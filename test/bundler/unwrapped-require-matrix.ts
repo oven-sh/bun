@@ -15,13 +15,15 @@
 import { spawn } from "bun";
 import { bunEnv, bunExe, tempDir } from "harness";
 
+// `fn` tells `x.fn()` from `(0, x.fn)()`.
+const fn = `function () { return this === undefined ? "fn-nothis" : "fn-this"; }`;
 const packages: Record<string, string> = {
   "node_modules/react/package.json": `{ "name": "react", "version": "19.0.0", "main": "index.js" }`,
   // `exports.x = ...`: the file becomes ESM and every export is its own binding.
-  "node_modules/react/index.js": `exports.v = "react"; exports.w = "w"; exports.fn = function () { return "fn"; }; exports.a = { b: "ab", c: function () { return "ac:" + this.b; } };`,
+  "node_modules/react/index.js": `"use strict"; exports.v = "react"; exports.w = "w"; exports.fn = ${fn}; exports.a = { b: "ab", c: function () { return "ac:" + this.b; } };`,
   "node_modules/scheduler/package.json": `{ "name": "scheduler", "version": "0.25.0", "main": "index.js" }`,
   // `module.exports = ...`: the file stays a `__commonJS` wrapper.
-  "node_modules/scheduler/index.js": `module.exports = { v: "sched", w: "w", fn: function () { return "fn"; }, a: { b: "sab", c: function () { return "sac:" + this.b; } } };`,
+  "node_modules/scheduler/index.js": `"use strict"; module.exports = { v: "sched", w: "w", fn: ${fn}, a: { b: "sab", c: function () { return "sac:" + this.b; } } };`,
 };
 
 // `kinds`: the declaration kinds the rebind is valid for (default: var, let). `writes`: the rebind runs and stores
@@ -49,6 +51,7 @@ const rebinds: Record<string, Rebind> = {
 const reads: Record<string, (x: string, out: string) => string> = {
   oneLevel: (x, out) => `${out}.push(${x}.v);`,
   index: (x, out) => `${out}.push(${x}["w"]);`,
+  indexEmpty: (x, out) => `${out}.push(${x}[""]);`,
   call: (x, out) => `${out}.push(${x}.fn());`,
   twoLevel: (x, out) => `${out}.push(${x}.a.b);`,
   twoLevelCall: (x, out) => `${out}.push(${x}.a.c());`,
@@ -96,20 +99,23 @@ export type Options = {
   orders?: string[];
 };
 
-type Cell = { name: string; kind: string; rebind: string; read: string; scope: string; order: string };
+type Cell = { name: string; pkg: string; kind: string; rebind: string; read: string; scope: string; order: string };
 
 // A `var` in one of these is declared by the function, so the bundler never takes it for the namespace.
 const blockScopes = ["topBlock", "fnBlock", "elseIf", "loopBody", "switchCase"];
 
-// A read that the bundler visits before the rebind is an import item by then. It prints as the property read that
-// was written, but it keeps two rules of an import read. A read whose value is unused is removed when it is a
-// statement of the module: the getter of the new value does not run. `minify` drops the `(0, ...)` of a call: the
-// call gets the variable as `this`.
+// The cells whose bundle is known to differ from the unbundled run.
 export function knownGap(cell: Cell, minified: boolean): boolean {
-  if (cell.order === "writeFirst" || !rebinds[cell.rebind].writes) return false;
-  if (cell.kind === "var" && blockScopes.includes(cell.scope)) return false;
-  if (cell.read === "stmt") return cell.scope === "top" && cell.order === "hoistedWriter";
-  return cell.read === "commaCall" && minified;
+  // As on main, and not about a rebind: `minify` drops the `(0, ...)` of a call through a variable that became the
+  // namespace of a package that stays a wrapper. The call gets the namespace as `this`.
+  if (cell.pkg === "scheduler" && cell.rebind === "none" && cell.read === "commaCall") {
+    return minified && !(cell.kind === "var" && blockScopes.includes(cell.scope));
+  }
+  // A read that the bundler visits before the rebind is an import item by then. It prints as the property read that
+  // was written, but a read whose value is unused is removed when it is a statement of the module: the getter of
+  // the new value does not run.
+  const isStatementOfModule = cell.read === "stmt" && cell.scope === "top" && cell.order === "hoistedWriter";
+  return isStatementOfModule && !!rebinds[cell.rebind].writes;
 }
 
 const cellsPerBundle = 1000;
@@ -117,7 +123,7 @@ const cellsPerBundle = 1000;
 const prelude =
   `"use strict";\n` +
   `const cells = (globalThis.__cells ??= {});\n` +
-  `const mk = out => ({ v: "N", w: "Nw", fn() { return this === undefined ? "N-nothis" : "N-this:" + this.v; }, a: { b: "Nab", c() { return "Nac:" + this.b; } }, get g() { out.push("Ngetter"); return 1; } });\n`;
+  `const mk = out => ({ v: "N", w: "Nw", "": "Nempty", fn() { return this === undefined ? "N-nothis" : "N-this:" + this.v; }, a: { b: "Nab", c() { return "Nac:" + this.b; } }, get g() { out.push("Ngetter"); return 1; } });\n`;
 
 export function generate(options: Options = {}): { files: Record<string, string>; cells: Cell[] } {
   const kinds = options.kinds ?? ["var", "let", "const"];
@@ -152,7 +158,7 @@ export function generate(options: Options = {}): { files: Record<string, string>
               // A variable of the module has its own name. So do the functions beside it.
               const id = isTop ? String(cells.length) : "";
               const [x, out] = isTop ? [`x${id}`, `o${id}`] : ["x", "out"];
-              cells.push({ name, kind, rebind: rebindName, read, scope, order });
+              cells.push({ name, pkg, kind, rebind: rebindName, read, scope, order });
               const body = orders[order](
                 `${kind} ${x} = require("${pkg}");`,
                 rebind.code(x, out),
@@ -193,7 +199,8 @@ export function generate(options: Options = {}): { files: Record<string, string>
       await run("unbundled", import.meta.dir + "/entry" + bundle + ".mjs");
       for (const minify of [false, true]) {
         const name = minify ? "minified" : "plain";
-        // A directory of its own: the module loader has read no listing of it before the bundle is there.
+        // A directory of its own. On Windows, the import of a file that is new in a directory the module loader
+        // has read before fails with "Cannot find module" (a defect of the loader, not of the bundler).
         const outdir = import.meta.dir + "/" + name + bundle;
         const result = await Bun.build({
           entrypoints: [import.meta.dir + "/entry" + bundle + ".mjs"],

@@ -1800,15 +1800,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || self.single_stmt_body_scope == Some(alias.scope)
             // Another declaration of the variable can initialize it again.
             || self.symbols[alias.local.inner_index() as usize].shares_variable()
-            || !self.require_alias_holds(&alias)
-            // `require_alias_of` searches by local. Symbols are declared in source order.
-            || self
-                .require_aliases
-                .last()
-                .is_some_and(|last| last.local.inner_index() >= alias.local.inner_index())
         {
             return false;
         }
+        // `require_alias_of` searches by local: a variable with one declaration is declared in visit order.
+        debug_assert!(
+            self.require_aliases
+                .last()
+                .is_none_or(|last| last.local.inner_index() < alias.local.inner_index())
+        );
         self.import_items_for_namespace
             .insert(alias.local, ImportItemForNamespaceMap::default());
         self.require_aliases.push(alias);
@@ -1871,13 +1871,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Each folded read prints the symbol of the local, which the React Compiler would declare again.
         self.react_compiler_must_keep_body |= items.count() > 0;
         for (name, item) in items.keys().iter().zip(items.values()) {
-            self.symbols[item.ref_.inner_index() as usize].namespace_alias =
-                Some(bun_alloc::ast_box(G::NamespaceAlias {
-                    namespace_ref: alias.local,
-                    alias: js_ast::StoreStr::new(self.arena.alloc_slice_copy(name)),
-                    import_record_index,
-                    was_originally_property_access: true,
-                }));
+            let symbol = &mut self.symbols[item.ref_.inner_index() as usize];
+            symbol.set_property_of_variable(true);
+            symbol.namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
+                namespace_ref: alias.local,
+                alias: js_ast::StoreStr::new(self.arena.alloc_slice_copy(name)),
+                import_record_index,
+                was_originally_property_access: true,
+            }));
         }
     }
 
@@ -1909,18 +1910,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 self.confirm_require_alias(&alias, is_import_equals);
                 // The current part holds every use of `namespace`: the declarator, and one for each read.
-                let uses = self
+                let mut uses = self
                     .existing_part_use(alias.namespace)
                     .map_or(0, |use_| use_.count_estimate());
-                let reads = uses.saturating_sub(1);
+                let mut reads = uses;
+                take_back_uses(&mut reads, 1);
                 self.forget_part_use(alias.namespace);
                 for (ref_, count) in [(alias.namespace, uses), (alias.local, reads)] {
                     let symbol = &mut self.symbols[ref_.inner_index() as usize];
-                    symbol.use_count_estimate = symbol.use_count_estimate.saturating_sub(count);
+                    take_back_uses(&mut symbol.use_count_estimate, count);
                 }
                 if let Some(use_) = self.existing_part_use(alias.local) {
+                    uses = use_.count_estimate();
+                    take_back_uses(&mut uses, reads);
                     use_.subtract(reads);
-                    if use_.count_estimate() == 0 {
+                    if uses == 0 {
                         self.forget_part_use(alias.local);
                     }
                 }
@@ -2004,12 +2008,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     core::mem::take(&mut part.symbol_uses.values_mut()[at]).count_estimate();
                 for ref_ in [alias.namespace, alias.local] {
                     let symbol = &mut self.symbols[ref_.inner_index() as usize];
-                    symbol.use_count_estimate = symbol.use_count_estimate.saturating_sub(reads);
+                    take_back_uses(&mut symbol.use_count_estimate, reads);
                 }
                 if let Some(use_) = part.symbol_uses.get_mut(&alias.local) {
+                    debug_assert!(use_.count_estimate() >= reads);
                     use_.subtract(reads);
                 }
-                reads_left = reads_left.saturating_sub(reads);
+                take_back_uses(&mut reads_left, reads);
                 took_back_a_use = true;
             }
             if took_back_a_use {
@@ -10722,6 +10727,12 @@ fn record_destructured_aliases(
         .expect("oom");
     }
     Some(rest_ref)
+}
+
+/// Takes `count` uses back from `total`. A debug build fails when `require_aliases` counted fewer than that.
+fn take_back_uses(total: &mut u32, count: u32) {
+    debug_assert!(*total >= count, "{count} uses taken back from {total}");
+    *total = total.saturating_sub(count);
 }
 
 /// The local that `part` declares when it is one `var x = value` statement.

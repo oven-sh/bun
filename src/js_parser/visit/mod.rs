@@ -297,6 +297,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let was_anonymous_named_expr = val.is_anonymous_named();
 
                 let prev_require_to_convert_count = self.imports_to_convert_from_require.len();
+                // Only `x = require("pkg")` as written: an initializer that folds to it stays a variable.
+                let is_call_as_written = matches!(val.data, ExprData::ECall(_));
                 let prev_macro_call_count = self.macro_call_count;
                 let orig_dead = self.is_control_flow_dead;
                 // `replacement` is a `BackRef` so the
@@ -391,6 +393,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // `transpose_require` turned a `require()` in the initializer into an import.
                 if prev_require_to_convert_count < self.imports_to_convert_from_require.len()
+                    && is_call_as_written
                     && self.note_require_alias(
                         decl.binding,
                         val,
@@ -1965,6 +1968,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // fail if something with side effects is in between the declaration
                     // and the usage.
                     if symbol.use_count_estimate == 1
+                        // In a `case` list, a `require()` variable still waits for the cases after this one.
+                        && p.require_alias_of(id).is_none()
                         && p.substitute_single_use_symbol_in_stmt(stmt, id, replacement)
                     {
                         // `const ns = await import(x); return ns` — the single use just

@@ -818,8 +818,8 @@ describe("bundler", () => {
       stdout: "default,sched sched\nTypeError",
     },
   });
-  // A write to a property of a variable that can still be the namespace is a
-  // write to an import.
+  // As on main: a write to a property of a variable that can still become the
+  // namespace is a build error.
   itBundled("cjs2esm/UnwrappedRequirePropertyWriteBeforeRebind", {
     files: {
       "/entry.js": /* js */ `
@@ -837,8 +837,8 @@ describe("bundler", () => {
     const minifyOptions = { minifySyntax: minify, minifyIdentifiers: minify, minifyWhitespace: minify };
     // A read that the bundler visits after the write is a read of a property
     // of what the variable holds: a getter runs, a call has the `this` that is
-    // written, and a read of `null` throws. A read that it visits before the
-    // write keeps two rules of an import read (`knownGap` in unwrapped-require-matrix.ts).
+    // written, and a read of `null` throws. For a read that it visits before
+    // the write, see `knownGap` in unwrapped-require-matrix.ts.
     itBundled(`cjs2esm/UnwrappedRequireReboundReadsTheVariable${suffix}`, {
       files: {
         "/entry.js": /* js */ `
@@ -1152,7 +1152,7 @@ describe("bundler", () => {
     },
   });
   // A `const` of a block that nothing rebinds is the namespace, as at the top
-  // of a function: a write to a property of it is a write to an import.
+  // of a function. As on main, a write to a property of it is a build error.
   itBundled("cjs2esm/UnwrappedRequireInBlockPropertyWrite", {
     files: {
       "/entry.js": /* js */ `
@@ -1492,6 +1492,112 @@ describe("bundler", () => {
       },
     });
   }
+  for (const minify of [false, true]) {
+    // Only `x = require("pkg")` as written can become the namespace. An
+    // initializer that folds to the `require()` is a variable, as on main: a
+    // write to a property of it and a later write to it are ordinary writes.
+    itBundled(`cjs2esm/UnwrappedRequireFoldedInitializer${minify ? "Minified" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          var a = true && require("react");
+          a.extra = 1;
+          var b = (0, require("react"));
+          b = { react: "b2" };
+          var c = true ? require("react") : null;
+          c.more = 2;
+          function fn() {
+            let d = null ?? require("react-is");
+            const read = () => d.is;
+            d = { is: "d2" };
+            return read();
+          }
+          console.log(a.react, a.extra, b.react, c.more, fn(), require("react").react);
+        `,
+        ...unwrapListPackages,
+      },
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      minifyWhitespace: minify,
+      run: {
+        stdout: "react 1 b2 2 d2 react",
+      },
+    });
+    // The statements of a \`switch\` are in the lists of its cases. A variable
+    // of one case is settled after the last case: a later case can read it or
+    // write it.
+    itBundled(`cjs2esm/UnwrappedRequireInSwitch${minify ? "Minified" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          let saved;
+          function keep(value) {
+            saved = value;
+          }
+          function readInLaterCase(n) {
+            switch (n) {
+              case 0:
+                const R = require("react");
+                keep(R);
+              case 1:
+                return R.react;
+            }
+          }
+          function reboundInLaterCase(n) {
+            const out = [];
+            switch (n) {
+              case 1:
+                let g = require("react");
+                out.push(g.react);
+              case 2:
+                g = { react: "g2" };
+                out.push(g.react);
+            }
+            return out.join(" ");
+          }
+          function closureInLaterCase(n) {
+            switch (n) {
+              case 0:
+                const R = require("react-is");
+                keep(R);
+              default:
+                return (() => R.is)();
+            }
+          }
+          console.log(readInLaterCase(0), typeof saved, reboundInLaterCase(1), closureInLaterCase(0));
+        `,
+        ...unwrapListPackages,
+      },
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      minifyWhitespace: minify,
+      run: {
+        stdout: "react object react g2 is",
+      },
+    });
+  }
+  // A TypeScript import that is only a type does not declare the variable:
+  // the \`const\` of the same name still becomes the namespace.
+  itBundled("cjs2esm/UnwrappedRequireOverTypeImport", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { React } from "./types";
+        const React = require("react");
+        const name: React = React.react;
+        console.log(name);
+      `,
+      "/types.ts": /* ts */ `
+        export type React = string;
+      `,
+      ...unwrapListPackages,
+    },
+    dce: true,
+    dceKeepMarkerCount: false,
+    onAfterBundle(api) {
+      expect(api.readFile("out.js")).not.toContain("exports_react");
+    },
+    run: {
+      stdout: "react",
+    },
+  });
   // The React Compiler declares the locals of a component again. A namespace
   // of a `require()` is a binding of the module for it, also when a variable
   // of the component became that namespace. A variable that stays after a
@@ -1774,7 +1880,7 @@ describe("bundler", () => {
   });
   // Declaration kind x rebind x read x scope x visit order, each compared with
   // the unbundled run (unwrapped-require-matrix.ts). A debug or sanitizer
-  // build is too slow for the 26,496 cells: it runs 216 of them.
+  // build is too slow for the 28,152 cells: it runs 216 of them.
   const matrixRuns: [string, Options, number][] =
     isDebug || isASAN
       ? [
@@ -1791,9 +1897,9 @@ describe("bundler", () => {
           ],
         ]
       : [
-          ["WriteFirst", { orders: ["writeFirst"] }, 9536],
-          ["ReadInEarlierFn", { orders: ["readInEarlierFn"] }, 8480],
-          ["HoistedWriter", { orders: ["hoistedWriter"] }, 8480],
+          ["WriteFirst", { orders: ["writeFirst"] }, 10132],
+          ["ReadInEarlierFn", { orders: ["readInEarlierFn"] }, 9010],
+          ["HoistedWriter", { orders: ["hoistedWriter"] }, 9010],
         ];
   test.concurrent.each(matrixRuns)(
     "cjs2esm/UnwrappedRequireMatrix%s",

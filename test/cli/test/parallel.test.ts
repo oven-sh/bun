@@ -129,6 +129,27 @@ test("--parallel marks a file whose worker exits mid-run as failed (no retry)", 
   expect(exitCode).toBe(1);
 });
 
+test("--parallel: the coordinator, not the worker, reports a worker that fails a test and then calls process.exit(0)", async () => {
+  using dir = tempDir("parallel-exit-after-failure", {
+    "a.test.js": `import {test,expect} from "bun:test"; test("a",()=>expect(1).toBe(1));`,
+    "boom.test.js": `import {test,expect} from "bun:test"; test("fails",()=>expect(1).toBe(2)); test("exits",()=>process.exit(0));`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout + stderr).not.toContain("this test run has failed");
+  expect(stderr).toContain("(fail) fails");
+  expect(stderr).toContain("(worker crashed: exit code 0)");
+  expect(exitCode).toBe(1);
+});
+
 // The label must use the OS's name for the number the worker died from. Signal
 // 16 on Linux is SIGSTKFLT (it used to be labeled "SIG16"). SIGUSR2 is 31 on
 // macOS, where 31 used to be read with Linux numbering as SIGSYS, a crash

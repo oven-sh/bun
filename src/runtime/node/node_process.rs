@@ -86,6 +86,10 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
             bun_core::Output::flush();
             bun_core::reload_process(should_clear_terminal, false);
         }
+        // The field: the method is also true on the debugger thread, which does not own the test runner.
+        if vm.is_main_thread {
+            crate::cli::test_command::on_process_exit(vm);
+        }
         vm.exit_handler.requested = true;
         vm.on_exit();
         vm.global_exit();

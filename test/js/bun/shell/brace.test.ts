@@ -159,6 +159,19 @@ describe("brace + glob composition", () => {
     expect(words).toContain("lib/b.ts");
   });
 
+  test("src/{lib,b/c}/*.ts: a brace group with a separator in it", async () => {
+    using dir = tempDir("shell-brace-glob-separator", {
+      "src/lib/a.ts": "",
+      "src/b/c/index.ts": "",
+      "src/b/other.ts": "",
+    });
+    const out = (await $`echo src/{lib,b/c}/*.ts`.cwd(String(dir)).text()).trim().replaceAll("\\", "/");
+    const words = out.split(" ");
+    expect(words).toContain("src/lib/a.ts");
+    expect(words).toContain("src/b/c/index.ts");
+    expect(words).not.toContain("src/b/other.ts");
+  });
+
   test("an interpolated comma inside a brace group is one literal branch", async () => {
     using dir = tempDir("shell-brace-glob3", {
       "x.ts": "",

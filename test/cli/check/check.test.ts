@@ -16659,6 +16659,8 @@ describe.concurrent("--check", () => {
     // Not the first: `bun` looks for a file with that name.
     [["index.html", "{about,none}.html"]],
     [["index.html", "./pages/*.html"]],
+    // A group with a separator in it.
+    [["index.html", "{about,pages/contact}.html"]],
   ])("bun --check %j: the scripts of every page", async pages => {
     const page = (script: string) => `<!doctype html>\n<script type="module" src="${script}"></script>\n`;
     using dir = project({

@@ -267,6 +267,7 @@ impl FetchSession {
             pool: http::PoolOptions {
                 id: NEXT_POOL_ID.fetch_add(1, Ordering::Relaxed),
                 idle_timeout_seconds: 0,
+                user_timeout_ms: 0,
                 max_idle_sockets: 0,
             },
             keep_alive: true,
@@ -371,6 +372,31 @@ impl FetchSession {
             }
         }
 
+        if let Some(tcp) = options.get(global, "tcp")? {
+            if tcp.is_object() {
+                if let Some(ms) = non_negative_number(global, tcp, "tcp", "userTimeout")? {
+                    // Milliseconds, rounded up so the bound is never shorter than asked.
+                    let ms = ms.ceil();
+                    if ms > f64::from(u32::MAX) {
+                        return Err(global.throw_range_error(
+                            ms,
+                            jsc::RangeErrorOptions {
+                                field_name: b"tcp.userTimeout",
+                                min: 0,
+                                max: i64::from(u32::MAX),
+                                ..Default::default()
+                            },
+                        ));
+                    }
+                    this.pool.user_timeout_ms = ms as u32;
+                }
+            } else if !tcp.is_undefined_or_null() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "FetchSession: 'tcp' must be an object"
+                )));
+            }
+        }
+
         Ok(this)
     }
 
@@ -446,6 +472,32 @@ fn positive_number(
     if !(number.is_finite() && number > 0.0) {
         return Err(global.throw_invalid_arguments(format_args!(
             "FetchSession: 'keepAlive.{name}' must be a positive number"
+        )));
+    }
+    Ok(Some(number))
+}
+
+/// `object[name]` as a finite number `>= 0`, `None` when absent or `undefined`.
+fn non_negative_number(
+    global: &JSGlobalObject,
+    object: JSValue,
+    object_name: &'static str,
+    name: &'static str,
+) -> JsResult<Option<f64>> {
+    let Some(value) = object.get(global, name)? else {
+        return Ok(None);
+    };
+    if value.is_undefined() {
+        return Ok(None);
+    }
+    let number = if value.is_number() {
+        value.as_number()
+    } else {
+        f64::NAN
+    };
+    if !(number.is_finite() && number >= 0.0) {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "FetchSession: '{object_name}.{name}' must be a non-negative number"
         )));
     }
     Ok(Some(number))

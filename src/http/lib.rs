@@ -513,6 +513,9 @@ pub struct HTTPClientResult<'a> {
 pub struct PoolOptions {
     pub id: u64,
     pub idle_timeout_seconds: u32,
+    /// TCP user timeout (`TCP_USER_TIMEOUT`) in milliseconds for every TCP
+    /// connection the session opens. 0 = OS default (no setsockopt).
+    pub user_timeout_ms: u32,
     pub max_idle_sockets: u16,
 }
 
@@ -2002,6 +2005,17 @@ impl<'a> HTTPClient<'a> {
         // TCP options do not apply to a unix socket.
         if !self.flags.disable_keepalive && self.unix_socket_path.is_empty() {
             let _ = socket.set_keep_alive(true, 60);
+        }
+        // `FetchSession({ tcp: { userTimeout } })`: bound how long sent data may
+        // stay unacknowledged. Keepalive probes do not run while data is in
+        // flight, so this is the only timer that catches a peer that vanished
+        // mid-request (a pooled socket whose source address disappeared after a
+        // network change). Independent of `disable_keepalive`: that gate exists
+        // for Node Agent parity, not because the socket must not be bounded.
+        // On Linux the value also replaces the keepalive probe count as the
+        // abort rule, so a value above ~60s lengthens idle half-open detection.
+        if self.pool.user_timeout_ms != 0 && self.unix_socket_path.is_empty() {
+            let _ = socket.set_user_timeout(self.pool.user_timeout_ms);
         }
 
         self.on_open::<IS_SSL>(socket)?;

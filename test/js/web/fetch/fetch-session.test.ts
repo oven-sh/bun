@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, isIPv6, isWindows, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isIPv6, isLinux, isWindows, libcPathForDlopen, tempDir, tls as tlsCert } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
@@ -340,6 +340,109 @@ describe("Bun.FetchSession", () => {
       "FetchSession: cannot use a proxy with a unix socket",
     );
     expect(construct({ unix: 1 })).toThrow("FetchSession: 'unix' must be a non-empty string");
+    expect(construct({ tcp: 5 })).toThrow("FetchSession: 'tcp' must be an object");
+    for (const userTimeout of [-1, NaN, Infinity, "x"]) {
+      expect(construct({ tcp: { userTimeout } })).toThrow(
+        "FetchSession: 'tcp.userTimeout' must be a non-negative number",
+      );
+    }
+    expect(construct({ tcp: { userTimeout: 2 ** 32 } })).toThrow(
+      'The value of "tcp.userTimeout" is out of range. It must be >= 0 and <= 4294967295. Received 4294967296',
+    );
+    for (const tcp of [undefined, null, {}, { userTimeout: undefined }, { userTimeout: 0 }, { userTimeout: 1500.2 }]) {
+      expect(construct({ tcp })).not.toThrow();
+    }
+  });
+
+  // The kernel reports the option back, so a child process scans its fds for
+  // the one TCP socket that carries the session's value.
+  test.skipIf(isWindows)("tcp.userTimeout is set once on each connection of the session", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const { dlopen, FFIType, ptr } = require("bun:ffi");
+        const isDarwin = process.platform === "darwin";
+        const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+          getsockopt: {
+            args: [FFIType.int, FFIType.int, FFIType.int, FFIType.ptr, FFIType.ptr],
+            returns: FFIType.int,
+          },
+        });
+        const IPPROTO_TCP = 6;
+        // Linux TCP_USER_TIMEOUT is in ms. Darwin's TCP_RXT_CONNDROPTIME is in whole seconds.
+        const OPT = isDarwin ? 0x80 : 18;
+        const expected = isDarwin ? 3 : 2500;
+        // The values of every TCP socket of this process, by fd.
+        function scan() {
+          const found = {};
+          for (let fd = 3; fd < 256; fd++) {
+            const val = new Int32Array(1);
+            const len = new Uint32Array([4]);
+            if (libc.symbols.getsockopt(fd, IPPROTO_TCP, OPT, ptr(val), ptr(len)) === 0) found[fd] = val[0];
+          }
+          return found;
+        }
+        const withValue = scan => Object.values(scan).filter(v => v === expected).length;
+
+        using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+        const url = "http://127.0.0.1:" + server.port + "/";
+        const out = {};
+
+        using plain = new Bun.FetchSession();
+        await (await fetch(url, { session: plain })).text();
+        out.without_option = withValue(scan());
+
+        using bounded = new Bun.FetchSession({ tcp: { userTimeout: 2500 } });
+        await (await fetch(url, { session: bounded })).text();
+        out.after_first = withValue(scan());
+        // Pool reuse: still one connection, and it keeps the value.
+        await (await fetch(url, { session: bounded })).text();
+        out.after_pooled = withValue(scan());
+        // A request that opts out of the pool still gets the bound on its own connection.
+        await (await fetch(url, { session: bounded, keepalive: false })).text();
+        out.after_no_keepalive = withValue(scan()) >= 1;
+        console.log(JSON.stringify(out));
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+      out: { without_option: 0, after_first: 1, after_pooled: 1, after_no_keepalive: true },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Linux TCP_USER_TIMEOUT also covers data the peer's zero window holds back,
+  // which is the one dead-peer condition a test can create on loopback.
+  test.skipIf(!isLinux)("tcp.userTimeout fails a request whose peer stopped reading", async () => {
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.pause();
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      using session = new Bun.FetchSession({ tcp: { userTimeout: 500 } });
+      const body = new Uint8Array(16 * 1024 * 1024);
+      const request = fetch(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}/`, {
+        method: "POST",
+        body,
+        session,
+      });
+      const outcome = await request.then(
+        response => ({ status: response.status }),
+        (error: any) => ({ code: error.code }),
+      );
+      expect(outcome).toEqual({ code: expect.stringMatching(/^(ECONNRESET|ETIMEDOUT)$/) });
+    } finally {
+      server.close();
+    }
   });
 
   test("rejects a proxy that names no proxy, which fetch() reads as absent", async () => {

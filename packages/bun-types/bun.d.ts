@@ -9092,6 +9092,33 @@ declare module "bun" {
      * Send the requests of this session over a Unix socket.
      */
     unix?: string | undefined;
+    /**
+     * TCP options for the connections of this session. They do not apply to
+     * Unix sockets or to HTTP/3 connections.
+     */
+    tcp?:
+      | {
+          /**
+           * Milliseconds that sent data may stay unacknowledged before the
+           * kernel aborts the connection. Use it to fail a request over a
+           * pooled connection whose peer went away without a reset, for
+           * example after a network change. The request then rejects with a
+           * connection error instead of waiting for the kernel's retransmit
+           * limit (about 15 minutes on Linux).
+           *
+           * It also aborts a connection to a peer that stops reading for that
+           * long. On Linux, a value above about 60 seconds also lengthens how
+           * long an idle half-open connection takes to be detected.
+           *
+           * Linux: `TCP_USER_TIMEOUT`. macOS: `TCP_RXT_CONNDROPTIME`, in whole
+           * seconds, rounded up. Windows: `TCP_MAXRTMS`. `0` means the OS
+           * default.
+           *
+           * @default 0
+           */
+          userTimeout?: number | undefined;
+        }
+      | undefined;
   }
 
   /**

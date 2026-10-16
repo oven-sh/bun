@@ -531,6 +531,16 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
+    /// Bound how long sent data may stay unacknowledged before the kernel
+    /// aborts the connection (`TCP_USER_TIMEOUT` and its equivalents). `ms == 0`
+    /// restores the OS default.
+    pub fn set_user_timeout(&self, ms: u32) -> bool {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).set_user_timeout(ms) == 0,
+            _ => false,
+        }
+    }
+
     /// Set the IP type-of-service. Returns 0 on success or a negative errno;
     /// non-TCP sockets (pipes, duplexes, not-yet-connected) report -EBADF (-9)
     /// the way Node's no-handle fallback does.

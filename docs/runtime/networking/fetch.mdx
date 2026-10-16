@@ -494,12 +494,15 @@ session.close(); // closes the idle connections
 | `proxy`     | The same values as `fetch`'s `proxy`, including `false`.                                                                                                                                                                  |
 | `keepAlive` | `false` closes each connection after its response. `idleTimeout` is in seconds (default 300). `maxIdleSockets` caps the idle connections per kind (plain, TLS, Unix socket). Neither limit applies to HTTP/3 connections. |
 | `unix`      | A Unix socket path.                                                                                                                                                                                                       |
+| `tcp`       | `userTimeout` is in milliseconds (default: the OS default). The kernel aborts a connection whose sent data stays unacknowledged for that long, and the request rejects with a connection error. Not applied to Unix sockets or HTTP/3 connections. |
 
 An option given on the request takes precedence over the session's, `proxy: false` included. A request's `tls` replaces the session's `tls` as a whole.
 
 The constructor throws for a `proxy` or a `tls.checkServerIdentity` that it cannot use, such as `proxy: 8080`, a `proxy` object without a `url`, or a `checkServerIdentity` that is not a function. For `proxy`, only `undefined`, `null` and `""` mean no option. On a request, `fetch` ignores such a `proxy` (`true` throws), and the request keeps the proxy of its session or of the environment.
 
 Bun rounds `idleTimeout` up to its socket timer, which moves in 4 second steps up to four minutes and in whole minutes beyond that. A connection is never closed before `idleTimeout`, and it can stay open for up to two steps longer. The longest `idleTimeout` is 238 minutes. A larger value means 238 minutes.
+
+A pooled connection can outlive its network path, for example after a Wi-Fi change. The kernel then retransmits the request for about 15 minutes on Linux before it gives up, and the request hangs for that long. `tcp.userTimeout` bounds this. It is off by default, because it also aborts a connection to a peer that stops reading for that long. Linux sets `TCP_USER_TIMEOUT`, macOS sets `TCP_RXT_CONNDROPTIME` (whole seconds, rounded up), Windows sets `TCP_MAXRTMS`.
 
 Without `maxIdleSockets` a session has no limit of its own. The idle connections of all sessions and of plain `fetch` share one bounded pool per kind. When that pool is full, Bun closes the longest-idle connection in it, whichever session it belongs to. A `maxIdleSockets` above the size of the pool has no effect.
 

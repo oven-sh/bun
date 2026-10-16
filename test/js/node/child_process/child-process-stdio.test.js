@@ -266,16 +266,16 @@ describe.concurrent("child.stdout and child.stderr event order", () => {
     ["stdout", "waiting-read", "destroy-callback-throws"],
     // two-chunks: the second chunk and the EOF are in the pipe while the first 'data' listener runs.
     ["stdout", "two-chunks", "data"],
-    // Not on Windows. There Node runs the promise jobs of a listener that threw after 'end', when
-    // the EOF is already in the pipe. And Bun reads a pipe asynchronously there, so a read() call
-    // in 'exit' finds no bytes yet.
-    // held-open: a grandchild holds the pipe until the parent has seen the child's 'exit', so the 'close'
-    // of the pipe is also the 'close' of the child. On Windows the exit of the child ends the grandchild.
     ...(isWindows
       ? []
       : [
+          // Not on Windows. There Node runs the promise jobs of a listener that threw after 'end', when
+          // the EOF is already in the pipe. And Bun reads a pipe asynchronously there, so a read() call
+          // in 'exit' finds no bytes yet.
           ["stdout", "first-read", "throw"],
           ["stdout", "first-read", "read-on-exit"],
+          // held-open: a grandchild holds the pipe until the parent has seen the child's 'exit', so the
+          // 'close' of the pipe is also the 'close' of the child. Not checked on Windows.
           ["stdout", "held-open", "for-await"],
           ["stdout", "held-open", "await-end"],
         ]),

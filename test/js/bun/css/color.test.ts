@@ -773,16 +773,23 @@ describe("conversions between color spaces", () => {
 // rgb(), hsl() and hwb() cannot hold an origin outside the sRGB gamut. Browsers compute the
 // unclamped color and clip it when painting (w3c/csswg-drafts#8444): the display-p3 green
 // below paints as #00ff00, the lab() one as #ff96ff. These used to be resolved by gamut
-// mapping the origin, to #00f942 and #ffffff, so now they are not resolved at all.
+// mapping the origin, to #00f942 and #ffffff. A style sheet now keeps them as written.
+// `Bun.color()` must give a value: rgb() reads the origin with no gamut mapping and clips the
+// result, which is the painted color. hsl() and hwb() have no such value yet.
 describe("relative colors with an origin outside the sRGB gamut", () => {
+  test.each(["hsl(from color(display-p3 0 1 0) h s l)", "hwb(from oklch(100% 0.399 336.3) h w b)"])(
+    "%s is not resolved",
+    input => {
+      expect([color(input, "css"), color(input, "hex")]).toEqual([null, null]);
+    },
+  );
+
   test.each([
-    "rgb(from lab(100% 104.3 -50.9) r g b)",
-    "hsl(from color(display-p3 0 1 0) h s l)",
-    "hwb(from oklch(100% 0.399 336.3) h w b)",
-    "rgb(from light-dark(red, color(display-p3 0 1 0)) r g b)",
-    "color-mix(in srgb, rgb(from lab(100% 104.3 -50.9) r g b), red)",
-  ])("%s is not resolved", input => {
-    expect([color(input, "css"), color(input, "hex")]).toEqual([null, null]);
+    ["rgb(from color(display-p3 0 1 0) r g b)", "#0f0"],
+    ["rgb(from lab(100% 104.3 -50.9) r g b)", "#ff96ff"],
+    ["rgb(from light-dark(red, color(display-p3 0 1 0)) r g b)", "light-dark(red, #0f0)"],
+  ])("%s is the painted color %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
   });
 
   test.each([
@@ -824,6 +831,31 @@ describe("relative colors with an origin outside the sRGB gamut", () => {
         }
       }
     });
+  });
+});
+
+// https://drafts.csswg.org/css-color-5/#relative-colors
+// A relative rgb(), hsl() or hwb() color is not clamped, and a style sheet keeps it as written.
+// `Bun.color()` must give a value. It clips a channel of rgb(), which is what a browser paints.
+// The clamp of an hsl() or hwb() channel is not always the painted color, so those have no value yet.
+describe("relative color with a channel outside its range", () => {
+  test.each(["hsl(from #336699 h 185% l)", "hsl(from #336699 h s -10%)", "hwb(from #336699 h 150% b)"])(
+    "%s is not resolved",
+    input => {
+      expect(color(input, "css")).toBeNull();
+    },
+  );
+
+  test.each([
+    ["rgb(from #336699 300 g b)", "#f69"],
+    ["rgb(from #336699 r -10 b)", "#309"],
+    ["rgb(from #336699 r g 120%)", "#36f"],
+    ["rgb(from #336699 255 0 b)", "#f09"],
+    ["hsl(from #336699 h 100% l)", "#06c"],
+    ["rgb(from #336699 r g b / 2)", "#369"],
+    ["rgb(300 0 0)", "red"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
   });
 });
 

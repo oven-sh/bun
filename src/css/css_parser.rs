@@ -2982,12 +2982,19 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub struct ParserOpts: u8 {
         const CSS_MODULES = 0b1;
+        /// The caller cannot keep a color as written. A relative `rgb()` reads its origin with no gamut mapping, and a channel outside its range is clipped, as a browser paints it.
+        const CLIP_RELATIVE_COLOR = 0b10;
     }
 }
 impl ParserOpts {
     #[inline]
     pub(crate) fn css_modules(self) -> bool {
         self.contains(Self::CSS_MODULES)
+    }
+
+    #[inline]
+    pub(crate) fn clip_relative_color(self) -> bool {
+        self.contains(Self::CLIP_RELATIVE_COLOR)
     }
 }
 

@@ -835,7 +835,7 @@ pub(crate) fn run_scripts_with_filter(
 
         let run_in_bun = ctx.debug.run_in_bun;
         let path_var: Vec<u8> =
-            RunCommand::path_for_run(this_transpiler.env_mut(), path, None, path, run_in_bun)?;
+            RunCommand::path_for_run(this_transpiler.env_mut(), path, path, run_in_bun)?.path;
 
         for (i, name) in [&pre_script_name[..], script_name, &post_script_name[..]]
             .iter()
@@ -934,7 +934,10 @@ pub(crate) fn run_scripts_with_filter(
         // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
         let path = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
         let top_level_dir = fsinstance.top_level_dir;
-        Some(RunCommand::find_shell(path, top_level_dir).ok_or(crate::Error::MissingShell)?)
+        Some(
+            RunCommand::find_shell(bun_paths::ToolPath::new(path), top_level_dir)
+                .ok_or(crate::Error::MissingShell)?,
+        )
     } else {
         None
     };

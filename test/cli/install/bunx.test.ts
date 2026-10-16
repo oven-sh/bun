@@ -29,6 +29,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
+import { type as osType } from "os";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
 
@@ -2949,6 +2950,22 @@ console.log("scripts ran: tool " + ran(".") + ", dep " + ran("../dep"));
         exitCode: 0,
         requests: [],
       });
+    });
+
+    // `bunx` puts `node_modules/.bin` of the directory it runs in first in PATH for the tool, not for the install.
+    it.concurrent.skipIf(isWindows)("a script does not find the commands of the project in front of PATH", async () => {
+      using registry = await localRegistry({
+        name: "tool",
+        version: "1.0.0",
+        bin: { tool: "cli.js" },
+        scripts: { postinstall: "uname > built.txt" },
+        files: {
+          "cli.js": `#!/usr/bin/env node\nconsole.log(require("fs").readFileSync(__dirname + "/built.txt", "utf8").trim());\n`,
+        },
+      });
+      using box = sandbox(registry);
+      addLocalBin(box.cwd, "uname", `console.log("planted");`);
+      expect(await box.run(["--trust", "tool"])).toMatchObject({ stdout: `${osType()}\n`, exitCode: 0 });
     });
   });
 

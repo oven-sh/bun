@@ -14,6 +14,7 @@ use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::{self as core, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
+use bun_install::script_env::{Owner, ScriptPath};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSValue};
@@ -22,7 +23,7 @@ use bun_options_types::schema::api;
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
 use bun_paths::strings;
-use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_paths::{self as paths, MAX_PATH_BYTES, SEP, ToolPath};
 use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_which::which;
@@ -35,21 +36,6 @@ use crate::cli::shell_completions::ShellCompletions;
 bun_core::declare_scope!(RUN_LOG, visible);
 
 use bun_core::UnwrapOrOom;
-
-/// Picks the POSIX or Windows path literal at compile
-/// time. Local because `bun_paths` does not export a macro form yet.
-macro_rules! path_literal {
-    ($posix:literal, $win:literal) => {{
-        #[cfg(windows)]
-        {
-            $win
-        }
-        #[cfg(not(windows))]
-        {
-            $posix
-        }
-    }};
-}
 
 /// Process-lifetime arena for the runner's `Transpiler`; threads an
 /// `&'static Arena` per PORTING.md §AST crates. Route through the shared
@@ -151,70 +137,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Output::flush();
     }
 
-    #[cfg(not(windows))]
-    const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
-
-    /// `findShell` — locate a POSIX shell on `$PATH`, falling back to a
-    /// hardcoded list. Returns a NUL-terminated path borrowed from the
-    /// process-lifetime cache populated by `find_shell`.
-    fn find_shell_impl(path: &[u8], cwd: &[u8], path_buf: &mut PathBuffer) -> Option<usize> {
+    /// The shell that runs the scripts of a `package.json`. Cached to only run once.
+    pub(crate) fn find_shell(path: ToolPath<'_>, cwd: &[u8]) -> Option<&'static ZStr> {
         #[cfg(windows)]
         {
             let _ = (path, cwd);
-            const WIN: &[u8] = b"C:\\Windows\\System32\\cmd.exe";
-            path_buf[..WIN.len()].copy_from_slice(WIN);
-            return Some(WIN.len());
+            Some(bun_core::zstr!("C:\\Windows\\System32\\cmd.exe"))
         }
-
         #[cfg(not(windows))]
         {
-            for shell in Self::SHELLS_TO_SEARCH {
-                if let Some(shell_) = which(path_buf, path, cwd, shell) {
-                    return Some(shell_.len());
-                }
-            }
-
-            const HARDCODED_POPULAR_ONES: &[&[u8]] = &[
-                b"/bin/bash",
-                b"/usr/bin/bash",
-                b"/usr/local/bin/bash", // don't think this is a real one
-                b"/bin/sh",
-                b"/usr/bin/sh", // don't think this is a real one
-                b"/usr/bin/zsh",
-                b"/usr/local/bin/zsh",
-                b"/system/bin/sh", // Android
-            ];
-            for shell in HARDCODED_POPULAR_ONES {
-                path_buf[..shell.len()].copy_from_slice(shell);
-                path_buf[shell.len()] = 0;
-                // SAFETY: NUL-terminated above.
-                let z = ZStr::from_buf(&path_buf[..], shell.len());
-                if bun_sys::is_executable_file_path(z) {
-                    return Some(shell.len());
-                }
-            }
-
-            None
+            bun_install::RunCommand::find_shell(path, cwd)
         }
-    }
-
-    /// Find the "best" shell to use. Cached to only run once.
-    pub(crate) fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static ZStr> {
-        // Process-lifetime; written exactly once on the CLI thread.
-        // PORTING.md §Global mutable state: scratch buffer behind
-        // a `Once` gate → RacyCell.
-        static SHELL_BUF: bun_core::RacyCell<PathBuffer> =
-            bun_core::RacyCell::new(PathBuffer::ZEROED);
-        static ONCE: bun_core::Once<Option<&'static ZStr>> = bun_core::Once::new();
-        ONCE.call(|| {
-            // SAFETY: single-writer (Once gate), process-lifetime storage,
-            // CLI is single-threaded at this point.
-            let buf = unsafe { &mut *SHELL_BUF.get() };
-            let len = Self::find_shell_impl(path, cwd, buf)?;
-            buf[len] = 0;
-            // SAFETY: `buf[len] == 0` written above; SHELL_BUF is `'static`.
-            Some(ZStr::from_buf(&buf[..], len))
-        })
     }
 
     // Look for invocations of any: `yarn run` / `yarn $cmd` / `pnpm run` /
@@ -232,8 +165,36 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .map_err(Into::into)
     }
 
+    /// Like [`Self::run_package_script_foreground`], but puts the `node_modules/.bin` of `cwd` and
+    /// of its parents at the front of `PATH` while the script runs.
+    pub(crate) fn run_lifecycle_script_foreground(
+        ctx: &mut ContextData,
+        script: &[u8],
+        name: &[u8],
+        cwd: &[u8],
+        env: &mut DotEnv::Loader,
+        silent: bool,
+    ) -> crate::Result<()> {
+        let script_path = Self::path_for_run(env, b"", cwd, ctx.debug.run_in_bun)?;
+        env.map.put(b"PATH", &script_path.path)?;
+        let use_system_shell = ctx.debug.use_system_shell;
+        let result = Self::run_package_script_foreground(
+            ctx,
+            script,
+            name,
+            cwd,
+            env,
+            &[],
+            silent,
+            use_system_shell,
+            ToolPath::new(&script_path.inherited),
+        );
+        env.map.put(b"PATH", &script_path.inherited)?;
+        result
+    }
+
     /// Spawns the script body via the bun-shell or system shell and exits on
-    /// non-zero.
+    /// non-zero. The system shell is looked up on `tool_path`.
     ///
     /// `passthrough` is `&[Box<[u8]>]` to match `ctx.passthrough` directly.
     pub(crate) fn run_package_script_foreground(
@@ -245,71 +206,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         passthrough: &[Box<[u8]>],
         silent: bool,
         use_system_shell: bool,
+        tool_path: ToolPath<'_>,
     ) -> crate::Result<()> {
-        Self::run_package_script_foreground_with_shell_path(
-            ctx,
-            original_script,
-            name,
-            cwd,
-            env,
-            passthrough,
-            silent,
-            use_system_shell,
-            None,
-        )
-    }
-
-    /// Like [`Self::run_package_script_foreground`], but puts the `node_modules/.bin` of `cwd` and
-    /// of its parents at the front of `PATH` while the script runs.
-    pub(crate) fn run_lifecycle_script_foreground(
-        ctx: &mut ContextData,
-        script: &[u8],
-        name: &[u8],
-        cwd: &[u8],
-        env: &mut DotEnv::Loader,
-        silent: bool,
-    ) -> crate::Result<()> {
-        let mut original_path: Vec<u8> = Vec::new();
-        let path = Self::path_for_run(
-            env,
-            b"",
-            Some(&mut original_path),
-            cwd,
-            ctx.debug.run_in_bun,
-        )?;
-        env.map.put(b"PATH", &path)?;
-        let use_system_shell = ctx.debug.use_system_shell;
-        let result = Self::run_package_script_foreground_with_shell_path(
-            ctx,
-            script,
-            name,
-            cwd,
-            env,
-            &[],
-            silent,
-            use_system_shell,
-            Some(original_path.as_slice()),
-        );
-        env.map.put(b"PATH", &original_path)?;
-        result
-    }
-
-    /// Like [`Self::run_package_script_foreground`], but resolves the shell
-    /// interpreter from `shell_path` instead of the loader's `PATH`.
-    pub(crate) fn run_package_script_foreground_with_shell_path(
-        ctx: &mut ContextData,
-        original_script: &[u8],
-        name: &[u8],
-        cwd: &[u8],
-        env: &mut DotEnv::Loader,
-        passthrough: &[Box<[u8]>],
-        silent: bool,
-        use_system_shell: bool,
-        shell_path: Option<&[u8]>,
-    ) -> crate::Result<()> {
-        let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
-        let shell_bin =
-            Self::find_shell(shell_search_path, cwd).ok_or(crate::Error::MissingShell)?;
+        let shell_bin = Self::find_shell(tool_path, cwd).ok_or(crate::Error::MissingShell)?;
         env.map
             .put(b"npm_lifecycle_event", name)
             .expect("unreachable");
@@ -1858,16 +1757,13 @@ impl RunCommand {
             .map_err(Into::into)
     }
 
-    /// Prepends workspace
-    /// `.bin` dirs + the bun-node shim dir to `PATH` and writes the original
-    /// PATH back through `original_path`.
+    /// Puts the PATH of [`Self::path_for_run`] in the environment of `this_transpiler`.
     pub(crate) fn configure_path_for_run(
         root_dir_info: bun_resolver::DirInfoRef,
         this_transpiler: &mut Transpiler<'static>,
-        original_path: Option<&mut Vec<u8>>,
         cwd: &[u8],
         force_using_bun: bool,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<ScriptPath> {
         let mut package_json_dir: &[u8] = b"";
 
         if let Some(package_json) = root_dir_info.enclosing_package_json {
@@ -1878,42 +1774,32 @@ impl RunCommand {
             }
         }
 
-        let new_path = Self::path_for_run(
+        let script_path = Self::path_for_run(
             this_transpiler.env_mut(),
             package_json_dir,
-            original_path,
             cwd,
             force_using_bun,
         )?;
         this_transpiler
             .env_mut()
             .map
-            .put(b"PATH", &new_path)
+            .put(b"PATH", &script_path.path)
             .unwrap_or_oom();
-        Ok(())
+        Ok(script_path)
     }
 
-    /// Builds a new PATH with `node_modules/.bin` for each ancestor of `cwd`
-    /// (plus `package_json_dir` and the bun-node shim dir) prepended, returns
-    /// it as an owned buffer, and writes the original PATH out via
-    /// `original_path`.
+    /// PATH for what runs in `cwd`: the bun-node shim dir when `node` is to be bun, `package_json_dir`, then [`ScriptPath`].
     pub(crate) fn path_for_run(
         env_loader: &mut DotEnv::Loader,
         package_json_dir: &[u8],
-        original_path: Option<&mut Vec<u8>>,
         cwd: &[u8],
         force_using_bun: bool,
-    ) -> crate::Result<Vec<u8>> {
-        // Snapshot PATH up front. The env
-        // map owns `Box<[u8]>` values, so a borrow would dangle once the
-        // caller (`configure_path_for_run`) overwrites PATH. Own a copy instead.
-        let path: Vec<u8> = env_loader
+    ) -> crate::Result<ScriptPath> {
+        // A borrow of PATH would dangle once the caller overwrites it in the env map.
+        let inherited: Vec<u8> = env_loader
             .get(b"PATH")
             .map(<[u8]>::to_vec)
             .unwrap_or_default();
-        if let Some(op) = original_path {
-            op.clone_from(&path);
-        }
 
         let bun_node_exe = Self::bun_node_file_utf8()?;
         let bun_node_dir_win =
@@ -1929,10 +1815,10 @@ impl RunCommand {
             )
             .unwrap_or(false);
 
-        let mut needs_to_force_bun = force_using_bun || !found_node;
+        let needs_to_force_bun = force_using_bun || !found_node;
         let mut optional_bun_self_path: &[u8] = b"";
 
-        let mut new_path_len: usize = path.len() + 2;
+        let mut new_path_len: usize = inherited.len() + 2;
 
         if !package_json_dir.is_empty() {
             new_path_len += package_json_dir.len() + 1;
@@ -1956,11 +1842,11 @@ impl RunCommand {
             new_path_len += bun_node_dir_win.len() + 1;
         }
 
-        let mut new_path: Vec<u8> = Vec::with_capacity(new_path_len);
+        let mut front: Vec<u8> = Vec::with_capacity(new_path_len);
 
         if needs_to_force_bun {
             match Self::create_fake_temporary_node_executable(
-                &mut new_path,
+                &mut front,
                 &mut optional_bun_self_path,
             ) {
                 Ok(()) => {}
@@ -1986,39 +1872,15 @@ impl RunCommand {
                     .put(b"npm_execpath", optional_bun_self_path)
                     .unwrap_or_oom();
             }
-
-            needs_to_force_bun = false;
-        }
-        let _ = needs_to_force_bun;
-
-        {
-            if !package_json_dir.is_empty() {
-                new_path.extend_from_slice(package_json_dir);
-                new_path.push(DELIMITER);
-            }
-
-            let mut remain = cwd;
-            while let Some(i) = strings::last_index_of_char(remain, SEP) {
-                new_path.extend_from_slice(strings::without_trailing_slash(remain));
-                new_path.extend_from_slice(path_literal!(
-                    b"/node_modules/.bin",
-                    b"\\node_modules\\.bin"
-                ));
-                new_path.push(DELIMITER);
-                remain = &remain[..i];
-            }
-            // final segment once the loop ends naturally
-            new_path.extend_from_slice(strings::without_trailing_slash(remain));
-            new_path.extend_from_slice(path_literal!(
-                b"/node_modules/.bin",
-                b"\\node_modules\\.bin"
-            ));
-            new_path.push(DELIMITER);
-
-            new_path.extend_from_slice(&path);
         }
 
-        Ok(new_path)
+        Ok(ScriptPath::new(
+            Owner::inherited(),
+            front,
+            package_json_dir,
+            cwd,
+            inherited,
+        )?)
     }
 
     fn basename_or_bun(str: &[u8]) -> &[u8] {
@@ -2393,11 +2255,9 @@ impl RunCommand {
             ::core::mem::size_of::<Transpiler>(),
         );
         let force_using_bun = ctx.debug.run_in_bun;
-        let mut original_path: Vec<u8> = Vec::new();
-        Self::configure_path_for_run(
+        let script_path = Self::configure_path_for_run(
             root_dir_info,
             this_transpiler,
-            Some(&mut original_path),
             root_dir_info.abs_path,
             force_using_bun,
         )?;
@@ -2482,7 +2342,7 @@ impl RunCommand {
                         }
 
                         if let Some(&prescript) = scripts.get(&temp_script_buffer[1..]) {
-                            Self::run_package_script_foreground_with_shell_path(
+                            Self::run_package_script_foreground(
                                 ctx,
                                 prescript,
                                 &temp_script_buffer[1..],
@@ -2491,11 +2351,11 @@ impl RunCommand {
                                 &[],
                                 silent,
                                 use_system_shell,
-                                Some(original_path.as_slice()),
+                                ToolPath::new(&script_path.inherited),
                             )?;
                         }
 
-                        Self::run_package_script_foreground_with_shell_path(
+                        Self::run_package_script_foreground(
                             ctx,
                             script_content,
                             target_name,
@@ -2504,13 +2364,13 @@ impl RunCommand {
                             &passthrough,
                             silent,
                             use_system_shell,
-                            Some(original_path.as_slice()),
+                            ToolPath::new(&script_path.inherited),
                         )?;
 
                         temp_script_buffer[..b"post".len()].copy_from_slice(b"post");
 
                         if let Some(&postscript) = scripts.get(&temp_script_buffer[..]) {
-                            Self::run_package_script_foreground_with_shell_path(
+                            Self::run_package_script_foreground(
                                 ctx,
                                 postscript,
                                 &temp_script_buffer,
@@ -2519,7 +2379,7 @@ impl RunCommand {
                                 &[],
                                 silent,
                                 use_system_shell,
-                                Some(original_path.as_slice()),
+                                ToolPath::new(&script_path.inherited),
                             )?;
                         }
 
@@ -2661,15 +2521,11 @@ impl RunCommand {
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let fs = unsafe { &mut *this_transpiler.fs };
             let top_level_dir = fs.top_level_dir;
-            let path = env_loader.get(b"PATH").unwrap_or(b"");
-            let mut path_for_which = path;
-            if bin_dirs_only {
-                if original_path.len() < path.len() {
-                    path_for_which = &path[..path.len() - (original_path.len() + 1)];
-                } else {
-                    path_for_which = b"";
-                }
-            }
+            let path_for_which = if bin_dirs_only {
+                script_path.bin_dirs()
+            } else {
+                env_loader.get(b"PATH").unwrap_or(b"")
+            };
 
             if !path_for_which.is_empty() {
                 let mut path_buf = bun_paths::path_buffer_pool::get();

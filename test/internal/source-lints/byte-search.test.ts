@@ -121,6 +121,13 @@ const BANNED: { name: string; re: RegExp; hint: string }[] = [
     re: new RegExp(String.raw`\.split\(\s*${PARAM}${BODY_EQ}`, "g"),
     hint: 'strings::split(s, b"x") / strings::split_any(s, b"xy")',
   },
+  // Any installed package can link a command into `node_modules/.bin`, and `bun run` puts that
+  // directory in front of PATH. A program that bun picks and runs itself is not looked up there.
+  {
+    name: "which() for a program that bun runs itself",
+    re: /\bwhich\([^;]*?\bb"(?:bash|sh|zsh|git|ccache)"\s*,?\s*\)/g,
+    hint: "bun_which::which_tool(buf, ToolPath::new(path), cwd, name)",
+  },
   {
     name: "portable SIMD",
     re: /\bportable_simd\b|\b(?:std|core)::simd\b/g,

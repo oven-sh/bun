@@ -128,6 +128,7 @@ pub mod prune;
 #[path = "repository.rs"]
 pub mod repository_real;
 pub(crate) mod retry_timer;
+pub mod script_env;
 pub mod update_scope;
 pub mod update_transitive;
 pub mod yarn;
@@ -476,16 +477,15 @@ impl RunCommand {
         Some(len)
     }
 
+    /// The shell that runs the scripts of a `package.json`: from `path`, or else a usual place.
     #[cfg(not(windows))]
     fn find_shell_impl<'a>(
         buf: &'a mut bun_paths::PathBuffer,
-        path: &[u8],
+        path: bun_paths::ToolPath<'_>,
         cwd: &[u8],
     ) -> Option<&'a ZStr> {
         for shell in Self::SHELLS_TO_SEARCH {
-            if let Some(found) = bun_which::which(buf, path, cwd, shell) {
-                // `which()` writes a NUL-terminated path into `buf` and
-                // returns a borrow of it; reborrow as `&ZStr`.
+            if let Some(found) = bun_which::which_tool(buf, path, cwd, shell) {
                 let len = found.len();
                 return Some(ZStr::from_buf(buf, len));
             }
@@ -514,21 +514,18 @@ impl RunCommand {
     }
 
     /// Find the "best" shell to use. Cached to only run once.
-    /// Returns a slice into a process-lifetime static buffer (includes trailing NUL).
     #[cfg(not(windows))]
-    pub(crate) fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static [u8]> {
-        // PORTING.md §Concurrency: `bun.once` + static buf → OnceLock. Store the
-        // result bytes (including NUL) directly in the OnceLock so the borrow is
-        // trivially `'static` — avoids the Mutex+data_ptr dance from the draft.
-        static ONCE: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
-
-        ONCE.get_or_init(|| {
-            let mut scratch = bun_paths::path_buffer_pool::get();
-            let found = Self::find_shell_impl(&mut scratch, path, cwd)?;
-            // Includes trailing NUL so the caller may treat it as `[:0]const u8`.
-            Some(found.as_bytes_with_nul().to_vec())
+    pub fn find_shell(path: bun_paths::ToolPath<'_>, cwd: &[u8]) -> Option<&'static ZStr> {
+        static SHELL_BUF: bun_core::RacyCell<bun_paths::PathBuffer> =
+            bun_core::RacyCell::new(bun_paths::PathBuffer::ZEROED);
+        static ONCE: bun_core::Once<Option<&'static ZStr>> = bun_core::Once::new();
+        ONCE.call(|| {
+            // SAFETY: written once, under the `Once`, and read-only after that.
+            let buf = unsafe { &mut *SHELL_BUF.get() };
+            let len = Self::find_shell_impl(buf, path, cwd)?.len();
+            // SAFETY: `find_shell_impl` wrote a NUL at `buf[len]`; `SHELL_BUF` is `'static`.
+            Some(ZStr::from_buf(&buf[..], len))
         })
-        .as_deref()
     }
 
     /// Symlinks/hardlinks the running bun binary as

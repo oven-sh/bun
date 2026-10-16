@@ -2791,6 +2791,175 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("default node-gyp scr
   });
 });
 
+// `plant` has no script and nobody trusts it. Its `bin` names commands that a script of `native`, which is trusted,
+// runs after it started bun again: `npm run`, `npx` and the node-gyp script that bun adds all do.
+describe.concurrent.skipIf(isWindows)("a bin of another package stays behind PATH below a trusted script", () => {
+  const bun = bunExe();
+  const plant = (...commands: string[]): ScriptPackage => ({
+    bin: Object.fromEntries(commands.map(command => [command, "plant.sh"])),
+    files: { "plant.sh": "#!/bin/sh\necho planted\n" },
+  });
+  const carrier: ScriptPackage = { dependencies: { plant: "1.0.0" } };
+  const tool: ScriptPackage = { bin: { tool: "tool.sh" }, files: { "tool.sh": "#!/bin/sh\nuname > built.txt\n" } };
+  const vendored = { name: "vendored", scripts: { postinstall: "uname > ../built.txt" } };
+  const natives: Record<string, ScriptPackage> = {
+    "bun run <script>": { scripts: { postinstall: `${bun} run build`, build: "uname > built.txt" } },
+    "bunx <command>": { scripts: { postinstall: `${bun} x uname > built.txt` } },
+    "bunx <command of its dependency>": { dependencies: { tool: "1.0.0" }, scripts: { postinstall: `${bun} x tool` } },
+    "bun <command of its dependency>": { dependencies: { tool: "1.0.0" }, scripts: { postinstall: `${bun} tool` } },
+    "bun install": {
+      scripts: { postinstall: `cd vendored && ${bun} install` },
+      files: { "vendored/package.json": JSON.stringify(vendored) },
+    },
+  };
+  const textOf = async (path: string) => ((await file(path).exists()) ? await file(path).text() : null);
+
+  test.each(Object.keys(natives))("bun install, the script runs %s", async name => {
+    using ctx = await setupScriptPackages("hoisted", { plant: plant("uname"), carrier, tool, native: natives[name] });
+    await writeFile(
+      ctx.packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { native: "1.0.0", carrier: "1.0.0" },
+        trustedDependencies: ["native"],
+      }),
+    );
+    const { err, exitCode } = await ctx.bun("install");
+    expect(err).not.toContain("error:");
+    expect(existsSync(ctx.installed(".bin", "uname"))).toBeTrue();
+    expect(await textOf(ctx.installed("native", "built.txt"))).toBe(`${osType()}\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  describe.each(["hoisted", "isolated"] as const)("bun pm trust (%s)", linker => {
+    test.each(Object.keys(natives))("the script runs %s", async name => {
+      using ctx = await setupScriptPackages(linker, { plant: plant("uname"), tool, native: natives[name] });
+      await writeFile(ctx.packageJson, JSON.stringify({ name: "foo", dependencies: { native: "1.0.0", plant: "1.0.0" } }));
+      expect((await ctx.bun("install")).out).toContain("Blocked 1 postinstall");
+      expect(existsSync(ctx.installed(".bin", "uname"))).toBeTrue();
+
+      const { err, exitCode } = await ctx.bun("pm", "trust", "native");
+      expect(err).not.toContain("error:");
+      expect(await textOf(ctx.installed("native", "built.txt"))).toBe(`${osType()}\n`);
+      expect(exitCode).toBe(0);
+    });
+
+    // No package has a `node-gyp`, so `node-gyp rebuild` is `bun x node-gyp`, which `#!/usr/bin/env node` starts.
+    // That `bun` is the first one in PATH: here it has to be the bun under test, not one that is installed.
+    test("the node-gyp script that bun adds", async () => {
+      using ctx = await setupScriptPackages(linker, {
+        plant: plant("node"),
+        "node-gyp": fakeNodeGyp,
+        native: { hasInstallScript: true, files: { "binding.gyp": "" } },
+      });
+      ctx.env.BUN_CONFIG_REGISTRY = ctx.registry;
+      await mkdir(join(ctx.packageDir, "bun-under-test"));
+      await symlink(bun, join(ctx.packageDir, "bun-under-test", "bun"));
+      ctx.env.PATH = `${join(ctx.packageDir, "bun-under-test")}:${ctx.env.PATH}`;
+      await writeFile(ctx.packageJson, JSON.stringify({ name: "foo", dependencies: { native: "1.0.0", plant: "1.0.0" } }));
+      expect((await ctx.bun("install")).out).toContain("Blocked 1 postinstall");
+      expect(existsSync(ctx.installed(".bin", "node"))).toBeTrue();
+
+      const { err, exitCode } = await ctx.bun("pm", "trust", "native");
+      expect(err).not.toContain("error:");
+      expect(await textOf(ctx.installed("native", "build.node"))).toBe("built");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // `bun run` puts the project's `node_modules/.bin` in front of the PATH that the install inherits.
+  test("bun install started by bun run: the shell of the scripts", async () => {
+    using ctx = await setupScriptPackages("hoisted", {
+      plant: plant("bash", "sh", "zsh"),
+      native: { scripts: { postinstall: "uname > built.txt" } },
+    });
+    await writeFile(
+      ctx.packageJson,
+      JSON.stringify({
+        name: "foo",
+        scripts: { setup: `${bun} install`, postinstall: "uname > built.txt" },
+        dependencies: { native: "1.0.0", plant: "1.0.0" },
+        trustedDependencies: ["native"],
+      }),
+    );
+    // The links exist before the scripts run.
+    expect((await ctx.bun("install", "--ignore-scripts")).exitCode).toBe(0);
+    expect(existsSync(ctx.installed(".bin", "bash"))).toBeTrue();
+    await rm(ctx.installed("native"), { recursive: true, force: true });
+
+    const { err, exitCode } = await ctx.bun("run", "setup");
+    expect(err).not.toContain("error:");
+    expect({
+      dependency: await textOf(ctx.installed("native", "built.txt")),
+      project: await textOf(join(ctx.packageDir, "built.txt")),
+    }).toEqual({ dependency: `${osType()}\n`, project: `${osType()}\n` });
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun run` in a workspace puts the `node_modules/.bin` of that workspace in front. `native` is not below it.
+  test("bun pm trust started by bun run in a workspace", async () => {
+    using ctx = await setupScriptPackages("isolated", {
+      plant: plant("uname"),
+      native: { scripts: { postinstall: "uname > built.txt" } },
+    });
+    const workspace = join(ctx.packageDir, "packages", "a");
+    await Promise.all([
+      writeFile(ctx.packageJson, JSON.stringify({ name: "foo", workspaces: ["packages/*"] })),
+      write(
+        join(workspace, "package.json"),
+        JSON.stringify({
+          name: "a",
+          scripts: { trust: `${bun} pm trust native` },
+          dependencies: { native: "1.0.0", plant: "1.0.0" },
+        }),
+      ),
+    ]);
+    expect((await ctx.bun("install")).out).toContain("Blocked 1 postinstall");
+    expect(existsSync(join(workspace, "node_modules", ".bin", "uname"))).toBeTrue();
+
+    await using proc = spawn({
+      cmd: [bun, "run", "trust"],
+      cwd: workspace,
+      env: ctx.env,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(await textOf(join(workspace, "node_modules", "native", "built.txt"))).toBe(`${osType()}\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  // Every entry, in order. `bun install` adds its node-gyp script at the end.
+  test("PATH of a lifecycle script of the project", async () => {
+    using ctx = await setupScriptPackages("hoisted", {});
+    const root = realpathSync(ctx.packageDir);
+    await Promise.all([
+      write(join(root, "with-node", "node"), "#!/bin/sh\n"),
+      writeFile(ctx.packageJson, JSON.stringify({ name: "foo", scripts: { postinstall: 'echo "$PATH" > path.txt' } })),
+    ]);
+    chmodSync(join(root, "with-node", "node"), 0o755);
+    delete ctx.env.NODE;
+    delete ctx.env.npm_node_execpath;
+    ctx.env.PATH = join(root, "with-node");
+
+    const { err, exitCode } = await ctx.bun("install");
+    expect(err).not.toContain("error:");
+    const bins: string[] = [];
+    for (let dir = root; ; dir = join(dir, "..")) {
+      bins.push(join(dir, "node_modules", ".bin"));
+      if (dir === join(dir, "..")) break;
+    }
+    expect((await file(join(root, "path.txt")).text()).trimEnd().split(":")).toEqual([
+      ...bins,
+      join(root, "with-node"),
+      expect.stringMatching(/\.node-gyp$/),
+    ]);
+    expect(exitCode).toBe(0);
+  });
+});
+
 // Each script reports that it runs, then stays alive until the test writes a line into its pipe:
 // how many run at once is counted, not timed.
 describe.concurrent.each(["hoisted", "isolated"] as const)("scripts that run at once (%s)", linker => {

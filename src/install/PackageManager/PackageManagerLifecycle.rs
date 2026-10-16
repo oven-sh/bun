@@ -8,8 +8,8 @@ use bun_collections::ArrayHashMap;
 use bun_core::fmt::PathSep;
 use bun_core::{Output, ZBox, fmt as bun_fmt, handle_oom};
 use bun_core::{ZStr, strings};
+use bun_paths::AutoAbsPath;
 use bun_paths::resolve_path::{join_abs_string_z, platform};
-use bun_paths::{AutoAbsPath, EnvPath};
 use bun_semver::string::Builder as SemverStringBuilder;
 use bun_sys as Syscall;
 
@@ -24,6 +24,7 @@ use crate::lifecycle_script_runner::{
 use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::Command;
 use crate::resolution_real::Tag as ResolutionTag;
+use crate::script_env::{Owner, lifecycle_path};
 use bun_install::lockfile::{Lockfile, Package};
 use bun_install::{Behavior, PackageID, PackageManager, PreinstallState, invalid_package_id};
 
@@ -350,35 +351,18 @@ impl PackageManager {
         // shared borrow does not span it.
         let original_path: Vec<u8> = script_env.get(b"PATH").unwrap_or(b"").to_vec();
 
-        let mut path = EnvPath::init_capacity(
-            original_path.len() + 1 + b"node_modules/.bin".len() + cwd.len() + 1,
+        let owner = if list.is_dependency {
+            script_env.put(b"BUN_INTERNAL_SCRIPT_OWNER", cwd)?;
+            Owner::Dependency(cwd)
+        } else {
+            Owner::inherited()
+        };
+        let path = lifecycle_path(
+            owner,
+            cwd,
+            &original_path,
+            FileSystem::instance().top_level_dir(),
         )?;
-
-        let mut parent: Option<&[u8]> = Some(cwd);
-        // An untrusted package can link a `node` or `sh` into a shared `.bin`: searched last.
-        let mut inherited_path = list.is_dependency.then_some(original_path.as_slice());
-        let store_entry = bun_paths::path_literal!("/node_modules/.bun/").as_bytes();
-
-        while let Some(dir) = parent {
-            if dir.len() != cwd.len() && !strings::contains(dir, store_entry) {
-                if let Some(inherited) = inherited_path.take() {
-                    append_path_without_ancestor_bins(&mut path, inherited, cwd)?;
-                }
-            }
-
-            let mut builder = path.path_component_builder();
-            builder.append(dir);
-            builder.append(b"node_modules/.bin");
-            builder.apply()?;
-
-            parent = bun_paths::dirname(dir);
-        }
-
-        match inherited_path {
-            Some(inherited) => append_path_without_ancestor_bins(&mut path, inherited, cwd)?,
-            None if list.is_dependency => {}
-            None => path.append(original_path.as_slice())?,
-        }
         script_env.put(b"PATH", path.slice())?;
 
         put_npm_package_env(&mut script_env, cwd, &list.package_name)?;
@@ -391,11 +375,9 @@ impl PackageManager {
 
         #[cfg(windows)]
         let shell_bin: Option<&ZStr> = None;
-        // `find_shell` includes the trailing NUL in its `'static` storage.
         #[cfg(not(windows))]
         let shell_bin: Option<&ZStr> = (self.env().get(b"PATH"))
-            .and_then(|env_path| crate::RunCommand::find_shell(env_path, cwd))
-            .map(ZStr::from_slice_with_nul);
+            .and_then(|path| crate::RunCommand::find_shell(bun_paths::ToolPath::new(path), cwd));
 
         RealLifecycleScriptSubprocess::spawn_package_scripts(
             self,
@@ -492,7 +474,7 @@ fn put_npm_package_env(
 }
 
 /// Rewrites the `node_modules/.bin` entries of `PATH` to their real paths. A script's `cwd` is a
-/// real path too, so `append_path_without_ancestor_bins` can then compare the two.
+/// real path too, so `lifecycle_path` can then compare the two.
 pub(crate) fn resolve_bin_dirs_in_path(
     env: &mut bun_dotenv::Loader,
 ) -> Result<(), bun_alloc::AllocError> {
@@ -521,27 +503,6 @@ pub(crate) fn resolve_bin_dirs_in_path(
         }
     }
     env.map.put(b"PATH", &path)
-}
-
-/// Without the `node_modules/.bin` of `cwd` and its ancestors that a `bun run` above put in front.
-fn append_path_without_ancestor_bins(
-    path: &mut EnvPath,
-    inherited: &[u8],
-    cwd: &[u8],
-) -> Result<(), bun_alloc::AllocError> {
-    let bin = bun_paths::path_literal!("/node_modules/.bin").as_bytes();
-    for entry in strings::split(inherited, &[bun_paths::DELIMITER]) {
-        let is_ancestor_bin = strings::without_trailing_slash(entry)
-            .strip_suffix(bin)
-            .is_some_and(|dir| {
-                cwd.strip_prefix(dir)
-                    .is_some_and(|rest| rest.first().is_none_or(|&c| c == bun_paths::SEP))
-            });
-        if !is_ancestor_bin {
-            path.append(entry)?;
-        }
-    }
-    Ok(())
 }
 
 fn add_package_to_set(

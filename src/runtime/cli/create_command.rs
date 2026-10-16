@@ -13,13 +13,13 @@ use bun_http as HTTP;
 use bun_js_printer as JSPrinter;
 use bun_libarchive::{Archiver, archiver};
 use bun_parsers::json as JSON;
-use bun_paths::{OSPathSlice, PathBuffer};
+use bun_paths::{OSPathSlice, PathBuffer, ToolPath};
 use bun_resolver::fs;
 use bun_sys::FdDirExt as _;
 #[cfg(not(windows))]
 use bun_sys::copy_file as CopyFile;
 use bun_url::URL;
-use bun_which::which;
+use bun_which::{which, which_tool};
 use bun_zlib as Zlib;
 
 use crate::Command;
@@ -60,6 +60,7 @@ fn exec_task(
     name: &[u8],
     cwd: &[u8],
     env_loader: &mut DotEnv::Loader,
+    tool_path: ToolPath<'_>,
 ) -> crate::Result<()> {
     let task = strings::trim(task, b" \n\r\t");
     if task.is_empty() {
@@ -78,6 +79,7 @@ fn exec_task(
         &[],
         false,
         use_system_shell,
+        tool_path,
     )
 }
 
@@ -1074,14 +1076,21 @@ impl CreateCommand {
 
         if run_tasks {
             // `bun` in a task is this bun, as it is for the install below.
-            let path = RunCommand::path_for_run(env_loader, b"", None, destination, true)?;
+            let path = RunCommand::path_for_run(env_loader, b"", destination, true)?.path;
             env_loader.map.put(b"PATH", &path)?;
             env_loader
                 .map
                 .put(b"npm_package_name", bun_paths::basename(destination))?;
 
             for task in &preinstall_tasks {
-                exec_task(ctx, task, b"preinstall", destination, env_loader)?;
+                exec_task(
+                    ctx,
+                    task,
+                    b"preinstall",
+                    destination,
+                    env_loader,
+                    ToolPath::new(path_env),
+                )?;
             }
         }
 
@@ -1143,7 +1152,14 @@ impl CreateCommand {
 
         if run_tasks {
             for task in &postinstall_tasks {
-                exec_task(ctx, task, b"postinstall", destination, env_loader)?;
+                exec_task(
+                    ctx,
+                    task,
+                    b"postinstall",
+                    destination,
+                    env_loader,
+                    ToolPath::new(path_env),
+                )?;
             }
         }
 
@@ -2100,7 +2116,7 @@ impl GitHandler {
         let win_loop = bun_event_loop::EventLoopHandle::init_mini(
             bun_event_loop::MiniEventLoop::init_global(None, None),
         );
-        if let Some(git) = which(bun_path_buf, path, destination, b"git") {
+        if let Some(git) = which_tool(bun_path_buf, ToolPath::new(path), destination, b"git") {
             let git: &[u8] = git.as_bytes();
 
             if verbose {

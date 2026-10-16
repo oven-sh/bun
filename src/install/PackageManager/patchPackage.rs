@@ -745,9 +745,9 @@ fn diff_against_cache(
         }
     };
     let mut gitbuf = bun_paths::path_buffer_pool::get();
-    let Some(git) = bun_which::which(
+    let Some(git) = bun_which::which_tool(
         &mut gitbuf,
-        bun_core::env_var::PATH.get().unwrap_or(b""),
+        bun_paths::ToolPath::new(bun_core::env_var::PATH.get().unwrap_or(b"")),
         cwd.as_bytes(),
         b"git",
     ) else {

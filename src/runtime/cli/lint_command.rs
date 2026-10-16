@@ -165,8 +165,8 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
 /// Runs git and waits for it to exit.
 fn run_git(command: &git::Command) -> Result<git::Finished, git::NotRun> {
     let mut buffer = bun_paths::path_buffer_pool::get();
-    let path = bun_core::env_var::PATH.get().unwrap_or(b"");
-    let Some(found) = bun_which::which(&mut buffer, path, command.cwd, b"git") else {
+    let path = bun_paths::ToolPath::new(bun_core::env_var::PATH.get().unwrap_or(b""));
+    let Some(found) = bun_which::which_tool(&mut buffer, path, command.cwd, b"git") else {
         return Err(git::NotRun::NotFound);
     };
     let argv = std::iter::once(found.as_bytes())

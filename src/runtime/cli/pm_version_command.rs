@@ -19,7 +19,7 @@ use bun_parsers::json as JSON;
 use bun_paths::{resolve_path as path, resolve_path::platform as path_platform};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
-use bun_which::which;
+use bun_which::which_tool;
 
 pub(crate) struct PmVersionCommand;
 
@@ -554,8 +554,8 @@ impl PmVersionCommand {
         cwd: &[u8],
         used_for: &str,
     ) -> &'a [u8] {
-        let Some(git_path) = which(path_buf, env_var::PATH.get().unwrap_or(b""), cwd, b"git")
-        else {
+        let path = bun_paths::ToolPath::new(env_var::PATH.get().unwrap_or(b""));
+        let Some(git_path) = which_tool(path_buf, path, cwd, b"git") else {
             Output::err_generic(
                 "git must be installed to use `bun pm version {}`",
                 (used_for,),

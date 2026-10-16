@@ -10,7 +10,7 @@ use bun_core::{ZStr, strings};
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_sys;
 use bun_url::URL;
-use bun_which::which;
+use bun_which::{which, which_tool};
 use enumset::EnumSet;
 
 use bun_core::analytics;
@@ -410,7 +410,8 @@ impl Loader {
         };
         // borrowck — `path` borrows `self.map`; `which` writes into `buf` and
         // returns a borrow of `buf`. Copy the result before mutating `self.map`.
-        let ccache_path: Box<[u8]> = which(&mut buf, path, fs.top_level_dir(), b"ccache")
+        let path = bun_paths::ToolPath::new(path);
+        let ccache_path: Box<[u8]> = which_tool(&mut buf, path, fs.top_level_dir(), b"ccache")
             .map(|z| Box::<[u8]>::from(z.as_bytes()))
             .unwrap_or_default();
 
@@ -1476,6 +1477,11 @@ impl Map {
         loader.load_process()?;
         for key in REPOSITORY_VARS {
             loader.map.remove(key);
+        }
+        // What git itself runs (`ssh`, a credential helper) is not a command of a package either.
+        let path = bun_paths::ToolPath::new(loader.map.get(b"PATH").unwrap_or(b""));
+        if let std::borrow::Cow::Owned(path) = path.without_bin_dirs() {
+            loader.map.put(b"PATH", &path)?;
         }
         Ok(loader.map)
     }

@@ -35,7 +35,7 @@ use bun_ptr::Interned;
 #[cfg(not(windows))]
 use bun_resolver::fs::RealFS;
 use bun_sys as sys;
-use bun_which::which;
+use bun_which::which_tool;
 
 use crate::Command;
 use crate::api::bun_process::sync as spawn_sync;
@@ -448,9 +448,9 @@ fn get_changed_files(
     since: &[u8],
 ) -> core::result::Result<StringSet, GitError> {
     let mut which_buf = CorePathBuffer([0u8; bun_core::MAX_PATH_BYTES]);
-    let Some(git_path) = which(
+    let Some(git_path) = which_tool(
         &mut which_buf,
-        env_var::PATH.get().unwrap_or(b""),
+        bun_paths::ToolPath::new(env_var::PATH.get().unwrap_or(b"")),
         top_level_dir,
         b"git",
     ) else {

@@ -226,7 +226,7 @@ Bun supports a variety of protocols, including [`github`](https://docs.npmjs.com
 }
 ```
 
-Bun runs `git` (2.24 or newer) with the environment that `bun` was started in. Variables from the project's `.env` files (`PATH`, `GIT_SSH_COMMAND`, `GIT_DIR`, ...) do not reach it.
+Bun runs `git` (2.24 or newer) with the environment that `bun` was started in, without the `node_modules/.bin` directories in `PATH`: neither `git` nor a program that git starts, such as `ssh`, is a command of an installed package. Variables from the project's `.env` files (`PATH`, `GIT_SSH_COMMAND`, `GIT_DIR`, ...) do not reach it.
 
 Bun tries an SSH URL over HTTPS first, then over SSH. It sets `GIT_SSH_COMMAND` to `ssh -oStrictHostKeyChecking=accept-new`, unless you have an SSH command of your own: `core.sshCommand` in your git config, `GIT_SSH` or `GIT_SSH_COMMAND`. A `core.sshCommand` from an `includeIf` section that depends on the repository does not count; use `GIT_SSH_COMMAND` for that.
 

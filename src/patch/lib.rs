@@ -1514,9 +1514,9 @@ pub fn git_diff_internal(
     // `bun_spawn::sync` execs argv[0] verbatim (execve, no PATH search), so
     // resolve `git` here — same as `patchCommit`'s `bun.which` call.
     let mut gitbuf = bun_paths::path_buffer_pool::get();
-    let git = bun_which::which(
+    let git = bun_which::which_tool(
         &mut gitbuf,
-        bun_core::env_var::PATH.get().unwrap_or(b""),
+        bun_paths::ToolPath::new(bun_core::env_var::PATH.get().unwrap_or(b"")),
         b"",
         b"git",
     )

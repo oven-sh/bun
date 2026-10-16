@@ -11,7 +11,7 @@ use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_paths::resolve_path::posix_to_platform_in_place;
 #[cfg(windows)]
 use bun_paths::w_path_buffer_pool;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, is_absolute};
+use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, ToolPath, is_absolute};
 #[cfg(windows)]
 use bun_paths::{WPathBuffer, path_buffer_pool};
 
@@ -210,6 +210,54 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
             }
         }
 
+        None
+    }
+}
+
+/// [`which`] for a program that bun runs itself: see [`ToolPath`].
+pub fn which_tool<'a>(
+    buf: &'a mut PathBuffer,
+    path: ToolPath<'_>,
+    cwd: &[u8],
+    bin: &[u8],
+) -> Option<&'a ZStr> {
+    #[cfg(windows)]
+    {
+        which(buf, &path.without_bin_dirs(), cwd, bin)
+    }
+
+    #[cfg(not(windows))]
+    {
+        // `which` does not search `PATH` for these.
+        if bin.is_empty() || bin.len() >= MAX_PATH_BYTES || strings::contains_char(bin, b'/') {
+            return which(buf, path.as_bytes(), cwd, bin);
+        }
+        bun_core::scoped_log!(
+            which_log,
+            "tool path={} cwd={} bin={}",
+            BStr::new(path.as_bytes()),
+            BStr::new(cwd),
+            BStr::new(bin)
+        );
+
+        let cwd_for_relative_segment: &[u8] = if is_absolute(cwd) {
+            strings::without_trailing_slash(cwd)
+        } else {
+            b""
+        };
+        for segment in strings::tokenize(path.as_bytes(), &[DELIMITER]) {
+            if ToolPath::is_skipped(segment) {
+                continue;
+            }
+            let cwd_prefix: &[u8] = if is_absolute(segment) {
+                b""
+            } else {
+                cwd_for_relative_segment
+            };
+            if let Some(len) = is_valid(buf, cwd_prefix, segment, bin) {
+                return Some(ZStr::from_buf(&buf[..], len as usize));
+            }
+        }
         None
     }
 }

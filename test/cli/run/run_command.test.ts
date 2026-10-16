@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { dlopen } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 
@@ -279,6 +279,124 @@ describe.concurrent.each([
     const { stdout, stderr, exitCode } = await run(`a${raw}b`);
     expect(stderr).toBe(`$ echo 'c${spelled}d'\n`);
     expect(stdout).toBe(`c${raw}d\n`);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// Every entry of the PATH that a script of the project finds, in order. Not concurrent: two bun
+// processes that both make the `node` alias for bun can leave one of them without it.
+describe.skipIf(isWindows)("PATH of a script of the project", () => {
+  const show = 'echo "$PATH" > "$OUT"';
+
+  function project() {
+    const dir = tempDir("run-script-path", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"], scripts: { show } }),
+      "packages/a/package.json": JSON.stringify({ name: "a", scripts: { show } }),
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", scripts: { show } }),
+      "sub/keep.txt": "",
+      "node_modules/.bin/show-bin": `#!/bin/sh\n${show}\n`,
+      "with-node/node": "#!/bin/sh\n",
+      "without-node/keep.txt": "",
+    });
+    const root = realpathSync(String(dir));
+    chmodSync(join(root, "node_modules", ".bin", "show-bin"), 0o755);
+    chmodSync(join(root, "with-node", "node"), 0o755);
+    return { root, [Symbol.dispose]: () => dir[Symbol.dispose]() };
+  }
+
+  /** The `node_modules/.bin` of `dir` and of every directory above it. */
+  function bins(dir: string) {
+    const all: string[] = [];
+    for (let parent = dir; ; parent = dirname(parent)) {
+      all.push(join(parent, "node_modules", ".bin"));
+      if (parent === dirname(parent)) return all;
+    }
+  }
+
+  const bunAsNode = expect.stringMatching(/\/bun-node[^/]*$/);
+
+  test.each([
+    {
+      name: "bun run <script>",
+      args: ["run", "show"],
+      path: (root: string) => [bins(root)[0], ...bins(root), join(root, "with-node")],
+    },
+    {
+      name: "bun run <script> in a folder below package.json",
+      args: ["run", "show"],
+      cwd: "sub",
+      path: (root: string) => [root, bins(join(root, "sub"))[0], ...bins(join(root, "sub")), join(root, "with-node")],
+    },
+    {
+      name: "bun run --filter",
+      args: ["run", "--filter", "a", "show"],
+      path: (root: string) => [join(root, "packages", "a"), ...bins(join(root, "packages", "a")), join(root, "with-node")],
+    },
+    {
+      name: "bun run --parallel",
+      args: ["run", "--parallel", "show"],
+      path: (root: string) => [...bins(root), join(root, "with-node")],
+    },
+    {
+      name: "bun --bun run <script>",
+      args: ["--bun", "run", "show"],
+      path: (root: string) => [bunAsNode, bins(root)[0], ...bins(root), join(root, "with-node")],
+    },
+    {
+      name: "bun run <script> without node",
+      args: ["run", "show"],
+      inherited: "without-node",
+      path: (root: string) => [bunAsNode, bins(root)[0], ...bins(root), join(root, "without-node")],
+    },
+    {
+      name: "bunx <bin>",
+      args: ["x", "show-bin"],
+      path: (root: string) => [bins(root)[0], ...bins(root), join(root, "with-node")],
+    },
+    {
+      name: "bun <bin>",
+      args: ["show-bin"],
+      path: (root: string) => [bins(root)[0], ...bins(root), join(root, "with-node")],
+    },
+  ])("$name", async ({ args, cwd = "", inherited = "with-node", path }) => {
+    using dir = project();
+    const out = join(dir.root, "path.txt");
+    const { NODE: _, npm_node_execpath: __, ...env } = bunEnv;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: join(dir.root, cwd),
+      env: { ...env, PATH: join(dir.root, inherited), OUT: out },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect((await Bun.file(out).text()).trimEnd().split(":")).toEqual(path(dir.root));
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun install` names the dependency whose script it runs. A bun below that script keeps the
+  // `node_modules/.bin` of everything else behind the inherited PATH.
+  test.each([
+    { name: "bun run <script>", args: ["run", "show"] },
+    { name: "bunx <bin>", args: ["x", "show-bin"] },
+    { name: "bun <bin>", args: ["show-bin"] },
+  ])("$name below a script of a dependency", async ({ args }) => {
+    using dir = project();
+    const out = join(dir.root, "path.txt");
+    const dependency = join(dir.root, "node_modules", "dep");
+    const { NODE: _, npm_node_execpath: __, ...env } = bunEnv;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: dependency,
+      env: { ...env, PATH: join(dir.root, "with-node"), OUT: out, BUN_INTERNAL_SCRIPT_OWNER: dependency },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    const [own, ...shared] = bins(dependency);
+    expect((await Bun.file(out).text()).trimEnd().split(":")).toEqual([own, join(dir.root, "with-node"), ...shared]);
     expect(exitCode).toBe(0);
   });
 });

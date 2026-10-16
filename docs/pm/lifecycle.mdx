@@ -111,3 +111,11 @@ Like npm, Bun sets these variables for each lifecycle script:
 | `npm_package_json`, `npm_package_name`, `npm_package_version` | From the `package.json` of the package the script is in |
 | `npm_package_config_<key>`                                    | The strings in `config` of that `package.json`          |
 | `npm_config_local_prefix`, `INIT_CWD`                         | The project directory, and where `bun install` ran      |
+
+### `PATH`
+
+A script of your project finds the commands of its dependencies first, like in npm: `node_modules/.bin` of the project and of each directory above it comes before the `PATH` that `bun install` started with.
+
+A script of a dependency finds its own `node_modules/.bin` first, then the `PATH` that `bun install` started with, then the `node_modules/.bin` directories that it shares with other packages. Any installed package can link a command into a shared directory, so a command such as `node` or `sh` never comes from there when your system has one. This order also holds for what the script starts with `bun run`, `bunx`, `npm run` or `npx`, and for a `bun install` below it.
+
+Bun does not look in a `node_modules/.bin` for the shell that runs a script.

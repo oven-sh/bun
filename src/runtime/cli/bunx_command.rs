@@ -715,10 +715,9 @@ impl BunxCommand {
         let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
 
         let force_using_bun = ctx.debug.run_in_bun;
-        Run::configure_path_for_run(
+        let script_path = Run::configure_path_for_run(
             root_dir_info,
             this_transpiler,
-            None,
             root_dir_info.abs_path,
             force_using_bun,
         )?;
@@ -1103,7 +1102,11 @@ impl BunxCommand {
             .map
             .put(b"BUN_INTERNAL_BUNX_HAS_COPY", has_copy)?;
 
+        // The scripts that this install runs must not find the project's `node_modules/.bin` first.
+        let path_with_bin_dirs: Vec<u8> = env_loader.get(b"PATH").unwrap_or(b"").to_vec();
+        env_loader.map.put(b"PATH", &script_path.inherited)?;
         let envp = env_loader.map.create_null_delimited_env_map()?;
+        env_loader.map.put(b"PATH", &path_with_bin_dirs)?;
 
         let spawn_result = match proc_sync::spawn(&proc_sync::Options {
             argv: args.iter().map(|s| Box::<[u8]>::from(*s)).collect(),

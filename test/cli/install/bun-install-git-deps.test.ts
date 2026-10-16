@@ -1498,6 +1498,54 @@ test.concurrent("installs a git+file:// dependency", async () => {
   expect(exitCode).toBe(0);
 });
 
+// `bun run` puts the project's `node_modules/.bin` in front of the PATH that `bun install` inherits, and any
+// installed package can link a command there. `planted` records that it ran, then does what the real command does.
+function projectWithPlantedCommand(root: string, dependency: string, command: string, body: string) {
+  const project = writeProject(root, { [nameOf("b")]: dependency });
+  const manifest = JSON.parse(readFileSync(join(project, "package.json"), "utf8"));
+  writeFileSync(join(project, "package.json"), JSON.stringify({ ...manifest, scripts: { setup: `${bunExe()} install` } }));
+  const planted = join(project, "node_modules", ".bin", command);
+  mkdirSync(dirname(planted), { recursive: true });
+  writeFileSync(planted, `#!/bin/sh\necho ran >> ${quote(join(root, "planted.txt"))}\n${body}\n`);
+  chmodSync(planted, 0o755);
+  return project;
+}
+
+test.concurrent.skipIf(isWindows)("a git in node_modules/.bin does not fetch a git dependency", async () => {
+  using dir = tempDir("git-dep-planted-git", {});
+  const root = String(dir);
+  const project = projectWithPlantedCommand(root, `git+${pathToFileURL(sharedBare)}#pkg-b`, "git", "exit 1");
+
+  const { stderr, exitCode } = await runBun(project, join(root, "cache"), {}, "run", "setup");
+  expect(stderr).not.toContain("error:");
+  expect(existsSync(join(root, "planted.txt"))).toBeFalse();
+  expect(await installedVersions(project, [nameOf("b")])).toEqual(markers(["b"]));
+  expect(exitCode).toBe(0);
+});
+
+// git looks `ssh` up on the PATH that bun gives it. Both stand-ins run the command for the remote side here.
+test.concurrent.skipIf(isWindows)("git does not run an ssh from node_modules/.bin for a git dependency", async () => {
+  using dir = tempDir("git-dep-planted-ssh", {});
+  const root = String(dir);
+  const runRemoteCommand = 'for command; do :; done\nexec sh -c "$command"';
+  const project = projectWithPlantedCommand(root, `git+ssh://localhost${sharedBare}#pkg-b`, "ssh", runRemoteCommand);
+  mkdirSync(join(root, "tools"));
+  writeFileSync(join(root, "tools", "ssh"), `#!/bin/sh\n${runRemoteCommand}\n`);
+  chmodSync(join(root, "tools", "ssh"), 0o755);
+
+  const { stderr, exitCode } = await runBun(
+    project,
+    join(root, "cache"),
+    { PATH: `${join(root, "tools")}:${gitEnv.PATH}`, GIT_SSH_COMMAND: undefined, GIT_SSH: undefined },
+    "run",
+    "setup",
+  );
+  expect(stderr).not.toContain("error:");
+  expect(existsSync(join(root, "planted.txt"))).toBeFalse();
+  expect(await installedVersions(project, [nameOf("b")])).toEqual(markers(["b"]));
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent(
   "a failed prepare script of a git dependency says that its devDependencies are not installed",
   async () => {

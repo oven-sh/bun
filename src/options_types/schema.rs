@@ -310,9 +310,10 @@ pub mod api {
     impl BunInstall {
         /// Resolves `path` against `dir`, the directory of the config file that sets it or the
         /// directory it was typed in. As in npm, `~` and `~/<rest>` expand to the home directory.
-        pub fn resolve_path(dir: &[u8], path: &[u8]) -> Box<[u8]> {
-            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
-
+        fn resolve_path_as<P: bun_paths::resolve_path::PlatformT>(
+            dir: &[u8],
+            path: &[u8],
+        ) -> Box<[u8]> {
             let home = bun_core::env_var::HOME.get_not_empty();
             if let ([b'~', rest @ ..], Some(home)) = (path, home)
                 && rest
@@ -327,9 +328,19 @@ pub mod api {
             }
             let mut buf = bun_paths::path_buffer_pool::get();
             // A joined path that does not fit in `buf` could not be opened anyway, so keep `path`.
-            join_abs_string_buf_checked::<platform::AutoLoose>(dir, &mut buf[..], &[path])
+            bun_paths::resolve_path::join_abs_string_buf_checked::<P>(dir, &mut buf[..], &[path])
                 .unwrap_or(path)
                 .into()
+        }
+
+        /// For a path out of a config file.
+        pub fn resolve_path(dir: &[u8], path: &[u8]) -> Box<[u8]> {
+            Self::resolve_path_as::<bun_paths::platform::AutoLoose>(dir, path)
+        }
+
+        /// For a path typed on the command line.
+        pub fn resolve_typed_path(dir: &[u8], path: &[u8]) -> Box<[u8]> {
+            Self::resolve_path_as::<bun_paths::platform::Auto>(dir, path)
         }
     }
 

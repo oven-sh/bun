@@ -1739,7 +1739,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         static TYPED_PATHS: OnceLock<[Box<[u8]>; 3]> = OnceLock::new();
         let [config, cache_dir, ca_file_name] = TYPED_PATHS.get_or_init(|| {
             [cli.config, cli.cache_dir, Some(cli.ca_file_name)]
-                .map(|path| BunInstall::resolve_path(start_dir, path.unwrap_or_default()))
+                .map(|path| BunInstall::resolve_typed_path(start_dir, path.unwrap_or_default()))
         });
         cli.config = cli.config.map(|_| &**config);
         cli.cache_dir = cli.cache_dir.map(|_| &**cache_dir);

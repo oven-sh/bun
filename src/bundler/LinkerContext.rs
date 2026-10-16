@@ -1203,7 +1203,11 @@ impl<'a> LinkerContext<'a> {
         chunk_abs_dir: &[u8],
         source_abs_path: &[u8],
     ) -> Result<Box<[u8]>, AllocError> {
-        let mut rel = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, source_abs_path)?;
+        use bun_paths::resolve_path::{platform::Auto, relative_platform};
+        let mut rel = Box::<[u8]>::from(relative_platform::<Auto, false>(
+            chunk_abs_dir,
+            source_abs_path,
+        ));
         bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel);
         Ok(rel)
     }

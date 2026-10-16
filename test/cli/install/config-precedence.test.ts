@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync } from "fs";
-import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, readdirSorted, tempDir } from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
 
@@ -1295,6 +1295,12 @@ describe.concurrent("directories named by config files", () => {
         [],
         "project",
       ],
+      [
+        "./bunfig.toml, written with a backslash",
+        { "project/bunfig.toml": bunfig({ registry: unreachable, cafile: "ca\\x.pem" }) },
+        [],
+        "project",
+      ],
       ["./.npmrc", { "project/.npmrc": `registry=${unreachable}\ncafile=ca/x.pem\n` }, [], "project"],
       ["~/.npmrc", { "home/.npmrc": `registry=${unreachable}\ncafile=ca/x.pem\n` }, [], "home"],
       ["--cafile", {}, [`--registry=${unreachable}`, "--cafile=ca/x.pem"], cwd],
@@ -1303,6 +1309,27 @@ describe.concurrent("directories named by config files", () => {
       using dir = tempDir("config-relative-cafile", { ...workspace, ...config });
       const { stderr, exitCode } = await run(String(dir), ["add", "no-deps", ...args], noDirs, cwd);
       expect(stderr).toContain(`HTTPThread: could not find CA file: '${join(String(dir), base, "ca", "x.pem")}'\n`);
+      expect(exitCode).toBe(1);
+    });
+
+    test.skipIf(isWindows)("a backslash in --config is part of the file name", async () => {
+      using dir = tempDir("config-typed-backslash", {
+        ...workspace,
+        [`${cwd}/ci\\x.toml`]: bunfig({ cache: { dir: "c" } }),
+        [`${cwd}/ci/x.toml`]: bunfig({ cache: { dir: "the-file-behind-a-slash" } }),
+      });
+      expect(await run(String(dir), ["pm", "cache", "--config=ci\\x.toml"], noDirs, cwd)).toEqual({
+        stdout: join(String(dir), cwd, "c"),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.skipIf(isWindows)("a backslash in --cafile is part of the file name", async () => {
+      using dir = tempDir("config-typed-backslash-cafile", workspace);
+      const args = ["add", "no-deps", `--registry=${unreachable}`, "--cafile=ca\\x.pem"];
+      const { stderr, exitCode } = await run(String(dir), args, noDirs, cwd);
+      expect(stderr).toContain(`HTTPThread: could not find CA file: '${join(String(dir), cwd, "ca\\x.pem")}'\n`);
       expect(exitCode).toBe(1);
     });
   });

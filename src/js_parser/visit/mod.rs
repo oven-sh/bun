@@ -1113,8 +1113,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let class_body = self.current_scope;
                         self.field_init_class_bodies.push(class_body);
                     }
-                    // The legacy decorator lowering in `lower_class` does it for a
-                    // decorated instance field.
+                    // `lower_class` (legacy decorators) moves the key of a decorated
+                    // instance field that has an initializer.
                     let old_is_key_moved = self.fn_only_data_visit.is_key_moved_into_constructor;
                     self.fn_only_data_visit.is_key_moved_into_constructor = old_is_key_moved
                         || (is_field

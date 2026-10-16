@@ -1405,6 +1405,7 @@ static constexpr DeepEqualsMode deepEqualsMode {
 // The per-type comparisons (Map, Set, Date, typed arrays, ...) are compiled once
 // and take the mode at runtime; only the dispatch and the plain-object tail in
 // `specialObjectsDequal` below stay specialised per mode.
+// For two cells of one JSType an arm is asked once, so a test of `c1`'s class needs the mirrored test of `c2`.
 static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2)
 {
     uint8_t c1Type = c1->type();
@@ -1594,11 +1595,6 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             RETURN_IF_EXCEPTION(scope, {});
             if (!causesEqual) {
                 return false;
-            }
-
-            // node compares the own enumerable properties of both errors name for name, as the generic walk does.
-            if (mode.checkPrototypes) {
-                break;
             }
 
             // check arbitrary enumerable properties. `.stack` is not checked.
@@ -1996,7 +1992,7 @@ static NEVER_INLINE JSValue mapValueOrUndefined(JSC::JSGlobalObject* globalObjec
     return map->get(globalObject, key);
 }
 
-// node's strict setObjectEquiv / mapObjectEquiv (lib/internal/util/comparisons.js, v26.3.0): the right entries that the lookups of nodeSetEquiv / nodeMapEquiv did not settle pair with left entries one-to-one. Compiled once for both node modes.
+// node's strict setObjectEquiv (https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/util/comparisons.js#L682-L722) and mapObjectEquiv (#L835-L876): each right entry that nodeSetEquiv / nodeMapEquiv did not settle pairs with a left entry of its own. Compiled once for both node modes.
 struct NodeUnorderedPairing {
     const DeepEqualsMode& mode;
     JSC::JSGlobalObject* globalObject;
@@ -2069,7 +2065,7 @@ struct NodeUnorderedPairing {
         candidates.appendWithCrashOnOverflow(key);
     }
 
-    // Queues the right entry (`key`, `value`) of a Map whose left side holds the key with an unequal value. node pairs this entry like any other: its partner can be a left entry under a deep-equal key. False when no left entry is one, as in Maps that differ in one value.
+    // Queues the right entry (`key`, `value`) of a Map whose left side holds the key with an unequal value: node pairs it like any other (#L880-L891). Unlike node, this first looks for a left entry that can be its partner, so Maps that differ in one value end here with false.
     bool addTwin(JSValue key, JSValue value)
     {
         JSCell* leftIterator = iterate(left);
@@ -2101,16 +2097,16 @@ struct NodeUnorderedPairing {
         return false;
     }
 
-    // Walks `left`, and every entry that the lookup in `right` does not settle claims a candidate of its own: front guess, back guess, then a scan from the back. The shortcut for Sets of fewer than three members (compareSmallSets) is not ported.
+    // Walks `left`, and every entry that the lookup in `right` does not settle claims a candidate of its own, in node's probe order: front guess, back guess, then a scan from the back.
     bool claimCandidates()
     {
-        // When no right entry was settled, `right` holds no left entry either, so node skips the lookups (`extraChecks`).
+        // node's `extraChecks` (#L687, #L840): when no right entry was settled, `right` holds no left entry either.
         bool lookUp = open.size() != size(left);
         Bun::PendingEntries<size_t> pending(WTF::move(open));
         JSCell* leftIterator = iterate(left);
         JSValue key, value;
         while (next(leftIterator, key, value)) {
-            // A left entry that is not an object claims nothing. When `right` does not hold it, a candidate stays open below.
+            // Unlike node, a left entry that is not an object is not looked up: when `right` does not hold it, a candidate stays open below.
             if (!isTypeofObject(key))
                 continue;
             if (lookUp) {
@@ -2126,7 +2122,7 @@ struct NodeUnorderedPairing {
             if (claim == Bun::Claim::Missed)
                 return false;
             if (claim == Bun::Claim::Exhausted) {
-                // `right` holds every other left entry, unless a getter changed a size. Then each of them must still be one that `right` holds.
+                // Unlike node, the walk ends here: `right` holds every other left entry. When a getter changed a size, each of them must still be one that `right` holds.
                 if (size(left) == size(right))
                     return true;
                 while (next(leftIterator, key, value)) {
@@ -2143,7 +2139,7 @@ struct NodeUnorderedPairing {
     }
 };
 
-// node's setEquiv: walks the right Set and looks each member up in the left one.
+// node's setEquiv (#L742-L775): walks the right Set and looks each member up in the left one. Its shortcut for Sets of fewer than three members (compareSmallSets, #L724-L740) is not ported.
 static bool nodeSetEquiv(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSSet* left, JSSet* right)
 {
     std::optional<NodeUnorderedPairing> pairing;
@@ -2166,7 +2162,7 @@ static bool nodeSetEquiv(const DeepEqualsMode& mode, JSC::JSGlobalObject* global
     return pairing->claimCandidates();
 }
 
-// node's mapEquiv: the same for two Maps. A key that both hold is settled when the two values are deep-equal.
+// node's mapEquiv (#L878-L921) without its one-entry shortcut (#L884-L888). Unlike node, an object key that both Maps hold is looked up too, and it is settled when the two values are deep-equal.
 static bool nodeMapEquiv(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSMap* left, JSMap* right)
 {
     std::optional<NodeUnorderedPairing> pairing;

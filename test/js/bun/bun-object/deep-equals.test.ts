@@ -1,4 +1,5 @@
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import assert from "node:assert";
 import util from "node:util";
 import vm from "node:vm";
 
@@ -192,11 +193,86 @@ describe("pairs of one internal type that are unequal in both argument orders", 
     ["Reflect and a boxed Symbol", () => Reflect, () => Object(Symbol.iterator)],
     ["Math and a boxed BigInt", () => Math, () => Object(1n)],
     ["boxed BigInts with different values", () => Object(1n), () => Object(2n)],
+    [
+      "the main global and a vm global that holds its enumerable properties",
+      () => globalThis,
+      () => vm.runInContext("this", vm.createContext({ ...globalThis })),
+    ],
   ];
   describe.each(entryPoints)("%s", (_, equal) => {
     it.each(pairs)("%s", (_, a, b) => {
       expect([equal(a(), b()), equal(b(), a())]).toEqual([false, false]);
     });
+  });
+});
+
+// Each row reads a leaf getter under 10 nested collections. A second comparison of a level doubles the count.
+describe("reads a value under nested Sets and Maps once per side", () => {
+  const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, strict?: boolean, skipPrototype?: boolean) => boolean;
+  let reads = 0;
+  const nested = (wrap: (value: unknown) => unknown) => {
+    let value: unknown = {
+      get value() {
+        reads++;
+        return 1;
+      },
+    };
+    for (let depth = 0; depth < 10; depth++) value = wrap(value);
+    return value;
+  };
+  const sharedKey = { id: 1 };
+  class Tagged extends Map {
+    tag = 1;
+  }
+  const wraps: [string, (value: unknown) => unknown][] = [
+    ["a string key", value => new Map([["k", value]])],
+    ["one object member of a Set", value => new Set([value])],
+    ["one object key that only one side holds", value => new Map([[{ id: 1 }, value]])],
+    ["an object key that both sides hold", value => new Map([[sharedKey, value]])],
+    ["a subclass with a field", value => new Tagged([["k", value]])],
+    ["an own string property", value => Object.assign(new Map([["k", value]]), { x: 1 })],
+    ["a Set member beside a number", value => new Set([value, 1])],
+  ];
+  it.each([
+    ["Bun.deepEquals", (a: unknown, b: unknown) => deepEquals(a, b)],
+    ["Bun.deepEquals strict", (a: unknown, b: unknown) => deepEquals(a, b, true)],
+    ["Bun.deepEquals strict, skipPrototype", (a: unknown, b: unknown) => deepEquals(a, b, true, true)],
+    ["expect().toEqual", (a: unknown, b: unknown) => expect(a).toEqual(b)],
+    ["expect().toStrictEqual", (a: unknown, b: unknown) => expect(a).toStrictEqual(b)],
+    ["assert.deepEqual", (a: unknown, b: unknown) => assert.deepEqual(a, b)],
+  ])("%s", (_, compare) => {
+    const wrong: string[] = [];
+    for (const [name, wrap] of wraps) {
+      const a = nested(wrap);
+      const b = nested(wrap);
+      reads = 0;
+      compare(a, b);
+      if (reads !== 2) wrong.push(`${name}: ${reads} reads`);
+    }
+    expect(wrong).toEqual([]);
+  });
+});
+
+// A pair of one internal type is compared once, and not once per argument order. The boxed String comparison calls a
+// user `toString` before the own properties are compared, so the calls count the comparisons.
+describe("a boxed String with an own property is converted once per side", () => {
+  const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, strict?: boolean, skipPrototype?: boolean) => boolean;
+  it.each([
+    ["Bun.deepEquals strict", (a: unknown, b: unknown) => deepEquals(a, b, true)],
+    ["Bun.deepEquals strict, skipPrototype", (a: unknown, b: unknown) => deepEquals(a, b, true, true)],
+    ["expect().toStrictEqual", (a: unknown, b: unknown) => expect(a).toStrictEqual(b)],
+    // node reads the string of both operands and does not call `toString`.
+    ["util.isDeepStrictEqual", (a: unknown, b: unknown) => util.isDeepStrictEqual(a, b)],
+    ["util.isDeepStrictEqual, skipPrototype", (a: unknown, b: unknown) => util.isDeepStrictEqual(a, b, true as any)],
+  ])("%s", (_, compare) => {
+    let calls = 0;
+    const toString = function () {
+      calls++;
+      return "a";
+    };
+    const boxed = () => Object.assign(new String("a"), { toString });
+    compare(boxed(), boxed());
+    expect(calls).toBe(2);
   });
 });
 

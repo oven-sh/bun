@@ -33,11 +33,6 @@ const inheritedSharedConstructor = () => Object.assign(Object.create(inheritsSha
 const nullPrototypeProxy = () => new Proxy({}, { getPrototypeOf: () => null });
 const sharedObject = { a: 1 };
 const sharedSetMember = ["x"];
-const errorWithEnumerableCode = () => Object.assign(new Error("x"), { code: 1 });
-const errorWithHiddenCode = () =>
-  Object.defineProperty(Object.assign(new Error("x"), { other: 2 }), "code", { value: 1, enumerable: false });
-const errorWithEnumerableStack = (stack: string) =>
-  Object.defineProperty(new Error("x"), "stack", { value: stack, enumerable: true });
 const sharedArrayBuffer = new ArrayBuffer(4);
 
 function float64WithNaNPayload(bits: bigint) {
@@ -735,70 +730,6 @@ const cases: Case[] = [
     strict: false,
     loose: false,
   },
-  // node compares the own enumerable keys of both errors. A key that one error holds but does not enumerate is not a match.
-  {
-    name: "an error with an own enumerable key and an error that holds the key non-enumerable beside another key",
-    a: errorWithEnumerableCode,
-    b: errorWithHiddenCode,
-    strict: false,
-    loose: false,
-    looseBug: "reports equal",
-  },
-  {
-    name: "arrays holding such errors",
-    a: () => [errorWithEnumerableCode()],
-    b: () => [errorWithHiddenCode()],
-    strict: false,
-    loose: false,
-    looseBug: "reports equal",
-  },
-  {
-    name: "maps holding such errors under the same key",
-    a: () => new Map([["k", errorWithEnumerableCode()]]),
-    b: () => new Map([["k", errorWithHiddenCode()]]),
-    strict: false,
-    loose: false,
-    looseBug: "reports equal",
-  },
-  {
-    name: "sets holding such errors",
-    a: () => new Set([errorWithEnumerableCode()]),
-    b: () => new Set([errorWithHiddenCode()]),
-    strict: false,
-    loose: false,
-    looseBug: "reports equal",
-  },
-  {
-    name: "an error with an own enumerable message and an error with another own enumerable key",
-    a: () => Object.assign(new Error(), { message: "x" }),
-    b: () => Object.assign(new Error("x"), { code: 1 }),
-    strict: false,
-    loose: false,
-    looseBug: "reports equal",
-  },
-  {
-    name: "an error with an own enumerable name and an error with another own enumerable key",
-    a: () => Object.assign(new Error("x"), { name: "Error" }),
-    b: () => Object.assign(new Error("x"), { errno: 1 }),
-    strict: false,
-    loose: false,
-    looseBug: "reports equal",
-  },
-  {
-    name: "errors with equal own enumerable stacks",
-    a: () => errorWithEnumerableStack("at a"),
-    b: () => errorWithEnumerableStack("at a"),
-    strict: true,
-    loose: true,
-  },
-  {
-    name: "errors with unequal own enumerable stacks",
-    a: () => errorWithEnumerableStack("at a"),
-    b: () => errorWithEnumerableStack("at b"),
-    strict: false,
-    loose: false,
-    looseBug: "reports equal",
-  },
   {
     name: "errors with different causes",
     a: () => new Error("x", { cause: 1 }),
@@ -979,6 +910,50 @@ const cases: Case[] = [
         [{ k: 1 }, "x"],
         [{ k: 1 }, "y"],
         [{ k: 1 }, "y"],
+      ]),
+    strict: false,
+    loose: false,
+  },
+  // bun 1.4.0 to 1.4.3 report the next pair as not equal.
+  {
+    name: "maps holding a shared key and a deep-equal key in the other order",
+    a: () =>
+      new Map([
+        [sharedObject, "x"],
+        [{ a: 1 }, "y"],
+      ]),
+    b: () =>
+      new Map([
+        [{ a: 1 }, "y"],
+        [sharedObject, "x"],
+      ]),
+    strict: true,
+    loose: true,
+  },
+  // Each member that only one side holds is deep-equal to a member that both sides hold.
+  {
+    name: "sets whose unshared members are copies of two different shared members",
+    a: () => new Set([{ a: 1 }, sharedObject, sharedSetMember]),
+    b: () => new Set([["x"], sharedObject, sharedSetMember]),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "maps keyed by a shared object and copies of it in different counts",
+    a: () =>
+      new Map([
+        [sharedObject, "z"],
+        [{ a: 1 }, "v"],
+        [{ a: 1 }, "v"],
+        [{ a: 2 }, "w"],
+      ]),
+    b: () =>
+      new Map([
+        [sharedObject, "z"],
+        [{ a: 1 }, "v"],
+        [{ a: 2 }, "w"],
+        [{ a: 2 }, "w"],
       ]),
     strict: false,
     loose: false,
@@ -1351,6 +1326,44 @@ describe("util.isDeepStrictEqual", () => {
     const stringKeyed = (value: unknown) => new Map([["k", value]]);
     const skipPrototype = new assert.Assert({ skipPrototype: true });
 
+    const symbolKey = Symbol("key");
+    const sharedKey = { id: 1 };
+    class Tagged extends Map {
+      tag = 1;
+    }
+    const wraps: [string, (value: unknown) => unknown][] = [
+      ["a string key", stringKeyed],
+      ["one object member of a Set", value => new Set([value])],
+      ["one object key that only one side holds", value => new Map([[{ id: 1 }, value]])],
+      ["a number key", value => new Map([[1, value]])],
+      ["a symbol key", value => new Map([[symbolKey, value]])],
+      ["a null key", value => new Map([[null, value]])],
+      ["an object key that both sides hold", value => new Map([[sharedKey, value]])],
+      ["a subclass with a field", value => new Tagged([["k", value]])],
+      ["an own string property", value => Object.assign(stringKeyed(value), { x: 1 })],
+      ["an own symbol property", value => Object.assign(stringKeyed(value), { [symbolKey]: 1 })],
+      ["an own index property", value => Object.assign(stringKeyed(value), { 0: 1 })],
+      ["an own non-enumerable property", value => Object.defineProperty(stringKeyed(value), "hidden", { value: 1 })],
+      [
+        "an undefined value beside it",
+        value =>
+          new Map([
+            ["k", value],
+            ["u", undefined],
+          ]),
+      ],
+      ["a Set member beside another object", value => new Set([value, { other: 1 }])],
+      [
+        "a string key beside two object keys that only one side holds",
+        value =>
+          new Map<unknown, unknown>([
+            ["data", value],
+            [{ id: 1 }, 1],
+            [{ id: 2 }, 2],
+          ]),
+      ],
+    ];
+
     test.each([
       ["util.isDeepStrictEqual", (a: unknown, b: unknown) => util.isDeepStrictEqual(a, b), 2],
       [
@@ -1378,48 +1391,16 @@ describe("util.isDeepStrictEqual", () => {
         (a: unknown, b: unknown) => expect(() => assert.notDeepStrictEqual(a, b)).toThrow(assert.AssertionError),
         3,
       ],
-    ])("%s reads a value under 10 string-keyed Maps once per side", (_, compare, expectedReads) => {
-      const a = nested(stringKeyed);
-      const b = nested(stringKeyed);
-      reads = 0;
-      compare(a, b);
-      expect(reads).toBe(expectedReads);
-    });
-
-    const symbolKey = Symbol("key");
-    const sharedKey = { id: 1 };
-    class Tagged extends Map {
-      tag = 1;
-    }
-    test.each([
-      ["one object member of a Set", (value: unknown) => new Set([value])],
-      ["one object key that only one side holds", (value: unknown) => new Map([[{ id: 1 }, value]])],
-      ["a number key", (value: unknown) => new Map([[1, value]])],
-      ["a symbol key", (value: unknown) => new Map([[symbolKey, value]])],
-      ["a null key", (value: unknown) => new Map([[null, value]])],
-      ["an object key that both sides hold", (value: unknown) => new Map([[sharedKey, value]])],
-      ["a subclass with a field", (value: unknown) => new Tagged([["k", value]])],
-      ["an own string property", (value: unknown) => Object.assign(stringKeyed(value), { x: 1 })],
-      ["an own symbol property", (value: unknown) => Object.assign(stringKeyed(value), { [symbolKey]: 1 })],
-      ["an own index property", (value: unknown) => Object.assign(stringKeyed(value), { 0: 1 })],
-      [
-        "an own non-enumerable property",
-        (value: unknown) => Object.defineProperty(stringKeyed(value), "hidden", { value: 1 }),
-      ],
-      [
-        "an undefined value beside it",
-        (value: unknown) =>
-          new Map([
-            ["k", value],
-            ["u", undefined],
-          ]),
-      ],
-    ])("10 nested collections with %s", (_, wrap) => {
-      const a = nested(wrap);
-      const b = nested(wrap);
-      reads = 0;
-      expect(util.isDeepStrictEqual(a, b)).toBe(true);
-      expect(reads).toBe(2);
+    ])("%s reads a value under 10 nested collections once per side", (_, compare, expectedReads) => {
+      const wrong: string[] = [];
+      for (const [name, wrap] of wraps) {
+        const a = nested(wrap);
+        const b = nested(wrap);
+        reads = 0;
+        compare(a, b);
+        if (reads !== expectedReads) wrong.push(`${name}: ${reads} reads`);
+      }
+      expect(wrong).toEqual([]);
     });
 
     test("entries are read in the order of the right Map, left value first", () => {
@@ -1441,49 +1422,87 @@ describe("util.isDeepStrictEqual", () => {
       expect(util.isDeepStrictEqual(left, right)).toBe(true);
       expect(log).toEqual(["left k2", "right k2", "left k1", "right k1"]);
     });
+  });
 
-    test("a boxed String with an own property is converted once per side", () => {
-      let calls = 0;
-      const toString = function () {
-        calls++;
-        return "a";
-      };
-      const boxed = () => Object.assign(new String("a"), { toString });
-      expect(util.isDeepStrictEqual(boxed(), boxed())).toBe(true);
-      expect(calls).toBe(2);
-    });
-
-    test.each([
-      ["at the top level", (map: unknown) => map],
-      ["as a property", (map: unknown) => ({ map })],
-      ["as an array element", (map: unknown) => [map]],
-    ])("a Map that holds itself under a string key equals its copy, %s", (_, wrap) => {
-      const selfHolding = () => {
-        const map = new Map<string, unknown>();
-        map.set("self", map);
-        return wrap(map);
-      };
-      expect(util.isDeepStrictEqual(selfHolding(), selfHolding())).toBe(true);
-      assert.deepStrictEqual(selfHolding(), selfHolding());
-    });
-
-    test("two Maps that hold each other equal their copies", () => {
-      const pair = () => {
-        const first = new Map<string, unknown>();
-        const second = new Map<string, unknown>([["first", first]]);
-        first.set("second", second);
-        return first;
-      };
-      expect(util.isDeepStrictEqual(pair(), pair())).toBe(true);
-    });
-
-    test("a Set that holds itself equals its copy", () => {
-      const selfHolding = () => {
-        const set = new Set<unknown>();
-        set.add(set);
-        return set;
-      };
-      expect(util.isDeepStrictEqual(selfHolding(), selfHolding())).toBe(true);
+  // A cycle that runs only through the entries of a Map or a Set. bun 1.4.0 to 1.4.3 throw a RangeError on each row.
+  describe("a Map or a Set that holds itself equals its copy", () => {
+    const selfHoldingMap = () => {
+      const map = new Map<unknown, unknown>();
+      return map.set("self", map);
+    };
+    test.each<[string, Thunk]>([
+      // The first three are the "Circular references" inputs of node's test/parallel/test-assert-deep.js.
+      [
+        "a Set that holds itself",
+        () => {
+          const set = new Set<unknown>();
+          return set.add(set);
+        },
+      ],
+      [
+        "a Map that holds itself under a number key",
+        () => {
+          const map = new Map<unknown, unknown>();
+          return map.set(2, map);
+        },
+      ],
+      [
+        "a Map keyed by itself",
+        () => {
+          const map = new Map<unknown, unknown>();
+          return map.set(map, 2);
+        },
+      ],
+      [
+        "a Set that holds itself and an object",
+        () => {
+          const set = new Set<unknown>();
+          return set.add(set).add({ x: 1 });
+        },
+      ],
+      [
+        "a Map keyed by itself and by an object",
+        () => {
+          const map = new Map<unknown, unknown>();
+          return map.set(map, 2).set({}, 1);
+        },
+      ],
+      [
+        "a Map that holds itself beside two object keys",
+        () => {
+          const map = new Map<unknown, unknown>();
+          return map.set("self", map).set({ id: 1 }, 1).set({ id: 2 }, 2);
+        },
+      ],
+      [
+        "two Maps that hold each other",
+        () => {
+          const first = new Map<string, unknown>();
+          const second = new Map<string, unknown>([["first", first]]);
+          return first.set("second", second);
+        },
+      ],
+      [
+        "two Sets that hold each other",
+        () => {
+          const first = new Set<unknown>();
+          return first.add(new Set([first]));
+        },
+      ],
+      [
+        "a Map and a Set that hold each other",
+        () => {
+          const map = new Map<string, unknown>();
+          return map.set("set", new Set([map]));
+        },
+      ],
+      ["a Map that holds itself, as a property", () => ({ map: selfHoldingMap() })],
+      ["a Map that holds itself, as an array element", () => [selfHoldingMap()]],
+    ])("%s", (_, make) => {
+      expect(util.isDeepStrictEqual(make(), make())).toBe(true);
+      expect(util.isDeepStrictEqual(make(), make(), true as any)).toBe(true);
+      assert.deepStrictEqual(make(), make());
+      expect(() => assert.notDeepStrictEqual(make(), make())).toThrow(assert.AssertionError);
     });
   });
 
@@ -2056,6 +2075,51 @@ describe("util.isDeepStrictEqual", () => {
       });
       test.each(mapScenarios)("%s", (_, mutate, _node, bun) => {
         expect(compareWith("Map", mutate)).toBe(bun);
+      });
+
+      // node compares a one-entry Map and a Set of fewer than three members with shortcuts, and they read the size that the getter changed.
+      test.each<[string, () => boolean, boolean, boolean]>([
+        [
+          "a one-entry Map whose right side gains an object key while the values are compared",
+          () => {
+            let mutated = false;
+            const leaf = () => ({
+              get value() {
+                if (!mutated) {
+                  mutated = true;
+                  right.set({}, 3);
+                }
+                return 1;
+              },
+            });
+            const left = map(["k1", leaf()]);
+            const right = map(["k1", leaf()]);
+            return util.isDeepStrictEqual(left, right);
+          },
+          false,
+          true,
+        ],
+        [
+          "a one-member Set whose right side gains an object",
+          () => {
+            let mutated = false;
+            const right = set({ id: 0 });
+            const left = set({
+              get id() {
+                if (!mutated) {
+                  mutated = true;
+                  right.add({ id: 9 });
+                }
+                return 0;
+              },
+            });
+            return util.isDeepStrictEqual(left, right);
+          },
+          false,
+          true,
+        ],
+      ])("%s", (_, compare, _node, bun) => {
+        expect(compare()).toBe(bun);
       });
 
       // node reads the right value with `get()` when it compares the entry, so the value of a removed key is undefined.

@@ -1368,6 +1368,10 @@ impl<'a> Linker<'a> {
                 sys::Errno::EINVAL
                     if Self::is_behind_link(&mut self.is_behind_link, self.node_modules_path) =>
                 {
+                    // Without the name being what is in the way, the link would fail again.
+                    if errno != sys::Errno::EEXIST {
+                        return Err(err.into());
+                    }
                     if sys::unlink(abs_dest).is_err() {
                         return Err(Error::Sys(bun_errno::SystemErrno::EEXIST));
                     }

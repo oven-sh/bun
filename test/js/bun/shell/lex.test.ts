@@ -64,6 +64,42 @@ describe("lex shell", () => {
     expect(result).toEqual(expected);
   });
 
+  test.each([
+    ["$?", "echo $?", [{ SpecialParam: "$?" }]],
+    [
+      "$? ends at the ?",
+      "echo $?x y",
+      [{ SpecialParam: "$?" }, { Text: "x" }, { Delimit: {} }, { Text: "y" }, { Delimit: {} }],
+    ],
+    ["$$", "echo $$x", [{ SpecialParam: "$$" }, { Text: "x" }, { Delimit: {} }]],
+    ["$$$ is $$ and a $", "echo $$$", [{ SpecialParam: "$$" }, { Text: "$" }]],
+    ["in double quotes", 'echo "$? $$"', [{ SpecialParam: "$?" }, { DoubleQuotedText: " " }, { SpecialParam: "$$" }]],
+    ["in single quotes", "echo '$? $$'", [{ SingleQuotedText: "$? $$" }]],
+    ["after a non-ASCII character", "echo é$?$$", [{ Text: "é" }, { SpecialParam: "$?" }, { SpecialParam: "$$" }]],
+    [
+      "$$( is a $ and a $(",
+      "echo $$(true)",
+      [{ Text: "$" }, { CmdSubstBegin: {} }, { Text: "true" }, { Delimit: {} }, { CmdSubstEnd: {} }],
+    ],
+    [
+      "an escaped $ or ? is text",
+      "echo \\$? \\$$ $\\?",
+      [
+        { Text: "$?" },
+        { Delimit: {} },
+        { Text: "$" },
+        { Text: "$" },
+        { Delimit: {} },
+        { Text: "$" },
+        { Text: "?" },
+        { Delimit: {} },
+      ],
+    ],
+  ])("special parameter: %s", (_name, source, word) => {
+    const expected = [{ Text: "echo" }, { Delimit: {} }, ...word, { Eof: {} }];
+    expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
+  });
+
   test("quote_multi", () => {
     const expected = [
       { "Text": "echo" },

@@ -1,0 +1,25 @@
+##### main (/tmp/probe/bun-main)
+warm, bunx px-probe, 3 levels below a root with 0 config file(s): SERVED-BY-USER exit=0 
+  parent: total=608 path=94 on_project_paths=25
+warm, bunx px-probe, 3 levels below a root with 1 config file(s): SERVED-BY-USER exit=0 
+  parent: total=608 path=94 on_project_paths=25
+warm, bunx px-probe, 3 levels below a root with 2 config file(s): SERVED-BY-USER exit=0 
+  parent: total=608 path=94 on_project_paths=25
+warm, bunx px-probe@1.0.0, 3 levels below a root with 0 config file(s): SERVED-BY-USER exit=0 
+  parent: total=547 path=49 on_project_paths=4
+warm, bunx px-probe@1.0.0, 3 levels below a root with 1 config file(s): SERVED-BY-USER exit=0 
+  parent: total=558 path=49 on_project_paths=4
+warm, bunx px-probe@1.0.0, 3 levels below a root with 2 config file(s): SERVED-BY-USER exit=0 
+  parent: total=558 path=49 on_project_paths=4
+cold, no package.json: SERVED-BY-USER exit=0 
+  parent: total=639 path=89 on_project_paths=7
+  child : total=716 path=78 on_project_paths=0 write_opens_in_project=0
+cold, 3 levels below a root with 0 config file(s): SERVED-BY-USER exit=0 
+  parent: total=676 path=109 on_project_paths=25
+  child : total=718 path=78 on_project_paths=0 write_opens_in_project=0
+cold, 3 levels below a root with 2 config file(s): SERVED-BY-USER exit=0 
+  parent: total=676 path=109 on_project_paths=25
+  child : total=720 path=78 on_project_paths=0 write_opens_in_project=0
+cold, 3 levels below a root with 3 config file(s): SERVED-BY-USER exit=0 
+  parent: total=676 path=109 on_project_paths=25
+  child : total=718 path=78 on_project_paths=0 write_opens_in_project=0

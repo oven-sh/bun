@@ -1,0 +1,25 @@
+##### pr (/workspace/bun/build/debug/bun-debug)
+warm, bunx px-probe, 3 levels below a root with 0 config file(s): SERVED-BY-USER exit=0 
+  parent: total=608 path=94 on_project_paths=25
+warm, bunx px-probe, 3 levels below a root with 1 config file(s): SERVED-BY-PROJECT exit=0 
+  parent: total=614 path=96 on_project_paths=27
+warm, bunx px-probe, 3 levels below a root with 2 config file(s): SERVED-BY-PROJECT exit=0 
+  parent: total=618 path=96 on_project_paths=27
+warm, bunx px-probe@1.0.0, 3 levels below a root with 0 config file(s): SERVED-BY-USER exit=0 
+  parent: total=573 path=59 on_project_paths=10
+warm, bunx px-probe@1.0.0, 3 levels below a root with 1 config file(s): SERVED-BY-PROJECT exit=0 
+  parent: total=579 path=61 on_project_paths=12
+warm, bunx px-probe@1.0.0, 3 levels below a root with 2 config file(s): SERVED-BY-PROJECT exit=0 
+  parent: total=583 path=61 on_project_paths=12
+cold, no package.json: SERVED-BY-USER exit=0 
+  parent: total=639 path=89 on_project_paths=7
+  child : total=720 path=80 on_project_paths=2 write_opens_in_project=0
+cold, 3 levels below a root with 0 config file(s): SERVED-BY-USER exit=0 
+  parent: total=676 path=109 on_project_paths=25
+  child : total=720 path=80 on_project_paths=2 write_opens_in_project=0
+cold, 3 levels below a root with 2 config file(s): SERVED-BY-PROJECT exit=0 
+  parent: total=686 path=111 on_project_paths=27
+  child : total=744 path=85 on_project_paths=5 write_opens_in_project=0
+cold, 3 levels below a root with 3 config file(s): SERVED-BY-PROJECT exit=0 
+  parent: total=686 path=111 on_project_paths=27
+  child : total=750 path=86 on_project_paths=5 write_opens_in_project=0

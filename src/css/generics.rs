@@ -87,18 +87,6 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for &'bump [T] {
     }
 }
 
-impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for ArrayList<'bump, T> {
-    #[inline]
-    fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        // PERF: element-wise deep_clone — profile if hot.
-        let mut out = ArrayList::with_capacity_in(self.len(), bump);
-        for item in self.iter() {
-            out.push(item.deep_clone(bump));
-        }
-        out
-    }
-}
-
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Vec<T> {
     #[inline]
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
@@ -158,13 +146,6 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Box<T> {
     }
 }
 
-impl<'bump> DeepClone<'bump> for bun_ast::Loc {
-    #[inline]
-    fn deep_clone(&self, _bump: &'bump Arena) -> Self {
-        *self
-    }
-}
-
 // ───────────────────────────────────────────────────────────────────────────────
 // Eql
 // ───────────────────────────────────────────────────────────────────────────────
@@ -186,19 +167,6 @@ pub use bun_css_derive::CssEql;
 #[inline]
 pub(crate) fn eql<T: CssEql>(lhs: &T, rhs: &T) -> bool {
     lhs.eql(rhs)
-}
-
-fn eql_list<T: CssEql>(lhs: &ArrayList<'_, T>, rhs: &ArrayList<'_, T>) -> bool {
-    if lhs.len() != rhs.len() {
-        return false;
-    }
-    debug_assert_eq!(lhs.len(), rhs.len());
-    for (left, right) in lhs.iter().zip(rhs.iter()) {
-        if !left.eql(right) {
-            return false;
-        }
-    }
-    true
 }
 
 // Blanket / base impls.
@@ -232,13 +200,6 @@ impl<T: CssEql> CssEql for [T] {
             }
         }
         true
-    }
-}
-
-impl<'bump, T: CssEql> CssEql for ArrayList<'bump, T> {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        eql_list(self, other)
     }
 }
 
@@ -317,13 +278,6 @@ impl CssEql for VendorPrefix {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
         *self == *other
-    }
-}
-
-impl CssEql for bun_ast::Loc {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        self.start == other.start
     }
 }
 
@@ -1479,12 +1433,6 @@ impl PartialCmp for f32 {
     #[inline]
     fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
         partial_cmp_f32(*self, *rhs)
-    }
-}
-impl PartialCmp for CSSInteger {
-    #[inline]
-    fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
-        Some(Ord::cmp(self, rhs))
     }
 }
 

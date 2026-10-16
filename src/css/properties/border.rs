@@ -260,7 +260,6 @@ macro_rules! impl_fallbacks {
                 arena: &Bump,
                 targets: &Targets,
             ) -> SmallList<$T, 2> {
-                let _ = arena;
                 let mut fallbacks = ColorFallbackKind::empty();
                 $(
                     fallbacks.insert(self.$field.get_necessary_fallbacks(targets));

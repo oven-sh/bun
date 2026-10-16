@@ -85,26 +85,6 @@ export function getStdioWriteStream(
         });
       }
     };
-
-    const kFastPath = require("internal/fs/streams").kWriteStreamFastPath;
-    stream._final = function (cb) {
-      try {
-        const sink = this[kFastPath];
-        if (sink && sink !== true) {
-          const result = sink.flush();
-          if ($isPromise(result)) {
-            result.then(
-              () => cb(null),
-              err => cb(err),
-            );
-            return;
-          }
-        }
-        cb(null);
-      } catch (err) {
-        cb(err);
-      }
-    };
   }
 
   stream._isStdio = true;
@@ -396,6 +376,8 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
         drainMicrotasks();
         // With both queues empty, internal/process/after_tick_drain.ts (once something loaded it) runs one callback.
       } while (!queue.isEmpty() || asyncHooksTick.runAfterTickDrainCallback?.());
+      // Without this, every checkpoint after the first tick calls this function to find an empty queue.
+      $putInternalField(nextTickQueue, 0, 0);
     }
 
     $putInternalField(nextTickQueue, 0, 0);

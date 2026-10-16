@@ -51,7 +51,7 @@ describe("Bun.wrapAnsi", () => {
     // wordWrap defaults on and is `options.wordWrap !== false`: only an
     // explicit `false` turns it off, other falsy values keep the default.
     test.each([undefined, null, 0, ""])("wordWrap: %p keeps word wrapping on", value => {
-      expect(Bun.wrapAnsi("hello world", 3, { wordWrap: value as boolean })).toBe("hello\nworld");
+      expect(Bun.wrapAnsi("hello world", 3, { wordWrap: value as any })).toBe("hello\nworld");
     });
 
     test("wordWrap: false breaks words character-by-character", () => {
@@ -71,7 +71,7 @@ describe("Bun.wrapAnsi", () => {
     // trim defaults on and is `options.trim !== false`: only an explicit
     // `false` turns it off, other falsy values keep the default.
     test.each([undefined, null, 0, ""])("trim: %p keeps trimming on", value => {
-      expect(Bun.wrapAnsi("hello world", 5, { trim: value as boolean })).toBe("hello\nworld");
+      expect(Bun.wrapAnsi("hello world", 5, { trim: value as any })).toBe("hello\nworld");
     });
 
     test("trim: false keeps the separator space on its own row", () => {

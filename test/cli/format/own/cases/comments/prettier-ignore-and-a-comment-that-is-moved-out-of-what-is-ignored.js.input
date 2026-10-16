@@ -1,0 +1,29 @@
+x = a
+// c1
+.b && // prettier-ignore
+  c;
+
+// prettier-ignore
+a
+// c1
+.b;
+
+function f(/* prettier-ignore */ a
+// c1
+= 1) {}
+
+let {
+  // prettier-ignore
+  a
+  // c1
+  = 1 } = b;
+
+x = {
+  // prettier-ignore
+  a: (b // c1
+  ) };
+
+x = a
+/* c1 */
+?.b && // prettier-ignore
+  c;

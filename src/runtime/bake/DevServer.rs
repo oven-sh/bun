@@ -149,12 +149,6 @@ pub(crate) struct Options<'a> {
     pub broadcast_console_log_from_browser_to_server: bool,
 }
 
-// Note: the fields (`arena`, `root`, `vm`, `framework`,
-// `bundler_options`, `broadcast_console_log_from_browser_to_server`) are
-// required with no sensible zero value, so `Default` is intentionally NOT
-// implemented. Callers construct `Options` via struct-literal at the call site
-// (see `bake_body.rs::UserOptions::into_dev_server_options`).
-
 // The fields `client_graph`, `server_graph`, `directory_watchers`, and `assets`
 // all use `@fieldParentPointer` to access DevServer's state. This pattern has
 // made it easier to group related fields together, but one must remember those
@@ -507,8 +501,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         );
         w!(generation, 0);
         w!(graph_safety_lock, ThreadLock::init_unlocked());
-        w!(framework, options.framework);
-        w!(bundler_options, options.bundler_options);
         w!(emit_incremental_visualizer_events, 0);
         w!(emit_memory_visualizer_events, 0);
         w!(
@@ -518,9 +510,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         // `dev.frontend_only = dev.framework.file_system_router_types.len == 0`
         w!(
             frontend_only,
-            (*addr_of_mut!((*p).framework))
-                .file_system_router_types
-                .is_empty()
+            options.framework.file_system_router_types.is_empty()
         );
         w!(client_graph, IncrementalGraph::default());
         w!(server_graph, IncrementalGraph::default());
@@ -630,8 +620,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     //
     // SAFETY: `init_transpiler` writes the slot via `MaybeUninit::write` (see
     // `bake_body.rs`), so the previous (uninitialized) bytes are never dropped.
-    // `framework`/`log`/`bundler_options` were written above; reborrowing each
-    // individually via `addr_of_mut!` is sound because no `&mut DevServer` exists.
+    // `log` was written above; reborrowing it is sound because no `&mut DevServer` exists.
     // Note: `Transpiler<'static>` erases the arena lifetime — `options.arena`
     // is the `UserOptions.arena` which is moved into / outlives the `DevServer`
     // box. Widen `'a → 'static` here once.
@@ -644,9 +633,10 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // accessed below were each written above and are reborrowed disjointly via
     // `addr_of_mut!`, so no overlapping `&mut` exists.
     unsafe {
-        let framework = &mut *addr_of_mut!((*p).framework);
+        // Still in `options`, so that an early return drops them.
+        let framework = &options.framework;
         let log = &mut *addr_of_mut!((*p).log);
-        let bundler_options = &mut *addr_of_mut!((*p).bundler_options);
+        let bundler_options = &options.bundler_options;
 
         match framework.init_transpiler(
             arena,
@@ -699,6 +689,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         }
 
         w!(bundler_framework_views, bundler_framework_views);
+        w!(framework, options.framework);
+        w!(bundler_options, options.bundler_options);
     }
 
     // ── every field is now written ───────────────────────────────────────────
@@ -753,7 +745,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             unsafe { &mut (*(*dev_ptr).server_transpiler.as_mut_ptr()).resolver },
             // SAFETY: see above; `client_transpiler` was initialized and is disjoint from `framework`.
             unsafe { &mut (*(*dev_ptr).client_transpiler.as_mut_ptr()).resolver },
-            options.arena,
         )
         .is_err()
     {
@@ -895,7 +886,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     }
 
     if !dev.frontend_only {
-        dev.init_server_runtime();
+        dev.init_server_runtime()?;
     }
 
     // Initialize FrameworkRouter
@@ -950,7 +941,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                     .iter()
                     .map(|e| Box::<[u8]>::from(e.as_ref()))
                     .collect(),
-                style: fsr.style.clone(),
+                style: fsr.style,
                 allow_layouts: fsr.allow_layouts,
                 server_file: to_opaque_file_id::<{ bake::Side::Server }>(server_file),
                 client_file: if let Some(client) = &fsr.entry_client {
@@ -1189,7 +1180,7 @@ impl Drop for DevServer {
 // re-exports from memory_cost module already declared at top
 
 impl DevServer {
-    fn init_server_runtime(&mut self) {
+    fn init_server_runtime(&mut self) -> JsResult<()> {
         let runtime = BunString::create_static_external(
             crate::bake::bake_body::get_hmr_runtime(crate::bake::bake_body::Side::Server)
                 .code
@@ -1210,6 +1201,13 @@ impl DevServer {
                 .unwrap_or(false),
         ) {
             Ok(v) => v,
+            // Nothing says that what the dev server bundles is static code.
+            Err(err)
+                if bun_core::code_generation_from_strings()
+                    == bun_core::CodeGenerationFromStrings::Strict =>
+            {
+                return Err(err);
+            }
             Err(err) => {
                 // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
                 // `print_error_like_object_to_console` needs `&mut VM`, so cast
@@ -1245,6 +1243,7 @@ impl DevServer {
 
         fetch_function.ensure_still_alive();
         register_update.ensure_still_alive();
+        Ok(())
     }
 
     /// Deferred one tick so that the server can be up faster
@@ -1383,16 +1382,21 @@ pub(crate) fn is_allowed_host_header(
     {
         return true;
     }
-    if bun_core::ip_address::is_ip_address(bun_core::ip_address::strip_ipv6_brackets(host)) {
+    // A host that the resolver reads as a number is never looked up, so DNS cannot rebind it.
+    let numeric = bun_core::ip_address::strip_ipv6_brackets(host);
+    if bun_core::ip_address::is_ip_address(numeric)
+        || (numeric.first().is_some_and(u8::is_ascii_digit)
+            && bun_core::ip_address::to_ip_address(numeric).is_some_and(|ip| ip.is_ipv4()))
+    {
         return true;
     }
-    if let Some(crate::server::server_config::Address::Tcp {
-        hostname: Some(h), ..
-    }) = address
-    {
-        return strings::eql_case_insensitive_ascii(host, h.as_bytes(), true);
+    use crate::server::server_config::Address;
+    match address {
+        Some(Address::Tcp {
+            hostname: Some(h), ..
+        }) => strings::eql_case_insensitive_ascii(host, h.as_bytes(), true),
+        Some(Address::Tcp { hostname: None, .. }) | Some(Address::Unix(_)) | None => false,
     }
-    false
 }
 
 /// `host[":" port]` / `"[" v6 "]" [":" port]` → host (brackets retained for IPv6).
@@ -6558,7 +6562,6 @@ fn bundle_new_route_js_function_impl(
 
     let _exit = dev.vm().enter_event_loop_scope();
 
-    let _ = dev;
     let Some(dev_ptr) = request.request_context.dev_server_mut() else {
         return Err(global.throw(format_args!(
             "Request context does not belong to dev server"

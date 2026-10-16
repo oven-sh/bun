@@ -731,7 +731,7 @@ async function runTests(): Promise<TestResult[]> {
   // Start the docker-service coordinator (test/docker/coordinator.ts). It
   // owns every `docker compose` invocation for this shard — `compose up` is
   // not concurrency-safe, so exactly one process runs it — and prestarts the
-  // services this shard's tests need (mysql/postgres/redis/minio/…) in the
+  // services this shard's tests need (mysql/postgres/redis/…) in the
   // background while getVendorTests below installs vendor deps. Tests reach
   // it through the unix socket in BUN_DOCKER_COORDINATOR (inherited by every
   // spawned test process); ensure() waits for the coordinator's ready message
@@ -1985,6 +1985,9 @@ async function spawnBun(
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
     TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
+    // test/leaksan.supp names functions, so LeakSanitizer needs a symbolizer to apply it. It looks for one on PATH,
+    // which some tests replace.
+    ASAN_SYMBOLIZER_PATH: process.env.ASAN_SYMBOLIZER_PATH ?? which(["llvm-symbolizer"]),
     ...(typeof remapPort == "number"
       ? { BUN_CRASH_REPORT_URL: `http://localhost:${remapPort}` }
       : { BUN_ENABLE_CRASH_REPORTING: "0" }),
@@ -2878,7 +2881,6 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
 
   let zipPath: string | undefined;
   downloadLoop: for (let i = 0; i < 10; i++) {
-    // build-bun also uploads libbun-*.a / dep libs; only the zips are wanted here.
     const args = ["artifact", "download", "*.zip", releasePath, "--step", target];
     if (buildId) {
       args.push("--build", buildId);

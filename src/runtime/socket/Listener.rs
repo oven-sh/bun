@@ -30,8 +30,6 @@ use crate::socket::{SSLConfig, SSLConfigFromJs};
 use crate::socket::WindowsNamedPipeContext;
 
 #[cfg(windows)]
-use crate::node::path as node_path;
-#[cfg(windows)]
 use bun_boringssl as boringssl;
 #[cfg(windows)]
 use bun_core::strings;
@@ -39,6 +37,8 @@ use bun_core::strings;
 use bun_jsc::GlobalRef;
 #[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
+#[cfg(windows)]
+use bun_node_path as node_path;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 
@@ -137,6 +137,78 @@ impl Listener {
     }
 }
 
+/// The `SSL_CTX` of the native `SecureContext` in `tls.secureContext`, which alone asks for TLS.
+fn prebuilt_ssl_ctx(
+    vm: &VirtualMachine,
+    global: &JSGlobalObject,
+    opts: JSValue,
+    config: &mut SocketConfig,
+    is_server: bool,
+) -> JsResult<Option<boring_sys::OwnedSslCtx>> {
+    let Some(tls_js) = opts.get_truthy(global, "tls")? else {
+        return Ok(None);
+    };
+    if !tls_js.is_object() {
+        return Ok(None);
+    }
+    let Some(sc_js) = tls_js.get_truthy(global, "secureContext")? else {
+        return Ok(None);
+    };
+    let Some(sc) = sc_js.as_class_ref::<SecureContext>() else {
+        return Err(global.throw_invalid_argument_type_value(
+            b"secureContext",
+            b"SecureContext",
+            sc_js,
+        ));
+    };
+    // The context is served as it is: its trust store would not be the `ca` written next to `requestCert`.
+    if is_server
+        && config.ssl.as_ref().is_some_and(|ssl| ssl.request_cert != 0)
+        && !crate::socket::server_ctx_requests_cert(Some(sc.ctx.as_ptr()))
+    {
+        return Err(global
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "TLSOptions.requestCert needs a secureContext that was created with requestCert"
+                ),
+            )
+            .throw());
+    }
+    if config.ssl.is_none() {
+        config.ssl = Some(crate::socket::tls_true_defaults(vm, is_server));
+    }
+    Ok(Some(sc.ctx.clone()))
+}
+
+/// Tears down the half-built `Listener` of `listen()`, unless `disarm()` runs first.
+struct HalfBuiltListener(Option<*mut Listener>);
+
+impl HalfBuiltListener {
+    fn disarm(mut self) -> *mut Listener {
+        self.0.take().expect("guard already disarmed")
+    }
+}
+
+impl Drop for HalfBuiltListener {
+    fn drop(&mut self) {
+        let Some(this) = self.0.take() else { return };
+        // SAFETY: this is still the sole owner on the error path; the
+        // fields below are `Cell`/`JsCell`, so a shared borrow suffices.
+        let this_ref = unsafe { &*this };
+        this_ref.secure_ctx.set(None);
+        // protos: Box drops automatically when Listener is dropped below
+        bun_core::asan::unregister_root_region(
+            this_ref.group.as_ptr().cast::<c_void>(),
+            size_of::<uws::SocketGroup>(),
+        );
+        // SAFETY: group was init'd above; not concurrently walked.
+        unsafe { uws::SocketGroup::destroy(this_ref.group.as_ptr()) };
+        // SAFETY: reclaim the Box we leaked via into_raw
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+}
+
 #[derive(Clone)]
 pub(crate) enum UnixOrHost {
     Unix(Box<[u8]>),
@@ -209,6 +281,7 @@ impl Listener {
                 ));
             }
         }
+        let prebuilt_ctx = prebuilt_ssl_ctx(vm, cx.global(), opts, &mut socket_config, true)?;
         let ssl_enabled = socket_config.ssl.is_some();
         let socket_flags = socket_config.socket_flags();
         let pause_on_connect = socket_config.pause_on_connect;
@@ -407,27 +480,14 @@ impl Listener {
             this_ref.group.as_ptr().cast::<c_void>(),
             size_of::<uws::SocketGroup>(),
         );
-        // Cleanup guard: on any early return below, tear down the half-built Listener.
-        // Disarmed via `into_inner` once ownership transfers to the JS wrapper.
-        let cleanup = scopeguard::guard(this, |this| {
-            // SAFETY: this is still the sole owner on the error path; the
-            // fields below are `Cell`/`JsCell`, so a shared borrow suffices.
-            let this_ref = unsafe { &*this };
-            this_ref.secure_ctx.set(None);
-            // protos: Box drops automatically when Listener is dropped below
-            bun_core::asan::unregister_root_region(
-                this_ref.group.as_ptr().cast::<c_void>(),
-                size_of::<uws::SocketGroup>(),
-            );
-            // SAFETY: group was init'd above; not concurrently walked.
-            unsafe { uws::SocketGroup::destroy(this_ref.group.as_ptr()) };
-            // SAFETY: reclaim the Box we leaked via into_raw
-            drop(unsafe { bun_core::heap::take(this) });
-        });
+        let cleanup = HalfBuiltListener(Some(this));
 
-        if let Some(ssl_cfg) = ssl_cfg_taken.as_ref() {
+        if prebuilt_ctx.is_some() {
+            this_ref.secure_ctx.set(prebuilt_ctx);
+        } else if let Some(ssl_cfg) = ssl_cfg_taken.as_ref() {
             let mut create_err = uws::create_bun_socket_error_t::none;
-            match ssl_cfg.as_usockets().create_ssl_context(&mut create_err) {
+            let ctx_opts = ssl_cfg.as_usockets();
+            match ctx_opts.create_ssl_context_with_digest(&ctx_opts.digest(), &mut create_err) {
                 Some(ctx) => this_ref.secure_ctx.set(Some(ctx)),
                 None => {
                     return Err(cx.global().throw_value(
@@ -572,42 +632,22 @@ impl Listener {
                 .set(Strong::create(default_data, cx.global()));
         }
 
-        if let Some(ssl_config) = ssl_cfg_taken.as_ref() {
-            // `ssl_enabled` ⇒ `createSSLContext` succeeded above ⇒ `secure_ctx` set.
-            let secure = this_ref
-                .secure_ctx
-                .get()
-                .as_ref()
-                .expect("unreachable")
-                .as_ptr();
-            if let Some(server_name) = ssl_config.server_name_cstr() {
-                if !server_name.to_bytes().is_empty() {
-                    // Registering the default cert under its own server_name is a
-                    // hint for sni_cb, not load-bearing — sni_find() miss falls
-                    // through to the default SSL_CTX anyway.
-                    // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                    let _ = bun_opaque::opaque_deref_mut(listen_socket).add_server_name(
-                        server_name,
-                        secure,
-                        core::ptr::null_mut(),
-                    );
-                }
-            }
+        if ssl_enabled {
             // Register the dynamic SNI dispatch when the JS config provided a
             // `serverName` handler - `us_select_cert_cb` invokes it FIRST for
             // every ClientHello carrying a servername (the user callback takes
             // precedence over the static SNI tree, Node semantics) and
             // installs whichever context it returns on the in-flight SSL. A
-            // null return falls back to the static tree (bind hostname +
-            // addContext entries), then the default context; an asynchronous
-            // resolution suspends the handshake until resumeSNI.
+            // null return falls back to the static tree (addContext entries),
+            // then the default context; an asynchronous resolution suspends
+            // the handshake until resumeSNI.
             if !this_ref.handlers.on_server_name().is_empty() {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST - safe deref.
                 bun_opaque::opaque_deref_mut(listen_socket).on_server_name(us_dispatch_server_name);
             }
         }
 
-        let this = scopeguard::ScopeGuard::into_inner(cleanup); // ownership transfers to JS wrapper
+        let this = cleanup.disarm(); // ownership transfers to JS wrapper
         // SAFETY: `global` is live; ownership of `this` (heap-allocated above)
         // transfers to the C++ wrapper (freed via `ListenerClass__finalize` →
         // `Listener::finalize` → `deinit`).
@@ -629,7 +669,12 @@ impl Listener {
     // `OWNED_PROTOS` stays unset: accepted sockets clone the listener's `protos`.
     fn accepted_socket_flags(&self) -> SocketFlags {
         let mut flags = SocketFlags::empty();
-        flags.set(SocketFlags::REJECT_UNAUTHORIZED, self.reject_unauthorized);
+        // Also what the context in use was built with: `tls.secureContext` need not come with the options again.
+        let ctx = self.secure_ctx.get().as_ref().map(|ctx| ctx.as_ptr());
+        flags.set(
+            SocketFlags::REJECT_UNAUTHORIZED,
+            self.reject_unauthorized || crate::socket::server_ctx_rejects_unauthorized(ctx),
+        );
         flags.set(SocketFlags::PAUSE_ON_CONNECT, self.pause_on_connect);
         flags
     }
@@ -659,6 +704,7 @@ impl Listener {
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            latest_session: Cell::new(None),
         });
         let s = this_socket;
         s.ref_();
@@ -705,6 +751,7 @@ impl Listener {
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            latest_session: Cell::new(None),
         });
         let s = this_socket;
         s.ref_();
@@ -757,14 +804,12 @@ impl Listener {
                 global.throw_invalid_arguments(format_args!("hostname pattern cannot be empty"))
             );
         }
-        // NUL-terminate for the C `const char*` parameter. Interior NULs are
-        // tolerated — the C SNI tree just truncates at the first one. Build the
-        // `&CStr` via `from_ptr` to allow that instead of asserting via
-        // `ZStr::as_cstr()`. `server_name_z` must outlive the
-        // remove_server_name/add_server_name calls below.
+        // No ClientHello can carry a NUL, so this pattern matches nothing, as in Node.
+        if bun_core::strings::contains_char(server_name_bytes, 0) {
+            return Ok(JSValue::UNDEFINED);
+        }
         let server_name_z = bun_core::ZBox::from_bytes(server_name_bytes);
-        // SAFETY: `server_name_z` is NUL-terminated and lives to end of scope.
-        let server_name = unsafe { core::ffi::CStr::from_ptr(server_name_z.as_ptr()) };
+        let server_name = server_name_z.as_zstr().as_cstr();
 
         let ListenerType::Uws(ls) = this.listener.get() else {
             return Ok(JSValue::UNDEFINED);
@@ -779,7 +824,7 @@ impl Listener {
         } else if let Some(ssl_config) = {
             // SAFETY: per-thread VM; valid for program lifetime.
             let vm = VirtualMachine::get().as_mut();
-            SSLConfig::from_js(vm, global, tls)?
+            SSLConfig::from_js(vm, global, tls, true)?
         } {
             // Note: `cfg` cleanup handled by Drop on SSLConfig
             let mut create_err = uws::create_bun_socket_error_t::none;
@@ -803,28 +848,39 @@ impl Listener {
             return Ok(JSValue::UNDEFINED);
         };
 
+        super::socket_body::install_sni_alpn_selector(sni_ctx.as_ptr());
+
         // The C SNI tree SSL_CTX_up_ref()s; ours drops here.
         // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-        let ls_ref = bun_opaque::opaque_deref_mut(ls);
-        ls_ref.remove_server_name(server_name);
-        let ok = ls_ref.add_server_name(server_name, sni_ctx.as_ptr(), core::ptr::null_mut());
-        if !ok {
-            // Old entry was already removed; failing silently would leave the
-            // hostname with no SNI mapping at all. Surface it.
-            return Err(global.throw_value(
-                global
-                    .err(
-                        jsc::ErrorCode::BORINGSSL,
-                        format_args!(
-                            "Failed to register SNI for '{}'",
-                            bstr::BStr::new(server_name_bytes)
-                        ),
-                    )
-                    .to_js(),
-            ));
-        }
+        bun_opaque::opaque_deref_mut(ls).add_server_name(
+            server_name,
+            sni_ctx.as_ptr(),
+            core::ptr::null_mut(),
+        );
 
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// `tls.Server#setSecureContext()` while listening. Accepted sockets keep their context.
+    pub(crate) fn set_secure_context(this: &Self, secure_context: &SecureContext) -> JSValue {
+        if !this.ssl {
+            return JSValue::UNDEFINED;
+        }
+        let ctx = secure_context.ctx.clone();
+        match this.listener.get() {
+            ListenerType::Uws(ls) => {
+                // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(ls).set_default_ssl_ctx(&ctx);
+                this.secure_ctx.set(Some(ctx));
+            }
+            #[cfg(windows)]
+            ListenerType::NamedPipe(pipe) => {
+                // SAFETY: the pipe context is live while `this.listener` holds it.
+                unsafe { pipe.as_ref() }.ctx.set(Some(ctx));
+            }
+            ListenerType::None => {}
+        }
+        JSValue::UNDEFINED
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1097,6 +1153,7 @@ impl Listener {
         let _cell_root = handlers.root_cell(cx.global());
 
         let port = socket_config.port;
+        let mut owned_ssl_ctx = prebuilt_ssl_ctx(vm, cx.global(), opts, &mut socket_config, false)?;
         let ssl_enabled = socket_config.ssl.is_some();
         let default_data = socket_config.default_data;
 
@@ -1153,28 +1210,6 @@ impl Listener {
             };
             Some((local_addr_bytes.to_vec().into_boxed_slice(), local_port))
         };
-
-        // Resolve the prebuilt SSL_CTX before the platform branches so the Windows
-        // named-pipe path can adopt it. node:tls passes the native SecureContext as
-        // `tls.secureContext` so we share its already-built SSL_CTX.
-        let mut owned_ssl_ctx: Option<boring_sys::OwnedSslCtx> = None;
-        if ssl_enabled {
-            let native_sc: Option<&SecureContext> = 'blk: {
-                let Some(tls_js) = opts.get_truthy(cx.global(), "tls")? else {
-                    break 'blk None;
-                };
-                if !tls_js.is_object() {
-                    break 'blk None;
-                }
-                let Some(sc_js) = tls_js.get_truthy(cx.global(), "secureContext")? else {
-                    break 'blk None;
-                };
-                sc_js.as_class_ref::<SecureContext>()
-            };
-            if let Some(sc) = native_sc {
-                owned_ssl_ctx = Some(sc.ctx.clone());
-            }
-        }
 
         #[cfg(windows)]
         let mut connection = connection;
@@ -1273,6 +1308,7 @@ impl Listener {
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
                             twin: JsCell::new(None),
                             verify_error: JsCell::new(None),
+                            latest_session: Cell::new(None),
                         })
                     };
                     let tls_ref = tls;
@@ -1366,6 +1402,7 @@ impl Listener {
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
                             twin: JsCell::new(None),
                             verify_error: JsCell::new(None),
+                            latest_session: Cell::new(None),
                         })
                     };
                     let tcp_ref = tcp;
@@ -1610,6 +1647,7 @@ fn connect_finish<const IS_SSL: bool>(
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            latest_session: Cell::new(None),
         })
     };
     // Either the caller's JS-owned socket (reconnect) or the fresh one above.
@@ -1725,6 +1763,31 @@ pub(crate) fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> 
     Err(global.throw(format_args!("Expected a Listener instance")))
 }
 
+#[bun_jsc::host_fn]
+pub(crate) fn js_set_secure_context(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    jsc::mark_binding!();
+
+    let [listener, secure_context] = frame.arguments_as_array::<2>();
+    if frame.arguments_count() < 2 {
+        return Err(global.throw_not_enough_arguments(
+            "setSecureContext",
+            2,
+            frame.arguments_count() as usize,
+        ));
+    }
+    // A cluster worker's `_handle` is no `Listener`: JS wraps its connections.
+    match (
+        listener.as_class_ref::<Listener>(),
+        secure_context.as_class_ref::<SecureContext>(),
+    ) {
+        (Some(this), Some(sc)) => Ok(Listener::set_secure_context(this, sc)),
+        _ => Ok(JSValue::UNDEFINED),
+    }
+}
+
 #[cfg(windows)]
 fn is_valid_pipe_name(pipe_name: &[u8]) -> bool {
     // check for valid pipe names
@@ -1765,7 +1828,8 @@ pub(crate) struct WindowsNamedPipeListeningContext {
     /// JSC_BORROW: process-lifetime singleton; `&'static` so call sites read
     /// `self.vm.is_shutting_down()` without a raw-pointer deref.
     pub(crate) vm: &'static VirtualMachine,
-    pub ctx: Option<boring_sys::OwnedSslCtx>, // server reuses the same ctx
+    /// Every accept wraps its pipe with this context.
+    pub ctx: JsCell<Option<boring_sys::OwnedSslCtx>>,
 }
 
 /// `c_int`: raw libuv return code so JS `err.errno` is the platform-correct UV value.
@@ -1793,7 +1857,9 @@ impl WindowsNamedPipeListeningContext {
         // An accepted pipe is the listening script's.
         let entered = this_ref.vm.enter_context(listener.context);
         use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
-        let socket: PipeSocketType = if this_ref.ctx.is_some() {
+        // Owned for the whole accept: JS below can replace the slot through setSecureContext().
+        let ssl_ctx = this_ref.ctx.get().clone();
+        let socket: PipeSocketType = if ssl_ctx.is_some() {
             PipeSocketType::Tls(Listener::on_name_pipe_created::<true>(listener))
         } else {
             PipeSocketType::Tcp(Listener::on_name_pipe_created::<false>(listener))
@@ -1810,7 +1876,7 @@ impl WindowsNamedPipeListeningContext {
         let result = unsafe {
             (*client)
                 .named_pipe
-                .get_accepted_by(&mut (*this).uv_pipe, this_ref.ctx.as_ref())
+                .get_accepted_by(&mut (*this).uv_pipe, ssl_ctx.as_ref())
         };
         if result.is_err() {
             // connection dropped
@@ -1871,7 +1937,7 @@ impl WindowsNamedPipeListeningContext {
             listener: NonNull::new(listener).map(bun_ptr::BackRef::from),
             global_this: GlobalRef::from(global_this),
             vm: global_this.bun_vm(),
-            ctx: None,
+            ctx: JsCell::new(None),
         }));
         // Cleanup guard: once the uv pipe handle is registered with the loop it must be closed via
         // uv_close; before that point we can free the struct directly. `deinit()` also
@@ -1892,10 +1958,10 @@ impl WindowsNamedPipeListeningContext {
             let ctx_opts = ssl_options.as_usockets();
             let mut err = uws::create_bun_socket_error_t::none;
             // Create SSL context using uSockets to match behavior of node.js
-            match ctx_opts.create_ssl_context(&mut err) {
+            match ctx_opts.create_ssl_context_with_digest(&ctx_opts.digest(), &mut err) {
                 // SAFETY: `this` was just allocated above; scoped field write.
                 Some(ctx) => unsafe {
-                    (*this).ctx = Some(ctx);
+                    (*this).ctx.set(Some(ctx));
                 },
                 None => return Err(ListenPipeError::Other(crate::Error::InvalidOptions)),
             }
@@ -1976,55 +2042,19 @@ impl WindowsNamedPipeListeningContext {
     }
 }
 
-/// `us_dispatch_server_name` for a socket adopted into TLS: no listen socket,
-/// so the resolver lives on the SSL and the handler's `this` is the socket's
-/// own `data`. Only the fd-adopt path registers this, not the duplex wrap.
+/// `us_dispatch_server_name` for a socket adopted into TLS, which has no listen
+/// socket. Only the fd-adopt path registers this, not the duplex wrap.
 ///
 /// # Safety
 /// `socket` is the live us_socket_t processing this ClientHello and `hostname`
 /// is NUL-terminated for the call. JS-thread only.
+#[unsafe(no_mangle)]
 pub(crate) extern "C" fn us_dispatch_socket_server_name(
     socket: *mut uws_sys::us_socket_t,
     hostname: *const core::ffi::c_char,
     abort_handshake: *mut core::ffi::c_int,
 ) -> *mut uws_sys::SslCtx {
-    jsc::mark_binding!();
-    if socket.is_null() || hostname.is_null() {
-        return core::ptr::null_mut();
-    }
-    let s_ref = uws_sys::us_socket_t::opaque_mut(socket);
-    if s_ref.kind() != uws_sys::SocketKind::BunSocketTls {
-        return core::ptr::null_mut();
-    }
-    let tls = match *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() {
-        Some(tls) => tls,
-        None => return core::ptr::null_mut(),
-    };
-    // An idle socket can drop its Handlers while the us_socket_t lives on;
-    // `get_handlers()` would panic. Same guard as `select_alpn_callback`.
-    if !tls.has_handlers() {
-        return core::ptr::null_mut();
-    }
-    let handlers = tls.get_handlers();
-    let callback = handlers.on_server_name();
-    if callback.is_empty() {
-        return core::ptr::null_mut();
-    }
-    let global = handlers.global_object;
-    let socket_handle = tls.get_this_value(&global);
-    // node:tls stores the JS TLSSocket (which carries `_SNICallback`) in the
-    // native socket's `data`; that is the handler's `this`, mirroring how the
-    // listener path passes the net.Server.
-    let this_value = TLSSocket::data_get_cached(socket_handle).unwrap_or(JSValue::UNDEFINED);
-    // SAFETY: `hostname` is NUL-terminated per the fn contract.
-    let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
-    // Peer-supplied SNI bytes, decoded as Latin-1 like Node's `OneByteString`.
-    let js_name = EncodedSlice::latin1(name.to_bytes()).to_js(&global);
-    let result = match callback.call(&global, this_value, &[this_value, js_name, socket_handle]) {
-        Ok(v) => v,
-        Err(err) => global.take_exception(err),
-    };
-    decode_sni_result(result, abort_handshake).cast()
+    dispatch_server_name(socket, hostname, abort_handshake).cast()
 }
 
 /// Shared decoding of what the JS SNI handler returned. See
@@ -2049,7 +2079,9 @@ fn decode_sni_result(result: JSValue, abort_handshake: *mut core::ffi::c_int) ->
     }
     if let Some(sc) = result.as_class_ref::<SecureContext>() {
         // The C dispatcher frees this +1 after `SSL_set_SSL_CTX` takes its own.
-        return sc.ctx.clone().into_raw().cast();
+        let ctx = sc.ctx.clone().into_raw();
+        super::socket_body::install_sni_alpn_selector(ctx);
+        return ctx.cast();
     }
     // Anything else is not a SecureContext: Node treats this as an invalid SNI
     // context and drops the connection.
@@ -2067,79 +2099,70 @@ fn decode_sni_result(result: JSValue, abort_handshake: *mut core::ffi::c_int) ->
 /// returned `SSL_CTX*` applies to the in-flight handshake only - the caller
 /// installs it with `SSL_set_SSL_CTX`, which takes its own reference, and
 /// nothing is cached in the SNI tree, so the callback runs per-connection the
-/// way Node's does. A null return falls back to the static tree (bind
-/// hostname + addContext entries), then the default context. An asynchronous
+/// way Node's does. A null return falls back to the static tree
+/// (addContext entries), then the default context. An asynchronous
 /// SNICallback sets `*abort_handshake = 2` instead: the handshake suspends
 /// (select-certificate retry) until the JS resolution calls
 /// `handle.resumeSNI(...)` -> `us_socket_sni_resolve()`.
 ///
 /// # Safety
-/// `ls` is a live listen socket whose accept-group ext holds a `*mut Listener`
-/// and `hostname` is a NUL-terminated string valid for the call. JS-thread
-/// only.
+/// `socket` is the live us_socket_t processing this ClientHello and `hostname`
+/// is NUL-terminated for the call. JS-thread only.
 extern "C" fn us_dispatch_server_name(
-    ls: *mut uws_sys::ListenSocket,
+    _ls: *mut uws_sys::ListenSocket,
     hostname: *const core::ffi::c_char,
     abort_handshake: *mut core::ffi::c_int,
     socket: *mut c_void,
 ) -> *mut c_void {
+    dispatch_server_name(socket.cast(), hostname, abort_handshake)
+}
+
+fn dispatch_server_name(
+    socket: *mut uws_sys::us_socket_t,
+    hostname: *const core::ffi::c_char,
+    abort_handshake: *mut core::ffi::c_int,
+) -> *mut c_void {
     jsc::mark_binding!();
-    if ls.is_null() || hostname.is_null() {
+    if socket.is_null() || hostname.is_null() {
         return core::ptr::null_mut();
     }
-    // The accept group's ext holds the owning `*mut Listener` for the lifetime
-    // of the listen socket. S008: `ListenSocket` is an `opaque_ffi!` ZST.
-    let listener_ptr: *mut Listener = bun_opaque::opaque_deref_mut(ls).group().owner::<Listener>();
-    if listener_ptr.is_null() {
+    let s_ref = uws_sys::us_socket_t::opaque_mut(socket);
+    if s_ref.kind() != uws_sys::SocketKind::BunSocketTls {
         return core::ptr::null_mut();
     }
-    // SAFETY: see above — the listen socket keeps the `Listener` alive for the
-    // duration of this synchronous handshake dispatch.
-    let listener = unsafe { bun_ptr::ThisPtr::new(listener_ptr) };
-    let handlers = &listener.handlers;
+    let tls = match *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() {
+        Some(tls) => tls,
+        None => return core::ptr::null_mut(),
+    };
+    // An idle socket can drop its Handlers while the us_socket_t lives on;
+    // `get_handlers()` would panic. Same guard as `select_alpn_callback`.
+    if !tls.has_handlers() {
+        return core::ptr::null_mut();
+    }
+    // No `Handlers::enter`/`exit` scope here: that protocol tracks the
+    // accepted-socket callback lifecycle, and running it from inside the
+    // handshake corrupts `active_connections` for every subsequent accept.
+    let handlers = tls.get_handlers();
     let callback = handlers.on_server_name();
     if callback.is_empty() {
         return core::ptr::null_mut();
     }
-    // No `Handlers::enter`/`exit` scope here: that protocol tracks the
-    // accepted-socket callback lifecycle, and running it against the listener's
-    // own handlers from inside the handshake corrupts `active_connections` for
-    // every subsequent accept. The listener and its handlers are structurally
-    // alive for this synchronous dispatch - the listen socket cannot be freed
-    // mid-handshake.
     let global = handlers.global_object;
-    // Pass the listener's `data` (the owning net.Server) rather than minting a
-    // JS wrapper for the Listener itself - `to_js` here would create a second
-    // cell owning the same Rust struct and whichever is collected first frees
-    // it out from under the other.
-    let this_value = listener
-        .strong_data
-        .get()
-        .get()
-        .unwrap_or(JSValue::UNDEFINED);
+    // The resume handle an asynchronous SNICallback uses (`handle.resumeSNI(...)`).
+    // GC-managed, so a resume after the socket died is a safe no-op.
+    let socket_handle = tls.get_this_value(&global);
+    // The handler's `this` is the `data` that carries `_SNICallback`: the
+    // listener's (the net.Server, kept past `stop()` while connections remain)
+    // for an accepted socket, the socket's own (the TLSSocket) for an adopted one.
+    let this_value = match handlers.listener() {
+        Some(listener) => listener.strong_data.get().get(),
+        None => TLSSocket::data_get_cached(socket_handle),
+    }
+    .unwrap_or(JSValue::UNDEFINED);
     // SAFETY: `hostname` is NUL-terminated per the fn contract.
     let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
+    // Peer-supplied SNI bytes, decoded as Latin-1 like Node's `OneByteString`.
     let js_name = EncodedSlice::latin1(name.to_bytes()).to_js(&global);
-    // The accepted socket processing this ClientHello: its JS wrapper is the
-    // resume handle an asynchronous SNICallback uses (`handle.resumeSNI(...)`)
-    // to complete the suspended handshake. The wrapper's lifecycle is
-    // GC-managed, so a resume after the socket died is a safe no-op.
-    let socket_handle: JSValue = if socket.is_null() {
-        JSValue::UNDEFINED
-    } else {
-        // SAFETY: the C caller passes the live us_socket_t processing this
-        // ClientHello; for BunSocketTls sockets the ext slot holds the
-        // TLSSocket wrapper.
-        let s_ref = uws_sys::us_socket_t::opaque_mut(socket.cast());
-        if s_ref.kind() == uws_sys::SocketKind::BunSocketTls {
-            match *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() {
-                Some(tls) => tls.get_this_value(&global),
-                None => JSValue::UNDEFINED,
-            }
-        } else {
-            JSValue::UNDEFINED
-        }
-    };
     let result = match callback.call(&global, this_value, &[this_value, js_name, socket_handle]) {
         Ok(v) => v,
         Err(err) => global.take_exception(err),

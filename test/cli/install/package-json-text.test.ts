@@ -86,11 +86,7 @@ describe.concurrent("the text that an edit does not touch stays as it is", () =>
       ["remove", "a-dep", "no-deps"],
       replaced(/  "dependencies": \{[^}]*\},\r\n/, ""),
     ],
-    [
-      "bun update changes the version",
-      ["update", "no-deps"],
-      replaced(`"no-deps": "^1.0.0"`, `"no-deps": "^1.1.0"`),
-    ],
+    ["bun update changes the version", ["update", "no-deps"], replaced(`"no-deps": "^1.0.0"`, `"no-deps": "^1.1.0"`)],
     [
       "bun update --latest changes the version",
       ["update", "--latest", "no-deps"],
@@ -205,12 +201,12 @@ describe.concurrent("where an edit puts a member", () => {
   }
 
   test("the comma goes after the value before it, not after its comment", async () => {
-    expect(
-      await edited(`{\n  "name": "app" // the name\n}\n`, "set", "version=1.0.0"),
-    ).toBe(`{\n  "name": "app", // the name\n  "version": "1.0.0"\n}\n`);
-    expect(
-      await edited(`{\n  "name": "app" /* the name */\n}\n`, "set", "version=1.0.0"),
-    ).toBe(`{\n  "name": "app", /* the name */\n  "version": "1.0.0"\n}\n`);
+    expect(await edited(`{\n  "name": "app" // the name\n}\n`, "set", "version=1.0.0")).toBe(
+      `{\n  "name": "app", // the name\n  "version": "1.0.0"\n}\n`,
+    );
+    expect(await edited(`{\n  "name": "app" /* the name */\n}\n`, "set", "version=1.0.0")).toBe(
+      `{\n  "name": "app", /* the name */\n  "version": "1.0.0"\n}\n`,
+    );
   });
 
   test("a trailing comma stays a trailing comma", async () => {
@@ -237,9 +233,9 @@ describe.concurrent("where an edit puts a member", () => {
       ),
     ).toBe(`{\n  "name": "app",\n\n  // what it is\n  /* and more */\n  "version": "1.0.0"\n}\n`);
     // Nothing is left of a group but its comments.
-    expect(await edited(`{\n  "scripts": {\n    // how to build\n    "build": "b"\n  }\n}\n`, "delete", "scripts.build")).toBe(
-      `{\n  "scripts": {\n    // how to build\n  }\n}\n`,
-    );
+    expect(
+      await edited(`{\n  "scripts": {\n    // how to build\n    "build": "b"\n  }\n}\n`, "delete", "scripts.build"),
+    ).toBe(`{\n  "scripts": {\n    // how to build\n  }\n}\n`);
     expect(await edited(`{\n  "scripts": {\n    "build": "b"\n  }\n}\n`, "delete", "scripts.build")).toBe(
       `{\n  "scripts": {}\n}\n`,
     );
@@ -268,13 +264,15 @@ describe.concurrent("where an edit puts a member", () => {
   });
 
   test("an array on lines gets a line", async () => {
-    expect(
-      await edited(`{\n  "files": [\n    "a", // the first\n    "b"\n  ]\n}\n`, "set", "files[]=c"),
-    ).toBe(`{\n  "files": [\n    "a", // the first\n    "b",\n    "c"\n  ]\n}\n`);
+    expect(await edited(`{\n  "files": [\n    "a", // the first\n    "b"\n  ]\n}\n`, "set", "files[]=c")).toBe(
+      `{\n  "files": [\n    "a", // the first\n    "b",\n    "c"\n  ]\n}\n`,
+    );
   });
 
   test("a file on one line is laid out, and keeps its comments and tokens", async () => {
-    expect(await edited(`{"name":"app",/* why */"config":{"n":1.50,'s':'t'},"files":["a"]}`, "set", "version=1.0.0")).toBe(
+    expect(
+      await edited(`{"name":"app",/* why */"config":{"n":1.50,'s':'t'},"files":["a"]}`, "set", "version=1.0.0"),
+    ).toBe(
       `{\n  "name": "app",\n  /* why */ "config": {\n    "n": 1.50,\n    's': 't'\n  },\n  "files": ["a"],\n  "version": "1.0.0"\n}`,
     );
     // What does not change is not laid out.
@@ -290,6 +288,12 @@ describe.concurrent("where an edit puts a member", () => {
     );
   });
 
+  test("a // comment that is laid out again still ends its line", async () => {
+    expect(await edited(`{ "name": // the name\n "app", "n": 1 }`, "set", "version=1.0.0")).toBe(
+      `{\n  "name": // the name\n  "app",\n  "n": 1,\n  "version": "1.0.0"\n}`,
+    );
+  });
+
   test("a key that is there twice keeps both members", async () => {
     expect(await edited(`{\n  "a": 1, // first\n  "a": 2, // second\n  "b": 3\n}\n`, "delete", "b")).toBe(
       `{\n  "a": 1, // first\n  "a": 2 // second\n}\n`,
@@ -297,8 +301,8 @@ describe.concurrent("where an edit puts a member", () => {
   });
 
   test("a key with an escape is the key that it spells", async () => {
-    expect(await edited(`{\n  "n\\u0061me": "app", // spelled with an escape\n  "v": "1"\n}\n`, "set", "name=lib")).toBe(
-      `{\n  "n\\u0061me": "lib", // spelled with an escape\n  "v": "1"\n}\n`,
-    );
+    expect(
+      await edited(`{\n  "n\\u0061me": "app", // spelled with an escape\n  "v": "1"\n}\n`, "set", "name=lib"),
+    ).toBe(`{\n  "n\\u0061me": "lib", // spelled with an escape\n  "v": "1"\n}\n`);
   });
 });

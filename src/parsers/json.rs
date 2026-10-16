@@ -881,6 +881,7 @@ pub(crate) fn skip_ws_and_comments(contents: &[u8], mut p: usize) -> Option<usiz
     None
 }
 
+#[inline]
 fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
     match *contents.get(p)? {
         b'"' | b'\'' => skip_string_token(contents, p),

@@ -873,9 +873,7 @@ describe.concurrent("package.json indentation", async () => {
 
     expect(await file(packageJson).text()).toBe(rootPackageJson);
     const workspacePackageJson = await file(join(packageDir, "packages", "bar", "package.json")).text();
-    expect(workspacePackageJson).toBe(
-      `\n{\n\n\t"name": "bar",\n\t"dependencies": {\n\t\t"no-deps": "^2.0.0"\n\t},\n}`,
-    );
+    expect(workspacePackageJson).toBe(`\n{\n\n\t"name": "bar",\n\t"dependencies": {\n\t\t"no-deps": "^2.0.0"\n\t},\n}`);
   });
 
   test("install maintains indentation", async () => {

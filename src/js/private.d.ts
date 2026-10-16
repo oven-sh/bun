@@ -87,7 +87,7 @@ declare module "bun" {
         isAncientHTTP: boolean,
         connectHead?: Buffer,
         isPipelinedDispatch?: boolean,
-      ): Promise<unknown> | void;
+      ): void;
     }
   }
   function serve<WebSocketData>(options: Serve.NodeHTTPServeOptions<WebSocketData>): Server<WebSocketData>;

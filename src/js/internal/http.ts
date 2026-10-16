@@ -42,7 +42,6 @@ const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 // Set on a server socket at the 'connect'/'upgrade' handoff: the native response of that request.
 const kHandoffResponse = Symbol("kHandoffResponse");
-const kCloseCallback = Symbol("closeCallback");
 
 // node:_http_server registers its pipelined-response machinery here at module
 // initialization, letting internal/http1_server_fallback drive the same
@@ -107,17 +106,10 @@ function emitErrorNextTickIfErrorListener(self, err, cb) {
   }
 }
 
-function callCloseCallback(self) {
-  if (self[kCloseCallback]) {
-    self[kCloseCallback]();
-    self[kCloseCallback] = undefined;
-  }
-}
 function emitCloseNT(self) {
   if (!self._closed) {
     self.destroyed = true;
     self._closed = true;
-    callCloseCallback(self);
     self.emit("close");
   }
 }
@@ -525,7 +517,6 @@ export {
   METHODS,
   STATUS_CODES,
   abortedSymbol,
-  callCloseCallback,
   checkShouldUseProxy,
   drainMicrotasks,
   emitCloseNT,
@@ -539,7 +530,6 @@ export {
   http1ServerPipeline,
   isTlsSymbol,
   kAbortController,
-  kCloseCallback,
   kHandle,
   kHandoffResponse,
   kInternalSocketData,

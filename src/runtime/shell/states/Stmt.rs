@@ -78,6 +78,7 @@ impl Stmt {
         {
             let me = interp.as_stmt_mut(this);
             me.last_exit_code = Some(exit_code);
+            me.base.shell_mut().last_exit_code = exit_code;
             me.idx += 1;
             me.currently_executing = None;
         }

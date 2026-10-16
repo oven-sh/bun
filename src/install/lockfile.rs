@@ -2141,16 +2141,12 @@ impl Default for Lockfile {
     }
 }
 
-/// Linux refuses to rename onto or unlink a mount point (a bind-mounted file) with EBUSY. A network
-/// filesystem that refuses a file in use the same way gets the same answer: write into the file
-/// that is there. On Windows EBUSY is a sharing violation, so this is false there.
+/// Linux refuses to rename onto or unlink a mount point (a bind-mounted file) with EBUSY.
 pub(crate) fn is_mount_point_error(err: &sys::Error) -> bool {
     cfg!(any(target_os = "linux", target_os = "android")) && err.get_errno() == sys::E::EBUSY
 }
 
-/// Writes `bytes` over the existing file `filename`, whose directory entry cannot be replaced. It
-/// truncates last, so a concurrent reader never finds the file empty. A write that fails puts the
-/// old bytes back.
+/// Truncates last, so a reader never finds the file empty. A failed write puts the old bytes back.
 fn write_in_place(filename: &ZStr, bytes: &[u8]) -> sys::Result<()> {
     let file = File::openat(Fd::cwd(), filename.as_bytes(), sys::O::RDWR, 0)?;
     let old = file.read_to_end()?;
@@ -2165,8 +2161,7 @@ fn write_in_place(filename: &ZStr, bytes: &[u8]) -> sys::Result<()> {
     written
 }
 
-/// A temporary file (`mode` less the umask) renamed over `filename`, or `bytes` written into
-/// `filename` when it is a mount point. False: it had these bytes.
+/// A temporary file (`mode` less the umask) renamed over `filename`. False: it had these bytes.
 pub(crate) fn replace_in_cwd(filename: &ZStr, bytes: &[u8], mode: sys::Mode) -> bool {
     if File::read_from(Fd::cwd(), filename.as_bytes()).is_ok_and(|existing| existing == bytes) {
         return false;

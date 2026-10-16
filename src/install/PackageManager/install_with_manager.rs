@@ -2178,8 +2178,7 @@ fn create_new_lockfile_and_enqueue(
             Features::main(),
         )?;
     }
-    // The root of the lockfile that loaded has no dependencies, so it matches only a package.json
-    // without dependencies. The frozen check after the resolve accepts that one.
+    // The root of the loaded lockfile has no dependencies: a package.json with some has changed.
     if frozen && root.dependencies.len > 0 && matches!(load_result, lockfile::LoadResult::Ok { .. })
     {
         frozen_lockfile_had_changes(log_level);

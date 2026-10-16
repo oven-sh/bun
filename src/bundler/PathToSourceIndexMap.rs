@@ -1,14 +1,12 @@
 use bun_collections::StringHashMap;
-use bun_paths::fs::is_file_namespace;
 
 use crate::IndexStringMap::IndexInt;
 
 /// Abstracts over the two structurally-identical `Path` ports (`bun_paths::fs::Path`
 /// and `bun_resolver::fs::Path`) so the bundler can key the map with either while
-/// the crates converge.
+/// the crates converge. Both expose `.text: &[u8]`, which is all we need.
 pub trait PathLike {
     fn path_text(&self) -> &[u8];
-    fn path_namespace(&self) -> &[u8];
 }
 
 // `bun_resolver::fs::Path` is now a re-export of `bun_paths::fs::Path` (D090),
@@ -17,10 +15,6 @@ impl PathLike for bun_paths::fs::Path<'_> {
     #[inline]
     fn path_text(&self) -> &[u8] {
         self.text
-    }
-    #[inline]
-    fn path_namespace(&self) -> &[u8] {
-        self.namespace
     }
 }
 
@@ -38,69 +32,36 @@ pub type Map = StringHashMap<IndexInt>;
 /// `found_existing` + value-ptr together, so we hand-roll a thin shim.
 pub(crate) type GetOrPutResult<'a> = bun_collections::string_hash_map::GetOrPutResult<'a, IndexInt>;
 
-/// Module identity is `(namespace, text)`. File-namespace entries key on bare
-/// `text`; other namespaces key on `len(namespace) as u32 LE ++ namespace ++ text`.
 impl PathToSourceIndexMap {
-    #[inline]
-    fn composite_key(namespace: &[u8], text: &[u8]) -> Vec<u8> {
-        let mut v = Vec::with_capacity(4 + namespace.len() + text.len());
-        v.extend_from_slice(&(namespace.len() as u32).to_le_bytes());
-        v.extend_from_slice(namespace);
-        v.extend_from_slice(text);
-        v
-    }
-
     pub(crate) fn get_path(&self, path: &impl PathLike) -> Option<IndexInt> {
-        self.get(path.path_namespace(), path.path_text())
+        self.get(path.path_text())
     }
 
-    pub(crate) fn get(&self, namespace: &[u8], text: &[u8]) -> Option<IndexInt> {
-        if is_file_namespace(namespace) {
-            self.map.get(text).copied()
-        } else {
-            self.map
-                .get(Self::composite_key(namespace, text).as_slice())
-                .copied()
-        }
+    pub(crate) fn get(&self, text: impl AsRef<[u8]>) -> Option<IndexInt> {
+        self.map.get(text.as_ref()).copied()
     }
 
+    // Takes `&[u8]` (not `impl AsRef<[u8]>`)
+    // to avoid E0283 inference ambiguity at `.into()` call sites in bundle_v2.
     pub(crate) fn put(
         &mut self,
-        namespace: &[u8],
         text: &[u8],
         value: IndexInt,
     ) -> Result<(), bun_alloc::AllocError> {
         // PERF: bun_collections::StringHashMap is keyed by `Box<[u8]>`, so we dupe here.
         // Revisit once StringHashMap gains a borrowed-key variant.
-        if is_file_namespace(namespace) {
-            self.map.put(text, value)
-        } else {
-            self.map
-                .put(Self::composite_key(namespace, text).as_slice(), value)
-        }
+        self.map.put(text, value)
     }
 
     pub(crate) fn get_or_put(
         &mut self,
-        namespace: &[u8],
-        text: &[u8],
+        text: impl AsRef<[u8]>,
     ) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
         // PERF: see note in `put` re: key duplication.
-        if is_file_namespace(namespace) {
-            self.map.get_or_put(text)
-        } else {
-            self.map
-                .get_or_put(Self::composite_key(namespace, text).as_slice())
-        }
+        self.map.get_or_put(text.as_ref())
     }
 
-    pub fn remove(&mut self, namespace: &[u8], text: &[u8]) -> bool {
-        if is_file_namespace(namespace) {
-            self.map.remove(text).is_some()
-        } else {
-            self.map
-                .remove(Self::composite_key(namespace, text).as_slice())
-                .is_some()
-        }
+    pub fn remove(&mut self, text: impl AsRef<[u8]>) -> bool {
+        self.map.remove(text.as_ref()).is_some()
     }
 }

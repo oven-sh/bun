@@ -377,6 +377,27 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
       exitCode: 0,
     });
   });
+
+  test.concurrent("zlib: params() after a buffered writeSync keeps the pending input in the stream", async () => {
+    expect(
+      await run(
+        `const d = zlib.createDeflate({ level: 0 });
+         const h = d._handle;
+         const ws = d._writeState;
+         const input = Buffer.alloc(1024, 97);
+         const out1 = Buffer.alloc(4096);
+         h.writeSync(zlib.constants.Z_NO_FLUSH, input, 0, input.length, out1, 0, out1.length);
+         const head = Buffer.from(out1.subarray(0, out1.length - ws[0]));
+         out1.buffer.transfer();
+         h.params(1, 0);
+         const out2 = Buffer.alloc(4096);
+         h.writeSync(zlib.constants.Z_FINISH, null, 0, 0, out2, 0, out2.length);
+         const tail = out2.subarray(0, out2.length - ws[0]);
+         const result = zlib.inflateSync(Buffer.concat([head, tail]));
+         console.log(head.length + " " + result.length + " " + result.equals(input));`,
+      ),
+    ).toEqual({ stdout: "2 1024 true", exitCode: 0 });
+  });
 });
 
 describe.concurrent("zlib native handle argument validation", () => {
@@ -462,5 +483,51 @@ describe.concurrent("zlib native handle argument validation", () => {
       stdout: 'threw ERR_INVALID_ARG_VALUE: The "in" argument must not be backed by a resizable ArrayBuffer',
       exitCode: 0,
     });
+  });
+
+  // A growable SharedArrayBuffer grows in place and never shrinks, so the
+  // pointer/length captured for the threadpool write stays a valid prefix even
+  // across a concurrent grow(). The resizable-buffer rejection above must not
+  // apply to it.
+  test.concurrent("write() accepts an output buffer backed by a growable SharedArrayBuffer", async () => {
+    expect(
+      await run(
+        `const C = zlib.createDeflateRaw()._handle.constructor;
+         const h = new C(zlib.constants.DEFLATERAW);
+         const ws = new Uint32Array(2);
+         const { promise, resolve } = Promise.withResolvers();
+         h.init(15, 6, 8, 0, ws, resolve, undefined);
+         const sab = new SharedArrayBuffer(64, { maxByteLength: 128 });
+         if (!sab.growable) throw new Error("SharedArrayBuffer is not growable");
+         const out = new Uint8Array(sab);
+         h.write(zlib.constants.Z_FINISH, Buffer.from("hello"), 0, 5, out, 0, 64);
+         sab.grow(128);
+         await promise;
+         const written = 64 - ws[0];
+         console.log("ok " + zlib.inflateRawSync(Buffer.from(out.slice(0, written))).toString());`,
+      ),
+    ).toEqual({ stdout: "ok hello", exitCode: 0 });
+  });
+
+  test.concurrent("write() accepts an input buffer backed by a growable SharedArrayBuffer", async () => {
+    expect(
+      await run(
+        `const C = zlib.createDeflateRaw()._handle.constructor;
+         const h = new C(zlib.constants.DEFLATERAW);
+         const ws = new Uint32Array(2);
+         const { promise, resolve } = Promise.withResolvers();
+         h.init(15, 6, 8, 0, ws, resolve, undefined);
+         const sab = new SharedArrayBuffer(16, { maxByteLength: 64 });
+         if (!sab.growable) throw new Error("SharedArrayBuffer is not growable");
+         const input = new Uint8Array(sab);
+         input.set(Buffer.from("hello world"));
+         const out = Buffer.alloc(1024);
+         h.write(zlib.constants.Z_FINISH, input, 0, 11, out, 0, 1024);
+         sab.grow(64);
+         await promise;
+         const written = 1024 - ws[0];
+         console.log("ok " + zlib.inflateRawSync(out.subarray(0, written)).toString());`,
+      ),
+    ).toEqual({ stdout: "ok hello world", exitCode: 0 });
   });
 });

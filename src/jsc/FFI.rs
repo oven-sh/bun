@@ -6,22 +6,20 @@
 // fns; the compiler-builtin macro noise from ffi.h is dropped — it is never
 // referenced.
 
-#![allow(non_snake_case, non_upper_case_globals, clippy::missing_safety_doc)]
-
 use core::ffi::{c_int, c_longlong, c_void};
 
 use bun_jsc::JSValue;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct struct_unnamed_1 {
+struct struct_unnamed_1 {
     pub payload: i32,
     pub tag: i32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub union union_EncodedJSValue {
+union union_EncodedJSValue {
     pub(crate) as_int64: i64,
     pub ptr: *mut c_void,
     pub as_bits: struct_unnamed_1,

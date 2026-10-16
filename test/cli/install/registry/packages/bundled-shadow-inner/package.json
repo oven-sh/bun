@@ -1,0 +1,22 @@
+{
+  "_id": "bundled-shadow-inner",
+  "name": "bundled-shadow-inner",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-shadow-inner",
+      "version": "1.0.0",
+      "dependencies": {
+        "bundled-shadow-shared": "2.0.0"
+      },
+      "_id": "bundled-shadow-inner@1.0.0",
+      "dist": {
+        "integrity": "sha512-vLarWIx0f5OlsgpY6rtzIKtoQAjH7HRTrhDBpFtK5eMreRh8i9MmNNBIkmQogQGHxnl8f/A2aqYwUPtmMKb84A==",
+        "shasum": "9247c2d44500bedc5f78cff3e90fd15d0facfd71",
+        "tarball": "http://localhost:4873/bundled-shadow-inner/-/bundled-shadow-inner-1.0.0.tgz"
+      }
+    }
+  }
+}

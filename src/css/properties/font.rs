@@ -392,7 +392,7 @@ impl FontFamily {
                     // AST crate: std.Io.Writer.Allocating on dest.arena (arena) → bumpalo Vec
                     let mut id = bun_alloc::ArenaVec::<u8>::new_in(dest.arena);
                     let mut first = true;
-                    for slice in val.split(|b| *b == b' ') {
+                    for slice in bun_core::strings::split(val, b" ") {
                         if first {
                             first = false;
                         } else {

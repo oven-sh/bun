@@ -2,7 +2,7 @@
 #include "ZigGeneratedClasses.h"
 
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(JSC::JSGlobalObject* globalObject, void* impl);
-extern "C" void Blob__setAsFile(void* impl, BunString* filename);
+extern "C" void Blob__setAsFile(void* impl, const BunString* filename);
 
 namespace WebCore {
 

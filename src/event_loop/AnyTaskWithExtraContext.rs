@@ -1,4 +1,4 @@
-//! This is AnyTask except it gives you two pointers instead of one.
+//! Type-erased task carrying two context pointers.
 //! Generally, prefer jsc.Task instead of this.
 
 use core::ffi::c_void;

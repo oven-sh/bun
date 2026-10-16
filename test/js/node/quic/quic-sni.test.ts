@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { createPrivateKey, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { connect, listen, QuicEndpoint } from "node:quic";
+import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
 
 // The vendored Node suite exercises `sni` / `setSNIContexts()` but cannot
 // observe which certificate was served (both fixtures are self-signed and the
@@ -26,11 +27,11 @@ async function servedCommonName(address, servername: string): Promise<string> {
     alpn: "quic-test",
     servername,
     verifyPeer: "manual",
-  });
+  } as SessionOptions);
   try {
     await session.opened;
     const cert = session.peerCertificate;
-    const x509 = cert instanceof X509Certificate ? cert : new X509Certificate(Buffer.from(cert));
+    const x509 = cert instanceof X509Certificate ? cert : new X509Certificate(Buffer.from(cert as any));
     return x509.subject.match(/CN=([^\s,]+)/)![1];
   } finally {
     await session.close();
@@ -128,16 +129,124 @@ test("opened reports the X509 code name for validationErrorCode", async () => {
   await using server = await listen(ignoreErrors, { sni: { "*": identity1 }, alpn: ["quic-test"] });
 
   // No `ca` on the client, so the self-signed agent1 chain cannot be verified.
-  const session = await connect(server.address, {
+  const session = await connect(server.address!, {
     alpn: "quic-test",
     servername: "agent1",
     verifyPeer: "manual",
-  });
+  } as SessionOptions);
   const info = await session.opened;
   await session.close();
 
-  expect({ code: info.validationErrorCode, reason: info.validationErrorReason }).toEqual({
+  expect({ code: info.validationErrorCode as unknown as string, reason: info.validationErrorReason }).toEqual({
     code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
     reason: "unable to get local issuer certificate",
   });
+});
+
+test("connect() with the default verifyPeer refuses an unverifiable certificate before a pending stream reaches the server", async () => {
+  const script = `
+    import { createPrivateKey } from "node:crypto";
+    import { readFileSync } from "node:fs";
+    import { connect, listen } from "node:quic";
+
+    const cert = readFileSync(${JSON.stringify(join(keysDir, "agent1-cert.pem"))});
+    const key = createPrivateKey(readFileSync(${JSON.stringify(join(keysDir, "agent1-key.pem"))}));
+
+    let streamsReceived = 0;
+    const server = await listen(
+      serverSession => {
+        serverSession.onerror = () => {};
+        serverSession.opened.catch(() => {});
+        serverSession.closed.catch(() => {});
+        serverSession.onstream = stream => {
+          streamsReceived++;
+          stream.closed.catch(() => {});
+          try {
+            const w = stream.writer;
+            w.writeSync(new Uint8Array([streamsReceived]));
+            w.endSync();
+          } catch {}
+        };
+      },
+      { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"] },
+    );
+
+    const session = await connect(server.address, { alpn: "quic-test", servername: "agent1" });
+    session.onerror = () => {};
+    const openedError = session.opened.then(() => undefined, e => e);
+    const closedSettled = session.closed.then(() => {}, () => {});
+    const pending = await session.createBidirectionalStream({ body: Buffer.alloc(1024, 97) });
+    pending.closed.catch(() => {});
+    const err = await openedError;
+    await closedSettled;
+
+    const probe = await connect(server.address, { alpn: "quic-test", servername: "agent1", verifyPeer: "manual" });
+    probe.onerror = () => {};
+    await probe.opened;
+    const stream = await probe.createBidirectionalStream({ body: Buffer.from("probe") });
+    const chunks = [];
+    for await (const batch of stream) chunks.push(...batch);
+    await probe.close();
+
+    console.log(
+      JSON.stringify({
+        code: err?.code,
+        message: err?.message,
+        echoed: [...Buffer.concat(chunks)],
+        streamsReceived,
+      }),
+    );
+    process.exit(0);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
+      code: "ERR_QUIC_TRANSPORT_ERROR",
+      message:
+        "QUIC transport error 0: Peer certificate validation failed: unable to get local issuer certificate [UNABLE_TO_GET_ISSUER_CERT_LOCALLY]",
+      echoed: [1],
+      streamsReceived: 1,
+    }),
+    stderr: expect.stringContaining(
+      "ExperimentalWarning: quic is an experimental feature and might change at any time",
+    ),
+    exitCode: 0,
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/32234
+test("a client verifies an Ed25519 server certificate", async () => {
+  const fixtures = join(import.meta.dir, "..", "tls", "fixtures");
+  const cert = readFileSync(join(fixtures, "ed25519-cert.pem"));
+  const key = createPrivateKey(readFileSync(join(fixtures, "ed25519-key.pem")));
+  await using server = await listen(ignoreErrors, {
+    sni: { "*": { keys: [key], certs: [cert] } },
+    alpn: ["quic-test"],
+  });
+  const session = await connect(server.address!, { alpn: "quic-test", servername: "localhost", ca: [cert] });
+  try {
+    expect(await session.opened).toMatchObject({ validationErrorCode: undefined, validationErrorReason: undefined });
+  } finally {
+    await session.close();
+  }
+});
+
+test("connect() refuses a servername with a NUL byte", async () => {
+  await using server = await listen(ignoreErrors, { sni: { "*": identity1 }, alpn: ["quic-test"] });
+  expect(
+    (async () =>
+      connect(server.address!, {
+        alpn: "quic-test",
+        servername: "agent2.example\0evil",
+        verifyPeer: "manual",
+      } as SessionOptions))(),
+  ).rejects.toThrow("servername must not contain null bytes");
 });

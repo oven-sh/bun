@@ -2,6 +2,7 @@
 
 use crate::mysql::Capabilities;
 use crate::mysql::StatusFlags;
+use crate::mysql::capabilities::MariaDBCapabilities;
 use crate::mysql::protocol::CharacterSet;
 use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::new_reader::{NewReader, ReaderContext};
@@ -14,6 +15,7 @@ pub struct HandshakeV10 {
     pub auth_plugin_data_part_1: [u8; 8],
     pub auth_plugin_data_part_2: Box<[u8]>,
     pub capability_flags: Capabilities,
+    pub mariadb_capability_flags: MariaDBCapabilities,
     pub(crate) character_set: CharacterSet,
     pub status_flags: StatusFlags,
     pub auth_plugin_name: Data,
@@ -28,6 +30,7 @@ impl Default for HandshakeV10 {
             auth_plugin_data_part_1: [0u8; 8],
             auth_plugin_data_part_2: Box::default(),
             capability_flags: Capabilities::default(),
+            mariadb_capability_flags: MariaDBCapabilities::default(),
             character_set: CharacterSet::default(),
             status_flags: StatusFlags::default(),
             auth_plugin_name: Data::empty(),
@@ -78,8 +81,17 @@ impl HandshakeV10 {
         // Length of auth plugin data
         let auth_plugin_data_len = reader.int::<u8>()?.max(21);
 
-        // Skip reserved bytes
-        reader.skip(10);
+        // Reserved bytes: 6 filler, then 4 a MariaDB 10.2+ server uses for
+        // its extended capability flags. MariaDB marks itself by leaving
+        // CLIENT_LONG_PASSWORD (its CLIENT_MYSQL) unset; MySQL zero-fills all 10.
+        // https://mariadb.com/kb/en/connection/#initial-handshake-packet
+        reader.skip(6);
+        let mariadb_flags = reader.int::<u32>()?;
+        self.mariadb_capability_flags = if self.capability_flags.CLIENT_LONG_PASSWORD {
+            MariaDBCapabilities::default()
+        } else {
+            MariaDBCapabilities::from_int(mariadb_flags)
+        };
 
         // Auth plugin data part 2
         let remaining_auth_len = auth_plugin_data_len - 8;

@@ -10,12 +10,12 @@ pub enum Error {
     InvalidResponse,
     #[error("ExtractionFailed")]
     ExtractionFailed,
-    #[error("UnsupportedTarget")]
-    UnsupportedTarget,
     #[error("InvalidSourceMap")]
     InvalidSourceMap,
     #[error("SourceMapTooLarge")]
     SourceMapTooLarge,
+    #[error("embedded module graph would exceed 4 GiB (its offsets are 32-bit)")]
+    ModuleGraphTooLarge,
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
@@ -45,9 +45,11 @@ impl Error {
             Self::NetworkError => "NetworkError",
             Self::InvalidResponse => "InvalidResponse",
             Self::ExtractionFailed => "ExtractionFailed",
-            Self::UnsupportedTarget => "UnsupportedTarget",
             Self::InvalidSourceMap => "InvalidSourceMap",
             Self::SourceMapTooLarge => "SourceMapTooLarge",
+            Self::ModuleGraphTooLarge => {
+                "embedded module graph would exceed 4 GiB (its offsets are 32-bit)"
+            }
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Http(e) => e.name(),

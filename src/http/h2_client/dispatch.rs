@@ -5,7 +5,7 @@
 
 use super::client_session::{ClientSession, stream_mut};
 use super::stream::{State as StreamState, Stream};
-use super::{LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
+use super::{LOCAL_MAX_CONTINUATIONS, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
 use crate::h2_frame_parser as wire;
 use bun_picohttp as picohttp;
 
@@ -279,6 +279,8 @@ fn dispatch_frame(
                     0,
                     &payload[0..8],
                 );
+            } else {
+                session.awaiting_ping_ack = false;
             }
         }
         FT_PRIORITY => {
@@ -293,6 +295,7 @@ fn dispatch_frame(
             }
         }
         FT_HEADERS => {
+            session.continuation_count = 0;
             let mut fragment = payload;
             let maybe_stream = session.streams.get(&stream_id).copied();
             if maybe_stream.is_none() {
@@ -331,6 +334,7 @@ fn dispatch_frame(
                     session.fatal_error = Some(crate::Error::HTTP2HeaderListTooLarge);
                     return;
                 }
+                reset_stream_frame_received(session);
                 session.orphan_header_block.clear();
                 session.orphan_header_block.extend_from_slice(fragment);
                 if flags & wire::HeadersFrameFlags::END_HEADERS as u8 != 0 {
@@ -343,6 +347,7 @@ fn dispatch_frame(
             // SAFETY: stream pointer from map is valid for session lifetime.
             let stream = stream_mut(maybe_stream.unwrap());
             session.stream_progressed = true;
+            session.liveness_ping_spent = false;
             if flags & wire::HeadersFrameFlags::PADDED as u8 != 0 {
                 fragment = match strip_padding(fragment) {
                     Some(f) => f,
@@ -378,6 +383,11 @@ fn dispatch_frame(
         FT_CONTINUATION => {
             if session.expecting_continuation == 0 || stream_id != session.expecting_continuation {
                 session.fatal_error = Some(crate::Error::HTTP2ProtocolError);
+                return;
+            }
+            session.continuation_count += 1;
+            if session.continuation_count > LOCAL_MAX_CONTINUATIONS {
+                session.fatal_error = Some(crate::Error::HTTP2EnhanceYourCalm);
                 return;
             }
             if let Some(&stream_ptr) = session.streams.get(&session.expecting_continuation) {
@@ -420,12 +430,14 @@ fn dispatch_frame(
                     if stream_id == 0 || stream_id & 1 == 0 || stream_id >= session.next_stream_id {
                         session.fatal_error = Some(crate::Error::HTTP2ProtocolError);
                     }
+                    reset_stream_frame_received(session);
                     return;
                 }
             };
             // SAFETY: stream pointer valid for session lifetime.
             let stream = stream_mut(stream_ptr);
             session.stream_progressed = true;
+            session.liveness_ping_spent = false;
             // §8.1.1: DATA before the *final* response HEADERS is malformed —
             // a 1xx alone (status_code still 0) doesn't satisfy this.
             if stream.status_code == 0 {
@@ -480,6 +492,10 @@ fn dispatch_frame(
             };
             // SAFETY: stream pointer valid for session lifetime.
             let stream = stream_mut(stream_ptr);
+            if stream.rst_done {
+                // First RST_STREAM wins; a later STREAM_CLOSED for in-flight DATA is ignored.
+                return;
+            }
             let had_response = stream.remote_closed();
             stream.rst_done = true;
             stream.state = StreamState::Closed;
@@ -569,6 +585,8 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
     let mut status: u32 = 0;
     let mut bounds: Vec<[u32; 3]> = Vec::new();
     let start_len = stream.decoded_bytes.len();
+    // The size cap counts a value before the trim, so whitespace is not free.
+    let mut untrimmed_len = start_len;
     let mut seen_regular = false;
     let mut seen_status = false;
     // Stream-level malformations seen mid-decode. The loop MUST consume the
@@ -624,9 +642,8 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
         }
         // Cap decoded size independently of the wire size: HPACK indexed
         // refs can amplify a small block into huge name/value pairs.
-        if stream.decoded_bytes.len() + result.name.len() + result.value.len()
-            > LOCAL_MAX_HEADER_LIST_SIZE as usize
-        {
+        untrimmed_len += result.name.len() + result.value.len();
+        if untrimmed_len > LOCAL_MAX_HEADER_LIST_SIZE as usize {
             session.fatal_error = Some(crate::Error::HTTP2HeaderListTooLarge);
             stream.header_block.clear();
             return;
@@ -634,7 +651,9 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
         let name_start: u32 = u32::try_from(stream.decoded_bytes.len()).expect("int cast");
         stream.decoded_bytes.extend_from_slice(result.name);
         let value_start: u32 = u32::try_from(stream.decoded_bytes.len()).expect("int cast");
-        stream.decoded_bytes.extend_from_slice(result.value);
+        stream
+            .decoded_bytes
+            .extend_from_slice(trim_response_value(result.value));
         bounds.push([
             name_start,
             value_start,
@@ -720,6 +739,13 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
     }
 }
 
+/// HEADERS or DATA the peer sent before it saw the RST_STREAM of their stream. They are in
+/// front of the ACK of a liveness PING, and a server's PING limit counts them as a response.
+fn reset_stream_frame_received(session: &mut ClientSession) {
+    session.stream_progressed |= session.awaiting_ping_ack;
+    session.liveness_ping_spent = false;
+}
+
 fn strip_padding(payload: &[u8]) -> Option<&[u8]> {
     if payload.is_empty() {
         return None;
@@ -776,7 +802,12 @@ pub(crate) fn is_malformed_response_field(name: &[u8]) -> bool {
 /// verbatim, breaking the no-CR/LF invariant the HTTP/1.1 parser provides and
 /// enabling header injection when values are forwarded downstream.
 pub(crate) fn is_malformed_response_value(value: &[u8]) -> bool {
-    value.iter().any(|&c| c == 0 || c == b'\r' || c == b'\n')
+    bun_core::strings::contains_any(value, b"\0\r\n")
+}
+
+/// RFC 9110 §5.5: a parser strips leading and trailing SP / HTAB. HPACK and QPACK do not.
+pub(crate) fn trim_response_value(value: &[u8]) -> &[u8] {
+    bun_core::strings::trim(value, b" \t")
 }
 
 pub(crate) fn error_code_for(err: crate::Error) -> wire::ErrorCode {

@@ -350,4 +350,76 @@ describe("Bun.serve HTML manifest", () => {
         Has ETag: true"
     `);
   });
+
+  // With --splitting, a module that is only dynamically imported becomes its
+  // own chunk. The assets that only it imports still have to end up in the
+  // manifest, otherwise the page's lazy code requests files the server never
+  // registered routes for.
+  it("serves assets that only a lazily imported chunk references", async () => {
+    await using dir = tempDir("serve-html-lazy-asset", {
+      "server.ts": `
+        import { readdirSync } from "node:fs";
+        import index from "./index.html";
+
+        using server = Bun.serve({
+          port: 0,
+          routes: {
+            "/": index,
+          },
+          fetch() {
+            return new Response("not found", { status: 404 });
+          },
+        });
+
+        // The page's own script, the lazy chunk, and the asset only the lazy chunk imports.
+        for (const file of readdirSync(import.meta.dir).sort()) {
+          if (!/^(index|lazy|logo)-/.test(file)) continue;
+          const { status } = await fetch(new URL(file, server.url));
+          console.log(file.replace(/-[a-z0-9]+\\./, "-[hash]."), status);
+        }
+      `,
+      "index.html": `<!DOCTYPE html><html><head><script type="module" src="./app.js"></script></head><body></body></html>`,
+      "app.js": `import("./lazy.js").then(m => console.log(m.default));`,
+      "lazy.js": `
+        import logo from "./logo.svg";
+        export default logo;
+      `,
+      "logo.svg": `<svg xmlns="http://www.w3.org/2000/svg"></svg>`,
+    });
+
+    await using buildProc = Bun.spawn({
+      cmd: [bunExe(), "build", "server.ts", "--outdir", "dist", "--target", "bun", "--splitting"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [, buildStderr, buildExitCode] = await Promise.all([
+      buildProc.stdout.text(),
+      buildProc.stderr.text(),
+      buildProc.exited,
+    ]);
+    expect(buildStderr).toBe("");
+    expect(buildExitCode).toBe(0);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "server.js"],
+      cwd: join(dir, "dist"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toMatchInlineSnapshot(`
+      "index-[hash].js 200
+      lazy-[hash].js 200
+      logo-[hash].svg 200
+      "
+    `);
+    expect(exitCode).toBe(0);
+  });
 });

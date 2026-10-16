@@ -400,9 +400,11 @@ impl InitCommand {
 
         let mut fields = PackageJSONFields::default();
 
-        let mut package_json_file: Option<bun_sys::File> =
-            bun_sys::File::openat(destination_dir, b"package.json", bun_sys::O::RDWR, 0).ok();
-        let package_json_existed = package_json_file.is_some();
+        let package_json_open =
+            bun_sys::File::openat(destination_dir, b"package.json", bun_sys::O::RDWR, 0);
+        let package_json_missing =
+            matches!(&package_json_open, Err(err) if err.get_errno() == bun_sys::E::ENOENT);
+        let mut package_json_file: Option<bun_sys::File> = package_json_open.ok();
         let mut package_json_contents: MutableString = MutableString::init_empty();
         bun_ast::initialize_store();
         // Arena for JSON parse / Expr building.
@@ -842,20 +844,19 @@ impl InitCommand {
                         i64::try_from(written.len()).expect("int cast"),
                     )
                 }),
-                // Exists but could not be read or is not a JSON object: start it over in place.
-                None if package_json_existed => bun_sys::File::openat(
-                    Fd::cwd(),
-                    b"package.json",
-                    bun_sys::O::WRONLY | bun_sys::O::TRUNC,
-                    0,
-                )
-                .and_then(|file| file.write_all(written))
-                .map_err(|err| err.with_path(b"package.json")),
-                None => Assets::write_new_file(
+                None if package_json_missing => match Assets::write_new_file(
                     b"package.json",
                     bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::EXCL,
                     written,
-                ),
+                ) {
+                    // A symlink to a file that does not exist yet: write through it.
+                    Err(err) if err.get_errno() == bun_sys::E::EEXIST => {
+                        Assets::overwrite(b"package.json", written)
+                    }
+                    result => result,
+                },
+                // Exists but could not be opened, read, or parsed as an object: start it over in place.
+                None => Assets::overwrite(b"package.json", written),
             };
             if let Err(err) = write_result {
                 Assets::failed(err, b"package.json");
@@ -982,7 +983,7 @@ impl Assets {
     fn create_new(filename: &[u8], contents: &[u8]) -> bun_sys::Result<()> {
         if let Some(dir) = bun_core::dirname(filename) {
             if !dir.is_empty() && dir != b"." {
-                let _ = bun_sys::Dir::cwd().make_path(dir);
+                bun_sys::Dir::cwd().make_path(dir)?;
             }
         }
         Self::write_new_file(
@@ -1030,6 +1031,14 @@ impl Assets {
             let _ = bun_sys::unlinkat(Fd::cwd(), ZStr::from_slice_with_nul(&filename_z));
         }
         result.map_err(|err| err.with_path(filename))
+    }
+
+    /// Replace a file's contents in place. A failure leaves the file where it is.
+    fn overwrite(filename: &[u8], contents: &[u8]) -> bun_sys::Result<()> {
+        let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+        bun_sys::File::openat(Fd::cwd(), filename, flags, 0o666)
+            .and_then(|file| file.write_all(contents))
+            .map_err(|err| err.with_path(filename))
     }
 
     /// Whether the file was created; an existing one is left alone, any other failure exits.
@@ -1440,8 +1449,9 @@ impl Template {
     }
 
     fn create_agent_rule() {
+        /// The rule is an extra for a detected editor: one that cannot be written is skipped.
         fn create_rule(path: &[u8], contents: &[u8]) -> bool {
-            Assets::check(Assets::create_new(path, contents), path)
+            Assets::create_new(path, contents).is_ok()
         }
 
         let mut create_claude_md = Self::is_claude_code_installed()
@@ -1458,7 +1468,7 @@ impl Template {
             };
             let created = create_rule(asset_path, template_file.contents);
             if !created && create_claude_md {
-                // CLAUDE.md appeared in the meantime: install the plain cursor rule instead.
+                // If installing the CLAUDE.md fails for some reason, fall back to installing the cursor rule.
                 create_claude_md = false;
                 create_rule(template_file.path, template_file.contents);
             }

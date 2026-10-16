@@ -97,8 +97,8 @@ else {
 - The rows with `cork()` are there for two of those clauses. A corked write reports when the stream is uncorked. In the state where the pipe is already broken, its write has failed by then.
 - `test/js/node/{process,child_process,readline,stream}`, `tty.test.ts` and `test/regression/issue/25432.test.ts` (42 files, 852 tests, debug build): 14 fail. 10 of them fail with main's stream code in the same run. The other 4 are 5 s timeouts of tests that need 3 to 5 s in this container and that also time out on main.
 - Vendored Node tests: 238 files (`child-process`, `stdio`, `stdout`, `stderr`, `stdin`, `tty`, `readline`, `console`, `fs-write-stream`, `process-exit`, `stream-writable`, `stream-pipeline`, `stream-finished`, unhandled rejections), release builds: 234 pass on main and with this PR, same exit code per file.
-- macOS and Windows: the three files pass there, as they were before the rows with `cork()` and the state of a pipe that is already broken. Those rows have run on Linux only.
-- The `process.stdout` and `process.stderr` rows use a FIFO and do not run on Windows. On Windows the sink of `process.stdout` writes synchronously, and one `uv_write` takes a whole chunk for `child.stdin`, so the tests that need a held write or a write that fails after it was accepted are skipped there.
+- macOS and Windows: the tests that run there pass.
+- The `process.stdout` and `process.stderr` rows use a FIFO and do not run on Windows. On Windows the sink of `process.stdout` writes synchronously, and one `uv_write` takes a whole chunk for `child.stdin`, so the tests that need a held write or a write that fails after it was accepted are skipped there. The `child.stdin` rows on a pipe that the child closed before the calls do not finish on Windows, and are skipped there too. `child_process.test.ts` already skips its test of that case on Windows.
 
 #### What changes for callers
 
@@ -132,4 +132,3 @@ else {
 - #44954 conflicts textually in `streams.ts`, where both add functions at one place. #45195 and #45318 conflict in test files only. #36316 makes `child.stdin` a `net.Socket`, which takes it off this path. #44980 and #42031 do not conflict.
 
 </details>
-

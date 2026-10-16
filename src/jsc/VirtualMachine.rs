@@ -6974,7 +6974,7 @@ impl VirtualMachine {
             splat_space(writer, pad)?;
 
             let trimmed = source.trimmed_text();
-            let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
+            let clamped = bun_core::strings::truncate_to_char_boundary(trimmed, MAX_LINE_LENGTH);
 
             let hl = bun_core::fmt::fmt_javascript(
                 clamped,
@@ -7068,7 +7068,8 @@ impl VirtualMachine {
 
                 if top_frame.is_none() || top_frame.unwrap().position.is_invalid() {
                     did_print_name = true;
-                    let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
+                    let clamped =
+                        bun_core::strings::truncate_to_char_boundary(trimmed, MAX_LINE_LENGTH);
                     let hl = bun_core::fmt::fmt_javascript(
                         clamped,
                         bun_core::fmt::HighlighterOptions {
@@ -7105,7 +7106,8 @@ impl VirtualMachine {
                     let pad = max_line_number_pad.saturating_sub(int_size);
                     splat_space(writer, pad)?;
 
-                    let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
+                    let clamped =
+                        bun_core::strings::truncate_to_char_boundary(trimmed, MAX_LINE_LENGTH);
                     let hl = bun_core::fmt::fmt_javascript(
                         clamped,
                         bun_core::fmt::HighlighterOptions {

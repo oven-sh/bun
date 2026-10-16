@@ -434,29 +434,28 @@ pub struct CodeResult {
     pub(crate) shifts: Vec<source_map::SourceMapShifts>,
 }
 
+const SOURCE_MAPPING_URL: &[u8] = b"//# sourceMappingURL=";
+
 /// Appends `//# sourceMappingURL=<prefix><rel_path>\n`, percent-encoded so that no byte of either part ends the comment.
 pub(crate) fn append_source_mapping_url_comment(out: &mut Vec<u8>, prefix: &[u8], rel_path: &[u8]) {
-    const START: &[u8] = b"//# sourceMappingURL=";
-    out.reserve(START.len() + prefix.len() + rel_path.len() + b"\n".len());
-    out.extend_from_slice(START);
+    out.reserve(SOURCE_MAPPING_URL.len() + prefix.len() + rel_path.len() + b"\n".len());
+    out.extend_from_slice(SOURCE_MAPPING_URL);
     // `prefix` is publicPath, a URL already: printable ASCII stays, so `?`, `#`, `[::1]` and `%XX` keep their meaning.
     percent_encode(out, prefix, |byte| byte.is_ascii_graphic());
     percent_encode(out, rel_path, is_url_path_byte);
     out.push(b'\n');
 }
 
-/// Returns `code` followed by the comment, in an allocation of the exact size.
+/// Returns `code` followed by the comment. One allocation of the exact size, unless a byte of the URL is encoded.
 pub(crate) fn with_source_mapping_url_comment(
     code: &[u8],
     prefix: &[u8],
     rel_path: &[u8],
 ) -> Box<[u8]> {
-    let mut comment: Vec<u8> = Vec::new();
-    append_source_mapping_url_comment(&mut comment, prefix, rel_path);
-
-    let mut buf: Vec<u8> = Vec::with_capacity(code.len() + comment.len());
+    let comment_len = SOURCE_MAPPING_URL.len() + prefix.len() + rel_path.len() + b"\n".len();
+    let mut buf: Vec<u8> = Vec::with_capacity(code.len() + comment_len);
     buf.extend_from_slice(code);
-    buf.extend_from_slice(&comment);
+    append_source_mapping_url_comment(&mut buf, prefix, rel_path);
     buf.into_boxed_slice()
 }
 

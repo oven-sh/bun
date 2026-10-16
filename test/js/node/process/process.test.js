@@ -6,6 +6,7 @@ import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
+import { Worker } from "worker_threads";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
 
@@ -2552,18 +2553,6 @@ describe.concurrent("'beforeExit' and 'exit' go through process.emit", () => {
     process.on("beforeExit", code => console.log("listener beforeExit", code));
     process.on("exit", code => console.log("listener exit", code));`;
 
-  const worker = body => `
-    const { Worker } = require("worker_threads");
-    new Worker(${JSON.stringify(body)}, { eval: true }).on("exit", code => console.log("worker exited", code));`;
-
-  const workerLogEmit = `
-    const { writeSync } = require("fs");
-    const builtInEmit = process.emit;
-    process.emit = function (event, ...args) {
-      if (event === "beforeExit" || event === "exit") writeSync(1, "worker emit " + event + " " + args[0] + "\\n");
-      return builtInEmit.call(this, event, ...args);
-    };`;
-
   const cases = [
     {
       name: "a replaced emit, with no listener",
@@ -2809,6 +2798,7 @@ describe.concurrent("'beforeExit' and 'exit' go through process.emit", () => {
     },
     {
       // Node exits with 3 here and in the next case: a throw at 'exit' does not replace the exit code there.
+      // Bun exits with 1, as it does for a throw from an 'exit' listener on main (#42032 changes both).
       name: "a throw from emit in process.exit() that nothing catches: the 'exit' listeners run once",
       script: `
         const builtInEmit = process.emit;
@@ -2821,7 +2811,7 @@ describe.concurrent("'beforeExit' and 'exit' go through process.emit", () => {
         process.exit(3);`,
       stdout: ["listener exit 3"],
       stderr: "boom",
-      exitCode: expect.any(Number),
+      exitCode: 1,
     },
     {
       name: "process.exit() in a 'beforeExit' listener and a throw from an 'exit' listener: the listeners run once",
@@ -2833,7 +2823,7 @@ describe.concurrent("'beforeExit' and 'exit' go through process.emit", () => {
         });`,
       stdout: ["listener exit 3"],
       stderr: "boom",
-      exitCode: expect.any(Number),
+      exitCode: 1,
     },
     {
       name: "emit = 5: a natural exit emits nothing and keeps the exit code",
@@ -2854,42 +2844,62 @@ describe.concurrent("'beforeExit' and 'exit' go through process.emit", () => {
       stdout: ["caught TypeError: process.emit is not a function"],
       exitCode: 3,
     },
-    {
-      name: "in a worker that ends",
-      serial: true,
-      script: worker(workerLogEmit),
-      stdout: ["worker emit beforeExit 0", "worker emit exit 0", "worker exited 0"],
-    },
-    {
-      name: "in a worker that calls process.exit()",
-      serial: true,
-      script: worker(workerLogEmit + `process.exit(3);`),
-      stdout: ["worker emit exit 3", "worker exited 3"],
-    },
   ];
 
-  for (const { name, script, stdout, stderr = "", exitCode = 0, posix = false, serial = false } of cases) {
-    // A worker needs about 3 s to start in a debug build, too close to the 5 s default. Those cases run
-    // one at a time and get 30 s.
-    (serial ? it.serial : it.skipIf(posix && isWindows))(
-      name,
-      async () => {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "-e", script],
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stdout: out.split(/\r?\n/).filter(Boolean), stderr: err, exitCode: code }).toEqual({
-          stdout,
-          stderr: stderr ? expect.stringContaining(stderr) : "",
-          exitCode,
-        });
-      },
-      serial ? 30_000 : undefined,
-    );
+  for (const { name, script, stdout, stderr = "", exitCode = 0, posix = false } of cases) {
+    it.skipIf(posix && isWindows)(name, async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: out.split(/\r?\n/).filter(Boolean), stderr: err, exitCode: code }).toEqual({
+        stdout,
+        stderr: stderr ? expect.stringContaining(stderr) : "",
+        exitCode,
+      });
+    });
   }
+
+  // The worker runs in this process. Its replaced emit records each event in shared memory, which the
+  // test reads once the worker has exited.
+  const workerEvents = ["", "beforeExit", "exit"];
+  async function runWorker(body) {
+    const shared = new SharedArrayBuffer(64);
+    const { promise, resolve } = Promise.withResolvers();
+    new Worker(
+      `
+      const { workerData } = require("worker_threads");
+      const log = new Int32Array(workerData);
+      const builtInEmit = process.emit;
+      process.emit = function (event, ...args) {
+        const id = ${JSON.stringify(workerEvents)}.indexOf(event);
+        if (id > 0) {
+          const n = Atomics.add(log, 0, 1);
+          Atomics.store(log, 1 + 2 * n, id);
+          Atomics.store(log, 2 + 2 * n, args[0]);
+        }
+        return builtInEmit.call(this, event, ...args);
+      };
+      ${body}`,
+      { eval: true, workerData: shared },
+    ).on("exit", resolve);
+    const exitCode = await promise;
+    const log = new Int32Array(shared);
+    const events = [];
+    for (let n = 0; n < log[0]; n++) events.push(`${workerEvents[log[1 + 2 * n]]} ${log[2 + 2 * n]}`);
+    return { events, exitCode };
+  }
+
+  it("in a worker that ends", async () => {
+    expect(await runWorker("")).toEqual({ events: ["beforeExit 0", "exit 0"], exitCode: 0 });
+  });
+
+  it("in a worker that calls process.exit()", async () => {
+    expect(await runWorker("process.exit(3);")).toEqual({ events: ["exit 3"], exitCode: 3 });
+  });
 });
 
 it("process._exiting", () => {

@@ -14,10 +14,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 
 const seg = (ch, n = 220) => Buffer.alloc(n, ch).toString();
 

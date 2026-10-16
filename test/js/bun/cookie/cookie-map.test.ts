@@ -455,6 +455,67 @@ describe("delete with prefixed cookie names", () => {
   });
 });
 
+describe("subclassing", () => {
+  class SessionCookie extends Bun.Cookie {
+    pair() {
+      return `${this.name}=${this.value}`;
+    }
+  }
+  class Jar extends Bun.CookieMap {
+    names() {
+      return [...this.keys()];
+    }
+  }
+
+  test.each([
+    ["(name, value)", ["id", "1"]],
+    ["(name, value, options)", ["id", "1", { path: "/app" }]],
+    ["(cookieString)", ["id=1; Path=/app"]],
+    ["(options)", [{ name: "id", value: "1", path: "/app" }]],
+  ])("new (class extends Bun.Cookie)%s returns an instance of the subclass", (_overload, args) => {
+    const cookie = new SessionCookie(...(args as any));
+    expect(Object.getPrototypeOf(cookie)).toBe(SessionCookie.prototype);
+    expect(cookie).toBeInstanceOf(Bun.Cookie);
+    expect(cookie.pair()).toBe("id=1");
+    expect(cookie.serialize()).toStartWith("id=1; Path=/");
+  });
+
+  test.each([
+    ["(string)", "a=1; b=2"],
+    ["(object)", { a: "1", b: "2" }],
+    [
+      "(pairs)",
+      [
+        ["a", "1"],
+        ["b", "2"],
+      ],
+    ],
+  ])("new (class extends Bun.CookieMap)%s returns an instance of the subclass", (_overload, init) => {
+    const jar = new Jar(init as any);
+    expect(Object.getPrototypeOf(jar)).toBe(Jar.prototype);
+    expect(jar).toBeInstanceOf(Bun.CookieMap);
+    expect(jar.names()).toEqual(["a", "b"]);
+    jar.set("c", "3");
+    expect(jar.toJSON()).toEqual({ a: "1", b: "2", c: "3" });
+  });
+
+  test("Reflect.construct takes the prototype from newTarget", () => {
+    function NewTarget() {}
+    const cookie = Reflect.construct(Bun.Cookie, ["id", "1"], NewTarget);
+    expect(Object.getPrototypeOf(cookie)).toBe(NewTarget.prototype);
+    expect(Bun.Cookie.prototype.serialize.call(cookie)).toStartWith("id=1;");
+
+    const map = Reflect.construct(Bun.CookieMap, ["a=1"], NewTarget);
+    expect(Object.getPrototypeOf(map)).toBe(NewTarget.prototype);
+    expect(Bun.CookieMap.prototype.get.call(map, "a")).toBe("1");
+  });
+
+  test("the base constructors still return the base prototype", () => {
+    expect(Object.getPrototypeOf(new Bun.Cookie("id", "1"))).toBe(Bun.Cookie.prototype);
+    expect(Object.getPrototypeOf(new Bun.CookieMap("a=1"))).toBe(Bun.CookieMap.prototype);
+  });
+});
+
 describe("invalid delete usage", () => {
   test("invalid usage does not crash", () => {
     expect(() => {

@@ -8,7 +8,7 @@
 // tarball ships it at its top level, so after `bun bd` it can be found in the
 // build cache for the WEBKIT_VERSION pinned in scripts/build/deps/webkit.ts;
 // that is what is used when no path is given. A local WebKit build writes it
-// to <build>/JavaScriptCore/DerivedSources/CombinedDomains.json.
+// to <build>/JavaScriptCore/Scripts/CombinedDomains.json.
 //
 // Pass --v8 to also refresh src/protocol/v8 from the Chrome DevTools protocol
 // repository (requires network access).
@@ -182,10 +182,13 @@ function findPinnedCombinedDomains(): string | undefined {
   // Mirrors prebuiltDestDir() in scripts/build/deps/webkit.ts:
   // <cache>/webkit-<version>[-<os>][-<arch>][-debug|-lto][-asan]/
   const dirVersion = version.startsWith("autobuild-") ? version.slice("autobuild-".length) : version.slice(0, 16);
+  // The build cache, as sharedCacheDir() in scripts/build/config.ts resolves it.
   const bunInstall = process.env.BUN_INSTALL
     ? path.resolve(repoRoot, process.env.BUN_INSTALL)
     : path.join(homedir(), ".bun");
-  const cacheDir = path.join(bunInstall, "build-cache");
+  const cacheDir = process.env.BUN_BUILD_CACHE_DIR
+    ? path.resolve(repoRoot, process.env.BUN_BUILD_CACHE_DIR)
+    : path.join(bunInstall, "build-cache");
   if (!existsSync(cacheDir)) {
     return undefined;
   }

@@ -62,25 +62,35 @@ fn main() {
         .expect("write default_trusted_dependencies_list.rs");
 
     // ── Windows .bin/ shim PE ───────────────────────────────────────────────
-    // `BinLinkingShim.rs` does `include_bytes!("bun_shim_impl.exe")` on
-    // Windows. The real PE is produced by a separate `cargo build -p
-    // bun_shim_impl` step (scripts/build/rust.ts) *before* this crate compiles
-    // — but a bare `cargo check` run outside the build system has no such step,
-    // and the file is git-ignored. Create a 0-byte placeholder so compilation
-    // succeeds; `embedded_executable_data()` asserts non-empty at runtime so a
-    // placeholder can never silently ship.
+    // `BinLinkingShim.rs` does
+    // `include_bytes!(concat!(env!("BUN_CODEGEN_DIR"), "/bun-shim-impl.exe"))`
+    // on Windows. The build system builds the shim into the codegen directory
+    // *before* any edge of this package runs — but a bare `cargo check` run
+    // outside the build system has no such step. Create a 0-byte placeholder
+    // so compilation succeeds; `embedded_executable_data()` asserts non-empty
+    // at runtime so a placeholder can never silently ship.
     //
-    // `rerun-if-changed` is the load-bearing line: it makes cargo recompile
-    // this crate when the build system overwrites the placeholder with the
-    // real PE (rustc's dep-info would also catch it, but build.rs's own
-    // `rerun-if-changed` set replaces the default "rerun on any source change"
-    // heuristic, so we must list it explicitly).
+    // Same resolution as `bun_runtime`'s build script: the build system sets
+    // BUN_CODEGEN_DIR; bare cargo defaults to the debug profile's directory.
+    let repo = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("repo root from CARGO_MANIFEST_DIR");
+    let codegen_dir = env::var("BUN_CODEGEN_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| repo.join("build/debug/codegen"));
+    println!("cargo:rustc-env=BUN_CODEGEN_DIR={}", codegen_dir.display());
+    println!("cargo:rerun-if-env-changed=BUN_CODEGEN_DIR");
     if env::var("CARGO_CFG_WINDOWS").is_ok() {
-        let exe = manifest.join("windows-shim").join("bun_shim_impl.exe");
+        let exe = codegen_dir.join("bun-shim-impl.exe");
         if !exe.exists() {
+            fs::create_dir_all(&codegen_dir)
+                .unwrap_or_else(|e| panic!("failed to create {}: {e}", codegen_dir.display()));
             fs::write(&exe, [])
                 .unwrap_or_else(|e| panic!("failed to create {}: {e}", exe.display()));
         }
+        // build.rs's own `rerun-if-changed` set replaces the default "rerun
+        // on any source change" heuristic, so list the embed explicitly.
         println!("cargo:rerun-if-changed={}", exe.display());
     }
 }

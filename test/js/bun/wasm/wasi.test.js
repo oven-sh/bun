@@ -281,8 +281,10 @@ it("fd_renumber moves the source descriptor onto the target descriptor", () => {
   expect(wasi.wasiImport.fd_renumber(fdB, fdA)).toBe(WASI_ESUCCESS);
   expect({ fdA: read(fdA), fdB: read(fdB) }).toEqual({ fdA: "file b", fdB: WASI_EBADF });
 
-  // The same descriptor on both sides changes nothing.
+  // The same descriptor on both sides changes nothing. Node.js compares the two numbers before it looks
+  // at the table, so this also holds for a descriptor that is not open.
   expect(wasi.wasiImport.fd_renumber(fdA, fdA)).toBe(WASI_ESUCCESS);
+  expect(wasi.wasiImport.fd_renumber(fdB, fdB)).toBe(WASI_ESUCCESS);
   expect(read(fdA)).toBe("file b");
 
   // A descriptor that is not open, on each side: EBADF, and fdA stays.

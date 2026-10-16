@@ -1165,11 +1165,15 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       fd_renumber: wrap((from, to) => {
-        const fromEntry = CHECK_FD(from, BigInt(0));
-        const toEntry = CHECK_FD(to, BigInt(0));
+        // The checks are in the order of uvwasi_fd_table_renumber, which compares the numbers first:
+        // https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/fd_table.c#L419-L436
         if (from === to) {
           return WASI_ESUCCESS;
         }
+        const fromEntry = CHECK_FD(from, BigInt(0));
+        const toEntry = CHECK_FD(to, BigInt(0));
+        // uvwasi closes `to` first and keeps its entry when the close fails. A close that reports an error
+        // has closed the descriptor anyway, so the table changes first here.
         this.FD_MAP.set(to, fromEntry);
         this.FD_MAP.delete(from);
         fs.closeSync(toEntry.real);
@@ -1446,6 +1450,8 @@ class WASI {
               path: full,
             });
             const entry = stat(this, newfd);
+            // uvwasi masks the rights of a terminal the same way:
+            // https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L2131-L2143
             // wasi-libc's isatty() is "a character device with no FD_SEEK and no FD_TELL", and a seek that
             // succeeds gives fd_read a position, which a terminal refuses.
             if (entry.filetype === WASI_FILETYPE_CHARACTER_DEVICE && bindings.isTTY(realfd)) {

@@ -182,7 +182,6 @@ impl Expansion {
                     &mut me.current_out,
                     &mut me.meta_offsets,
                     &mut me.has_quoted_empty,
-                    true,
                     event_loop,
                     command_ctx,
                     vm_args_utf8,
@@ -472,7 +471,6 @@ impl Expansion {
         out: &mut Vec<u8>,
         meta_offsets: &mut Vec<u32>,
         has_quoted_empty: &mut bool,
-        expand_tilde: bool,
         event_loop: EventLoopHandle,
         command_ctx: *mut bun_options_types::context::ContextData,
         vm_args_utf8: &mut Vec<bun_core::Utf8Bytes<'static>>,
@@ -526,13 +524,9 @@ impl Expansion {
                 out.push(b',');
             }
             ast::SimpleAtom::Tilde => {
-                if expand_tilde {
-                    let home = shell.get_homedir();
-                    out.extend_from_slice(home.slice());
-                    home.deref();
-                } else {
-                    out.push(b'~');
-                }
+                let home = shell.get_homedir();
+                out.extend_from_slice(home.slice());
+                home.deref();
             }
             ast::SimpleAtom::CmdSubst(_) => return true,
         }

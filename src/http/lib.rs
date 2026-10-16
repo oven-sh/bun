@@ -3897,14 +3897,6 @@ impl<'a> HTTPClient<'a> {
         // Headers complete: start the body-idle window fresh (see [`IDLE_TIMEOUT_SECONDS`]).
         self.set_timeout(&socket);
 
-        if (self.state.content_encoding_i as usize) < response.headers.list.len()
-            && !self.state.flags.did_set_content_encoding
-        {
-            // if it compressed with this header, it is no longer because we will decompress it
-            self.state.flags.did_set_content_encoding = true;
-            self.state.content_encoding_i = u8::MAX;
-        }
-
         if should_continue == ShouldContinue::Finished {
             if !to_read.is_empty() {
                 self.state.flags.allow_keepalive = false;
@@ -5003,7 +4995,7 @@ impl<'a> HTTPClient<'a> {
         let mut is_server_sent_events = false;
         let mut content_codings: u32 = 0;
         let mut has_keep_alive_token = false;
-        for (header_i, header) in response.headers.list.iter().enumerate() {
+        for header in response.headers.list.iter() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
                     // byte-level parse — header.value() is network bytes, not &str
@@ -5044,13 +5036,11 @@ impl<'a> HTTPClient<'a> {
                                 Some(Encoding::Identity) => {}
                                 Some(coding) if coding.is_compressed() && content_codings == 0 => {
                                     self.state.encoding = coding;
-                                    self.state.content_encoding_i = header_i as u8;
                                     content_codings = 1;
                                 }
                                 // Stacked or unknown codings: we can only strip one layer, so pass through raw.
                                 _ => {
                                     self.state.encoding = Encoding::Identity;
-                                    self.state.content_encoding_i = u8::MAX;
                                     content_codings = u32::MAX;
                                 }
                             }

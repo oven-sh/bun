@@ -329,16 +329,8 @@ impl ByteStream {
         core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
     }
 
-    /// Init-time reset. Runs before the JS
+    /// Seeds the stream from the drain result. Runs before the JS
     /// wrapper exists, so `&mut self` is sound here (R-2 exemption).
-    pub(crate) fn setup(&mut self) {
-        // Called immediately after `ByteStream::default()` construction;
-        // the old value owns nothing the new one
-        // reuses, so dropping it is the intended reset.
-        drop(core::mem::take(self));
-    }
-
-    /// Seeds the stream from the drain result; init-time like [`Self::setup`].
     pub(crate) fn apply_drain_result(&mut self, drain_result: DrainResult) {
         match drain_result {
             DrainResult::EstimatedSize(estimated_size) => {
@@ -529,8 +521,7 @@ impl ByteStream {
 
             if self.sink_paused.get() {
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData sink paused → buffer");
-                self.append(stream, 0)
-                    .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
+                self.append(stream, 0);
                 return;
             }
 
@@ -701,8 +692,7 @@ impl ByteStream {
             }
 
             if has_remaining {
-                self.append(stream, to_copy_len)
-                    .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
+                self.append(stream, to_copy_len);
             } else {
                 // Only resume the producer when the whole chunk fit the pull
                 // view. When the tail spilled into `buffer` the next `on_pull`
@@ -726,12 +716,11 @@ impl ByteStream {
 
         bun_output::scoped_log!(ByteStream, "ByteStream.onData no action just append");
 
-        self.append(stream, 0)
-            .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
+        self.append(stream, 0);
     }
 
     /// Buffer `stream`, whose first `offset` bytes a pending pull already took.
-    fn append(&self, stream: streams::Result, offset: usize) -> Result<(), bun_alloc::AllocError> {
+    fn append(&self, stream: streams::Result, offset: usize) {
         if self.buffered.capacity() == 0 {
             match stream {
                 streams::Result::Owned(mut owned) | streams::Result::OwnedAndDone(mut owned) => {
@@ -751,7 +740,7 @@ impl ByteStream {
                 streams::Result::Done => {}
                 _ => unreachable!(),
             }
-            return Ok(());
+            return;
         }
 
         match stream {
@@ -776,8 +765,6 @@ impl ByteStream {
             // We don't support the rest of these yet
             _ => unreachable!(),
         }
-
-        Ok(())
     }
 
     fn set_value(&self, view: JSValue) {

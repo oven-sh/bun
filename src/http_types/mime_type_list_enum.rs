@@ -19,10 +19,3 @@ impl MimeTypeList {
         self.0.as_bytes()
     }
 }
-
-impl From<MimeTypeList> for &'static str {
-    #[inline]
-    fn from(v: MimeTypeList) -> Self {
-        v.0
-    }
-}

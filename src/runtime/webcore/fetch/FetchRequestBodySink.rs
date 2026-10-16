@@ -65,7 +65,6 @@ pub struct FetchRequestBodySink {
     /// Bytes written since last on_drain; >0 guarantees a drain ack is owed.
     pub pending_bytes: BlobSizeType,
     pub ended: bool,
-    pub done: bool,
 }
 
 impl Default for FetchRequestBodySink {
@@ -77,7 +76,6 @@ impl Default for FetchRequestBodySink {
             pending: WritablePending::default(),
             pending_bytes: 0,
             ended: false,
-            done: false,
         }
     }
 }
@@ -177,7 +175,7 @@ impl FetchRequestBodySink {
         if self.pending.state == PendingState::Pending {
             return bun_sys::Result::Ok(JSPromise::opaque_ref(self.pending.promise(cx)).to_js());
         }
-        if self.done || self.ended {
+        if self.ended {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
                 cx.global(),
                 JSValue::js_number(0.0),

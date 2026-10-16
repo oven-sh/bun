@@ -68,21 +68,13 @@ impl CurrentFile {
 
         bun_core::pretty_error!("<r>\n");
 
-        if repeat_count > 0 {
-            if repeat_count > 1 {
-                bun_core::pretty_errorln!(
-                    "{}{}: <d>(run #{})<r>\n",
-                    bstr::BStr::new(prefix),
-                    bstr::BStr::new(title),
-                    repeat_index + 1
-                );
-            } else {
-                bun_core::pretty_errorln!(
-                    "{}{}:\n",
-                    bstr::BStr::new(prefix),
-                    bstr::BStr::new(title)
-                );
-            }
+        if repeat_count > 1 {
+            bun_core::pretty_errorln!(
+                "{}{}: <d>(run #{})<r>\n",
+                bstr::BStr::new(prefix),
+                bstr::BStr::new(title),
+                repeat_index + 1
+            );
         } else {
             bun_core::pretty_errorln!(
                 "{}{}:\n",
@@ -620,7 +612,6 @@ pub(crate) mod on_unhandled_rejection {
             buntest.on_uncaught_exception(
                 global_object,
                 Some(rejection),
-                true,
                 &current_state_data,
             );
             buntest.add_result(current_state_data);
@@ -635,7 +626,6 @@ pub(crate) mod on_unhandled_rejection {
                     buntest.on_uncaught_exception(
                         global_object,
                         Some(global_object.take_exception(e)),
-                        false,
                         &phase,
                     );
                 }

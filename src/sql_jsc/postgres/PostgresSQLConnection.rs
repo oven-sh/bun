@@ -2056,9 +2056,9 @@ impl PostgresSQLConnection {
                 // Tells a cell the client cannot decode from a framing error of `decode` itself.
                 let mut cell_failed = false;
                 let decode_result = if request_flags.result_mode == SQLQueryResultMode::Raw {
-                    protocol::DataRow::decode((), &mut reader, |(), i, b| putter.put_raw(i, b))
+                    protocol::DataRow::decode(&mut reader, |i, b| putter.put_raw(i, b))
                 } else {
-                    protocol::DataRow::decode((), &mut reader, |(), i, b| {
+                    protocol::DataRow::decode(&mut reader, |i, b| {
                         putter.put(i, b).inspect_err(|_| cell_failed = true)
                     })
                 };
@@ -2311,7 +2311,6 @@ impl PostgresSQLConnection {
                                 bstr::BStr::new(sasl.nonce())
                             );
                             let written = 128 - cursor.len();
-                            mechanism_buf[written] = 0;
                             &mechanism_buf[..written]
                         };
                         let response = protocol::SASLInitialResponse {
@@ -2618,7 +2617,6 @@ impl PostgresSQLConnection {
                             let mut cur = &mut final_password_buf[..];
                             let _ = write!(cur, "md5{}", bstr::BStr::new(final_hash_str_output));
                             let n = 36 - cur.len();
-                            final_password_buf[n] = 0;
                             &final_password_buf[..n]
                         };
 

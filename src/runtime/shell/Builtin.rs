@@ -919,10 +919,7 @@ impl Builtin {
 
     /// Event loop handle (forwarded from the interpreter).
     #[inline]
-    pub(crate) fn event_loop(
-        interp: &Interpreter,
-        _cmd: NodeId,
-    ) -> crate::shell::interpreter::EventLoopHandle {
+    pub(crate) fn event_loop(interp: &Interpreter) -> crate::shell::interpreter::EventLoopHandle {
         interp.event_loop
     }
 

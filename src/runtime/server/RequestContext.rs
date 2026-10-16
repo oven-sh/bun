@@ -3869,14 +3869,8 @@ where
             blob.size()
         };
 
-        let (content_type, needs_content_type, content_type_needs_free) =
+        let (content_type, needs_content_type) =
             get_content_type(response.get_init_headers_mut(), blob);
-        // NOTE: `MimeType` owns a `Cow<'static, [u8]>`; Drop handles the owned case.
-        // Hold the value past all reads below, then let it drop at scope end.
-        let _ct_guard = scopeguard::guard(content_type_needs_free, |_needs| {
-            // Drop of `content_type` (moved into closure capture below would
-            // change borrow lifetimes); rely on natural end-of-scope drop.
-        });
         let mut has_content_disposition = false;
         let mut has_content_range = false;
         if let Some(mut headers_) = response.swap_init_headers() {
@@ -4873,9 +4867,8 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
     }
 }
 
-fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (MimeType, bool, bool) {
+fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (MimeType, bool) {
     let mut needs_content_type = true;
-    let mut content_type_needs_free = false;
 
     let content_type: MimeType = 'brk: {
         if let Some(headers_) = headers {
@@ -4885,11 +4878,7 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
                 let content_slice = content.to_utf8();
                 // Dupe only when the latin1/utf16 slice was heap-converted.
                 let dupe = content_slice.is_owned();
-                let mt = MimeType::init(
-                    content_slice.slice(),
-                    dupe,
-                    Some(&mut content_type_needs_free),
-                );
+                let mt = MimeType::init(content_slice.slice(), dupe, None);
                 drop(content_slice);
                 break 'brk mt;
             }
@@ -4908,7 +4897,7 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
         }
     };
 
-    (content_type, needs_content_type, content_type_needs_free)
+    (content_type, needs_content_type)
 }
 
 // `ServerLike` lives in `crate::server` (mod.rs) and is impl'd for the four

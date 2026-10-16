@@ -733,15 +733,11 @@ impl CopyFile {
             }
             // Do we need to open only one file?
         } else if self.destination_fd == Fd::INVALID {
-            self.source_fd = self.source_file_store.pathlike.fd();
-
             if self.do_open_file::<{ IOWhich::Destination }>().is_err() {
                 return;
             }
             // Do we need to open only one file?
         } else if self.source_fd == Fd::INVALID {
-            self.destination_fd = self.destination_file_store.pathlike.fd();
-
             if self.do_open_file::<{ IOWhich::Source }>().is_err() {
                 return;
             }
@@ -753,13 +749,6 @@ impl CopyFile {
 
         debug_assert!(self.destination_fd.is_valid());
         debug_assert!(self.source_fd.is_valid());
-
-        if matches!(
-            self.destination_file_store.pathlike,
-            PathOrFileDescriptor::Fd(_)
-        ) {
-            // nothing to do for the Fd case
-        }
 
         let stat: Stat = match stat_ {
             Some(s) => s,

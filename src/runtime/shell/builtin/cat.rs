@@ -22,7 +22,6 @@ pub(crate) enum CatState {
         in_done: bool,
         chunks_queued: usize,
         chunks_done: usize,
-        errno: ExitCode,
     },
     ExecFilepathArgs {
         /// Index into argv where filepath args start.
@@ -80,7 +79,6 @@ impl Cat {
                 in_done: false,
                 chunks_queued: 0,
                 chunks_done: 0,
-                errno: 0,
             }
         } else {
             CatState::ExecFilepathArgs {
@@ -207,7 +205,7 @@ impl Cat {
                     }
                 };
 
-                let evtloop = Builtin::event_loop(interp, cmd);
+                let evtloop = Builtin::event_loop(interp);
                 let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 let reader = IOReader::init(fd, evtloop);
                 reader.set_interp(interp_ptr);
@@ -252,12 +250,7 @@ impl Cat {
             // Pull the reader `Arc` out of
             // state before calling `remove_reader`, then drop it.
             match &mut Self::state_mut(interp, cmd).state {
-                CatState::ExecStdin {
-                    in_done,
-                    errno: st_errno,
-                    ..
-                } => {
-                    *st_errno = errno;
+                CatState::ExecStdin { in_done, .. } => {
                     let was_done = core::mem::replace(in_done, true);
                     if !was_done {
                         if let BuiltinInput::Fd(r) = &Builtin::of(interp, cmd).stdin {
@@ -351,9 +344,7 @@ impl Cat {
                 chunks_queued,
                 chunks_done,
                 in_done,
-                errno: st_errno,
             } => {
-                *st_errno = errno;
                 *in_done = true;
                 if errno != 0 {
                     if *chunks_done >= *chunks_queued || !stdout_needs_io {

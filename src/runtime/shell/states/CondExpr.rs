@@ -189,10 +189,8 @@ impl CondExpr {
         interp: &Interpreter,
         this: NodeId,
         stat: &bun_sys::Result<bun_sys::Stat>,
-        path: &[u8],
     ) {
         // Evaluate `op` against the stat result.
-        let _ = path;
         debug_assert!(matches!(
             interp.as_condexpr(this).state,
             CondExprState::WaitingStat

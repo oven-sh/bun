@@ -359,7 +359,7 @@ pub(crate) fn handle_template_value(
                                 .throw());
                         }
 
-                        if !builder.append_utf8::<true>(path)? {
+                        if !builder.append_utf8(path)? {
                             return Err(global.throw(format_args!(
                                 "Shell script string contains invalid UTF-16"
                             )));
@@ -595,23 +595,18 @@ impl<'a> ShellSrcBuilder<'a> {
         Ok(true)
     }
 
-    pub(crate) fn append_utf8<const ALLOW_ESCAPE: bool>(
-        &mut self,
-        utf8: &[u8],
-    ) -> crate::Result<bool> {
+    pub(crate) fn append_utf8(&mut self, utf8: &[u8]) -> crate::Result<bool> {
         let invalid = simdutf::validate::utf8(utf8);
         // Note: the name `invalid` is misleading — it holds the validity bool.
         if !invalid {
             return Ok(false);
         }
-        if ALLOW_ESCAPE {
-            if needs_escape_utf8_ascii_latin1(utf8)
-                || IfClauseTok::from_text(utf8).is_some()
-                || self.outbuf_ends_with_var_ref()
-            {
-                self.append_js_str_ref(BunString::clone_utf8(utf8))?;
-                return Ok(true);
-            }
+        if needs_escape_utf8_ascii_latin1(utf8)
+            || IfClauseTok::from_text(utf8).is_some()
+            || self.outbuf_ends_with_var_ref()
+        {
+            self.append_js_str_ref(BunString::clone_utf8(utf8))?;
+            return Ok(true);
         }
 
         self.append_utf8_impl(utf8)?;

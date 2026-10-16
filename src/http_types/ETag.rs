@@ -31,9 +31,7 @@ fn parse(tag_str: &[u8]) -> Parsed<'_> {
 }
 
 /// Perform weak comparison between two entity tags according to RFC 9110 Section 8.8.3.2
-fn weak_match(tag1: &[u8], is_weak1: bool, tag2: &[u8], is_weak2: bool) -> bool {
-    let _ = is_weak1;
-    let _ = is_weak2;
+fn weak_match(tag1: &[u8], tag2: &[u8]) -> bool {
     // For weak comparison, we only compare the opaque tag values, ignoring weak indicators
     tag1 == tag2
 }
@@ -163,12 +161,7 @@ pub fn if_none_match(
     // Parse comma-separated list of entity tags
     for tag_str in split_entity_tags(if_none_match) {
         let parsed = parse(tag_str);
-        if weak_match(
-            our_parsed.tag,
-            our_parsed.is_weak,
-            parsed.tag,
-            parsed.is_weak,
-        ) {
+        if weak_match(our_parsed.tag, parsed.tag) {
             return true; // Condition is false, so we should return 304
         }
     }

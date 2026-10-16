@@ -124,19 +124,15 @@ pub mod caching_sha2_password {
     #[derive(Default)]
     pub struct Response {
         pub status: FastAuthStatus,
-        pub(crate) data: Data,
     }
 
     impl Response {
-        // `Data`'s own Drop frees `self.data`, so no explicit Drop impl is
-        // needed here.
-
         pub fn decode(&mut self, reader: PacketReader<'_>) -> crate::Result<()> {
             let status: u8 = reader.int::<u8>()?;
             bun_core::scoped_log!(Auth, "FastAuthStatus: {}", status);
             self.status = FastAuthStatus::from_raw(status);
 
-            self.data = reader.read(reader.peek().len())?;
+            let _ = reader.read(reader.peek().len())?;
             Ok(())
         }
     }

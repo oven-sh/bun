@@ -110,7 +110,7 @@ impl Ls {
 
                 let cwd = Builtin::cwd(interp, cmd);
                 let opts = Self::state_mut(interp, cmd).opts;
-                let evtloop = Builtin::event_loop(interp, cmd);
+                let evtloop = Builtin::event_loop(interp);
                 let interp_ptr = interp.as_ctx_ptr();
                 if let Some(start) = paths_start {
                     let print_directory = task_count > 1;
@@ -352,12 +352,10 @@ pub(crate) struct ShellLsTask {
     pub cwd: bun_sys::Fd,
     pub path: ZBox,
     pub output: Vec<u8>,
-    pub is_absolute: bool,
     pub err: Option<bun_sys::Error>,
     /// Cached current time (seconds since epoch) for formatting timestamps.
     /// Cached once per task to avoid repeated syscalls.
     now_secs: u64,
-    pub event_loop: EventLoopHandle,
     /// Back-ref so recursive `enqueue` can populate the subtask's
     /// `task.interp` (needed by [`ShellTask::run_from_main_thread`]).
     pub interp: *mut Interpreter,
@@ -382,10 +380,8 @@ impl ShellLsTask {
             cwd,
             path,
             output: Vec::new(),
-            is_absolute: false,
             err: None,
             now_secs: 0,
-            event_loop,
             interp,
             task: ShellTask::new(event_loop),
         });
@@ -407,10 +403,8 @@ impl ShellLsTask {
             cwd: self.cwd,
             path: new_path,
             output: Vec::new(),
-            is_absolute: false,
             err: None,
             now_secs: 0,
-            event_loop: self.event_loop,
             interp: self.interp,
             task: ShellTask::new_child(&self.task),
         }));
@@ -429,25 +423,15 @@ impl ShellLsTask {
     }
 
     fn join(&self, child: &[u8]) -> ZBox {
-        if !self.is_absolute {
-            // If relative paths enabled, stdlib join is preferred over
-            // ResolvePath.joinBuf because it doesn't try to normalize the path.
-            // On Windows both '/' and '\' count as separators here, so
-            // `["foo/", "bar"]` → `foo/bar` (no extra sep).
-            let parent = self.path.as_bytes();
-            let mut v = Vec::with_capacity(parent.len() + 1 + child.len());
-            v.extend_from_slice(parent);
-            if parent.last().is_some_and(|&c| !bun_paths::is_sep_native(c)) {
-                v.push(bun_paths::SEP);
-            }
-            v.extend_from_slice(child);
-            return ZBox::from_vec(v);
+        // Joins without normalizing. On Windows '/' and '\' both count as separators here.
+        let parent = self.path.as_bytes();
+        let mut v = Vec::with_capacity(parent.len() + 1 + child.len());
+        v.extend_from_slice(parent);
+        if parent.last().is_some_and(|&c| !bun_paths::is_sep_native(c)) {
+            v.push(bun_paths::SEP);
         }
-        let out = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&[
-            self.path.as_bytes(),
-            child,
-        ]);
-        ZBox::from_bytes(out)
+        v.extend_from_slice(child);
+        ZBox::from_vec(v)
     }
 
     fn run_from_thread_pool(this: &mut ShellLsTask) {

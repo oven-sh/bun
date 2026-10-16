@@ -300,7 +300,7 @@ impl Rm {
                     };
                     if !started {
                         let cwd = Builtin::cwd(interp, cmd);
-                        let evtloop = Builtin::event_loop(interp, cmd);
+                        let evtloop = Builtin::event_loop(interp);
                         let opts = Self::state_mut(interp, cmd).opts;
                         let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                         let (args_start, argc) = {
@@ -640,7 +640,6 @@ pub(crate) struct DirTask {
     pub(crate) is_absolute: bool,
     pub(crate) subtask_count: AtomicUsize,
     pub(crate) need_to_wait: AtomicBool,
-    pub(crate) deleting_after_waiting_for_children: AtomicBool,
     pub(crate) kind_hint: EntryKindHint,
     pub(crate) deleted_entries: Vec<u8>,
     /// Intrusive node for the verbose-write bounce-back to the main thread.
@@ -681,7 +680,6 @@ impl ShellRmTask {
             is_absolute: false,
             subtask_count: AtomicUsize::new(1),
             need_to_wait: AtomicBool::new(false),
-            deleting_after_waiting_for_children: AtomicBool::new(false),
             kind_hint: EntryKindHint::Idk,
             deleted_entries: Vec::new(),
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(evtloop),
@@ -822,7 +820,6 @@ impl ShellRmTask {
             is_absolute: false,
             subtask_count: AtomicUsize::new(1),
             need_to_wait: AtomicBool::new(false),
-            deleting_after_waiting_for_children: AtomicBool::new(false),
             kind_hint,
             deleted_entries: Vec::new(),
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(self.event_loop),
@@ -1372,9 +1369,7 @@ impl DirTask {
         // `ShellRmTask`) before we get here. So the hand-off is threaded out
         // as a stack-local bool via `remove_entry`'s return value and `this`
         // is never touched again when set. When `waiting` is false the
-        // hand-off never happened, so `deleting_after_waiting_for_children`
-        // (only ever stored by a child that observed `need_to_wait == true`)
-        // is necessarily false and `post_run` is both safe and required.
+        // hand-off never happened, so `post_run` is both safe and required.
         if !waiting {
             // SAFETY: `waiting == false` ⇒ `need_to_wait` was never published,
             // so no other thread can have driven `delete_after_waiting_for_children`
@@ -1462,10 +1457,6 @@ impl DirTask {
         // `task_manager` lives in a separate allocation, so `tm: &ShellRmTask`
         // does not overlap any DirTask borrow.
         unsafe {
-            // `run_from_thread_pool_impl` has a `defer post_run` so set this to skip that.
-            (*this)
-                .deleting_after_waiting_for_children
-                .store(true, Ordering::SeqCst);
             (*this).need_to_wait.store(false, Ordering::SeqCst);
             // The caller just took `subtask_count` to 0; restore the slot
             // `post_run`'s own decrement expects.

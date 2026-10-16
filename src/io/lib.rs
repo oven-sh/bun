@@ -961,15 +961,6 @@ impl IoRequestLoop {
         {
             self.tick_kqueue();
         }
-        #[cfg(not(any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "macos",
-            target_os = "freebsd"
-        )))]
-        {
-            panic!("TODO on this platform");
-        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]

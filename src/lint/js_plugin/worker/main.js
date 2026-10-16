@@ -724,10 +724,6 @@ let listenWords = new Uint32Array(64);
 // 0: the tree of typescript-estree, which oxlint's is like in every file, 1: that of espree.
 let fileDialect = 0;
 
-function dialect() {
-  return fileDialect;
-}
-
 // Tells the other side that `keys` are listened for. Returns the calls: see `calls.rs`. The nodes come along if there are calls and
 // they are not there yet, or if `wantsTree`.
 function listen(keys, wantsTree) {

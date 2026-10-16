@@ -154,8 +154,6 @@ public:
     uint64_t getCount() const;
     double add(JSNodePerformanceHooksHistogram* other);
 
-    // std::shared_ptr<HistogramData> getHistogramDataForCloning() const;
-
 private:
     uint16_t m_extraMemorySizeForGC = 0;
 };

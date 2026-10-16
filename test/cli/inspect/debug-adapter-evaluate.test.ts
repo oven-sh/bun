@@ -73,7 +73,7 @@ const rows: Row[] = [
   asTyped("{ if (true) 5 }", "5"),
   asTyped("{ a: 1 }; 3", "3"),
   asTyped("{ let d = local.k * 2; d }", "14", onCallFrame),
-  ...["repl", "watch", "hover", "variables", "clipboard"].map(context => asTyped("{ let x = 1; x }", "1", { context })),
+  ...["repl", "watch", "variables", "clipboard"].map(context => asTyped("{ let x = 1; x }", "1", { context })),
   // A trailing `;` makes a statement, as in node's REPL. Chrome DevTools prints the object.
   asTyped("{ a: 1 };", "1"),
   evaluate("return { a: 1 };", "{ a: 1 };", "1"),
@@ -140,7 +140,11 @@ const rows: Row[] = [
     expected: { sent: [], printed: "false" },
   },
 
-  // VS Code asks for completions while the user types, so a completion never runs statements.
+  // VS Code asks for a hover when the mouse moves, and for completions while the user types.
+  // Neither runs statements. A hover that does not parse is cancelled.
+  parenthesized("{ a: 1 }", "{a: 1}", { context: "hover" }),
+  parenthesized("{ globalThis.typed++; 1 }", "Symbol(Cancel)", { context: "hover" }),
+  parenthesized("{ globalThis.typed++; local.k }", "Symbol(Cancel)", { context: "hover", onCallFrame: true }),
   {
     name: "completions of an object literal",
     request: { command: "completions", text: "{ a: 1, bb: 2 }." },

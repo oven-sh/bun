@@ -1169,6 +1169,8 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
       expression,
       objectGroup,
       callFrameId,
+      // Moving the mouse must not run statements: a hovered block stays a SyntaxError, which cancels the hover.
+      expressionOnly: context === "hover",
     });
 
     if (wasThrown) {

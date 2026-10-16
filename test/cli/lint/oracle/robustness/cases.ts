@@ -532,6 +532,30 @@ export const cases: Case[] = [
     ];
   })(),
 
+  // ── TypeScript keeps the type of a reference at the start of a loop. For a loop in a `finally` block, what it keeps depends on who asks
+  // first: from behind the block there are fewer ways into it. `no-floating-promises` asks about the last statement. ──
+  {
+    name: "a loop in a `finally` block: a rule that asks behind the block does not change what another is told in it",
+    file: "a.ts",
+    text: () =>
+      `declare const a: boolean; let x = 0;
+try {
+  try {
+    while (a) {}
+  } finally {
+    do {} while (a);
+  }
+} finally {
+  a && (x = 1);
+}
+export { x };
+`,
+    rules: { "typescript/no-floating-promises": "error", "typescript/no-unnecessary-condition": "error" },
+    args: typed,
+    reports: {},
+    exitCode: 0,
+  },
+
   // ── the type checker runs out of stack while it answers a rule, and no file is checked before it is linted ──
   {
     name: "3,000 generic calls in each other: the promise is reported, or it says that it gave up",

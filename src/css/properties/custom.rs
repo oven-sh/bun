@@ -301,17 +301,14 @@ impl TokenList {
     // deinit(): body only freed owned `Vec` fields — handled by `Drop` on `Vec`.
 
     pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
-        // Unless minifying, the `:`, `,` or `/` that the caller wrote ends in a blank, and
-        // that blank is the whole of a whitespace-only value (`--foo: ;`).
+        // The caller's separator wrote the blank of a whitespace-only value (`--foo: ;`).
         if !dest.minify && self.v.len() == 1 && self.v[0].is_whitespace() {
             return Ok(());
         }
         self.write_tokens(dest, is_custom_property, false)
     }
 
-    /// Prints the stored tokens. The grammar of the list is unknown: a blank can be a
-    /// descendant combinator (`--sel: .a .b`) or a separator for another tool, so the printer
-    /// adds none. `in_math` is for the arguments of a math function.
+    /// Prints the tokens as stored. It adds no blank: one can be a combinator (`--sel: .a .b`).
     fn write_tokens(
         &self,
         dest: &mut Printer,
@@ -384,18 +381,14 @@ impl TokenList {
         Ok(())
     }
 
-    /// The tokens that print. When whitespace and comments are collapsed, the run of them at
-    /// each end of the list does not print: the text next to it is the printer's own, so
-    /// nothing there can join two tokens. `None` if nothing else is left, which is a blank
-    /// value, and this prints it.
+    /// The tokens to print: collapsing drops the run at each end. `None` if none is left.
     #[inline]
     fn tokens_to_print(&self, dest: &mut Printer) -> PrintResult<Option<&[TokenOrValue]>> {
         if !dest.collapse_token_whitespace {
             return Ok(Some(&self.v));
         }
         let Some(start) = self.v.iter().position(|t| !t.is_whitespace_or_comment()) else {
-            // Printed as `/**/`, a comment alone is an empty value, which older browsers
-            // reject. The diff print has its blank from the separator before the list.
+            // A blank, not `/**/`: older browsers reject a value that is only a comment.
             if dest.minify && !self.v.is_empty() {
                 dest.write_char(b' ')?;
             }
@@ -409,9 +402,7 @@ impl TokenList {
         Ok(Some(&self.v[start..end]))
     }
 
-    /// Prints a token whose text depends on the tokens next to it: whitespace, a comment and
-    /// `\` always, a comma and a math operator in the diff print. Any other token prints as
-    /// it is. This is the body of the print loop, and a call costs more than most of its arms.
+    /// Prints one token. Inlined, because it is the body of the print loop.
     #[inline(always)]
     fn write_token(
         tokens: &[TokenOrValue],
@@ -434,8 +425,7 @@ impl TokenList {
                 dest.write_str("*/")
             }
             Token::Delim(d) if *d == u32::from(b'\\') => {
-                // The tokenizer makes this token only where a newline follows it. Before
-                // any other text the `\` is an escape.
+                // The tokenizer makes a `\` delim only before a newline, so one has to follow.
                 dest.write_char(b'\\')?;
                 let newline_follows = !dest.collapse_token_whitespace
                     && tokens.get(i + 1).is_some_and(TokenOrValue::is_whitespace);
@@ -461,10 +451,7 @@ impl TokenList {
         }
     }
 
-    /// Prints the one separator of the run of whitespace and comments that `i` is in, at the
-    /// first token of the run: a blank if the run holds whitespace, else `/**/`. A comment can
-    /// be all that keeps two tokens apart (`a/**/b` is not `ab`, `/` `/**/` `*` is not `/*`),
-    /// so it never prints as nothing, which is what lightningcss does.
+    /// Prints the run at `i` as one blank, or `/**/` for comments only: `a/**/b` is not `ab`.
     fn write_collapsed_run(
         tokens: &[TokenOrValue],
         i: usize,
@@ -488,8 +475,7 @@ impl TokenList {
         if matches!(before, Some(TokenOrValue::Token(Token::Delim(d))) if *d == u32::from(b'\\')) {
             return Ok(());
         }
-        // No grammar reads a blank next to a comma, or next to `*` and `/` in a math
-        // function, so the diff print gives these one form.
+        // The diff print drops a blank next to a comma or a math operator: no grammar reads it.
         let has_one_form = |t: &TokenOrValue| match t {
             TokenOrValue::Token(Token::Comma) => true,
             TokenOrValue::Token(Token::Delim(d)) => in_math && is_math_operator(*d),
@@ -601,8 +587,7 @@ impl TokenList {
             return Err(input.new_custom_error(ParserError::maximum_nesting_depth));
         }
 
-        // Whitespace and comments are stored like any other token. What a minified list
-        // can lose is decided when it is printed.
+        // Every token is stored, whitespace and comments too. Only the printer drops one.
         loop {
             let state = input.state();
             let Ok(tok) = input.next_including_whitespace_and_comments() else {
@@ -845,8 +830,7 @@ fn is_math_operator(delim: u32) -> bool {
     delim == u32::from(b'*') || delim == u32::from(b'/')
 }
 
-/// Writes the sign that a number was written with and returns the value to print after it.
-/// The sign is part of the token: without it `2n+1` prints as `2n1`.
+/// Writes the sign a number was written with (`2n+1` is not `2n1`). Returns the magnitude.
 fn write_sign(num: &crate::Num, dest: &mut Printer) -> PrintResult<f32> {
     if !num.has_sign {
         return Ok(num.value);
@@ -859,9 +843,7 @@ fn write_sign(num: &crate::Num, dest: &mut Printer) -> PrintResult<f32> {
     Ok(num.value.abs())
 }
 
-/// Prints the text of whitespace or of a comment as it was written, except that each line
-/// break that CSS reads as one (CR LF, CR, FF) prints as `\n`: the output does not follow the
-/// line endings of the checkout.
+/// Writes `text` with each CR LF, CR and FF as `\n`, whatever line ends the checkout has.
 fn write_line_breaks_as_lf(text: &[u8], dest: &mut Printer) -> PrintResult<()> {
     let mut rest = text;
     while let Some(i) = strings::index_of_any(rest, b"\r\x0C") {
@@ -999,8 +981,7 @@ impl UnresolvedColor {
         }
     }
 
-    /// Writes the `/` before an unresolved alpha. When minifying, no blank
-    /// follows it, and a `*` or `*=` directly after it would open a comment.
+    /// Writes the `/` before the alpha, and a blank if a `*` after it would open a comment.
     fn write_alpha_slash(alpha: &TokenList, dest: &mut Printer) -> PrintResult<()> {
         dest.delim(b'/', true)?;
         // The whitespace and comments at the start of the list do not print.

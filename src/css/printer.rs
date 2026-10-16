@@ -33,12 +33,7 @@ pub struct PrinterOptions<'a> {
     /// A mapping of pseudo classes to replace with class names that can be applied
     /// from JavaScript. Useful for polyfills, for example.
     pub pseudo_classes: Option<PseudoClasses<'a>>,
-    /// Whether to print each raw token list (a custom property, an unparsed
-    /// value, an unknown at-rule) in one form for a diff, while the rest of
-    /// the output stays formatted. Runs of whitespace and comments collapse
-    /// as `minify` collapses them, and a blank next to a comma, or next to
-    /// `*` and `/` in a math function, is not kept. A blank anywhere else
-    /// stays: it can be a descendant combinator. `bun pm diff` sets it.
+    /// Print each raw token list in one form, for a diff. `bun pm diff` sets it.
     pub canonical_token_lists: bool,
 }
 
@@ -128,8 +123,7 @@ pub struct Printer<'a> {
     pub(crate) line: u32,
     pub(crate) col: u32,
     pub(crate) minify: bool,
-    /// `minify`, or `PrinterOptions::canonical_token_lists`. The second without the first is
-    /// the diff print.
+    /// Set by `minify` and by `canonical_token_lists`. The second alone is the diff print.
     pub(crate) collapse_token_whitespace: bool,
     pub(crate) targets: Targets,
     pub(crate) vendor_prefix: css::VendorPrefix,

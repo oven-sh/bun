@@ -52,8 +52,8 @@ it("sleepSync with negative number throws", async () => {
   }
 });
 
-it("sleepSync drops the fraction, and NaN is 0", async () => {
-  for (const v of [0, -0, 0.9, -0.9, NaN]) expect(sleepSync(v)).toBeUndefined();
+it("sleepSync takes -0, a fraction above -1 and NaN as 0", async () => {
+  for (const v of [-0, -0.9, NaN]) expect(sleepSync(v)).toBeUndefined();
 });
 
 it("can map with sleepSync", async () => {

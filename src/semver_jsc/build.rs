@@ -1,3 +1,4 @@
+// Build scripts run on the host before bun_* crates are compiled; std is the only option.
 #![allow(
     clippy::disallowed_methods,
     clippy::disallowed_types,

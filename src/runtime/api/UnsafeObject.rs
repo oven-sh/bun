@@ -28,7 +28,8 @@ pub(crate) fn array_buffer_to_string<'a>(
 
     let array_buffer = jsc::ArrayBuffer::from_typed_array(global, buffer);
     match array_buffer.typed_array_type {
-        JSType::Uint16Array | JSType::Int16Array => {
+        // The empty slice of a detached view is not aligned.
+        JSType::Uint16Array | JSType::Int16Array if !array_buffer.byte_slice().is_empty() => {
             // Uint16Array/Int16Array storage is u16-aligned with even byte length;
             // bytemuck checks both at runtime.
             let utf16: &[u16] = bytemuck::cast_slice(array_buffer.byte_slice());
@@ -49,7 +50,10 @@ unsafe extern "C" {
 /// `undefined` when no platform-specific accessor is available so the caller
 /// can `?? process.memoryUsage.rss()`.
 pub(crate) fn memory_footprint() -> Option<usize> {
-    Some(Bun__memoryFootprint()).filter(|&bytes| bytes != 0)
+    match Bun__memoryFootprint() {
+        0 => None,
+        bytes => Some(bytes),
+    }
 }
 
 pub(crate) fn set_jit_policy(cx: &mut JsScope<'_>, scale: f64) -> JsResult<()> {

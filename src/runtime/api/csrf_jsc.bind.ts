@@ -3,7 +3,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 export default b.module({ rustPath: "crate::api::csrf_jsc" });
 
 /** In milliseconds. A day unless it is given. */
-const duration = b.u64.validateInteger(0, Number.MAX_SAFE_INTEGER).default(24 * 60 * 60 * 1000);
+const duration = b.u64.validateInteger().default(24 * 60 * 60 * 1000);
 
 export const CSRFGenerateOptions = b.dictionary(
   {

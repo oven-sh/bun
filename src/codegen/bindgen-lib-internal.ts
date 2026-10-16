@@ -608,7 +608,7 @@ export class Utf8Type extends Type {
     return "Vec<u8>";
   }
   rustReturnType(): string {
-    return "impl bindgen::to_js::Utf8<'a>";
+    return "impl AsRef<[u8]>";
   }
   rustToJS(value: string): string {
     return `bindgen::to_js::utf8(heap, ${value})`;
@@ -1209,8 +1209,11 @@ export interface DictionaryOptions {
   fromJS?: boolean;
   /** An array is read like any other object, not refused. */
   allowArray?: boolean;
-  /** A value whose `typeof` is not "object" gives every member its default: Node's `if (typeof options !== "object") options = null`. */
-  nonObjectAsEmpty?: boolean;
+  /**
+   * A value that is not an object gives every member its default. With `"typeof"` so does a function: Node's
+   * `if (typeof options !== "object") options = null`.
+   */
+  nonObjectAsEmpty?: boolean | "typeof";
 }
 
 export class DictionaryType extends NamedType {
@@ -1258,8 +1261,8 @@ export class DictionaryType extends NamedType {
   get allowArray(): boolean {
     return !!this.options.allowArray;
   }
-  get nonObjectAsEmpty(): boolean {
-    return !!this.options.nonObjectAsEmpty;
+  get nonObjectAsEmpty(): boolean | "typeof" {
+    return this.options.nonObjectAsEmpty ?? false;
   }
   get idlType(): string {
     return `WebCore::IDLDictionary<${this.cpp}>`;
@@ -1751,10 +1754,16 @@ export class ClassType extends NamedType {
 
 /** A plain object whose properties are native functions, as WebIDL's `namespace`. */
 export class NamespaceDefinition {
-  readonly functions: readonly (readonly [name: string, fn: FunctionDefinition])[];
+  readonly functions: readonly FunctionDefinition[];
   name = "";
   constructor(functions: Record<string, SignatureOptions>) {
-    this.functions = Object.entries(functions).map(([name, options]) => [name, new FunctionDefinition([options])]);
+    this.functions = Object.entries(functions).map(([name, options]) => {
+      assert(/^[A-Za-z_$][\w$]*$/.test(name), `${name}: a function is named by an identifier`);
+      assert(!(options instanceof FunctionDefinition), `${name}: write what b.fn takes, without b.fn`);
+      const fn = new FunctionDefinition([options]);
+      fn.name = name;
+      return fn;
+    });
     assert(this.functions.length > 0, "a namespace with no functions");
   }
 }

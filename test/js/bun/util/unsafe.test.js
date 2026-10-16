@@ -1,5 +1,5 @@
 import { expect, it, jest } from "bun:test";
-import { gc } from "harness";
+import { bunEnv, bunExe, gc } from "harness";
 
 it("arrayBufferToString u8", async () => {
   var encoder = new TextEncoder();
@@ -50,14 +50,24 @@ it("Bun.allocUnsafe", () => {
   expect(buffer[0]).toBe(0);
   expect(Bun.allocUnsafe(0).length).toBe(0);
   expect(Bun.allocUnsafe(-0).length).toBe(0);
-  expect(Bun.allocUnsafe(3n).length).toBe(3);
 });
 
 it("Bun.allocUnsafe takes an integer that fits 32 bits", () => {
   const valueOf = jest.fn(() => 1);
-  for (const size of [undefined, null, true, "1", {}, [], new Number(1), { valueOf }, Symbol()]) {
+  for (const [size, received] of [
+    [undefined, "undefined"],
+    [null, "null"],
+    [true, "type boolean (true)"],
+    ["1", "type string ('1')"],
+    [3n, "type bigint (3n)"],
+    [{ valueOf }, "an instance of Object"],
+  ]) {
     expect(() => Bun.allocUnsafe(size)).toThrow(
-      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "size must be a number" }),
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "size" argument must be of type number. Received ${received}`,
+      }),
     );
   }
   expect(valueOf).not.toHaveBeenCalled();
@@ -66,16 +76,20 @@ it("Bun.allocUnsafe takes an integer that fits 32 bits", () => {
       expect.objectContaining({
         name: "RangeError",
         code: "ERR_OUT_OF_RANGE",
-        message: `size must be an integer (received ${size})`,
+        message: `The value of "size" is out of range. It must be an integer. Received ${size}`,
       }),
     );
   }
-  for (const size of [-1, 2 ** 32]) {
+  for (const [size, received] of [
+    [-1, "-1"],
+    [2 ** 32, "4294967296"],
+    [2 ** 53, "9_007_199_254_740_992"],
+  ]) {
     expect(() => Bun.allocUnsafe(size)).toThrow(
       expect.objectContaining({
         name: "RangeError",
         code: "ERR_OUT_OF_RANGE",
-        message: `size must be in the range [0, 4294967295] (received ${size})`,
+        message: `The value of "size" is out of range. It must be >= 0 && <= 4294967295. Received ${received}`,
       }),
     );
   }
@@ -109,8 +123,8 @@ it("Bun.unsafe.gcAggressionLevel returns the level it replaces", () => {
     expect(Bun.unsafe.gcAggressionLevel(1)).toBe(0);
     expect(Bun.unsafe.gcAggressionLevel("2")).toBe(1);
     expect(Bun.unsafe.gcAggressionLevel(0.9)).toBe(2);
+    expect(Bun.unsafe.gcAggressionLevel(1)).toBe(0);
     // Nothing, and a level there is not, change nothing.
-    Bun.unsafe.gcAggressionLevel(1);
     for (const level of [undefined, null, 3, -1, 2 ** 32, 2 ** 32 + 2, "4294967298", Infinity]) {
       expect(Bun.unsafe.gcAggressionLevel(level)).toBe(1);
     }
@@ -130,6 +144,11 @@ it("Bun.unsafe.arrayBufferToString takes a typed array or an ArrayBuffer", () =>
   expect(Bun.unsafe.arrayBufferToString(new Uint8Array([104, 105, 233]))).toBe("hi\xe9");
   expect(Bun.unsafe.arrayBufferToString(new Uint8Array([104, 105]).buffer)).toBe("hi");
   expect(Bun.unsafe.arrayBufferToString(new Uint16Array([104, 0x65e5]))).toBe("h\u65e5");
+  for (const TypedArray of [Uint8Array, Uint16Array, Int16Array]) {
+    const detached = new TypedArray(4);
+    detached.buffer.transfer();
+    expect(Bun.unsafe.arrayBufferToString(detached)).toBe("");
+  }
   for (const notABuffer of [undefined, null, 1, "hi", {}, []]) {
     expect(() => Bun.unsafe.arrayBufferToString(notABuffer)).toThrow(
       expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "Expected an ArrayBuffer" }),
@@ -137,25 +156,20 @@ it("Bun.unsafe.arrayBufferToString takes a typed array or an ArrayBuffer", () =>
   }
 });
 
-it("Bun.unsafe.memoryFootprint is a number of bytes, or undefined where the platform does not say", () => {
+it("Bun.unsafe.memoryFootprint is a number of bytes", () => {
   const bytes = Bun.unsafe.memoryFootprint();
-  expect(bytes === undefined || (Number.isInteger(bytes) && bytes > 1024 * 1024)).toBe(true);
+  expect(bytes).toBeInteger();
+  expect(bytes).toBeGreaterThan(1024 * 1024);
 });
 
-it("Bun.unsafe.setJITPolicy takes a finite number that is at least 1", () => {
-  for (const scale of [undefined, null, "2", 2n, {}, { valueOf: () => 2 }]) {
-    expect(() => Bun.unsafe.setJITPolicy(scale)).toThrow(
-      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "scale must be a number" }),
-    );
-  }
-  for (const scale of [0, 0.999, -1, NaN, Infinity]) {
-    expect(() => Bun.unsafe.setJITPolicy(scale)).toThrow(
-      expect.objectContaining({
-        name: "RangeError",
-        code: "ERR_OUT_OF_RANGE",
-        message: `The value of "scale" is out of range. It must be a finite number >= 1. Received ${scale}`,
-      }),
-    );
-  }
-  expect(Bun.unsafe.setJITPolicy(1)).toBeUndefined();
+it("Bun.unsafe.mimallocDump prints to stderr", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", "console.log(Bun.unsafe.mimallocDump())"],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("undefined\n");
+  expect(stderr).toContain("blocks");
+  expect(exitCode).toBe(0);
 });

@@ -212,7 +212,7 @@ console.log(JSON.stringify(out));`,
         expect.objectContaining({
           name: "TypeError",
           code: "ERR_INVALID_ARG_TYPE",
-          message: "MmapOptions must be an object",
+          message: "MMapOptions must be an object",
         }),
       );
     }
@@ -241,6 +241,8 @@ console.log(JSON.stringify(out));`,
     expect(text({ offset: -0.9 })).toBe(whole);
     expect(text({ offset: NaN })).toBe(whole);
     expect(text({ offset: {} })).toBe(whole);
+    expect(text({ size: "4294967298" })).toBe(whole);
+    expect(() => Bun.mmap(path, { offset: "4294967297" })).toThrow("EINVAL");
     // More than the file holds is all of it.
     expect(text({ size: 2 ** 53 })).toBe(whole);
     expect(text({ size: 2 ** 64 })).toBe(whole);
@@ -273,6 +275,13 @@ console.log(JSON.stringify(out));`,
     expect(log).toEqual(["shared", "sync", "size", "offset"]);
 
     expect(Bun.mmap(path, Object.create({ size: 2 })).length).toBe(2);
+    expect(Bun.mmap(path, Object.assign([], { size: 2 })).length).toBe(2);
+    expect(
+      Bun.mmap(
+        path,
+        Object.assign(() => {}, { size: 2 }),
+      ).length,
+    ).toBe(2);
     Object.prototype.size = 2;
     try {
       expect(Bun.mmap(path, {}).length).toBe(Bun.mmap(path).length);

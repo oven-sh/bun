@@ -91,10 +91,10 @@ use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::{StringJsc as _, bun_string_jsc};
 
 use crate::generated_bindgen::bun_object::{
-    BracesOptions, EditorOptions, MmapOptions, WhichOptions,
+    BracesOptions, EditorOptions, MMapOptions, WhichOptions,
 };
 use crate::generated_bindgen::glob::GlobClass as _;
-use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope, WithValue};
+use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope};
 
 // ─── wrap_static_method adapters ───────────────────────────────────────────
 // `#[bun_jsc::host_fn(static)]` is not yet emitted,
@@ -353,24 +353,20 @@ fn get_cron_object(global_this: &JSGlobalObject, obj: &JSObject) -> JSValue {
 
 pub(crate) fn shell_escape<'a>(
     heap: &JsHeap<'a>,
-    input: WithValue<'a, BunString>,
-) -> bindgen::Result<'a, JsLocal<'a, JSString>> {
-    let bunstr = input.converted;
-    if !bun_shell_parser::needs_escape_bunstr(&bunstr) {
-        return match input.value.as_string() {
-            Some(string) => Ok(string),
-            None => heap.create_utf8_string(&bunstr.to_utf8()),
-        };
+    input: BunString,
+) -> bindgen::Result<'a, BunString> {
+    if !bun_shell_parser::needs_escape_bunstr(&input) {
+        return Ok(input);
     }
 
     let mut outbuf: Vec<u8> = Vec::new();
-    if !bun_shell_parser::escape_bun_str::<true>(&bunstr, &mut outbuf)? {
+    if !bun_shell_parser::escape_bun_str::<true>(&input, &mut outbuf)? {
         return Err(heap.error(format_args!(
             "String has invalid utf-16: {}",
-            bstr::BStr::new(bunstr.byte_slice()),
+            bstr::BStr::new(input.byte_slice()),
         )));
     }
-    heap.create_utf8_string(&outbuf)
+    Ok(BunString::clone_utf8(&outbuf))
 }
 
 /// `Bun.gc(force)`: heap size after the collection.
@@ -484,15 +480,11 @@ pub(crate) fn braces(
 
 pub(crate) fn which<'a>(
     heap: &JsHeap<'a>,
-    command: Option<&'a [u8]>,
+    command: &'a [u8],
     options: WhichOptions<'a>,
 ) -> bindgen::Result<'a, Option<JsLocal<'a, JSString>>> {
-    let command = command.unwrap_or_default();
     if command.len() >= MAX_PATH_BYTES {
         return Err(heap.error(format_args!("bin path is too long")));
-    }
-    if command.is_empty() {
-        return Ok(None);
     }
 
     let vm = VirtualMachine::get();
@@ -1467,7 +1459,7 @@ pub(crate) fn alloc_unsafe<'a>(
     heap.create_uninitialized_uint8_array(size as usize)
 }
 
-pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: MmapOptions) -> JsResult<JSValue> {
+pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: MMapOptions) -> JsResult<JSValue> {
     let global_this = cx.global();
 
     #[cfg(windows)]

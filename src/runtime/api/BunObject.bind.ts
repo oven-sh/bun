@@ -3,7 +3,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 export default b.module({ rustPath: "crate::api::bun_object" });
 
 export const allocUnsafe = b.fn({
-  args: { size: b.u32 },
+  args: { size: b.u32.validateInteger() },
   returns: b.bufferSource,
   capability: "heap",
   throws: true,
@@ -36,7 +36,7 @@ export const gc = b.fn({
   rustPath: "crate::api::bun_object::gc_from_js",
 });
 
-export const MmapOptions = b.dictionary(
+export const MMapOptions = b.dictionary(
   {
     shared: b.bool.loose.default(true),
     sync: b.bool.loose.default(false),
@@ -49,9 +49,9 @@ export const MmapOptions = b.dictionary(
 export const mmap = b.fn({
   args: {
     path: b.string.utf8,
-    options: MmapOptions.nullable.default({}),
+    options: MMapOptions.nullable.default({}),
   },
-  returns: b.any,
+  returns: b.bufferSource,
   capability: "js",
   throws: true,
 });
@@ -67,16 +67,17 @@ export const EditorOptions = b.dictionary(
 
 export const openInEditor = b.fn({
   args: {
-    path: b.string.loose.utf8.default(""),
+    path: b.string.loose.utf8.nullable.default(""),
     options: EditorOptions.nullable.default({}),
   },
+  length: 1,
   capability: "heap",
   throws: true,
 });
 
 export const shellEscape = b.fn({
-  args: { input: b.string.loose.withValue },
-  returns: b.string.utf8,
+  args: { input: b.string.loose },
+  returns: b.string,
   capability: "heap",
   throws: true,
 });
@@ -99,9 +100,10 @@ export const WhichOptions = b.dictionary(
 
 export const which = b.fn({
   args: {
-    command: b.string.loose.utf8.nullable,
+    command: b.string.loose.utf8.nullable.default(""),
     options: WhichOptions.nullable.default({}),
   },
+  length: 1,
   returns: b.string.utf8.nullable,
   capability: "heap",
   throws: true,

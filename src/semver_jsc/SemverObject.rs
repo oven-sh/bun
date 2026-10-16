@@ -37,25 +37,22 @@ pub(crate) fn order<'a>(
     )
 }
 
-pub(crate) fn satisfies(version: &[u8], range: Option<&[u8]>) -> JsResult<bool> {
-    let Some(range) = range else {
-        return Ok(false);
-    };
+pub(crate) fn satisfies<'a>(version: &'a [u8], range: &'a [u8]) -> bindgen::Result<'a, bool> {
     if !strings::is_all_ascii(version) || !strings::is_all_ascii(range) {
         return Ok(false);
     }
 
-    let Some(left_version) = Version::parse_exact(SlicedString::init(version, version)) else {
+    let Some(parsed_version) = Version::parse_exact(SlicedString::init(version, version)) else {
         return Ok(false);
     };
 
-    let right_group = query::parse(range, SlicedString::init(range, range))?;
+    let group = query::parse(range, SlicedString::init(range, range))?;
 
-    if let Some(right_version) = right_group.get_exact_version() {
-        return Ok(left_version.eql(right_version));
+    if let Some(exact_version) = group.get_exact_version() {
+        return Ok(parsed_version.eql(exact_version));
     }
 
-    Ok(right_group.satisfies(left_version, range, version))
+    Ok(group.satisfies(parsed_version, range, version))
 }
 
 /// `bun:internal-for-testing`: `Group::intersects` on two range strings.

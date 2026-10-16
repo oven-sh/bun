@@ -116,7 +116,7 @@ takes one of those to run JavaScript has stepped around the check.
 `throws: true` makes the return type a `Result`. The error is a
 `bindgen::Error<'a>`, made by `heap.error(..)`, `heap.type_error(..)`,
 `heap.range_error(..)`, `heap.error_with_code(ErrorCode::INVALID_ARG_TYPE, ..)` or
-`bindgen::Error::from_value(value)`, or any type that
+`bindgen::Error::from_value(value)` (`?` makes one of a `JsError` or an `AllocError`), or any type that
 implements `bindgen::IntoError` (`bun_sys::Error`, `SystemError`, `JsError` and a `Box` of
 one do), which lets a `capability: "none"` function fail too.
 
@@ -196,9 +196,9 @@ These come last, in this order (`b.any` already takes `undefined` and `null`, so
 - `.default(value)`: what to use when absent; `T`. `.nullable.default(value)` also applies to `null`.
 - `.withValue`, for arguments: see [Keeping the original value](#keeping-the-original-value). Not with `.default()`.
 
-As results, `b.string.utf8` is anything that is `AsRef<[u8]>`, or the string itself from
-`heap.create_utf8_string(bytes)` when the bytes do not outlive the body, and `b.array(T)`
-anything that is `IntoIterator`.
+As results, `b.string.utf8` is anything that is `AsRef<[u8]>` and `b.array(T)` anything that
+is `IntoIterator`. The body of a `b.fn` or of a namespace's function whose bytes do not outlive
+it returns the string itself, from `heap.create_utf8_string(bytes)`.
 
 ### Integers
 
@@ -237,7 +237,9 @@ export const BracesOptions = b.dictionary({
 Each member is read, then converted, in declaration order, once. A member
 whose type does not accept `undefined` is required. A member can be written
 `{ type, rustName, altNames }` to rename its field or to accept other spellings.
-A dictionary whose members can all be absent implements `Default`.
+A dictionary whose members can all be absent implements `Default`. The thunk hands the struct
+over by value, so the body of one over 64 bytes needs
+`#[allow(clippy::large_types_passed_by_value)]`.
 
 A member is looked up on the object and its prototype chain, **stopping before
 the calling realm's `Object.prototype`**, so a polluted `Object.prototype` cannot
@@ -250,11 +252,11 @@ each one on it. An `.optional` member that is `None` is left out.
 
 The second argument of `b.dictionary` takes:
 
-| Key                | What it does                                                                                                                                                                             |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `allowArray`       | an array is read like any other object, not refused                                                                                                                                      |
-| `nonObjectAsEmpty` | a value whose `typeof` is not `"object"` gives every member its default, as in Node's `if (typeof options !== "object") options = null`; every member must be optional or have a default |
-| `fromJS`           | also generates `Name::from_js(global, value)`, for a `#[host_fn]` body; one that holds JS values is lent to a closure, `Name::from_js(global, value, \|converted\| ..)`                  |
+| Key                | What it does                                                                                                                                                                                                      |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `allowArray`       | an array is read like any other object, not refused                                                                                                                                                               |
+| `nonObjectAsEmpty` | a value that is not an object gives every member its default; with `"typeof"` so does a function, as in Node's `if (typeof options !== "object") options = null`; every member must be optional or have a default |
+| `fromJS`           | also generates `Name::from_js(global, value)`, for a `#[host_fn]` body; one that holds JS values is lent to a closure, `Name::from_js(global, value, \|converted\| ..)`                                           |
 
 ### Enumerations
 

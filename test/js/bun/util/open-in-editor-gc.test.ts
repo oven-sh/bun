@@ -67,11 +67,14 @@ test.skipIf(!isLinux)("Bun.openInEditor converts its arguments to strings", asyn
         ["a.ts", { line: "" }],
         ["a.ts", { line: null, column: undefined, editor: "" }],
         ["a.ts", Object.create({ line: 9 })],
+        ["a.ts", Object.assign([], { line: 9 })],
+        ["a.ts", Object.assign(() => {}, { line: 9 })],
         ["a.ts", null],
         ["a.ts", 5],
         ["a.ts", "line"],
         [],
         [undefined],
+        [null],
         [""],
         [Symbol()],
         ["a.ts", { line: Symbol() }],
@@ -79,8 +82,8 @@ test.skipIf(!isLinux)("Bun.openInEditor converts its arguments to strings", asyn
         const before = lines().length;
         try {
           Bun.openInEditor(...args);
-          while (lines().length === before) await Bun.sleep(1);
-          results.push(lines()[before]);
+          for (const deadline = Date.now() + 10_000; lines().length === before && Date.now() < deadline; ) await Bun.sleep(1);
+          results.push(lines()[before] ?? "<nothing was spawned>");
         } catch (e) {
           results.push(e.name + ": " + e.message);
         }
@@ -94,7 +97,7 @@ test.skipIf(!isLinux)("Bun.openInEditor converts its arguments to strings", asyn
     cmd: [bunExe(), "run.js"],
     env: {
       ...bunEnv,
-      PATH: join(String(dir), "bin") + ":/usr/bin:/bin",
+      PATH: join(String(dir), "bin"),
       EDITOR: "code",
       EDITOR_LOG: join(String(dir), "log"),
     },
@@ -115,9 +118,12 @@ test.skipIf(!isLinux)("Bun.openInEditor converts its arguments to strings", asyn
     "a.ts",
     "a.ts",
     "--goto a.ts:9",
+    "--goto a.ts:9",
+    "--goto a.ts:9",
     "a.ts",
     "a.ts",
     "a.ts",
+    "Error: No file path specified",
     "Error: No file path specified",
     "Error: No file path specified",
     "Error: No file path specified",

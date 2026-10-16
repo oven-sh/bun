@@ -45,8 +45,7 @@ async function load(source: string): Promise<SchemaFile> {
       result.functions.push(value);
     } else if (value instanceof NamespaceDefinition) {
       value.name = name;
-      for (const [property, fn] of value.functions) {
-        fn.name = property;
+      for (const fn of value.functions) {
         fn.origin = origin;
         result.functions.push(fn);
       }

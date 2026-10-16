@@ -246,6 +246,7 @@ describe("Bun.CSRF", () => {
     expect(CSRF.generate(secret, Object.create({ encoding: "hex" }))).toMatch(/^[0-9a-f]+$/);
     for (const ignored of [null, undefined, 1, "hex", true] as any[]) {
       expect(CSRF.verify(CSRF.generate(secret, ignored), { secret })).toBe(true);
+      expect(CSRF.verify(CSRF.generate(), ignored)).toBe(true);
     }
     (Object.prototype as any).encoding = "hex";
     (Object.prototype as any).secret = "other";
@@ -256,6 +257,83 @@ describe("Bun.CSRF", () => {
       delete (Object.prototype as any).encoding;
       delete (Object.prototype as any).secret;
     }
+  });
+
+  test("an array, a function and a class are options like any other object", () => {
+    for (const options of [[], () => {}, class {}] as any[]) {
+      Object.assign(options, { encoding: "hex", secret });
+      const token = CSRF.generate(secret, options);
+      expect(token).toMatch(/^[0-9a-f]+$/);
+      expect(CSRF.verify(token, options)).toBe(true);
+      expect(CSRF.verify(token, Object.assign(options, { secret: "other" }))).toBe(false);
+    }
+
+    // What limits a token is not dropped because of what holds it.
+    const token = CSRF.generate(secret);
+    Bun.sleepSync(5);
+    class Policy {
+      static secret = secret;
+      static maxAge = 1;
+    }
+    expect(CSRF.verify(token, Policy as any)).toBe(false);
+    expect(CSRF.verify(token, { secret, maxAge: 1 })).toBe(false);
+    expect(CSRF.verify(token, { secret })).toBe(true);
+  });
+
+  test("every option is read and converted before any value is looked at", () => {
+    const log: string[] = [];
+    const options = {
+      get sessionId() {
+        log.push("sessionId");
+        return "";
+      },
+      get algorithm() {
+        log.push("algorithm");
+        return 5;
+      },
+    };
+    expect(() => CSRF.generate("", options as any)).toThrow("CSRFGenerateOptions.algorithm must be a string");
+    expect(log).toEqual(["sessionId", "algorithm"]);
+    expect(() => CSRF.generate("", { sessionId: "" })).toThrow("Secret must be a non-empty string");
+    expect(() => CSRF.generate(secret, { sessionId: "", encoding: "utf8" as any })).toThrow(
+      "sessionId must be a non-empty string",
+    );
+  });
+
+  test("a String object counts by what it converts to", () => {
+    class Empty extends String {
+      toString() {
+        return "";
+      }
+    }
+    expect(() => CSRF.generate(new Empty("abc") as any)).toThrow("Secret must be a non-empty string");
+    expect(() => CSRF.verify(new Empty("abc") as any, { secret })).toThrow("Token must be a non-empty string");
+    expect(CSRF.verify(CSRF.generate(new String(secret) as any), { secret })).toBe(true);
+  });
+
+  test("the largest expiresIn and maxAge are ones that a token can be verified with", () => {
+    expect(
+      CSRF.verify(CSRF.generate(secret, { expiresIn: Number.MAX_SAFE_INTEGER }), {
+        secret,
+        maxAge: Number.MAX_SAFE_INTEGER,
+      }),
+    ).toBe(true);
+  });
+
+  test("Bun.CSRF is a plain object of two functions", () => {
+    expect(Object.getPrototypeOf(CSRF)).toBe(Object.prototype);
+    expect(Bun.CSRF).toBe(CSRF);
+    expect(
+      Object.entries(Object.getOwnPropertyDescriptors(CSRF)).map(([key, { value, ...attributes }]) => ({
+        key,
+        name: value.name,
+        length: value.length,
+        ...attributes,
+      })),
+    ).toEqual([
+      { key: "generate", name: "generate", length: 0, writable: true, enumerable: true, configurable: true },
+      { key: "verify", name: "verify", length: 1, writable: true, enumerable: true, configurable: true },
+    ]);
   });
 
   describe.each([
@@ -292,15 +370,6 @@ describe("Bun.CSRF", () => {
       expect(embeddedExpiresIn({ expiresIn: undefined })).toBe(embeddedExpiresIn());
       expect(embeddedExpiresIn()).toBe(BigInt(24 * 60 * 60 * 1000));
       expect(embeddedExpiresIn({ expiresIn: 2 ** 53 - 1 })).toBe(BigInt(2 ** 53 - 1));
-    });
-
-    test("the largest value is one that a token can be verified with", () => {
-      expect(
-        CSRF.verify(CSRF.generate(secret, { expiresIn: Number.MAX_SAFE_INTEGER }), {
-          secret,
-          maxAge: Number.MAX_SAFE_INTEGER,
-        }),
-      ).toBe(true);
     });
 
     test("out-of-range and non-integer values throw RangeError [ERR_OUT_OF_RANGE]", () => {

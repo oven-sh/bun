@@ -2020,6 +2020,7 @@ impl Resolver {
 
 pub(crate) mod internal {
     use super::*;
+    use crate::generated_bindgen::dns::DNSCacheStats;
 
     // PORTING.md §Global mutable state: lazy env-var memo — an `OnceLock<u32>`
     // (idempotent init, safe concurrent read).
@@ -2799,8 +2800,8 @@ pub(crate) mod internal {
     static DNS_CACHE_ERRORS: AtomicUsize = AtomicUsize::new(0);
     static GETADDRINFO_CALLS: AtomicUsize = AtomicUsize::new(0);
 
-    pub(crate) fn get_cache_stats() -> crate::generated_bindgen::dns::DNSCacheStats {
-        crate::generated_bindgen::dns::DNSCacheStats {
+    pub(crate) fn get_cache_stats() -> DNSCacheStats {
+        DNSCacheStats {
             cache_hits_completed: DNS_CACHE_HITS_COMPLETED.load(Ordering::Relaxed),
             cache_hits_inflight: DNS_CACHE_HITS_INFLIGHT.load(Ordering::Relaxed),
             cache_misses: DNS_CACHE_MISSES.load(Ordering::Relaxed),
@@ -3091,7 +3092,7 @@ pub(crate) mod internal {
     pub(crate) fn prefetch_from_js(hostname: &[u8], port: u16) {
         let hostname_z = bun::ZBox::from_bytes(hostname);
         prefetch(
-            VirtualMachine::get().as_mut().uws_loop(),
+            VirtualMachine::get().uws_loop(),
             Some(hostname_z.as_zstr()),
             port,
         );

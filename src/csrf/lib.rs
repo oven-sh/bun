@@ -19,8 +19,7 @@ pub enum Error {
 }
 bun_core::impl_tag_error!(Error);
 
-/// Options for generating CSRF tokens. Defaults are noted on
-/// each field; callers must specify all fields.
+/// Options for generating CSRF tokens.
 pub struct GenerateOptions<'a> {
     /// Secret key to use for signing
     pub secret: &'a [u8],
@@ -33,8 +32,7 @@ pub struct GenerateOptions<'a> {
     pub algorithm: Algorithm, // = DEFAULT_ALGORITHM
 }
 
-/// Options for validating CSRF tokens. Defaults are noted on
-/// each field; callers must specify all fields.
+/// Options for validating CSRF tokens.
 pub struct VerifyOptions<'a> {
     /// The token to verify
     pub token: &'a [u8],

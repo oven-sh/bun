@@ -69,9 +69,18 @@ describe("dns.prefetch", () => {
         }),
       );
     }
-    for (const port of ["80", true, {}, { valueOf: () => 80 }] as any[]) {
+    for (const [port, received] of [
+      ["80", "type string ('80')"],
+      [true, "type boolean (true)"],
+      [80n, "type bigint (80n)"],
+      [{ valueOf: () => 80 }, "an instance of Object"],
+    ] as any[]) {
       expect(() => dns.prefetch("localhost", port)).toThrow(
-        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "port must be a number" }),
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "port" argument must be of type number. Received ${received}`,
+        }),
       );
     }
     for (const port of [80.5, NaN, Infinity]) {
@@ -79,20 +88,25 @@ describe("dns.prefetch", () => {
         expect.objectContaining({
           name: "RangeError",
           code: "ERR_OUT_OF_RANGE",
-          message: `port must be an integer (received ${port})`,
+          message: `The value of "port" is out of range. It must be an integer. Received ${port}`,
         }),
       );
     }
-    for (const port of [-1, 65536]) {
-      expect(() => dns.prefetch("localhost", port)).toThrow(
+    for (const [port, received] of [
+      [-1, "-1"],
+      [65536, "65536"],
+      [2 ** 53, "9_007_199_254_740_992"],
+    ]) {
+      expect(() => dns.prefetch("localhost", port as number)).toThrow(
         expect.objectContaining({
           name: "RangeError",
           code: "ERR_OUT_OF_RANGE",
-          message: `port must be in the range [0, 65535] (received ${port})`,
+          message: `The value of "port" is out of range. It must be >= 0 && <= 65535. Received ${received}`,
         }),
       );
     }
-    for (const port of [undefined, null, 0, 65535] as any[]) expect(dns.prefetch("localhost", port)).toBeUndefined();
+    // Not "localhost": the cache is keyed by the name, and the next test needs it cold.
+    for (const port of [undefined, null, 0, 65535] as any[]) expect(dns.prefetch("127.0.0.1", port)).toBeUndefined();
   });
 
   it("should prefetch", async () => {

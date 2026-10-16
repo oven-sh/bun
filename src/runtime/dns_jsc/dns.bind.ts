@@ -16,7 +16,7 @@ export const getCacheStats = b.fn({ returns: DNSCacheStats });
 export const prefetch = b.fn({
   args: {
     hostname: b.string.utf8,
-    port: b.u16.nullable.default(443),
+    port: b.u16.validateInteger().nullable.default(443),
   },
   rustPath: "crate::dns_jsc::internal::prefetch_from_js",
 });

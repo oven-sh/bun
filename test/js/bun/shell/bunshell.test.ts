@@ -204,8 +204,9 @@ describe("bunshell", () => {
       ]);
       // @ts-expect-error
       expect($.escape()).toBe("undefined");
-      // A lone surrogate has no UTF-8, so a string that is returned as it is has to be the same one.
+      // A lone surrogate has no UTF-8, so what needs no escaping does not go through it.
       expect($.escape("\ud800")).toBe("\ud800");
+      expect($.escape(new String("a\ud800") as any)).toBe("a\ud800");
       expect(() => $.escape(Symbol() as any)).toThrow(
         expect.objectContaining({ name: "TypeError", message: "Cannot convert a symbol to a string" }),
       );

@@ -411,8 +411,8 @@ ${cppNamespaceSignature(namespace)}
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min<unsigned>(${namespace.functions.length}, JSC::JSFinalObject::maxInlineCapacity));
 ${namespace.functions
   .map(
-    ([name, fn]) =>
-      `    object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, ${asciiLiteral(name)}), ${fn.length}, ${hostFunctionName(fn)}, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, 0);`,
+    fn =>
+      `    object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, ${asciiLiteral(fn.name)}), ${fn.length}, ${hostFunctionName(fn)}, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, 0);`,
   )
   .join("\n")}
     return object;
@@ -477,7 +477,7 @@ template<> void Bun::Bindgen::convertDictionaryInto<${type.cpp}>(JSC::JSGlobalOb
     auto* object = value.getObject();
 ${
   type.nonObjectAsEmpty
-    ? `    if (!object || object->isCallable()) {
+    ? `    if (!object${type.nonObjectAsEmpty === "typeof" ? " || object->isCallable()" : ""}) {
 ${indent(type.cppAssign("result", {}), 8)}
         return;
     }`
@@ -863,6 +863,7 @@ export function cppSource(file: SchemaFile): string {
   if (accepted.length > 0) headers.add("Bindgen/DictionaryMemberReader.h");
   const systemHeaders = ["JavaScriptCore/JSFunction.h"];
   if (accepted.some(type => !type.allowArray)) systemHeaders.unshift("JavaScriptCore/ArrayConstructor.h");
+  if (file.namespaces.length > 0) systemHeaders.push("JavaScriptCore/ObjectConstructor.h");
   if (file.types.some(type => type instanceof EnumerationType)) systemHeaders.push("wtf/SortedArrayMap.h");
   return `${banner(file.origin)}#include "root.h"
 #include "Generated${file.origin.namespace}.h"

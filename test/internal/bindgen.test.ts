@@ -82,6 +82,10 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.i32.validateInteger().wrap).toThrow(".wrap is another way");
   expect(() => b.string.utf8.owned.default("x")).toThrow("cannot have a default");
   expect(() => b.namespace({})).toThrow("a namespace with no functions");
+  expect(() => b.namespace({ f: b.fn({ args: { x: b.i32 } }) as any })).toThrow(
+    "f: write what b.fn takes, without b.fn",
+  );
+  expect(() => b.namespace({ "not-a-name": {} })).toThrow("not-a-name: a function is named by an identifier");
   expect(() => b.array(b.null)).toThrow("an array of nothing but null");
   for (const element of [b.any, b.bufferSource, b.dictionary({ value: b.any }), b.class({ rustPath: "T" })]) {
     expect(() => b.array(element)).toThrow("an array is a Vec, where the GC does not see JS values");

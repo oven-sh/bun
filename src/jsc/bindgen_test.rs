@@ -285,7 +285,7 @@ impl TestCounterClass for TestCounter {
         self.count
     }
 
-    fn label<'a>(&self) -> impl bindgen::to_js::Utf8<'a> {
+    fn label(&self) -> impl AsRef<[u8]> {
         &self.label
     }
 

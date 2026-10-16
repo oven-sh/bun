@@ -125,10 +125,11 @@ test.each(["order", "satisfies"] as const)("Bun.semver.%s converts its arguments
 
 describe("Bun.semver.order()", () => {
   test("an argument that is left out is undefined", () => {
-    // @ts-expect-error
-    expect(() => order()).toThrow("Invalid SemVer: undefined\n");
-    // @ts-expect-error
-    expect(() => order("1.2.3")).toThrow("Invalid SemVer: undefined\n");
+    for (const args of [[], ["1.2.3"]] as any[]) {
+      expect(() => order(...(args as [string, string]))).toThrow(
+        expect.objectContaining({ name: "Error", message: "Invalid SemVer: undefined\n" }),
+      );
+    }
   });
 
   test("whitespace bug fix", () => {
@@ -313,15 +314,13 @@ describe("Bun.semver.order()", () => {
 describe("Bun.semver.satisfies()", () => {
   test("expected errors", () => {
     expect(satisfies).toBeInstanceOf(Function);
-    // Nothing satisfies a range that is not there, as in node-semver.
+    // An argument that is left out is `undefined`, so the string "undefined": not a version, and a range with no
+    // parseable part, which behaves like "*".
     // @ts-expect-error
     expect(satisfies()).toBe(false);
     // @ts-expect-error
-    expect(satisfies("1.2.3")).toBe(false);
-    for (const noRange of [undefined, null] as any[]) {
-      expect(satisfies("1.2.3", noRange)).toBe(false);
-      expect(nodeSemver.satisfies("1.2.3", noRange)).toBe(false);
-    }
+    expect(satisfies("1.2.3")).toBe(true);
+    for (const range of [undefined, null, "undefined", "latest"] as any[]) expect(satisfies("1.2.3", range)).toBe(true);
     expect(satisfies(undefined as any, "1.2.3")).toBe(false);
     // @ts-expect-error
     expect(satisfies("1.2.3", "1.2.3", "blah")).toBeTrue();

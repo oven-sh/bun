@@ -1032,7 +1032,8 @@ test(
               const p = fetch("\${server.url}", { method: "POST", body, duplex: "half" })
                 .then((r) => {
                   keep.push(r.body); const rd = r.body.getReader(); rd.read(); keep.push(rd);
-                  // Exit with that state alive in every fetch.
+                  // Every fetch has that state. The streams then run on, for a different time in each
+                  // worker, so the exits land at arbitrary points of a transfer: no event marks those.
                   if (++touched === fetches) setTimeout(() => process.exit(0), 150 + \${(i * 13) % 60});
                 })
                 .catch((e) => { console.error(e); process.exit(3); });

@@ -396,7 +396,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             };
 
             if !is_absolute {
-                if self.walker.push_absolute_roots() {
+                if self.walker.tail.is_some() && self.walker.push_absolute_roots() {
                     // Nothing is below the cwd, so the cwd is not opened. `openat` starts from the root directory.
                     let root = dupe_z(self.walker.filesystem_root());
                     if let Ok(fd) = A::open(ZStr::from_slice_with_nul(&root[..]))? {
@@ -1987,6 +1987,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     }
 
     /// Queues a walk for each directory that absolute alternatives start in. Returns true if that leaves nothing for the cwd.
+    #[cold]
+    #[inline(never)]
     fn push_absolute_roots(&mut self) -> bool {
         let mut index = 0;
         while let Some(tail) = self.tail.as_deref()
@@ -2004,30 +2006,14 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         self.tail.as_deref().is_some_and(|tail| !tail.has_relative)
     }
 
-    /// For the entry `name` of the directory that is read now, in which the tail is active: returns if the tail matches it and, for a directory, if a path below it can match.
-    #[cold]
-    #[inline(never)]
+    /// `Tail::eval` for the entry `name`. Only a `SyntaxHint::Tail` component asks.
+    #[inline]
     fn eval_below_tail(&self, name: &[u8], is_dir: bool) -> (bool, bool) {
-        let Some(tail) = self.tail.as_deref() else {
-            return (false, false);
-        };
-        if (self.is_ignored)(name) {
-            return (false, false);
-        }
-        let mut entered = tail.entered.borrow_mut();
-        let dir_len = entered.dir_len;
-        let path = &mut entered.path;
-        path.truncate(dir_len);
-        path.extend_from_slice(name);
         let dots = if self.dot { Dots::Match } else { Dots::Hide };
-        let matches = tail.matches(path, dots);
-        if !is_dir {
-            return (matches, false);
+        match self.tail.as_deref() {
+            Some(tail) if !(self.is_ignored)(name) => tail.eval(name, is_dir, dots),
+            _ => (false, false),
         }
-        path.push(b'/');
-        // A directory also matches with a separator after it, if the pattern can end with one.
-        let matches = matches || tail.ends_with_separator && tail.matches(path, dots);
-        (matches, tail.may_match_below(path, dots))
     }
 
     /// Subset of `active` whose components are non-wildcard literals that
@@ -2343,11 +2329,12 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             if (is_separator || (c == b'*' && pattern.get(i as usize + 1) == Some(&b'*')))
                 && brackets.may_be_open(i)
             {
-                let (tail, rewritten) = Self::build_components_from_tokens(
+                let (tail, rewritten) = components_from_tokens(
                     pattern_components,
                     pattern,
                     end_byte_of_basename_excluding_special_syntax,
                     basename_excluding_special_syntax_component_idx,
+                    Self::make_component,
                 );
                 if let Some(rewritten) = rewritten {
                     *whole_pattern = rewritten;
@@ -2400,82 +2387,81 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
         Ok(None)
     }
+}
 
-    /// Splits `pattern` again from its start, with the tokens of the matcher. Also returns the pattern as the matcher reads it, if that is not as written.
-    #[cold]
-    #[inline(never)]
-    fn build_components_from_tokens(
-        pattern_components: &mut Vec<Component>,
-        written: &[u8],
-        end_byte_of_basename_excluding_special_syntax: &mut u32,
-        basename_excluding_special_syntax_component_idx: &mut u32,
-    ) -> (Option<Box<Tail>>, Option<Box<[u8]>>) {
-        pattern_components.clear();
-        *end_byte_of_basename_excluding_special_syntax = 0;
-        *basename_excluding_special_syntax_component_idx = 0;
-        // For the walker a `\` is a separator on Windows. For the matcher it is an escape.
-        let rewritten: Option<Box<[u8]>> = (cfg!(windows) && written.contains(&b'\\')).then(|| {
-            let slash = |byte: &u8| if *byte == b'\\' { b'/' } else { *byte };
-            written.iter().map(slash).collect()
-        });
-        let pattern = rewritten.as_deref().unwrap_or(written);
-        let pattern_len = u32::try_from(pattern.len()).expect("int cast");
-        let shape = Shape::of(pattern);
-        let tokens = Tokens::new(pattern, &shape);
-        let mut saw_special = false;
-        let mut start_byte: u32 = 0;
-        let mut at = 0;
-        while at < pattern.len() {
-            let (token, end) = tokens.at(at);
-            match token {
-                Token::Literal if pattern[at] == b'/' => {
-                    let end_byte = u32::try_from(end).expect("int cast");
-                    // The last component has the separator that ends the pattern.
-                    let is_last = end == pattern.len();
-                    let component_end = if is_last { end_byte } else { end_byte - 1 };
-                    if let Some(component) =
-                        Self::make_component(pattern, start_byte, component_end)
-                    {
-                        saw_special = saw_special || component.syntax_hint.is_special_syntax();
-                        if !saw_special {
-                            *basename_excluding_special_syntax_component_idx =
-                                u32::try_from(pattern_components.len()).expect("int cast");
-                            *end_byte_of_basename_excluding_special_syntax = end_byte;
-                        }
-                        pattern_components.push(component);
+/// Splits `pattern` again from its start, with the tokens of the matcher. Also returns the pattern as the matcher reads it, if that is not as written.
+#[cold]
+#[inline(never)]
+fn components_from_tokens(
+    pattern_components: &mut Vec<Component>,
+    written: &[u8],
+    end_byte_of_basename_excluding_special_syntax: &mut u32,
+    basename_excluding_special_syntax_component_idx: &mut u32,
+    make_component: fn(&[u8], u32, u32) -> Option<Component>,
+) -> (Option<Box<Tail>>, Option<Box<[u8]>>) {
+    pattern_components.clear();
+    *end_byte_of_basename_excluding_special_syntax = 0;
+    *basename_excluding_special_syntax_component_idx = 0;
+    // For the walker a `\` is a separator on Windows. For the matcher it is an escape.
+    let rewritten: Option<Box<[u8]>> = (cfg!(windows) && written.contains(&b'\\')).then(|| {
+        let slash = |byte: &u8| if *byte == b'\\' { b'/' } else { *byte };
+        written.iter().map(slash).collect()
+    });
+    let pattern = rewritten.as_deref().unwrap_or(written);
+    let pattern_len = u32::try_from(pattern.len()).expect("int cast");
+    let shape = Shape::of(pattern);
+    let tokens = Tokens::new(pattern, &shape);
+    let mut saw_special = false;
+    let mut start_byte: u32 = 0;
+    let mut at = 0;
+    while at < pattern.len() {
+        let (token, end) = tokens.at(at);
+        match token {
+            Token::Literal if pattern[at] == b'/' => {
+                let end_byte = u32::try_from(end).expect("int cast");
+                // The last component has the separator that ends the pattern.
+                let is_last = end == pattern.len();
+                let component_end = if is_last { end_byte } else { end_byte - 1 };
+                if let Some(component) = make_component(pattern, start_byte, component_end) {
+                    saw_special = saw_special || component.syntax_hint.is_special_syntax();
+                    if !saw_special {
+                        *basename_excluding_special_syntax_component_idx =
+                            u32::try_from(pattern_components.len()).expect("int cast");
+                        *end_byte_of_basename_excluding_special_syntax = end_byte;
                     }
-                    start_byte = end_byte;
+                    pattern_components.push(component);
                 }
-                Token::Group { first } if starts_tail(&tokens, first, end) => {
-                    // The tail starts at the first `**`, which reads every directory below it anyway. Then no other component is active with the tail.
-                    let doubles = |it: &Component| it.syntax_hint == SyntaxHint::Double;
-                    if let Some(first_double) = pattern_components.iter().position(doubles) {
-                        start_byte = pattern_components[first_double].start;
-                        pattern_components.truncate(first_double);
-                    }
-                    pattern_components.push(Component {
-                        start: start_byte,
-                        len: pattern_len - start_byte,
-                        syntax_hint: SyntaxHint::Tail,
-                        ..Default::default()
-                    });
-                    let tail = Tail::new(&pattern[start_byte as usize..], start_byte != 0);
-                    return (Some(Box::new(tail)), rewritten);
-                }
-                _ => {}
+                start_byte = end_byte;
             }
-            at = end;
+            Token::Group { first } if starts_tail(&tokens, first, end) => {
+                // The tail starts at the first `**`, which reads every directory below it anyway. Then no other component is active with the tail.
+                let doubles = |it: &Component| it.syntax_hint == SyntaxHint::Double;
+                if let Some(first_double) = pattern_components.iter().position(doubles) {
+                    start_byte = pattern_components[first_double].start;
+                    pattern_components.truncate(first_double);
+                }
+                pattern_components.push(Component {
+                    start: start_byte,
+                    len: pattern_len - start_byte,
+                    syntax_hint: SyntaxHint::Tail,
+                    ..Default::default()
+                });
+                let tail = Tail::new(&pattern[start_byte as usize..], start_byte != 0);
+                return (Some(Box::new(tail)), rewritten);
+            }
+            _ => {}
         }
-        let last = Self::make_component(pattern, start_byte, pattern_len);
-        saw_special = saw_special || last.is_some_and(|it| it.syntax_hint.is_special_syntax());
-        if !saw_special {
-            *basename_excluding_special_syntax_component_idx =
-                u32::try_from(pattern_components.len()).expect("int cast");
-            *end_byte_of_basename_excluding_special_syntax = pattern_len;
-        }
-        pattern_components.extend(last);
-        (None, rewritten)
+        at = end;
     }
+    let last = make_component(pattern, start_byte, pattern_len);
+    saw_special = saw_special || last.is_some_and(|it| it.syntax_hint.is_special_syntax());
+    if !saw_special {
+        *basename_excluding_special_syntax_component_idx =
+            u32::try_from(pattern_components.len()).expect("int cast");
+        *end_byte_of_basename_excluding_special_syntax = pattern_len;
+    }
+    pattern_components.extend(last);
+    (None, rewritten)
 }
 
 /// What `{`, `(`, `[` and `\` have opened before a byte of a pattern, as far as one look at each byte tells. It can say open when nothing is, and never the reverse.
@@ -2588,18 +2574,8 @@ impl Tail {
         let tokens = Tokens::new(&pattern, &shape);
         let is_negated = crate::matcher::negations(&pattern) != 0;
         // If every part of the tail can match nothing, the separator before it ends the pattern.
-        let whole = [
-            if is_after_separator {
-                &b"/"[..]
-            } else {
-                &b""[..]
-            },
-            &pattern[..],
-        ]
-        .concat();
-        let whole_shape = Shape::of(&whole);
-        let ends_with_separator = !is_negated
-            && ends_with_separator(&Tokens::new(&whole, &whole_shape), 0..whole.len(), 0);
+        let ends_with_separator =
+            !is_negated && ends_with_separator(&tokens, 0..pattern.len(), is_after_separator, 0);
         let matches_nothing = ends_with_separator
             && (crate::matcher::match_prepared::<{ cfg!(windows) }>(
                 &pattern,
@@ -2621,7 +2597,7 @@ impl Tail {
             has_relative,
             entered: core::cell::RefCell::new(Entered {
                 has_tail: false,
-                path: Vec::new(),
+                path: Vec::with_capacity(128),
                 dir_len: 0,
             }),
             pattern: pattern.into_boxed_slice(),
@@ -2659,6 +2635,25 @@ impl Tail {
             }
             false => NOT_BELOW_TAIL,
         }
+    }
+
+    /// For the entry `name` of the directory that the walk reads now: returns if the tail matches it and, for a directory, if a path below it can match.
+    #[cold]
+    #[inline(never)]
+    fn eval(&self, name: &[u8], is_dir: bool, dots: Dots) -> (bool, bool) {
+        let mut entered = self.entered.borrow_mut();
+        let dir_len = entered.dir_len;
+        let path = &mut entered.path;
+        path.truncate(dir_len);
+        path.extend_from_slice(name);
+        let matches = self.matches(path, dots);
+        if !is_dir {
+            return (matches, false);
+        }
+        path.push(b'/');
+        // A directory also matches with a separator after it, if the pattern can end with one.
+        let matches = matches || self.ends_with_separator && self.matches(path, dots);
+        (matches, self.may_match_below(path, dots))
     }
 
     /// Returns true if the tail matches `path`, a path from the directory that the tail starts in.
@@ -2752,36 +2747,34 @@ fn is_unbounded(tokens: &Tokens) -> bool {
     false
 }
 
-/// Returns true if what `part` of the pattern matches can end with a separator. It gives up on groups that are nested deep.
-fn ends_with_separator(tokens: &Tokens, part: core::ops::Range<usize>, depth: u32) -> bool {
+/// Returns true if what `part` of the pattern matches can end with a separator. `ends` says that of what is before `part`. It gives up on groups that are nested deep.
+fn ends_with_separator(
+    tokens: &Tokens,
+    part: core::ops::Range<usize>,
+    mut ends: bool,
+    depth: u32,
+) -> bool {
     let (pattern, shape) = (tokens.pattern, tokens.shape);
-    // The last token of `part`, and the one before it if the last one can match nothing.
-    let mut found: Vec<(Token, usize)> = Vec::new();
     let mut at = part.start;
     while at < part.end {
         let (token, end) = tokens.at(at);
-        found.push((token, at));
+        ends = match token {
+            Token::Literal => pattern[at] == b'/',
+            Token::Group { first }
+                if depth < 64 && pattern[at] != b'!' && !shape.is_sequence_at(first) =>
+            {
+                // A group that can match nothing leaves the end to what is before it.
+                let can_be_empty = matches!(pattern[at], b'?' | b'*')
+                    || shape.alternatives_at(first).any(|it| it.is_empty());
+                let mut alternatives = shape.alternatives_at(first);
+                (can_be_empty && ends)
+                    || alternatives.any(|it| ends_with_separator(tokens, it, false, depth + 1))
+            }
+            _ => false,
+        };
         at = end;
     }
-    for &(token, at) in found.iter().rev() {
-        let Token::Group { first } = token else {
-            return token == Token::Literal && pattern[at] == b'/';
-        };
-        if depth >= 64 || pattern[at] == b'!' || shape.is_sequence_at(first) {
-            return false;
-        }
-        let mut alternatives = shape.alternatives_at(first);
-        if alternatives.any(|it| ends_with_separator(tokens, it, depth + 1)) {
-            return true;
-        }
-        // A group that can match nothing leaves the end to the token before it.
-        let can_be_empty = matches!(pattern[at], b'?' | b'*')
-            || shape.alternatives_at(first).any(|it| it.is_empty());
-        if !can_be_empty {
-            return false;
-        }
-    }
-    false
+    ends
 }
 
 /// Returns the directories that the absolute alternatives of a pattern start in, and whether an alternative is left for the cwd. Only a group of plain text that starts the pattern has them.

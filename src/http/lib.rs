@@ -50,6 +50,7 @@ pub mod websocket;
 
 // ── crate-root re-exports ──
 pub use async_http::AsyncHTTP;
+pub(crate) use async_http::http_thread_timer_read;
 pub use certificate_info::CertificateInfo;
 pub use decompressor::Decompressor;
 pub use header_builder::HeaderBuilder;
@@ -331,6 +332,11 @@ pub(crate) fn idle_timeout_seconds() -> c_uint {
     IDLE_TIMEOUT_SECONDS.load(Ordering::Relaxed)
 }
 
+/// Longest idle timeout the socket timer can hold, in seconds. The long
+/// timer wheel counts `% 240` minutes, and one minute of pad
+/// ([`normalize_idle_timeout_seconds`]) stays below that.
+pub const MAX_POOL_IDLE_TIMEOUT_SECONDS: u32 = 238 * 60;
+
 /// Normalise an idle timeout (seconds) for uSockets' timer wheels. The sweep
 /// phase is unrelated to when a socket arms its timer, so a timer armed for N
 /// ticks can fire up to one period (4s short wheel, 60s long wheel) before
@@ -347,14 +353,52 @@ pub fn normalize_idle_timeout_seconds(raw: u64) -> c_uint {
     const LONG_WHEEL_PERIOD_SECONDS: u64 = 60;
     /// `SocketTimeout::set_timeout` routes values above this to the long wheel.
     const SHORT_WHEEL_MAX_SECONDS: u64 = 240;
-    /// The long counter wraps `% 240` minutes; one minute of pad stays below.
-    const MAX_RAW_SECONDS: u64 = 238 * LONG_WHEEL_PERIOD_SECONDS;
-    let raw = raw.min(MAX_RAW_SECONDS);
+    let raw = raw.min(u64::from(MAX_POOL_IDLE_TIMEOUT_SECONDS));
     (if raw + SHORT_WHEEL_PERIOD_SECONDS > SHORT_WHEEL_MAX_SECONDS {
         (raw.div_ceil(LONG_WHEEL_PERIOD_SECONDS) + 1) * LONG_WHEEL_PERIOD_SECONDS
     } else {
         raw + SHORT_WHEEL_PERIOD_SECONDS
     }) as c_uint
+}
+
+/// Seconds a parked HTTP/1 socket may be reused for when the origin sent no
+/// `Keep-Alive: timeout=N` (undici `keepAliveTimeout`).
+pub(crate) const DEFAULT_REUSE_SECONDS: u32 = 4;
+/// Subtracted from `Keep-Alive: timeout=N` so a request is never written at
+/// the moment the origin closes the idle connection (undici
+/// `keepAliveTimeoutThreshold`). `N` at or below this closes the socket
+/// instead of parking it.
+pub(crate) const KEEPALIVE_HINT_MARGIN_SECONDS: u32 = 2;
+/// Longest reuse window a `Keep-Alive: timeout=N` hint can set (undici
+/// `keepAliveMaxTimeout`).
+pub(crate) const MAX_KEEPALIVE_HINT_SECONDS: u32 = 600;
+/// Seconds a parked HTTP/2 session stays in the pool without a session
+/// `idleTimeout`.
+pub(crate) const DEFAULT_H2_REUSE_SECONDS: u32 = 5 * 60;
+
+/// `timeout=N` from a `Keep-Alive` header value (`timeout=5, max=100`, RFC
+/// 9112 appendix C.2.2). Parameter names are case-insensitive. `None` when
+/// there is no such parameter, or its value is not a decimal integer. A
+/// value that does not fit in `u32` is `u32::MAX`.
+pub(crate) fn parse_keepalive_timeout(value: &[u8]) -> Option<u32> {
+    for param in HeaderValueIterator::init(value) {
+        let Some((name, digits)) = strings::split_once_char(param, b'=') else {
+            continue;
+        };
+        if !strings::eql_case_insensitive_ascii_check_length(name.trim_ascii(), b"timeout") {
+            continue;
+        }
+        let digits = digits.trim_ascii();
+        if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+        let mut n: u32 = 0;
+        for &c in digits {
+            n = n.saturating_mul(10).saturating_add(u32::from(c - b'0'));
+        }
+        return Some(n);
+    }
+    None
 }
 
 pub const END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY: &[u8] = b"0\r\n\r\n";
@@ -509,6 +553,9 @@ pub struct HTTPClientResult<'a> {
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct PoolOptions {
     pub id: u64,
+    /// Longest a parked socket of this session is handed out for, in whole
+    /// seconds, not padded for the timer wheel: `HTTPContext::find_in` checks
+    /// it against the clock.
     pub idle_timeout_seconds: u32,
     pub max_idle_sockets: u16,
 }
@@ -2728,6 +2775,7 @@ impl<'a> HTTPClient<'a> {
                 None,
                 self.unix_socket_path,
                 self.pool,
+                self.state.keepalive_timeout_seconds,
             );
         } else {
             GenHttpContext::<IS_SSL>::close_socket(socket);
@@ -4383,6 +4431,7 @@ impl<'a> HTTPClient<'a> {
                     None,
                     self.unix_socket_path,
                     self.pool,
+                    self.state.keepalive_timeout_seconds,
                 );
             } else {
                 if self.proxy_tunnel.is_some() {
@@ -4550,6 +4599,7 @@ impl<'a> HTTPClient<'a> {
             None,
             b"",
             self.pool,
+            None,
         );
 
         self.state.reset();
@@ -5034,6 +5084,11 @@ impl<'a> HTTPClient<'a> {
                         Some(false) => self.state.flags.allow_keepalive = false,
                         Some(true) => has_keep_alive_token = true,
                         None => {}
+                    }
+                }
+                h if h == hash_header_const(b"Keep-Alive") => {
+                    if let Some(seconds) = parse_keepalive_timeout(header.value()) {
+                        self.state.keepalive_timeout_seconds = Some(seconds);
                     }
                 }
                 h if h == hash_header_const(b"Last-Modified") => {

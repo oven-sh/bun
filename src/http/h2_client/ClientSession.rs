@@ -1175,6 +1175,7 @@ impl ClientSession {
                 Some(self_ref),
                 b"",
                 self.pool,
+                None,
             );
         } else {
             NewHTTPContext::<true>::close_socket(self.socket);

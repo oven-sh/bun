@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tls } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:net";
@@ -939,3 +939,87 @@ test.concurrent.each(["http", "https"])(
     });
   },
 );
+
+/**
+ * A keep-alive http server that counts its connections and answers every
+ * request with `extraHeaders` added, so a test can tell a reused connection
+ * from a new one.
+ */
+async function countingServer(extraHeaders = "") {
+  let connections = 0;
+  const sockets = new Set<import("net").Socket>();
+  const server = createServer(sock => {
+    connections++;
+    sockets.add(sock);
+    sock.on("close", () => sockets.delete(sock));
+    sock.on("error", () => {});
+    let buf = "";
+    sock.on("data", d => {
+      buf += d.toString("latin1");
+      let i: number;
+      while ((i = buf.indexOf("\r\n\r\n")) >= 0) {
+        buf = buf.slice(i + 4);
+        sock.write(`HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n${extraHeaders}\r\nok`);
+      }
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  return {
+    url: `http://127.0.0.1:${(server.address() as import("net").AddressInfo).port}/`,
+    get connections() {
+      return connections;
+    },
+    [Symbol.dispose]() {
+      for (const sock of sockets) sock.destroy();
+      server.close();
+    },
+  };
+}
+
+// The origin closes an idle connection on its own schedule. A request written
+// onto a pooled connection at that moment fails with ECONNRESET, and a POST
+// cannot be retried. So the pool stops handing a connection out before the
+// origin's deadline: `Keep-Alive: timeout=N` minus a 2 s margin, or 4 s when
+// the origin sends no hint (the same numbers as undici).
+describe("keep-alive pool reuse window", () => {
+  test.each([
+    ["timeout=1", 2],
+    ["timeout=2", 2],
+    ["max=100, timeout=1", 2],
+    ["TIMEOUT=2", 2],
+    ["timeout=60", 1],
+    ["max=100", 1],
+  ])("two back-to-back requests with Keep-Alive: %s use %i connection(s)", async (hint, connections) => {
+    using server = await countingServer(`Keep-Alive: ${hint}\r\n`);
+    for (let i = 0; i < 2; i++) {
+      expect(await (await fetch(server.url, { method: "POST", body: "select 1" })).text()).toBe("ok");
+    }
+    expect(server.connections).toBe(connections);
+  });
+
+  test("Keep-Alive: timeout=3 reuses the connection for 1 s, then dials a new one", async () => {
+    using server = await countingServer("Keep-Alive: timeout=3\r\n");
+    const post = async () => (await fetch(server.url, { method: "POST", body: "select 1" })).text();
+    expect(await post()).toBe("ok");
+    expect(await post()).toBe("ok");
+    expect(server.connections).toBe(1);
+    // The window is the time the connection sat idle, so this waits for it.
+    await Bun.sleep(1_100);
+    expect(await post()).toBe("ok");
+    expect(server.connections).toBe(2);
+  });
+
+  test.concurrent(
+    "without a Keep-Alive hint the connection is not reused after 4 s idle",
+    async () => {
+      using server = await countingServer();
+      const post = async () => (await fetch(server.url, { method: "POST", body: "select 1" })).text();
+      expect(await post()).toBe("ok");
+      await Bun.sleep(4_100);
+      expect(await post()).toBe("ok");
+      expect(server.connections).toBe(2);
+    },
+    15_000,
+  );
+});

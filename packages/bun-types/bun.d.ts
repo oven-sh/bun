@@ -9065,14 +9065,18 @@ declare module "bun" {
       | boolean
       | {
           /**
-           * Seconds an idle connection stays in the pool before it is closed.
-           * The socket timer is coarse: it moves in 4 second steps up to four
-           * minutes, and in whole minutes beyond that. Bun rounds the value up
-           * to the timer, so a connection is never closed before `idleTimeout`,
-           * and it can stay open for up to two steps longer. The longest is
-           * 238 minutes (14280), and a larger value means that.
+           * Seconds an idle connection is reused for. After that it is no
+           * longer handed to a request, and a coarse timer closes it soon
+           * after (within 4 seconds up to four minutes of idle time, within a
+           * minute beyond that). The longest is 238 minutes (14280), and a
+           * larger value means that.
            *
-           * @default 300
+           * It caps the server's `Keep-Alive: timeout=N` (reused for `N - 2`
+           * seconds) and the 4 second default Bun uses when the server sends
+           * no such header. An HTTP/2 connection ignores both and is reused
+           * for `idleTimeout` seconds (300 without one).
+           *
+           * @default 4
            */
           idleTimeout?: number | undefined;
           /**

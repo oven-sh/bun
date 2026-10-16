@@ -243,8 +243,13 @@ pub struct PooledSocket<const SSL: bool> {
     pub(crate) h2_session: Option<RefPtr<h2::ClientSession>>,
     /// `PoolOptions::id` of the fetch session that opened it.
     pub(crate) pool_id: u64,
-    /// `PoolOptions::idle_timeout_seconds` of the session that parked it.
-    pub(crate) idle_timeout_seconds: u32,
+    /// Seconds this socket may be handed out for after it was parked (see
+    /// [`HTTPContext::reuse_window_seconds`]). Also what the idle close timer
+    /// is armed from.
+    pub(crate) reuse_seconds: u32,
+    /// `http_thread().timer` reading (ns) past which `find_in` closes this
+    /// socket instead of handing it out. Not consulted for HTTP/2 sessions.
+    pub(crate) reuse_deadline_ns: u64,
 }
 
 /// `&mut` access to a pooled / found-slot HTTP/2 session, for the field
@@ -624,6 +629,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// tunnel. The pool takes ownership of one strong ref on the tunnel;
     /// the caller must NOT deref it afterwards. If pooling fails (pool
     /// full, hostname too long, socket bad), the tunnel is dereffed here.
+    ///
+    /// `keepalive_hint_seconds` is the `timeout=N` of the response's
+    /// `Keep-Alive` header, when it sent one.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn release_socket(
         &mut self,
@@ -640,6 +648,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         h2_session: Option<RefPtr<h2::ClientSession>>,
         unix_path: &[u8],
         pool: crate::PoolOptions,
+        keepalive_hint_seconds: Option<u32>,
     ) {
         // log("releaseSocket(0x{f})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
@@ -654,7 +663,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
         debug_assert!(!hostname.is_empty());
         debug_assert!(transport == Transport::Unix || port > 0);
 
-        if hostname.len() <= MAX_KEEPALIVE_HOSTNAME
+        let reuse_seconds =
+            Self::reuse_window_seconds(pool, keepalive_hint_seconds, h2_session.is_some());
+
+        if reuse_seconds > 0
+            && hostname.len() <= MAX_KEEPALIVE_HOSTNAME
             && !(socket.is_closed() || socket.is_shutdown() || socket.get_error() != 0)
             && socket.is_established()
         {
@@ -687,7 +700,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 proxy_auth_hash,
                 h2_session,
                 pool_id: pool.id,
-                idle_timeout_seconds: pool.idle_timeout_seconds,
+                reuse_seconds,
+                reuse_deadline_ns: http::http_thread_timer_read()
+                    .saturating_add(u64::from(reuse_seconds) * 1_000_000_000),
             };
             let parked = match transport {
                 Transport::Tcp => Self::park(self.pending_sockets.get_or_init(), pooled, pool),
@@ -770,17 +785,54 @@ impl<const SSL: bool> HTTPContext<SSL> {
             ActiveSocket::<SSL>::init(slot.addr().as_ptr().cast_const()),
         );
         socket.flush();
-        Self::arm_idle_timeout(socket, options.idle_timeout_seconds);
+        Self::arm_idle_timeout(socket, pooled.reuse_seconds);
         slot.write(pooled);
         None
     }
 
-    /// How long a parked socket may sit idle; 0 is the 5 minute default.
-    fn arm_idle_timeout(socket: HTTPSocket<SSL>, idle_timeout_seconds: u32) {
-        socket.set_timeout(match idle_timeout_seconds {
-            0 => 5 * 60,
-            seconds => seconds,
+    /// Seconds a socket parked now may be handed out for. 0 means do not
+    /// park it.
+    ///
+    /// The origin closes an idle connection on its own schedule. `Keep-Alive:
+    /// timeout=N` announces it, minus [`http::KEEPALIVE_HINT_MARGIN_SECONDS`]
+    /// so a request never lands on the socket at the moment the origin closes
+    /// it (undici `keepAliveTimeoutThreshold`). Without a hint the window is
+    /// [`http::DEFAULT_REUSE_SECONDS`] (undici `keepAliveTimeout`). The
+    /// session's `idleTimeout` caps both.
+    ///
+    /// An HTTP/2 session proves its own liveness (PING, GOAWAY, the idle frame
+    /// handlers), so it keeps the long default and ignores the hint.
+    fn reuse_window_seconds(
+        pool: crate::PoolOptions,
+        keepalive_hint_seconds: Option<u32>,
+        is_h2: bool,
+    ) -> u32 {
+        let session = match pool.idle_timeout_seconds {
+            0 => None,
+            seconds => Some(seconds),
+        };
+        if is_h2 {
+            return session.unwrap_or(http::DEFAULT_H2_REUSE_SECONDS);
+        }
+        let hint = keepalive_hint_seconds.map(|n| {
+            n.saturating_sub(http::KEEPALIVE_HINT_MARGIN_SECONDS)
+                .min(http::MAX_KEEPALIVE_HINT_SECONDS)
         });
+        match (session, hint) {
+            (Some(s), Some(h)) => s.min(h),
+            (Some(s), None) => s,
+            (None, Some(h)) => h,
+            (None, None) => http::DEFAULT_REUSE_SECONDS,
+        }
+    }
+
+    /// Arm the close timer of a parked socket. The timer wheel is coarse and
+    /// the value is padded so it never fires before `reuse_seconds`; the
+    /// handout check in `find_in` is the exact bound.
+    fn arm_idle_timeout(socket: HTTPSocket<SSL>, reuse_seconds: u32) {
+        socket.set_timeout(http::normalize_idle_timeout_seconds(u64::from(
+            reuse_seconds,
+        )));
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -840,6 +892,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             transport,
             pool_id,
         } = *key;
+        let now_ns = http::http_thread_timer_read();
         let mut iter = pool.used.iterator::<true, true>();
 
         while let Some(pending_socket_index) = iter.next() {
@@ -918,6 +971,15 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
                 if http_socket.is_shutdown() || http_socket.get_error() != 0 {
                     Self::terminate_socket(http_socket);
+                    continue;
+                }
+
+                // Past its reuse window: the origin closes it any moment now,
+                // and a request written onto it cannot be replayed unless it
+                // is idempotent. Retire it with a FIN and dial a new one.
+                if socket.h2_session.is_none() && now_ns >= socket.reuse_deadline_ns {
+                    bun_core::scoped_log!(HTTPContext, "Keep-Alive reuse window over");
+                    Self::close_socket(http_socket);
                     continue;
                 }
 
@@ -1452,7 +1514,7 @@ impl<const SSL: bool> Handler<SSL> {
         if handshake_success {
             if let Some(pooled) = active.pooled_mut() {
                 // Allow pooled sockets to be reused if the handshake was successful.
-                HTTPContext::<SSL>::arm_idle_timeout(socket, pooled.idle_timeout_seconds);
+                HTTPContext::<SSL>::arm_idle_timeout(socket, pooled.reuse_seconds);
                 return;
             }
         }
@@ -1568,6 +1630,14 @@ impl<const SSL: bool> Handler<SSL> {
         if let Some(session) = tagged.session() {
             HTTPContext::<SSL>::mark_socket_as_dead(socket);
             h2::ClientSession::on_timeout(session);
+        }
+        if tagged.is::<PooledSocket<SSL>>() {
+            // An idle keep-alive socket we are done with: a FIN, so the
+            // origin does not observe a reset for a connection nothing was
+            // wrong with.
+            bun_core::scoped_log!(HTTPContext, "Keep-Alive idle timeout");
+            HTTPContext::<SSL>::close_socket(socket);
+            return;
         }
 
         HTTPContext::<SSL>::terminate_socket(socket);

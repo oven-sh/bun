@@ -43,17 +43,21 @@ function connectionCountingServer() {
   };
 }
 
-/** A keep-alive http server whose `closed` settles when its first connection goes away. */
-async function closeObservingServer() {
+/**
+ * A keep-alive http server whose `closed` settles when its first connection
+ * goes away. Every response carries `extraHeaders`.
+ */
+async function closeObservingServer(extraHeaders = "") {
   const closed = Promise.withResolvers<void>();
   const server = net.createServer(socket => {
     socket.on("error", () => {});
     socket.on("close", () => closed.resolve());
-    socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"));
+    socket.on("data", () => socket.write(`HTTP/1.1 200 OK\r\nContent-Length: 2\r\n${extraHeaders}\r\nok`));
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   return {
+    server,
     url: `http://127.0.0.1:${(server.address() as net.AddressInfo).port}/`,
     closed: closed.promise,
     [Symbol.dispose]() {
@@ -155,6 +159,32 @@ describe("Bun.FetchSession", () => {
     } finally {
       counting.close();
     }
+  });
+
+  test("keepAlive.idleTimeout is exact: a connection idle for that long is not reused", async () => {
+    using server = await closeObservingServer();
+    let connections = 0;
+    server.server.on("connection", () => connections++);
+    using session = new Bun.FetchSession({ keepAlive: { idleTimeout: 1 } });
+    expect(await (await fetch(server.url, { session })).text()).toBe("ok");
+    expect(await (await fetch(server.url, { session })).text()).toBe("ok");
+    expect(connections).toBe(1);
+    // The timeout is the time the connection sat idle, so this waits for it.
+    await Bun.sleep(1_100);
+    expect(await (await fetch(server.url, { session })).text()).toBe("ok");
+    expect(connections).toBe(2);
+  });
+
+  test("the origin's Keep-Alive: timeout caps keepAlive.idleTimeout", async () => {
+    using server = await closeObservingServer("Keep-Alive: timeout=3\r\n");
+    let connections = 0;
+    server.server.on("connection", () => connections++);
+    using session = new Bun.FetchSession({ keepAlive: { idleTimeout: 60 } });
+    expect(await (await fetch(server.url, { session })).text()).toBe("ok");
+    // timeout=3 minus the 2 s margin: reuse stops after 1 s idle.
+    await Bun.sleep(1_100);
+    expect(await (await fetch(server.url, { session })).text()).toBe("ok");
+    expect(connections).toBe(2);
   });
 
   // The socket timer sweeps every 4 seconds, so this takes two sweeps; it runs

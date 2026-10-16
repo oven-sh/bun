@@ -3232,10 +3232,13 @@ void JSNodeSqliteSession::deleteSession()
     if (!m_record || m_record->handle == nullptr) return;
     // A changeset()/patchset() is on the C stack for this handle;
     // sqlite3session_delete would free it under sessionGenerateChangeset().
-    // close() throws ERR_INVALID_STATE for this; Symbol.dispose no-ops.
+    // close() and Symbol.dispose throw ERR_INVALID_STATE before reaching here.
     if (m_record->inUse) return;
     if (!m_record->dbGone) {
         auto* db = m_database.get();
+        // Both callers refuse while the connection runs a callback: the
+        // preupdate hook that installed this session may be walking it.
+        ASSERT(!db->isBusy());
         db->untrackSession(m_record.get());
         sqlite3session_delete(m_record->handle);
     }
@@ -3342,7 +3345,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSessionClose, (JSGlobalObject * globalObject, CallFra
         return throwNodeState(globalObject, scope, "session is not open"_s);
     }
     if (self->record()->inUse) {
-        return throwNodeState(globalObject, scope, "session is currently generating a changeset"_s);
+        return throwNodeState(globalObject, scope, "session is currently in use"_s);
+    }
+    // Checked last: changeset()/patchset() run the authorizer, so both hold
+    // there and the in-use message above wins (Node's order).
+    if (self->database()->isBusy()) {
+        return throwNodeState(globalObject, scope, "session cannot be closed while in a callback"_s);
     }
     self->deleteSession();
     return JSValue::encode(jsUndefined());
@@ -3350,9 +3358,20 @@ JSC_DEFINE_HOST_FUNCTION(jsSessionClose, (JSGlobalObject * globalObject, CallFra
 
 JSC_DEFINE_HOST_FUNCTION(jsSessionDispose, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* self = dynamicDowncast<JSNodeSqliteSession>(callFrame->thisValue());
-    (void)globalObject;
-    if (self) self->deleteSession();
+    // Already closed, or the database freed the handle: nothing to do.
+    if (!self || self->isStale() || self->session() == nullptr) {
+        return JSValue::encode(jsUndefined());
+    }
+    if (self->record()->inUse) {
+        return throwNodeState(globalObject, scope, "session is currently in use"_s);
+    }
+    if (self->database()->isBusy()) {
+        return throwNodeState(globalObject, scope, "session cannot be closed while in a callback"_s);
+    }
+    self->deleteSession();
     return JSValue::encode(jsUndefined());
 }
 

@@ -61,8 +61,9 @@ static constexpr size_t kNodeSqliteLimitCount = 11;
 //                 deletes the orphaned handle on its next entry point
 //   inUse       — a sqlite3session_changeset/patchset is on the C stack for
 //                 this handle (it re-enters the authorizer via its internal
-//                 SAVEPOINT/SELECT). session.close()/Symbol.dispose refuse
-//                 while set. The BusyScope taken before inUse is set means
+//                 SAVEPOINT/SELECT). session.close()/Symbol.dispose throw
+//                 while set, and also while the database isBusy() (any
+//                 SQLite callback). The BusyScope taken before inUse is set means
 //                 deleteTrackedSessions()/sweepOrphanedSessions() are never
 //                 reached while any record is inUse; the sweep loops ASSERT
 //                 that, rather than branching on it.
@@ -194,12 +195,15 @@ public:
     void rememberRegistration(const WTF::String& name, int argc, const std::array<size_t, 4>& slots);
 
     // Incremented for the duration of any native call that may re-enter JS.
-    // close()/deserialize()/process-exit consult it. Node permits re-entrant
-    // close(), so closeInternal() runs when busy but defers sqlite3_close_v2
-    // itself until the outermost BusyScope unwinds: while a statement is
-    // outstanding close_v2 only zombifies, but from an authorizer callback
-    // during prepare() no Vdbe exists yet and close_v2 would free the handle
-    // under the parser's feet.
+    // close()/deserialize()/session.close()/process-exit consult it. A
+    // re-entrant db.close() is accepted: closeInternal() runs when busy but
+    // defers sqlite3_close_v2 itself until the outermost BusyScope unwinds.
+    // While a statement is outstanding close_v2 only zombifies, but from an
+    // authorizer callback during prepare() no Vdbe exists yet and close_v2
+    // would free the handle under the parser's feet. session.close() and
+    // Symbol.dispose refuse with ERR_INVALID_STATE instead, like Node: the
+    // preupdate hook fires the authorizer while it walks the session it
+    // would free.
     bool isBusy() const { return m_busyDepth > 0; }
     struct BusyScope {
         JSDatabaseSync* db;

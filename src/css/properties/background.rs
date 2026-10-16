@@ -783,19 +783,15 @@ impl BackgroundHandler {
                 self.clips = Some((clips, clips_vp));
             }
             Property::Unparsed(val) => {
-                if is_background_property(val.property_id) {
-                    self.flush(dest, context);
-                    let arena = dest.bump();
-                    let mut unparsed = val.deep_clone(arena);
-                    context.add_unparsed_fallbacks(arena, &mut unparsed);
-                    if let Some(prop) = BackgroundProperty::try_from_property_id(val.property_id) {
-                        self.flushed_properties.insert(prop);
-                    }
-
-                    dest.push(Property::Unparsed(unparsed));
-                } else {
-                    return false;
+                self.flush(dest, context);
+                let arena = dest.bump();
+                let mut unparsed = val.deep_clone(arena);
+                context.add_unparsed_fallbacks(arena, &mut unparsed);
+                if let Some(prop) = BackgroundProperty::try_from_property_id(val.property_id) {
+                    self.flushed_properties.insert(prop);
                 }
+
+                dest.push(Property::Unparsed(unparsed));
             }
             _ => return false,
         }
@@ -1174,21 +1170,4 @@ impl crate::small_list::ImageFallback for Background {
     fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         Background::get_necessary_fallbacks(self, targets)
     }
-}
-
-fn is_background_property(property_id: PropertyId) -> bool {
-    matches!(
-        property_id,
-        PropertyId::BackgroundColor
-            | PropertyId::BackgroundImage
-            | PropertyId::BackgroundPosition
-            | PropertyId::BackgroundPositionX
-            | PropertyId::BackgroundPositionY
-            | PropertyId::BackgroundRepeat
-            | PropertyId::BackgroundSize
-            | PropertyId::BackgroundAttachment
-            | PropertyId::BackgroundOrigin
-            | PropertyId::BackgroundClip(_)
-            | PropertyId::Background
-    )
 }

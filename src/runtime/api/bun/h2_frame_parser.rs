@@ -232,6 +232,8 @@ const MAX_WINDOW_SIZE: u32 = i32::MAX as u32;
 const MAX_HEADER_TABLE_SIZE: u32 = u32::MAX;
 const MAX_STREAM_ID: u32 = i32::MAX as u32;
 const MAX_FRAME_SIZE: u32 = 0xFF_FFFF; // u24::MAX
+// node's kMaxALTSVC: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L241
+const MAX_ALTSVC_LENGTH: usize = 16384 - 2;
 const DEFAULT_WINDOW_SIZE: u64 = u16::MAX as u64;
 // Float versions for range validation before integer conversion
 const MAX_WINDOW_SIZE_F64: f64 = MAX_WINDOW_SIZE as f64;
@@ -2262,7 +2264,17 @@ impl H2FrameParser {
         }
     }
 
-    pub(crate) fn send_alt_svc(&self, stream_identifier: u32, origin_str: &[u8], alt: &[u8]) {
+    /// Writes nothing and returns `false` when the origin and the value exceed `MAX_ALTSVC_LENGTH`.
+    #[must_use]
+    pub(crate) fn send_alt_svc(
+        &self,
+        stream_identifier: u32,
+        origin_str: &[u8],
+        alt: &[u8],
+    ) -> bool {
+        if origin_str.len() + alt.len() > MAX_ALTSVC_LENGTH {
+            return false;
+        }
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_ALTSVC stream {} origin {} alt {}",
@@ -2274,18 +2286,15 @@ impl H2FrameParser {
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 2];
         let mut stream = FixedBufferStream::new(&mut buffer);
 
+        // Both lengths are at most MAX_ALTSVC_LENGTH, so the casts keep every bit.
         let frame = FrameHeader {
             type_: FrameType::HTTP_FRAME_ALTSVC as u8,
             flags: 0,
             stream_identifier,
-            length: u32::try_from(origin_str.len() + alt.len() + 2).expect("int cast"),
+            length: (origin_str.len() + alt.len() + 2) as u32,
         };
         let _ = frame.write(&mut stream, &self.frames_sent_legacy);
-        let _ = stream.write_all(
-            &u16::try_from(origin_str.len())
-                .expect("int cast")
-                .to_be_bytes(),
-        );
+        let _ = stream.write_all(&(origin_str.len() as u16).to_be_bytes());
         let _ = self.write(&buffer);
         if !origin_str.is_empty() {
             let _ = self.write(origin_str);
@@ -2293,6 +2302,7 @@ impl H2FrameParser {
         if !alt.is_empty() {
             let _ = self.write(alt);
         }
+        true
     }
 
     pub(crate) fn send_ping(&self, ack: bool, payload: &[u8]) {
@@ -4971,11 +4981,17 @@ impl H2FrameParser {
         // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L3233-L3239
         let origin_bytes = origin_view.as_ref().map(header_value_bytes);
         let value_bytes = value_view.as_ref().map(header_value_bytes);
-        this.send_alt_svc(
+        if !this.send_alt_svc(
             stream_id,
             origin_bytes.as_deref().unwrap_or_default(),
             value_bytes.as_deref().unwrap_or_default(),
-        );
+        ) {
+            let exception = global_object.to_type_error(
+                bun_jsc::ErrorCode::HTTP2_ALTSVC_LENGTH,
+                format_args!("HTTP/2 ALTSVC frames are limited to 16382 bytes"),
+            );
+            return Err(global_object.throw_value(exception));
+        }
         Ok(JSValue::UNDEFINED)
     }
 
@@ -6095,6 +6111,12 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!(
                 "Expected parentId, promisedId, headers and sensitiveHeaders arguments"
             )));
+        }
+        if !parent_id_arg.is_number() {
+            return Err(global_object.throw(format_args!("Expected parentId to be a number")));
+        }
+        if !promised_id_arg.is_number() {
+            return Err(global_object.throw(format_args!("Expected promisedId to be a number")));
         }
         let parent_id = parent_id_arg.to_u32();
         let promised_id = promised_id_arg.to_u32();

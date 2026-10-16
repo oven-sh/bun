@@ -3258,6 +3258,14 @@ size_t us_client_hello_servername(const SSL_CLIENT_HELLO *hello, char *out, size
   return 0;
 }
 
+/* us_select_cert_cb for an SSL that no us_socket_t drives: the owner of its SSLWrapper resolves.
+ * Out of line, so the us_socket_t path of us_select_cert_cb costs what it did without it. */
+__attribute__((noinline))
+static enum ssl_select_cert_result_t us_select_cert_for_wrapper(const SSL_CLIENT_HELLO *hello) {
+  void *wrapper = hello->ssl ? us_ssl_wrapper(hello->ssl) : NULL;
+  return wrapper ? (enum ssl_select_cert_result_t)us_ssl_wrapper_select_cert(wrapper, hello) : ssl_select_cert_success;
+}
+
 /* The async-capable certificate selector. Registered (instead of relying on
  * sni_cb alone) on listener contexts that have a dynamic JS resolver, so an
  * SNICallback that cannot answer synchronously suspends the handshake
@@ -3266,11 +3274,7 @@ size_t us_client_hello_servername(const SSL_CLIENT_HELLO *hello, char *out, size
 static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *hello) {
   SSL *ssl = hello->ssl;
   struct us_socket_t *s = ssl ? us_ssl_socket(ssl) : NULL;
-  if (!s) {
-    /* An SSL that an SSLWrapper drives resolves through its owner. */
-    void *wrapper = ssl ? us_ssl_wrapper(ssl) : NULL;
-    return wrapper ? (enum ssl_select_cert_result_t)us_ssl_wrapper_select_cert(wrapper, hello) : ssl_select_cert_success;
-  }
+  if (!s) return us_select_cert_for_wrapper(hello);
   struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
   struct us_server_names_t *names = rare ? rare->server_names : NULL;
 

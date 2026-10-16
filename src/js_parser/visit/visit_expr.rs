@@ -2461,16 +2461,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A direct eval reads names from the scope of its call. When its argument
-    /// is a string literal that names `__dirname` or `__filename`, count a use
-    /// of the parser's symbol, so that a bundled CommonJS module declares it.
+    /// Counts a use of `__dirname` / `__filename` when a direct eval's string literal names it.
     #[cold]
     #[inline(never)]
     fn record_path_names_read_by_direct_eval(p: &mut Self, call: &E::Call) {
         use crate::parser::options::Format;
 
-        // In cjs and iife output such an eval keeps what it reads today: the
-        // names of the output file, when its loader binds them.
+        // In cjs and iife output such an eval keeps reading the names of the output file.
         if !matches!(
             p.options.output_format,
             Format::Esm | Format::InternalBakeDev

@@ -154,6 +154,9 @@ sql1.begin(async txn => {
   const plain: { id: number }[] = rows;
 }
 
+expectType(sql1`SELECT id FROM users WHERE id = ${1}`.describe()).is<Promise<Bun.SQL.ResultStatement>>();
+expectType(await sql1.unsafe("SELECT id FROM users WHERE id = $1").describe()).is<Bun.SQL.ResultStatement>();
+
 expectType(sql1`COPY users TO STDOUT`.readable()).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
 expectType(sql1`COPY users TO STDOUT`.readable().pipeTo(sql2`COPY users FROM STDIN`.writable())).is<Promise<void>>();
 sql1`COPY users FROM STDIN`.writable().getWriter().write("1\tAlice\n");

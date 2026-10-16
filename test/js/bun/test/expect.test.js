@@ -1077,7 +1077,7 @@ describe("expect()", () => {
     // Symbol.hasInstance can make a thrown string, symbol or BigInt an instance of the class, so
     // the failure of .not.toThrow(Class) cannot assume a .message. A child process runs it,
     // because a null dereference there ends the whole test run.
-    test(".not.toThrow(Class) reports a thrown value that is not an object", async () => {
+    test(".not.toThrow(Class) reports a thrown string, symbol or BigInt that Symbol.hasInstance accepts", async () => {
       const { bunEnv, bunExe } = require("harness");
       const src = `
         import { expect } from "bun:test";
@@ -1086,16 +1086,22 @@ describe("expect()", () => {
             return true;
           }
         }
-        for (const thrown of ["boom", Symbol("boom"), 10n ** 30n, {}, { message: "an object" }, new TypeError("an error")]) {
+        const report = async run => {
           try {
-            expect(() => {
-              throw thrown;
-            }).not.toThrow(Anything);
+            await run();
             console.log("passed");
           } catch (e) {
             console.log(e.message.split("\\n").filter(Boolean).slice(1).join(" | "));
           }
+        };
+        const thrower = thrown => () => {
+          throw thrown;
+        };
+        for (const thrown of ["boom", Symbol("boom"), 10n ** 30n, {}, { message: "an object" }, new TypeError("an error")]) {
+          await report(() => expect(thrower(thrown)).not.toThrow(Anything));
         }
+        await report(() => expect(Promise.reject("boom")).rejects.not.toThrow(Anything));
+        await report(() => expect(thrower("boom")).not.toThrow(RangeError));
       `;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", src],
@@ -1112,6 +1118,8 @@ describe("expect()", () => {
           "Expected constructor: not Anything | Received value: {}",
           'Expected constructor: not Anything | Received message: "an object"',
           'Expected constructor: not Anything | Received message: "an error"',
+          'Expected constructor: not Anything | Received value: "boom"',
+          "passed",
           "",
         ],
         exitCode: 0,

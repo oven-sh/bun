@@ -1142,6 +1142,8 @@ describe("bundler", () => {
           // A conditional or logical expression that folds to the method is the method.
           (true ? import.meta.hot.accept : fail)(fail);
           (false ? fail : import.meta.hot.accept).call(null, fail);
+          // A call in the dead branch must not take the removal meant for the outer call.
+          (true ? import.meta.hot.accept : fail())(fail);
           (null ?? import.meta.hot.dispose)(fail);
           (false || import.meta.hot.on)(fail);
           (1 && import.meta.hot.off)(fail);

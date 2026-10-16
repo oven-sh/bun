@@ -231,18 +231,6 @@ impl JSMySQLQuery {
         // allocation outlives the closure body.
         let _guard = self.ref_guard();
         let is_last_result = result.is_last_result;
-        let global = self.global_object();
-        // Before `result()`, so a throw here can still reject the query.
-        let keyword = self
-            .query
-            .with_mut(|q| q.advance_command(result.backslash_escapes));
-        let js_command = match self.query.get().command_to_js(global, keyword) {
-            Ok(command) => command,
-            Err(err) => {
-                return self.reject_with_js_value(queries_array, global.take_exception(err));
-            }
-        };
-        js_command.ensure_still_alive();
         // R-2: `&Self` is `Copy`; the guard captures it by value and runs on
         // every exit path (defer). All mutation is `JsCell`-backed.
         let _downgrade = scopeguard::guard(self, move |s| {
@@ -254,6 +242,9 @@ impl JSMySQLQuery {
         if !self.query.with_mut(|q| q.result(is_last_result)) {
             return;
         }
+        let keyword = self
+            .query
+            .with_mut(|q| q.advance_command(result.backslash_escapes));
 
         let Some(target_value) = self.get_target() else {
             return;
@@ -274,6 +265,21 @@ impl JSMySQLQuery {
         };
         debug_assert!(function.is_callable(), "onQueryResolveFn is not callable");
 
+        // `result()` above accepted this result, so a throw from the string
+        // allocation takes that back to reject the query.
+        let global = self.global_object();
+        let js_command = match self.query.get().command_to_js(global, keyword) {
+            Ok(command) => command,
+            Err(err) => {
+                return self.reject_when(
+                    MySQLQuery::fail_accepted_result,
+                    queries_array,
+                    global.take_exception(err),
+                );
+            }
+        };
+        js_command.ensure_still_alive();
+
         let pending_value = self.get_pending_value().unwrap_or(JSValue::UNDEFINED);
         pending_value.ensure_still_alive();
         self.set_pending_value(JSValue::UNDEFINED);
@@ -283,7 +289,7 @@ impl JSMySQLQuery {
         event_loop.run_callback(
             bun_event_loop::ContextId::NONE,
             function,
-            self.global_object(),
+            global,
             this_value,
             &[
                 target_value,

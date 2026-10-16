@@ -3258,6 +3258,18 @@ impl<'a> Parser<'a> {
         self.input.token_list_parse_failures += 1;
     }
 
+    /// See `ParserInput::unresolved_relative_colors`.
+    #[inline]
+    pub(crate) fn unresolved_relative_colors(&self) -> u64 {
+        self.input.unresolved_relative_colors.get()
+    }
+
+    #[inline]
+    pub(crate) fn note_unresolved_relative_color(&self) {
+        let count = &self.input.unresolved_relative_colors;
+        count.set(count.get() + 1);
+    }
+
     pub(crate) fn is_exhausted(&mut self) -> bool {
         self.expect_exhausted().is_ok()
     }
@@ -3802,6 +3814,8 @@ pub struct ParserInput<'a> {
     /// alternative is guaranteed to fail again, so they propagate the error
     /// instead of retrying (which is exponential in the nesting depth).
     token_list_parse_failures: u64,
+    /// Count of relative colors that are valid and left for the browser to compute. A reader with no unparsed form samples it to tell such a color from an invalid value.
+    unresolved_relative_colors: core::cell::Cell<u64>,
 }
 
 /// See `ParserInput::unclosed_block_at_eof`.
@@ -3830,6 +3844,7 @@ impl<'a> ParserInput<'a> {
             unclosed_block_at_eof: None,
             math_fn_parse_failures: 0,
             token_list_parse_failures: 0,
+            unresolved_relative_colors: core::cell::Cell::new(0),
         }
     }
 }

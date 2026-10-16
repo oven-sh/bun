@@ -1941,6 +1941,7 @@ impl ComponentParser {
             && !SRGB::try_from_css_color(&from)
                 .is_some_and(|srgb| srgb.resolve_missing().is_nearly_in_gamut())
         {
+            input.note_unresolved_relative_color();
             return Err(input.new_custom_error(css::ParserError::invalid_value));
         }
 

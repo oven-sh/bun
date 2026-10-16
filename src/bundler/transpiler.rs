@@ -878,6 +878,7 @@ pub struct ParseOptions<'a, 'b> {
     pub virtual_source: Option<&'b bun_ast::Source>,
     pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
     pub inject_jest_globals: bool,
+    pub is_test_entry_point: bool,
     pub set_breakpoint_on_first_line: bool,
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
@@ -1529,6 +1530,7 @@ impl<'a> Transpiler<'a> {
                 opts.features.ascii_only = target.is_bun();
 
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
+                opts.features.is_test_entry_point = this_parse.is_test_entry_point;
                 opts.features.vitest_globals =
                     self.options.vitest_globals || self.options.test_file_imports_vitest;
                 opts.features.own_test_globals = self.options.own_test_globals;
@@ -2875,6 +2877,7 @@ impl<'a> Transpiler<'a> {
                     virtual_source: None,
                     replace_exports: Default::default(),
                     inject_jest_globals: false,
+                    is_test_entry_point: false,
                     set_breakpoint_on_first_line: false,
                     remove_cjs_module_wrapper: false,
                     dont_bundle_twice: false,

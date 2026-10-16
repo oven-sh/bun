@@ -193,6 +193,8 @@ pub mod Runtime {
         pub inlining: bool,
 
         pub inject_jest_globals: bool,
+        /// A test file or a preload of `bun test`, and not a module they import.
+        pub is_test_entry_point: bool,
         /// Inject the globals from "vitest" instead of "bun:test".
         pub vitest_globals: bool,
         /// Bitset indexed like `Jest::GLOBALS`, set for the ones a script put on `globalThis` itself.
@@ -293,6 +295,7 @@ pub mod Runtime {
                 allow_runtime: true,
                 inlining: false,
                 inject_jest_globals: false,
+                is_test_entry_point: false,
                 vitest_globals: false,
                 own_test_globals: 0,
                 no_macros: false,
@@ -395,6 +398,11 @@ pub mod Runtime {
             // `bool: NoUninit`, `u8: AnyBitPattern` → `cast_slice` is statically sound.
             hasher.update(bytemuck::cast_slice::<bool, u8>(&bools));
             hasher.update(&[self.react_compiler as u8]);
+
+            // `P::runs_imports_in_turn` reads both, also in a file without `P::uses_test_api`. Nothing is added for other files.
+            if self.is_test_entry_point {
+                hasher.update(&[b'e', u8::from(self.vitest_globals)]);
+            }
 
             // Hash --feature flags. These directly affect transpiled output via
             // feature("NAME") replacement in visit_expr.rs. When empty, we add

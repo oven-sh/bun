@@ -2659,6 +2659,9 @@ fn transpile_source_code_of_any_provenance(
                     inject_jest_globals: unsafe {
                         (*jsc_vm).transpiler.options.rewrite_jest_for_tests
                     },
+                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                    is_test_entry_point: (is_main || is_preload)
+                        && unsafe { (*jsc_vm).transpiler.options.rewrite_jest_for_tests },
                     keep_json_and_toml_as_one_statement: true,
                     allow_bytecode_cache: true,
                     set_breakpoint_on_first_line,

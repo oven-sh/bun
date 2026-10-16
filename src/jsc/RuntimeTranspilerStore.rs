@@ -865,6 +865,7 @@ impl TranspilerJob {
             dont_bundle_twice: true,
             allow_commonjs: true,
             inject_jest_globals: transpiler.options.rewrite_jest_for_tests,
+            is_test_entry_point: false,
             // SAFETY: leaf-field `&` borrow on `*vm.debugger`; see `vm` note above.
             set_breakpoint_on_first_line: unsafe { &(*vm).debugger }
                 .as_ref()

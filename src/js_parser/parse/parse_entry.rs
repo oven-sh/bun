@@ -246,6 +246,7 @@ impl<'a> Options<'a> {
                 allow_runtime: f.allow_runtime,
                 inlining: f.inlining,
                 inject_jest_globals: f.inject_jest_globals,
+                is_test_entry_point: f.is_test_entry_point,
                 vitest_globals: f.vitest_globals,
                 own_test_globals: f.own_test_globals,
                 no_macros: f.no_macros,
@@ -1993,7 +1994,7 @@ impl<'a> Parser<'a> {
         // Glob imports go before the file's own imports, whether or not they're lowered.
         let mut lowered_glob_imports = BumpVec::<js_ast::Part>::new_in(p.arena);
         for stmt in core::mem::replace(&mut p.import_meta_glob_imports, BumpVec::new_in(p.arena)) {
-            let is_lowered = !hoisted_mocks.is_empty()
+            let is_lowered = !(hoisted_mocks.is_empty() && imports_after_hoisted_mocks.is_empty())
                 && matches!(
                     stmt.data,
                     js_ast::StmtData::SImport(import)

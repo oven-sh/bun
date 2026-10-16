@@ -7,6 +7,7 @@
 
 import { describe, expect, jest, mock, spyOn, test, vi } from "bun:test";
 import { bunEnv, bunExe, Heap, isASAN, isDebug, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
@@ -6021,6 +6022,124 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
       1,
       args,
     );
+  });
+
+  // Static imports are all linked before the first one runs. Vitest runs each import before it looks at the next.
+  describe("a Vitest test file without a mock call of its own runs its imports in turn", () => {
+    const files = {
+      "flags.ts": `export const flags = {}; export const limit = 3;`,
+      "panel.ts": `
+        import { flags, limit } from "./flags";
+        export const limitAtLoad = limit;
+        export const isOn = () => "on" in flags;
+      `,
+      "suite.test.ts": `
+        import { expect, test, vi } from "vitest";
+        import { isOn, limitAtLoad } from "./panel";
+        const on = vi.fn(() => true);
+        vi.mock("./flags", () => ({
+          get flags() { return on() ? { on: 1 } : {}; },
+          limit: 1,
+          onlyInTheMock: true,
+        }));
+        test("the suite", () => expect([isOn(), limitAtLoad]).toEqual([true, 1]));
+      `,
+    };
+    const imports = `
+      import "./suite.test";
+      import { isOn, limitAtLoad } from "./panel";
+      import * as flags from "./flags";
+    `;
+    const own = `test("the file that imports the suite", () => expect([isOn(), limitAtLoad, flags.onlyInTheMock]).toEqual([true, 1, true]));`;
+
+    test.each([
+      ["it imports vitest", [], `${imports} import { expect, test } from "vitest"; ${own}`],
+      ["it imports vitest", ["--isolate"], `${imports} import { expect, test } from "vitest"; ${own}`],
+      ["the globals are those of vitest", ["--globals=vitest"], imports + own],
+      ["the globals are those of vitest", ["--globals=vitest", "--isolate"], imports + own],
+    ])("%s %j", async (_, args, file) => {
+      await expectFixturesToPass({ ...files, "again.test.ts": file }, 2, [...args, "./again.test.ts"]);
+    });
+
+    test("a preload does too", async () => {
+      await expectFixturesToPass(
+        {
+          ...files,
+          "mocks.ts": `
+            import { vi } from "vitest";
+            vi.mock("./flags", () => ({ onlyInTheMock: true }));
+          `,
+          "setup.ts": `
+            import "./mocks";
+            import * as flags from "./flags";
+            globalThis.inSetup = flags.onlyInTheMock;
+          `,
+          "setup.test.ts": `test("the preload", () => expect(globalThis.inSetup).toBe(true));`,
+        },
+        1,
+        ["--globals=vitest", "--preload=./setup.ts", "./setup.test.ts"],
+      );
+    });
+
+    test("a file of bun:test keeps its static imports", async () => {
+      using dir = tempDir("mock-module", {
+        "flags.ts": files["flags.ts"],
+        "panel.ts": files["panel.ts"],
+        "static.test.ts": `
+          import { isOn } from "./panel";
+          import { absent } from "./flags";
+          import { test } from "bun:test";
+          test("never runs", () => { isOn(absent); });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./static.test.ts"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("SyntaxError: Export named 'absent' not found in module");
+      expect(exitCode).toBe(1);
+    });
+
+    // The file is big enough for the cache, and uses nothing of the test API by name.
+    test("the transpiler cache keeps the file as a test file apart from the file as an import", async () => {
+      using dir = tempDir("mock-module", {
+        "flags.ts": files["flags.ts"],
+        "mocks.ts": `
+          import { vi } from "vitest";
+          vi.mock("./flags", () => ({ onlyInTheMock: true }));
+        `,
+        "print.ts": `export const print = value => test("prints", () => console.log("only in the mock: " + value));`,
+        "again.test.ts": `
+          import "./mocks";
+          import * as flags from "./flags";
+          import { print } from "./print";
+          print(flags.onlyInTheMock); // ${"-".repeat(8192)}
+        `,
+        "importer.test.ts": `import "./again.test";`,
+      });
+      const cache = join(String(dir), "cache");
+      const outputs: string[] = [];
+      for (const file of ["./importer.test.ts", "./again.test.ts", "./importer.test.ts"]) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "--globals=vitest", file],
+          cwd: String(dir),
+          env: { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain(" 1 pass\n 0 fail\n");
+        expect(exitCode).toBe(0);
+        outputs.push(stdout.match(/only in the mock: \w+/)?.[0] ?? stdout);
+      }
+      // As an import its own imports stay static, so the module is updated in place and gets no new export.
+      expect(outputs).toEqual(["only in the mock: undefined", "only in the mock: true", "only in the mock: undefined"]);
+      expect(readdirSync(cache)).not.toBeEmpty();
+    });
   });
 
   test("every file that imports the module that mocks gets the mock", async () => {

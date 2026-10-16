@@ -314,6 +314,8 @@ pub(crate) use bun_install::PRETEND_TO_BE_NODE;
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
 static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+pub(crate) use bun_install::SUBCOMMAND_ARGV_INDEX;
+
 bun_core::declare_scope!(CLI, hidden);
 
 pub(crate) type LoaderColonList =
@@ -568,20 +570,8 @@ pub(crate) mod reserved_command {
 
     #[cold]
     pub(crate) fn exec() -> crate::Result<()> {
-        let mut command_name: &[u8] = b"";
-        for (i, arg) in bun::argv().iter().enumerate() {
-            if i == 0 {
-                continue;
-            }
-            if arg.len() > 1 && arg[0] == b'-' {
-                continue;
-            }
-            command_name = arg;
-            break;
-        }
-        if command_name.is_empty() {
-            command_name = bun::argv().get(1).map(|z| z.as_bytes()).unwrap_or(b"");
-        }
+        let idx = super::command::subcommand_argv_index();
+        let command_name: &[u8] = bun::argv().get(idx).map(|z| z.as_bytes()).unwrap_or(b"");
         pretty_error!(
             "<r><red>Uh-oh<r>. <b><yellow>bun {0}<r> is a subcommand reserved for future use by Bun.\n\nIf you were trying to run a package.json script called {0}, use <b><magenta>bun run {0}<r>.\n",
             bstr::BStr::new(command_name)
@@ -603,6 +593,71 @@ pub(crate) mod command {
     fn argv_zslice() -> Vec<&'static bun_core::ZStr> {
         let a = bun::argv();
         (0..a.len()).map(|i| a.get(i).unwrap()).collect()
+    }
+
+    /// See [`SUBCOMMAND_ARGV_INDEX`](super::SUBCOMMAND_ARGV_INDEX).
+    #[inline]
+    pub(crate) fn subcommand_argv_index() -> usize {
+        bun_install::subcommand_argv_index()
+    }
+
+    /// The leading flag at `argv[i]` and whether it consumed `argv[i + 1]`.
+    fn leading_flag_at(i: usize) -> (arguments::LeadingFlag, bool) {
+        let argv = bun::argv();
+        let arg = argv.get(i).map(|z| z.as_bytes()).unwrap_or(b"");
+        // Only a short flag yields to a keyword, so only a short flag looks.
+        let next_is_keyword = !arg.starts_with(b"--")
+            && argv
+                .get(i + 1)
+                .is_some_and(|next| keyword_tag(next).is_some());
+        let flag = arguments::LeadingFlag::classify(arg, next_is_keyword);
+        let consumed = matches!(
+            flag,
+            arguments::LeadingFlag::Flag {
+                consumes_value: true,
+                ..
+            }
+        );
+        (flag, consumed)
+    }
+
+    /// The flags in front of the keyword, each with the value it consumed.
+    pub(crate) fn leading_flags() -> impl Iterator<Item = (&'static [u8], Option<&'static [u8]>)> {
+        let argv = bun::argv();
+        let end = subcommand_argv_index().min(argv.len());
+        let mut i = 1;
+        core::iter::from_fn(move || {
+            if i >= end {
+                return None;
+            }
+            let (_, consumed) = leading_flag_at(i);
+            let flag = argv.get(i).map(|z| z.as_bytes()).unwrap_or(b"");
+            let value = if consumed {
+                argv.get(i + 1).map(|z| z.as_bytes())
+            } else {
+                None
+            };
+            i += 1 + consumed as usize;
+            Some((flag, value))
+        })
+    }
+
+    /// Apply a `--cwd` that preceded the keyword, for handlers that do not
+    /// run a clap parse. The last occurrence wins, as in clap.
+    #[cold]
+    pub(crate) fn apply_leading_cwd() -> crate::Result<()> {
+        let mut last: Option<&[u8]> = None;
+        for (flag, value) in leading_flags() {
+            if flag == b"--cwd" {
+                last = value;
+            } else if let Some(dir) = flag.strip_prefix(b"--cwd=") {
+                last = Some(dir);
+            }
+        }
+        if let Some(dir) = last {
+            arguments::chdir_to_cwd_arg(dir)?;
+        }
+        Ok(())
     }
 
     pub(crate) use bun_options_types::command_tag::Tag;
@@ -715,8 +770,7 @@ pub(crate) mod command {
     #[inline(never)]
     fn which() -> Tag {
         let argv = bun::argv();
-        let mut iter = argv.iter();
-        let Some(argv0) = iter.next() else {
+        let Some(argv0) = argv.get(0) else {
             return Tag::HelpCommand;
         };
 
@@ -750,139 +804,177 @@ pub(crate) mod command {
             return Tag::RunAsNodeCommand;
         }
 
-        let Some(mut first_arg_name) = iter.next() else {
-            return Tag::AutoCommand;
-        };
-        while !first_arg_name.is_empty()
-            && first_arg_name[0] == b'-'
-            && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
-        {
+        let mut idx: usize = 1;
+        let mut saw_filter_flag = false;
+        let mut saw_filter_value = false;
+        let first_arg_name = loop {
+            let Some(arg) = argv.get(idx) else {
+                return Tag::AutoCommand;
+            };
+            if arg.is_empty() || arg[0] != b'-' {
+                break arg;
+            }
             // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
             // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
             // that and boot the legacy `bun repl` implementation instead.
-            match iter.next() {
-                Some(n) => first_arg_name = n,
-                None => return Tag::AutoCommand,
+            match leading_flag_at(idx) {
+                (arguments::LeadingFlag::Program, _) => return Tag::AutoCommand,
+                (arguments::LeadingFlag::Flag { filter, .. }, consumed) => {
+                    saw_filter_flag |= filter;
+                    saw_filter_value |= filter && consumed;
+                    idx += 1 + consumed as usize;
+                }
+            }
+        };
+        SUBCOMMAND_ARGV_INDEX.store(idx, core::sync::atomic::Ordering::Relaxed);
+
+        // `bun --filter <pattern> <word>` runs `<word>` as a script, whatever
+        // the word is (docs/pm/filter.mdx).
+        if saw_filter_value {
+            return Tag::AutoCommand;
+        }
+        let keyword = RootCommandMatcher::r#match(first_arg_name);
+        // `--filter=<pattern>` and `--workspaces` keep the subcommand, except
+        // for the two that cannot honor them.
+        if saw_filter_flag
+            && (keyword == RootCommandMatcher::case(b"test")
+                || keyword == RootCommandMatcher::case(b"build"))
+        {
+            return Tag::AutoCommand;
+        }
+        if keyword == RootCommandMatcher::case(b"i")
+            || keyword == RootCommandMatcher::case(b"install")
+        {
+            // `bun install -g` is `bun add -g`. A value that a leading flag
+            // consumed is not the flag.
+            let rest = (idx + 1..argv.len()).filter_map(|i| argv.get(i).map(|z| z.as_bytes()));
+            if leading_flags()
+                .map(|(flag, _)| flag)
+                .chain(rest)
+                .any(|arg| arg == b"-g" || arg == b"--global")
+            {
+                return Tag::AddCommand;
             }
         }
+        match keyword_tag(first_arg_name) {
+            // These ran the package.json script of that name before they
+            // were commands, and still do where a project has one.
+            Some(Tag::CheckCommand | Tag::LintCommand | Tag::FormatCommand)
+                if super::script_or_command::is_of_the_project(first_arg_name.as_bytes()) =>
+            {
+                Tag::AutoCommand
+            }
+            Some(tag) => tag,
+            None => Tag::AutoCommand,
+        }
+    }
 
-        type RootCommandMatcher = strings::ExactSizeMatcher<12>;
-        let x = RootCommandMatcher::r#match(first_arg_name);
+    type RootCommandMatcher = strings::ExactSizeMatcher<12>;
+
+    /// The command a subcommand keyword names, `None` for anything else.
+    fn keyword_tag(arg: &[u8]) -> Option<Tag> {
+        let x = RootCommandMatcher::r#match(arg);
         // PERF: `if x == const` is a chain of compares rather than a jump
         // table on the packed u96 — profile if it shows up on a hot path.
         if x == RootCommandMatcher::case(b"init") {
-            return Tag::InitCommand;
+            return Some(Tag::InitCommand);
         }
         if x == RootCommandMatcher::case(b"build") || x == RootCommandMatcher::case(b"bun") {
-            return Tag::BuildCommand;
+            return Some(Tag::BuildCommand);
         }
         if x == RootCommandMatcher::case(b"discord") {
-            return Tag::DiscordCommand;
+            return Some(Tag::DiscordCommand);
         }
         if x == RootCommandMatcher::case(b"upgrade") {
-            return Tag::UpgradeCommand;
+            return Some(Tag::UpgradeCommand);
         }
         if x == RootCommandMatcher::case(b"completions") {
-            return Tag::InstallCompletionsCommand;
+            return Some(Tag::InstallCompletionsCommand);
         }
         if x == RootCommandMatcher::case(b"getcompletes") {
-            return Tag::GetCompletionsCommand;
+            return Some(Tag::GetCompletionsCommand);
         }
         if x == RootCommandMatcher::case(b"link") {
-            return Tag::LinkCommand;
+            return Some(Tag::LinkCommand);
         }
         if x == RootCommandMatcher::case(b"unlink") {
-            return Tag::UnlinkCommand;
+            return Some(Tag::UnlinkCommand);
         }
         if x == RootCommandMatcher::case(b"x") {
-            return Tag::BunxCommand;
+            return Some(Tag::BunxCommand);
         }
         if x == RootCommandMatcher::case(b"repl") {
-            return Tag::ReplCommand;
+            return Some(Tag::ReplCommand);
         }
-        if x == RootCommandMatcher::case(b"i") || x == RootCommandMatcher::case(b"install") {
-            for arg in argv.iter() {
-                if arg == b"-g" || arg == b"--global" {
-                    return Tag::AddCommand;
-                }
-            }
-            return Tag::InstallCommand;
-        }
-        if x == RootCommandMatcher::case(b"ci") {
-            return Tag::InstallCommand;
+        if x == RootCommandMatcher::case(b"i")
+            || x == RootCommandMatcher::case(b"install")
+            || x == RootCommandMatcher::case(b"ci")
+        {
+            return Some(Tag::InstallCommand);
         }
         if x == RootCommandMatcher::case(b"c") || x == RootCommandMatcher::case(b"create") {
-            return Tag::CreateCommand;
+            return Some(Tag::CreateCommand);
         }
         if x == RootCommandMatcher::case(b"test") {
-            return Tag::TestCommand;
+            return Some(Tag::TestCommand);
         }
         if x == RootCommandMatcher::case(b"pm") {
-            return Tag::PackageManagerCommand;
+            return Some(Tag::PackageManagerCommand);
         }
         if x == RootCommandMatcher::case(b"add") || x == RootCommandMatcher::case(b"a") {
-            return Tag::AddCommand;
+            return Some(Tag::AddCommand);
         }
         if x == RootCommandMatcher::case(b"update") || x == RootCommandMatcher::case(b"up") {
-            return Tag::UpdateCommand;
+            return Some(Tag::UpdateCommand);
         }
         if x == RootCommandMatcher::case(b"patch") {
-            return Tag::PatchCommand;
+            return Some(Tag::PatchCommand);
         }
         if x == RootCommandMatcher::case(b"patch-commit") {
-            return Tag::PatchCommitCommand;
+            return Some(Tag::PatchCommitCommand);
         }
         if x == RootCommandMatcher::case(b"r")
             || x == RootCommandMatcher::case(b"remove")
             || x == RootCommandMatcher::case(b"rm")
             || x == RootCommandMatcher::case(b"uninstall")
         {
-            return Tag::RemoveCommand;
+            return Some(Tag::RemoveCommand);
         }
         if x == RootCommandMatcher::case(b"run") {
-            return Tag::RunCommand;
+            return Some(Tag::RunCommand);
         }
         if x == RootCommandMatcher::case(b"help") {
-            return Tag::HelpCommand;
+            return Some(Tag::HelpCommand);
         }
         if x == RootCommandMatcher::case(b"exec") {
-            return Tag::ExecCommand;
+            return Some(Tag::ExecCommand);
         }
         if x == RootCommandMatcher::case(b"outdated") {
-            return Tag::OutdatedCommand;
+            return Some(Tag::OutdatedCommand);
         }
         if x == RootCommandMatcher::case(b"publish") {
-            return Tag::PublishCommand;
+            return Some(Tag::PublishCommand);
         }
         if x == RootCommandMatcher::case(b"audit") {
-            return Tag::AuditCommand;
+            return Some(Tag::AuditCommand);
         }
         if x == RootCommandMatcher::case(b"check") {
-            return match super::script_or_command::is_of_the_project(b"check") {
-                true => Tag::AutoCommand,
-                false => Tag::CheckCommand,
-            };
+            return Some(Tag::CheckCommand);
         }
         if x == RootCommandMatcher::case(b"lint") {
-            return match super::script_or_command::is_of_the_project(b"lint") {
-                true => Tag::AutoCommand,
-                false => Tag::LintCommand,
-            };
+            return Some(Tag::LintCommand);
         }
         if x == RootCommandMatcher::case(b"fmt") {
-            return match super::script_or_command::is_of_the_project(b"fmt") {
-                true => Tag::AutoCommand,
-                false => Tag::FormatCommand,
-            };
+            return Some(Tag::FormatCommand);
         }
         if x == RootCommandMatcher::case(b"info") {
-            return Tag::InfoCommand;
+            return Some(Tag::InfoCommand);
         }
         if x == RootCommandMatcher::case(b"dedupe") {
-            return Tag::DedupeCommand;
+            return Some(Tag::DedupeCommand);
         }
         if x == RootCommandMatcher::case(b"prune") {
-            return Tag::PruneCommand;
+            return Some(Tag::PruneCommand);
         }
         // reserved
         if x == RootCommandMatcher::case(b"deploy")
@@ -893,24 +985,21 @@ pub(crate) mod command {
             || x == RootCommandMatcher::case(b"login")
             || x == RootCommandMatcher::case(b"logout")
         {
-            return Tag::ReservedCommand;
+            return Some(Tag::ReservedCommand);
         }
         if x == RootCommandMatcher::case(b"whoami") || x == RootCommandMatcher::case(b"list") {
-            return Tag::PackageManagerCommand;
+            return Some(Tag::PackageManagerCommand);
         }
         if x == RootCommandMatcher::case(b"why") {
-            return Tag::WhyCommand;
+            return Some(Tag::WhyCommand);
         }
         if x == RootCommandMatcher::case(b"fuzzilli") {
             if bun_core::Environment::ENABLE_FUZZILLI {
-                return Tag::FuzzilliCommand;
+                return Some(Tag::FuzzilliCommand);
             }
-            return Tag::AutoCommand;
+            return None;
         }
-        if x == RootCommandMatcher::case(b"-e") {
-            return Tag::AutoCommand;
-        }
-        Tag::AutoCommand
+        None
     }
 
     /// Initialize the process-global `CONTEXT_DATA` and publish it via
@@ -1336,12 +1425,36 @@ pub(crate) mod command {
         Ok(())
     }
 
+    /// The `--env-file` paths in front of the keyword. `bun x` and `bun create`
+    /// do not run a clap parse, and the package they start must see the file.
+    fn leading_env_files() -> impl Iterator<Item = Box<[u8]>> {
+        leading_flags().filter_map(|(flag, value)| {
+            let path = if flag == b"--env-file" {
+                value
+            } else {
+                flag.strip_prefix(b"--env-file=")
+            };
+            path.map(Box::<[u8]>::from)
+        })
+    }
+
+    /// `--help` or `-h` in front of the keyword (`bun --help init`).
+    fn help_requested_before_keyword() -> bool {
+        leading_flags().any(|(flag, _)| flag == b"--help" || flag == b"-h")
+    }
+
     #[cold]
     #[inline(never)]
     fn exec_init() -> CmdResult {
         // InitCommand parses its own argv (no Context).
+        if help_requested_before_keyword() {
+            tag_print_help(Tag::InitCommand, true);
+            Global::exit(0);
+        }
+        apply_leading_cwd()?;
         let argv = argv_zslice();
-        super::init_command::InitCommand::exec(&argv[2.min(argv.len())..])
+        let start = (subcommand_argv_index() + 1).min(argv.len());
+        super::init_command::InitCommand::exec(&argv[start..])
     }
 
     #[cold]
@@ -1351,11 +1464,13 @@ pub(crate) mod command {
         // exec handles both the non-tty path (dump the embedded completion
         // script to stdout) and the tty install path (bunx symlink, fpath/XDG
         // dir search, profile patching).
-        for a in bun::argv().iter().skip(2) {
-            if matches!(a, b"--help" | b"-h") {
-                tag_print_help(Tag::InstallCompletionsCommand, true);
-                Global::exit(0);
-            }
+        let help_after_keyword = bun::argv()
+            .iter()
+            .skip(subcommand_argv_index() + 1)
+            .any(|a| matches!(a, b"--help" | b"-h"));
+        if help_after_keyword || help_requested_before_keyword() {
+            tag_print_help(Tag::InstallCompletionsCommand, true);
+            Global::exit(0);
         }
         super::install_completions_command::InstallCompletionsCommand::exec()?;
         Global::exit(0);
@@ -1705,8 +1820,11 @@ pub(crate) mod command {
         }
 
         // Create command wraps bunx
+        apply_leading_cwd()?;
         let ctx = init(Tag::CreateCommand, log)?;
+        ctx.args.env_files.extend(leading_env_files());
         let args = argv_zslice();
+        let cmd_idx = subcommand_argv_index();
 
         if args.len() <= 2 {
             tag_print_help(Tag::CreateCommand, false);
@@ -1716,18 +1834,18 @@ pub(crate) mod command {
         let mut template_name_start: usize = 0;
         let mut positionals: [&[u8]; 2] = [b"", b""];
         let mut positional_i: usize = 0;
-        let mut dash_dash_bun = false;
-        let mut print_help = false;
+        let mut dash_dash_bun = leading_flags().any(|(flag, _)| flag == b"--bun");
+        let mut print_help = help_requested_before_keyword();
 
         if args.len() > 2 {
-            let remainder = &args[1..];
+            let remainder = &args[cmd_idx..];
             let mut remainder_i: usize = 0;
             while remainder_i < remainder.len() && positional_i < positionals.len() {
                 let slice = strings::trim(remainder[remainder_i].as_bytes(), b" \t\n");
                 if !slice.is_empty() {
                     if !strings::has_prefix(slice, b"--") {
                         if positional_i == 1 {
-                            template_name_start = remainder_i + 2;
+                            template_name_start = cmd_idx + remainder_i + 1;
                         }
                         positionals[positional_i] = slice;
                         positional_i += 1;

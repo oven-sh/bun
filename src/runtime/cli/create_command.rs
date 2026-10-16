@@ -164,7 +164,7 @@ impl CreateOptions {
             }
         };
 
-        let mut positionals = args.positionals().to_vec();
+        let mut positionals = bun_install::positionals_from_keyword(args.positionals()).to_vec();
         if !positionals.is_empty() && (positionals[0] == b"c" || positionals[0] == b"create") {
             positionals.remove(0);
         }

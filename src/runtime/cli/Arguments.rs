@@ -820,6 +820,112 @@ pub(crate) fn disallow_code_generation_from_strings_as_compiled(embedded: &[&bun
     }
 }
 
+/// How `Command::which()` treats a flag in front of the subcommand keyword.
+/// The arity comes from `AUTO_PARAMS` so the sniffer and clap agree.
+pub(crate) enum LeadingFlag {
+    /// The rest of argv belongs to the program: `-` (stdin) or an eval flag.
+    Program,
+    Flag {
+        /// The next argv token is this flag's value, not the keyword.
+        consumes_value: bool,
+        /// `--filter` / `-F` / `--workspaces`.
+        filter: bool,
+    },
+}
+
+impl LeadingFlag {
+    /// Commands reuse short letters (`-p` is `--print` here and `--production`
+    /// for `bun install`), so a short flag leaves a keyword after it alone.
+    pub(crate) fn classify(arg: &[u8], next_is_keyword: bool) -> Self {
+        if arg == b"-" {
+            return Self::Program;
+        }
+        let no_value = Self::Flag {
+            consumes_value: false,
+            filter: false,
+        };
+        if let Some(long) = arg.strip_prefix(b"--") {
+            let (name, has_attached_value) = match strings::index_of_char_usize(long, b'=') {
+                Some(i) => (&long[..i], true),
+                None => (long, false),
+            };
+            let Some(param) = AUTO_PARAMS.iter().find(|p| p.names.matches_long(name)) else {
+                return no_value;
+            };
+            if Self::is_eval(param) {
+                return Self::Program;
+            }
+            return Self::Flag {
+                consumes_value: !has_attached_value && Self::takes_value(param),
+                filter: Self::is_filter_long(name),
+            };
+        }
+        // Short chain: the first value-taking flag claims the rest of the
+        // token (`-Fpat`) or, when it is the last character, the next token.
+        let chain = if arg == b"-pe" {
+            b"p".as_slice()
+        } else {
+            &arg[1..]
+        };
+        for (i, &c) in chain.iter().enumerate() {
+            let Some(param) = AUTO_PARAMS.iter().find(|p| p.names.short == Some(c)) else {
+                break;
+            };
+            if Self::is_eval(param) {
+                // `bun -e <keyword>` has always evaluated the keyword.
+                if c == b'e' || !next_is_keyword {
+                    return Self::Program;
+                }
+                return no_value;
+            }
+            if Self::takes_value(param) {
+                return Self::Flag {
+                    consumes_value: i + 1 == chain.len() && !next_is_keyword,
+                    filter: c == b'F',
+                };
+            }
+        }
+        no_value
+    }
+
+    fn takes_value(param: &ParamType) -> bool {
+        matches!(param.takes_value, clap::Values::One | clap::Values::Many)
+    }
+
+    fn is_eval(param: &ParamType) -> bool {
+        matches!(param.names.long, Some(b"eval") | Some(b"print"))
+    }
+
+    fn is_filter_long(name: &[u8]) -> bool {
+        name == b"filter" || name == b"workspaces"
+    }
+}
+
+/// Resolve a `--cwd` value against the current directory and `chdir` into it.
+pub(crate) fn chdir_to_cwd_arg(cwd_arg: &[u8]) -> crate::Result<bun_core::ZBox> {
+    let mut outbuf = bun_paths::path_buffer_pool::get();
+    // An absolute --cwd needs no base; a relative one still requires a
+    // live cwd (an exe-dir base would silently chdir somewhere else).
+    let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
+        b"/"
+    } else {
+        bun_core::getcwd(&mut outbuf)?.as_bytes()
+    };
+    let mut spill = Vec::new();
+    let out = resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[cwd_arg]);
+    // `chdir` wants a NUL-terminated path.
+    let out_z = bun_core::ZBox::from_bytes(out);
+    if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
+        Output::err(
+            err,
+            "Could not change directory to \"{}\"\n",
+            format_args!("{}", BStr::new(cwd_arg)),
+        );
+        Global::exit(1);
+    }
+    Ok(out_z)
+}
+
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
@@ -874,28 +980,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
     // so we dupe into a plain `Box<[u8]>`.
     let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
-        let mut outbuf = bun_paths::path_buffer_pool::get();
-        // An absolute --cwd needs no base; a relative one still requires a
-        // live cwd (an exe-dir base would silently chdir somewhere else).
-        let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
-            b"/"
-        } else {
-            bun_core::getcwd(&mut outbuf)?.as_bytes()
-        };
-        let mut spill = Vec::new();
-        let out =
-            resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[cwd_arg]);
-        // `chdir` wants a NUL-terminated path, so dupe-Z once and reuse for both
-        // the `chdir` arg and the stored `absolute_working_dir`.
-        let out_z = bun_core::ZBox::from_bytes(out);
-        if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
-            Output::err(
-                err,
-                "Could not change directory to \"{}\"\n",
-                format_args!("{}", BStr::new(cwd_arg)),
-            );
-            Global::exit(1);
-        }
+        let out_z = chdir_to_cwd_arg(cwd_arg)?;
         // Store the post-chdir physical path (mirrors process.chdir) so
         // process.cwd(), path.resolve, and the resolver agree on one form.
         let mut phys = bun_paths::path_buffer_pool::get();
@@ -960,7 +1045,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     ctx.args.absolute_working_dir = Some(cwd);
-    ctx.positionals = slice_to_owned(args.positionals());
+    ctx.positionals = slice_to_owned(bun_install::positionals_from_keyword(args.positionals()));
 
     if command::LOADS_CONFIG[cmd] {
         load_config_with_cmd_args(cmd, &args, ctx)?;

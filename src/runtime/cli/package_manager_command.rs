@@ -233,12 +233,17 @@ impl PackageManagerCommand {
     }
 
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
-        let args_vec: Vec<&'static [u8]> = bun_core::argv().into_iter().skip(1).collect();
+        // The flags in front of the keyword, without the values they consumed,
+        // then the keyword and what follows it.
+        let keyword_index = Command::subcommand_argv_index();
+        let mut args_vec: Vec<&'static [u8]> =
+            Command::leading_flags().map(|(flag, _)| flag).collect();
+        args_vec.extend(bun_core::argv().into_iter().skip(keyword_index));
         let args: &[&[u8]] = &args_vec;
 
         // "bun whoami" instead of "bun pm whoami"
         let is_direct_whoami = bun_core::argv()
-            .get(1)
+            .get(keyword_index)
             .is_some_and(|arg| strings::eql_comptime(arg.as_bytes(), b"whoami"));
 
         let cli = CommandLineArguments::parse(Subcommand::Pm)?;

@@ -1514,6 +1514,111 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(exitCode).toBe(0);
 });
 
+// A flag in front of the subcommand, typed or spliced into argv by BUN_OPTIONS,
+// moves "pm" out of argv[1]. trust must not read the "trust" keyword as a
+// package name, and `bun pm trust` without packages is still an error (#20347).
+test.each([
+  ["BUN_OPTIONS", [], { BUN_OPTIONS: "--smol" }],
+  ["a flag typed before the subcommand", ["--smol"], {}],
+])("bun pm trust reads its package names with %s", async (_, flagsBeforeSubcommand, extraEnv) => {
+  using dir = tempDir("pm-trust-shifted-argv", {
+    "package.json": JSON.stringify({
+      name: "trust-shifted-argv",
+      version: "1.0.0",
+      dependencies: { dep: "file:./dep" },
+    }),
+    "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+  });
+  const dirStr = String(dir);
+
+  // trust needs a lockfile before it looks at the package names; a file: dependency produces one offline.
+  await using install = Bun.spawn({ cmd: [bunExe(), "install"], cwd: dirStr, stdout: "pipe", stderr: "pipe", env });
+  const [installErr, installExit] = await Promise.all([install.stderr.text(), install.exited, install.stdout.text()]);
+  expect(installErr).not.toContain("error:");
+  expect(installExit).toBe(0);
+
+  const spawnEnv = { ...env, ...extraEnv };
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flagsBeforeSubcommand, "pm", "trust"],
+      cwd: dirStr,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: spawnEnv,
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    expect(stderr).toContain("expected package names(s) or --all");
+    expect(exitCode).toBe(1);
+  }
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flagsBeforeSubcommand, "pm", "trust", "not-a-dependency"],
+      cwd: dirStr,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: spawnEnv,
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    // The "don't exist" listing names exactly the packages given on the command line.
+    expect(stderr).toContain("- not-a-dependency");
+    expect(stderr).not.toContain("- trust");
+    expect(exitCode).toBe(1);
+  }
+});
+
+// A flag between `pm` and `trust` (`bun pm -g trust`, the spelling that `bun pm -g untrusted` prints)
+// must not make the word `trust` a package name.
+test("bun pm -g trust takes its package names from the words after trust", async () => {
+  const postinstall = `"${bunExe()}" -e "require('fs').writeFileSync('postinstall.txt', '')"`;
+  using dir = tempDir("pm-trust-flag-before-keyword", {
+    "app/package.json": JSON.stringify({ name: "app" }),
+    "scripted/package.json": JSON.stringify({ name: "scripted", version: "1.0.0", scripts: { postinstall } }),
+    "trust/package.json": JSON.stringify({ name: "trust", version: "1.0.0", scripts: { postinstall } }),
+  });
+  const root = String(dir);
+  const bunInstall = join(root, "bun-install");
+  const globalDir = join(bunInstall, "install", "global");
+  const run = async (...args: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: join(root, "app"),
+      // Every global-dir variable is set so an inherited one can never point at the developer's real global folder.
+      env: {
+        ...env,
+        BUN_INSTALL: bunInstall,
+        BUN_INSTALL_GLOBAL_DIR: globalDir,
+        BUN_INSTALL_BIN: join(bunInstall, "bin"),
+        BUN_INSTALL_CACHE_DIR: join(root, ".bun-cache"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+  const ranPostinstall = (name: string) => exists(join(globalDir, "node_modules", name, "postinstall.txt"));
+
+  expect(await run("add", "-g", join(root, "scripted"), join(root, "trust"))).toEqual({
+    stdout: expect.stringContaining("Blocked 2 postinstalls"),
+    stderr: expect.not.stringContaining("error:"),
+    exitCode: 0,
+  });
+
+  // No package name: the usage error, not a lookup of a package named `trust`.
+  const usage = await run("pm", "-g", "trust");
+  expect(usage.stderr).toContain("expected package names(s) or --all");
+  expect(usage.exitCode).toBe(1);
+
+  expect(await run("pm", "-g", "trust", "scripted")).toEqual({
+    stdout: expect.stringContaining("1 script ran across 1 package"),
+    stderr: expect.not.stringContaining("error:"),
+    exitCode: 0,
+  });
+  expect(await ranPostinstall("scripted")).toBeTrue();
+  expect(await ranPostinstall("trust")).toBeFalse();
+  expect(JSON.parse(await Bun.file(join(globalDir, "package.json")).text()).trustedDependencies).toEqual(["scripted"]);
+});
+
 /**
  * Every directory the cache directory resolution can fall back to, and the temp directory that
  * `bun pm cache rm` sweeps for bunx entries, is inside `side`: neither the fixed nor the unfixed

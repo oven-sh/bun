@@ -357,7 +357,12 @@ impl TrustCommand {
         );
         Output::flush();
 
-        if args.len() == 2 {
+        // `["trust", names...]`: a flag and its value are not positionals.
+        let packages_to_trust: Vec<&[u8]> = pm.options.positionals.get(1..).unwrap_or(&[]).to_vec();
+        let trust_all =
+            strings::left_has_any_in_right(args, &[b"-a".as_slice(), b"--all".as_slice()]);
+
+        if !trust_all && packages_to_trust.is_empty() {
             Self::error_expected_args();
         }
 
@@ -382,16 +387,6 @@ impl TrustCommand {
         unsafe { update_lockfile_if_needed(&mut *pm_raw, &load_lockfile)? };
         // SAFETY: `pm_raw` singleton; `load_lockfile` is not dereferenced while this runs.
         let recorded = read_trusted_dependencies(unsafe { &mut *pm_raw });
-
-        let packages_to_trust: Vec<&[u8]> = (args[2..].iter().copied())
-            .filter(|arg| !arg.is_empty() && arg[0] != b'-')
-            .collect();
-        let trust_all =
-            strings::left_has_any_in_right(args, &[b"-a".as_slice(), b"--all".as_slice()]);
-
-        if !trust_all && packages_to_trust.is_empty() {
-            Self::error_expected_args();
-        }
 
         // SAFETY: `pm_raw` singleton; the discovery phase only reads it.
         let mut blocked = Blocked::find_all(unsafe { &*pm_raw }, linker)?;

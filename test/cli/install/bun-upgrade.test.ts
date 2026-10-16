@@ -323,6 +323,31 @@ describe.concurrent(() => {
     expect(err).toEndWith(unpackFailure);
     expect(exitCode).toBe(1);
   });
+
+  // A flag in front of the subcommand, typed or spliced into argv by
+  // BUN_OPTIONS, moves "upgrade" out of argv[1]. The package-name check must
+  // not read the keyword itself as a package name (#20347).
+  it.each([
+    ["BUN_OPTIONS", [], { BUN_OPTIONS: "--smol" }],
+    ["a flag typed before the subcommand", ["--smol"], {}],
+  ])("%s, should not display the package-names error", async (_, flagsBeforeSubcommand, extraEnv) => {
+    // The archive is garbage, so the upgrade fails after argument parsing.
+    using server = startReleaseServer({ tagName: "bun-v9.9.9" });
+    using stagingRoot = tempDir("bun-upgrade-shifted-argv", {});
+    await using proc = spawn({
+      cmd: [standInExe, ...flagsBeforeSubcommand, "upgrade", "--stable"],
+      cwd: standInDir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...server.env, ...extraEnv, BUN_TMPDIR: String(stagingRoot) },
+    });
+
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("does not take package names");
+    expectTargetsRelease(err, "9.9.9");
+    expect(exitCode).toBe(1);
+  });
 });
 
 it.concurrent(

@@ -5,8 +5,6 @@
   "extends": "./build/tsconfig.json",
   "compilerOptions": {
     "erasableSyntaxOnly": true,
-    // runner.node.ts imports test/docker/prestart-map.mjs.
-    "allowJs": true,
     // `extends` does not rebase this path.
     "types": ["../packages/bun-types"]
   },

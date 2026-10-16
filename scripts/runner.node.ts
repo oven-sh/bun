@@ -34,7 +34,6 @@ import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
-import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import {
   getAbi,
   getAbiVersion,
@@ -75,6 +74,7 @@ import {
   uploadArtifact,
   type JunitFileSuite,
 } from "./buildkite.ts";
+import { dockerServicesForShard, isDockerBacked } from "./docker-services.ts";
 
 const isX64 = process.arch === "x64";
 
@@ -566,11 +566,11 @@ const isParallelAllowlisted = (testPath: string) => {
   );
 };
 
-const dockerServicePrefixes = Object.keys(dockerPrestartMap);
-const needsDockerService = (testPath: string) => {
-  const path = testPath.replaceAll("\\", "/");
-  return dockerServicePrefixes.some(prefix => path.startsWith(prefix));
-};
+// Whether the test file asks for a docker-compose service. Only a `bun test`
+// file can, so the vendored node-style tests are never read. The answer comes
+// from the file's source, which isDockerBacked() reads once per process.
+const needsDockerService = (testPath: string) =>
+  isTestStrict(testPath) && !isNodeTest(testPath) && isDockerBacked(testsPath, testPath);
 
 /**
  * Returns whether we should validate exception checks running the given test
@@ -731,7 +731,7 @@ async function runTests(): Promise<TestResult[]> {
   // Start the docker-service coordinator (test/docker/coordinator.ts). It
   // owns every `docker compose` invocation for this shard — `compose up` is
   // not concurrency-safe, so exactly one process runs it — and prestarts the
-  // services this shard's tests need (mysql/postgres/redis/…) in the
+  // services this shard's test files ask for (scripts/docker-services.ts) in the
   // background while getVendorTests below installs vendor deps. Tests reach
   // it through the unix socket in BUN_DOCKER_COORDINATOR (inherited by every
   // spawned test process); ensure() waits for the coordinator's ready message
@@ -741,7 +741,8 @@ async function runTests(): Promise<TestResult[]> {
   // pipe.
   if (isCI && isLinux && spawnSync("docker", ["compose", "version"], { stdio: "ignore" }).status === 0) {
     const coordinatorSocket = join(tmpdir(), `bun-docker-${process.pid}.sock`);
-    const coordinator = spawn(execPath, [join(cwd, "test", "docker", "coordinator.ts"), ...tests], {
+    const dockerServices = dockerServicesForShard(testsPath, tests.filter(needsDockerService));
+    const coordinator = spawn(execPath, [join(cwd, "test", "docker", "coordinator.ts"), ...dockerServices], {
       stdio: ["pipe", "pipe", "inherit"],
       env: { ...process.env, BUN_DOCKER_COORDINATOR_SOCKET: coordinatorSocket },
     }) as ChildProcessByStdio<Socket, Socket, null>; // see SpawnedProcess
@@ -2808,7 +2809,7 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
     filteredTests.push(...availableTests);
   }
 
-  // Run docker-backed tests (the prefixes the coordinator prestarts) last in
+  // Run docker-backed tests (the files that ask for a docker service) last in
   // the shard: the coordinator kicks off `compose up` for their services when
   // the runner starts, but a cold mysqld/postgres takes ~10s to become
   // healthy. Scheduling those files after the non-docker ones lets container

@@ -200,6 +200,41 @@ Docker Compose keeps services running between test runs:
 
 This is different from the old approach where every test started and stopped its own container.
 
+## Prestart in CI
+
+In CI, `scripts/runner.node.ts` starts one coordinator (`coordinator.ts`) for
+each shard. The coordinator runs every `docker compose` command for that shard.
+When the shard launches, it starts the services that the test files of the shard
+ask for. So a container is usually healthy before the first test asks for it.
+
+The runner reads what a test file asks for from the source of that file
+(`scripts/docker-services.ts`). There is no list of test files to maintain. A
+file is docker-backed when it has one of these:
+
+- A call of `describeWithContainer()`. The runner starts each service that the
+  file names as a literal, as in `{ image: "postgres_plain" }`. `"mysql:8"` and
+  `"mysql:9"` count as `mysql_plain` and `mysql_native_password`.
+- An import of `test/docker/index.ts`. The runner starts each service that the
+  file names as the first argument of a call, as in
+  `dockerCompose.ensure("postgres_plain")`.
+- An import of a helper module that `helperServices` in
+  `scripts/docker-services.ts` lists. Today that is
+  `test/js/valkey/test-utils.ts`. If you add a helper module that asks for a
+  service for the tests that import it, add the module there.
+
+The runner runs the docker-backed files after the other serial files of the
+shard, and it keeps them out of the `bun test --parallel` batch.
+
+A service name that the test computes still works, but the runner cannot read
+it. The coordinator then starts the service when a test first asks for it, and
+that test waits for the container. A request through a helper module that is not
+listed is not seen at all. That file is not docker-backed for the runner, so it
+can also run inside the `bun test --parallel` batch.
+
+The service names are the keys of `services:` in `docker-compose.yml`.
+`service-names.mts` lists them, and `ServiceName` is the type of that list. Add
+a new service to both files.
+
 ## Debugging
 
 ### View Running Services

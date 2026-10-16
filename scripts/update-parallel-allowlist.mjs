@@ -4,7 +4,7 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
+import { isDockerBacked } from "./docker-services.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const testDir = join(__dirname, "..", "test");
@@ -157,11 +157,8 @@ if (opts["denylist-from-annotations"]) {
   writeFileSync(denylistPath, [...header, ...[...denylist].sort()].join("\n") + "\n");
   console.error(`denylist: ${added.length} file(s) added from batch annotations (${denylist.size} total)`);
 }
-// prestart-map.mjs is a hint list for the shard-level service prestart, not a
-// registry of every test that talks to a container, so also treat any file that
-// calls describeWithContainer( as a docker-service test.
-const dockerPrefixes = Object.keys(dockerPrestartMap);
-const usesContainer = file => /describeWithContainer\s*\(/.test(readFileSync(join(testDir, file), "utf8"));
+// The same rule the runner applies at its bucket gate (needsDockerService).
+const needsDockerService = file => isDockerBacked(testDir, file);
 const files = listBunTestFiles();
 // Fast on every lane we have timings for: a file that is quick on Linux but
 // slow elsewhere would otherwise hold a bucket slot for its whole run.
@@ -176,7 +173,7 @@ const slowest = file => {
 const sharedStatePrefixes = ["cli/install/"];
 const sharedStateExempt = ["cli/install/hosted-git-info/", "cli/install/migration/"];
 const isGood = file => {
-  if (dockerPrefixes.some(prefix => file.startsWith(prefix)) || usesContainer(file)) return false;
+  if (needsDockerService(file)) return false;
   if (/stress/i.test(file)) return false;
   if (sharedStatePrefixes.some(p => file.startsWith(p)) && !sharedStateExempt.some(p => file.startsWith(p)))
     return false;
@@ -215,7 +212,7 @@ const out = {
     builds_scanned: builds.length,
     build_range: [Math.min(...builds), Math.max(...builds)],
     fast_ms: FAST_MS,
-    rule: `a bun test file qualifies when its slowest lane median in expected-durations.json is <= ${FAST_MS}ms (or it has no entry) and it had zero flaky/failed annotations in the scanned builds and is not in test/parallel-denylist.txt; docker-service (prestart-map prefixes or describeWithContainer callers), stress-named and cli/install tests (shared bin/cache dirs; hosted-git-info and migration exempt) never qualify. Every directory with a qualifying file is listed and its other files go in excludeFiles`,
+    rule: `a bun test file qualifies when its slowest lane median in expected-durations.json is <= ${FAST_MS}ms (or it has no entry) and it had zero flaky/failed annotations in the scanned builds and is not in test/parallel-denylist.txt; docker-service (a file that scripts/docker-services.ts finds a service request in), stress-named and cli/install tests (shared bin/cache dirs; hosted-git-info and migration exempt) never qualify. Every directory with a qualifying file is listed and its other files go in excludeFiles`,
     stats: { dirs: dirs.length, files: eligibleFiles, excluded: excludeFiles.length },
   },
   dirs,

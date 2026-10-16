@@ -18,12 +18,6 @@ struct ModuleKey {
     namespace_len: u32,
 }
 
-// SAFETY: `bytes` is a `Box<[u8]>` that only this key reaches. Nothing reads it
-// through a shared alias that outlives `&self`.
-unsafe impl Send for ModuleKey {}
-// SAFETY: the key has no interior mutability.
-unsafe impl Sync for ModuleKey {}
-
 impl ModuleKey {
     fn new(namespace: &[u8], text: &[u8]) -> Self {
         let mut bytes = Vec::with_capacity(text.len() + namespace.len());

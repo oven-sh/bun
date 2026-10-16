@@ -247,7 +247,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.commonjs_module_exports_assigned_deoptimized = true;
             }
 
-            p.record_assignment(result.r#ref);
+            // A write that never runs does not rebind a variable that waits in `require_aliases`.
+            if !(p.is_control_flow_dead && p.require_alias_of(result.r#ref).is_some()) {
+                p.record_assignment(result.r#ref);
+            }
         }
 
         let mut original_name: Option<&[u8]> = None;

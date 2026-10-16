@@ -880,7 +880,7 @@ describe("bundler", () => {
     });
     // Each read here is visited before the write, and reads a property of an
     // export (`x.a.b`). The declaration of the variable stays for the read,
-    // also when the write never runs, or when the build removes it.
+    // also when the write never runs.
     itBundled(`cjs2esm/UnwrappedRequireReboundAfterReads${suffix}`, {
       files: {
         "/entry.js": /* js */ `
@@ -942,6 +942,42 @@ describe("bundler", () => {
       },
     });
   }
+  // A write in a branch that the build removes never runs: the variable is
+  // the namespace, and the exports that nothing reads are gone.
+  itBundled("cjs2esm/UnwrappedRequireWriteInRemovedBranch", {
+    files: {
+      "/entry.js": /* js */ `
+        let a = require("react");
+        if (process.env.NODE_ENV !== "production") a = { react: "dev" };
+        let b = require("react");
+        process.env.NODE_ENV === "production" || (b = { other: "dev" });
+        function fn() {
+          let c = require("react-is");
+          if (process.env.NODE_ENV !== "production") {
+            [c] = [{ is: "dev" }];
+            c &&= null;
+            for (c of []) {
+            }
+            c++;
+          }
+          return process.env.NODE_ENV === "production" ? c.is : (c = "dev");
+        }
+        console.log(a.react, b.other, fn());
+      `,
+      ...unwrapListPackages,
+    },
+    define: { "process.env.NODE_ENV": '"production"' },
+    dce: true,
+    dceKeepMarkerCount: false,
+    onAfterBundle(api) {
+      const code = api.readFile("out.js");
+      expect(code).not.toContain("exports_react");
+      expect(code).toContain("console.log($react, $other, fn());");
+    },
+    run: {
+      stdout: "react other is",
+    },
+  });
   // The CommonJS output of rolldown for `import * as react from "react"`.
   // The namespace of an external package, and of a package in another
   // chunk, is an import binding: an assignment to it throws at load.

@@ -107,8 +107,10 @@ const blockScopes = ["topBlock", "fnBlock", "elseIf", "loopBody", "switchCase"];
 // The cells whose bundle is known to differ from the unbundled run.
 export function knownGap(cell: Cell, minified: boolean): boolean {
   // As on main, and not about a rebind: `minify` drops the `(0, ...)` of a call through a variable that became the
-  // namespace of a package that stays a wrapper. The call gets the namespace as `this`.
-  if (cell.pkg === "scheduler" && cell.rebind === "none" && cell.read === "commaCall") {
+  // namespace of a package that stays a wrapper. The call gets the namespace as `this`. A write in a branch that
+  // the build removes leaves the variable the namespace.
+  const becomesNamespace = cell.rebind === "none" || cell.rebind === "deadFalse";
+  if (cell.pkg === "scheduler" && becomesNamespace && cell.read === "commaCall") {
     return minified && !(cell.kind === "var" && blockScopes.includes(cell.scope));
   }
   // A read that the bundler visits before the rebind is an import item by then. It prints as the property read that

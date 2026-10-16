@@ -55,11 +55,7 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
-// The fast path gives each chunk to the sink inside write() and skips Writable's queue.
-// A write that has a callback also sends a zero-length marker through Writable, so that
-// Writable reports it in order with end(), _final and destroy(). _write completes a marker
-// when the run of parked writes that its chunk joined has settled. The shared marker is for
-// a chunk that joined no run: it completes at once.
+// A write with a callback also sends a zero-length marker through Writable, which then orders the callbacks.
 const kFastWriteRun = Symbol("kFastWriteRun");
 const kFastWriteMarker = Buffer.alloc(0);
 const kFs = Symbol("kFs");
@@ -633,8 +629,6 @@ function parkedFastRun(stream: FSStream, promise: Promise<unknown>): FastWriteRu
     marker: null,
     markers: 0,
   });
-  // The reactions run no user code, so a throw from a callback is never taken for a
-  // write failure.
   promise.then(
     () => settleFastRun(stream, run, null),
     err => settleFastRun(stream, run, err),
@@ -659,10 +653,7 @@ function settleFastRun(stream: FSStream, run: FastWriteRun, err: any) {
   }
 }
 
-// Writable holds back every later write of a stream that is errored and not destroyed,
-// and without autoDestroy a failed write leaves the stream like that. So destroy it.
-// process.stdout and process.stderr come back from destroy() ready for the next write,
-// as in Node.
+// Writable never dispatches the later writes of a stream that is errored and not destroyed.
 function destroyErroredFastStream(stream: FSStream) {
   const state = stream._writableState!;
   if (state.errored && !state.destroyed) stream.destroy();
@@ -691,7 +682,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
   if (run !== undefined) {
     if (!run.settled) run.waiting = cb;
     else if (run.err === null) cb(null);
-    // On a tick: Writable must see the failure before it dispatches the next marker.
+    // Not inside _write(): there Writable handles a failure a tick later, after the destroy in failFastMarker.
     else process.nextTick(failFastMarker, this, cb, run.err);
     return;
   }
@@ -761,10 +752,9 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
 
   // After end()/destroy() the Writable contract requires write() to fail with
   // ERR_STREAM_WRITE_AFTER_END / ERR_STREAM_DESTROYED and not reach the sink.
-  // A chunk that Writable still holds (from end(chunk) or Writable.prototype.write())
-  // reaches the sink first, so this one goes behind it.
   const state = this._writableState;
   if (state !== undefined && (state.ending || state.destroyed || state.length > 0)) {
+    // length > 0: Writable holds a chunk that must reach the sink before this one.
     return writablePrototypeWrite.$call(this, data, encoding, cb);
   }
 

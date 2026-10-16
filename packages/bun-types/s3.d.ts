@@ -473,6 +473,18 @@ declare module "bun" {
    * Represents a file in an S3-compatible storage service.
    * Extends the Blob interface for compatibility with web APIs.
    *
+   * Bun downloads the object only when you read it. An API that needs the
+   * bytes of a `Blob` at once throws a `TypeError` for an `S3File`: a
+   * `FormData` body, a `new Blob()` or `new File()` with several parts,
+   * `Bun.hash()`, `Bun.CryptoHasher`, `Bun.Archive` and the `stdin` of
+   * `Bun.spawn()`. Read the bytes first with `await file.bytes()`.
+   *
+   * @example
+   * ```ts
+   * const formData = new FormData();
+   * formData.append("report", new Blob([await file.bytes()], { type: file.type }), file.name);
+   * ```
+   *
    * @category Cloud Storage
    */
   interface S3File extends Blob {

@@ -766,7 +766,7 @@ describe("FormData", () => {
 // The bytes of a Bun.file() body are on disk, and the bytes of an S3 file are
 // in a bucket. formData() reads them first, as text() does, and parses what it
 // read.
-describe("formData() of a body whose bytes are not in memory", () => {
+describe.concurrent("formData() of a body whose bytes are not in memory", () => {
   const urlencoded = { "Content-Type": "application/x-www-form-urlencoded" };
   const parsed = { ok: "true", name: "bun" };
   const owners: [string, (body: Bun.BodyInit, headers?: Bun.HeadersInit) => Request | Response][] = [
@@ -1053,8 +1053,10 @@ describe("formData() of a body whose bytes are not in memory", () => {
     expect(missing).toEqual(await failure(request(s3.file("missing")).text()));
     expect(missing).toMatchObject({ code: "NoSuchKey" });
 
-    // A key that is too long cannot be signed: the read fails before formData() returns.
-    const unsigned = () => request(s3.file(Buffer.alloc(2000, "k").toString()));
+    // A key that does not fit the signed URL cannot be signed: the read fails
+    // before formData() returns. 600 bytes fit the path limit of every platform,
+    // and each "+" is three bytes in the URL.
+    const unsigned = () => request(s3.file(Buffer.alloc(600, "+").toString()));
     const rejection = await failure(unsigned().formData());
     expect(rejection).toEqual(await failure(unsigned().text()));
     expect(rejection).toMatchObject({ code: "ERR_S3_INVALID_PATH" });
@@ -1069,6 +1071,41 @@ describe("formData() of a body whose bytes are not in memory", () => {
     } finally {
       URL.revokeObjectURL(url);
     }
+  });
+
+  // The limit on the length of a string is global to a process, so this case
+  // has a process of its own.
+  test("bytes over the string limit reject as the same bytes in memory do", async () => {
+    using dir = tempDir("formdata-file-string-limit", {});
+    const script = `
+      const { setSyntheticAllocationLimitForTesting } = require("bun:internal-for-testing");
+      const headers = ${JSON.stringify(urlencoded)};
+      const path = ${JSON.stringify(join(String(dir), "form.bin"))};
+      const bytes = Buffer.alloc(2 * 1024 * 1024, "a");
+      await Bun.write(path, bytes);
+      setSyntheticAllocationLimitForTesting(1024 * 1024);
+      const code = promise => promise.then(() => "resolved", e => e.code);
+      const request = body => new Request("http://example.com/", { method: "POST", body, headers });
+      console.log(JSON.stringify({
+        file: [await code(new Response(Bun.file(path), { headers }).formData()), await code(request(Bun.file(path)).formData())],
+        memory: [await code(new Response(bytes, { headers }).formData()), await code(request(bytes).formData())],
+      }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({
+        file: ["ERR_STRING_TOO_LONG", "ERR_STRING_TOO_LONG"],
+        memory: ["ERR_STRING_TOO_LONG", "ERR_STRING_TOO_LONG"],
+      }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
 
   // Bun.stdin is a file too. Its stream is lifted back into that file before the read.

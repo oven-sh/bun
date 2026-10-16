@@ -713,7 +713,7 @@ impl S3Credentials {
             }
 
             // Written once, at its size. The signature is its last 64 bytes.
-            let mut authorization = Vec::with_capacity(
+            let mut authorization = Zeroing(Vec::with_capacity(
                 "AWS4-HMAC-SHA256 Credential=////aws4_request, SignedHeaders=, Signature=".len()
                     + self.access_key_id.len()
                     + amz_day.len()
@@ -721,9 +721,9 @@ impl S3Credentials {
                     + service_name.len()
                     + signed_headers.len()
                     + SIGNATURE_HEX_LEN,
-            );
+            ));
             write!(
-                &mut authorization,
+                &mut authorization.0,
                 "AWS4-HMAC-SHA256 Credential={}/{}/{}/{}/aws4_request, SignedHeaders={}, Signature=",
                 BStr::new(&self.access_key_id),
                 BStr::new(amz_day),
@@ -732,11 +732,13 @@ impl S3Credentials {
                 BStr::new(signed_headers)
             )
             .expect("infallible: in-memory write");
-            let signature_start = authorization.len();
-            authorization.resize(signature_start + SIGNATURE_HEX_LEN, 0);
+            let signature_start = authorization.0.len();
+            authorization
+                .0
+                .resize(signature_start + SIGNATURE_HEX_LEN, 0);
             bun_core::fmt::bytes_to_hex_lower(
                 &signature[0..DIGESTED_HMAC_256_LEN],
-                &mut authorization[signature_start..],
+                &mut authorization.0[signature_start..],
             );
             authorization.into_boxed_slice()
         };

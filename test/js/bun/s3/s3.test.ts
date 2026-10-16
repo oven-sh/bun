@@ -2154,6 +2154,8 @@ describe("presigned url signature", () => {
     region: "us-east-1",
     endpoint: "https://s3.example.com",
   };
+  // A client without a session token in its options takes the one of the environment.
+  const envSessionToken = (process.env.S3_SESSION_TOKEN ?? process.env.AWS_SESSION_TOKEN) || undefined;
   const fill = (length: number, text: string) => Buffer.alloc(length, text).toString();
   // Base64 text that has `+` and `/` as often as a real session token. Percent-encoding
   // makes each of them three bytes.
@@ -2245,7 +2247,7 @@ describe("presigned url signature", () => {
   it.each([...sizes, ...otherSizes, ...parameters].map(row => [row.name, row] as [string, Row]))(
     "signs %s",
     (_, row) => {
-      const credentials = { ...signing, ...row.client };
+      const credentials = { sessionToken: envSessionToken, ...signing, ...row.client };
       const key = row.key ?? "key.txt";
       const presigned = new S3Client(credentials).presign(key, row.presign);
       expect(presigned).toBe(presignedUrlFromSpec(presigned, credentials, key, row.presign));
@@ -2256,7 +2258,7 @@ describe("presigned url signature", () => {
   it.each([...sizes, ...otherSizes].filter(row => !row.presign).map(row => [row.name, row] as [string, Row]))(
     "redirects a Response to a presigned URL for %s",
     (_, row) => {
-      const credentials = { ...signing, ...row.client };
+      const credentials = { sessionToken: envSessionToken, ...signing, ...row.client };
       const key = row.key ?? "key.txt";
       const response = new Response(new S3Client(credentials).file(key));
       const location = response.headers.get("location")!;
@@ -2284,14 +2286,20 @@ describe("presigned url signature", () => {
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `console.log(Bun.s3.presign("key.txt"))`],
+      // A variable of the process wins over `.env`, so the child gets none of the names that Bun reads.
       env: {
         ...bunEnv,
+        S3_ACCESS_KEY_ID: undefined,
+        S3_SECRET_ACCESS_KEY: undefined,
         S3_SESSION_TOKEN: undefined,
-        AWS_SESSION_TOKEN: undefined,
+        S3_REGION: undefined,
+        S3_ENDPOINT: undefined,
+        S3_BUCKET: undefined,
         AWS_ACCESS_KEY_ID: undefined,
         AWS_SECRET_ACCESS_KEY: undefined,
-        AWS_ENDPOINT: undefined,
+        AWS_SESSION_TOKEN: undefined,
         AWS_REGION: undefined,
+        AWS_ENDPOINT: undefined,
         AWS_BUCKET: undefined,
       },
       cwd: String(dir),
@@ -2316,7 +2324,9 @@ describe("presigned url signature", () => {
     for (const credentials of [credentialsA, credentialsB, credentialsA, credentialsB]) {
       const client = new Bun.S3Client(credentials);
       const presigned = client.presign("credentials-test");
-      expect(presigned).toBe(presignedUrlFromSpec(presigned, credentials, "credentials-test"));
+      expect(presigned).toBe(
+        presignedUrlFromSpec(presigned, { sessionToken: envSessionToken, ...credentials }, "credentials-test"),
+      );
     }
   });
 });

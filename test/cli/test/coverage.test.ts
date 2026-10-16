@@ -751,6 +751,53 @@ test("calls second", () => {
   expect(exitCode).toBe(0);
 });
 
+// https://github.com/oven-sh/bun/issues/45218
+// The transpiler inlines `B` and `C` into `unused`. The inlined literals must
+// map to the use site, or the uncalled function's line range starts at the
+// declaration and zeroes every executed line in between.
+test("an uncalled function that uses an inlined const keeps the lines before it covered", async () => {
+  using dir = tempDir("cov-inlined-const", {
+    "subject.ts": `enum Color { Red = "red" }
+const A = 1;
+const B = 2;
+const C = Color.Red;
+
+export function unused(x: number): string {
+  return x + B + C;
+}
+`,
+    "subject.test.ts": `
+import { expect, test } from "bun:test";
+import * as m from "./subject.ts";
+
+test("only imports the function", () => {
+  expect(typeof m.unused).toBe("function");
+});
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"))!;
+  const executed = Object.fromEntries([...record.matchAll(/^DA:(\d+),(\d+)$/gm)].map(m => [m[1], Number(m[2]) > 0]));
+  // Lines 2 to 4 ran at module load. Line 6 is the uncalled function.
+  expect({ 2: executed[2], 3: executed[3], 4: executed[4], 6: executed[6] }).toEqual({
+    2: true,
+    3: true,
+    4: true,
+    6: false,
+  });
+  expect(stderr).toContain("1 pass");
+  expect(exitCode).toBe(0);
+});
+
 // JSC records coverage per SourceProvider, and a file has one for each time
 // it is loaded. Each case has a subject file of its own. Where a case loads
 // its subject twice, one load runs the `if` branch and the other runs the

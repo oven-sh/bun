@@ -5965,6 +5965,8 @@ describe("css tests", () => {
     minify_test("@media (240px <= width) { .foo { color: chartreuse }}", "@media (width>=240px){.foo{color:#7fff00}}");
     minify_test("@media (240px > width) { .foo { color: chartreuse }}", "@media (width<240px){.foo{color:#7fff00}}");
     minify_test("@media (240px >= width) { .foo { color: chartreuse }}", "@media (width<=240px){.foo{color:#7fff00}}");
+    minify_test("@media (width = 240px) { .foo { color: chartreuse }}", "@media (width=240px){.foo{color:#7fff00}}");
+    minify_test("@media (240px = width) { .foo { color: chartreuse }}", "@media (width=240px){.foo{color:#7fff00}}");
     minify_test(
       "@media (100px < width < 200px) { .foo { color: chartreuse }}",
       "@media (100px<width<200px){.foo{color:#7fff00}}",
@@ -6199,6 +6201,46 @@ describe("css tests", () => {
       `,
       {
         firefox: 60 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        @media (width = 240px) {
+          .foo {
+            color: chartreuse;
+          }
+        }
+      `,
+      `
+        @media (width: 240px) {
+          .foo {
+            color: #7fff00;
+          }
+        }
+      `,
+      {
+        firefox: 60 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        @media (width = 240px) {
+          .foo {
+            color: chartreuse;
+          }
+        }
+      `,
+      `
+        @media (width = 240px) {
+          .foo {
+            color: #7fff00;
+          }
+        }
+      `,
+      {
+        firefox: 64 << 16,
       },
     );
 
@@ -7866,6 +7908,36 @@ describe("css tests", () => {
   describe("container", () => {
     minify_test("@container (width > 100px) { a { color: red } }", "@container (width>100px){a{color:red}}");
     minify_test("@container not (width > 100px) { a { color: red } }", "@container not (width>100px){a{color:red}}");
+
+    minify_test("@container (width = 100px) { a { color: red } }", "@container (width=100px){a{color:red}}");
+    minify_test("@container (100px = width) { a { color: red } }", "@container (width=100px){a{color:red}}");
+    minify_test(
+      "@container my-layout (width = max(10px, 10em)) { a { color: red } }",
+      "@container my-layout (width=max(10px,10em)){a{color:red}}",
+    );
+    minify_test("@container (width=100px){a{color:red}}", "@container (width=100px){a{color:red}}");
+
+    // Unlike @media, a container query is never lowered to the `name: value`
+    // form, so `=` must survive for old targets too.
+    prefix_test(
+      `
+        @container card (inline-size = 30em) {
+          a {
+            color: red;
+          }
+        }
+      `,
+      `
+        @container card (inline-size = 30em) {
+          a {
+            color: red;
+          }
+        }
+      `,
+      {
+        firefox: 60 << 16,
+      },
+    );
 
     // `not` takes a single parenthesized query, so the grouping parens around
     // a nested and/or group must survive minification for the output to parse.

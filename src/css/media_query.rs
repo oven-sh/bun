@@ -1024,10 +1024,7 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
 impl MediaFeatureComparison {
     fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
-            // Suspect but intentional: emits '-' for `Equal`, diverging from
-            // the spec `=` and from this enum's strum tag. Preserved
-            // byte-for-byte; revisit if upstream fixes.
-            MediaFeatureComparison::Equal => dest.delim(b'-', true),
+            MediaFeatureComparison::Equal => dest.delim(b'=', true),
             MediaFeatureComparison::GreaterThan => dest.delim(b'>', true),
             MediaFeatureComparison::GreaterThanEqual => {
                 dest.whitespace()?;

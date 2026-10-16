@@ -1202,13 +1202,13 @@ pub mod ssl_wrapper {
         }
 
         /// Closes with no TLS alert: the handshake is not driven again, and a fatal error keeps
-        /// `shutdown` from writing a close_notify.
+        /// `shutdown` from writing a close_notify. The owner hears ECONNRESET, as on the fd engine.
         fn drop_suspended_handshake(&self) {
             self.callbacks.server_name.set(ServerName::Settled);
             self.flags.set_fatal_error(true);
             self.flags
                 .set_handshake_state(HandshakeState::HandshakeCompleted);
-            self.trigger_handshake_callback(HandshakeOutcome::HandshakeError(None));
+            self.trigger_handshake_callback(HandshakeOutcome::PeerClosed);
             self.trigger_close_callback();
         }
 

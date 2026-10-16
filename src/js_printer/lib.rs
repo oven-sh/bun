@@ -4107,11 +4107,7 @@ pub(crate) mod __gated_printer {
                         }
 
                         if !replaced.is_empty() {
-                            // Build a
-                            // local `Template` (not a StoreRef alias) so `fold`'s
-                            // `mem::take(self.head)` doesn't clobber the AST node.
-                            // `replaced` is leaked into the bump arena, so the
-                            // parts slice stays valid past this block.
+                            // `fold` writes its node and its parts in place: it gets a local `Template` over `replaced`.
                             let parts_slice = js_ast::StoreSlice::from_bump(replaced);
                             let mut copy = E::Template {
                                 tag: e.tag,
@@ -4132,16 +4128,7 @@ pub(crate) mod __gated_printer {
                                     return;
                                 }
                                 ExprData::ETemplate(t) => {
-                                    // Use the folded template for the print path
-                                    // below — assigned to the thread-local `e`,
-                                    // never written back into the shared AST node
-                                    // (see the comment at the top of this arm).
-                                    // Field values are arena/store-backed in both
-                                    // fold paths (the bail-out path aliases the
-                                    // stack `copy`, but its `parts`/`head` payloads
-                                    // are bump-allocated above), so copying the
-                                    // fields out is safe even though `t` itself may
-                                    // point at `copy`.
+                                    // `t` is `copy`, folded in place. Its head and parts are bump-allocated.
                                     e = E::Template {
                                         tag: t.tag,
                                         parts: t.parts.view(),

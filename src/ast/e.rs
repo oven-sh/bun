@@ -2039,14 +2039,14 @@ impl TemplatePart {
 /// The parts of an `E::Template`. Not `Copy`: one handle owns the free slots around them.
 pub struct TemplateParts {
     slice: crate::StoreSlice<TemplatePart>,
-    /// Free slots on each side of `slice`, in a block that `insert` allocated for this handle.
+    /// Slots on each side of `slice` that no handle has covered, in a block `insert` allocated.
     margin: u32,
 }
 
 impl TemplateParts {
     pub const EMPTY: TemplateParts = TemplateParts::borrowed(crate::StoreSlice::EMPTY);
 
-    /// Parts with no free slots around them: the first `insert` copies them.
+    /// Parts with no free slots around them: the first fold onto them copies them.
     #[inline]
     pub const fn borrowed(slice: crate::StoreSlice<TemplatePart>) -> TemplateParts {
         TemplateParts { slice, margin: 0 }
@@ -2068,33 +2068,72 @@ impl TemplateParts {
         TemplateParts::borrowed(self.slice)
     }
 
-    /// Moves the parts and the free slots around them out, leaving this handle empty.
+    /// Moves the free slots out with the parts. `self` keeps reading the parts, as a view.
     #[inline]
-    pub fn take(&mut self) -> TemplateParts {
-        core::mem::replace(self, TemplateParts::EMPTY)
+    pub(crate) fn take(&mut self) -> TemplateParts {
+        TemplateParts {
+            slice: self.slice,
+            margin: core::mem::take(&mut self.margin),
+        }
     }
 
+    /// A shorter slice gives up the free slots: a view can still cover the slots cut off.
     #[inline]
-    pub fn truncate(&mut self, len: usize) {
+    fn truncate(&mut self, len: usize) {
+        if len < self.slice.len() {
+            self.margin = 0;
+        }
         self.slice.truncate(len);
     }
 
+    /// `self ++ right`, in the buffer of the longer operand. `right` keeps reading its parts.
+    pub(crate) fn append(&mut self, bump: &Bump, right: &mut TemplateParts) {
+        self.append_with(|slots| bump.alloc_uninit_slice(slots), right);
+    }
+
+    #[inline]
+    fn append_with<'b>(
+        &mut self,
+        alloc_block: impl FnOnce(usize) -> &'b mut [core::mem::MaybeUninit<TemplatePart>],
+        right: &mut TemplateParts,
+    ) {
+        if right.slice.len() > self.slice.len() {
+            let mut parts = right.take();
+            parts.insert_with(alloc_block, self.slice(), true);
+            *self = parts;
+        } else if !right.slice.is_empty() {
+            self.insert_with(alloc_block, right.slice(), false);
+        }
+    }
+
     /// `extra ++ parts` with `front`, else `parts ++ extra`, in place while the free slots last.
-    pub fn insert(&mut self, bump: &Bump, extra: &[TemplatePart], front: bool) {
+    #[inline]
+    fn insert_with<'b>(
+        &mut self,
+        alloc_block: impl FnOnce(usize) -> &'b mut [core::mem::MaybeUninit<TemplatePart>],
+        extra: &[TemplatePart],
+        front: bool,
+    ) {
         let len = self.slice.len();
         let total = len + extra.len();
         let mut margin = self.margin as usize;
-        // SAFETY: a non-zero `margin` means `self.slice` came from this function: it sits in a
-        // block with at least `margin` free slots on each side, and `as_ptr` can reach them
-        // because `from_raw_parts` keeps the block's provenance. No other handle knows those
-        // slots (`view()` has a margin of 0, `take()` moves), so nothing else reads or writes
-        // them and `extra` cannot overlap them. A new block has `margin + total + margin` slots,
-        // and `[first, first + total)` is fully written before the slice is formed. A block that
-        // is too small is abandoned, never freed, so views of it stay valid.
+        // SAFETY: the `margin` slots on each side of the slice were allocated with it, and no
+        // handle has covered them: `insert` leaves them beside the slice it forms, `take()`
+        // moves the count to one handle, `view()` starts at 0, and `truncate` drops the count
+        // when it cuts slots off. So nothing else reads or writes them, and `extra` cannot
+        // overlap them. `as_ptr` reaches them because `from_raw_parts` keeps the provenance of
+        // the block. A new block has `margin + total + margin` slots, and `[first, first +
+        // total)` is fully written before the slice is formed. An old block is abandoned,
+        // never freed, so a view of it stays valid.
         self.slice = unsafe {
             let first = if extra.len() > margin {
-                margin = total.div_ceil(2);
-                let block = bump.alloc_uninit_slice::<TemplatePart>(margin + total + margin);
+                // A merge of two operands of about the same size gets no free slots.
+                margin = if 2 * extra.len() >= len {
+                    0
+                } else {
+                    total.div_ceil(2)
+                };
+                let block = alloc_block(margin + total + margin);
                 let first = block.as_mut_ptr().cast::<TemplatePart>().add(margin);
                 let kept = first.add(if front { extra.len() } else { 0 });
                 for (i, part) in self.slice().iter().enumerate() {
@@ -2107,6 +2146,10 @@ impl TemplateParts {
                 if front { old.sub(extra.len()) } else { old }
             };
             let free = if front { first } else { first.add(len) };
+            debug_assert!(
+                extra.as_ptr_range().end <= free.cast_const()
+                    || extra.as_ptr_range().start >= free.add(extra.len()).cast_const()
+            );
             for (i, part) in extra.iter().enumerate() {
                 free.add(i).write(part.shallow_clone());
             }
@@ -2118,10 +2161,7 @@ impl TemplateParts {
 
 pub struct Template {
     pub tag: Option<ExprNodeIndex>,
-    /// Arena-owned mutable slice. Stored as a
-    /// `StoreSlice` so writers (`substitute_single_use_symbol_in_expr`, the
-    /// visit pass, `foldStringAddition`) retain mutable provenance. Use
-    /// `parts()` / `parts_mut()` for ergonomic access; never null.
+    /// Arena-owned and written in place by `substitute_single_use_symbol_in_expr`, the visit pass and the folds.
     pub parts: TemplateParts,
     pub head: TemplateContents,
 }
@@ -2480,6 +2520,176 @@ pub use G::Class;
 // it long after parsing appended more rows, so Tree Borrows is what proves the
 // stored pointer survives those writes.
 // ──────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod template_parts_tests {
+    use super::*;
+    use crate::Loc;
+    use core::alloc::Layout;
+    use core::cell::RefCell;
+    use core::mem::MaybeUninit;
+
+    fn part(id: i32) -> TemplatePart {
+        TemplatePart {
+            value: Expr {
+                loc: Loc { start: id },
+                data: crate::expr::Data::ENumber(Number::new(f64::from(id))),
+            },
+            tail_loc: Loc { start: id },
+            tail: TemplateContents::Cooked(EString::init(b"t")),
+        }
+    }
+
+    fn ids(parts: &TemplateParts) -> Vec<i32> {
+        parts
+            .slice()
+            .iter()
+            .map(|part| part.tail_loc.start)
+            .collect()
+    }
+
+    /// Blocks that live until the test ends, like blocks of the AST arena.
+    struct Blocks(RefCell<Vec<(*mut u8, Layout)>>);
+
+    impl Blocks {
+        #[allow(clippy::mut_from_ref)]
+        fn alloc(&self, slots: usize) -> &mut [MaybeUninit<TemplatePart>] {
+            let layout = Layout::array::<TemplatePart>(slots.max(1)).unwrap();
+            // SAFETY: the layout has a non-zero size, and the block is freed once, in `drop`.
+            unsafe {
+                let block = std::alloc::alloc(layout);
+                assert!(!block.is_null());
+                self.0.borrow_mut().push((block, layout));
+                core::slice::from_raw_parts_mut(block.cast(), slots)
+            }
+        }
+
+        /// What the parser makes: an exact slice with no free slots.
+        fn exact(&self, ids: &[i32]) -> TemplateParts {
+            let block = self.alloc(ids.len());
+            for (slot, id) in block.iter_mut().zip(ids) {
+                slot.write(part(*id));
+            }
+            // SAFETY: every slot was written above.
+            let parts = unsafe { &mut *(core::ptr::from_mut(block) as *mut [TemplatePart]) };
+            TemplateParts::borrowed(crate::StoreSlice::new_mut(parts))
+        }
+    }
+
+    impl Drop for Blocks {
+        fn drop(&mut self) {
+            for (block, layout) in self.0.borrow_mut().drain(..) {
+                // SAFETY: `alloc` made this block with this layout.
+                unsafe { std::alloc::dealloc(block, layout) };
+            }
+        }
+    }
+
+    struct Rng(u64);
+
+    impl Rng {
+        fn below(&mut self, n: usize) -> usize {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            (self.0 % n as u64) as usize
+        }
+    }
+
+    /// Random folds against a `Vec`. Returns how many inserts moved to a new block, and how many did not.
+    fn run(seed: u64, steps: usize) -> (usize, usize) {
+        let blocks = Blocks(RefCell::new(Vec::new()));
+        let mut rng = Rng(seed);
+        let mut next_id = 0;
+        let mut fresh = |n: usize| -> Vec<i32> {
+            (0..n)
+                .map(|_| {
+                    next_id += 1;
+                    next_id
+                })
+                .collect()
+        };
+        let mut acc = blocks.exact(&fresh(2));
+        let mut model = ids(&acc);
+        let mut views: Vec<(TemplateParts, Vec<i32>)> = Vec::new();
+        let (mut moved, mut in_place) = (0, 0);
+        for step in 0..steps {
+            match rng.below(12) {
+                // `Template::fold`: rewrite the slots that stay, then cut the rest off.
+                0 | 1 => {
+                    let keep = rng.below(model.len() + 1);
+                    let view = acc.view();
+                    for i in 0..keep {
+                        let same = acc.slice()[i].shallow_clone();
+                        acc.slice_mut()[i] = same;
+                    }
+                    acc.truncate(keep);
+                    if keep < model.len() {
+                        assert_eq!(acc.margin, 0);
+                    }
+                    views.push((view, model.clone()));
+                    model.truncate(keep);
+                }
+                // A fold that hands the parts to another node. The operand still reads them.
+                2 => {
+                    let taken = acc.take();
+                    assert_eq!(acc.margin, 0);
+                    views.push((acc, model.clone()));
+                    acc = taken;
+                }
+                // `self ++ right` through the merge method, in either buffer.
+                3 | 4 => {
+                    let right_ids = fresh(rng.below(model.len() + 4));
+                    let mut right = blocks.exact(&right_ids);
+                    let view = acc.view();
+                    let before = model.clone();
+                    acc.append_with(|slots| blocks.alloc(slots), &mut right);
+                    model.extend(&right_ids);
+                    assert_eq!(ids(&right), right_ids);
+                    views.push((right, right_ids));
+                    views.push((view, before));
+                }
+                op => {
+                    let front = op % 2 == 0;
+                    let extra_ids = fresh(rng.below(6));
+                    let extra = blocks.exact(&extra_ids);
+                    let view = acc.view();
+                    let before = model.clone();
+                    if extra_ids.len() > acc.margin as usize {
+                        moved += 1;
+                    } else {
+                        in_place += 1;
+                    }
+                    acc.insert_with(|slots| blocks.alloc(slots), extra.slice(), front);
+                    if front {
+                        model.splice(0..0, extra_ids.iter().copied());
+                    } else {
+                        model.extend(&extra_ids);
+                    }
+                    assert_eq!(ids(&extra), extra_ids);
+                    views.push((view, before));
+                }
+            }
+            assert_eq!(ids(&acc), model, "step {step}");
+        }
+        // A view reads the parts it was made over, whatever its owner did afterwards.
+        for (view, want) in views.iter().rev().take(64) {
+            assert_eq!(&ids(view), want);
+        }
+        (moved, in_place)
+    }
+
+    #[test]
+    fn folds_match_a_vec() {
+        let mut totals = (0, 0);
+        for seed in [0x9E37_79B9_7F4A_7C15, 1, 0xDEAD_BEEF, 42] {
+            let (moved, in_place) = run(seed, 120);
+            totals.0 += moved;
+            totals.1 += in_place;
+        }
+        assert!(totals.0 > 0 && totals.1 > 0, "{totals:?}");
+    }
+}
 
 #[cfg(test)]
 mod json_tape_tests {

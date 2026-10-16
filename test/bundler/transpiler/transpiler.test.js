@@ -3360,6 +3360,57 @@ console.log(a)
         ["capture(`a${x}é` + `b${y}` + `c${z}`);", "capture(`a${x}é` + `b${y}c${z}`);\n"],
         ["capture(`a${x}` + `é${y}` + `c${z}`);", "capture(`a${x}` + `é${y}c${z}`);\n"],
         ["capture(`é${1}b${x}c${2}é${3}d`);", "capture(`é${1}b${x}c${2}é${3}d`);\n"],
+        // a substituted constant shortens a template that a fold made, and the next fold extends it
+        [
+          "function f(x, y, z, w) {\n  let s = 1;\n  let t = `a${x}` + `b${y}` + `c${z}` + `d${s}e`;\n  let u = t + `f${w}g`;\n  return u;\n}",
+          "function f(x, y, z, w) {\n  return `a${x}b${y}c${z}d1ef${w}g`;\n}\n",
+        ],
+        [
+          "function f(x, y, z, w) {\n  let s = 1;\n  let t = `a${!x}` + `b${!y}` + `c${!z}` + `d${s}e`;\n  let u = `f${!w}g` + t;\n  return u;\n}",
+          "function f(x, y, z, w) {\n  return `f${!w}ga${!x}b${!y}c${!z}d1e`;\n}\n",
+        ],
+        [
+          "function f(x, y, z, w) {\n  let s = 1;\n  let t = `a${!x}` + `b${s}` + `c${!z}` + `d${!y}e`;\n  let u = `f${!w}g` + t + `h${!w}i`;\n  let v = `j${!w}` + u + `k${!w}` + `l${!w}`;\n  return v;\n}",
+          "function f(x, y, z, w) {\n  return `j${!w}f${!w}ga${!x}b1c${!z}d${!y}eh${!w}ik${!w}l${!w}`;\n}\n",
+        ],
+        [
+          "function f(x, y, z, w) {\n  let s = 'S';\n  let t = `a${s}` + `b${!y}` + `c${!z}` + `d${!y}e` + `m${!x}`;\n  let u = `f${!w}g` + t + `h${!w}i`;\n  return u;\n}",
+          "function f(x, y, z, w) {\n  return `f${!w}gaSb${!y}c${!z}d${!y}em${!x}h${!w}i`;\n}\n",
+        ],
+        [
+          "function f(x, y, z, w) {\n  let s = 1;\n  let r = 2;\n  let t = `a${s}` + `b${r}`;\n  let u = `f${!w}g` + t + `h${!w}i` + `n${!x}`;\n  return u;\n}",
+          "function f(x, y, z, w) {\n  return `f${!w}ga1b2h${!w}in${!x}`;\n}\n",
+        ],
+        // operands of about the same size, as in a balanced tree of parentheses
+        [
+          "capture((`a${x}` + `b${y}`) + (`c${z}` + `d${w}`) + ((`e${x}` + `f${y}`) + (`g${z}` + `h${w}`)));",
+          "capture(`a${x}b${y}c${z}d${w}e${x}f${y}g${z}h${w}`);\n",
+        ],
+      ];
+      expect(cases.map(([input]) => [input, ts.parsedMin(input, false)])).toEqual(cases);
+    });
+
+    // The options of a transposed import() are one expression in both arms, and the
+    // statement is visited again after `t` is substituted. A fold must not take the
+    // text of that template away from the second arm.
+    it("a template literal in two places keeps its text", () => {
+      const cases = [
+        [
+          "function f(c, z) {\n  let t = c;\n  return import(t ? './a' : './b', `x${!z}w`);\n}",
+          'function f(c, z) {\n  return c ? import("./a", `x${!z}w`) : import("./b", `x${!z}w`);\n}\n',
+        ],
+        [
+          "function f(c, z) {\n  let t = c;\n  return import(t ? './a' : './b', 's' + `x${!z}w`);\n}",
+          'function f(c, z) {\n  return c ? import("./a", `sx${!z}w`) : import("./b", `sx${!z}w`);\n}\n',
+        ],
+        [
+          "function f(c, z) {\n  let t = c;\n  return import(t ? './a' : './b', `x${!z}w` + `y${!z}v`);\n}",
+          'function f(c, z) {\n  return c ? import("./a", `x${!z}wy${!z}v`) : import("./b", `x${!z}wy${!z}v`);\n}\n',
+        ],
+        [
+          "function f(c, z) {\n  let t = c;\n  let u = t;\n  return import(u ? './a' : './b', `x${`y${!z}`}w`);\n}",
+          'function f(c, z) {\n  return c ? import("./a", `x${`y${!z}`}w`) : import("./b", `x${`y${!z}`}w`);\n}\n',
+        ],
       ];
       expect(cases.map(([input]) => [input, ts.parsedMin(input, false)])).toEqual(cases);
     });

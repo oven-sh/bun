@@ -16,6 +16,8 @@ const letRun = (n: number, first: string, step: (prev: string) => string) => {
   return s + "  return t" + (n - 1) + ";\n}\ncapture(f);";
 };
 const inFunction = (body: string) => "function f(x) {\n  return " + body + ";\n}\ncapture(f);\n";
+const balanced = (term: string, leaves: number): string =>
+  leaves === 1 ? term : "(" + balanced(term, leaves >> 1) + " + " + balanced(term, leaves - (leaves >> 1)) + ")";
 
 // One substitution per term, for the flat shapes.
 const t = "a${x}b";
@@ -27,8 +29,8 @@ const W = "`" + w + "`";
 const u = "a${!x}b";
 const U = "`" + u + "`";
 
-// Each shape: [source, expected output]. All of them took about 135 MB before
-// the parts of a template could grow in place.
+// Each shape: [source, expected output]. All but the last took about 135 MB
+// before the parts of a template could grow in place.
 export const shapes: Record<string, () => [string, string]> = {
   "left chain": () => ["capture(" + chain(T, 2048) + ");", "capture(`" + rep(t, 2048) + "`);\n"],
   "chain after a non-constant operand": () => [
@@ -68,6 +70,12 @@ export const shapes: Record<string, () => [string, string]> = {
   "template visited again for each let": () => [
     letRun(1448, "`" + rep(t, 1448) + "`", prev => "!" + prev),
     inFunction("!`" + rep(t, 1448) + "`"),
+  ],
+  // Both operands of every `+` have the same size, so no fold can reuse a buffer.
+  // This one never was quadratic: it has to stay as cheap as it was.
+  "balanced tree of parentheses": () => [
+    "capture(" + balanced(W, 512) + ");",
+    "capture(`" + rep(w, 512) + "`);\n",
   ],
 };
 

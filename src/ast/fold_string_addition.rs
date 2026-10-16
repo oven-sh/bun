@@ -119,8 +119,6 @@ pub fn fold_string_addition(
                             // be treated by enums as strings, but will not be
                             // inlined unless they could be converted into
                             // .e_string.
-                            // `parts` is `StoreSlice<T>` (arena-owned, mutable
-                            // provenance) — write through `parts_mut()`.
                             if !left.parts().is_empty() {
                                 let i = left.parts().len() - 1;
                                 let last_tail = &left.parts()[i].tail;
@@ -152,13 +150,7 @@ pub fn fold_string_addition(
                                     ));
                                     left.parts_mut()[i].tail = new_tail;
 
-                                    // The longer operand is the accumulator of its chain.
-                                    if right.parts().len() > left.parts().len() {
-                                        right.parts.insert(bump, left.parts(), true);
-                                        left.parts = right.parts.take();
-                                    } else if !right.parts().is_empty() {
-                                        left.parts.insert(bump, right.parts(), false);
-                                    }
+                                    left.parts.append(bump, &mut right.parts);
                                     return Some(lhs);
                                 }
                             } else if left.head.is_utf8() && right.head.is_utf8() {

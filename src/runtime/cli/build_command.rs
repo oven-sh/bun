@@ -188,7 +188,8 @@ impl BuildCommand {
             && outfile.is_empty()
             && ctx.bundler_options.outdir.is_empty();
 
-        if output_to_stdout {
+        // `--no-bundle` never writes a source map.
+        if output_to_stdout && !ctx.bundler_options.transform_only {
             let kind = match this_transpiler.options.source_map {
                 options::SourceMapOption::External => Some("an external"),
                 options::SourceMapOption::Linked => Some("a linked"),

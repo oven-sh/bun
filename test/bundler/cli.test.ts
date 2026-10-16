@@ -463,6 +463,21 @@ describe.concurrent("--sourcemap never writes next to the entry point", () => {
     for (const file of Object.keys(fixture)) expect(after[file]).toBe(fixture[file]);
   });
 
+  // --no-bundle writes no source map, so the flag has nothing to misplace.
+  test("--no-bundle --sourcemap=linked still prints the file to stdout", async () => {
+    using dir = tempDir("build-no-bundle-sourcemap-stdout", fixture);
+    const { stdout, stderr, exitCode } = await build(
+      join(String(dir), "work"),
+      "../src/entry.js",
+      "--no-bundle",
+      "--sourcemap=linked",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toContain("console.log(dep)");
+    expect(tree(String(dir))).toEqual(fixture);
+    expect(exitCode).toBe(0);
+  });
+
   test("a standalone html build with --sourcemap and no --outdir writes to the cwd", async () => {
     using dir = tempDir("build-sourcemap-standalone-html", fixture);
     const { stdout, stderr, exitCode } = await build(

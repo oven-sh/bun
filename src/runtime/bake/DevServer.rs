@@ -2838,6 +2838,13 @@ impl DevServer {
                     continue; // ignore non-JavaScript imports
                 }
             } else {
+                // Without `PATH_IS_MODULE` the path is a specifier, not an in-graph file.
+                if !import
+                    .flags
+                    .contains(bun_ast::ImportRecordFlags::PATH_IS_MODULE)
+                {
+                    continue;
+                }
                 // Find the in-graph import.
                 let Some(file) = self.client_graph.bundled_files.get(import.path.text) else {
                     continue;

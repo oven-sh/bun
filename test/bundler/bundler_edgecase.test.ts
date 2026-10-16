@@ -1842,6 +1842,26 @@ describe("bundler", () => {
       },
     }));
   }
+  // tsconfig "paths" maps the specifier in late.js, the absolute path of a.js, to b.js. entry.js
+  // imports a.js too, so that specifier text is also the path of a module in the bundle. The
+  // import in late.js is b.js all the same.
+  itBundled("edgecase/TsconfigPathsTargetIsNotReplacedByTheModuleAtTheSpecifierPath", ({ root }) => ({
+    files: {
+      "/entry.js": /* js */ `
+        import { who as b } from "./b.js";
+        import { who as a } from "./a.js";
+        import "./late.js";
+        console.log("entry", a, b);
+      `,
+      "/a.js": `export const who = "A";`,
+      "/b.js": `export const who = "B";`,
+      "/late.js": `import { who } from ${JSON.stringify(join(root, "a.js"))}; console.log("late", who);`,
+      "/tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { [join(root, "a.js")]: ["./b.js"] } },
+      }),
+    },
+    run: { stdout: "late B\nentry A B" },
+  }));
   itBundled("edgecase/IntegerUnderflow#12547", {
     files: {
       "/entry.js": `

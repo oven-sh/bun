@@ -350,7 +350,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeVisitorKeys, (JSGlobalObject*, EncodedJ
 // `parserServices.program` of a file that wants types, which a rule in JavaScript does not get. What `getParserServices` of
 // `@typescript-eslint/utils` throws without them, so that the rule is taken out of the run instead of running as if the file had
 // no project: see `asks_for_types` in src/lint/js_plugin/host.rs.
-JSC_DEFINE_CUSTOM_GETTER(jsLintProgramOfFileWithTypes, (JSGlobalObject* globalObject, EncodedJSValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsLintProgramOfFileWithTypes, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

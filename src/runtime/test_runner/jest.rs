@@ -403,20 +403,19 @@ pub(crate) mod Jest {
         let Some(runner) = runner_ptr() else {
             return false;
         };
-        // SAFETY: `RUNNER` is only accessed on this thread, and no `&mut TestRunner` is formed.
+        // SAFETY: `RUNNER` is only accessed on this thread. No borrow of the runner is live when `exit_request` is written.
         unsafe {
             if !(*runner.as_ptr()).has_observed_failure() {
                 return false;
             }
-            let request = &mut (*runner.as_ptr()).exit_request;
             // An 'exit' listener that exits again keeps the first call site.
-            if request.is_none() {
+            if (*runner.as_ptr()).exit_request.is_none() {
                 let call = if argless { "process.exit()" } else { "process.exit(0)" };
                 let error = global.create_error_instance(format_args!(
                     "{call} was called{}, but this test run has failed. The exit code is 1.",
                     (*runner.as_ptr()).exit_caller()
                 ));
-                *request = Some(jsc::Strong::create(error, global));
+                (*runner.as_ptr()).exit_request = Some(jsc::Strong::create(error, global));
             }
         }
         true

@@ -1454,7 +1454,7 @@ impl CommandLineReporter {
         }
     }
 
-    /// The count lines before `print_summary()`. A run that ends early writes no `.snap` file: `snapshots_written` is false.
+    /// The count lines before `print_summary()`. `snapshots_written` is false for a run that ends early: it does not write the open `.snap` file.
     pub(crate) fn print_counts(&self, snapshots_written: bool) {
         let summary = self.jest.summary;
         struct DotIndenter {
@@ -1523,16 +1523,13 @@ impl CommandLineReporter {
         }
 
         let mut print_expect_calls = summary.expectations > 0;
-        let added = if snapshots_written {
-            self.jest.snapshots.added
-        } else {
+        let unwritten = if snapshots_written {
             0
+        } else {
+            self.jest.snapshots.added_unwritten
         };
-        let total = self
-            .jest
-            .snapshots
-            .total
-            .saturating_sub(self.jest.snapshots.added - added);
+        let added = self.jest.snapshots.added - unwritten;
+        let total = self.jest.snapshots.total.saturating_sub(unwritten);
         if total > 0 {
             let passed = self.jest.snapshots.passed;
             let failed = self.jest.snapshots.failed;
@@ -3056,15 +3053,7 @@ impl TestCommand {
             if repeat_index == 0 {
                 reporter.summary().files += 1;
             }
-            let promise = match vm.load_entry_point_for_test_runner(file_path) {
-                Ok(promise) => promise,
-                Err(err) => {
-                    if repeat_index == 0 {
-                        reporter.summary().files -= 1;
-                    }
-                    return Err(err.into());
-                }
-            };
+            let promise = vm.load_entry_point_for_test_runner(file_path)?;
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
             match jsc::JSInternalPromise::opaque_mut(promise).status() {

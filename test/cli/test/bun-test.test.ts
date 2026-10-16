@@ -2180,6 +2180,35 @@ test("exits", () => { process.exit(0); });
       expect(exitCode).toBe(1);
     });
 
+    // The .snap file of a.test.ts is written when b.test.ts opens its own. The early end does not write the one of b.test.ts.
+    test("the counts leave out only the new snapshots that no .snap file has", async () => {
+      using dir = tempDir("bun-test-process-exit-snapshots", {
+        "a.test.ts": `
+          import { test, expect } from "bun:test";
+          test("adds two", () => { expect(1).toMatchSnapshot(); expect(2).toMatchSnapshot(); });
+        `,
+        "b.test.ts": `
+          import { test, expect } from "bun:test";
+          test("adds one and fails", () => { expect(3).toMatchSnapshot(); expect(1).toBe(2); });
+          test("exits", () => { process.exit(0); });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"],
+        env: { ...bunEnv, CI: "false" },
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(`error: process.exit(0) was called ${byTheTest}`);
+      expect(stderr).toContain(" 1 pass\n 1 fail\nsnapshots: +2 added\n");
+      const written = await Bun.file(join(String(dir), "__snapshots__", "a.test.ts.snap")).text();
+      expect(written).toContain("exports[`adds two 2`]");
+      const unwritten = Bun.file(join(String(dir), "__snapshots__", "b.test.ts.snap"));
+      expect((await unwritten.exists()) ? await unwritten.text() : "").not.toContain("adds one and fails");
+      expect(exitCode).toBe(1);
+    });
+
     // The 'exit' listeners are told 1. The runner takes back only its own code when process.exit() returns to JS.
     test.each([
       ["stores 1", `process.on("exit", () => { process.exitCode = 1; });`],

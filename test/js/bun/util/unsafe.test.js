@@ -1,4 +1,4 @@
-import { expect, it } from "bun:test";
+import { expect, it, jest } from "bun:test";
 import { gc } from "harness";
 
 it("arrayBufferToString u8", async () => {
@@ -48,4 +48,35 @@ it("Bun.allocUnsafe", () => {
   expect(buffer.length).toBe(1024);
   buffer[0] = 0;
   expect(buffer[0]).toBe(0);
+  expect(Bun.allocUnsafe(0).length).toBe(0);
+  expect(Bun.allocUnsafe(-0).length).toBe(0);
+  expect(Bun.allocUnsafe(3n).length).toBe(3);
+});
+
+it("Bun.allocUnsafe takes an integer that fits 32 bits", () => {
+  const valueOf = jest.fn(() => 1);
+  for (const size of [undefined, null, true, "1", {}, [], new Number(1), { valueOf }, Symbol()]) {
+    expect(() => Bun.allocUnsafe(size)).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "size must be a number" }),
+    );
+  }
+  expect(valueOf).not.toHaveBeenCalled();
+  for (const size of [1.5, NaN, Infinity]) {
+    expect(() => Bun.allocUnsafe(size)).toThrow(
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `size must be an integer (received ${size})`,
+      }),
+    );
+  }
+  for (const size of [-1, 2 ** 32]) {
+    expect(() => Bun.allocUnsafe(size)).toThrow(
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `size must be in the range [0, 4294967295] (received ${size})`,
+      }),
+    );
+  }
 });

@@ -45,7 +45,6 @@
 
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \
-    macro(allocUnsafe) \
     macro(build) \
     macro(color) \
     macro(connect) \
@@ -59,20 +58,14 @@
     macro(inflateSync) \
     macro(jest) \
     macro(listen) \
-    macro(mmap) \
-    macro(openInEditor) \
     macro(registerMacro) \
     macro(resolve) \
     macro(resolveSync) \
     macro(serve) \
     macro(sha) \
-    macro(shellEscape) \
-    macro(shrink) \
-    macro(sleepSync) \
     macro(spawn) \
     macro(spawnSync) \
     macro(udpSocket) \
-    macro(which) \
     macro(write) \
     macro(zstdCompressSync) \
     macro(zstdDecompressSync) \

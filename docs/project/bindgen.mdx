@@ -93,7 +93,8 @@ takes one of those to run JavaScript has stepped around the check.
 
 `throws: true` makes the return type a `Result`. The error is a
 `bindgen::Error<'a>`, made by `heap.error(..)`, `heap.type_error(..)`,
-`heap.range_error(..)` or `bindgen::Error::from_value(value)`, or any type that
+`heap.range_error(..)`, `heap.error_with_code(ErrorCode::INVALID_ARG_TYPE, ..)` or
+`bindgen::Error::from_value(value)`, or any type that
 implements `bindgen::IntoError` (`bun_sys::Error`, `SystemError`, `JsError` and a `Box` of
 one do), which lets a `capability: "none"` function fail too.
 
@@ -144,7 +145,7 @@ any other: nothing looks at how many there are.
 | ------------------------------------------------ | -------------------------------- | ------------------------------------------------------------- |
 | `b.bool`                                         | `bool`                           | a boolean; `.loose` is `ToBoolean`                            |
 | `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | a number or BigInt that is an integer in range; see below     |
-| `b.f64`                                          | `f64`                            | a number                                                      |
+| `b.f64`                                          | `f64`                            | a number; `.loose` is `ToNumber`                              |
 | `b.string`                                       | `bun_core::String`               | a string; `.loose` is `ToString`                              |
 | `b.string.utf8`                                  | `&'a [u8]`                       | the same, and a `String` object                               |
 | `b.string.utf8.owned`                            | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
@@ -154,14 +155,16 @@ any other: nothing looks at how many there are.
 | `b.blob`                                         | `ExternalShared<Blob>`           | a `Blob`                                                      |
 | `b.any`                                          | `JsLocal<'a>`                    | anything                                                      |
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
-| `b.array(T)`                                     | `Vec<T>`                         | an array                                                      |
+| `b.array(T)`                                     | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
 | `b.dictionary(members)`                          | a generated `struct`             | an object that is not an array                                |
 | `b.union(alternatives)`                          | a generated `enum`               | see [Unions and kinds](#unions-and-kinds)                     |
 | `b.class(options)`                               | `JsWrapper<'a, T>`               | an instance                                                   |
 
 One JS type has one name; a modifier picks the Rust form. The last four are named
-types: each is called what it is exported as, and has to be exported.
+types: each is called what it is exported as, and has to be exported. It is used by
+schemas of the crate it is generated into. A member or an alternative also names a C++
+field, so one that is a C++ keyword is refused: a member takes a `rustName`.
 
 These come last, in this order (`b.any` already takes `undefined` and `null`, so only `.withValue` applies to it):
 
@@ -171,8 +174,9 @@ These come last, in this order (`b.any` already takes `undefined` and `null`, so
 - `.default(value)`: what to use when absent; `T`. `.nullable.default(value)` also applies to `null`.
 - `.withValue`, for arguments: see [Keeping the original value](#keeping-the-original-value). Not with `.default()`.
 
-As results, `b.string.utf8` is anything that is `AsRef<[u8]>` and `b.array(T)` anything
-that is `IntoIterator`.
+As results, `b.string.utf8` is anything that is `AsRef<[u8]>`, or the string itself from
+`heap.create_utf8_string(bytes)` when the bytes do not outlive the body, and `b.array(T)`
+anything that is `IntoIterator`.
 
 ### Integers
 

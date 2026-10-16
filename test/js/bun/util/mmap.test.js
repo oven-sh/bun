@@ -207,11 +207,74 @@ console.log(JSON.stringify(out));`,
   });
 
   it("mmap rejects non-object options", () => {
-    expect(() => Bun.mmap(path, 256)).toThrow("Expected options to be an object");
-    expect(() => Bun.mmap(path, "foo")).toThrow("Expected options to be an object");
-    expect(() => Bun.mmap(path, true)).toThrow("Expected options to be an object");
+    for (const options of [256, "foo", true, 1n, Symbol()]) {
+      expect(() => Bun.mmap(path, options)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "MmapOptions must be an object",
+        }),
+      );
+    }
     expect(() => Bun.mmap(path, undefined)).not.toThrow();
     expect(() => Bun.mmap(path, null)).not.toThrow();
+  });
+
+  it("mmap rejects a path that is not a string", () => {
+    for (const notAPath of [undefined, null, 1, {}, [], Buffer.from(path), new URL("file://" + path)]) {
+      expect(() => Bun.mmap(notAPath)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "path must be a string" }),
+      );
+    }
+    // The path is looked at first.
+    expect(() => Bun.mmap(1, 1)).toThrow("path must be a string");
+  });
+
+  it("mmap converts offset and size to numbers and drops the fraction", () => {
+    const text = options => Buffer.from(Bun.mmap(path, options)).toString();
+    const whole = text();
+    expect(text({ size: 2 })).toBe(whole.slice(0, 2));
+    expect(text({ size: 2.9 })).toBe(whole.slice(0, 2));
+    expect(text({ size: "2" })).toBe(whole.slice(0, 2));
+    expect(text({ size: { valueOf: () => 2 } })).toBe(whole.slice(0, 2));
+    expect(text({ offset: 1.9 })).toBe(whole.slice(1));
+    expect(text({ offset: -0.9 })).toBe(whole);
+    expect(text({ offset: NaN })).toBe(whole);
+    expect(text({ offset: {} })).toBe(whole);
+    // More than the file holds is all of it.
+    expect(text({ size: 2 ** 53 })).toBe(whole);
+    expect(text({ size: 2 ** 64 })).toBe(whole);
+    expect(text({ size: Infinity })).toBe(whole);
+    expect(() => Bun.mmap(path, { size: NaN })).toThrow("EINVAL");
+    expect(() => Bun.mmap(path, { offset: Infinity })).toThrow("EINVAL");
+    expect(() => Bun.mmap(path, { offset: -Infinity })).toThrow("offset must be a non-negative integer");
+    for (const member of ["size", "offset"]) {
+      expect(() => Bun.mmap(path, { [member]: 1n })).toThrow(TypeError);
+      expect(() => Bun.mmap(path, { [member]: Symbol() })).toThrow(TypeError);
+    }
+  });
+
+  it("mmap reads its options in order, each once, and not from Object.prototype", () => {
+    const log = [];
+    const options = {};
+    for (const [member, value] of Object.entries({ offset: 0, size: 2, sync: false, shared: true })) {
+      Object.defineProperty(options, member, {
+        get() {
+          log.push(member);
+          return value;
+        },
+      });
+    }
+    expect(Bun.mmap(path, options).length).toBe(2);
+    expect(log).toEqual(["shared", "sync", "size", "offset"]);
+
+    expect(Bun.mmap(path, Object.create({ size: 2 })).length).toBe(2);
+    Object.prototype.size = 2;
+    try {
+      expect(Bun.mmap(path, {}).length).toBe(Bun.mmap(path).length);
+    } finally {
+      delete Object.prototype.size;
+    }
   });
 
   it("mmap handles non-number offset/size without crashing", () => {

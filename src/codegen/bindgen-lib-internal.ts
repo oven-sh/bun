@@ -433,8 +433,12 @@ export const integers = {
 };
 
 export class DoubleType extends PrimitiveType {
-  constructor() {
-    super("Bun::Bindgen::IDLStrictDouble", "number", "f64", 8, ["number"]);
+  constructor(idlType = "Bun::Bindgen::IDLStrictDouble", valueKinds: ValueKinds = ["number"]) {
+    super(idlType, "number", "f64", 8, valueKinds);
+  }
+  /** `ToNumber`: WebIDL's `unrestricted double`. */
+  get loose(): DoubleType {
+    return new DoubleType("WebCore::IDLUnrestrictedDouble", "any");
   }
 }
 
@@ -604,7 +608,7 @@ export class Utf8Type extends Type {
     return "Vec<u8>";
   }
   rustReturnType(): string {
-    return "impl AsRef<[u8]>";
+    return "impl bindgen::to_js::Utf8<'a>";
   }
   rustToJS(value: string): string {
     return `bindgen::to_js::utf8(heap, ${value})`;

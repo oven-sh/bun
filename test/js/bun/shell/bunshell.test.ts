@@ -190,6 +190,16 @@ describe("bunshell", () => {
       expect(stdout.toString()).toEqual("a  b\n");
     });
 
+    test("$.escape converts its argument to a string, and returns it as it is when there is nothing to escape", () => {
+      expect($.escape(1 as any)).toBe('"1"');
+      expect($.escape({ toString: () => "a b" } as any)).toBe('"a b"');
+      const plain = { toString: () => "plain" };
+      expect($.escape(plain as any)).toBe(plain as any);
+      // @ts-expect-error
+      expect($.escape()).toBeUndefined();
+      expect(() => $.escape(Symbol() as any)).toThrow(TypeError);
+    });
+
     test("quotes values containing a tab, carriage return, or question mark", async () => {
       expect($.escape("a\tb")).toEqual('"a\tb"');
       expect($.escape("a\rb")).toEqual('"a\rb"');

@@ -1214,6 +1214,10 @@ impl<'a> Parser<'a> {
 
         visit_tracer.end();
 
+        if p.bundler_feature_flag_ref.is_valid() {
+            p.reject_bundler_feature_value_use();
+        }
+
         // If there were errors while visiting, also halt here
         if p.log().errors > orig_error_count {
             return Err(crate::Error::SyntaxError);

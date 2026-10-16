@@ -65,7 +65,9 @@ bun_core::declare_scope!(cache, visible);
 /// the cache-HIT path reinstates #33904 for them.
 /// Version 34: An import that a plugin `onResolve` answers is printed as it is written.
 /// Version 35: Long hexadecimal, octal and binary literals are rounded to the nearest double.
-const EXPECTED_VERSION: u32 = 35;
+/// Version 36: A default or namespace import of "bun:bundle", and a use of `feature`
+/// that is not a call, are errors. Older entries replay output for them.
+const EXPECTED_VERSION: u32 = 36;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

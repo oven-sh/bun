@@ -4127,7 +4127,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_macro =
             Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
         let mut stmt = stmt_;
-        if is_macro {
+        // `with { type: "macro" }` does not take "bun:bundle" out of its branch below.
+        if is_macro && path.text != b"bun:bundle" {
             let id = self.add_import_record(ImportKind::Stmt, path.loc, path.text);
             self.import_records.items_mut()[id as usize].path.namespace = crate::Macro::NAMESPACE;
             self.import_records.items_mut()[id as usize]
@@ -4183,6 +4184,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // that provides static feature flag checking at bundle time.
         // We handle it here at parse time (similar to macros) rather than at visit time.
         if path.text == b"bun:bundle" {
+            if stmt.default_name.is_some() || !stmt.star_name_loc.is_empty() {
+                self.reject_bun_bundle_default_or_namespace_import(&stmt);
+            }
             // Look for the "feature" import and validate specifiers
             // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a;
             // loop body only reads from `item`, so a shared borrow suffices and
@@ -4485,6 +4489,72 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.import_items_for_namespace
             .insert(stmt.namespace_ref, item_refs);
         Ok(self.s(stmt, loc))
+    }
+
+    /// "bun:bundle" does not exist at runtime and its statement is removed, so a
+    /// default or namespace binding would have no declaration in the output.
+    #[cold]
+    fn reject_bun_bundle_default_or_namespace_import(&mut self, stmt: &S::Import) {
+        if let Some(default_name) = stmt.default_name {
+            self.log().add_error(
+                Some(self.source),
+                default_name.loc,
+                b"\"bun:bundle\" has no export named \"default\"",
+            );
+        }
+        if let Some(star) = stmt.star_name_loc.to_nullable() {
+            let notes: Box<[bun_ast::Data]> = Box::new([bun_ast::range_data(
+                None,
+                bun_ast::Range::NONE,
+                b"\"bun:bundle\" does not exist at runtime. Use a named import: import { feature } from \"bun:bundle\"",
+            )]);
+            self.log().add_range_error_with_notes(
+                Some(self.source),
+                bun_ast::Range {
+                    loc: star,
+                    ..Default::default()
+                },
+                b"\"bun:bundle\" cannot be imported as a namespace",
+                notes,
+            );
+        }
+    }
+
+    /// The "bun:bundle" import is removed at parse time and only a direct
+    /// `feature("FLAG")` call is replaced. Any other reference that is still
+    /// counted after the visit pass would be printed with no declaration.
+    #[cold]
+    pub(crate) fn reject_bundler_feature_value_use(&mut self) {
+        let r#ref = self.bundler_feature_flag_ref;
+        let symbol = &self.symbols[r#ref.inner_index() as usize];
+        if symbol.use_count_estimate == 0 {
+            return;
+        }
+        let name: &'a [u8] = symbol.original_name.slice();
+        let loc = match self.module_scope().members.get(name) {
+            Some(member) if member.ref_.eql(r#ref) => member.loc,
+            _ => bun_ast::Loc::EMPTY,
+        };
+        let mut note = Vec::<u8>::new();
+        let _ = write!(
+            &mut note,
+            "\"bun:bundle\" does not exist at runtime, so \"{}\" has no value there",
+            bstr::BStr::new(name)
+        );
+        let notes: Box<[bun_ast::Data]> =
+            Box::new([bun_ast::range_data(None, bun_ast::Range::NONE, note)]);
+        self.log().add_range_error_fmt_with_notes(
+            Some(self.source),
+            bun_ast::Range {
+                loc,
+                ..Default::default()
+            },
+            notes,
+            format_args!(
+                "\"{0}\" from \"bun:bundle\" is used as a value, but it can only be called directly, as in {0}(\"FLAG\")",
+                bstr::BStr::new(name)
+            ),
+        );
     }
 
     #[cold]

@@ -2156,6 +2156,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.bundler_feature_flag_ref.is_valid() {
             if let Some(result) = Self::maybe_replace_bundler_feature_call(p, &mut *e_, expr.loc) {
                 *e = result;
+                Self::ignore_bundler_feature_call_target(p);
                 return;
             }
         }
@@ -2564,6 +2565,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loc,
         })
     }
+
+    /// The call is replaced, so its target is no longer a use. What is still
+    /// counted after the visit pass is a reference that is printed.
+    #[inline(never)]
+    fn ignore_bundler_feature_call_target(p: &mut Self) {
+        p.ignore_usage(p.bundler_feature_flag_ref);
+    }
+
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
     fn e_arrow(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;

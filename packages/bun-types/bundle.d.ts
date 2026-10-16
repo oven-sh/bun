@@ -1,6 +1,10 @@
 /**
  * The `bun:bundle` module provides compile-time utilities for dead-code elimination.
  *
+ * `bun:bundle` does not exist at runtime. Bun removes the import at build time, so
+ * only the named import is supported. A default import or a namespace import
+ * (`import * as`) is a build error.
+ *
  * @example
  * ```ts
  * import { feature } from "bun:bundle";
@@ -55,6 +59,9 @@ declare module "bun:bundle" {
    *
    * At bundle time, Bun replaces each call with a boolean literal (`true` or `false`)
    * and removes the unreachable branch.
+   *
+   * `feature` can only be called directly. Any other use of it, such as
+   * `const f = feature`, is a build error.
    *
    * @param flag Name of the feature flag to check
    * @returns `true` if the flag was passed with `--feature=FLAG`, `false` otherwise

@@ -426,6 +426,239 @@ console.log(x);
     });
   }
 
+  // "bun:bundle" does not exist at runtime and its import statement is removed.
+  // A binding that is not a direct `feature("FLAG")` call would be printed with
+  // no declaration, so each of these must fail the build.
+  const NAMESPACE = `"bun:bundle" cannot be imported as a namespace`;
+  const DEFAULT = `"bun:bundle" has no export named "default"`;
+  const usedAsValue = (name: string) =>
+    `"${name}" from "bun:bundle" is used as a value, but it can only be called directly, as in ${name}("FLAG")`;
+
+  const refusedAtImport: Record<string, [source: string, ...errors: string[]]> = {
+    "/namespace.js": [`import * as flags from "bun:bundle"; if (flags.feature("FLAG")) console.log("on");`, NAMESPACE],
+    "/default.js": [`import flags from "bun:bundle"; if (flags.feature("FLAG")) console.log("on");`, DEFAULT],
+    "/default-and-named.js": [
+      `import flags, { feature } from "bun:bundle"; if (feature("FLAG")) console.log(typeof flags);`,
+      DEFAULT,
+    ],
+    "/default-and-namespace.js": [`import d, * as ns from "bun:bundle"; console.log(d, ns);`, DEFAULT, NAMESPACE],
+    "/defer-namespace.js": [`import defer * as ns from "bun:bundle"; console.log(ns);`, NAMESPACE],
+    "/namespace-beside-named.js": [
+      `import { feature } from "bun:bundle"; import * as ns from "bun:bundle"; if (feature("FLAG")) console.log(ns);`,
+      NAMESPACE,
+    ],
+    "/unused-namespace.js": [`import * as flags from "bun:bundle"; console.log("unused");`, NAMESPACE],
+    "/unused-default.js": [`import flags from "bun:bundle"; console.log("unused");`, DEFAULT],
+    "/type-only-namespace-use.ts": [
+      `import * as B from "bun:bundle"; const r: B.Registry = {}; console.log(r);`,
+      NAMESPACE,
+    ],
+    "/default-with-macro-attribute.js": [
+      `import flags from "bun:bundle" with { type: "macro" }; const f = flags; console.log(f);`,
+      DEFAULT,
+    ],
+  };
+
+  const refusedAfterVisit: Record<string, [source: string, ...errors: string[]]> = {
+    "/renamed.js": [`import { feature as enabled } from "bun:bundle"; console.log(enabled);`, usedAsValue("enabled")],
+  };
+  for (const [file, use] of Object.entries({
+    "/alias.js": `const f = feature; if (f("FLAG")) console.log("on");`,
+    "/argument.js": `console.log(["FLAG"].map(feature));`,
+    "/comma-call.js": `if ((0, feature)("FLAG")) console.log("on");`,
+    "/method-call.js": `if (feature.call(null, "FLAG")) console.log("on");`,
+    "/new.js": `if (new feature("FLAG")) console.log("on");`,
+    "/tagged-template.js": "if (feature`FLAG`) console.log('on');",
+    "/export-default.js": `export default feature;`,
+    "/export-clause.js": `export { feature };`,
+    "/typeof.js": `console.log(typeof feature);`,
+    "/typeof-guard.js": `if (typeof feature === "function" && feature("FLAG")) console.log("on");`,
+    "/assignment.js": `feature = 1;`,
+    "/after-return.js": `export function f() { return 1; console.log(feature); }`,
+    // Refused while parsing, before tree shaking could remove the function.
+    "/unused-function.js": `function unused() { return feature; }`,
+    "/import-equals.ts": `import f = feature;`,
+  })) {
+    refusedAfterVisit[file] = [`import { feature } from "bun:bundle"; ${use}`, usedAsValue("feature")];
+  }
+
+  // Each of these builds today and must keep building. Each module prints one line.
+  const accepted: Record<string, [source: string, stdout: string]> = {
+    "/renamed.js": [
+      `import { feature as enabled } from "bun:bundle"; console.log("renamed", enabled("FLAG") ? "on" : "off");`,
+      "renamed on",
+    ],
+    "/string-name.js": [
+      `import { "feature" as enabled } from "bun:bundle"; console.log("string-name", enabled("FLAG") ? "on" : "off");`,
+      "string-name on",
+    ],
+    "/bare.js": [`import "bun:bundle"; console.log("bare");`, "bare"],
+    "/empty-clause.js": [`import {} from "bun:bundle"; console.log("empty-clause");`, "empty-clause"],
+    "/type-namespace.ts": [
+      `import type * as B from "bun:bundle"; const r: B.Registry = {}; console.log("type-namespace", typeof r);`,
+      "type-namespace object",
+    ],
+    "/type-default.ts": [`import type B from "bun:bundle"; console.log("type-default");`, "type-default"],
+    "/type-specifier.ts": [
+      `import { feature, type Registry } from "bun:bundle"; const r: Registry = {}; console.log("type-specifier", feature("FLAG") ? "on" : "off", typeof r);`,
+      "type-specifier on object",
+    ],
+    "/typeof-type.ts": [
+      `import { feature } from "bun:bundle"; type F = typeof feature; const f: F | null = null; console.log("typeof-type", feature("FLAG") ? "on" : "off", f);`,
+      "typeof-type on null",
+    ],
+    "/optional-call.js": [
+      `import { feature } from "bun:bundle"; console.log("optional-call", feature?.("FLAG") ? "on" : "off");`,
+      "optional-call on",
+    ],
+    "/parenthesized-call.js": [
+      `import { feature } from "bun:bundle"; console.log("parenthesized-call", (feature)("FLAG") ? "on" : "off");`,
+      "parenthesized-call on",
+    ],
+    "/use-before-import.js": [
+      `console.log("use-before-import", feature("FLAG") ? "on" : "off"); import { feature } from "bun:bundle";`,
+      "use-before-import on",
+    ],
+    "/shadowed.js": [
+      `import { feature } from "bun:bundle"; const len = feature => feature.length; console.log("shadowed", feature("FLAG") ? "on" : "off", len("abc"));`,
+      "shadowed on 3",
+    ],
+    "/dead-branch.js": [
+      `import { feature } from "bun:bundle"; if (false) console.log(typeof feature); if (feature("OFF")) console.log(feature); console.log("dead-branch", feature("FLAG") ? "on" : "off");`,
+      "dead-branch on",
+    ],
+  };
+
+  const refused = { ...refusedAtImport, ...refusedAfterVisit };
+  const sourcesOf = (rows: Record<string, readonly [source: string, ...rest: string[]]>) =>
+    Object.fromEntries(Object.entries(rows).map(([file, [source]]) => [file, source]));
+
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`feature_flag/${backend}/RefusesBindingsLeftInOutput`, {
+      backend,
+      files: sourcesOf(refused),
+      entryPoints: Object.keys(refused),
+      features: ["FLAG"],
+      bundleErrors: Object.fromEntries(Object.entries(refused).map(([file, [, ...errors]]) => [file, errors])),
+    });
+
+    itBundled(`feature_flag/${backend}/AcceptsEveryValidForm`, {
+      backend,
+      files: {
+        "/entry.js": Object.keys(accepted)
+          .map(file => `import ".${file}";`)
+          .join("\n"),
+        ...sourcesOf(accepted),
+      },
+      features: ["FLAG"],
+      run: {
+        stdout: Object.values(accepted)
+          .map(([, stdout]) => stdout)
+          .join("\n"),
+      },
+    });
+
+    // The attribute does not make it a macro import. It is ignored, as `with { type: "json" }` is.
+    itBundled(`feature_flag/${backend}/IgnoresMacroAttribute`, {
+      backend,
+      files: {
+        "/a.js": `import { feature } from "bun:bundle" with { type: "macro" }; console.log(feature("FLAG") ? "on" : "off");`,
+      },
+      features: ["FLAG"],
+      run: { stdout: "on" },
+    });
+  }
+
+  async function spawnBun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent.each([
+    [
+      "a namespace import",
+      `console.log("ran"); import * as flags from "bun:bundle"; flags.feature("FLAG");`,
+      NAMESPACE,
+    ],
+    ["a default import", `console.log("ran"); import flags from "bun:bundle"; flags.feature("FLAG");`, DEFAULT],
+    [
+      "a use that is not a call",
+      `console.log("ran"); import { feature } from "bun:bundle"; const f = feature;`,
+      usedAsValue("feature"),
+    ],
+  ])("bun run and bun test refuse %s", async (_, source, error) => {
+    using dir = tempDir("bundler-feature-flag", { "index.ts": source, "index.test.ts": source });
+    const [run, test] = await Promise.all([
+      spawnBun(String(dir), "run", "./index.ts"),
+      spawnBun(String(dir), "test", "./index.test.ts"),
+    ]);
+
+    // The file does not load, so "ran" is never printed.
+    expect(run.stderr).toContain(error);
+    expect(run.stdout).toBe("");
+    expect(run.exitCode).toBe(1);
+    expect(test.stderr).toContain(error);
+    expect(test.stdout).not.toContain("ran");
+    expect(test.exitCode).toBe(1);
+  });
+
+  test("Bun.Transpiler refuses them too", () => {
+    const transpiler = new Bun.Transpiler({ loader: "ts" });
+    const errorsOf = (fn: () => unknown): string[] => {
+      try {
+        fn();
+      } catch (e: any) {
+        return (e instanceof AggregateError ? e.errors : [e]).map(error => error.message);
+      }
+      return [];
+    };
+
+    for (const [source, ...errors] of Object.values(refusedAtImport)) {
+      // scanImports() only parses. The import statement is refused while parsing.
+      expect({
+        scanImports: errorsOf(() => transpiler.scanImports(source)),
+        scan: errorsOf(() => transpiler.scan(source)),
+        transformSync: errorsOf(() => transpiler.transformSync(source)),
+      }).toEqual({ scanImports: errors, scan: errors, transformSync: errors });
+    }
+    for (const [source, ...errors] of Object.values(refusedAfterVisit)) {
+      expect({
+        scan: errorsOf(() => transpiler.scan(source)),
+        transformSync: errorsOf(() => transpiler.transformSync(source)),
+      }).toEqual({ scan: errors, transformSync: errors });
+    }
+    for (const [source] of Object.values(accepted)) {
+      expect(errorsOf(() => transpiler.transformSync(source))).toEqual([]);
+    }
+  });
+
+  // A reference in a dead branch is refused only where the branch is printed.
+  // `bun test --coverage` and `bun --print` turn dead code elimination off.
+  test("a reference in a dead branch is refused only when dead code is kept", async () => {
+    const source = `import { feature } from "bun:bundle"; if (false) console.log(typeof feature);`;
+    const error = usedAsValue("feature");
+
+    expect(new Bun.Transpiler({ loader: "js" }).transformSync(source)).not.toContain("feature");
+    expect(() => new Bun.Transpiler({ loader: "js", deadCodeElimination: false }).transformSync(source)).toThrow(error);
+
+    using dir = tempDir("bundler-feature-flag", {
+      "dead.test.ts": `${source} import { test } from "bun:test"; test("loads", () => {});`,
+    });
+    const [plain, coverage, print] = await Promise.all([
+      spawnBun(String(dir), "test", "./dead.test.ts"),
+      spawnBun(String(dir), "test", "--coverage", "./dead.test.ts"),
+      spawnBun(String(dir), "--print", `${source} "printed"`),
+    ]);
+    expect(plain.stderr).not.toContain(error);
+    expect(plain.exitCode).toBe(0);
+    expect(coverage.stderr).toContain(error);
+    expect(coverage.exitCode).toBe(1);
+    expect(print.stderr).toContain(error);
+    expect(print.stdout).toBe("");
+    expect(print.exitCode).toBe(1);
+  });
+
   // Runtime tests - these must remain as manual tests since they test bun run and bun test
   test("works correctly at runtime with bun run", async () => {
     using dir = tempDir("bundler-feature-flag", {

@@ -591,13 +591,14 @@ impl FileSystemRouter {
         };
         let mut params = route_param::List::default();
         // `defer params.deinit(allocator)` → Drop
-        // SAFETY: R-2 — short-lived `&mut Router` for the route lookup;
-        // `match_page_with_allocator` is pure (no JS re-entry), and the returned
-        // `Match<'p>` borrows `params`/`path_bytes`, not `*router`, so the
-        // exclusive borrow ends at the `;`.
-        let Some(route) = unsafe { this.router.get_mut() }
-            .routes
-            .match_page_with_allocator(b"", &url_path, &mut params)
+        // R-2: `match_page_with_allocator` is pure (no JS re-entry). The names in
+        // `params` borrow the matched route's strings, which the returned `Match`
+        // keeps alive on its own: `route` does not depend on `*router` after this.
+        let Some(route) =
+            this.router
+                .get()
+                .routes
+                .match_page_with_allocator(b"", &url_path, &mut params)
         else {
             return Ok(JSValue::NULL);
         };
@@ -652,8 +653,8 @@ impl FileSystemRouter {
         let mut name_strings: Vec<EncodedSlice> = vec![EncodedSlice::EMPTY; names.len() * 2];
         let (name_strings_slice, paths_strings) = name_strings.split_at_mut(names.len());
         for (i, name) in names.iter().enumerate() {
-            name_strings_slice[i] = EncodedSlice::from_bytes(name);
-            paths_strings[i] = EncodedSlice::from_bytes(paths[i]);
+            name_strings_slice[i] = EncodedSlice::from_bytes(name.slice());
+            paths_strings[i] = EncodedSlice::from_bytes(paths[i].slice());
         }
         JSValue::from_entries(global_this, name_strings_slice, paths_strings, true)
     }
@@ -685,8 +686,8 @@ impl FileSystemRouter {
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub(crate) struct MatchedRoute {
     /// Self-referential: always points at `self.route_holder`. See `init`.
-    // Note: `Match<'a>` borrows (a) the resolver's process-lifetime DirnameStore for
-    // `name`/`file_path`/`basename`/`path` and (b) `self.pathname_backing` for
+    // Note: `Match<'a>` borrows (a) its own `route` (a counted handle on the matched
+    // route's strings) for the param names and (b) `self.pathname_backing` for
     // `pathname`/`query_string`/param values. Both are stable for `Self`'s lifetime, so
     // the stored `'static` is the standard self-referential erasure — see `init`.
     pub(crate) route: *const RouterMatch<'static>,
@@ -732,7 +733,7 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_name(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(global_this, this.route().name)
+        bun_string_jsc::create_utf8_for_js(global_this, this.route().name())
     }
 
     pub(crate) fn init(
@@ -748,9 +749,10 @@ impl MatchedRoute {
 
         // SAFETY: self-referential lifetime erasure — `RouterMatch<'_>` borrows two
         // backing stores —
-        //   (a) `name`/`file_path`/`basename`/`path` slice the resolver's DirnameStore
-        //       (process-lifetime arena — `bun_router` paths are `Interned`), so are
-        //       genuinely `'static`;
+        //   (a) the param `name`s slice the matched route's name, in the counted
+        //       `RouteStrings` that `match_.route` holds. It moves into the same Box
+        //       below, so those bytes are valid for `Self`'s lifetime whatever the
+        //       router does (`reload()`, finalize);
         //   (b) `pathname`/`query_string` and the param `value`s slice `pathname_backing`,
         //       which we move into the same heap-stable Box below. The Box is never moved
         //       after construction (JsClass m_ctx payload), so those bytes are valid for
@@ -831,7 +833,7 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_file_path(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(global_this, this.route().file_path)
+        bun_string_jsc::create_utf8_for_js(global_this, this.route().file_path())
     }
 
     pub(crate) fn finalize(self: Box<Self>) {
@@ -845,7 +847,7 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_kind(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        BunString::static_(kind_enum::classify(this.route().name)).to_js(global_this)
+        BunString::static_(kind_enum::classify(this.route().name())).to_js(global_this)
     }
 
     pub(crate) fn create_query_object(
@@ -904,7 +906,7 @@ impl MatchedRoute {
             URL::default()
         };
         bun_object::get_public_path_with_asset_prefix(
-            this.route().file_path,
+            this.route().file_path(),
             if let Some(ref base_dir) = this.base_dir {
                 base_dir.leak()
             } else {
@@ -933,7 +935,7 @@ impl MatchedRoute {
             let scanner = CombinedScanner::init(
                 b"",
                 route.pathname_without_leading_slash(),
-                route.name,
+                route.name(),
                 this.params(),
             );
             this.param_map
@@ -961,7 +963,7 @@ impl MatchedRoute {
                 let scanner = CombinedScanner::init(
                     route.query_string,
                     route.pathname_without_leading_slash(),
-                    route.name,
+                    route.name(),
                     this.params(),
                 );
                 this.query_string_map

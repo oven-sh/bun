@@ -1,7 +1,17 @@
 import { FileSystemRouter } from "bun";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectRssDeltaBelow,
+  isASAN,
+  isMacOS,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -461,6 +471,67 @@ it("reload() works with new dirs/files", () => {
   createTree(dir, ["test/test2/index.ts"]);
   router.reload();
   expect(router.match("/test/test2")!.name).toBe("/test/test2");
+});
+
+it("a MatchedRoute stays readable after reload() and after its router is collected", () => {
+  const { dir } = make(["index.tsx", "posts/[id].tsx", "Mixed/Case.tsx", "docs/[...rest].tsx"]);
+  const urls = ["/", "/posts/123?tab=a", "/mixed/case", "/docs/a/b/c"];
+  const read = (match: ReturnType<FileSystemRouter["match"]>) => ({
+    name: match!.name,
+    filePath: match!.filePath,
+    kind: match!.kind,
+    pathname: match!.pathname,
+    params: match!.params,
+    query: match!.query,
+    src: match!.src,
+  });
+  const create = () =>
+    new Bun.FileSystemRouter({ dir, style: "nextjs", origin: "https://example.com", assetPrefix: "/_next/static/" });
+
+  const router = create();
+  const expected = urls.map(url => read(router.match(url)));
+  expect(expected.map(route => route.name)).toEqual(["/", "/posts/[id]", "/Mixed/Case", "/docs/[...rest]"]);
+  expect(expected[1].params).toEqual({ id: "123" });
+
+  // Not read before the route table they came from is gone.
+  const beforeReload = urls.map(url => router.match(url));
+  router.reload();
+  router.reload();
+  Bun.gc(true);
+  expect(beforeReload.map(read)).toEqual(expected);
+
+  const orphans = (() => {
+    const temporary = create();
+    return urls.map(url => temporary.match(url));
+  })();
+  Bun.gc(true);
+  expect(orphans.map(read)).toEqual(expected);
+});
+
+it("new FileSystemRouter() in a loop does not keep the strings of its routes", async () => {
+  using dir = tempDir("fsr-constructor-leak", {});
+  const pages = path.join(String(dir), "pages");
+  mkdirSync(pages);
+  // An uppercase letter makes the router keep a lowercased copy of the name too.
+  const filler = Buffer.alloc(120, "A").toString();
+  for (let i = 0; i < 120; i++) fs.writeFileSync(path.join(pages, `R${i}-${filler}.tsx`), "");
+
+  // Every construction used to append two strings per route (here about 40 KB in all)
+  // to a store that is never freed: 6.6 MiB over the 160 measured constructions.
+  const code = /* ts */ `
+    const construct = (count) => {
+      for (let i = 1; i <= count; i++) {
+        new Bun.FileSystemRouter({ dir: ${JSON.stringify(pages)}, style: "nextjs" });
+        if (i % 16 === 0) Bun.gc(true);
+      }
+      Bun.gc(true);
+    };
+    construct(60);
+    const before = process.memoryUsage.rss();
+    construct(160);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+  `;
+  await expectRssDeltaBelow(["-e", code], { release: 3, debug: 3 });
 });
 
 it(".query works with dynamic routes, including params", () => {

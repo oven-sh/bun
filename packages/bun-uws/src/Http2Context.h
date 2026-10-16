@@ -295,8 +295,6 @@ struct Http2Response {
     inline bool sendTerminatingChunk(bool closeConnection = false);
 
     bool hasResponded() { return !(data.state & Http2ResponseData::HTTP_RESPONSE_PENDING); }
-    uint64_t getWriteOffset() { return data.offset; }
-    void overrideWriteOffset(uint64_t o) { data.offset = o; }
     size_t getBufferedAmount() { return data.backpressure.length(); }
 
     inline Http2Response *pause();
@@ -304,18 +302,12 @@ struct Http2Response {
     /* The handler started consuming the body: widen this stream's window. */
     inline void growReceiveWindow();
     inline Http2Response *cork(MoveOnlyFunction<void()> &&fn);
-    void uncork() {}
-    bool isCorked() { return false; }
     /* RST_STREAM: the transport-level equivalent of dropping an
      * HTTP/1 socket mid-response. */
     /* RST_STREAM (unless already closed both ways) and retire. */
     inline void close(http2::ErrorCode code = http2::ERR_CANCEL);
-    void *getNativeHandle() { return this; }
-    void *getSocketData() { return data.socketData; }
-    bool isConnectRequest() { return false; }
     inline void setTimeout(uint8_t seconds);
     inline void resetTimeout();
-    void prepareForSendfile() {}
 
     Http2Response *onWritable(void *userData, Http2ResponseData::OnWritableCallback h) {
         data.writableUserData = userData; data.onWritable = h; return this;
@@ -1586,7 +1578,8 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
             buf.resize(std::min(hardCap, std::max(buf.size() * 2, need)));
             continue;
         }
-        if (rc != 0) return connectionError(http2::ERR_COMPRESSION_ERROR);
+        /* lshpack decodes a zero-length literal name successfully. */
+        if (rc != 0 || x.name_len == 0) return connectionError(http2::ERR_COMPRESSION_ERROR);
         decoded += lsxpack_header_get_dec_size(&x);
         fields++;
         /* Past the 431 thresholds we keep decoding only to keep HPACK state in
@@ -1842,7 +1835,6 @@ inline bool Http2Response::sendTerminatingChunk(bool) {
 
 inline bool Http2Response::internalEnd(std::string_view body, uint64_t totalSize, bool optional, bool) {
     if (dead || localClosed) return !optional;
-    data.totalSize = totalSize;
     Http2Connection *c = conn;
 
     if (!(data.state & Http2ResponseData::HTTP_WRITE_CALLED)) {

@@ -17,7 +17,7 @@ test("WebSocket.protocol should not mutate after receiving frames", async () => 
     let buf = Buffer.alloc(0);
     let upgraded = false;
     socket.on("error", () => {});
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       if (upgraded) return;
       buf = Buffer.concat([buf, chunk]);
       const end = buf.indexOf("\r\n\r\n");

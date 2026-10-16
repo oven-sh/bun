@@ -111,7 +111,7 @@ interface CppSQLStatement {
   columns: string[];
   columnsCount: number;
   paramsCount: number;
-  columnTypes: string[];
+  columnTypes: SqliteTypes.Statement["columnTypes"];
   declaredTypes: (string | null)[];
   safeIntegers: boolean;
 }
@@ -125,12 +125,27 @@ interface CppSQL {
   fcntl(handle: TODO, ...args: TODO[]): TODO;
   close(handle: TODO, throwOnError: boolean): void;
   setCustomSQLite(path: string): void;
+  run(handle: TODO, internalFlags: number, internalFieldTuple: TODO, query: string, ...params: TODO[]): void;
+  prepare(
+    handle: TODO,
+    query: string,
+    params: SqliteTypes.SQLQueryBindings | SqliteTypes.SQLQueryBindings[] | undefined,
+    flags: number,
+    internalFlags: number,
+  ): CppSQLStatement;
+}
+
+interface TransactionFunction<A extends any[], T> {
+  (...args: A): T;
+  deferred: (...args: A) => T;
+  immediate: (...args: A) => T;
+  exclusive: (...args: A) => T;
 }
 
 let SQL: CppSQL;
 let controllers: WeakMap<Database, any> | undefined;
 
-class Statement {
+class Statement<ReturnType = unknown, ParamsType extends SqliteTypes.SQLQueryBindings[] = any[]> {
   constructor(raw: CppSQLStatement) {
     this.#raw = raw;
 
@@ -158,12 +173,12 @@ class Statement {
 
   #raw: CppSQLStatement;
 
-  get: SqliteTypes.Statement["get"];
-  all: SqliteTypes.Statement["all"];
-  iterate: SqliteTypes.Statement["iterate"];
-  values: SqliteTypes.Statement["values"];
-  raw: SqliteTypes.Statement["raw"];
-  run: SqliteTypes.Statement["run"];
+  get: SqliteTypes.Statement<ReturnType, ParamsType>["get"];
+  all: SqliteTypes.Statement<ReturnType, ParamsType>["all"];
+  iterate: SqliteTypes.Statement<ReturnType, ParamsType>["iterate"];
+  values: SqliteTypes.Statement<ReturnType, ParamsType>["values"];
+  raw: SqliteTypes.Statement<ReturnType, ParamsType>["raw"];
+  run: SqliteTypes.Statement<ReturnType, ParamsType>["run"];
   get isFinalized() {
     return this.#raw.isFinalized;
   }
@@ -226,7 +241,8 @@ class Statement {
     return this.#raw.safeIntegers;
   }
 
-  as(ClassType: any) {
+  as<T = unknown>(ClassType: new (...args: any[]) => T): Statement<T, ParamsType>;
+  as(ClassType: new (...args: any[]) => unknown): Statement<unknown, ParamsType> {
     this.#raw.as(ClassType);
 
     return this;
@@ -347,6 +363,8 @@ class Statement {
 const cachedCount = Symbol.for("Bun.Database.cache.count");
 
 class Database implements SqliteTypes.Database {
+  declare exec: Database["run"];
+
   constructor(
     filenameGiven: string | undefined | NodeJS.TypedArray | Buffer<ArrayBufferLike>,
     options?: SqliteTypes.DatabaseOptions | number,
@@ -464,13 +482,16 @@ class Database implements SqliteTypes.Database {
     serialized: NodeJS.TypedArray | ArrayBufferLike,
     options: boolean | { readonly?: boolean; strict?: boolean; safeIntegers?: boolean } = false,
   ) {
+    const bytes: NodeJS.TypedArray = require("node:util/types").isAnyArrayBuffer(serialized)
+      ? new Uint8Array(serialized as ArrayBufferLike)
+      : (serialized as NodeJS.TypedArray);
     if (typeof options === "boolean") {
       // Maintain backward compatibility with existing API
-      return new Database(serialized, { readonly: options });
+      return new Database(bytes, { readonly: options });
     } else if (options && typeof options === "object") {
-      return new Database(serialized, options);
+      return new Database(bytes, options);
     } else {
-      return new Database(serialized, 0);
+      return new Database(bytes, 0);
     }
   }
 
@@ -523,8 +544,14 @@ class Database implements SqliteTypes.Database {
     return createChangesObject();
   }
 
-  prepare(query: string, params: any[] | undefined, flags: number = 0) {
-    return new Statement(SQL.prepare(this.#handle, query, params, flags || 0, this.#internalFlags));
+  prepare<ReturnType, ParamsType extends SqliteTypes.SQLQueryBindings | SqliteTypes.SQLQueryBindings[]>(
+    query: string,
+    params?: ParamsType,
+    flags: number = 0,
+  ) {
+    return new Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>(
+      SQL.prepare(this.#handle, query, params, flags || 0, this.#internalFlags),
+    );
   }
 
   [kPrepareOwned](query: string, flags: number) {
@@ -571,7 +598,7 @@ class Database implements SqliteTypes.Database {
   // Code for transactions is largely copied from better-sqlite3
   // https://github.com/JoshuaWise/better-sqlite3/blob/master/lib/methods/transaction.js
   // thank you @JoshuaWise!
-  transaction(fn, self) {
+  transaction<A extends any[], T>(fn: (...args: A) => T, self?) {
     if (typeof fn !== "function") throw new TypeError("Expected first argument to be a function");
 
     const db = this;
@@ -596,11 +623,10 @@ class Database implements SqliteTypes.Database {
     defineProperties(properties.exclusive.value, properties);
 
     // Return the default version of the transaction function
-    return properties.default.value;
+    return properties.default.value as TransactionFunction<A, T>;
   }
 }
 
-// @ts-expect-error
 Database.prototype.exec = Database.prototype.run;
 
 // Return the database's cached transaction controller, or create a new one

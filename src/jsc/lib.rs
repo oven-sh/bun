@@ -12,7 +12,6 @@
 //! borrow (e.g. `DOMFormData::for_each`) are generic over the caller's `Blob`.
 
 #![allow(deprecated, non_snake_case)]
-#![allow(unexpected_cfgs)]
 // `ConsoleObject::Formatter::print_as` dispatches on `const FORMAT: Tag`.
 // `Tag` is a fieldless enum, so this is the structural-match subset of the
 // feature.
@@ -24,7 +23,6 @@
 // accessor inlining (every `VirtualMachine::get_or_null()` ≥3×/run_callback).
 // Precedent: 064951400fa4 did this for `bun_alloc`/`bun_ast`.
 #![feature(thread_local)]
-#![allow(incomplete_features)]
 
 extern crate alloc;
 // Allow `::bun_jsc::…` paths emitted by the proc-macros to resolve when used
@@ -369,7 +367,7 @@ pub use self::top_exception_scope::{
 /// is reachable as `bun_jsc::cpp::Name(...)` with a properly-scoped exception
 /// check (no `global.has_exception()` after-the-fact).
 pub mod cpp;
-pub use self::common_strings::CommonStrings;
+pub use self::common_strings::{CommonStrings, CommonStringsForRust as CommonString};
 pub use self::dom_url::DOMURL;
 pub use self::js_big_int::JSBigInt;
 
@@ -407,15 +405,13 @@ pub mod btjs;
 #[path = "CppTask.rs"]
 pub mod cpp_task;
 #[path = "fmt_jsc.rs"]
-pub mod fmt_jsc;
+pub(crate) mod fmt_jsc;
 #[path = "HTTPServerAgent.rs"]
 pub mod http_server_agent;
 #[path = "JSSecrets.rs"]
 pub mod js_secrets;
 #[path = "NodeModuleModule.rs"]
 pub mod node_module_module;
-#[path = "PluginRunner.rs"]
-pub mod plugin_runner;
 #[path = "PosixSignalHandle.rs"]
 pub mod posix_signal_handle;
 #[path = "resolve_path_jsc.rs"]
@@ -429,6 +425,8 @@ pub mod virtual_machine_exports;
 #[path = "host_fn.rs"] pub mod host_fn;
 #[path = "AnyPromise.rs"]
 pub mod any_promise;
+#[path = "BytecodeOrderRecorder.rs"]
+pub mod bytecode_order_recorder;
 #[path = "CachedBytecode.rs"]
 pub mod cached_bytecode;
 #[path = "DOMFormData.rs"]
@@ -460,8 +458,9 @@ pub mod zig_stack_trace;
 pub mod async_module;
 #[path = "bindgen.rs"]
 pub mod bindgen;
+#[cfg(debug_assertions)]
 #[path = "bindgen_test.rs"]
-pub mod bindgen_test;
+pub(crate) mod bindgen_test;
 #[path = "BunCPUProfiler.rs"]
 pub mod bun_cpu_profiler;
 #[path = "BunHeapProfiler.rs"]
@@ -479,6 +478,8 @@ pub mod ffi;
 pub mod jsc_scheduler;
 #[path = "ProcessAutoKiller.rs"]
 pub mod process_auto_killer;
+#[path = "ScriptExecutionContext.rs"]
+pub mod script_execution_context;
 
 /// Flags for `JSCInitialize` in ZigGlobalObject.cpp. JSC is set up once per process: the first call's flags win.
 #[derive(Clone, Copy, Default)]
@@ -510,6 +511,14 @@ pub fn initialize(options: InitializeOptions) {
             options.short_lived_globals,
         )
     };
+}
+
+/// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
+/// first VM, which freezes JSC's options.
+pub fn expect_vm_per_thread() {
+    let env = bun_sys::environ();
+    // SAFETY: `env` borrows the libc `environ` global for the duration of the call.
+    unsafe { JSC__useOptionsForVMPerThread(env.as_ptr(), env.len()) };
 }
 
 /// Whether this process was launched as `bun -e <code>` / `bun --eval <code>` /
@@ -766,6 +775,10 @@ pub use self::url::{URL, URLJsc};
 pub use self::zig_stack_frame::ZigStackFrame;
 pub use self::zig_stack_trace::ZigStackTrace;
 pub use abort_signal::{AbortSignal, AbortSignalRef};
+pub use script_execution_context::{
+    AbortCause, AbortHandle, AbortHandleOwner, ContextId, ContextTimer, ScriptExecutionContext,
+    StopReason,
+};
 
 // `VM` / `JSGlobalObject` — opaque FFI handles to C++-owned objects. Defined
 // once in their dedicated port files (`VM.rs` / `JSGlobalObject.rs`) and
@@ -785,7 +798,6 @@ pub struct IntegerRange {
     pub min: i128,
     pub max: i128,
     pub field_name: &'static [u8],
-    pub always_allow_zero: bool,
 }
 impl Default for IntegerRange {
     fn default() -> Self {
@@ -793,7 +805,6 @@ impl Default for IntegerRange {
             min: i128::from(MIN_SAFE_INTEGER),
             max: i128::from(MAX_SAFE_INTEGER),
             field_name: b"",
-            always_allow_zero: false,
         }
     }
 }
@@ -818,8 +829,6 @@ pub mod resolved_source_tag {
 
     #[allow(non_upper_case_globals)]
     impl ResolvedSourceTag {
-        /// `InternalModuleRegistryFlag` in SyntheticModuleType.h: builtin-module tags are `(1 << 9) | InternalModuleRegistry id`.
-        pub const INTERNAL_MODULE_REGISTRY_FLAG: u32 = 1 << 9;
         // Structural variants — keep in lock-step with the generated
         // `build/*/codegen/SyntheticModuleType.h` and
         // `src/jsc/bindings/headers-handwritten.h` (`ResolvedSourceTagPackageJSONTypeModule = 1`).
@@ -1055,12 +1064,6 @@ pub struct ValidateObjectOpts {
     pub(crate) nullable: bool,
 }
 
-/// `BunPluginTarget` is defined once
-/// in `bun_bundler::transpiler` (lowest tier) and re-exported via
-/// `js_global_object` so `crate::BunPluginTarget` and every consumer share one
-/// nominal type.
-pub use self::js_global_object::BunPluginTarget;
-
 // ──────────────────────────────────────────────────────────────────────────
 // JSObject (real module in JSObject.rs).
 // ──────────────────────────────────────────────────────────────────────────
@@ -1089,17 +1092,17 @@ impl FromJsEnum for bun_sys::SignalCode {
             );
         }
         let s = bun_core::String::from_js(v, global)?;
-        let hit = bun_sys::signal_code::from_name(s.to_utf8().slice());
+        let hit = bun_core::SignalCode::from_name(s.to_utf8().slice());
         match hit {
-            Some(code) => Ok(code),
+            Some(code) => Ok(bun_sys::SignalCode::of(code)),
             None => {
                 // Expected-names list
                 // (`'SIGHUP', 'SIGINT', … or 'SIGSYS'`), built from the
                 // canonical signal X-macro so names are never re-spelled.
-                let names = &bun_core::SIGNAL_NAMES[1..];
+                let names = bun_core::SignalCode::ALL;
                 let mut one_of = std::string::String::from("'");
                 for (i, entry) in names.iter().enumerate() {
-                    one_of.push_str(entry);
+                    one_of.push_str(entry.name());
                     one_of.push('\'');
                     if i < names.len() - 2 {
                         one_of.push_str(", '");
@@ -1236,8 +1239,8 @@ pub use self::event_loop as EventLoop;
 pub mod job;
 pub use self::event_loop::{
     AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,
-    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, ManagedTask,
-    MiniEventLoop, PosixSignalHandle, PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
+    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop,
+    PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
 };
 pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread, Protected};
 #[cfg(unix)]
@@ -1372,7 +1375,9 @@ pub trait LogJsc {
 /// either a `BuildMessage` or `ResolveMessage` JS cell, dispatching on metadata.
 fn msg_to_js(msg: &bun_ast::Msg, global: &JSGlobalObject) -> JsResult<JSValue> {
     match msg.metadata {
-        bun_ast::Metadata::Build => BuildMessage::create(global, msg.clone()),
+        bun_ast::Metadata::Build | bun_ast::Metadata::TypeScript { .. } => {
+            BuildMessage::create(global, msg.clone())
+        }
         bun_ast::Metadata::Resolve(_) => ResolveMessage::create(global, msg, b""),
     }
 }
@@ -1565,15 +1570,13 @@ unsafe extern "C" {
         one_shot_startup: bool,
         short_lived_globals: bool,
     );
+    fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
 }
 
 // Hand-stubbed in `generated.rs` until `src/codegen/generate-classes.ts`
-// grows a `.rs` backend (same arrangement as `r#gen` below).
+// grows a `.rs` backend.
 #[path = "generated.rs"]
 pub mod generated;
 
-/// `bun.gen` — bindgen dispatch shims.
-/// Hand-written per-module until `src/codegen/bindgen.ts` grows a `.rs` backend.
-/// (`gen` is a reserved keyword in edition 2024; use `r#gen` at call sites.)
-#[path = "bindings/GeneratedBindings.rs"]
-pub mod r#gen;
+#[path = "generated_bindgen.rs"]
+pub(crate) mod generated_bindgen;

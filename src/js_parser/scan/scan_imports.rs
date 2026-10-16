@@ -1,4 +1,3 @@
-#![allow(clippy::needless_range_loop)]
 #![warn(unused_must_use)]
 use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
 use crate::p::P;

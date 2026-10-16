@@ -314,6 +314,42 @@ it("assetPrefix, src, and origin", async () => {
   }
 });
 
+it("src keeps a protocol-relative origin and a one-character host", () => {
+  using dir = tempDir("fsr-origin", {
+    "pages/index.tsx": "export default 1;",
+    "pages/posts/[id].tsx": "export default 1;",
+  });
+
+  const srcFor = (origin: string) =>
+    new Bun.FileSystemRouter({
+      dir: path.join(String(dir), "pages"),
+      style: "nextjs",
+      assetPrefix: "/_next/static/",
+      origin,
+    }).match("/posts/hello-world")!.src;
+
+  // `//host` used to parse with an empty host, and so did `a/` (any second byte
+  // of `/` was taken as the start of a protocol-relative URL). Both silently
+  // dropped the origin and the assetPrefix from `src`.
+  expect({
+    "//nextjs.org": srcFor("//nextjs.org"),
+    "//nextjs.org:8080": srcFor("//nextjs.org:8080"),
+    "//nextjs.org/ignored": srcFor("//nextjs.org/ignored"),
+    "a/": srcFor("a/"),
+    "https://nextjs.org/ignored": srcFor("https://nextjs.org/ignored"),
+    "nextjs.org:8080": srcFor("nextjs.org:8080"),
+    "ab/": srcFor("ab/"),
+  }).toEqual({
+    "//nextjs.org": "//nextjs.org/_next/static/posts/[id].tsx",
+    "//nextjs.org:8080": "//nextjs.org:8080/_next/static/posts/[id].tsx",
+    "//nextjs.org/ignored": "//nextjs.org/_next/static/posts/[id].tsx",
+    "a/": "a/_next/static/posts/[id].tsx",
+    "https://nextjs.org/ignored": "https://nextjs.org/_next/static/posts/[id].tsx",
+    "nextjs.org:8080": "nextjs.org:8080/_next/static/posts/[id].tsx",
+    "ab/": "ab/_next/static/posts/[id].tsx",
+  });
+});
+
 it(".query works", () => {
   // set up the test
   const { dir } = make(["posts.tsx"]);
@@ -579,7 +615,7 @@ it("MatchedRoute.params does not leak", async () => {
   // garbage-collected. Use long segment values so any leak is large enough to
   // dominate RSS noise.
   const code = /* ts */ `
-    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+    const rss = process.memoryUsage.rss;
     const router = new Bun.FileSystemRouter({
       dir: ${JSON.stringify(path.join(String(dir), "pages"))},
       style: "nextjs",
@@ -1068,3 +1104,33 @@ it.skipIf(isWindows || isMacOS)(
     expect(exitCode).toBe(0);
   },
 );
+
+it("an absolute dir with '..' in it names routes like its normalized spelling", async () => {
+  const { dir } = make([
+    `pages/index.tsx`,
+    `pages/api/x.tsx`,
+    `pages/a-long-directory-name/deeper/page.tsx`,
+    `other/keep.tsx`,
+  ]);
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const routes = dir => Object.keys(new Bun.FileSystemRouter({ dir, style: "nextjs" }).routes).sort();
+      console.log(JSON.stringify([routes(process.argv[1] + "/pages"), routes(process.argv[1] + "/other/../pages")]));
+      `,
+      dir,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const routes = ["/", "/a-long-directory-name/deeper/page", "/api/x"];
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify([routes, routes]) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

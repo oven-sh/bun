@@ -197,8 +197,12 @@ test("indexOfLine converts the offset to a number, drops the fraction and starts
   expect(["6", " 6 ", "x", "", null, true, [6], new Number(6), { valueOf: () => 6 }].map(from)).toEqual([
     11, 11, 5, 5, 5, 5, 11, 11, 11,
   ]);
-  expect(() => from(6n)).toThrow(new TypeError("Conversion from 'BigInt' to 'number' is not allowed."));
-  expect(() => from(Symbol())).toThrow(new TypeError("Cannot convert a symbol to a number"));
+  expect(() => from(6n)).toThrow(
+    expect.objectContaining({ name: "TypeError", message: "Conversion from 'BigInt' to 'number' is not allowed." }),
+  );
+  expect(() => from(Symbol())).toThrow(
+    expect.objectContaining({ name: "TypeError", message: "Cannot convert a symbol to a number" }),
+  );
 });
 
 test("indexOfLine looks at the buffer before it converts the offset, and reads its bytes after", () => {

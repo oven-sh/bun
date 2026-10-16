@@ -1083,6 +1083,25 @@ for (const linker of ["hoisted", "isolated"] as const) {
       if (linker === "isolated") expectOneStoreEntry(project, ["a"]);
       expect(await installedVersions(project, ["a", leaf])).toEqual({ a: "gh-dep", [leaf]: "gh-leaf" });
       expect(exitCode).toBe(0);
+      if (unverified === "--no-verify") return;
+
+      // That install gave the rows of the old lockfile the sha512 of the commits
+      // that they pin. It verifies wherever the branch is by then, and it
+      // refuses other bytes for the pinned commit.
+      rmSync(join(project, "node_modules"), { recursive: true });
+      github.heads.leaf = "0000000";
+      github.downloads.length = 0;
+      const frozen = await runInstall(project, join(root, "cache-frozen"), github.env, ...args, "--frozen-lockfile");
+      expect(frozen.stderr).toBe("");
+      expect(github.downloads.sort()).toEqual(["leaf#bbbbbbb", "testrepo#aaaaaaa"]);
+      expect(await installedVersions(project, ["a", leaf])).toEqual({ a: "gh-dep", [leaf]: "gh-leaf" });
+      expect(frozen.exitCode).toBe(0);
+
+      rmSync(join(project, "node_modules"), { recursive: true });
+      github.tarballs.leaf.bbbbbbb = github.tarballs.leaf.ccccccc;
+      const other = await runInstall(project, join(root, "cache-other"), github.env, ...args, "--frozen-lockfile");
+      expect(diagnostics(other.stderr)).toContain("error: Integrity check failed for tarball: gh-leaf");
+      expect(other.exitCode).toBe(1);
     },
     30_000,
   );

@@ -77,6 +77,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     if (this[_queryStatus] & SQLQueryStatus.executed) {
       if (
         this[_adapter].rawChangesFormat &&
+        !(flags & SQLQueryFlags.simple) &&
         (mode === SQLQueryResultMode.raw || ((flags >> resultModeShift) & 3) === SQLQueryResultMode.raw)
       ) {
         return this;
@@ -259,7 +260,9 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   simple() {
-    this[_flags] |= SQLQueryFlags.simple;
+    if (!(this[_queryStatus] & SQLQueryStatus.executed)) {
+      this[_flags] |= SQLQueryFlags.simple;
+    }
     return this;
   }
 

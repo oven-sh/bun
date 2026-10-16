@@ -58,9 +58,11 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         // Compiles the first statement of the text and runs nothing.
         const stmt = db.prepare<unknown, any[]>(sql);
         try {
-          // A Statement without parameters ignores its arguments. db.run() says that an array of values has no place.
-          if (stmt.paramsCount > 0 || !($isArray(values) && values.length > 0)) {
-            if (stmt.native.columnsCount > 0) {
+          const returnsRows = stmt.native.columnsCount > 0;
+          // A Statement without parameters ignores its arguments. Of one that returns no rows, db.run() has always
+          // said that an array of values has no place.
+          if (returnsRows || stmt.paramsCount > 0 || !($isArray(values) && values.length > 0)) {
+            if (returnsRows) {
               readonly = stmt.readonly;
               if (mode === SQLQueryResultMode.values) {
                 rows = stmt.values(values);

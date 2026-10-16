@@ -600,8 +600,24 @@ for (const server of servers) {
           expect({
             chosen: await query(sql).execute().raw(),
             left: await query(sql).raw().execute().values(),
-          }).toEqual(isPostgres ? { chosen: [{ x: 7, y: "a" }], left: raw } : { chosen: raw, left: [[7, "a"]] });
+            // simple() comes too late to make it a simple query
+            leftAfterSimple: await query(sql).raw().execute().simple().values(),
+          }).toEqual(
+            isPostgres
+              ? { chosen: [{ x: 7, y: "a" }], left: raw, leftAfterSimple: raw }
+              : { chosen: raw, left: [[7, "a"]], leftAfterSimple: [[7, "a"]] },
+          );
         }
+      });
+
+      test("raw() counts for a simple query: it has one format", async () => {
+        await using sql = await pool();
+        const raw = await sql`select 7 as x, 'a' as y`.simple().raw();
+        expect({
+          chosen: await sql`select 7 as x, 'a' as y`.simple().execute().raw(),
+          unsafe: await sql.unsafe("select 7 as x, 'a' as y").execute().raw(),
+          left: await sql`select 7 as x, 'a' as y`.simple().raw().execute().values(),
+        }).toEqual({ chosen: raw, unsafe: raw, left: [[7, "a"]] });
       });
     });
 

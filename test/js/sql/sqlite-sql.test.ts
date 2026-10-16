@@ -1103,20 +1103,52 @@ describe("Query Execution", () => {
         error => error.message,
       );
 
-    test.each([
-      ["and a statement with a parameter follows", "SELECT count(*) AS n FROM flags; UPDATE flags SET flag = ?"],
-      ["and a statement that writes follows", "SELECT count(*) AS n FROM flags; UPDATE flags SET flag = 'written'"],
-      ["and nothing follows", "SELECT count(*) AS n FROM flags"],
-      ["and it returns no rows", "UPDATE flags SET flag = 'written'; UPDATE flags SET flag = ?"],
-    ])("values for a first statement without parameters reject before anything runs, %s", async (_, text) => {
-      await using sql = await open();
-      const expected = "SQLite query expected 0 values, received 1";
-      expect({
+    describe("values for a first statement without parameters", () => {
+      const inEveryMode = async (sql: SQL, text: string) => ({
         objects: await messageOf(sql.unsafe(text, [1])),
         values: await messageOf(sql.unsafe(text, [1]).values()),
         raw: await messageOf(sql.unsafe(text, [1]).raw()),
-      }).toEqual({ objects: expected, values: expected, raw: expected });
-      expect(await flags(sql)).toEqual(untouched);
+      });
+      const thrice = (message: string) => ({ objects: message, values: message, raw: message });
+
+      test("which returns rows are ignored, as bun:sqlite ignores them", async () => {
+        await using sql = await open();
+        const text = "SELECT count(*) AS n FROM flags";
+        expect({
+          objects: await sql.unsafe(text, [1]),
+          values: await sql.unsafe(text, [1, 2]).values(),
+          raw: await sql.unsafe(text, [1]).raw(),
+          nested: await sql`SELECT ${sql.unsafe("count(*) AS n", [1])} FROM flags`,
+        }).toEqual({ objects: [{ n: 2 }], values: [[2]], raw: await sql.unsafe(text).raw(), nested: [{ n: 2 }] });
+      });
+
+      test("which returns rows are ignored, and what follows runs", async () => {
+        await using sql = await open();
+        expect(await sql.unsafe("SELECT count(*) AS n FROM flags; UPDATE flags SET flag = 'written'", [1])).toEqual([
+          { n: 2 },
+        ]);
+        expect(await flags(sql)).toEqual([
+          [1, "written"],
+          [2, "written"],
+        ]);
+      });
+
+      test("which returns rows do not go to a parameter that follows, and NULL does not either", async () => {
+        await using sql = await open();
+        expect(await inEveryMode(sql, "SELECT count(*) AS n FROM flags; UPDATE flags SET flag = ?")).toEqual(
+          thrice("Only the first statement of a SQLite query can have parameters"),
+        );
+        expect(await flags(sql)).toEqual(untouched);
+      });
+
+      test.each(["UPDATE flags SET flag = 'written'", "UPDATE flags SET flag = 'written'; UPDATE flags SET flag = ?"])(
+        "which returns no rows reject before anything runs: %s",
+        async text => {
+          await using sql = await open();
+          expect(await inEveryMode(sql, text)).toEqual(thrice("SQLite query expected 0 values, received 1"));
+          expect(await flags(sql)).toEqual(untouched);
+        },
+      );
     });
 
     describe.each(["?", "?1", ":a", "$a", "@a"])("%s after the first statement", parameter => {
@@ -1155,12 +1187,11 @@ describe("Query Execution", () => {
 
     test("behind an empty statement", async () => {
       await using sql = await open();
-      expect(await messageOf(sql.unsafe("; SELECT 1 AS a; UPDATE flags SET flag = ?"))).toBe(
-        "Only the first statement of a SQLite query can have parameters",
-      );
-      expect(await messageOf(sql.unsafe("; SELECT 1 AS a; UPDATE flags SET flag = ?", [1]))).toBe(
-        "SQLite query expected 0 values, received 1",
-      );
+      for (const values of [undefined, [1]]) {
+        expect(await messageOf(sql.unsafe("; SELECT 1 AS a; UPDATE flags SET flag = ?", values))).toBe(
+          "Only the first statement of a SQLite query can have parameters",
+        );
+      }
       expect(await flags(sql)).toEqual(untouched);
     });
 

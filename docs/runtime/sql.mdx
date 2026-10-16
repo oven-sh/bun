@@ -418,7 +418,7 @@ console.log(rows); // [[Buffer, Buffer], [Buffer, Buffer], [Buffer, Buffer]]
 - On MySQL, each `Buffer` holds the bytes the server sent. They are binary for a prepared query and text for `.simple()`.
 - SQLite returns `Uint8Array` objects.
 
-Call `.raw()` before the query starts, that is before `await`, `.then()` or `.execute()`. After that it has no effect on PostgreSQL. On SQLite, `.execute()` has already run the query when it returns, so `.values()` has no effect after it either.
+Call `.raw()` before the query starts, that is before `await`, `.then()` or `.execute()`. After that, a prepared query on PostgreSQL ignores it. On SQLite, `.execute()` has already run the query when it returns, so `.values()` has no effect after it either.
 
 ### Result metadata
 

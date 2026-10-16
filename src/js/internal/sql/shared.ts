@@ -644,7 +644,7 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> exte
   get closed(): boolean;
 
   readonly supportsReservedConnections: boolean;
-  /** The server is asked for other formats for raw(), so it is neither chosen nor left once the query has started. */
+  /** A query that is not simple asks the server for other formats for raw(): neither chosen nor left once it has started. */
   readonly rawChangesFormat?: boolean;
   /** `true`: `onConnected` was still queued and will never run. */
   cancelConnect(onConnected: OnConnected<Connection>): boolean;

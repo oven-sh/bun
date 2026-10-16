@@ -993,8 +993,8 @@ declare module "bun" {
        * PostgreSQL: the text form of each value. MySQL: the bytes the server
        * sent, binary for a prepared query. SQLite: `Uint8Array` objects.
        *
-       * Call it before the query starts. After that it has no effect on
-       * PostgreSQL and SQLite.
+       * Call it before the query starts. After that, SQLite and a prepared query
+       * on PostgreSQL ignore it.
        */
       raw(): Query<T>;
 

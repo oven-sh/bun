@@ -47,6 +47,9 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     }
     case MessageEventInterfaceType:
         return createWrapper<MessageEvent>(globalObject, WTF::move(impl));
+    case PromiseRejectionEventInterfaceType: {
+        return createWrapper<PromiseRejectionEvent>(globalObject, WTF::move(impl));
+    }
     default: {
         break;
     }

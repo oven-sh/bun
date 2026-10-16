@@ -36,6 +36,7 @@ enum class DOMConstructorID : uint16_t {
     PerformanceResourceTiming,
     PerformanceServerTiming,
     PerformanceTiming,
+    PromiseRejectionEvent,
     ReadableByteStreamController,
     ReadableStream,
     ReadableStreamBYOBReader,

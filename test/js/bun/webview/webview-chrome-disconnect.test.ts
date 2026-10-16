@@ -76,11 +76,12 @@ const mockCDP = /* js */ `
               reply({});
               return commit(sessionId, "about:blank", "L" + ++loads);
             case "Runtime.evaluate":
-              // The backend fetches document.title after every load; answer
-              // that. Any evaluate() a scenario sends itself is deliberately
-              // left unanswered, so it is still waiting for a reply when the
-              // connection goes away.
-              if (params.expression === "document.title") return reply({ result: { type: "string", value: "mock" } });
+              // The backend fetches the title and status after every load;
+              // answer that. Any evaluate() a scenario sends itself is
+              // deliberately left unanswered, so it is still waiting for a
+              // reply when the connection goes away.
+              if (params.expression.includes("document.title"))
+                return reply({ result: { type: "object", value: { t: "mock", s: 200 } } });
               return;
             default:
               return reply({});

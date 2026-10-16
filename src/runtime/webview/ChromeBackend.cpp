@@ -819,6 +819,12 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         uint32_t rid = nextId();
         send(0, Command(rid, "Runtime.enable"_s, sidSpan));
 
+        // Same session as the Page.navigate below, so it applies first.
+        if (!view->m_userAgent.isEmpty()) {
+            uint32_t uid = nextId();
+            send(0, Command(uid, "Emulation.setUserAgentOverride"_s, sidSpan).str("userAgent"_s, view->m_userAgent));
+        }
+
         // Page.navigate with the url stashed by the first navigate() call.
         // The response confirms the navigation STARTED; Page.loadEventFired
         // confirms completion. We keep the pending entry alive for the
@@ -848,11 +854,17 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         return;
 
     case Method::PageTitle: {
-        // Runtime.evaluate("document.title") chained from loadEventFired.
-        // result.result.value is the string. Set m_title, settle Navigate.
+        // kPageTitleAndStatusJS chained from loadEventFired:
+        // result.result.value is {"t":"<title>","s":<status>}.
         auto inner = jsonField(result, { "result", 6 });
-        auto value = jsonString(jsonField(inner, { "value", 5 }));
-        view->m_title = WTF::String::fromUTF8(value);
+        auto value = jsonField(inner, { "value", 5 });
+        view->m_title = WTF::String::fromUTF8(jsonString(jsonField(value, { "t", 1 })));
+        uint32_t status = 0;
+        for (char c : jsonField(value, { "s", 1 })) {
+            if (c < '0' || c > '9') break;
+            status = status * 10 + (c - '0');
+        }
+        view->m_status = status <= 0xFFFF ? static_cast<uint16_t>(status) : 0;
         settle(g, view, entry.slot, true, jsUndefined());
         return;
     }
@@ -1135,12 +1147,16 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
 
     // Page.frameNavigated — commit. Update m_url and fire onNavigated.
     // Same timing as WKWebView's NavDone (didFinishNavigation): the URL is
-    // now the new document, resources may still be loading.
+    // now the new document, resources may still be loading. A child frame
+    // (parentId present) is not a navigation of the view.
     if (method.size() == 19 && memcmp(method.data(), "Page.frameNavigated", 19) == 0) {
         auto frame = jsonField(params, { "frame", 5 });
+        if (!jsonField(frame, { "parentId", 8 }).empty()) return;
         auto url = jsonString(jsonField(frame, { "url", 3 }));
         auto urlStr = WTF::String::fromUTF8(url);
         view->m_url = urlStr;
+        // The status arrives with the title after load (PageTitle).
+        view->m_status = 0;
         // m_loading stays true — loadEventFired flips it.
 
         if (JSObject* cb = view->m_onNavigated.get()) {
@@ -1150,19 +1166,17 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // Page.loadEventFired — load complete. Chain a document.title fetch
-    // so view.title is populated when navigate() resolves — matches
-    // WKWebView's NavDone which packs url+title in one reply. One extra
-    // roundtrip (~1ms), but the user-visible guarantee is worth it:
-    // `await view.navigate(); view.title` just works.
+    // Page.loadEventFired — load complete. Chain a title + status fetch
+    // so view.title and view.status are populated when navigate() resolves,
+    // like WKWebView's NavDone which packs url+title+status in one reply.
     //
     // If no navigate is pending (uninitiated navigation, redirect), the
-    // PageTitle handler settles a no-op and m_title still updates.
+    // PageTitle handler settles a no-op and m_title/m_status still update.
     if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
         view->m_loading = false;
         uint32_t tid = nextId();
         m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId });
-        send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
+        send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, kPageTitleAndStatusJS).boolean("returnByValue"_s, true));
         return;
     }
 

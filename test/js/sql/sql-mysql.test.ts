@@ -271,6 +271,54 @@ if (isDockerEnabled()) {
             affectedRows: 0,
           });
         });
+        test("result command follows UTF-16 query text, NO_BACKSLASH_ESCAPES and the results of a CALL", async () => {
+          await using db = new SQL({ ...getOptions(), max: 1 });
+          using sql = await db.reserve();
+          const t = "cu_" + randomUUIDv7("hex").replaceAll("-", "");
+          const commands = (results: any[]) => results.map(r => r.command);
+          await sql`CREATE TEMPORARY TABLE ${sql(t)} (a INT, b VARCHAR(9))`;
+
+          // A character outside Latin-1 makes the query text UTF-16. Quoted
+          // text of every kind can hold a `;`.
+          expect((await sql`/* ✓ */ insert into ${sql(t)} values (${1}, ${"x"})`).command).toBe("INSERT");
+          const utf16 = await sql.unsafe(
+            `select '€;' as e, "a;b" as f, 1 as \`x;y\`, 'it''s;' as g; /* ✓; */ update ${t} set b = 'y'; delete from ${t}`,
+          );
+          expect([...utf16[0]]).toEqual([{ e: "€;", f: "a;b", "x;y": 1, g: "it's;" }]);
+          expect(commands(utf16)).toEqual(["SELECT", "UPDATE", "DELETE"]);
+
+          // With NO_BACKSLASH_ESCAPES a backslash does not escape the closing
+          // quote, so '\' is a whole string. The mode changes in the middle of
+          // this text: each statement is scanned with the mode it ran under.
+          const toggled = await sql.unsafe(
+            String.raw`select '\';x' as a; set session sql_mode = 'NO_BACKSLASH_ESCAPES'; select '\' as b; insert into ${t} values (2, 'z\'); delete from ${t}`,
+          );
+          expect([[...toggled[0]], [...toggled[2]]]).toEqual([[{ a: "';x" }], [{ b: "\\" }]]);
+          expect(commands(toggled)).toEqual(["SELECT", "SET", "SELECT", "INSERT", "DELETE"]);
+          expect(
+            commands(await sql.unsafe(String.raw`select '\' as b; insert into ${t} values (3, ';'); select 3 as n`)),
+          ).toEqual(["SELECT", "INSERT", "SELECT"]);
+
+          // A CALL answers with one result per result set and a final OK. They
+          // all belong to the one statement.
+          const proc = "p_" + randomUUIDv7("hex").replaceAll("-", "");
+          const created = await sql.unsafe(
+            `create procedure ${proc}() begin select 1 as a; select 2 as b, 3 as c; end`,
+          );
+          try {
+            expect(created.command).toBe("CREATE");
+            const shape = (results: any[]) => results.map(r => ({ rows: [...r], count: r.count, command: r.command }));
+            const expected = [
+              { rows: [{ a: 1 }], count: 1, command: "CALL" },
+              { rows: [{ b: 2, c: 3 }], count: 1, command: "CALL" },
+              { rows: [], count: 0, command: "CALL" },
+            ];
+            expect(shape(await sql.unsafe(`call ${proc}()`))).toEqual(expected);
+            expect(shape(await sql`call ${sql(proc)}()`)).toEqual(expected);
+          } finally {
+            await sql.unsafe(`drop procedure if exists ${proc}`);
+          }
+        });
         test("MEDIUMINT not in the last column reads following columns correctly", async () => {
           // MySQL's binary protocol sends MYSQL_TYPE_INT24 as a fixed 4-byte
           // field. Reading only 3 left the cursor 1 byte behind, silently

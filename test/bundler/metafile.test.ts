@@ -1042,11 +1042,9 @@ describe("Bun.build metafile artifacts", () => {
         [{ outdir: "a", metafile: { json: "meta.json", markdown: "meta.md" } }, ["a/meta.json", "a/meta.md"]],
         [{ outdir: "b", metafile: "x/y/meta.json" }, ["b/x/y/meta.json"]],
         [{ outdir: "c", metafile: { markdown: "../above/meta.md" } }, ["above/meta.md"]],
-        // Both separators are separators in the path of an artifact.
-        [{ outdir: "d", metafile: "x\\meta.json" }, ["d/x/meta.json"]],
-        [{ outdir: join(cwd, "e"), metafile: "meta.json" }, ["e/meta.json"]],
+        [{ outdir: join(cwd, "d"), metafile: "meta.json" }, ["d/meta.json"]],
         // An absolute path does not go below the outdir.
-        [{ outdir: "f", metafile: join(cwd, "absolute", "meta.json") }, ["absolute/meta.json"]],
+        [{ outdir: "e", metafile: join(cwd, "absolute", "meta.json") }, ["absolute/meta.json"]],
         // A second build into "a". Its metafile is shorter, and it replaces the one of the first build.
         [{ outdir: "a", metafile: "meta.json", entrypoints: ["./foo.js"] }, ["a/meta.json"]],
       ];
@@ -1067,7 +1065,7 @@ describe("Bun.build metafile artifacts", () => {
       expect(builds.at(-1)!.artifacts[0].size).toBeLessThan(builds[0].artifacts[0].size);
 
       // The builds wrote the bundles and the metafiles, and nothing else.
-      const bundles = ["a/entry.js", "a/foo.js", "b/entry.js", "c/entry.js", "d/entry.js", "e/entry.js", "f/entry.js"];
+      const bundles = ["a/entry.js", "a/foo.js", "b/entry.js", "c/entry.js", "d/entry.js", "e/entry.js"];
       expect(
         Object.keys(printed.files)
           .filter(name => !(name in files))

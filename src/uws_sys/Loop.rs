@@ -124,6 +124,18 @@ impl PosixLoop {
         self.internal_loop_data.iteration_nr
     }
 
+    pub fn sweep_timer_count(&self) -> i32 {
+        self.internal_loop_data.sweep_timer_count
+    }
+
+    pub fn accept_backoff_pending(&self) -> bool {
+        self.internal_loop_data.accept_backoff_sweep_ns >= 0
+    }
+
+    pub fn accept_backoff_turn(&self) -> u32 {
+        self.internal_loop_data.accept_backoff_turn
+    }
+
     /// Copy out the ready-poll event at `current_ready_poll`.
     ///
     /// Safe back-reference accessor consolidating the C-dispatch
@@ -331,6 +343,18 @@ impl WindowsLoop {
 
     pub fn iteration_number(&self) -> u64 {
         self.internal_loop_data.iteration_nr
+    }
+
+    pub fn sweep_timer_count(&self) -> i32 {
+        self.internal_loop_data.sweep_timer_count
+    }
+
+    pub fn accept_backoff_pending(&self) -> bool {
+        self.internal_loop_data.accept_backoff_sweep_ns >= 0
+    }
+
+    pub fn accept_backoff_turn(&self) -> u32 {
+        self.internal_loop_data.accept_backoff_turn
     }
 
     /// Shared borrow of the backing libuv loop.

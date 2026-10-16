@@ -1084,6 +1084,38 @@ int bsd_send_is_transient_error() {
 #endif
 }
 
+#if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
+/* accept() failed with an error that the next call can return again for the
+ * same readiness report. The errors listed took a connection off the queue
+ * (accept(2): pending network errors of the new socket), so the next call
+ * makes progress. The caller excludes would-block. */
+int bsd_accept_failure_may_repeat() {
+    switch (errno) {
+    case ECONNABORTED:
+    case EPROTO:
+    case ENETDOWN:
+    case ENOPROTOOPT:
+    case EHOSTDOWN:
+#ifdef ENONET
+    case ENONET:
+#endif
+    case EHOSTUNREACH:
+    case EOPNOTSUPP:
+    case ENETUNREACH:
+#ifdef __APPLE__
+    /* XNU takes the connection off the queue before it allocates the descriptor
+     * and drops it when that fails (accept_nocancel, rdar 8554930). */
+    case EMFILE:
+    case ENFILE:
+    case ENOMEM:
+#endif
+        return 0;
+    default:
+        return 1;
+    }
+}
+#endif
+
 static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct sockaddr *listenAddr, socklen_t listenAddrLength, int backlog, int* error) {
     int result;
     do

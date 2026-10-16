@@ -207,6 +207,7 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
 
         us_poll_stop((struct us_poll_t *) s, s->group->loop);
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
+        us_internal_accept_backoff_on_close(s->group->loop);
 
         /* Link this socket to the close-list and let it be deleted after this iteration */
         s->next = s->group->loop->data.closed_head;
@@ -315,6 +316,7 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
         }
 
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
+        us_internal_accept_backoff_on_close(loop);
 
         /* Mark the socket as closed */
         s->flags.is_closed = 1;

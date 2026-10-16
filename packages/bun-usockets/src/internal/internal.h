@@ -68,6 +68,16 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 #define UNLIKELY(cond) __builtin_expect((_Bool)(cond), 0)
 #endif
 
+/* This loop closed a descriptor. A listener that backed off after a failed
+ * accept() gets its retry on this tick and does not wait for its deadline. */
+static inline void us_internal_accept_backoff_on_close(struct us_loop_t *loop) {
+#if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
+    if (UNLIKELY(loop->data.accept_backoff_sweep_ns >= 0)) {
+        loop->data.sweep_next_tick_ns = 0;
+    }
+#endif
+}
+
 extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t length);
 #define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
 
@@ -523,6 +533,9 @@ struct us_listen_socket_t {
   unsigned char deferred_accept;
   /* LIBUS_SOCKET_OPEN_PAUSED: accepted sockets start without read interest. */
   unsigned char accept_paused;
+  /* accept() failed and may fail again: the listener is out of the poll set
+   * until the loop registers it again (us_internal_accept_backoff_due). */
+  unsigned char accept_backed_off;
 };
 
 void us_internal_socket_group_link_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);

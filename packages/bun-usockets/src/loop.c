@@ -105,6 +105,88 @@ long long us_internal_sweep_timeout_ns(struct us_loop_t *loop) {
     return diff > 0 ? diff : 0;
 }
 
+#if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
+/* Listener back-off after a failed accept(). epoll and kqueue only: their
+ * listener polls are level-triggered, so a failure that leaves the connection
+ * queued is reported again at once, with no delay. */
+
+/* Retry deadline for the descriptors that this loop does not see become free
+ * (another thread, a file, the system-wide table). A close on this loop asks
+ * for a retry at once: us_internal_accept_backoff_on_close. */
+#define LIBUS_ACCEPT_BACKOFF_NS (5LL * 1000000LL)
+
+/* The first accept() of a readiness report failed. If the error can repeat,
+ * take the listener out of the poll set. The connection, if one is queued,
+ * stays in the backlog. One sweep reference for the episode keeps
+ * sweep_next_tick_ns armed when the last socket unlinks. */
+static void us_internal_accept_back_off(struct us_listen_socket_t *ls, struct us_loop_t *loop) {
+    if (!bsd_accept_failure_may_repeat()) {
+        return;
+    }
+    us_poll_stop(&ls->s.p, loop);
+    ls->accept_backed_off = 1;
+    if (loop->data.accept_backoff_sweep_ns < 0) {
+        us_internal_enable_sweep_timer(loop);
+        loop->data.accept_backoff_sweep_ns = loop->data.sweep_next_tick_ns;
+    }
+    loop->data.sweep_next_tick_ns = (long long) us_internal_monotonic_ns() + LIBUS_ACCEPT_BACKOFF_NS;
+}
+
+/* The retry of the backed-off listeners is due. The deadline registers all of
+ * them again. A close on this loop (sweep_next_tick_ns == 0) freed one
+ * descriptor, so it registers one of them, in turn, and restarts the deadline
+ * of the others. Then the sweep runs if its own deadline is due as well. */
+static void us_internal_accept_backoff_due(struct us_loop_t *loop, long long now) {
+    const int one_turn = loop->data.sweep_next_tick_ns == 0;
+    struct us_listen_socket_t *turn = NULL;
+    unsigned int turn_at = 0, at = 0, backed_off = 0;
+    for (struct us_socket_group_t *group = loop->data.head; group; group = group->next) {
+        for (struct us_listen_socket_t *ls = group->head_listen_sockets; ls; ls = ls->next) {
+            at++;
+            if (!ls->accept_backed_off) {
+                continue;
+            }
+            backed_off++;
+            if (one_turn) {
+                /* The first one after the last turn, or else the first one. */
+                if (!turn || (turn_at <= loop->data.accept_backoff_turn && at > loop->data.accept_backoff_turn)) {
+                    turn = ls;
+                    turn_at = at;
+                }
+            } else if (us_poll_start_rc(&ls->s.p, loop, LIBUS_SOCKET_READABLE) == 0) {
+                ls->accept_backed_off = 0;
+                backed_off--;
+            }
+        }
+    }
+    if (turn) {
+        loop->data.accept_backoff_turn = turn_at;
+        if (us_poll_start_rc(&turn->s.p, loop, LIBUS_SOCKET_READABLE) == 0) {
+            turn->accept_backed_off = 0;
+            backed_off--;
+        }
+    }
+
+    const long long sweep_at = loop->data.accept_backoff_sweep_ns;
+    if (backed_off) {
+        loop->data.sweep_next_tick_ns = now + LIBUS_ACCEPT_BACKOFF_NS;
+        if (now < sweep_at) {
+            return;
+        }
+        loop->data.accept_backoff_sweep_ns = now + LIBUS_TIMEOUT_GRANULARITY_NS;
+    } else {
+        loop->data.accept_backoff_sweep_ns = -1;
+        loop->data.sweep_next_tick_ns = sweep_at;
+        us_internal_disable_sweep_timer(loop);
+        if (loop->data.sweep_next_tick_ns < 0 || now < sweep_at) {
+            return;
+        }
+        loop->data.sweep_next_tick_ns = now + LIBUS_TIMEOUT_GRANULARITY_NS;
+    }
+    us_internal_timer_sweep(loop);
+}
+#endif
+
 void us_internal_sweep_if_due(struct us_loop_t *loop) {
     if (loop->data.sweep_next_tick_ns < 0) {
         return;
@@ -113,6 +195,12 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
     if (now < loop->data.sweep_next_tick_ns) {
         return;
     }
+#if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
+    if (UNLIKELY(loop->data.accept_backoff_sweep_ns >= 0)) {
+        us_internal_accept_backoff_due(loop, now);
+        return;
+    }
+#endif
     /* Re-arm first: a timeout handler may unlink the last socket and disarm. */
     loop->data.sweep_next_tick_ns = now + LIBUS_TIMEOUT_GRANULARITY_NS;
     us_internal_timer_sweep(loop);
@@ -131,6 +219,7 @@ int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct 
     loop->data.sweep_next_tick_ns = -1;
 #endif
     loop->data.sweep_timer_count = 0;
+    loop->data.accept_backoff_sweep_ns = -1;
     loop->data.recv_buf = us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
     loop->data.send_buf = us_malloc(LIBUS_SEND_BUFFER_LENGTH);
     /* Every read on this loop writes into recv_buf; a NULL here makes each one
@@ -520,12 +609,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                 LIBUS_SOCKET_DESCRIPTOR client_fd = bsd_accept_socket(us_poll_fd(p), &addr);
                 if (client_fd == LIBUS_SOCKET_ERROR) {
-                    /* Todo: start timer here */
-
+#if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
+                    if (UNLIKELY(!bsd_would_block())) {
+                        us_internal_accept_back_off(listen_socket, loop);
+                    }
+#endif
                 } else {
-
-                    /* Todo: stop timer if any */
-
                     do {
                         struct us_poll_t *accepted_p = us_create_poll(loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
                         us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
@@ -585,6 +674,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             break;
                         }
 
+                        /* A failure here only ends the batch (at the descriptor limit that is the normal
+                         * end). If it repeats, the next readiness report takes the back-off above. */
                     } while ((client_fd = bsd_accept_socket(us_poll_fd(p), &addr)) != LIBUS_SOCKET_ERROR);
                 }
             }

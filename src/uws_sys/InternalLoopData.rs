@@ -1,4 +1,4 @@
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_char, c_int, c_uint, c_void};
 
 #[cfg(windows)]
 use crate::Timer;
@@ -64,6 +64,8 @@ pub struct InternalLoopData {
     // Higher tier (`bun_runtime`) casts this back when reading.
     pub jsc_vm: *const c_void,
     pub tick_depth: c_int,
+    pub accept_backoff_turn: c_uint,
+    pub accept_backoff_sweep_ns: i64,
 }
 
 impl InternalLoopData {

@@ -2006,16 +2006,24 @@ impl<'a> HTTPClient<'a> {
         if !self.flags.disable_keepalive && self.unix_socket_path.is_empty() {
             let _ = socket.set_keep_alive(true, 60);
         }
-        // `FetchSession({ tcp: { userTimeout } })`: bound how long sent data may
-        // stay unacknowledged. Keepalive probes do not run while data is in
-        // flight, so this is the only timer that catches a peer that vanished
-        // mid-request (a pooled socket whose source address disappeared after a
-        // network change). Independent of `disable_keepalive`: that gate exists
-        // for Node Agent parity, not because the socket must not be bounded.
-        // On Linux the value also replaces the keepalive probe count as the
-        // abort rule, so a value above ~60s lengthens idle half-open detection.
+        // `FetchSession({ tcp: { userTimeout } })`: kernel-side bound on sent
+        // data the peer has not acknowledged. The idle timer above also catches
+        // a dead peer, but at >= 4s granularity, not while a streaming upload
+        // keeps re-arming it, and not when the request disabled it. Keepalive
+        // probes do not run while data is in flight. Not gated on
+        // `disable_keepalive`: that flag is Node Agent parity, not a reason to
+        // leave the socket unbounded.
         if self.pool.user_timeout_ms != 0 && self.unix_socket_path.is_empty() {
-            let _ = socket.set_user_timeout(self.pool.user_timeout_ms);
+            let err = socket.set_user_timeout(self.pool.user_timeout_ms);
+            if err != 0 {
+                bun_core::scoped_log!(
+                    fetch,
+                    "TCP_USER_TIMEOUT {}ms failed: errno {} {}\n",
+                    self.pool.user_timeout_ms,
+                    err,
+                    BStr::new(self.url.href)
+                );
+            }
         }
 
         self.on_open::<IS_SSL>(socket)?;

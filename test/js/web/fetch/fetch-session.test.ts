@@ -346,10 +346,14 @@ describe("Bun.FetchSession", () => {
         "FetchSession: 'tcp.userTimeout' must be a non-negative number",
       );
     }
-    expect(construct({ tcp: { userTimeout: 2 ** 32 } })).toThrow(
-      'The value of "tcp.userTimeout" is out of range. It must be >= 0 and <= 4294967295. Received 4294967296',
+    // Linux reads the option as a signed int.
+    expect(construct({ tcp: { userTimeout: 2 ** 31 } })).toThrow(
+      'The value of "tcp.userTimeout" is out of range. It must be >= 0 and <= 2147483647. Received 2147483648',
     );
-    for (const tcp of [undefined, null, {}, { userTimeout: undefined }, { userTimeout: 0 }, { userTimeout: 1500.2 }]) {
+    for (const userTimeout of [undefined, 0, 1500.2, 2 ** 31 - 1]) {
+      expect(construct({ tcp: { userTimeout } })).not.toThrow();
+    }
+    for (const tcp of [undefined, null, {}]) {
       expect(construct({ tcp })).not.toThrow();
     }
   });
@@ -386,7 +390,28 @@ describe("Bun.FetchSession", () => {
         }
         const withValue = scan => Object.values(scan).filter(v => v === expected).length;
 
-        using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+        // "/held" keeps its response body open until the client asks for "/release",
+        // so the client's connection is still alive while the test scans the fds.
+        let release;
+        using server = Bun.serve({
+          port: 0,
+          fetch(req) {
+            if (new URL(req.url).pathname === "/held") {
+              const held = Promise.withResolvers();
+              release = held.resolve;
+              return new Response(new ReadableStream({
+                async start(controller) {
+                  controller.enqueue("hold");
+                  await held.promise;
+                  controller.enqueue("done");
+                  controller.close();
+                },
+              }));
+            }
+            if (release) release();
+            return new Response("ok");
+          },
+        });
         const url = "http://127.0.0.1:" + server.port + "/";
         const out = {};
 
@@ -400,9 +425,11 @@ describe("Bun.FetchSession", () => {
         // Pool reuse: still one connection, and it keeps the value.
         await (await fetch(url, { session: bounded })).text();
         out.after_pooled = withValue(scan());
-        // A request that opts out of the pool still gets the bound on its own connection.
-        await (await fetch(url, { session: bounded, keepalive: false })).text();
-        out.after_no_keepalive = withValue(scan()) >= 1;
+        // A request that opts out of the pool gets the bound on its own, second connection.
+        const held = await fetch(url + "held", { session: bounded, keepalive: false });
+        out.during_no_keepalive = withValue(scan());
+        await (await fetch(url + "release", { session: plain })).text();
+        out.held_body = await held.text();
         console.log(JSON.stringify(out));
       `,
       ],
@@ -412,7 +439,7 @@ describe("Bun.FetchSession", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ out: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
-      out: { without_option: 0, after_first: 1, after_pooled: 1, after_no_keepalive: true },
+      out: { without_option: 0, after_first: 1, after_pooled: 1, during_no_keepalive: 2, held_body: "holddone" },
       stderr: "",
       exitCode: 0,
     });

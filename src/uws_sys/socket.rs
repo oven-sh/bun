@@ -533,11 +533,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     /// Bound how long sent data may stay unacknowledged before the kernel
     /// aborts the connection (`TCP_USER_TIMEOUT` and its equivalents). `ms == 0`
-    /// restores the OS default.
-    pub fn set_user_timeout(&self, ms: u32) -> bool {
+    /// restores the OS default. Returns 0 on success or a platform errno;
+    /// a socket that is not a connected TCP socket reports -EBADF (-9) like
+    /// [`Self::set_tos`].
+    pub fn set_user_timeout(&self, ms: u32) -> i32 {
         match self.socket {
-            InternalSocket::Connected(s) => sock(s).set_user_timeout(ms) == 0,
-            _ => false,
+            InternalSocket::Connected(s) => sock(s).set_user_timeout(ms),
+            _ => -9,
         }
     }
 

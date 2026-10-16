@@ -624,7 +624,9 @@ int bsd_socket_user_timeout(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int ms) {
     }
     return 0;
 #elif defined(TCP_RXT_CONNDROPTIME)
-    /* Darwin counts in seconds. Round up so the bound is never shorter than asked. */
+    /* Darwin counts in seconds and applies this to retransmissions only, not to
+     * zero-window probes (net.inet.tcp.max_persist_timeout governs those).
+     * Round up so the bound is never shorter than asked. */
     int seconds = ms == 0 ? 0 : (int)(ms / 1000 + (ms % 1000 != 0));
     if (setsockopt(fd, IPPROTO_TCP, TCP_RXT_CONNDROPTIME, &seconds, sizeof seconds) == -1) {
         return errno;

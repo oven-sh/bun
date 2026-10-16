@@ -5890,9 +5890,16 @@ describe("server names for a connection handed in with server.emit('connection')
     });
   });
 
-  it("addContext() over the socket of an http 'connect' event", async () => {
-    const server = createServer({ ...agent2 }, socket => socket.end());
-    server.addContext("tenant.test", { ...agent3 });
+  // A CONNECT proxy that ends TLS itself. This socket has no handle to adopt.
+  it.each(["addContext", "SNICallback"])("%s over the socket of an http 'connect' event", async how => {
+    const server = createServer(
+      {
+        ...agent2,
+        SNICallback: how === "SNICallback" ? (_name, cb) => cb(null, tls.createSecureContext(agent3)) : undefined,
+      },
+      socket => socket.end(),
+    );
+    if (how === "addContext") server.addContext("tenant.test", { ...agent3 });
     const proxy = http.createServer();
     proxy.on("connect", (_req, socket) => {
       socket.on("error", () => {});

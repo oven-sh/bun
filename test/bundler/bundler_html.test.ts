@@ -226,6 +226,29 @@ export const padZero = (num) => String(num).padStart(2, '0');`,
     },
   });
 
+  // A script that is also an entry point still runs in its place on the page.
+  itBundled("html/script-that-is-also-an-entry-point", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <script type="module" src="./first.js"></script>
+    <script type="module" src="./second.js"></script>
+  </head>
+</html>`,
+      "/first.js": `console.log("first");`,
+      "/second.js": `console.log("second");`,
+    },
+    entryPoints: ["/index.html", "/second.js"],
+    onAfterBundle(api) {
+      const jsMatch = api.readFile("out/index.html").match(/src="(.*\.js)"/);
+      expect(api.readFile("out/" + jsMatch![1])).toMatch(/"first"[\s\S]*"second"/);
+      api.expectFile("out/second.js").toContain('console.log("second")');
+    },
+  });
+
   // Test CSS imports
   itBundled("html/css-imports", {
     outdir: "out/",
@@ -418,6 +441,44 @@ export const initNav = () => console.log('Navigation initialized');`,
     });
   }
 
+  // With splitting, each page preloads the chunks its entry chunk statically
+  // imports (here lib.js's chunk, shared by both pages, and through it
+  // deep.js's, shared by all three) but not chunks it only import()s.
+  itBundled("html/modulepreload-links", {
+    outdir: "out/",
+    files: {
+      "/a.html": `<!DOCTYPE html><html><head><script type="module" src="./a.js"></script></head><body></body></html>`,
+      "/b.html": `<!DOCTYPE html><html><head><script type="module" src="./b.js"></script></head><body></body></html>`,
+      "/c.html": `<!DOCTYPE html><html><head><script type="module" src="./c.js"></script></head><body></body></html>`,
+      "/a.js": `import { lib } from "./lib.js"; console.log("a", lib()); import("./lazy.js");`,
+      "/b.js": `import { lib } from "./lib.js"; console.log("b", lib());`,
+      "/c.js": `import { deep } from "./deep.js"; console.log("c", deep());`,
+      "/lib.js": `import { deep } from "./deep.js"; export const lib = () => "lib" + deep();`,
+      "/deep.js": `export const deep = () => "deep";`,
+      "/lazy.js": `console.log("lazy");`,
+    },
+    entryPoints: ["/a.html", "/b.html", "/c.html"],
+    splitting: true,
+    onAfterBundle(api) {
+      const preloads = (page: string) =>
+        [
+          ...api.readFile(`out/${page}.html`).matchAll(/<link rel="modulepreload" crossorigin href="\.\/([^"]+)">/g),
+        ].map(m => api.readFile("out/" + m[1]));
+      const [a, b, c] = ["a", "b", "c"].map(preloads);
+      expect(a).toHaveLength(2);
+      expect(a[0]).toContain('"lib"');
+      expect(a[1]).toContain('"deep"');
+      expect(a.some(chunk => chunk.includes('"lazy"'))).toBe(false);
+      expect(b).toStrictEqual(a);
+      expect(c).toStrictEqual([a[1]]);
+      for (const page of ["a", "b", "c"]) {
+        expect(api.readFile(`out/${page}.html`)).toMatch(
+          /<script type="module" crossorigin src="[^"]+"><\/script><link rel="modulepreload"/,
+        );
+      }
+    },
+  });
+
   // Test multiple HTML entries with shared chunks
   itBundled("html/shared-chunks", {
     outdir: "out/",
@@ -492,8 +553,8 @@ export const largeModule = {
       const page1Html = api.readFile("out/page1.html");
       const page2Html = api.readFile("out/page2.html");
 
-      const page1JsPath = page1Html.match(/src="(.*\.js)"/)?.[1];
-      const page2JsPath = page2Html.match(/src="(.*\.js)"/)?.[1];
+      const page1JsPath = page1Html.match(/src="([^"]*\.js)"/)?.[1];
+      const page2JsPath = page2Html.match(/src="([^"]*\.js)"/)?.[1];
 
       expect(page1JsPath).toBeDefined();
       expect(page2JsPath).toBeDefined();
@@ -505,9 +566,15 @@ export const largeModule = {
       expect(page2Js).toContain("import{sharedUtil}");
       expect(page1Js).toContain("import{sharedUtil}");
 
+      // ... and that each page preloads the shared chunk its entry imports
+      const sharedChunkPath = page1Js.match(/from"\.\/([^"]*\.js)"/)?.[1];
+      expect(sharedChunkPath).toBeDefined();
+      expect(page1Html).toContain(`<link rel="modulepreload" crossorigin href="./${sharedChunkPath}">`);
+      expect(page2Html).toContain(`<link rel="modulepreload" crossorigin href="./${sharedChunkPath}">`);
+
       // Check CSS bundles
-      const page1CssPath = page1Html.match(/href="(.*\.css)"/)?.[1];
-      const page2CssPath = page2Html.match(/href="(.*\.css)"/)?.[1];
+      const page1CssPath = page1Html.match(/href="([^"]*\.css)"/)?.[1];
+      const page2CssPath = page2Html.match(/href="([^"]*\.css)"/)?.[1];
 
       expect(page1CssPath).toBeDefined();
       expect(page2CssPath).toBeDefined();

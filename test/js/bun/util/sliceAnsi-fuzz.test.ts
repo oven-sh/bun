@@ -407,7 +407,7 @@ describe("sliceAnsi consistency with other Bun APIs", () => {
 function randomString(rng: () => number, minLen: number, maxLen: number): string {
   const len = minLen + Math.floor(rng() * (maxLen - minLen + 1));
   const pieces: string[] = [];
-  for (let i = 0; i < len; ) {
+  for (let i = 0; i < len;) {
     const r = rng();
     if (r < 0.4) {
       // ASCII char
@@ -538,7 +538,7 @@ describe("sliceAnsi ambiguousIsNarrow fuzz", () => {
     const rng = makeRng(0xa4b16);
     for (let i = 0; i < 100; i++) {
       // Mix ambiguous (Greek) + non-ambiguous (ASCII) + ANSI
-      const pieces = [];
+      const pieces: string[] = [];
       const n = 5 + Math.floor(rng() * 30);
       for (let j = 0; j < n; j++) {
         const r = rng();
@@ -703,7 +703,7 @@ describe("sliceAnsi exception safety", () => {
     // First call throws, second should work normally.
     expect(() =>
       Bun.sliceAnsi(s, 0, 5, {
-        get ellipsis() {
+        get ellipsis(): never {
           throw new Error("boom");
         },
       }),
@@ -715,7 +715,7 @@ describe("sliceAnsi exception safety", () => {
     const s = "hello";
     expect(() =>
       Bun.sliceAnsi(s, 0, 3, {
-        get ambiguousIsNarrow() {
+        get ambiguousIsNarrow(): never {
           throw new Error("boom");
         },
       }),
@@ -816,7 +816,7 @@ describe("sliceAnsi direct stringWidth invariant (post-fix)", () => {
 function randomStringNoC1(rng: () => number, minLen: number, maxLen: number): string {
   const len = minLen + Math.floor(rng() * (maxLen - minLen + 1));
   const pieces: string[] = [];
-  for (let i = 0; i < len; ) {
+  for (let i = 0; i < len;) {
     const r = rng();
     if (r < 0.4) {
       pieces.push(String.fromCharCode(0x20 + Math.floor(rng() * 95)));

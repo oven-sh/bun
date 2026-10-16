@@ -11,13 +11,13 @@ use crate::shell::yield_::Yield;
 use core::ptr::NonNull;
 
 #[derive(Default)]
-pub struct Mkdir {
+pub(crate) struct Mkdir {
     pub(crate) opts: Opts,
     pub(crate) state: State,
 }
 
 #[derive(Default)]
-pub enum State {
+pub(crate) enum State {
     #[default]
     Idle,
     Exec(Exec),
@@ -25,7 +25,7 @@ pub enum State {
     Done,
 }
 
-pub struct Exec {
+pub(crate) struct Exec {
     pub(crate) started: bool,
     pub(crate) tasks_count: usize,
     pub(crate) tasks_done: usize,
@@ -107,7 +107,7 @@ impl Mkdir {
                     NextAction::Schedule(exec.args_start)
                 }
             }
-            State::WaitingWriteErr => return Yield::failed(),
+            State::WaitingWriteErr => return Yield::suspended(),
             State::Done => return Builtin::done(interp, cmd, 0),
         };
         match action {
@@ -298,6 +298,7 @@ impl ShellMkdirTask {
         use bun_paths::{Platform, platform, resolve_path};
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.
+        let mut spill = Vec::new();
         let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
             // Owned `Vec<u8>`; ensure NUL-terminated.
             if this.filepath.last() != Some(&0) {
@@ -305,15 +306,25 @@ impl ShellMkdirTask {
             }
             bun_core::ZStr::from_buf(&this.filepath, this.filepath.len() - 1)
         } else {
-            resolve_path::join_z::<platform::Auto>(&[&this.cwd_path, &this.filepath])
+            resolve_path::join_z_spill::<platform::Auto>(
+                &mut spill,
+                &[&this.cwd_path, &this.filepath],
+            )
         };
+
+        // `NodeFS` expects the `Valid::path_too_long` bound its JS callers
+        // enforce; past it, `PathLike::slice_z` yields "" and mkdir reports ENOENT.
+        if filepath.len() >= bun_paths::MAX_PATH_BYTES {
+            this.err = Some(
+                bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::mkdir)
+                    .with_path(filepath.as_bytes()),
+            );
+            return;
+        }
 
         let mut node_fs = NodeFS::default();
         let args = fs_args::Mkdir {
-            path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                filepath.as_bytes(),
-                false,
-            )),
+            path: PathLike::borrowed(filepath.as_bytes()),
             recursive: this.opts.parents,
             mode: fs_args::Mkdir::DEFAULT_MODE,
             always_return_none: true,
@@ -370,6 +381,10 @@ impl bun_event_loop::Taskable for ShellMkdirTask {
             drop(bun_core::heap::take(this));
         }
     }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 /// Collects each created directory into
@@ -392,7 +407,7 @@ impl MkdirCtx for MkdirVerboseVTable {
         let out = unsafe { &mut *self.inner };
         #[cfg(windows)]
         {
-            let mut buf = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             let str = bun_paths::strings::from_wpath(buf.as_mut(), dirpath.as_slice());
             out.extend_from_slice(str.as_bytes());
             out.push(b'\n');
@@ -418,7 +433,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMkdirTask {
 }
 
 #[derive(Default, Clone, Copy)]
-pub struct Opts {
+pub(crate) struct Opts {
     /// `-p`, `--parents` — no error if existing, make parent directories as
     /// needed, with their file modes unaffected by any -m option.
     pub(crate) parents: bool,

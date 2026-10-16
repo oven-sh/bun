@@ -126,13 +126,6 @@ impl SupportsCondition {
     }
 }
 
-impl crate::generics::CssEql for SupportsCondition {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        SupportsCondition::eql(self, other)
-    }
-}
-
 impl SupportsCondition {
     fn needs_parens(&self, parent: &SupportsCondition) -> bool {
         match self {
@@ -233,13 +226,6 @@ impl SupportsCondition {
         }
         dest.write_char(b')')?;
         Ok(())
-    }
-}
-
-impl css::generic::ToCss for SupportsCondition {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        SupportsCondition::to_css(self, dest)
     }
 }
 
@@ -353,7 +339,7 @@ impl SupportsCondition {
         input.skip_whitespace();
         let location = input.current_source_location();
         let pos = input.position();
-        let tok = input.next()?.clone();
+        let tok = *input.next()?;
         match tok {
             css::Token::Function(f) => {
                 if strings::eql_case_insensitive_ascii_check_length(b"selector", f) {

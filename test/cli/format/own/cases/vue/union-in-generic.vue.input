@@ -1,0 +1,15 @@
+<template>
+  <p>a</p>
+</template>
+
+<script
+  setup
+  lang="ts"
+  generic="
+    Aaaaaaa extends readonly (object | string | number | boolean)[] = readonly (
+      object | string | number | boolean
+    )[]
+  "
+>
+const a = 1
+</script>

@@ -1,4 +1,5 @@
 #include "NodeURL.h"
+#include "ASCIIHostPunycodeCheck.h"
 #include "ErrorCode.h"
 #include "wtf/URL.h"
 #include "wtf/URLParser.h"
@@ -106,6 +107,11 @@ bool hasValidPunycodeHost(WTF::StringView host)
 {
     if (!host.contains("xn--"_s))
         return true;
+    if (host.containsOnlyASCII()) {
+        auto verdict = host.is8Bit() ? checkASCIIHostPunycode(host.span8().data(), host.length()) : checkASCIIHostPunycode(host.span16().data(), host.length());
+        if (verdict != ASCIIHostPunycodeVerdict::NeedsFullCheck)
+            return verdict == ASCIIHostPunycodeVerdict::Valid;
+    }
     return !icuToASCII(host.toString(), IDNAMode::Default).isNull();
 }
 
@@ -149,6 +155,15 @@ static String parseDomainAsHost(const String& domain)
     if (!hasValidPunycodeHost(parsedHost))
         return {};
     return parsedHost;
+}
+
+// idnaToASCII for the certificate check in src/boringssl/lib.rs, on any thread. Not parseDomainAsHost, which cuts the name at '/'. Dead when the name does not convert.
+extern "C" BunString Bun__idnaToASCII(const BunString* domain)
+{
+    auto ascii = icuToASCII(domain->toWTFString(), IDNAMode::Default);
+    if (ascii.isNull())
+        return { BunStringTag::Dead };
+    return Bun::toStringRef(ascii);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -263,16 +278,19 @@ JSC::JSValue createNodeURLBinding(Zig::GlobalObject* globalObject)
         (unsigned)0,
         domainToAsciiFunction,
         false);
+    RETURN_IF_EXCEPTION(scope, {});
     binding->putByIndexInline(
         globalObject,
         (unsigned)1,
         domainToUnicodeFunction,
         false);
+    RETURN_IF_EXCEPTION(scope, {});
     binding->putByIndexInline(
         globalObject,
         (unsigned)2,
         idnaToASCIIFunction,
         false);
+    RETURN_IF_EXCEPTION(scope, {});
     return binding;
 }
 

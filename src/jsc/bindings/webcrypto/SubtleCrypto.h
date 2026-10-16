@@ -56,8 +56,6 @@ class CryptoAlgorithmParameters;
 class CryptoKey;
 class DeferredPromise;
 
-enum class CryptoAlgorithmIdentifier : uint8_t;
-
 class SubtleCrypto : public ContextDestructionObserver, public RefCounted<SubtleCrypto> {
 public:
     // ContextDestructionObserver.
@@ -103,7 +101,6 @@ public:
 private:
     explicit SubtleCrypto(ScriptExecutionContext*);
 
-    void addAuthenticatedEncryptionWarningIfNecessary(CryptoAlgorithmIdentifier);
     inline friend RefPtr<DeferredPromise> getPromise(DeferredPromise*, WeakPtr<SubtleCrypto>);
 
     Ref<WorkQueue> m_workQueue;

@@ -4,9 +4,9 @@
 // --- Getters ---
 #define FOR_EACH_GETTER(macro) \
     macro(Archive) \
-    macro(CSRF) \
     macro(CryptoHasher) \
     macro(FFI) \
+    macro(FetchSession) \
     macro(FileSystemRouter) \
     macro(Glob) \
     macro(Image) \
@@ -29,7 +29,6 @@
     macro(Transpiler) \
     macro(ValkeyClient) \
     macro(argv) \
-    macro(assetPrefix) \
     macro(cron) \
     macro(cwd) \
     macro(embeddedFiles) \
@@ -39,14 +38,10 @@
     macro(isStandaloneExecutable) \
     macro(origin) \
     macro(s3) \
-    macro(semver) \
-    macro(unsafe) \
     macro(valkey) \
 
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \
-    macro(allocUnsafe) \
-    macro(braces) \
     macro(build) \
     macro(color) \
     macro(connect) \
@@ -54,30 +49,19 @@
     macro(createShellInterpreter) \
     macro(deflateSync) \
     macro(file) \
-    macro(fs) \
-    macro(gc) \
-    macro(generateHeapSnapshot) \
     macro(gunzipSync) \
     macro(gzipSync) \
-    macro(indexOfLine) \
     macro(inflateSync) \
     macro(jest) \
     macro(listen) \
-    macro(mmap) \
-    macro(nanoseconds) \
-    macro(openInEditor) \
     macro(registerMacro) \
     macro(resolve) \
     macro(resolveSync) \
     macro(serve) \
     macro(sha) \
-    macro(shellEscape) \
-    macro(shrink) \
-    macro(sleepSync) \
     macro(spawn) \
     macro(spawnSync) \
     macro(udpSocket) \
-    macro(which) \
     macro(write) \
     macro(zstdCompressSync) \
     macro(zstdDecompressSync) \

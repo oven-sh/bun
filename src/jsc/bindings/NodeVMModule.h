@@ -36,9 +36,9 @@ public:
     static NodeVMModule* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, ArgList args);
 
     const WTF::String& identifier() const { return m_identifier; }
-    // The context's own module loader (its global object's), or `globalObject`'s without a context: the
-    // loader this module's record is created against.
-    JSC::JSModuleLoader* moduleLoader(JSC::JSGlobalObject*);
+    // The realm of the module's record: the global object of the module's context, or `globalObject` without a
+    // context. JSC queues the jobs of the record there, and the record uses that realm's module loader.
+    JSC::JSGlobalObject* moduleRealm(JSC::JSGlobalObject*);
 
     Status status() const { return m_status; }
     void status(Status value) { m_status = value; }
@@ -57,30 +57,36 @@ public:
 
     JSValue evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint);
 
-    // For top-level-await modules JSC finishes evaluation asynchronously
-    // (record status EvaluatingAsync -> Evaluated); pull the final state into
-    // m_status/m_evaluationException once the record has settled.
+    // A SourceTextModule with a record has the status of the record: Link() and Evaluate() of any module that
+    // imports it change that status, and so do the jobs of a top-level await. Call this before m_status or
+    // m_evaluationException is read.
     void reconcileEvaluationState(JSC::VM& vm);
 
-    bool hasAsyncGraph() const;
-    void propagateLinked();
+    bool hasAsyncGraph();
 
     JSC::Exception* evaluationException() const { return m_evaluationException.get(); }
+
+    // Where a termination unwound the evaluation of a graph: in the walk of Evaluate(), or in a job that a
+    // microtask checkpoint ran.
+    enum class UnwoundIn : bool {
+        Walk,
+        Job,
+    };
+    // Gives `error` to the modules of the graph of `root` that the termination stopped, because the termination
+    // itself is not an error a module can have.
+    static void errorModulesCutShort(JSC::JSGlobalObject*, JSC::AbstractModuleRecord* root, JSC::JSValue error, UnwoundIn);
 
 protected:
     WTF::String m_identifier;
     Status m_status = Status::Unlinked;
     WriteBarrier<JSModuleNamespaceObject> m_namespaceObject;
     WriteBarrier<JSObject> m_context;
-    WriteBarrier<Unknown> m_evaluationResult;
     WriteBarrier<Unknown> m_moduleWrapper;
     WTF::Vector<NodeVMModuleRequest> m_moduleRequests;
     WTF::HashMap<WTF::String, WriteBarrier<JSObject>> m_resolveCache;
     WriteBarrier<JSC::Exception> m_evaluationException;
 
     NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, JSValue moduleWrapper);
-
-    void evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint);
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;

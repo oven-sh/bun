@@ -2,8 +2,11 @@
 
 #include "BunClientData.h"
 #include "ErrorCode.h"
+#include "NodeVMSyntheticModule.h"
 #include "SigintWatcher.h"
 
+#include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/Protect.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/VM.h>
 
@@ -12,6 +15,9 @@ namespace Bun {
 using namespace JSC;
 
 static thread_local NodeVMRunTermination* s_innermostRunOnThisThread = nullptr;
+// Not a member of a run: a run then costs nothing for this. It is null except between a termination that unwinds
+// the steps of a SyntheticModule and the finish() of the run that the termination belongs to.
+static thread_local WTF::Vector<NodeVMSyntheticModule*>* s_stepsCutShort = nullptr;
 
 NodeVMRunTermination::NodeVMRunTermination(JSGlobalObject* realm, std::optional<Seconds> timeout, bool breakOnSigint)
     : m_vm(realm->vm())
@@ -77,11 +83,40 @@ void NodeVMRunTermination::finish(ThrowScope& scope)
     else
         throwError(m_realm, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
 
+    if (s_stepsCutShort) [[unlikely]] {
+        JSC::Exception* thrown = scope.exception();
+        if (thrown && !vm.isTerminationException(thrown))
+            errorStepsCutShort(vm, thrown->value());
+    }
+
     // A run this one is nested in may have been cut short as well by now (its own deadline); its request went
     // with ours, so make it again — after building the error above, which a pending trap would have cut short.
     // That error is then just what the enclosing script sees while it unwinds.
     if (enclosingRunCutShort())
         vm.notifyNeedTermination();
+}
+
+void NodeVMRunTermination::addStepsCutShort(NodeVMSyntheticModule* module)
+{
+    // The VM is being stopped as a whole: no run has an error for the module, and nothing runs in this VM again.
+    if (!WebCore::clientData(module->vm())->scriptAllowed())
+        return;
+    if (!s_stepsCutShort)
+        s_stepsCutShort = new WTF::Vector<NodeVMSyntheticModule*>();
+    gcProtect(module);
+    s_stepsCutShort->append(module);
+}
+
+void NodeVMRunTermination::errorStepsCutShort(VM& vm, JSValue error)
+{
+    std::unique_ptr<WTF::Vector<NodeVMSyntheticModule*>> modules(std::exchange(s_stepsCutShort, nullptr));
+    if (!modules)
+        return;
+    JSC::Exception* exception = JSC::Exception::create(vm, error);
+    for (NodeVMSyntheticModule* module : *modules) {
+        module->errorEvaluationSteps(vm, exception);
+        gcUnprotect(module);
+    }
 }
 
 const NodeVMRunTermination* NodeVMRunTermination::enclosingRunCutShort() const

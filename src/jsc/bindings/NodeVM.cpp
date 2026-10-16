@@ -51,6 +51,7 @@
 
 #include "AsyncContextFrame.h"
 #include "JavaScriptCore/JSCInlines.h"
+#include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/BytecodeCacheError.h"
@@ -993,7 +994,7 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         &moduleLoaderImportModule,
         nullptr, // moduleLoaderResolve
         nullptr, // moduleLoaderFetch
-        nullptr, // moduleLoaderCreateImportMetaProperties
+        &moduleLoaderCreateImportMetaProperties,
         nullptr, // moduleLoaderEvaluate
         &promiseRejectionTrackerForNodeVM,
         &reportUncaughtExceptionAtEventLoop,
@@ -1695,6 +1696,39 @@ static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject
     else
         promise->reject(vm, createError(globalObject, message));
     return promise;
+}
+
+void NodeVM::initializeImportMeta(JSGlobalObject* globalObject, JSC::JSModuleRecord* record, JSObject* importMeta)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::ScriptFetcher* fetcher = record->sourceCode().provider()->sourceOrigin().fetcher();
+    if (!fetcher || fetcher->fetcherType() != JSC::ScriptFetcher::Type::NodeVM)
+        return;
+    auto* vmFetcher = static_cast<NodeVMScriptFetcher*>(fetcher);
+    JSValue callback = vmFetcher->initializeImportMeta();
+    if (callback.isUndefined())
+        return;
+
+    MarkedArgumentBuffer args;
+    args.append(importMeta);
+    args.append(vmFetcher->owner());
+    JSC::call(globalObject, callback, JSC::getCallData(callback), jsUndefined(), args);
+    RETURN_IF_EXCEPTION(scope, );
+    // The module has its import.meta now, so nothing calls the callback again.
+    vmFetcher->clearInitializeImportMeta();
+}
+
+JSObject* NodeVMGlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObject* globalObject, JSC::JSModuleLoader*, JSValue, JSC::JSModuleRecord* record, RefPtr<JSC::ScriptFetcher>)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* importMeta = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    NodeVM::initializeImportMeta(globalObject, record, importMeta);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return importMeta;
 }
 
 JSPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin& sourceOrigin, bool deferred)

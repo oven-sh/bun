@@ -1,5 +1,5 @@
-// Scenarios for vm-script-fetcher-leak.test.ts; prints one JSON line. Also runs on
-// node --expose-gc --experimental-vm-modules --no-compilation-cache.
+// Scenarios for vm-script-fetcher-leak.test.ts and vm-module-graph-evaluation-bun.test.ts; prints one JSON line.
+// Also runs on node --expose-gc --experimental-vm-modules --no-compilation-cache.
 const vm = require("node:vm");
 const { setImmediate: tick } = require("node:timers/promises");
 
@@ -51,6 +51,17 @@ async function outcome(seen, fn) {
   } catch (e) {
     return { result: e?.code ?? e?.message, referrer: seen?.referrer };
   }
+}
+
+// An initializeImportMeta callback and what it was called with.
+function makeInitializeImportMeta() {
+  const seen = { calls: 0, referrer: undefined };
+  const initializeImportMeta = (meta, referrer) => {
+    seen.calls++;
+    seen.referrer = kindOf(referrer);
+    meta.initialized = true;
+  };
+  return { initializeImportMeta, seen };
 }
 
 async function evaluated(module) {
@@ -146,6 +157,70 @@ const scenarios = {
     })();
     await collectGarbage();
     return outcome(seen, f);
+  },
+
+  // import.meta is created when code evaluates it for the first time. initializeImportMeta and the module it
+  // gets live as long as code of the module that can still do that.
+  async "alive-importMeta"() {
+    const { f, seen } = await (async () => {
+      const { initializeImportMeta, seen } = makeInitializeImportMeta();
+      const m = await evaluated(
+        new vm.SourceTextModule("export const f = () => import.meta.initialized", { initializeImportMeta }),
+      );
+      return { f: m.namespace.f, seen };
+    })();
+    await collectGarbage();
+    return { before: seen.calls, result: f(), again: f(), ...seen };
+  },
+  async "alive-importMetaAfterAwait"() {
+    let open;
+    const c = vm.createContext({ gate: new Promise(resolve => (open = resolve)) });
+    const { done, seen } = await (async () => {
+      const { initializeImportMeta, seen } = makeInitializeImportMeta();
+      const m = new vm.SourceTextModule("await gate; globalThis.result = import.meta.initialized", {
+        context: c,
+        initializeImportMeta,
+      });
+      await m.link(() => {
+        throw new Error("no dependencies");
+      });
+      return { done: m.evaluate(), seen };
+    })();
+    await collectGarbage();
+    const before = seen.calls;
+    open();
+    await done;
+    return { before, result: c.result, ...seen };
+  },
+  // `import defer` is not in Node v26.3.0. The deferred module runs, and evaluates import.meta, at the first
+  // read of its namespace.
+  async "alive-importMetaDeferred"() {
+    const { touch, seen } = await (async () => {
+      const { initializeImportMeta, seen } = makeInitializeImportMeta();
+      const dep = new vm.SourceTextModule("export const value = import.meta.initialized", { initializeImportMeta });
+      const root = new vm.SourceTextModule('import defer * as dep from "dep"; export const touch = () => dep.value;');
+      await root.link(() => dep);
+      await root.evaluate();
+      return { touch: root.namespace.touch, seen };
+    })();
+    await collectGarbage();
+    return { before: seen.calls, result: touch(), ...seen };
+  },
+  async "freed-importMeta"() {
+    let finalized = 0;
+    const registry = new FinalizationRegistry(() => finalized++);
+    const kept = [];
+    for (let i = 0; i < N; i++) {
+      const initializeImportMeta = meta => void (meta.i = i);
+      registry.register(initializeImportMeta, undefined);
+      const m = await evaluated(
+        new vm.SourceTextModule("export const f = () => import.meta.i; f();", { initializeImportMeta }),
+      );
+      // The code is alive, and import.meta exists: nothing calls the callback again.
+      kept.push(m.namespace.f);
+    }
+    await collect(() => finalized === N);
+    return { alive: N - finalized, last: kept[N - 1]() };
   },
 
   // One closure per Script run in a long-lived context, as a REPL does.

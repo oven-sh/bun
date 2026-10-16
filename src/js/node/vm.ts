@@ -297,7 +297,8 @@ class Module {
   // Not async: a synchronously-completed evaluation must return an
   // already-settled promise (util.inspect shows `Promise { undefined }`
   // immediately), matching Node where evaluate() forwards ModuleWrap's
-  // promise and maps sync throws to a rejected promise.
+  // promise and maps sync throws to a rejected promise:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/vm/module.js#L212-L236
   evaluate(options = kEmptyObject) {
     try {
       validateModule(this);
@@ -318,20 +319,11 @@ class Module {
       // Always call into native, even when already evaluated: Node re-enters
       // ModuleWrap::Evaluate, which performs the afterEvaluate microtask
       // checkpoint for contexts with their own microtask queue.
+      // A SourceTextModule gives the promise of its Evaluate(). It is settled
+      // when the graph ran synchronously, and pending while a top-level await
+      // of the graph waits. A SyntheticModule has no promise and gives undefined.
       const result = this[kNative].evaluate(timeout, breakOnSigint);
-      if (status === kEvaluated) {
-        // Re-evaluating a settled module resolves synchronously with
-        // undefined (a then-chain on the cached promise would be pending).
-        return PromiseResolve(undefined);
-      }
-      if ($isPromise(result)) {
-        // Spec-style module evaluation capability: already settled (with
-        // undefined) for synchronous modules, pending for top-level await.
-        // Return it directly like Node returns ModuleWrap's promise — a
-        // then-chain would make a synchronously-settled result look pending.
-        return result;
-      }
-      return PromiseResolve(undefined);
+      return $isPromise(result) ? result : PromiseResolve(undefined);
     } catch (e) {
       return PromiseReject(e);
     }

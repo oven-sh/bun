@@ -9,6 +9,8 @@
 
 namespace Bun {
 
+class NodeVMSyntheticModule;
+
 // One node:vm run — a Script, a module evaluation, or an afterEvaluate microtask checkpoint — that
 // its `timeout` and/or `breakOnSigint` options may cut short. Both work by requesting the VM's
 // termination from another thread while the run is on the stack (JSC::VM::addTerminationDeadline's
@@ -37,6 +39,13 @@ public:
     // fired or its SIGINT arrived while this one was on the stack). The termination is that run's and stays
     // pending; a caller that keeps state past the unwind (a module mid-evaluation) records this error for it.
     JSC::JSObject* errorForEnclosingRunCutShort() const;
+
+    // The evaluation steps of a SyntheticModule that a termination unwound. The module is "evaluating" until the
+    // run that the termination belongs to gives it that run's error: finish() does that for the run that was cut
+    // short, and the caller of errorForEnclosingRunCutShort() does it with the error that returns. A termination
+    // that stops the VM is no run's, and the module then stays as it is.
+    static void addStepsCutShort(NodeVMSyntheticModule*);
+    static void errorStepsCutShort(JSC::VM&, JSC::JSValue error);
 
     // SigintWatcher's signal thread, under its lock: record the SIGINT, then request m_vm's termination.
     JSC::VM& vm() const { return m_vm; }

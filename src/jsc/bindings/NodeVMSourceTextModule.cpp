@@ -90,7 +90,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     uint32_t columnOffset = columnOffsetValue.toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    RefPtr fetcher(NodeVMScriptFetcher::create(vm, dynamicImportCallback, moduleWrapper));
+    RefPtr fetcher(NodeVMScriptFetcher::create(vm, dynamicImportCallback, moduleWrapper, initializeImportMeta));
 
     SourceOrigin sourceOrigin { {}, *fetcher };
 
@@ -110,7 +110,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     RETURN_IF_EXCEPTION(scope, nullptr);
     NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(
         vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), WTF::move(identifier), contextValue,
-        WTF::move(sourceCode), moduleWrapper, initializeImportMeta);
+        WTF::move(sourceCode), moduleWrapper);
     ptr->finishCreation(vm);
 
     if (cachedData.isEmpty()) {
@@ -166,9 +166,9 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         return {};
     }
 
-    JSModuleLoader* loader = moduleLoader(globalObject);
+    JSGlobalObject* realm = moduleRealm(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    ModuleAnalyzer analyzer(globalObject, loader, Identifier::fromString(vm, m_identifier), m_sourceCode, AllFeatures);
+    ModuleAnalyzer analyzer(realm, realm->moduleLoader(), Identifier::fromString(vm, m_identifier), m_sourceCode, AllFeatures);
 
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(node != nullptr);
@@ -474,8 +474,8 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
     record->link(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
 
+    // The modules that this one imports are linked now too: each reads that from its record.
     status(Status::Linked);
-    propagateLinked();
     return jsUndefined();
 }
 
@@ -512,34 +512,6 @@ JSUint8Array* NodeVMSourceTextModule::cachedData(JSGlobalObject* globalObject)
     return m_cachedBytecodeBuffer.get();
 }
 
-void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
-{
-    if (!m_initializeImportMeta || !m_initializeImportMeta.get().isCallable()) {
-        return;
-    }
-
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSModuleEnvironment* moduleEnvironment = m_moduleRecord->moduleEnvironmentMayBeNull();
-    ASSERT(moduleEnvironment != nullptr);
-
-    JSValue metaValue = moduleEnvironment->get(globalObject, globalObject->vm().propertyNames->builtinNames().metaPrivateName());
-    scope.assertNoExceptionExceptTermination();
-    RETURN_IF_EXCEPTION(scope, );
-    if (!metaValue || !metaValue.isObject()) {
-        return;
-    }
-
-    CallData callData = JSC::getCallData(m_initializeImportMeta.get());
-
-    MarkedArgumentBuffer args;
-    args.append(metaValue);
-    args.append(m_moduleWrapper.get());
-
-    scope.release();
-    JSC::call(globalObject, m_initializeImportMeta.get(), callData, jsUndefined(), args);
-}
-
 JSObject* NodeVMSourceTextModule::createPrototype(VM& vm, JSGlobalObject* globalObject)
 {
     return NodeVMModulePrototype::create(vm, NodeVMModulePrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
@@ -555,7 +527,6 @@ void NodeVMSourceTextModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(vmModule->m_moduleRecord);
     visitor.append(vmModule->m_moduleRequestsArray);
     visitor.append(vmModule->m_cachedBytecodeBuffer);
-    visitor.append(vmModule->m_initializeImportMeta);
     NodeVMScriptFetcher::visitSource(visitor, vmModule->m_sourceCode);
 }
 

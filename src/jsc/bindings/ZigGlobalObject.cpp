@@ -4238,10 +4238,16 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSModuleLoader* loader,
     JSValue key,
     JSModuleRecord* record,
-    RefPtr<JSC::ScriptFetcher>)
+    RefPtr<JSC::ScriptFetcher> scriptFetcher)
 {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto* importMeta = Zig::ImportMetaObject::create(globalObject, key);
     importMeta->setModuleGraph(globalObject->vm(), Bun::moduleGraphOfLoader(globalObject, loader));
+    // A vm.SourceTextModule without a context: its record uses this realm's loader.
+    if (scriptFetcher && scriptFetcher->fetcherType() == JSC::ScriptFetcher::Type::NodeVM) [[unlikely]] {
+        Bun::NodeVM::initializeImportMeta(globalObject, record, importMeta);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
     return importMeta;
 }
 

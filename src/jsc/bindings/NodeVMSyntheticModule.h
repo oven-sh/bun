@@ -30,9 +30,11 @@ public:
     void createModuleRecord(JSGlobalObject* globalObject);
     void ensureModuleRecord(JSGlobalObject* globalObject);
     AbstractModuleRecord* moduleRecord(JSGlobalObject* globalObject);
-    JSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives, JSValue scriptFetcher);
     JSValue instantiate(JSGlobalObject* globalObject);
-    JSValue evaluate(JSGlobalObject* globalObject);
+    // The module's [[EvaluationSteps]]. JSC calls them through Bun__runSyntheticModuleEvaluationSteps() when
+    // Evaluate() reaches the module's record for the first time, as the root or through an import of it.
+    void runEvaluationSteps(JSGlobalObject* globalObject);
+    void errorEvaluationSteps(JSC::VM&, JSC::Exception*);
     void setExport(JSGlobalObject* globalObject, WTF::String exportName, JSValue value);
 
     DECLARE_EXPORT_INFO;

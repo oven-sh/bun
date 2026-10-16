@@ -15,7 +15,7 @@ namespace Bun {
 // The presence of this class in a JSFunction's sourceOrigin indicates that the function was compiled by Bun's node:vm implementation.
 class NodeVMScriptFetcher : public JSC::ScriptFetcher {
 public:
-    static Ref<NodeVMScriptFetcher> create(JSC::VM& vm, JSC::JSValue dynamicImportCallback, JSC::JSValue owner) { return adoptRef(*new NodeVMScriptFetcher(vm, dynamicImportCallback, owner)); }
+    static Ref<NodeVMScriptFetcher> create(JSC::VM& vm, JSC::JSValue dynamicImportCallback, JSC::JSValue owner, JSC::JSValue initializeImportMeta = {}) { return adoptRef(*new NodeVMScriptFetcher(vm, dynamicImportCallback, owner, initializeImportMeta)); }
 
     Type fetcherType() const final { return Type::NodeVM; }
 
@@ -33,6 +33,16 @@ public:
         return JSC::jsUndefined();
     }
     void owner(JSC::VM&, JSC::JSValue value) { m_owner = makeOwnerWeak(value); }
+
+    // The `initializeImportMeta` option of a vm.SourceTextModule, until it has run. import.meta is created when
+    // the module's code evaluates it for the first time, which can be long after the module is evaluated.
+    JSC::JSValue initializeImportMeta() const
+    {
+        if (auto* cell = m_initializeImportMeta.get())
+            return JSC::JSValue(cell);
+        return JSC::jsUndefined();
+    }
+    void clearInitializeImportMeta() { m_initializeImportMeta.clear(); }
 
     bool isUsingDefaultLoader() const { return m_isUsingDefaultLoader; }
     auto temporarilyUseDefaultLoader()
@@ -69,11 +79,15 @@ private:
 
     bool hasUserCallback() const
     {
+        if (m_initializeImportMeta)
+            return true;
         auto* cell = m_dynamicImportCallback.get();
         return cell && cell->isObject();
     }
 
-    // Node retains the referrer only while a user callback exists (registerModule).
+    // Node retains the referrer only while a user callback exists (registerModule). Both callbacks of a
+    // vm.SourceTextModule get the module as the referrer:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/vm/module.js#L310-L323
     JSC::Weak<JSC::JSCell> makeOwnerWeak(JSC::JSValue value)
     {
         if (!value.isCell())
@@ -84,6 +98,7 @@ private:
     }
 
     JSC::Weak<JSC::JSCell> m_dynamicImportCallback;
+    JSC::Weak<JSC::JSCell> m_initializeImportMeta;
     // m_owner is the NodeVMScript / JSFunction / module wrapper that holds this
     // fetcher via m_source -> SourceProvider -> SourceOrigin -> RefPtr<fetcher>.
     // A Strong handle here would form an uncollectable cycle (the owner keeps
@@ -93,10 +108,12 @@ private:
     JSC::Weak<JSC::JSCell> m_owner;
     bool m_isUsingDefaultLoader = false;
 
-    NodeVMScriptFetcher(JSC::VM&, JSC::JSValue dynamicImportCallback, JSC::JSValue owner)
+    NodeVMScriptFetcher(JSC::VM&, JSC::JSValue dynamicImportCallback, JSC::JSValue owner, JSC::JSValue initializeImportMeta)
     {
         if (dynamicImportCallback && dynamicImportCallback.isCell())
             m_dynamicImportCallback = makeWeak(dynamicImportCallback.asCell());
+        if (initializeImportMeta && initializeImportMeta.isCell())
+            m_initializeImportMeta = makeWeak(initializeImportMeta.asCell());
         m_owner = makeOwnerWeak(owner);
     }
 };

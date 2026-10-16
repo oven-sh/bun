@@ -51,6 +51,10 @@ JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNameValue,
 bool isContext(JSC::JSGlobalObject* globalObject, JSValue);
 bool getContextArg(JSC::JSGlobalObject* globalObject, JSValue& contextArg);
 bool isUseMainContextDefaultLoaderConstant(JSC::JSGlobalObject* globalObject, JSValue value);
+// For the realm's moduleLoaderCreateImportMetaProperties hook: calls the `initializeImportMeta` option of the
+// vm.SourceTextModule that `record` belongs to, if the module has one, with the new import.meta object. JSC calls
+// the hook when the module's code evaluates import.meta for the first time, and again if the callback throws.
+void initializeImportMeta(JSC::JSGlobalObject*, JSC::JSModuleRecord*, JSC::JSObject* importMeta);
 
 } // namespace NodeVM
 
@@ -160,6 +164,7 @@ public:
     static bool defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow);
     static bool deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot);
     static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin&, bool deferred);
+    static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSModuleRecord*, RefPtr<JSC::ScriptFetcher>);
 
 private:
     // The contextified object that acts as the global proxy

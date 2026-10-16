@@ -43,7 +43,9 @@ use bun_wyhash::{Wyhash, Wyhash11};
 use crate::analytics;
 use crate::bun_bunfig::Arguments as Command;
 use crate::bun_progress::{Node as ProgressNode, Progress};
-use crate::lockfile::tree::is_filtered_dependency_or_workspace;
+use crate::lockfile::tree::{
+    EdgeFilter, filter_dependency_or_workspace, is_filtered_dependency_or_workspace,
+};
 use crate::lockfile::{self, Lockfile};
 use crate::network_task::ForTarballError;
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
@@ -231,24 +233,17 @@ pub fn served_peers(
     Ok(peers_served_in(&store, lockfile, None))
 }
 
-/// The nodes whose links reach the disk: one per entry, and only the first entry of a workspace.
+/// The nodes whose links reach the disk: one per entry, and only the owner's entry of a workspace.
 fn linked_nodes(store: &Store, lockfile: &Lockfile) -> Result<DynamicBitSet, AllocError> {
     let pkg_resolutions = lockfile.packages.items_resolution();
     let node_pkg_ids = store.nodes.items_pkg_id();
     let entry_node_ids = store.entries.items_node_id();
     let entry_dependencies = store.entries.items_dependencies();
-    let workspace_of = |entry: usize| {
-        let pkg_id = node_pkg_ids[entry_node_ids[entry].get() as usize] as usize;
-        (pkg_resolutions[pkg_id].tag == ResolutionTag::Workspace).then_some(pkg_id)
-    };
+    let pkg_of = |entry: usize| node_pkg_ids[entry_node_ids[entry].get() as usize] as usize;
 
     let mut queue: Vec<usize> = vec![0];
-    let mut workspaces = DynamicBitSet::init_empty(pkg_resolutions.len())?;
     for entry in 1..entry_node_ids.len() {
-        if let Some(pkg_id) = workspace_of(entry)
-            && !workspaces.is_set(pkg_id)
-        {
-            workspaces.set(pkg_id);
+        if store.workspace_owners.get(pkg_of(entry)) == Some(&entry_node_ids[entry]) {
             queue.push(entry);
         }
     }
@@ -262,7 +257,7 @@ fn linked_nodes(store: &Store, lockfile: &Lockfile) -> Result<DynamicBitSet, All
         linked.set(node);
         for dependency in entry_dependencies[entry].slice() {
             let entry = dependency.entry_id.get() as usize;
-            if workspace_of(entry).is_none() {
+            if pkg_resolutions[pkg_of(entry)].tag != ResolutionTag::Workspace {
                 queue.push(entry);
             }
         }
@@ -625,47 +620,63 @@ fn build_store(
 
     // Two would-be nodes with the same (pkg_id, ctx_hash) will end up with the
     // same `peers` set and therefore become the same entry in the second pass.
-    // ctx_hash is 0 when the package has no leaking peers (or is a workspace).
+    // ctx_hash is 0 when the package has no leaking peers (or the node is a link
+    // to the root package or to a workspace).
     let mut early_dedupe: HashMap<EarlyDedupeKey, store::node::Id> = HashMap::default();
 
-    let mut root_declares_workspace = DynamicBitSet::init_empty(lockfile.packages.len())?;
-    for dep_idx in pkg_dependency_slices[0].begin()..pkg_dependency_slices[0].end() {
-        if !dependencies[dep_idx as usize].behavior.is_workspace() {
-            continue;
+    // A workspace has one directory and one node_modules, so one node owns its
+    // dependencies: a child of the root node that root does not link. Every other
+    // node of the workspace is a link to the directory, whichever tag its edge has
+    // (a `workspace:` reference, a peer bound by name, a range the resolver linked).
+    //
+    // `workspace_owners[pkg_id]` is the owner of the workspace `pkg_id`, and
+    // `INVALID` for a package that has none. It is `OWNER_QUEUED` from the time the
+    // owner is queued until it has a node. The list has no elements until the
+    // first workspace.
+    let mut workspace_owners: Vec<store::node::Id> = Vec::new();
+    // The root node owns no workspace, so its id is free to mean "queued".
+    const OWNER_QUEUED: store::node::Id = store::node::Id::ROOT;
+    fn owner_slot(
+        owners: &mut Vec<store::node::Id>,
+        package_count: usize,
+        pkg_id: PackageID,
+    ) -> &mut store::node::Id {
+        if owners.is_empty() {
+            owners.resize(package_count, store::node::Id::INVALID);
         }
-        let res = resolutions[dep_idx as usize];
-        if res == invalid_package_id {
-            continue;
-        }
-        // Only mark workspaces that root will actually queue; an entry excluded
-        // by --filter or `bun install <pkgs>` never gets a root-declared node,
-        // so a `workspace:` reference must keep its dependencies.
-        if is_filtered_dependency_or_workspace(
-            dep_idx,
-            0,
-            workspace_filters,
-            install_root_dependencies,
-            manager,
-            lockfile,
-            resolutions,
-            &mut linked,
-        ) {
-            continue;
-        }
-        if let Some(packages) = packages_to_install {
-            if !packages.contains(&res) {
-                continue;
-            }
-        }
-        root_declares_workspace.set(res as usize);
+        &mut owners[pkg_id as usize]
     }
+
+    // Owners that root did not queue: `--filter` did not select the workspace, or
+    // root has no `workspaces` edge to it. A reference asks for the owner, and the
+    // walk takes them first in first out, after root's `workspaces` edges and
+    // before root's own dependencies. That is where an install of everything has
+    // its owners.
+    let mut pending_owners: LinearFifo<QueuedNode, DynamicBuffer<QueuedNode>> =
+        LinearFifo::<QueuedNode, DynamicBuffer<QueuedNode>>::init();
 
     let mut peer_dep_ids: Vec<DependencyID> = Vec::new();
 
     let mut visited_parent_node_ids: Vec<store::node::Id> = Vec::new();
 
     // First pass: create full dependency tree with resolved peers
-    'next_node: while let Some(entry) = node_queue.pop() {
+    'next_node: loop {
+        // A pending owner is walked between two children of the root node, so
+        // every node created before it has its whole subtree.
+        let pending_owner = if pending_owners.readable_length() != 0
+            && node_queue.last().is_none_or(|next| {
+                next.parent_id == store::node::Id::ROOT
+                    && !dependencies[next.dep_id as usize].behavior.is_workspace()
+            }) {
+            pending_owners.read_item()
+        } else {
+            None
+        };
+        let from_pending_owners = pending_owner.is_some();
+        let Some(entry) = pending_owner.or_else(|| node_queue.pop()) else {
+            break;
+        };
+
         'check_cycle: {
             // check for cycles
             let mut nodes_slice = nodes.slice();
@@ -701,10 +712,10 @@ fn build_store(
 
                     // ensure the dependency name is the same before skipping the cycle. if they aren't
                     // we lose dependency name information for the symlinks
-                    if curr_dep.name_hash == entry_dep.name_hash &&
-                        // also ensure workspace self deps are not skipped.
-                        // implicit workspace dep != explicit workspace dep
-                        curr_dep.behavior.is_workspace() == entry_dep.behavior.is_workspace()
+                    if curr_dep.name_hash == entry_dep.name_hash
+                        // A reference to a workspace from below its owner is a link to
+                        // the workspace, like every other reference. It is not the owner.
+                        && workspace_owners.get(entry.pkg_id as usize) != Some(&curr_id)
                     {
                         node_nodes[entry.parent_id.get() as usize].push(curr_id);
                         continue 'next_node;
@@ -726,18 +737,46 @@ fn build_store(
         if entry.dep_id != invalid_dependency_id {
             let entry_dep = &dependencies[entry.dep_id as usize];
 
-            // A `workspace:` protocol reference does not own the workspace's
-            // dependencies when root also declares that workspace; the
-            // root-declared entry does. (If root does not declare it, the
-            // protocol reference is the only one and must keep them.)
-            if entry_dep.version.tag == VersionTag::Workspace
-                && !entry_dep.behavior.is_workspace()
-                && root_declares_workspace.is_set(entry.pkg_id as usize)
-            {
+            // Root queues its `workspaces` edges as owners. Every other owner comes
+            // from `pending_owners`.
+            let owns_workspace = from_pending_owners
+                || (entry_dep.behavior.is_workspace()
+                    && workspace_owners.get(entry.pkg_id as usize) == Some(&OWNER_QUEUED));
+
+            if owns_workspace {
+                workspace_owners[entry.pkg_id as usize] = node_id;
+            } else if pkg_resolutions[entry.pkg_id as usize].tag == ResolutionTag::Workspace {
                 skip_dependencies = true;
+
+                let owner =
+                    owner_slot(&mut workspace_owners, lockfile.packages.len(), entry.pkg_id);
+                if *owner == store::node::Id::INVALID {
+                    // Root did not queue this workspace. Its owner is a child of the root
+                    // node all the same: it has the place and the peers that an install
+                    // of everything gives it, not those of the package that reached it.
+                    *owner = OWNER_QUEUED;
+                    let root_deps = pkg_dependency_slices[0];
+                    let root_edge = (root_deps.begin()..root_deps.end()).find(|&dep_id| {
+                        dependencies[dep_id as usize].behavior.is_workspace()
+                            && resolutions[dep_id as usize] == entry.pkg_id
+                    });
+                    pending_owners.write_item(QueuedNode {
+                        parent_id: store::node::Id::ROOT,
+                        // Root has no `workspaces` edge to a `workspace:<path>` outside
+                        // `workspaces`, or to a workspace that its own dependency of the
+                        // same name replaced. The owner then has the edge that reached it.
+                        dep_id: root_edge.unwrap_or(entry.dep_id),
+                        pkg_id: entry.pkg_id,
+                    })?;
+                }
             }
 
             'dont_dedupe: {
+                // The owner is one node. A link never shares it.
+                if owns_workspace {
+                    break 'dont_dedupe;
+                }
+
                 let mut nodes_slice = nodes.slice();
                 // disjoint-column views via `split_mut`.
                 let store::node::NodeColumnsMut {
@@ -750,55 +789,55 @@ fn build_store(
                     ..
                 } = nodes_slice.split_mut();
 
-                let ctx_hash: u64 =
-                    if entry_dep.version.tag == VersionTag::Workspace || peer_name_count == 0 {
-                        0
-                    } else {
-                        'ctx: {
-                            let leaks = leaking_peers.at(entry.pkg_id as usize);
-                            if leaks.count() == 0 {
-                                break 'ctx 0;
-                            }
-
-                            let peer_names = peer_name_idx.keys();
-                            let mut hasher = Wyhash11::init(0);
-                            let mut it = leaks.iterator::<true, true>();
-                            while let Some(bit) = it.next() {
-                                let peer_name_hash = peer_names[bit];
-                                let resolved: PackageID = 'resolved: {
-                                    let mut curr_id = entry.parent_id;
-                                    while curr_id != store::node::Id::INVALID {
-                                        for ids in &node_dependencies[curr_id.get() as usize] {
-                                            if dependencies[ids.dep_id as usize].name_hash
-                                                == peer_name_hash
-                                                && !is_contained_folder(ids.dep_id)
-                                            {
-                                                break 'resolved ids.pkg_id;
-                                            }
-                                        }
-                                        for ids in &node_peers[curr_id.get() as usize].list {
-                                            if !ids.auto_installed
-                                                && dependencies[ids.dep_id as usize].name_hash
-                                                    == peer_name_hash
-                                            {
-                                                break 'resolved ids.pkg_id;
-                                            }
-                                        }
-                                        curr_id = node_parent_ids[curr_id.get() as usize];
-                                    }
-                                    break 'resolved invalid_package_id;
-                                };
-                                // `invalid_package_id` is part of the key: an
-                                // unresolved peer auto-installs the declarer's own
-                                // `resolutions[peer_dep_id]`, which is position-
-                                // independent, so two positions that both leave
-                                // the name unresolved expand identically.
-                                hasher.update(bun_core::bytes_of(&peer_name_hash));
-                                hasher.update(bun_core::bytes_of(&resolved));
-                            }
-                            break 'ctx hasher.final_();
+                // A link has no subtree, so it is the same node wherever it is.
+                let ctx_hash: u64 = if skip_dependencies || peer_name_count == 0 {
+                    0
+                } else {
+                    'ctx: {
+                        let leaks = leaking_peers.at(entry.pkg_id as usize);
+                        if leaks.count() == 0 {
+                            break 'ctx 0;
                         }
-                    };
+
+                        let peer_names = peer_name_idx.keys();
+                        let mut hasher = Wyhash11::init(0);
+                        let mut it = leaks.iterator::<true, true>();
+                        while let Some(bit) = it.next() {
+                            let peer_name_hash = peer_names[bit];
+                            let resolved: PackageID = 'resolved: {
+                                let mut curr_id = entry.parent_id;
+                                while curr_id != store::node::Id::INVALID {
+                                    for ids in &node_dependencies[curr_id.get() as usize] {
+                                        if dependencies[ids.dep_id as usize].name_hash
+                                            == peer_name_hash
+                                            && !is_contained_folder(ids.dep_id)
+                                        {
+                                            break 'resolved ids.pkg_id;
+                                        }
+                                    }
+                                    for ids in &node_peers[curr_id.get() as usize].list {
+                                        if !ids.auto_installed
+                                            && dependencies[ids.dep_id as usize].name_hash
+                                                == peer_name_hash
+                                        {
+                                            break 'resolved ids.pkg_id;
+                                        }
+                                    }
+                                    curr_id = node_parent_ids[curr_id.get() as usize];
+                                }
+                                break 'resolved invalid_package_id;
+                            };
+                            // `invalid_package_id` is part of the key: an
+                            // unresolved peer auto-installs the declarer's own
+                            // `resolutions[peer_dep_id]`, which is position-
+                            // independent, so two positions that both leave
+                            // the name unresolved expand identically.
+                            hasher.update(bun_core::bytes_of(&peer_name_hash));
+                            hasher.update(bun_core::bytes_of(&resolved));
+                        }
+                        break 'ctx hasher.final_();
+                    }
+                };
 
                 let dedupe_entry = early_dedupe.get_or_put(EarlyDedupeKey {
                     pkg_id: entry.pkg_id,
@@ -815,20 +854,6 @@ fn build_store(
 
                     if dedupe_dep.name_hash != entry_dep.name_hash {
                         break 'dont_dedupe;
-                    }
-
-                    if (dedupe_dep.version.tag == VersionTag::Workspace)
-                        != (entry_dep.version.tag == VersionTag::Workspace)
-                    {
-                        break 'dont_dedupe;
-                    }
-
-                    if dedupe_dep.version.tag == VersionTag::Workspace
-                        && entry_dep.version.tag == VersionTag::Workspace
-                    {
-                        if dedupe_dep.behavior.is_workspace() != entry_dep.behavior.is_workspace() {
-                            break 'dont_dedupe;
-                        }
                     }
 
                     // The skipped subtree would have walked up through this
@@ -960,8 +985,10 @@ fn build_store(
 
             for &dep_id in &dep_ids_sort_buf {
                 let dep = &dependencies[dep_id as usize];
-                if !is_omitted_peer(dep)
-                    && is_filtered_dependency_or_workspace(
+                let pkg_id = resolutions[dep_id as usize];
+
+                if !is_omitted_peer(dep) {
+                    match filter_dependency_or_workspace(
                         dep_id,
                         entry.pkg_id,
                         workspace_filters,
@@ -970,12 +997,22 @@ fn build_store(
                         lockfile,
                         resolutions,
                         &mut linked,
-                    )
-                {
-                    continue;
+                    ) {
+                        EdgeFilter::Install => {}
+                        EdgeFilter::Skip => continue,
+                        // Root's edge is not installed, and a peer below root still binds
+                        // to it. The store then has the names of an install of everything,
+                        // which are the names `bun prune` keeps. A peer edge of root is not
+                        // resolved here, so it provides nothing.
+                        EdgeFilter::NotSelected => {
+                            if !dep.behavior.is_peer() {
+                                node_dependencies[node_id.get() as usize]
+                                    .push(store::node::DependencyIds { dep_id, pkg_id });
+                            }
+                            continue;
+                        }
+                    }
                 }
-
-                let pkg_id = resolutions[dep_id as usize];
 
                 // TODO: handle duplicate dependencies. should be similar logic
                 // like we have for dev dependencies in `hoistDependency`
@@ -995,6 +1032,21 @@ fn build_store(
                 }
 
                 peer_dep_ids.push(dep_id);
+            }
+        }
+
+        if node_id == store::node::Id::ROOT {
+            // Root's `workspaces` edges are the owners of the workspaces that root queues.
+            for queued in &node_queue[queue_mark..] {
+                if dependencies[queued.dep_id as usize].behavior.is_workspace()
+                    && pkg_resolutions[queued.pkg_id as usize].tag == ResolutionTag::Workspace
+                {
+                    *owner_slot(
+                        &mut workspace_owners,
+                        lockfile.packages.len(),
+                        queued.pkg_id,
+                    ) = OWNER_QUEUED;
+                }
             }
         }
 
@@ -1155,6 +1207,16 @@ fn build_store(
         );
     }
 
+    if bun_core::Environment::CI_ASSERT {
+        let node_parent_ids = nodes.items_parent_id();
+        for &owner in &workspace_owners {
+            assert!(
+                owner == store::node::Id::INVALID
+                    || node_parent_ids[owner.get() as usize] == store::node::Id::ROOT
+            );
+        }
+    }
+
     let mut dedupe: HashMap<PackageID, Vec<DedupeInfo>> = HashMap::default();
 
     let mut res_fmt_buf: Vec<u8> = Vec::new();
@@ -1184,6 +1246,13 @@ fn build_store(
     'next_entry: while let Some(entry) = entry_queue.read_item() {
         let pkg_id = node_pkg_ids[entry.node_id.get() as usize];
 
+        // `Some` for a workspace: the node that owns its dependencies.
+        let workspace_owner = workspace_owners
+            .get(pkg_id as usize)
+            .copied()
+            .filter(|&owner| owner != store::node::Id::INVALID);
+        let is_workspace_owner = workspace_owner == Some(entry.node_id);
+
         let dedupe_entry = dedupe.get_or_put(pkg_id)?;
         if !dedupe_entry.found_existing {
             *dedupe_entry.value_ptr = Vec::new();
@@ -1197,17 +1266,11 @@ fn build_store(
                         continue;
                     }
                 }
-                if info.dep_id != invalid_dependency_id && curr_dep_id != invalid_dependency_id {
-                    let curr_dep = &dependencies[curr_dep_id as usize];
-                    let existing_dep = &dependencies[info.dep_id as usize];
-
-                    if existing_dep.version.tag == VersionTag::Workspace
-                        && curr_dep.version.tag == VersionTag::Workspace
-                    {
-                        if existing_dep.behavior.is_workspace() != curr_dep.behavior.is_workspace()
-                        {
-                            continue;
-                        }
+                // The owner's entry gets the workspace's dependencies. A link's entry gets none.
+                if let Some(owner) = workspace_owner {
+                    let info_node_id = store_entries.items_node_id()[info.entry_id.get() as usize];
+                    if (info_node_id == owner) != is_workspace_owner {
+                        continue;
                     }
                 }
 
@@ -1244,12 +1307,8 @@ fn build_store(
                     } = entries.split_mut();
 
                     entry_parents[info.entry_id.get() as usize].push(entry.entry_parent_id);
-                    if curr_dep_id == invalid_dependency_id
-                        || !dependencies[curr_dep_id as usize].behavior.is_workspace()
-                    {
-                        entry_dependencies[entry.entry_parent_id.get() as usize]
-                            .insert(item, &dependencies_ctx)?;
-                    }
+                    entry_dependencies[entry.entry_parent_id.get() as usize]
+                        .insert(item, &dependencies_ctx)?;
                     continue 'next_entry;
                 }
             }
@@ -1293,25 +1352,22 @@ fn build_store(
 
         let new_entry_dep_id = node_dep_ids[entry.node_id.get() as usize];
 
-        let new_entry_is_root = new_entry_dep_id == invalid_dependency_id;
-        let new_entry_is_workspace = !new_entry_is_root
-            && dependencies[new_entry_dep_id as usize].version.tag == VersionTag::Workspace;
-
-        let new_entry_dependencies: store::entry::Dependencies =
-            if dedupe_entry.found_existing && new_entry_is_workspace {
-                store::entry::Dependencies::default()
-            } else {
-                store::entry::Dependencies::init_capacity(
-                    node_nodes[entry.node_id.get() as usize].len(),
-                )?
-            };
+        let new_entry_dependencies = store::entry::Dependencies::init_capacity(
+            node_nodes[entry.node_id.get() as usize].len(),
+        )?;
 
         // never hoisted, so it must not claim the hoist slots for its name below
         let new_entry_nested_folder = nested_folders.is_set(pkg_id as usize);
 
         // An entry that is not linked claims its name too, or a deeper package would shadow it.
+        // The owner of a workspace that root does not list has the edge of a reference. The
+        // entry of the reference claims that name.
         let hoisted = !new_entry_nested_folder
             && new_entry_dep_id != invalid_dependency_id
+            && !(is_workspace_owner
+                && !dependencies[new_entry_dep_id as usize]
+                    .behavior
+                    .is_workspace())
             && claim_hidden_hoist(
                 manager,
                 &mut hidden_hoisted,
@@ -1332,10 +1388,11 @@ fn build_store(
             scripts: core::cell::Cell::new(None),
         })?;
 
-        // skip implicit workspace dependencies on the root.
+        // Root does not depend on the owner of a workspace. It depends on a workspace only
+        // through a reference, which has an entry of its own.
         if let Some(entry_parent_id) = entry.entry_parent_id.try_get()
             && let Some(new_entry_dep) = dependencies.get(new_entry_dep_id as usize)
-            && !new_entry_dep.behavior.is_workspace()
+            && !is_workspace_owner
         {
             let item = store::entry::DependenciesItem {
                 entry_id: new_entry_id,
@@ -1385,6 +1442,7 @@ fn build_store(
         entries: store_entries,
         nodes,
         hidden_hoist_keys,
+        workspace_owners,
     })
 }
 
@@ -2006,9 +2064,6 @@ pub(crate) fn install_isolated_packages(
         let pkg_names = pkgs.items_name();
         let pkg_resolutions = pkgs.items_resolution();
 
-        // TODO: delete
-        let mut seen_workspace_ids: HashMap<PackageID, ()> = HashMap::default();
-
         let tasks_in_flight = bun_threading::WaitGroup::init();
 
         let tasks: Box<[installer::Task]> = (0..store.entries.len())
@@ -2123,8 +2178,8 @@ pub(crate) fn install_isolated_packages(
                     installer.start_task(entry_id);
                 }
                 ResolutionTag::Workspace => {
-                    // if injected=true this might be false
-                    if !seen_workspace_ids.get_or_put(pkg_id)?.found_existing {
+                    let node_id = entry_node_ids[entry_id.get() as usize];
+                    if store.workspace_owners.get(pkg_id as usize) == Some(&node_id) {
                         installer.set_step(entry_id, Step::SymlinkDependencies);
                         installer.start_task(entry_id);
                         continue;

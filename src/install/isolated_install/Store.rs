@@ -28,6 +28,11 @@ pub struct Store {
     pub(crate) nodes: node::List,
     /// `node_modules/.bun/node_modules` names other than that of the entry's `node_id`.
     pub(crate) hidden_hoist_keys: Vec<entry::DependenciesItem>,
+    /// By package id: the node that owns the dependencies of a workspace, a child of the root
+    /// node, and `INVALID` for every other package. The installer links the entry of that node
+    /// into the workspace's node_modules. Every other entry of a workspace is a link to its
+    /// directory. The list has no elements when the store has no workspace.
+    pub(crate) workspace_owners: Vec<node::Id>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────

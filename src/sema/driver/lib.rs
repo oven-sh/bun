@@ -1085,8 +1085,10 @@ pub struct WithoutInclude {
     pub config_path: Vec<u8>,
     /// How many files it includes.
     pub included: usize,
-    /// The files of `Request::paths` that were checked in it, each a `tspath.Path`. Sorted.
-    pub files: Vec<Vec<u8>>,
+    /// How many files of `Request::paths` were checked in it.
+    pub asked_for: usize,
+    /// The first of them, a `tspath.Path`.
+    pub example: Vec<u8>,
     pub load_time: Duration,
 }
 
@@ -3710,11 +3712,15 @@ fn check_named_files(
     let program: &Program = root;
     report.files_loaded = program.files.modules.len();
     report.load_time = started.elapsed();
-    if let Some(named) = named.filter(|_| includes_everything) {
+    if includes_everything
+        && let Some(named) = named
+        && let Some(example) = named.first()
+    {
         report.without_include.push(WithoutInclude {
             config_path: config_path.clone(),
             included,
-            files: named.to_vec(),
+            asked_for: named.len(),
+            example: example.clone(),
             load_time: report.load_time,
         });
     }

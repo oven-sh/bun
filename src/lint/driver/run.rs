@@ -1195,42 +1195,34 @@ impl Run<'_> {
                 .concat(),
             );
         }
-        // Who says which files to lint knows that they are few: `--staged`, `--changed`, standard input, or their names.
-        let named: Vec<Vec<u8>> = (options.patterns.iter())
-            .map(|it| paths::resolve(&environment.cwd, &paths::from_native(it)))
-            .collect();
-        let is_named = |path: &Vec<u8>| named.contains(&paths::from_native(path));
+        // Who lints with `--staged` or `--changed`, or from standard input, knows that the files are few.
         let mut without_include = std::mem::take(&mut *without_include.lock());
         if options.only.is_some() || options.stdin || options.silent {
             without_include.clear();
         }
-        without_include.retain(|program| {
-            typed::is_out_of_proportion(program) && !program.files.iter().all(is_named)
-        });
+        without_include.retain(typed::is_out_of_proportion);
         for program in without_include {
-            let relative =
-                |path: &[u8]| paths::relative(&environment.cwd, &paths::from_native(path));
-            let shown: Vec<Vec<u8>> = program
-                .files
-                .iter()
-                .take(3)
-                .map(|it| relative(it))
-                .collect();
-            let more: &[u8] = if program.files.len() > 3 {
-                b", .."
-            } else {
-                b""
-            };
             let plural = bun_sema_driver::format::plural;
             let seconds = program.load_time.as_secs_f64();
             let took = match seconds >= 1.0 {
                 true => format!("{seconds:.1}s"),
                 false => format!("{:.0}ms", seconds * 1e3),
             };
-            let config = relative(&program.config_path);
+            let config = paths::relative(&environment.cwd, &program.config_path);
+            let example = paths::relative(&environment.cwd, &program.example);
+            let linted = match program.asked_for {
+                1 => example,
+                many => [
+                    &plural(many, b"file", b"files")[..],
+                    b" (",
+                    &example,
+                    b", ..)",
+                ]
+                .concat(),
+            };
             let or_the_flag: &[u8] = match options.tsconfig {
                 Some(_) => b".",
-                None => b", or pass --tsconfig.",
+                None => b" or pass --tsconfig.",
             };
             self.warn(
                 &[
@@ -1239,14 +1231,11 @@ impl Run<'_> {
                     b" in ",
                     took.as_bytes(),
                     b" to lint ",
-                    &plural(program.files.len(), b"file", b"files")[..],
-                    b": ",
-                    &shown.join(&b", "[..])[..],
-                    more,
+                    &linted,
                     b"\n  ",
                     &config,
-                    b" has no \"include\", so every file below it is part of its project.",
-                    b"\n  To lint faster, add \"include\" to it",
+                    b" has no \"include\", so it covers every file under it.",
+                    b"\n  To speed this up, add \"include\" to it",
                     or_the_flag,
                 ]
                 .concat(),

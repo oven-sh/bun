@@ -219,9 +219,9 @@ bun lint --type-aware --tsconfig tsconfig.lint.json
 A `tsconfig.json` without `"include"` covers every file below it. At the root of a monorepo, that can mean loading the whole repository to lint one package. Bun warns you when that happens.
 
 ```txt
-warn: Loaded 10,114 files in 1.4s to lint 1 file: vite.config.ts
-  ../../tsconfig.json has no "include", so every file below it is part of its project.
-  To lint faster, add "include" to it, or pass --tsconfig.
+warn: Loaded 10,114 files in 1.4s to lint vite.config.ts
+  ../../tsconfig.json has no "include", so it covers every file under it.
+  To speed this up, add "include" to it or pass --tsconfig.
 ```
 
 ## Git hooks

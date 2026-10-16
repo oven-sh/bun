@@ -5343,12 +5343,12 @@ maybe(() => { return f; });
 
         const many = Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [`other/${i}.ts`, "export {};\n"]));
         const withInclude = JSON.stringify({ compilerOptions, include: ["**/*"] });
-        const warning = `warn: Loaded 1,005 files in <time> to lint 1 file: config.ts
-  ../../tsconfig.json has no "include", so every file below it is part of its project.
-  To lint faster, add "include" to it, or pass --tsconfig.`;
-        const ofFlag = `warn: Loaded 1,005 files in <time> to lint 3 files: config.ts, src/a.d.ts, src/b.ts
-  ../../tsconfig.json has no "include", so every file below it is part of its project.
-  To lint faster, add "include" to it.`;
+        const warning = `warn: Loaded 1,005 files in <time> to lint config.ts
+  ../../tsconfig.json has no "include", so it covers every file under it.
+  To speed this up, add "include" to it or pass --tsconfig.`;
+        const ofFlag = `warn: Loaded 1,005 files in <time> to lint 3 files (config.ts, ..)
+  ../../tsconfig.json has no "include", so it covers every file under it.
+  To speed this up, add "include" to it.`;
         test.each([
           ["a warning says that a thousand files were loaded for it", {}, [], "packages/a", warning],
           ["not if the tsconfig.json says what it includes", { "tsconfig.json": withInclude }, [], "packages/a", ""],
@@ -5356,9 +5356,7 @@ maybe(() => { return f; });
           ["but if that one has no include either", {}, ["--tsconfig", "../../tsconfig.json"], "packages/a", ofFlag],
           ["not with --silent", {}, ["--silent"], "packages/a", ""],
           ["not if they are all linted", {}, [], ".", ""],
-          // Who names the files knows that they are few.
-          ["not if the file is named", {}, ["config.ts", "src/b.ts"], "packages/a", ""],
-          ["but if a directory is named too", {}, ["src/b.ts", "."], "packages/a", warning],
+          ["also if the file is named", {}, ["config.ts", "src/b.ts"], "packages/a", warning],
         ])("%s", async (_, others, flags, cwd, expected) => {
           const paths = flags.some(it => it.endsWith(".ts")) ? [] : ["."];
           const args = ["-f", "unix", "--type-aware", ...flags, ...paths];
@@ -5375,7 +5373,9 @@ maybe(() => { return f; });
           [999, 1, [], false],
           [1000, 10, [], true],
           [1000, 11, [], false],
-          // The second pass is only about the one file that was fixed. There is none with the configuration of oxlint.
+          // The second pass is only about the one file that was fixed, which counts once. There is none with the
+          // configuration of oxlint.
+          [1000, 10, ["--fix"], true],
           [1000, 11, ["--fix"], false],
         ])("of %d files, %d are linted %j: a warning %p", async (all, linted, flags, warns) => {
           const names = Array.from({ length: all }, (_, i) => (i < linted ? `sub/${i}.ts` : `other/${i}.ts`));
@@ -5388,10 +5388,10 @@ maybe(() => { return f; });
             ["--type-aware", "--rule", "no-var: error", "--rule", "no-debugger: error", ...flags, "sub"],
           );
           const warnings = stderr.split("\n").filter(it => it.startsWith("warn: "));
-          const noun = linted === 1 ? "file" : "files";
-          const expected = `warn: Loaded ${all.toLocaleString("en-US")} files in <time> to lint ${linted} ${noun}:`;
+          const what = linted === 1 ? "sub/0.ts" : `${linted} files (sub/0.ts, ..)`;
+          const expected = `warn: Loaded ${all.toLocaleString("en-US")} files in <time> to lint ${what}`;
           expect({
-            warnings: warnings.map(it => it.replace(/ in [\d.]+m?s /, " in <time> ").replace(/: sub\/.*/, ":")),
+            warnings: warnings.map(it => it.replace(/ in [\d.]+m?s /, " in <time> ")),
             exitCode,
           }).toEqual({ warnings: warns ? [expected] : [], exitCode: 1 });
         });

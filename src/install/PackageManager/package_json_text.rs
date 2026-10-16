@@ -457,7 +457,7 @@ impl<'a> Text<'a> {
 
     fn name_is(&mut self, container: &Container, index: usize, name: &[u8]) -> bool {
         let text = self.text;
-        let member = self.member(container, index);
+        let member = &self.members[container.first + index];
         self.string_token_is(&text[member.key..member.key_end], name)
     }
 
@@ -711,11 +711,18 @@ impl<'a> Text<'a> {
         };
         let container = self.containers[old.container];
         if self.has_same_members(&container, entries) {
+            // What is as it is written is copied in one piece, up to the next value that is not.
             let mut copied = container.open;
             for index in 0..container.len {
                 let member = self.member(&container, index);
+                let value = entries.value(index)?;
+                if member.container == NO_CONTAINER
+                    && self.is_token(&text[member.value..member.value_end], value)
+                {
+                    continue;
+                }
                 self.put(&text[copied..member.value]);
-                self.value(entries.value(index)?, member.old_value())?;
+                self.value(value, member.old_value())?;
                 copied = member.value_end;
             }
             self.put(&text[copied..=container.close]);

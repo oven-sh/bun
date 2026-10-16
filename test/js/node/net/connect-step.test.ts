@@ -183,9 +183,15 @@ describe("the step from a lookup result to the connect call", () => {
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (harness) {
   const node = harness.nodeExe();
+  // A Node.js that does not strip types by default cannot load this file.
+  const stripsTypes =
+    !!node &&
+    Bun.spawnSync({ cmd: [node, "-p", "process.features.typescript"], env: harness.bunEnv })
+      .stdout.toString()
+      .trim() === "strip";
 
   describe("Node.js compatibility", () => {
-    (node ? test : test.skip)("all tests pass in Node.js", async () => {
+    (stripsTypes ? test : test.skip)("all tests pass in Node.js", async () => {
       // A direct run: `node --test` forks a second process per file, and node:test exits non-zero on a failure anyway.
       await using proc = Bun.spawn({
         cmd: [node!, fileURLToPath(import.meta.url)],

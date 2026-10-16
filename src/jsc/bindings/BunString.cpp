@@ -374,12 +374,20 @@ std::optional<UTF8View> UTF8View::tryCreate(JSC::JSGlobalObject* globalObject, J
     return result;
 }
 
+// The strict converter is the fast one. It returns 0 for an unpaired surrogate, and only then the converter that replaces runs.
+static size_t convertUTF16(std::span<const char16_t> source, char* out)
+{
+    if (const size_t written = simdutf::convert_utf16le_to_utf8(source.data(), source.size(), out)) [[likely]]
+        return written;
+    return simdutf::convert_utf16le_to_utf8_with_replacement(source.data(), source.size(), out);
+}
+
 std::span<const char8_t> UTF8View::convertIntoStack(WTF::StringView view, std::span<char8_t, stackCapacity> stack)
 {
     auto* out = reinterpret_cast<char*>(stack.data());
     if (view.is8Bit())
         return stack.first(simdutf::convert_latin1_to_utf8(reinterpret_cast<const char*>(view.span8().data()), view.length(), out));
-    return stack.first(simdutf::convert_utf16le_to_utf8_with_replacement(view.span16().data(), view.length(), out));
+    return stack.first(convertUTF16(view.span16(), out));
 }
 
 size_t UTF8View::utf8Length(WTF::StringView view)
@@ -396,7 +404,7 @@ bool UTF8View::convertIntoHeap(WTF::StringView view, size_t utf8Length, WTF::Vec
     auto* out = reinterpret_cast<char*>(heap.mutableSpan().data());
     const size_t written = view.is8Bit()
         ? simdutf::convert_latin1_to_utf8(reinterpret_cast<const char*>(view.span8().data()), view.length(), out)
-        : simdutf::convert_utf16le_to_utf8_with_replacement(view.span16().data(), view.length(), out);
+        : convertUTF16(view.span16(), out);
     // simdutf's sizer and converter agree. Never expose bytes that were not written.
     ASSERT(written == utf8Length);
     heap.shrink(written);

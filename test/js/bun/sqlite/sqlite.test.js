@@ -2801,10 +2801,13 @@ describe("string parameters are encoded as well-formed UTF-8", () => {
     const q = db.query("SELECT length(CAST(? AS BLOB)) AS bytes");
     const latin1 = "\u00E9".repeat(600_000);
     const cjk = "\u65E5".repeat(400_000);
+    const ascii = "a".repeat(1_200_000);
     const previous = setSyntheticAllocationLimitForTesting(1024 * 1024);
     try {
       expect(() => q.get(latin1)).toThrow(new RangeError("Out of memory"));
       expect(() => q.get(cjk)).toThrow(new RangeError("Out of memory"));
+      // An 8-bit ASCII string is borrowed: it needs no conversion buffer.
+      expect(q.get(ascii)).toEqual({ bytes: 1_200_000 });
     } finally {
       setSyntheticAllocationLimitForTesting(previous);
     }

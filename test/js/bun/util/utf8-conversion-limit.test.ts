@@ -13,12 +13,15 @@
 // limit of each SQLite.
 //
 // An 8-bit ASCII string must stay borrowed: no API here needs a NUL terminator,
-// so a copy of it is waste. The conversion refuses every 8-bit string of 2**30
-// characters before it reads one, ASCII or not. So the last row binds an ASCII
-// string of that length. SQLite takes it or reports that it is too big for
-// SQLite: the limit is 1e9 bytes in the bundled SQLite and 2 GiB in the system
-// SQLite that macOS loads. Each answer shows that SQLite got the string's buffer,
-// where a copy reports "Out of memory".
+// so a copy of it is waste. The last row binds an ASCII string of 2**30
+// characters. SQLite takes it or reports that it is too big for SQLite: the
+// limit is 1e9 bytes in the bundled SQLite and 2 GiB in the system SQLite that
+// macOS loads. The row shows that a string of that length reaches SQLite. It
+// does not show the borrow: `Bun::UTF8View::tryWith` gives the same two answers
+// for a string that it converts. The borrow has its own test, "a conversion
+// buffer that the allocator refuses is an error" in
+// test/js/bun/sqlite/sqlite.test.js: under an allocation limit the ASCII string
+// still binds.
 import { decodeURIComponentSIMD } from "bun:internal-for-testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";

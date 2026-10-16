@@ -28,6 +28,7 @@ pub enum AnyPostgresError {
     OutOfMemory,
     Overflow,
     PBKDFD2,
+    SASL_ITERATION_COUNT_TOO_HIGH,
     SASL_SIGNATURE_MISMATCH,
     SASL_SIGNATURE_INVALID_BASE64,
     ShortRead,

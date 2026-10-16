@@ -1309,17 +1309,10 @@ fn match_groups(
 }
 
 /// Returns false only if `glob`, one segment of a pattern, matches no name that starts with `.` under [`Dots::Hide`].
-/// There only a `.` in the pattern takes that dot, and only the punctuation of groups comes before it.
 pub(crate) fn may_match_hidden(glob: &[u8]) -> bool {
-    let mut from = 0;
-    while let Some(dot) = strings::index_of_char_pos(glob, b'.', from) {
-        let start = dot - usize::from(dot > 0 && glob[dot - 1] == b'\\');
-        if start == 0 || matches!(glob[start - 1], b'{' | b',' | b'}' | b'(' | b'|' | b')') {
-            return true;
-        }
-        from = dot + 1;
-    }
-    false
+    // Only a `.` in the pattern takes that dot, and a group or a class has to come before it.
+    let choice = strings::index_of_any(glob, b"{([");
+    glob.starts_with(b"\\.") || choice.is_some_and(|at| strings::contains_char(&glob[at..], b'.'))
 }
 
 /// Returns true if `path` has a `.` or `..` segment or, with [`Dots::Hide`], a segment that starts with `.`.

@@ -2450,7 +2450,10 @@ struct us_socket_t *us_internal_ssl_on_end_after_rejected_send(struct us_socket_
 struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
   /* Past its FIN a socket polls for writable only when ssl_raw_write asked for this event. */
   if (!us_internal_socket_can_raw_write(s)) return ssl_close_after_rejected_send(s, LIBUS_ECONNRESET);
-  return ssl_on_writable(s);
+  s = ssl_on_writable(s);
+  /* Asked for from inside this dispatch, that event never comes: loop.c drops the writable interest of a shut-down socket. */
+  if (s && !ssl_gone(s) && s->ssl_send_rejected) return ssl_close_after_rejected_send(s, LIBUS_ECONNRESET);
+  return s;
 }
 
 static struct us_socket_t *ssl_on_writable(struct us_socket_t *s) {

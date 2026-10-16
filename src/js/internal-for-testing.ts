@@ -7,7 +7,7 @@
 // In a debug build, the import is always allowed.
 // It is disallowed in release builds unless run in Bun's CI.
 
-const fmtBinding = $bindgenFn("fmt_jsc.bind.ts", "fmtString");
+const fmtBinding = $bindgen("fmt_jsc.bind.ts", "fmtString");
 
 export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
 export const highlightJavaScriptRedacted = (code: string) => fmtBinding(code, "highlight-javascript-redacted");
@@ -27,6 +27,9 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
 // behind `bun_core::strings`, driven directly so tests can sweep lengths and
 // alignments. Returns the kernel's raw result: an index (`haystack.length` =
 // not found), a count, or for memmem/memrmem the offset with -1 = not found.
+// scannerRunStops fills `arg` with its three bitmaps and returns 0. lineStarts
+// fills `arg` with uint32 offsets and returns how many. oddBlocks fills `arg`
+// with uint64 words and returns 0.
 export const highwayStringsForTesting: (
   op:
     | "indexOfChar"
@@ -38,7 +41,10 @@ export const highwayStringsForTesting: (
     | "memmem"
     | "memrmem"
     | "memmem16"
-    | "memrmem16",
+    | "memrmem16"
+    | "scannerRunStops"
+    | "lineStarts"
+    | "oddBlocks",
   haystack: Uint8Array,
   arg: number | Uint8Array,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
@@ -75,6 +81,11 @@ export const sslCtxLiveCount = $newRustFunction("SecureContext.rs", "jsLiveCount
 export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", "jsThreadsafeFunctionLiveCount", 0);
 
 export const bundlerWorkerLiveCount: () => number = $newRustFunction("JSBundler.rs", "jsWorkerLiveCount", 0);
+
+export const semverIntersects = $newRustFunction("SemverObject.rs", "intersectsForTesting", 2) as (
+  left: string,
+  right: string,
+) => boolean;
 
 /** What a bytecode order file calls the code of `text`: `M <name>` and `<start> <kind> <name>` lines, or null. */
 export const bytecodeOrderNames = $newRustFunction("BytecodeOrderRecorder.rs", "namesForTesting", 3) as (
@@ -231,9 +242,34 @@ export const frameworkRouterInternals = $rust("FrameworkRouter.rs", "JSFramework
   };
 };
 
-export const bindgen = $rust("bindgen_test.rs", "getBindgenTestFunctions") as {
-  add: (a: any, b: any) => number;
-  requiredAndOptionalArg: (a: any, b?: any, c?: any, d?: any) => number;
+// Only in a build with assertions: `isCompiled` in scripts/build/codegen.ts.
+export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
+  add: $bindgen("bindgen_test.bind.ts", "add"),
+  requiredAndOptionalArg: $bindgen("bindgen_test.bind.ts", "requiredAndOptionalArg"),
+  utf8Echo: $bindgen("bindgen_test.bind.ts", "utf8Echo"),
+  utf8EchoLoose: $bindgen("bindgen_test.bind.ts", "utf8EchoLoose"),
+  utf8Optional: $bindgen("bindgen_test.bind.ts", "utf8Optional"),
+  utf8Owned: $bindgen("bindgen_test.bind.ts", "utf8Owned"),
+  stringEcho: $bindgen("bindgen_test.bind.ts", "stringEcho"),
+  nextColor: $bindgen("bindgen_test.bind.ts", "nextColor"),
+  optionsEcho: $bindgen("bindgen_test.bind.ts", "optionsEcho"),
+  describeValue: $bindgen("bindgen_test.bind.ts", "describeValue"),
+  describeAnything: $bindgen("bindgen_test.bind.ts", "describeAnything"),
+  overloaded: $bindgen("bindgen_test.bind.ts", "overloaded"),
+  describeDefaults: $bindgen("bindgen_test.bind.ts", "describeDefaults"),
+  names: $bindgen("bindgen_test.bind.ts", "names"),
+  sumArray: $bindgen("bindgen_test.bind.ts", "sumArray"),
+  range: $bindgen("bindgen_test.bind.ts", "range"),
+  words: $bindgen("bindgen_test.bind.ts", "words"),
+  sumBytes: $bindgen("bindgen_test.bind.ts", "sumBytes"),
+  sumBytesOptional: $bindgen("bindgen_test.bind.ts", "sumBytesOptional"),
+  sumBytesThenText: $bindgen("bindgen_test.bind.ts", "sumBytesThenText"),
+  sumBeforeAndAfterCallback: $bindgen("bindgen_test.bind.ts", "sumBeforeAndAfterCallback"),
+  withValueEcho: $bindgen("bindgen_test.bind.ts", "withValueEcho"),
+  fail: $bindgen("bindgen_test.bind.ts", "fail"),
+  TestCounter: $bindgen("bindgen_test.bind.ts", "TestCounter"),
+  TestHolder: $bindgen("bindgen_test.bind.ts", "TestHolder"),
+  makeToken: $bindgen("bindgen_test.bind.ts", "makeToken"),
 };
 
 export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
@@ -569,7 +605,7 @@ export const decodeURIComponentSIMD = $newCppFunction(
   1,
 );
 
-export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");
+export const getDevServerDeinitCount = $bindgen("DevServer.bind.ts", "getDeinitCountForTesting");
 export const getCounters = $newRustFunction("Counters.rs", "createCountersObject", 0);
 export const linearFifoOrderedRemoveProbe = $newRustFunction(
   "collections/linear_fifo.rs",

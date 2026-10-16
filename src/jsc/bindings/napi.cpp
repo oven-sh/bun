@@ -1,5 +1,4 @@
 #include "BunProcess.h"
-#include "CodeGenerationFromStrings.h"
 #include "headers.h"
 #include "BunClientData.h"
 #include "node_api.h"
@@ -3056,8 +3055,6 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
     NAPI_CHECK_ARG(env, result);
     JSValue scriptValue = toJS(script);
     NAPI_RETURN_EARLY_IF_FALSE(env, scriptValue.isString(), napi_string_expected);
-
-    RETURN_IF_MAY_NOT_MAKE_SCRIPT_FROM_STRINGS(globalObject, throwScope, napi_set_last_error(env, napi_pending_exception));
 
     WTF::String code = scriptValue.getString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, napi_set_last_error(env, napi_generic_failure));

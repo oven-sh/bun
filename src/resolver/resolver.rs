@@ -460,6 +460,85 @@ static BIN_FOLDERS_LOCK: Mutex = Mutex::new();
 static BIN_FOLDERS_LOADED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// Real locations of installed package code that have no `node_modules`
+/// segment, so `Path::is_node_module()` is false for them: `bun install
+/// --backend=symlink` links `node_modules` file by file into the install cache,
+/// and auto-install resolves straight into that cache. The macro guard asks
+/// this set too. Append-only for the life of the process, like the `DirInfo`
+/// cache that fills it.
+pub mod linked_package_roots {
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    use bun_collections::StringHashMap;
+    use bun_threading::Guarded;
+
+    static ROOTS: Guarded<Option<StringHashMap<()>>> = Guarded::new(None);
+    static ANY: AtomicBool = AtomicBool::new(false);
+
+    /// `real_path` is the directory of an installed package, or one file that
+    /// `node_modules` links to on its own.
+    pub(crate) fn record(real_path: &'static [u8]) {
+        let real_path = bun_paths::strings::without_trailing_slash(real_path);
+        if real_path.is_empty() {
+            return;
+        }
+        let mut roots = ROOTS.lock();
+        bun_core::handle_oom(
+            roots
+                .get_or_insert_with(StringHashMap::default)
+                .put_static_key(real_path, ()),
+        );
+        ANY.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether `real_path` or a directory above it is recorded.
+    #[inline]
+    pub fn covers(real_path: &[u8]) -> bool {
+        ANY.load(Ordering::SeqCst) && covers_recorded(real_path)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn covers_recorded(real_path: &[u8]) -> bool {
+        let roots = ROOTS.lock();
+        let Some(roots) = roots.as_ref() else {
+            return false;
+        };
+        let mut candidate = bun_paths::strings::without_trailing_slash(real_path);
+        loop {
+            if roots.contains_key(candidate) {
+                return true;
+            }
+            match bun_paths::dirname(candidate) {
+                Some(parent) if parent.len() < candidate.len() => {
+                    candidate = bun_paths::strings::without_trailing_slash(parent);
+                }
+                _ => return false,
+            }
+        }
+    }
+}
+
+/// Whether `dir` (no trailing separator) is a `node_modules` directory or is
+/// below one.
+fn dir_is_in_node_modules(dir: &[u8]) -> bool {
+    let needle = bun_paths::NODE_MODULES_NEEDLE;
+    strings::contains(dir, needle) || dir.ends_with(&needle[..needle.len() - 1])
+}
+
+/// A file directly in the `node_modules` directory `dir` resolved to
+/// `real_path` through a link.
+#[cold]
+#[inline(never)]
+fn record_file_linked_in_node_modules(dir: &DirInfo::DirInfo, real_path: &'static [u8]) {
+    // Below a directory link, `finalize_result` caches a real path on every
+    // entry. Such an entry is not a link itself.
+    if !dir.abs_real_path.is_empty() && bun_paths::dirname(real_path) == Some(dir.abs_real_path) {
+        return;
+    }
+    linked_package_roots::record(real_path);
+}
+
 // LAYERING: `AnyResolveWatcher` is the erased vtable the resolver calls to
 // register directory watches. The concrete callback lives in `bun_watcher`
 // (lower tier); defining the vtable shape there and re-exporting here keeps a
@@ -1653,6 +1732,9 @@ impl<'a> Resolver<'a> {
                 let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
                 if !symlink_path.is_empty() {
                     path.set_realpath(symlink_path);
+                    if dir.is_node_modules() {
+                        record_file_linked_in_node_modules(&dir, symlink_path);
+                    }
                     if !result.file_fd.is_valid() {
                         result.file_fd = query.entry().cache().fd;
                     }
@@ -3569,6 +3651,7 @@ impl<'a> Resolver<'a> {
             open_dir,
             Some(package_id),
         )?;
+        linked_package_roots::record(dir_entries_dir);
         // SAFETY: `dir_info_ptr` is the BSSMap slot just filled by `dir_info_uncached`.
         Ok(Some(unsafe { DirInfoRef::from_raw(dir_info_ptr) }))
     }
@@ -6111,6 +6194,64 @@ impl<'a> Resolver<'a> {
         None
     }
 
+    /// `dir` is in `node_modules` and its package.json is a link: the layout of
+    /// `bun install --backend=symlink`, a real directory whose files are links
+    /// into the install cache. Records the directory the link points into, so
+    /// that files the package reaches by a relative import are covered too.
+    #[cold]
+    #[inline(never)]
+    fn record_linked_package_root(&mut self, dir: &DirInfo::DirInfo) {
+        // A workspace or `bun link` package is one directory link to the
+        // project's own code.
+        if !dir.abs_real_path.is_empty() && !dir_is_in_node_modules(dir.abs_real_path) {
+            return;
+        }
+
+        // Read the link itself, not the file it leads to: a package can ship
+        // its package.json as a link to another of its files.
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let mut link_buf = bun_paths::path_buffer_pool::get();
+        let link_len = self
+            .fs_ref()
+            .abs_buf(&[dir.abs_path, b"package.json".as_slice()], &mut path_buf)
+            .len();
+        path_buf[link_len] = 0;
+        let link = bun_core::ZStr::from_buf(&path_buf[..], link_len);
+        let Ok(target_len) = bun_sys::readlink(link, &mut link_buf[..]) else {
+            return;
+        };
+        let target = self
+            .fs_ref()
+            .abs_buf(&[dir.abs_path, &link_buf[..target_len]], &mut path_buf);
+        let Some(target_dir) = bun_paths::dirname(target) else {
+            return;
+        };
+        let Ok(fd) = bun_sys::open_dir_for_iteration(FD::cwd(), target_dir) else {
+            return;
+        };
+        let root = fd.get_fd_path(&mut link_buf);
+        fd.close();
+        let Ok(root) = root else {
+            return;
+        };
+
+        // `"lib": "file:.."`: the folder that the link leads to holds the
+        // project itself.
+        for own in [dir.abs_path, dir.abs_real_path] {
+            if !own.is_empty()
+                && bun_paths::resolve_path::is_parent_or_equal(root, own)
+                    != bun_paths::resolve_path::ParentEqual::Unrelated
+            {
+                return;
+            }
+        }
+        linked_package_roots::record(
+            Fs::file_system::DirnameStore::instance()
+                .append_slice(root)
+                .expect("unreachable"),
+        );
+    }
+
     fn dir_info_uncached(
         &mut self,
         info: *mut DirInfo::DirInfo,
@@ -6390,6 +6531,14 @@ impl<'a> Resolver<'a> {
                 // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
                 if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
                 {
+                    if info
+                        .flags
+                        .intersects(DirInfo::Flag::IsNodeModules | DirInfo::Flag::InsideNodeModules)
+                        && !entry.cache().symlink.as_bytes().is_empty()
+                    {
+                        self.record_linked_package_root(info);
+                    }
+
                     // A package in the global cache has a `package_id`, and keeps it even if its
                     // tarball shipped a `node_modules` folder.
                     info.package_json = if self.use_package_manager()

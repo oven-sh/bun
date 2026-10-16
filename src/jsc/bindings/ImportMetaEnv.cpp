@@ -5,6 +5,7 @@
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include <JavaScriptCore/PropertyNameArray.h>
+#include <JavaScriptCore/VMInlines.h>
 
 extern "C" bool Bun__getEnvValue(JSC::JSGlobalObject* globalObject, const EncodedSlice* name, EncodedSlice* value);
 
@@ -44,7 +45,7 @@ static bool isBoolean(std::optional<ViteVariable> variable)
 static bool startedInProduction(Zig::GlobalObject* globalObject)
 {
     auto nodeEnv = "NODE_ENV"_s.span8();
-    EncodedSlice name = { nodeEnv.data(), nodeEnv.size() };
+    EncodedSlice name = { byteCast<uint8_t>(nodeEnv.data()), nodeEnv.size() };
     EncodedSlice value = { nullptr, 0 };
     return Bun__getEnvValue(globalObject, &name, &value) && WTF::equalSpans(std::span { Zig::untag(value.ptr), value.len }, "production"_s.span8());
 }

@@ -828,9 +828,9 @@ describe("process.exitCode", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toInclude("error: boom");
-    expect(exitCode).toBe(9);
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 9 });
   });
 });
 

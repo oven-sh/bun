@@ -578,32 +578,48 @@ describe("stdio is flushed when the worker exits synchronously", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent.each([
+  describe.concurrent.each([
     ["while the entry loads", `Promise.reject(new Error("boom"));`],
     ["in a later turn", `setInterval(() => {}, 100000); setImmediate(() => Promise.reject(new Error("boom")));`],
-  ])("unhandled rejection %s: user 'exit' handler and the parent see code 1", async (_label, reject) => {
-    const workerSrc = `process.on("exit", code => {
-        process.stdout.write("exit handler " + code + " " + process.exitCode + "\\n");
+  ])("unhandled rejection %s", (_label, reject) => {
+    async function run(afterWrite: string) {
+      const workerSrc = `process.on("exit", code => {
+          process.stdout.write("exit handler " + code + " " + process.exitCode + "\\n");
+          ${afterWrite}
+        });
+        ${reject}`;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { Worker } = require("node:worker_threads");
+           const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true, stdout: true });
+           let out = "";
+           w.stdout.setEncoding("utf8").on("data", d => (out += d));
+           w.on("error", e => console.log("error " + e.message));
+           w.on("exit", c => console.log(JSON.stringify({ code: c, out })));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
       });
-      ${reject}`;
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const { Worker } = require("node:worker_threads");
-         const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true, stdout: true });
-         let out = "";
-         w.stdout.setEncoding("utf8").on("data", d => (out += d));
-         w.on("error", e => console.log("error " + e.message));
-         w.on("exit", c => console.log(JSON.stringify({ code: c, out })));`,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, exitCode };
+    }
+
+    test("user 'exit' handler and the parent see code 1", async () => {
+      expect(await run("")).toEqual({
+        stdout: `error boom\n${JSON.stringify({ code: 1, out: "exit handler 1 1\n" })}\n`,
+        exitCode: 0,
+      });
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe(`error boom\n${JSON.stringify({ code: 1, out: "exit handler 1 1\n" })}\n`);
-    expect(exitCode).toBe(0);
+
+    test("the exitCode the user 'exit' handler sets wins", async () => {
+      expect(await run("process.exitCode = 42;")).toEqual({
+        stdout: `error boom\n${JSON.stringify({ code: 42, out: "exit handler 1 1\n" })}\n`,
+        exitCode: 0,
+      });
+    });
   });
 });
 

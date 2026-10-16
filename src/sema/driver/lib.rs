@@ -941,6 +941,13 @@ pub struct Diagnostic {
     pub project: u32,
 }
 
+impl Diagnostic {
+    /// Whether it fails the run: `tsc` fails on whatever it reports (`message TS1450`), and it never reports a suggestion.
+    pub fn fails(&self) -> bool {
+        self.category != Category::Suggestion
+    }
+}
+
 /// `taskResult.builder`: how much of a `Report` one task of a build printed.
 #[derive(Clone, Copy)]
 pub struct TaskOutput {
@@ -1061,16 +1068,14 @@ pub struct Report {
 }
 
 impl Report {
-    /// True if the exit code is 0: there are no errors, and nothing was left unchecked.
+    /// True if the exit code is 0: nothing reported fails the run, and nothing was left unchecked.
     pub fn is_ok(&self) -> bool {
-        self.error_count() == 0 && self.incomplete.is_empty()
+        self.failing().next().is_none() && self.incomplete.is_empty()
     }
 
-    pub fn error_count(&self) -> usize {
-        self.diagnostics
-            .iter()
-            .filter(|d| d.category == Category::Error)
-            .count()
+    /// The diagnostics for which `Diagnostic::fails` holds.
+    pub fn failing(&self) -> impl Iterator<Item = &Diagnostic> {
+        self.diagnostics.iter().filter(|d| d.fails())
     }
 
     /// Adds the result of checking another project. The diagnostics are left unsorted.
@@ -4736,15 +4741,10 @@ fn check_named_files(
                 report.diagnostics.extend(global_errors());
             }
         }
-        // `GetDiagnosticsOfAnyProgram` collects them itself if there are no other errors. This list also contains
-        // suggestions.
-        let is_error = |d: &Diagnostic| d.category == Category::Error;
-        if !stops
-            || emits_despite_errors
-            || !(report.diagnostics[always_reported..].iter())
-                .chain(per_file_lists.iter().flatten())
-                .any(is_error)
-        {
+        // `GetDiagnosticsOfAnyProgram` collects them itself if nothing else is reported, of whatever category.
+        let per_file = per_file_lists.iter().flatten();
+        let mut others = report.diagnostics[always_reported..].iter().chain(per_file);
+        if !stops || emits_despite_errors || !others.any(Diagnostic::fails) {
             per_file_lists.append(&mut emit_diagnostics.lock());
         }
         // `iterateBaseline`: a caller that writes output for every file also does so for the files that aren't checked.

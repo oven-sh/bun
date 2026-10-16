@@ -1,8 +1,9 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { spawn } from "child_process";
 import { once } from "events";
-import { bunEnv, bunExe, tls as certs } from "harness";
+import { bunEnv, bunExe, nodeExe, tls as certs } from "harness";
 import net from "net";
+import { join } from "path";
 import { Duplex } from "stream";
 import tls from "tls";
 
@@ -426,6 +427,92 @@ test.each(["socket.unref();", "socket.ref(); tlsSocket.unref();"])(
     }
   },
 );
+
+// These fixtures have no timer and call no process.exit(): they print what they saw when nothing keeps them alive
+// any more. They run on both runtimes, and every expectation is what Node.js v26.3.0 prints.
+describe.each(["bun", "node"])("%s: ref() and unref() on a TLS socket that wraps another stream", runtime => {
+  const exe = runtime === "node" ? nodeExe() : bunExe();
+
+  async function run(fixture: string, arg = "") {
+    await using proc = Bun.spawn({
+      cmd: [exe!, join(import.meta.dir, fixture), arg],
+      // With the flag, a child that never comes to rest exits when the test process does.
+      env: { ...bunEnv, TLS_KEY: certs.key, TLS_CERT: certs.cert, BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout && JSON.parse(stdout), stderr, exitCode, signalCode: proc.signalCode };
+  }
+  const exitedByItself = { stderr: "", exitCode: 0, signalCode: null };
+
+  // TLSWrap passes ref() and unref() to the handle that it wraps, and a JS stream has none:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L635-L654
+  // unref() lets the process come to rest. ref() makes it wait for the peer's "bye" and for the close.
+  const rests = ["at rest", "bye", "end", "close"];
+  test.skipIf(!exe).each([
+    ["engine, server side", { "TLS in TLS, server side, unref() in the tick of the wrap": rests }],
+    [
+      "engine, client side",
+      {
+        "TLS in TLS, client side, unref() after the handshake": rests,
+        "a pair of JS streams, ref()": ["secureConnect"],
+      },
+    ],
+    [
+      "engine, both wraps in one tick",
+      {
+        "TLS in TLS on an accepted socket, unref() in the tick of the wraps": rests,
+        "TLS in TLS on a socket that still connects, unref() in the tick of the wraps": rests,
+      },
+    ],
+    ["engine, a write in flight", { "a socket with a write in flight, unref() after the handshake": rests }],
+    [
+      "engine, reads that stop and start again",
+      { "TLS in TLS, client side, unref() behind reads that stopped and started again": rests },
+    ],
+    [
+      "engine, a destroyed wrap",
+      { "TLS in TLS, client side, unref() on the socket below, then destroy() and ref()": ["close"] },
+    ],
+    [
+      "handle",
+      {
+        "an accepted socket, unref() in the tick of the wrap": rests,
+        "a socket that still connects, unref() in the tick of the wrap": rests,
+      },
+    ],
+    [
+      "handle, unref() before the wrap",
+      {
+        // The process did not come to rest before the close.
+        "an accepted socket, unref() on it and ref() on the wrap in the tick of the wrap": ["bye", "end", "close"],
+        "an accepted socket, unref() before the wrap and a late reader": ["at rest", "a reader"],
+      },
+    ],
+  ])("%s", async (group, wraps) => {
+    expect(await run("tls-wrap-ref-unref-fixture.mjs", group)).toEqual({ stdout: wraps, ...exitedByItself });
+  });
+
+  // Node.js v26.3.0 ends with SIGSEGV here, so this one has no twin.
+  test.skipIf(runtime === "node")("handle, second address", async () => {
+    expect(await run("tls-wrap-ref-unref-fixture.mjs", "handle, second address")).toEqual({
+      stdout: {
+        "a socket that connects to its second address, unref() in the tick of the wrap": rests,
+        "a socket that connects to its second address, unref() on it and ref() on the wrap": ["bye", "end", "close"],
+      },
+      ...exitedByItself,
+    });
+  });
+
+  // What https-proxy-agent and hpagent do. The agent calls unref() on the socket that it keeps.
+  test.skipIf(!exe)("a keep-alive https request through a TLS proxy lets the process exit", async () => {
+    expect(await run("https-keepalive-through-tls-proxy-fixture.mjs")).toEqual({
+      stdout: ["hello"],
+      ...exitedByItself,
+    });
+  });
+});
 
 test("_parent is the wrapped net.Socket", async () => {
   const server = net.createServer(socket => socket.on("error", () => {}));

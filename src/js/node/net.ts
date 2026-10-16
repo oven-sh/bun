@@ -492,6 +492,20 @@ function linkUpgraded(self, connection: SocketInstance) {
   connection.on("error", onUpgradedError.bind(null, self));
   self.connecting = isSocket && (connection.connecting || !connection._handle);
 }
+// A TLS socket has an fd of its own only after it adopted the one of the socket that it wraps (adoptTLSPair). Before that,
+// and when a TLS engine reads that socket as a stream (attachTLSEngine), ref() and unref() go to that socket: TLSWrap
+// passes both to the handle that it wraps, and a stream that is no net.Socket has no handle to take them.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L635-L654
+// False when the handle of `self` decides.
+function refWrapped(self, ref: boolean) {
+  const upgraded = self[kupgraded];
+  if (!upgraded || upgraded._handle?.[kAdoptedTLSRaw] === self) return false;
+  if (upgraded instanceof Socket && !upgraded.destroyed && !self.destroyed) {
+    if (ref) upgraded.ref();
+    else upgraded.unref();
+  }
+  return true;
+}
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
 function onUpgradedConnect(self, connection) {
   if (self.destroyed || self[kupgraded] !== connection) return;
@@ -511,12 +525,16 @@ function attachTLSEngine(self, connection, options) {
   connection.once(kReadError, onUpgradedReadError.bind(null, self));
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L117-L120
   connection.resume();
+  // The engine has no fd, so nothing of its own keeps the event loop alive: see refWrapped.
+  handle.ref = handle.unref = noop;
   self._handle = handle;
 }
 function adoptTLSPair(self, connection, pair) {
   if (!pair) throw new Error("Invalid socket");
   const raw = (connection._handle = pair[0]);
   raw[kAdoptedTLSRaw] = self;
+  // Node has one handle under both sockets: what unref() said to the wrapped one holds for this one.
+  self[kUserUnrefed] = connection[kUserUnrefed];
   self.once("end", self[kCloseRawConnection]);
   raw.connecting = false;
   self._handle = pair[1];
@@ -2769,6 +2787,7 @@ Socket.prototype.ref = function ref() {
   // An explicit ref() supersedes the hold a pause dropped on the user's behalf;
   // unrefAfterDrain must not give it up again.
   this[kPausedUnref] = false;
+  if (refWrapped(this, true)) return this;
   const socket = this._handle;
   if (!socket) {
     this.once("connect", this.ref);
@@ -2967,6 +2986,7 @@ Socket.prototype._unrefTimer = function _unrefTimer() {
 
 Socket.prototype.unref = function unref() {
   this[kUserUnrefed] = true;
+  if (refWrapped(this, false)) return this;
   const socket = this._handle;
   if (!socket) {
     this.once("connect", this.unref);

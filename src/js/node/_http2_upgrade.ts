@@ -48,6 +48,8 @@ interface TLSProxySocket extends DuplexStream {
   secureConnecting: boolean;
   _secureEstablished: boolean;
   authorizationError?: string;
+  ref(): this;
+  unref(): this;
 }
 
 /**
@@ -131,6 +133,18 @@ function tlsSocketFinal(this: TLSProxySocket, callback: () => void) {
   // Signal end-of-stream to the TLS layer
   h.end();
   callback();
+}
+
+// The TLS engine has no fd. ref() and unref() go to the raw socket, as TLSWrap passes both to the handle that it wraps.
+// A stream that is no net.Socket has neither: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L635-L654
+function tlsSocketRef(this: TLSProxySocket) {
+  this._ctx.rawSocket.ref?.();
+  return this;
+}
+
+function tlsSocketUnref(this: TLSProxySocket) {
+  this._ctx.rawSocket.unref?.();
+  return this;
 }
 
 // ---------------------------------------------------------------------------
@@ -319,6 +333,8 @@ function upgradeRawSocketToH2(
   tlsSocket._write = tlsSocketWrite;
   tlsSocket._destroy = tlsSocketDestroy;
   tlsSocket._final = tlsSocketFinal;
+  tlsSocket.ref = tlsSocketRef;
+  tlsSocket.unref = tlsSocketUnref;
 
   // Suppress unhandled error events until the H2 session attaches its own error handler
   tlsSocket.on("error", noop);

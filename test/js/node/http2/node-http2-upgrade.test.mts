@@ -11,13 +11,15 @@
  *   node --experimental-strip-types --test test/js/node/http2/node-http2-upgrade.test.ts
  */
 import assert from "node:assert";
+import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
 import net from "node:net";
 import path from "node:path";
+import readline from "node:readline";
 import { Duplex } from "node:stream";
-import { afterEach, describe, test } from "node:test";
+import { after, afterEach, before, describe, test } from "node:test";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 
@@ -184,6 +186,44 @@ describe("HTTP/2 upgrade — session event", () => {
 
     client.close();
     srv.netServer.close();
+  });
+});
+
+// Http2Session passes both to its socket, and in Node.js the TLS socket passes them to the handle of the raw socket:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L635-L654
+describe("HTTP/2 upgrade — session.unref() and session.ref()", () => {
+  let server: ChildProcess;
+  let exited: Promise<unknown[]>;
+  let lines: AsyncIterator<string>;
+  let port: number;
+
+  // The server is another process: node-http2-upgrade-unref-fixture.mjs.
+  before(async () => {
+    server = spawn(process.execPath, [path.join(__dirname, "node-http2-upgrade-unref-fixture.mjs")], {
+      stdio: ["ignore", "pipe", "inherit"],
+      // With the flag, a server that never comes to rest exits when this process does.
+      env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
+    });
+    exited = once(server, "exit");
+    lines = readline.createInterface({ input: server.stdout! })[Symbol.asyncIterator]();
+    port = Number((await lines.next()).value);
+  });
+  after(() => {
+    server.kill();
+  });
+
+  test("reach the raw socket: the server's process comes to rest, then waits for the session again", async () => {
+    const client = connectClient(port);
+    try {
+      assert.strictEqual((await request(client, "GET", "/")).body, "ok");
+      // Behind session.unref() nothing kept that process alive. session.ref() makes it wait for this close.
+      assert.strictEqual((await lines.next()).value, "ref");
+      client.close();
+      assert.deepStrictEqual(JSON.parse((await lines.next()).value), ["at rest", "session close", "at rest"]);
+      assert.deepStrictEqual(await exited, [0, null]);
+    } finally {
+      client.destroy();
+    }
   });
 });
 

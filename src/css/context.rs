@@ -2,7 +2,9 @@ use crate::css_parser as css;
 
 use css::css_rules::media::MediaRule;
 
+use css::css_properties::PropertyId;
 use css::css_properties::custom::UnparsedProperty;
+use css::css_values::color::ColorFallbackKind;
 use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, MediaQuery};
 
 use bun_alloc::{Arena as Bump, ArenaPtr};
@@ -30,6 +32,8 @@ pub struct PropertyHandlerContext<'a> {
     pub(crate) targets: css::targets::Targets,
     pub(crate) is_important: bool,
     pub(crate) supports: Vec<SupportsEntry>,
+    /// The properties that have a copy in `supports`, so that a declaration of another property does not scan the copies.
+    copied: Vec<PropertyId>,
     pub(crate) ltr: Vec<css::Property>,
     pub(crate) rtl: Vec<css::Property>,
     pub(crate) dark: Vec<css::Property>,
@@ -48,6 +52,7 @@ impl<'a> PropertyHandlerContext<'a> {
             targets: *targets,
             is_important: false,
             supports: Vec::new(),
+            copied: Vec::new(),
             ltr: Vec::new(),
             rtl: Vec::new(),
             dark: Vec::new(),
@@ -62,6 +67,7 @@ impl<'a> PropertyHandlerContext<'a> {
             targets: self.targets,
             is_important: false,
             supports: Vec::new(),
+            copied: Vec::new(),
             ltr: Vec::new(),
             rtl: Vec::new(),
             dark: Vec::new(),
@@ -260,6 +266,7 @@ impl<'a> PropertyHandlerContext<'a> {
         // Per-element `deinit()` calls dropped — Vec::clear drops each element,
         // and SupportsEntry / Property own their resources via Drop.
         self.supports.clear();
+        self.copied.clear();
         self.ltr.clear();
         self.rtl.clear();
         self.dark.clear();
@@ -274,6 +281,11 @@ impl<'a> PropertyHandlerContext<'a> {
     ) {
         if self.context != DeclarationContext::StyleRule {
             return;
+        }
+
+        let id = property.property_id();
+        if !self.copied.contains(&id) {
+            self.copied.push(id);
         }
 
         let found = 'brk: {
@@ -318,6 +330,9 @@ impl<'a> PropertyHandlerContext<'a> {
             return;
         }
 
+        if !self.supports.is_empty() {
+            self.retract_replaced(unparsed);
+        }
         let fallbacks = unparsed.value.get_fallbacks(bump, &self.targets);
         // `SmallList`
         // has no `IntoIterator`, so spill to a Vec to preserve P3-before-LAB order.
@@ -330,6 +345,55 @@ impl<'a> PropertyHandlerContext<'a> {
                     value: condition_and_fallback.1,
                 }),
             );
+        }
+    }
+
+    /// Drops the staged copies that `unparsed` replaces in each browser that reads one. Runs before `unparsed` stages its own copies.
+    #[cold]
+    #[inline(never)]
+    fn retract_replaced(&mut self, unparsed: &UnparsedProperty) {
+        if self.copied.contains(&unparsed.property_id) && unparsed.value.is_valid_at_parse_time() {
+            let mut keep = unparsed.value.get_necessary_fallbacks(&self.targets);
+            keep.remove(keep.lowest());
+            self.retract_conditional(unparsed.property_id, keep);
+        }
+    }
+
+    /// Drops the staged copies of `property_id`, except in the `@supports` rules of the tiers in `keep`, where the declaration in hand stages a copy of its own behind them.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn retract_conditional(&mut self, property_id: PropertyId, keep: ColorFallbackKind) {
+        // The handlers also run over a merged rule, with no context, while the copies of the next rule are staged.
+        if self.context != DeclarationContext::StyleRule || !self.copied.contains(&property_id) {
+            return;
+        }
+
+        // Departs from lightningcss on purpose: it prints these copies behind the rule, where they beat a later declaration that wins in the source.
+        let important = self.is_important;
+        self.supports.retain_mut(|entry| {
+            let kept = [ColorFallbackKind::P3, ColorFallbackKind::LAB]
+                .into_iter()
+                .any(|kind| keep.contains(kind) && kind.supports_condition().eql(&entry.condition));
+            if !kept {
+                let copies = if important {
+                    &mut entry.important_declarations
+                } else {
+                    &mut entry.declarations
+                };
+                copies.retain(|copy| copy.property_id() != property_id);
+            }
+            !entry.declarations.is_empty() || !entry.important_declarations.is_empty()
+        });
+
+        let has_copy = |copies: &Vec<css::Property>| {
+            copies.iter().any(|copy| copy.property_id() == property_id)
+        };
+        if !self
+            .supports
+            .iter()
+            .any(|entry| has_copy(&entry.declarations) || has_copy(&entry.important_declarations))
+        {
+            self.copied.retain(|copied| *copied != property_id);
         }
     }
 }

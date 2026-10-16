@@ -833,6 +833,43 @@ impl TokenList {
         fallbacks
     }
 
+    /// Whether each browser that reads `color()` or `lab()` keeps a declaration with this value at parse time: it holds a `var()`, or is `inherit`, `initial` or `unset`.
+    pub(crate) fn is_valid_at_parse_time(&self) -> bool {
+        if let [TokenOrValue::Token(Token::Ident(keyword))] = self.v.as_slice() {
+            return crate::match_ignore_ascii_case! { *keyword, {
+                b"inherit" | b"initial" | b"unset" => true,
+                _ => false,
+            }};
+        }
+        let mut has_var = false;
+        self.has_no_empty_var_fallback(&mut has_var) && has_var
+    }
+
+    /// An empty `var()` fallback is newer syntax than `color()`, like `env()`, which does not count as a `var()`.
+    fn has_no_empty_var_fallback(&self, has_var: &mut bool) -> bool {
+        self.v.iter().all(|token_or_value| match token_or_value {
+            TokenOrValue::Var(var) => {
+                *has_var = true;
+                var.fallback.as_ref().is_none_or(|fallback| {
+                    fallback.v.iter().any(|token| !token.is_whitespace())
+                        && fallback.has_no_empty_var_fallback(has_var)
+                })
+            }
+            TokenOrValue::Env(env) => env
+                .fallback
+                .as_ref()
+                .is_none_or(|fallback| fallback.has_no_empty_var_fallback(has_var)),
+            TokenOrValue::Function(f) => f.arguments.has_no_empty_var_fallback(has_var),
+            TokenOrValue::UnresolvedColor(
+                UnresolvedColor::RGB { alpha, .. } | UnresolvedColor::HSL { alpha, .. },
+            ) => alpha.has_no_empty_var_fallback(has_var),
+            TokenOrValue::UnresolvedColor(UnresolvedColor::LightDark { light, dark }) => {
+                light.has_no_empty_var_fallback(has_var) && dark.has_no_empty_var_fallback(has_var)
+            }
+            _ => true,
+        })
+    }
+
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 }
 

@@ -591,17 +591,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             }
         break;
     }
-    case POLL_TYPE_SOCKET_SHUT_DOWN: {
-            /* The writable event us_socket_reject_sends asked for: what the peer sent is read first,
-             * and the close follows it, as for an error event. A paused owner reads on resume. */
-            struct us_socket_t *rejected = us_internal_socket_follow_adopted((struct us_socket_t *) p);
-            if (UNLIKELY(rejected->send_rejected) && !rejected->ssl && (events & LIBUS_SOCKET_WRITABLE) && !error &&
-                !rejected->flags.is_paused) {
-                us_internal_dispatch_ready_poll(&rejected->p, 1, eof, LIBUS_SOCKET_READABLE);
-                break;
-            }
-        }
-        __attribute__((fallthrough));
+    case POLL_TYPE_SOCKET_SHUT_DOWN:
     case POLL_TYPE_SOCKET: {
             /* We should only use s, no p after this point */
             struct us_socket_t *s = (struct us_socket_t *) p;
@@ -641,6 +631,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     /* Kqueue one-shot writable needs to be re-registered */
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) | LIBUS_SOCKET_WRITABLE);
                     #endif
+                }
+
+                if (UNLIKELY(s->send_rejected) && !s->ssl && !s->flags.is_paused) {
+                    /* The event us_socket_reject_sends asked for, or the one its caller ran under. A rejected
+                     * send leaves nothing of the connection to wait for: this is its hangup. The read loop
+                     * delivers what the peer sent, and the end closes the socket. A paused owner reads on resume. */
+                    us_internal_dispatch_ready_poll(&s->p, 0, eof | LIBUS_POLL_HANGUP, LIBUS_SOCKET_READABLE);
+                    return;
                 }
             }
 
@@ -942,10 +940,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s = us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);
                         return;
                     }
-                    /* The end behind a rejected send is the peer going away, not an end of its stream. */
-                    s = !s->send_rejected ? us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL)
-                        : s->ssl ? us_internal_ssl_on_end_after_rejected_send(s)
-                                 : us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);
+                    s = s->ssl && s->send_rejected ? us_internal_ssl_on_end_after_rejected_send(s)
+                                                   : us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }
                 if (s->flags.allow_half_open && !hangup && s->read_eof) {

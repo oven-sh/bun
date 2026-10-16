@@ -278,15 +278,14 @@ describe.skipIf(skip)("node:http2 seeded short-I/O fuzz", () => {
 describe.concurrent.skipIf(skip)("node:http2 transport write errors", () => {
   // A send() the kernel rejects for good is the only report that the transport is dead. The
   // session must not close it before the loop has read: what the peer sent before is still
-  // queued. With nothing to read, a client session and its request report the errno, and the
-  // process must not exit before they do when the socket is its only handle (the clients
-  // below start no timer to wait).
+  // queued. The process must not exit before the events when the socket is its only handle
+  // (the clients below start no timer to wait).
   //
-  // Node reports a dead transport only from its read side (it drops the status of a failed
-  // write, see ClearOutgoing in node_http2.cc). So bun reports a send errno only when a read
-  // of the socket would return it too: ECONNRESET, ECONNABORTED and ETIMEDOUT keep their
-  // identity, and any other errno is a clean close ("sustained errno" in
-  // socket-syscall-fault.test.ts).
+  // Node reports a dead transport from its read only and drops the status of a failed write:
+  // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1890-L1893
+  // A write from a timer waits for Node's loop, so that read is first. Bun sends at once, and
+  // the errno of the rejected send is the report when a read would return it too. EPIPE names
+  // no cause and is a clean close ("sustained errno" in socket-syscall-fault.test.ts).
   //
   // Each client runs in a subprocess: the fault rules are process-global, so the raw peer
   // has to live in a process that is not faulted.
@@ -327,12 +326,13 @@ describe.concurrent.skipIf(skip)("node:http2 transport write errors", () => {
     return Buffer.concat([header, payload]);
   };
 
-  // The peer stays connected and says nothing after its SETTINGS and the ACK of the client's
-  // (`silent`: nothing at all). When the client prints "ready", the peer writes `answer` and
-  // tells the client so.
+  // The peer stays connected, also after the FIN of the client, and says nothing after its
+  // SETTINGS and the ACK of the client's (`silent`: nothing at all). So only the loop can end
+  // the client's socket. When the client prints "ready", the peer writes `answer` and tells
+  // the client so.
   async function runClient(scenario: string, { silent = false, answer }: { silent?: boolean; answer?: Buffer } = {}) {
     const connection = Promise.withResolvers<net.Socket>();
-    const server = net.createServer(socket => {
+    const server = net.createServer({ allowHalfOpen: true }, socket => {
       socket.on("error", () => {});
       connection.resolve(socket);
       if (silent) return;
@@ -384,8 +384,18 @@ describe.concurrent.skipIf(skip)("node:http2 transport write errors", () => {
   // The timer moves the request out of the read callback that emits the SETTINGS events.
   const fromATimer = (write: string) => `settled(() => setTimeout(() => { ${write} }, 0));`;
 
-  test.each(["ECONNRESET", "ECONNABORTED", "ETIMEDOUT"])("send → %s is reported with its own code", async errno => {
-    expect(await runClient(fromATimer(`reject("send", "${errno}"); request();`))).toEqual(reported(errno));
+  test.each(["ECONNRESET", "ECONNABORTED", "ENOTCONN", "ETIMEDOUT", "ENETDOWN", "ENETUNREACH", "EHOSTUNREACH"])(
+    "send → %s is reported with its own code",
+    async errno => {
+      expect(await runClient(fromATimer(`reject("send", "${errno}"); request();`))).toEqual(reported(errno));
+    },
+  );
+
+  test("send → an errno that only a writable event finds fatal ends the session", async () => {
+    // EPROTOTYPE is retried on writable events, up to a limit: the send that reaches the limit
+    // is made under such an event, which is then the last one for that socket.
+    const events = await runClient(fromATimer(`reject("send", "EPROTOTYPE"); request();`));
+    expect(events).toEqual(["request close " + http2.constants.NGHTTP2_CANCEL, "session close"]);
   });
 
   test("send → EPIPE is a clean close", async () => {
@@ -395,10 +405,11 @@ describe.concurrent.skipIf(skip)("node:http2 transport write errors", () => {
     expect(events).toEqual(["request close " + http2.constants.NGHTTP2_CANCEL, "session close"]);
   });
 
-  test("send → ECONNRESET for a request made inside a read-driven event", async () => {
-    // A close made under the loop's read of this socket ended as a bogus 'write EBADF'.
+  test("send → ECONNRESET for a request made inside a read-driven event is a clean close", async () => {
+    // What a read queued is sent before the session reads again, in Node as well, and Node
+    // drops the status of that send: https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L981-L984
     const events = await runClient(`settled(() => { reject("send", "ECONNRESET"); request(); });`);
-    expect(events).toEqual(reported("ECONNRESET"));
+    expect(events).toEqual(["request close " + http2.constants.NGHTTP2_CANCEL, "session close"]);
   });
 
   test("send → ECONNRESET inside the connect flush", async () => {
@@ -452,9 +463,9 @@ describe.concurrent.skipIf(skip)("node:http2 transport write errors", () => {
        fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1 });`,
     ],
   ])("a server session whose response %s is rejected closes quietly", async (_, size, rejectWrites) => {
-    // A client that vanishes is routine for a server, and it has nobody to report it to.
-    // Node's server sessions close without an 'error', and an 'error' on a stream with no
-    // listener would end the process. This server attaches no 'error' listener at all.
+    // The answer from inside the 'stream' handler is a send of the session's read: a clean
+    // close, as in Node. This server attaches no 'error' listener at all, so an 'error' on
+    // the stream would end the process.
     const fixture = `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
       const http2 = require("node:http2");

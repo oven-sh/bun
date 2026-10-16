@@ -561,7 +561,7 @@ static int us_internal_classify_failed_send(struct us_socket_t *s) {
      * traffics in raw negative WSA values on this platform (see
      * SocketEmitEndNT / failWrite, which shape unnameable ones as
      * ECONNRESET), and a real code keeps fatal sends distinguishable from
-     * the legacy -1 closed/shutdown sentinel so the h2 parser can latch
+     * the legacy -1 closed/shutdown sentinel so the h2 parser can act on
      * them (flood tests hung on Windows because a fatal send looked like
      * backpressure). Keep 1 as the floor for a zero/garbage WSA value.
      * See a5e7ba5905 before widening what counts as fatal

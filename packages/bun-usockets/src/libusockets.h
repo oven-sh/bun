@@ -678,7 +678,8 @@ int us_socket_raw_write(us_socket_r s, const char *data, int length);
 int us_socket_write_check_error(us_socket_r s, const char *data, int length, int *fatal_write_error);
 /* The owner of a plain TCP socket got a fatal code from us_socket_write_check_error or
  * us_socket_raw_writev_check_error. This ends the write side only, as the TLS engine does for a
- * rejected send of its own. The loop reads what the peer sent and then closes with an error code. */
+ * rejected send of its own. The loop reads what the peer sent and then closes: with the error of
+ * that read, or clean. The owner has the code of its send. */
 void us_socket_reject_sends(us_socket_r s) nonnull_fn_decl;
 
 void us_socket_timeout(us_socket_r s, unsigned int seconds) nonnull_fn_decl;

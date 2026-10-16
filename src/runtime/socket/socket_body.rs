@@ -55,11 +55,12 @@ fn js_loop_ctx() -> bun_io::EventLoopCtx {
 }
 
 /// The error behind a close that the event loop initiated: the `recv()`
-/// failure, `SO_ERROR` or rejected send that uSockets closed the socket with
-/// (`> 2`, see `on_close`). uSockets reports it in the platform's own
-/// numbering: an errno on POSIX, a WSA code (`WSAECONNRESET` = 10054) on
-/// Windows. `sys::Error` stores `SystemErrno` discriminants, so the WSA code
-/// has to be mapped first or the error reaches JS with no `code` at all.
+/// failure or `SO_ERROR` that uSockets closed the socket with (`> 2`, see
+/// `on_close`). uSockets reports it in the platform's own numbering: an errno
+/// on POSIX, a WSA code (`WSAECONNRESET` = 10054) on Windows. `sys::Error`
+/// stores `SystemErrno` discriminants, so the WSA code has to be mapped first
+/// or the error reaches JS with no `code` at all. The code of a rejected send
+/// (`NativeCallbacks::close_code`) has the same numbering.
 fn read_error_from_close_code(code: c_int) -> sys::Error {
     #[cfg(not(windows))]
     {
@@ -90,11 +91,10 @@ pub(crate) extern "C" fn Bun__socketReadErrorFromCloseCode(
     <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(code), global)
 }
 
-/// The close code to report for a send that the kernel rejected with `errno`,
-/// when the loop then closed the socket with `loop_code`. 0 is a clean close.
-/// Only an errno that a read of the socket would also return is reported: the
-/// peer-gone set of `us_socket_write_check_error` without `EPIPE`.
-pub(crate) fn rejected_send_close_code(errno: c_int, loop_code: c_int) -> c_int {
+/// The close code that stands for a send the kernel rejected with `errno`, or 0 when that
+/// errno names no cause: `EPIPE` says only that the connection had ended before. The rest is
+/// the peer-gone set of `us_socket_write_check_error`, and a read would return the same code.
+pub(crate) fn rejected_send_close_code(errno: c_int) -> c_int {
     use sys::SystemErrno as E;
     #[cfg(not(windows))]
     let known = E::init(i64::from(errno));
@@ -111,15 +111,7 @@ pub(crate) fn rejected_send_close_code(errno: c_int, loop_code: c_int) -> c_int 
             | E::ENETUNREACH
             | E::EHOSTUNREACH,
         ) => errno,
-        // The BSDs fail every send on a disconnected socket with EPIPE and keep the cause
-        // as the socket error, which the loop read. linux sends EPIPE when the peer's FIN
-        // came first: an EOF.
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        Some(E::EPIPE) => loop_code,
-        _ => {
-            let _ = loop_code;
-            0
-        }
+        _ => 0,
     }
 }
 
@@ -974,9 +966,9 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     /// The kernel rejected a send of this socket's owner. Nothing closes under
-    /// the writer: the write side ends, and the loop closes the socket with an
-    /// error code after it has read what the peer sent. The owner says what
-    /// that close means (`NativeCallbacks::close_code`).
+    /// the writer: the write side ends, and the loop closes the socket after it
+    /// has read what the peer sent. The owner says what a clean close means
+    /// (`NativeCallbacks::close_code`).
     pub(crate) fn reject_sends(&self) {
         self.socket.get().reject_sends();
     }
@@ -2329,13 +2321,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         // CloseCode enum (0=clean, 1=failure/RST, 2=fast-shutdown); when the
         // close was driven by a recv() failure or a poll error (loop.c's
         // EPOLLERR/EV_ERROR branch, which reports SO_ERROR) it's the actual
-        // error code. So is the code an owner gives for a send the kernel
-        // rejected (`NativeCallbacks::close_code`). No producer can yield
-        // EPERM(1)/ENOENT(2): recv never returns them and the others clamp
-        // them away. So values >2 are read errors and 0/1/2 are
-        // self-initiated closes that must not surface as a JS read error
-        // (matching Node's onStreamRead, which only sees errors that came
-        // from uv_read_cb).
+        // error code. Neither producer can yield EPERM(1)/ENOENT(2) — recv
+        // never returns them and the poll-error branch clamps them away — so
+        // values >2 are real read errors and 0/1/2 are self-initiated closes
+        // that must not surface as a JS read error (matching Node's
+        // onStreamRead, which only sees errors that came from uv_read_cb).
+        // `NativeCallbacks::close_code` reports a rejected send as such an error.
         if err > 2 {
             js_error =
                 <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(err), &global);
@@ -4217,7 +4208,7 @@ impl NativeCallbacks {
         true
     }
     /// The close code for JS when the loop closed the socket with `code`. An owner whose
-    /// send the kernel rejected knows what that close means.
+    /// send the kernel rejected knows what a clean close means.
     pub(crate) fn close_code(&self, code: c_int) -> c_int {
         match self {
             NativeCallbacks::H2(h2) => h2.close_code_after_rejected_send(code),

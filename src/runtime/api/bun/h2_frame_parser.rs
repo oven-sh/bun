@@ -180,6 +180,22 @@ impl Drop for NativeSocket {
     }
 }
 
+/// The first native send of a session that the kernel rejected. The socket stays open until
+/// the loop has read what the peer sent before. Node reports a reset from its read only and
+/// drops the status of a failed write, so its write order decides what the close reports:
+/// https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1890-L1893
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RejectedSend {
+    None,
+    /// The send followed a read of the peer's bytes, where Node sends as well:
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L981-L984
+    /// Every frame counts as sent from then on, and the close is what the loop reads.
+    Dropped,
+    /// The send came first. Every other write of Node's waits for its loop, so there its read
+    /// is first and reports the reset: this errno stands for that read at a clean end.
+    Errno(i32),
+}
+
 unsafe extern "C" {
     safe fn Bun__wrapAbortError(global_object: &JSGlobalObject, cause: JSValue) -> JSValue;
     /// One-call materialization of a decoded header block: returns the
@@ -1158,11 +1174,9 @@ pub(crate) struct H2FrameParser {
     has_nonnative_backpressure: Cell<bool>,
     /// True while flush() has bytes out in an onWrite dispatch to a JS-backed socket.
     js_socket_flushing: Cell<bool>,
-    /// The errno of the first native send that the kernel rejected, or 0. Only that send has
-    /// the cause: linux answers the next one with EPIPE.
-    rejected_send_errno: Cell<i32>,
-    /// The peer's bytes arrived after `rejected_send_errno` was set: it answered before it left.
-    read_after_rejected_send: Cell<bool>,
+    rejected_send: Cell<RejectedSend>,
+    /// `on_native_read` is on the stack.
+    in_native_read: Cell<bool>,
     /// An outbound header block the HPACK encoder could not emit. Latched once; the deferred
     /// tick reports it, because it is detected inside a user submit call.
     pending_header_compression_error: Cell<bool>,
@@ -2558,14 +2572,7 @@ impl H2FrameParser {
         result: i32,
     ) -> (usize, usize) {
         let total = pending.len() - offset;
-        let written: usize = if result < 0 {
-            if Self::is_transport_fatal_write_result(result) {
-                self.note_transport_write_fatal(result);
-            }
-            0
-        } else {
-            usize::try_from(result).expect("int cast")
-        };
+        let written = self.native_written(result, total);
         if written < total {
             // The rest goes back in front of whatever a re-entrant write buffered meanwhile.
             let reentrant_offset = self.write_buffer_offset.replace(offset + written);
@@ -2591,20 +2598,13 @@ impl H2FrameParser {
             let result: i32 = socket.write_maybe_corked(
                 &self.write_buffer.get().slice()[self.write_buffer_offset.get()..],
             );
-            let written: u32 = if result < 0 {
-                if Self::is_transport_fatal_write_result(result) {
-                    self.note_transport_write_fatal(result);
-                }
-                0
-            } else {
-                u32::try_from(result).expect("int cast")
-            };
+            let written = self.native_written(result, buffer_len);
 
-            if (written as usize) < buffer_len {
+            if written < buffer_len {
                 self.write_buffer_offset
-                    .set(self.write_buffer_offset.get() + written as usize);
+                    .set(self.write_buffer_offset.get() + written);
                 bun_output::scoped_log!(H2FrameParser, "_genericFlush {}", written);
-                return written as usize;
+                return written;
             }
 
             // all the buffer was written! reset things
@@ -2637,17 +2637,10 @@ impl H2FrameParser {
                 let result: i32 = socket.write_maybe_corked(
                     &self.write_buffer.get().slice()[self.write_buffer_offset.get()..],
                 );
-                let written: u32 = if result < 0 {
-                    if Self::is_transport_fatal_write_result(result) {
-                        self.note_transport_write_fatal(result);
-                    }
-                    0
-                } else {
-                    u32::try_from(result).expect("int cast")
-                };
-                if (written as usize) < buffered_len {
+                let written = self.native_written(result, buffered_len);
+                if written < buffered_len {
                     self.write_buffer_offset
-                        .set(self.write_buffer_offset.get() + written as usize);
+                        .set(self.write_buffer_offset.get() + written);
 
                     // we still have more to buffer and even more now
                     let _ = self.write_buffer.with_mut(|wb| wb.write(bytes));
@@ -2667,16 +2660,9 @@ impl H2FrameParser {
             self.write_buffer.with_mut(|wb| wb.clear());
             {
                 let result: i32 = socket.write_maybe_corked(bytes);
-                let written: u32 = if result < 0 {
-                    if Self::is_transport_fatal_write_result(result) {
-                        self.note_transport_write_fatal(result);
-                    }
-                    0
-                } else {
-                    u32::try_from(result).expect("int cast")
-                };
-                if (written as usize) < bytes.len() {
-                    let pending = &bytes[written as usize..];
+                let written = self.native_written(result, bytes.len());
+                if written < bytes.len() {
+                    let pending = &bytes[written..];
                     // ops not all data was sent, lets buffer again
                     let _ = self.write_buffer.with_mut(|wb| wb.write(pending));
                     global.vm().deprecated_report_extra_memory(pending.len());
@@ -2698,16 +2684,9 @@ impl H2FrameParser {
             return true;
         }
         let result: i32 = socket.write_maybe_corked(bytes);
-        let written: u32 = if result < 0 {
-            if Self::is_transport_fatal_write_result(result) {
-                self.note_transport_write_fatal(result);
-            }
-            0
-        } else {
-            u32::try_from(result).expect("int cast")
-        };
-        if (written as usize) < bytes.len() {
-            let pending = &bytes[written as usize..];
+        let written = self.native_written(result, bytes.len());
+        if written < bytes.len() {
+            let pending = &bytes[written..];
             // ops not all data was sent, lets buffer again
             let _ = self.write_buffer.with_mut(|wb| wb.write(pending));
             global.vm().deprecated_report_extra_memory(pending.len());
@@ -3025,26 +3004,35 @@ impl H2FrameParser {
     /// peer sent first. The write side ends, and the loop closes the socket after that read.
     fn note_transport_write_fatal(&self, result: i32) {
         if let BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) = self.native_socket.get() {
-            if self.rejected_send_errno.get() == 0 {
-                self.rejected_send_errno.set(-result);
+            if self.rejected_send.get() == RejectedSend::None {
+                self.rejected_send.set(if self.in_native_read.get() {
+                    RejectedSend::Dropped
+                } else {
+                    RejectedSend::Errno(-result)
+                });
             }
             socket.get().reject_sends();
         }
     }
 
-    /// What the loop's close with `code` means for JS once a send was rejected. A client hears
-    /// the errno of that send when the peer sent nothing after it. After an answer of the peer
-    /// the close is clean, as in Node. A server closes quietly: an unheard stream 'error'
-    /// would end the process.
+    /// How many of the `len` bytes of a native write need no retry.
+    fn native_written(&self, result: i32, len: usize) -> usize {
+        if Self::is_transport_fatal_write_result(result) {
+            self.note_transport_write_fatal(result);
+        }
+        if self.rejected_send.get() == RejectedSend::Dropped {
+            return len;
+        }
+        usize::try_from(result.max(0)).expect("int cast")
+    }
+
+    /// The close code for JS when the loop closed the socket with `code`. An error of the
+    /// loop's own read is the report already.
     pub(crate) fn close_code_after_rejected_send(&self, code: core::ffi::c_int) -> core::ffi::c_int {
-        let errno = self.rejected_send_errno.get();
-        if errno == 0 {
-            return code;
+        match self.rejected_send.get() {
+            RejectedSend::Errno(errno) if code == 0 => crate::socket::rejected_send_close_code(errno),
+            _ => code,
         }
-        if self.is_server.get() || self.read_after_rejected_send.get() {
-            return 0;
-        }
-        crate::socket::rejected_send_close_code(errno, code)
     }
 
     pub(crate) fn on_auto_flush(&self) -> bool {
@@ -3153,10 +3141,7 @@ impl H2FrameParser {
                         return 0usize;
                     }
                     let w = socket.get().write_vectored_raw(iov);
-                    if Self::is_transport_fatal_write_result(w) {
-                        self.note_transport_write_fatal(w);
-                    }
-                    if w < 0 { 0 } else { w as usize }
+                    self.native_written(w, total)
                 }),
             _ => {
                 // Socket changed under us (detach mid-call): degrade to the copy path
@@ -7365,11 +7350,15 @@ impl H2FrameParser {
     pub(crate) fn on_native_read(&self, data: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(H2FrameParser, "onNativeRead");
         let _keepalive = self.keepalive();
-        if self.rejected_send_errno.get() != 0 {
-            self.read_after_rejected_send.set(true);
+        if let RejectedSend::Errno(_) = self.rejected_send.get() {
+            // The peer answered before it left. The flush counts what waits as sent.
+            self.rejected_send.set(RejectedSend::Dropped);
+            self.register_auto_flush();
         }
+        let outer = self.in_native_read.replace(true);
         // Engine-driven inbound: all reads flow through the rewritten connection engine.
         self.rewrite_read(data);
+        self.in_native_read.set(outer);
         // What a frame callback left pending stopped the engine (`should_stop`);
         // it belongs to the socket dispatch that delivered these bytes.
         if self.left_exception.replace(false) {
@@ -7404,11 +7393,6 @@ impl H2FrameParser {
         let _keepalive = self.keepalive();
         self.native_socket.note_socket_closed();
         self.detach_native_socket();
-        // What the transport did not take goes to the session's onWrite, which counts it as
-        // sent and ends a half-open socket. Later: this runs under the socket's close dispatch.
-        if self.has_backpressure() {
-            self.register_auto_flush();
-        }
     }
 
     #[bun_jsc::host_fn(method)]
@@ -7528,8 +7512,8 @@ impl H2FrameParser {
             hpack: JsCell::new(None),
             has_nonnative_backpressure: Cell::new(false),
             js_socket_flushing: Cell::new(false),
-            rejected_send_errno: Cell::new(0),
-            read_after_rejected_send: Cell::new(false),
+            rejected_send: Cell::new(RejectedSend::None),
+            in_native_read: Cell::new(false),
             pending_header_compression_error: Cell::new(false),
             frames_sent_legacy: Cell::new(0),
             engine_frames_received: Cell::new(0),

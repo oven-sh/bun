@@ -105,6 +105,9 @@ public:
 
     bool isExpired() const;
 
+    // Every field has the same value in both cookies.
+    bool fieldsEqual(const Cookie&) const;
+
     void appendTo(JSC::VM& vm, StringBuilder& builder) const;
     String toString(JSC::VM& vm) const;
     JSC::JSValue toJSON(JSC::VM& vm, JSC::JSGlobalObject*) const;

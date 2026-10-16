@@ -166,6 +166,22 @@ bool Cookie::isExpired() const
     return currentTime > m_expires;
 }
 
+bool Cookie::fieldsEqual(const Cookie& other) const
+{
+    // A null string and an empty string print and serialize the same.
+    return equalIgnoringNullity(m_name, other.m_name)
+        && equalIgnoringNullity(m_value, other.m_value)
+        && equalIgnoringNullity(m_domain, other.m_domain)
+        && equalIgnoringNullity(m_path, other.m_path)
+        && m_expires == other.m_expires
+        && m_secure == other.m_secure
+        && m_sameSite == other.m_sameSite
+        && m_httpOnly == other.m_httpOnly
+        && m_partitioned == other.m_partitioned
+        // NaN is "no Max-Age".
+        && (m_maxAge == other.m_maxAge || (std::isnan(m_maxAge) && std::isnan(other.m_maxAge)));
+}
+
 String Cookie::toString(JSC::VM& vm) const
 {
     StringBuilder builder;

@@ -67,7 +67,7 @@ impl Declaration {
 /// them apart. Known properties are fully identified by their tag.
 fn same_custom_name(a: &PropertyId, b: &PropertyId) -> bool {
     match (a, b) {
-        (PropertyId::Custom(a), PropertyId::Custom(b)) => a == b,
+        (PropertyId::Custom(a), PropertyId::Custom(b)) => css::generic::eql(a, b),
         _ => true,
     }
 }

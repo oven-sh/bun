@@ -3719,6 +3719,21 @@ describe("expect()", () => {
       expect({ a: o, b: o }).toMatchObject({ a: o, b: o });
     });
 
+    test("a getter that throws inside a negated matcher propagates", () => {
+      const received = {
+        a: {
+          get x() {
+            throw new Error("boom");
+          },
+        },
+        b: { y: 1 },
+      };
+      expect(() => expect(received).toMatchObject({ a: expect.not.objectContaining({ x: 1 }), b: { y: 1 } })).toThrow(
+        "boom",
+      );
+      expect(() => expect(received).toEqual({ a: expect.not.objectContaining({ x: 1 }), b: { y: 1 } })).toThrow("boom");
+    });
+
     test("a real cycle still matches", () => {
       /** @type {any} */
       const node = { id: 1 };

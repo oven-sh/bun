@@ -618,6 +618,7 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSV
 {
     ExpectFlags flags = ExpectFlags();
     AsymmetricMatcherResult result = matchAsymmetricMatcherAndGetFlags(globalObject, matcherProp, otherProp, throwScope, flags);
+    RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
     if (result != AsymmetricMatcherResult::NOT_MATCHER && (flags & FLAG_NOT)) {
         result = (result == AsymmetricMatcherResult::PASS) ? AsymmetricMatcherResult::FAIL : AsymmetricMatcherResult::PASS;
     }
@@ -2170,32 +2171,6 @@ void Bun::DeferredMatcherWrites::apply(JSGlobalObject* globalObject, ThrowScope&
     }
 }
 
-/**
- * @brief `Bun.deepMatch(a, b)`
- *
- * @note
- * `stack` holds the (object, subset) pairs on the current recursion path.
- * A subset object that is already on the path is a cycle in the pattern. It
- * matches only the object it was paired with on the path. Any other pair is
- * compared: the same object can sit under several keys.
- *
- * `gcBuffer` ensures JSC's stack scan does not come up empty-handed and free
- * properties currently within those stacks. Likely unnecessary, but better to
- * be safe tnan sorry
- *
- * @tparam enableAsymmetricMatchers
- * @param objValue
- * @param subsetValue
- * @param globalObject
- * @param throwScope
- * @param gcBuffer
- * @param stack
- * @param matcherWrites
- * @param isMatchingObjectContaining
- *
- * @return true
- * @return false
- */
 template<bool enableAsymmetricMatchers>
 bool Bun__deepMatch(
     JSValue objValue,
@@ -2220,8 +2195,7 @@ bool Bun__deepMatch(
     // fast path for reference equality.
     if (objValue == subsetValue) return true;
 
-    // A subset object that is already on the path is a cycle in the pattern.
-    // It matches only the object it was paired with when the cycle started.
+    // A subset object already on the path is a cycle. It matches only its first partner.
     for (const auto& [ancestorObj, ancestorSubset] : stack) {
         if (ancestorSubset == subsetValue) return ancestorObj == objValue;
     }

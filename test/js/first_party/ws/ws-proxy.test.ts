@@ -299,12 +299,13 @@ describe("ws package through HTTP CONNECT proxy", () => {
     );
   });
 
-  // The native client has accepted the 101, so giving up on the request has to close the WebSocket too.
-  test.each<{ call: string; listener: string; events: ClientEvent[] }>([
-    { call: "controller.abort()", listener: "upgrade", events: failed({ error: "The operation was aborted", code: "ABORT_ERR" }) }, // prettier-ignore
-    { call: "req.destroy()", listener: "upgrade", events: failed({ error: "socket hang up", code: "ECONNRESET" }) },
-    { call: "req.destroy()", listener: "open", events: [{ close: [1006, Buffer.alloc(0)] }] },
-  ])("$call in an '$listener' listener closes the socket", async ({ call, listener, events }) => {
+  // The native client has accepted the 101, so giving up on the request has to close the WebSocket too. As with npm ws
+  // on Node, there's no 'error'.
+  test.each([
+    { call: "controller.abort()", listener: "upgrade" },
+    { call: "req.destroy()", listener: "upgrade" },
+    { call: "req.destroy()", listener: "open" },
+  ])("$call in an '$listener' listener emits 'close' 1006 once", async ({ call, listener }) => {
     using recorded = await startRecordingProxy();
     await using target = await createPeer();
     const controller = new AbortController();
@@ -314,12 +315,17 @@ describe("ws package through HTTP CONNECT proxy", () => {
       signal: controller.signal,
       finishRequest: request => void (req = request).end(),
     } as ClientOptions);
+    const events: string[] = [];
+    for (const name of ["upgrade", "open", "error", "close"]) ws.on(name, () => events.push(name));
     const seen = wsEvents(ws);
-    const requestClosed = new Promise(resolve => req.on("close", resolve));
     ws.on(listener, () => (call === "req.destroy()" ? req.destroy() : controller.abort()));
-    await requestClosed;
+    expect(await seen).toEqual([{ close: [1006, Buffer.alloc(0)] }]);
+    // Once the target has seen the connection end, nothing is left that could emit another event.
+    await (
+      await target.connection()
+    ).ended;
     expect(() => (ws.terminate(), ws.close())).not.toThrow();
-    expect(await seen).toEqual(events);
+    expect(events).toEqual(["upgrade", "open", "close"]);
     expect(getEventListeners(controller.signal, "abort")).toEqual([]);
   });
 
@@ -672,7 +678,13 @@ describe("'error' when the proxy can't be reached", () => {
         const ws = new WebSocket(process.env.TARGET, { proxy: process.env.PROXY });
         ws.on("error", error => console.log(JSON.stringify((${details})(error))));
       `,
-        { NO_PROXY: "127.0.0.1", TARGET: `ws://127.0.0.1:${port}`, PROXY: `http://${unresolvable("proxy")}:9` },
+        // Both spellings: they are one variable on Windows, and runClientScript() clears both.
+        {
+          NO_PROXY: "127.0.0.1",
+          no_proxy: "127.0.0.1",
+          TARGET: `ws://127.0.0.1:${port}`,
+          PROXY: `http://${unresolvable("proxy")}:9`,
+        },
       );
       expect(lines.map(line => JSON.parse(line))).toEqual([refused(port)]);
       expect(exitCode).toBe(0);

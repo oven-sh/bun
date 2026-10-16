@@ -53,6 +53,7 @@ const kNative = Symbol("kNative");
 const kNativeOptions = Symbol("kNativeOptions");
 const kOptions = Symbol("kOptions");
 const kRemoveAbortListener = Symbol("kRemoveAbortListener");
+const kProxyUrl = Symbol("kProxyUrl");
 const kRequest = Symbol("kRequest");
 const kResponse = Symbol("kResponse");
 const kStatusCode = Symbol("status-code");
@@ -395,6 +396,8 @@ interface WebSocketDuplex extends Duplex {
 // node:http is almost the entire cost of require("ws"); load it on first use.
 let http: HttpModule | undefined;
 let kHeaderSource: symbol | undefined;
+let kQueuedReadLength: symbol | undefined;
+let kRememberPeer: symbol | undefined;
 function lazyHttp(): HttpModule {
   return (http ??= require("node:http"));
 }
@@ -1053,6 +1056,7 @@ class WebSocket extends EventEmitter {
   declare [kHandshakeTimer]: Timer | undefined;
   declare [kIdentityError]: unknown;
   declare [kNative]: NativeClient | NativeServer | null;
+  declare [kProxyUrl]: string | undefined;
   declare [kRequest]: ClientRequest | undefined;
   declare [kTransport]: Transport;
   declare [kWriteCallback]: SendCallback | undefined;
@@ -1155,9 +1159,18 @@ class WebSocket extends EventEmitter {
   setSocket(socket: ServerSocket, head: Buffer, options: SetSocketOptions): boolean {
     const maxPayload = Math.max(options.maxPayload | 0, 0);
 
+    // node:http does this itself for an 'upgrade' listener, but handleUpgrade() can also be called from a 'request' one.
+    if (this._isServer) socket[(kRememberPeer ??= require("internal/http").kRememberPeer as symbol)]?.();
+
     // The native server socket only sees data received after it adopts the connection. If handleUpgrade() was called
-    // late, node:http may already have read frames into `head` or `socket`'s buffer, so use the stream transport.
-    if (options[kResponse] && head.length === 0 && socket.readableLength === 0) {
+    // late, node:http may already have read frames into `head` or `socket`'s buffer, or be about to push them into that
+    // buffer, so use the stream transport.
+    if (
+      options[kResponse] &&
+      head.length === 0 &&
+      socket.readableLength === 0 &&
+      !socket[(kQueuedReadLength ??= require("internal/http").kQueuedReadLength as symbol)]
+    ) {
       const native = upgradeWebSocket(
         options[kResponse],
         this,
@@ -1544,8 +1557,17 @@ function settleCallbacks(websocket: WebSocket, failed: boolean): void {
   if (callbacks === null) return;
 
   websocket[kCallbacks] = null;
-  const err = failed ? $ERR_STREAM_DESTROYED("write") : null;
-  for (let i = 0; i < callbacks.length; i++) callbacks[i](err);
+  runCallbacks(callbacks, 0, failed ? $ERR_STREAM_DESTROYED("write") : null);
+}
+
+function runCallbacks(callbacks: SendCallback[], start: number, err: Error | null): void {
+  let i = start;
+  try {
+    for (; i < callbacks.length; i++) callbacks[i](err);
+  } finally {
+    // One of them threw. In node:stream each write has its own callback, so the rest still run.
+    if (++i < callbacks.length) process.nextTick(runCallbacks, callbacks, i, err);
+  }
 }
 
 function sendAfterClose(websocket: WebSocket, data: any, cb: SendCallback | undefined): void {
@@ -1763,10 +1785,6 @@ const serverHandlers: ServerHandlers = {
   close(code, reason) {
     if (code < 0) receiverOnError(this, createReceiverError(serverFailures[-code]!, reason.toString()));
     else receiverOnConclude(this, code, reason);
-
-    // The native side has just written its Close frame. If that flushed everything, it shut the socket down at once
-    // and no drain event follows.
-    if (code !== 1006) serverHandlers.drain.$call(this);
   },
 };
 
@@ -1801,6 +1819,7 @@ const clientHandlers: ClientHandlers = {
 
     // node:http drops the request's timeout once the response is an upgrade, even if an 'upgrade' listener throws.
     clearTimeout(this[kHandshakeTimer]);
+    req.upgradeOrConnect = true;
 
     if (this.listenerCount("upgrade") > 0) {
       const res = makeHandshakeResponse(statusCode, statusMessage, rawHeaders);
@@ -1809,15 +1828,21 @@ const clientHandlers: ClientHandlers = {
       res.push(null);
       this.emit("upgrade", res);
 
-      // The user may have closed the connection from a listener of the `'upgrade'` event, or destroyed the request.
-      if (this.readyState !== CONNECTING || req.destroyed) return;
+      // The user may have closed the connection from a listener of the `'upgrade'` event.
+      if (this.readyState !== CONNECTING) {
+        releaseNative(req);
+        return;
+      }
     }
 
-    if (!validateUpgrade(this, req, rawHeaders, headerValue(rawHeaders, "upgrade"))) return;
+    if (!validateUpgrade(this, req, rawHeaders, headerValue(rawHeaders, "upgrade"))) {
+      // abortHandshake() can't do this if a listener has already destroyed the request.
+      releaseNative(req);
+      return;
+    }
 
     // From here on the WebSocket owns the connection.
     req[kNative] = null;
-    req.upgradeOrConnect = true;
     this[kRequest] = req;
 
     return { deflate: nativeDeflateParams(this) };
@@ -1861,16 +1886,21 @@ const clientHandlers: ClientHandlers = {
     if (!req.destroyed) {
       req.destroyed = true;
       req.emit("close");
+    } else if (this._readyState === OPEN) {
+      this.terminate();
     }
   },
   error(error, viaProxy) {
     const { code } = error;
 
     if (this._readyState !== CONNECTING) {
-      receiverOnError(
-        this,
-        code! in receiverErrors ? createReceiverError(code as ReceiverErrorCode, error.$detail) : error,
-      );
+      // After 'open', upstream only emits 'error' for what its Receiver rejects. Its socketOnError() destroys the socket
+      // without an event, and 'close' follows with 1006.
+      if (code! in receiverErrors) {
+        receiverOnError(this, createReceiverError(code as ReceiverErrorCode, error.$detail));
+      } else if (this._readyState === OPEN) {
+        this._readyState = CLOSING;
+      }
       return;
     }
 
@@ -1886,8 +1916,8 @@ const clientHandlers: ClientHandlers = {
     this._req = null;
     const identityError = code === "ERR_TLS_CERT_ALTNAME_INVALID" && this[kIdentityError];
     // Through a proxy, the proxy is the only host the client looks up and connects to.
-    const proxy = viaProxy ? req?.[kNativeOptions].proxy : undefined;
-    const dialled = proxy ? String((proxy as ProxyOptions).url ?? proxy) : native.url;
+    const proxyUrl = viaProxy ? this[kProxyUrl] : undefined;
+    const dialled = proxyUrl !== undefined && URL.canParse(proxyUrl) ? proxyUrl : native.url;
     emitErrorAndClose(this, (identityError as Error) || connectError(dialled, error));
   },
   // The peer's Close frame was received and ours was sent.
@@ -1916,10 +1946,14 @@ const clientHandlers: ClientHandlers = {
     // emitClose() fails the ones that are left.
     const callbacks = (this[kCallbacks] ??= []);
 
+    let called = false;
+
     callbacks.push(cb);
     socket.write(chunk, err => {
-      if (this[kCallbacks] !== callbacks) return;
+      // node:net on Bun also calls a callback again if a later one threw while the socket was being destroyed.
+      if (called || this[kCallbacks] !== callbacks) return;
 
+      called = true;
       callbacks.shift();
       cb(err);
     });
@@ -2325,9 +2359,14 @@ function extractAgentOptions(agent: Agent): {
     // https-proxy-agent overwrites this header with the URL's credentials. The native client prefers the header.
     const { username, password } = new URL(proxyUrl);
     if ((username || password) && $isObject(headers)) {
-      headers = { ...headers };
-      for (const name of Object.keys(headers)) {
-        if (name.toLowerCase() === "proxy-authorization") delete headers[name];
+      if (headers instanceof Headers) {
+        headers = new Headers(headers);
+        headers.delete("proxy-authorization");
+      } else {
+        headers = { ...headers };
+        for (const name of Object.keys(headers)) {
+          if (name.toLowerCase() === "proxy-authorization") delete headers[name];
+        }
       }
     }
 
@@ -2443,7 +2482,15 @@ class ClientRequest extends EventEmitter {
   flushHeaders(): void {}
   setNoDelay(): void {}
   setSocketKeepAlive(): void {}
-  setTimeout(): this {
+  // `handshakeTimeout` is this request's timeout in node:http, so an 'unexpected-response' listener can change it or turn
+  // it off. Without `handshakeTimeout` upstream doesn't listen for 'timeout', and nothing happens.
+  setTimeout(msecs?: number): this {
+    const websocket = this[kWebSocket];
+
+    if (websocket._req === this && websocket[kHandshakeTimer] !== undefined) {
+      clearTimeout(websocket[kHandshakeTimer]);
+      websocket[kHandshakeTimer] = msecs ? setTimeout(handshakeOnTimeout, msecs, websocket) : undefined;
+    }
     return this;
   }
   write(): boolean {
@@ -2498,9 +2545,11 @@ class ClientRequest extends EventEmitter {
 
     this.destroyed = true;
 
-    if (this.upgradeOrConnect) {
-      // Called from an 'open' listener. node:http destroys the socket, which the WebSocket now uses.
-      this[kWebSocket].terminate();
+    if (this.upgradeOrConnect && !this[kAborted]) {
+      // Called from an 'upgrade' or 'open' listener. node:http destroys the socket, which the WebSocket uses from here
+      // on. In an 'upgrade' listener upstream hasn't looked at the response yet and still emits 'open', so
+      // clientHandlers.open() does it then.
+      if (this[kWebSocket].readyState !== CONNECTING) this[kWebSocket].terminate();
       process.nextTick(emitRequestClose, this);
       return this;
     }
@@ -2947,6 +2996,10 @@ function initAsClient(
       : proxyTls;
     nativeOptions.proxy =
       wrapped === proxyTls ? proxy : ({ __proto__: proxy, tls: wrapped } as unknown as ProxyOptions);
+    // For connectError(). The caller may change or reuse its `proxy` object before the connection fails.
+    websocket[kProxyUrl] = String(
+      ($isObject(proxy) && getIgnoringObjectPrototype(proxy as ProxyOptions, "url")) || proxy,
+    );
   }
 
   let tls = opts.tls;

@@ -1274,13 +1274,17 @@ impl<const SSL: bool> WebSocket<SSL> {
         if !self.options.ws_mode {
             // Resume reading, or we'd never see the peer's Close frame or FIN.
             self.resume();
-            match self.io() {
-                Io::Socket => self.tcp.get().set_timeout(close_timeout_seconds()),
-                Io::Tunnel(tunnel) => tunnel.set_timeout(close_timeout_seconds()),
-                Io::Stream => {}
-            }
+            self.arm_close_timeout();
         }
         self.send_control_frame(Opcode::Close, payload);
+    }
+
+    fn arm_close_timeout(&self) {
+        match self.io() {
+            Io::Socket => self.tcp.get().set_timeout(close_timeout_seconds()),
+            Io::Tunnel(tunnel) => tunnel.set_timeout(close_timeout_seconds()),
+            Io::Stream => {}
+        }
     }
 
     fn send_control_frame(&self, opcode: Opcode, payload: &[u8]) {
@@ -1325,6 +1329,11 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     /// Shared tail of the writable handlers (direct socket and proxy tunnel).
     fn flush_send_queue(&self) {
+        // Data queued before close() goes out first. As long as the peer keeps reading it, the
+        // close timeout starts over, or a slow upload would be cut off.
+        if self.close_sent.get() && !self.options.ws_mode && self.has_backpressure() {
+            self.arm_close_timeout();
+        }
         if self.send_buffer.borrow().readable_length() != 0 {
             self.send_buffer_out();
         }
@@ -1348,7 +1357,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.flush_send_queue();
     }
 
-    /// Only `send_close` sets a timeout.
+    /// Only `arm_close_timeout` sets a timeout.
     pub fn handle_timeout(&self, _socket: Socket<SSL>) {
         self.finish(Outcome::Closed);
     }

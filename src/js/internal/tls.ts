@@ -363,8 +363,12 @@ function stripTls13CipherNames(ciphers: string): { cipherList: string; tls13Only
 
 // The native `ca` replaces the default store, so the CAs of an archive can only extend a `ca` the caller gave.
 function unsealPfxForNative(tls) {
-  if (tls.pfx == null) return tls;
-  tls = processPfxOptions(tls);
+  // `tls` can be the caller's own object, so a `pfx` that comes from a polluted Object.prototype doesn't count.
+  if (tls.pfx == null || tls.pfx === (Object.prototype as { pfx?: unknown }).pfx) return tls;
+  // processPfxOptions() copies own properties only, but the native parser also reads inherited ones. Losing an
+  // inherited `ca` or `checkServerIdentity` would loosen the verification.
+  const prototype = Object.getPrototypeOf(tls);
+  tls = Object.setPrototypeOf(processPfxOptions(tls), prototype);
   const { ca, cert, _pfxExtraCACerts: pfxCAs } = tls;
   if (!pfxCAs) return tls;
   if (ca) tls.ca = $isArray(ca) ? [...ca, ...pfxCAs] : [ca, ...pfxCAs];

@@ -1034,10 +1034,17 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
         // No listener yet: dispatch on a later tick so a listener attached right after still sees it.
         if (scriptExecutionContext()) {
             queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [name = eventName, buffer = JSC::ArrayBuffer::tryCreate(binaryData)](WebSocket& ws) mutable {
+                if (!buffer)
+                    return;
                 size_t length = buffer->byteLength();
                 auto* globalObject = ws.scriptExecutionContext()->jsGlobalObject();
+                auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
                 auto* subclassStructure = static_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure();
                 JSUint8Array* uint8array = JSUint8Array::create(globalObject, subclassStructure, buffer.copyRef(), 0, length);
+                if (!uint8array || scope.exception()) [[unlikely]] {
+                    scope.clearExceptionExceptTermination();
+                    return;
+                }
                 JSC::EnsureStillAliveScope ensureStillAlive(uint8array);
                 MessageEvent::Init init;
                 init.data = uint8array;

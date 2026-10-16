@@ -44,6 +44,10 @@ const kRequest = Symbol("request");
 const kHeaderSource = Symbol("kHeaderSource");
 // Set on a server socket at the 'connect'/'upgrade' handoff: the native response of that request.
 const kHandoffResponse = Symbol("kHandoffResponse");
+// Method of a server socket. Whoever takes the connection over calls it while the connection is still open.
+const kRememberPeer = Symbol("kRememberPeer");
+// Getter of a server socket: how many bytes of a tunnel the native side has read and will push into the socket in a task.
+const kQueuedReadLength = Symbol("kQueuedReadLength");
 const kCloseCallback = Symbol("closeCallback");
 
 // node:_http_server registers its pipelined-response machinery here at module
@@ -552,7 +556,9 @@ export {
   kPendingCallbacks,
   kPerRequestCheckServerIdentity,
   kProxyConfig,
+  kQueuedReadLength,
   kRealListen,
+  kRememberPeer,
   kRequest,
   kWaitForProxyTunnel,
   noBodySymbol,

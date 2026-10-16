@@ -542,23 +542,31 @@ describe.each(implementations)("ws client handshake request ($name)", ({ ws: imp
     type Socket = InstanceType<typeof WebSocket>;
     const found = "HTTP/1.1 302 Found\r\nLocation: /dest\r\nContent-Length: 0\r\n\r\n";
 
-    // npm ws goes on to emit 'open' on the destroyed socket. The built-in's native client fails the handshake instead.
+    // Destroying the request destroys the socket, but npm ws has no listeners on it yet. It goes on to emit 'open', and
+    // learns about the socket from its 'close' event.
+    const opened = [...openEvents, abnormalClose];
+    const aborted = ["upgrade 101 rs=0", ...closedBeforeOpen];
+
     test.each([
-      { call: "req.destroy()", act: req => req.destroy(), events: hangUp },
-      { call: "req.destroy(error)", act: req => req.destroy(new Error("boom")), events: boom },
-      { call: "req.abort()", act: req => req.abort(), events: hangUp },
-    ] as { call: string; act: RequestAction; events: string[] }[])(
-      "$call in an 'upgrade' listener closes the socket",
+      { call: "req.destroy()", act: req => req.destroy(), events: opened },
+      { call: "req.destroy(error)", act: req => req.destroy(new Error("boom")), events: opened },
+      { call: "req.abort()", act: req => req.abort(), events: opened },
+      { call: "req.destroy() and ws.terminate()", act: (req, ws) => (req.destroy(), ws.terminate()), events: aborted },
+      { call: "req.destroy() and ws.close()", act: (req, ws) => (req.destroy(), ws.close()), events: aborted },
+      { call: "ws.terminate() and req.destroy()", act: (req, ws) => (ws.terminate(), req.destroy()), events: aborted },
+    ] as { call: string; act(req: ClientRequest, ws: Socket): void; events: string[] }[])(
+      "$call in an 'upgrade' listener emits 'close' 1006 once",
       async ({ act, events }) => {
         await using client = await connectClient(implementation);
         const { ws } = client;
         const req: ClientRequest = (ws as any)._req;
         const watched = watchRequest(req);
-        ws.on("upgrade", () => act(req));
-        await watched.closed;
+        ws.on("upgrade", () => act(req, ws));
+        await Promise.all([watched.closed, client.closed]);
+        // Once the peer has seen the connection end, nothing is left that could emit another event.
+        expect(await (await client.peer.connection()).remainingFrames()).toEqual([]);
         expect([() => ws.terminate(), () => ws.close()].map(tryCall)).toEqual(["undefined", "undefined"]);
-        await client.closed;
-        expect(client.events).toEqual(builtin ? ["upgrade 101 rs=0", ...events] : [...openEvents, abnormalClose]);
+        expect(client.events).toEqual(events);
       },
     );
 

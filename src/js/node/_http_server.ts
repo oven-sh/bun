@@ -43,6 +43,8 @@ const {
   headerStateSymbol,
   NodeHTTPHeaderState,
   kPendingCallbacks,
+  kQueuedReadLength,
+  kRememberPeer,
   kRequest,
   kCloseCallback,
   NodeHTTPResponseFlags,
@@ -1736,6 +1738,20 @@ function getNodeHTTPServerSocket() {
       this[kBytesWritten] = value;
     }
 
+    // Called when an 'upgrade' or 'connect' listener, or `ws` from a 'request' listener, takes the connection over. Its
+    // 'close' listeners run after the handle is gone and still ask who the peer was, and the handle can't answer once the
+    // connection has closed.
+    [kRememberPeer]() {
+      const handle = this[kHandle];
+      if (!handle) return;
+      this.#peer = {
+        remoteAddress: handle.remoteAddress,
+        servername: handle.servername,
+        peerCertVerified: handle.peerCertVerified,
+        authorizationError: handle.authorizationError,
+      };
+    }
+
     [kEnableStreaming](enable: boolean) {
       // The common keep-alive request never streams: the dispatcher disables
       // streaming on every request, so track the state and skip the two native
@@ -1749,14 +1765,7 @@ function getNodeHTTPServerSocket() {
         if (enable) {
           handle.ondata = this.#onData.bind(this);
           handle.ondrain = this.#onDrain.bind(this);
-          // The 'upgrade' or 'connect' listener now owns the socket. Its 'close' listeners run after the handle is
-          // gone and still ask who the peer was, and the handle can't answer once the connection has closed.
-          this.#peer = {
-            remoteAddress: handle.remoteAddress,
-            servername: handle.servername,
-            peerCertVerified: handle.peerCertVerified,
-            authorizationError: handle.authorizationError,
-          };
+          this[kRememberPeer]();
         } else {
           handle.ondata = undefined;
           handle.ondrain = undefined;
@@ -2246,6 +2255,10 @@ function getNodeHTTPServerSocket() {
 
     get [kInternalSocketData]() {
       return this[kHandle]?.response;
+    }
+
+    get [kQueuedReadLength]() {
+      return this[kHandle]?.queuedTunnelBytes ?? 0;
     }
   } as unknown as typeof import("node:net").Socket;
   Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });

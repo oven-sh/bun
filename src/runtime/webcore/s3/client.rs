@@ -103,6 +103,21 @@ pub(crate) fn download(
     )
 }
 
+/// The `Range` header value for the window `offset..offset + size` of an
+/// object. `None` is the whole object. A window is never empty: `Blob::to_js`
+/// turns an empty window of an S3 object into a plain empty Blob.
+fn range_header(offset: usize, size: Option<usize>) -> Option<Vec<u8>> {
+    debug_assert!(size != Some(0));
+    let mut range = Vec::new();
+    match size {
+        Some(size) => write!(&mut range, "bytes={}-{}", offset, offset + size.max(1) - 1),
+        None if offset == 0 => return None,
+        None => write!(&mut range, "bytes={}-", offset),
+    }
+    .expect("infallible: in-memory write");
+    Some(range)
+}
+
 pub(crate) fn download_slice(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -113,23 +128,7 @@ pub(crate) fn download_slice(
     callback_context: *mut c_void,
     request_payer: bool,
 ) -> JsResult<()> {
-    let range: Option<Vec<u8>> = 'brk: {
-        if let Some(size_) = size {
-            let mut end = offset + size_;
-            if size_ > 0 {
-                end -= 1;
-            }
-            let mut v = Vec::new();
-            write!(&mut v, "bytes={}-{}", offset, end).expect("infallible: in-memory write");
-            break 'brk Some(v);
-        }
-        if offset == 0 {
-            break 'brk None;
-        }
-        let mut v = Vec::new();
-        write!(&mut v, "bytes={}-", offset).expect("infallible: in-memory write");
-        Some(v)
-    };
+    let range = range_header(offset, size);
 
     s3_simple_request::execute_simple_s3_request(
         this,
@@ -1144,23 +1143,7 @@ fn download_stream(
         );
         return core::ptr::null_mut();
     }
-    let range: Option<Vec<u8>> = 'brk: {
-        if let Some(size_) = size {
-            let mut end = offset + size_;
-            if size_ > 0 {
-                end -= 1;
-            }
-            let mut v = Vec::new();
-            write!(&mut v, "bytes={}-{}", offset, end).expect("infallible: in-memory write");
-            break 'brk Some(v);
-        }
-        if offset == 0 {
-            break 'brk None;
-        }
-        let mut v = Vec::new();
-        write!(&mut v, "bytes={}-", offset).expect("infallible: in-memory write");
-        Some(v)
-    };
+    let range = range_header(offset, size);
 
     let result = match this.sign_request::<false>(
         &bun_s3_signing::SignOptions {

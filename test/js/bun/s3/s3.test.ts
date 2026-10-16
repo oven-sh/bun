@@ -2262,4 +2262,33 @@ describe("s3 file size stays unknown", () => {
       "bytes=0-4",
     ]);
   });
+
+  // An empty window has no bytes to download. It is a plain empty Blob, so no
+  // reader can take its size of 0 for a request of one byte (`Range: bytes=30-30`).
+  it("an empty slice is a plain empty Blob and requests nothing", async () => {
+    using endpoint = s3LocalEndpoint(payload);
+    const file = endpoint.file("text/csv");
+    const read = async (blob: Blob) => ({
+      size: blob.size,
+      type: blob.type,
+      presign: typeof (blob as any).presign,
+      text: await blob.text(),
+      bytes: (await blob.bytes()).length,
+      stream: await Bun.readableStreamToText(blob.stream()),
+    });
+    const empty = { size: 0, type: file.slice(10, 20).type, presign: "undefined", text: "", bytes: 0, stream: "" };
+    expect({
+      "slice(30, 30)": await read(file.slice(30, 30)),
+      "slice(0, 0)": await read(file.slice(0, 0)),
+      "slice(50, 20)": await read(file.slice(50, 20)),
+      "slice(10, 20).slice(4, 4)": await read(file.slice(10, 20).slice(4, 4)),
+      requests: endpoint.ranges,
+    }).toEqual({
+      "slice(30, 30)": empty,
+      "slice(0, 0)": empty,
+      "slice(50, 20)": empty,
+      "slice(10, 20).slice(4, 4)": empty,
+      requests: [],
+    });
+  });
 });

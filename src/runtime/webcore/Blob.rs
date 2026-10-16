@@ -3359,9 +3359,17 @@ impl BlobExt for Blob {
         // contract), so the const→mut cast is the original `Blob::new` provenance.
         let this = std::ptr::from_ref::<Blob>(self).cast_mut();
         if self.is_s3() {
-            // SAFETY: `self` is a heap-allocated *mut Blob (see `Blob::new`); the
-            // C++ side wraps it in a JSS3File without taking a second ref.
-            return crate::webcore::s3_file::to_js_unchecked(global_object, this);
+            if self.size.get() != 0 {
+                // SAFETY: `self` is a heap-allocated *mut Blob (see `Blob::new`); the
+                // C++ side wraps it in a JSS3File without taking a second ref.
+                return crate::webcore::s3_file::to_js_unchecked(global_object, this);
+            }
+            // An empty window of an S3 object (`slice(n, n)`, or a cloned record
+            // of one) has no bytes to download: it is a plain empty Blob. Every
+            // S3 reader can then take a known size as at least one byte.
+            self.detach();
+            self.offset.set(0);
+            self.calculate_estimated_byte_size();
         }
 
         js::to_js_unchecked(global_object, this)

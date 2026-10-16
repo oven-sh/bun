@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync, symlinkSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import {
   bunExe,
@@ -1878,9 +1878,15 @@ describe("deno_task", () => {
         .stdout("z\n")
         .fileEquals("test.txt", "")
         .runAsTest("a digit that is a word of its own is still an fd number");
+
+      // A tab does not end a word yet, so the `z` word keeps the tab.
+      TestBuilder.command`echo z${{ raw: "\t" }}2>test.txt`
+        .stdout(out => expect(out.trim()).toBe("z"))
+        .fileEquals("test.txt", "")
+        .runAsTest("a digit after a tab is still an fd number");
     });
 
-    describe("only 0 is an fd number before <", () => {
+    describe("a digit is an fd number only in the direction of that fd", () => {
       TestBuilder.command`cat 0<test.txt`.file("test.txt", "IN\n").stdout("IN\n").runAsTest("cat 0<file");
 
       // bash opens the file for reading on fd 1, and echo fails. Bun Shell has no such redirect.
@@ -1889,7 +1895,28 @@ describe("deno_task", () => {
         .stdout("z 1\n")
         .fileEquals("test.txt", "KEEP\n")
         .runAsTest("echo z 1<file");
+
+      // bash opens the file for writing on fd 0 and prints `z`. Bun Shell has no such redirect.
+      TestBuilder.command`echo z 0>test.txt`.fileEquals("test.txt", "z 0\n").runAsTest("echo z 0>file");
     });
+
+    // https://github.com/oven-sh/bun/issues/10465
+    test.each(["<<", "x<<", "x1<<", "0<<"])(
+      "cat %sEOF: a here-document is an error, and its body does not run",
+      async redirect => {
+        using dir = tempDir("shell-here-document", {});
+        let message: string | undefined;
+        try {
+          await $`${{ raw: `cat ${redirect}EOF\ntouch ran.txt\nEOF` }}`.cwd(String(dir)).quiet();
+        } catch (e) {
+          message = (e as Error).message;
+        }
+        expect({ message, ran: existsSync(join(String(dir), "ran.txt")) }).toEqual({
+          message: 'Here-documents "<<" are not supported yet.',
+          ran: false,
+        });
+      },
+    );
 
     // invalid fd
     // await TestBuilder.command`echo 2 3> test.txt`

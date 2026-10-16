@@ -310,18 +310,14 @@ describe("lex shell", () => {
     let result = JSON.parse(lex`echo foo > cat secrets.txt`);
     expect(result).toEqual(expected);
 
+    // fd 0 cannot be written to a file, so the `0` is a word.
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
+      { "Text": "0" },
+      { "Delimit": {} },
       {
-        "Redirect": {
-          "stdin": true,
-          "stdout": false,
-          "stderr": false,
-          "append": false,
-          duplicate_out: false,
-          "__unused": 0,
-        },
+        "Redirect": redirect({ stdout: true }),
       },
       { "Text": "file.txt" },
       { "Delimit": {} },
@@ -498,11 +494,6 @@ describe("lex shell", () => {
       ["echo **2>f", [...echo, { DoubleAsterisk: {} }, text("2"), delimit, stdout, ...toFile]],
       // Bun Shell has no fd numbers above 2. bash reads `12>` as fd 12.
       ["echo 12>f", [...echo, text("12"), delimit, stdout, ...toFile]],
-      // Bun Shell reads `<<` as `<` (https://github.com/oven-sh/bun/issues/10465).
-      [
-        "cat x1<<f",
-        [text("cat"), delimit, text("x1"), delimit, { Redirect: redirect({ stdin: true, append: true }) }, ...toFile],
-      ],
     ])("%s: a digit inside a word stays in the word", (script, expected) => {
       expect(tokens(script)).toEqual(expected);
     });
@@ -538,15 +529,36 @@ describe("lex shell", () => {
       expect(tokens(script)).toEqual(expected);
     });
 
-    // Bun Shell reads a file only into fd 0. bash opens `f` for reading on fd 1 or 2.
+    test("echo z<TAB>2>f: a digit after a tab is an fd number", () => {
+      // A tab does not end a word yet, so only the redirect is compared.
+      expect(tokens("echo z\t2>f").slice(-4)).toEqual([stderr, ...toFile]);
+    });
+
+    // fd 1 and 2 can be written to a file, and fd 0 can be read from one. bash takes each fd in both directions.
     test.each([
       ["cat 0<f", [text("cat"), delimit, stdin, ...toFile]],
       ["echo z 1<f", [...echo, text("z"), delimit, text("1"), delimit, stdin, ...toFile]],
       ["echo z 2<f", [...echo, text("z"), delimit, text("2"), delimit, stdin, ...toFile]],
-      // Two redirects in a row: the parser rejects `0<<f`, as before.
-      ["cat 0<<f", [text("cat"), delimit, stdin, stdin, ...toFile]],
-    ])("%s: only 0 is an fd number before `<`", (script, expected) => {
+      ["echo z 0>f", [...echo, text("z"), delimit, text("0"), delimit, stdout, ...toFile]],
+      [
+        "echo z 0>>f",
+        [
+          ...echo,
+          text("z"),
+          delimit,
+          text("0"),
+          delimit,
+          { Redirect: redirect({ stdout: true, append: true }) },
+          ...toFile,
+        ],
+      ],
+    ])("%s: a digit is an fd number only in the direction of that fd", (script, expected) => {
       expect(tokens(script)).toEqual(expected);
+    });
+
+    // https://github.com/oven-sh/bun/issues/10465
+    test.each(["cat <<f", "cat x<<f", "cat x1<<f", "cat 0<<f"])("%s: a here-document is an error", script => {
+      expect(() => tokens(script)).toThrow('Here-documents "<<" are not supported yet.');
     });
 
     test.each([

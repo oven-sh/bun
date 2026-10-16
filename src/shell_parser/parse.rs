@@ -2724,11 +2724,18 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         }
                         c if (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
                             // An fd number is a word of its own: in `a2>f` the `2` belongs to `a2`.
-                            if self.chars.state != CharState::Normal || self.word_is_open() {
+                            // A tab does not end a word, so a word can still be open after one.
+                            let after_whitespace = self.chars.prev.is_some_and(|prev| {
+                                !prev.escaped && ShellCharIter::<ENCODING>::is_whitespace(prev)
+                            });
+                            if self.chars.state != CharState::Normal
+                                || (self.word_is_open() && !after_whitespace)
+                            {
                                 break 'escaped;
                             }
                             let snapshot = self.make_snapshot();
                             if let Some(redirect) = self.eat_redirect(input) {
+                                self.break_word(AddDelimiter::AfterText)?;
                                 self.tokens.push(Token::Redirect(redirect));
                                 fell_through = true;
                                 break 'escaped;
@@ -3023,6 +3030,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     /// Returns true if the operator is "double one": >> or <<
     /// Returns false if not doubled or invalid (e.g. <> ><)
+    /// `<<` is a here-document, which is an error.
     fn eat_simple_redirect_operator(&mut self, dir: RedirectDirection) -> bool {
         if let Some(peeked) = self.peek() {
             if peeked.escaped {
@@ -3039,6 +3047,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 c if c == u32::from(b'<') => {
                     if dir == RedirectDirection::In {
                         let _ = self.eat();
+                        self.add_error(b"Here-documents \"<<\" are not supported yet.");
                         return true;
                     }
                     return false;
@@ -3063,8 +3072,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             if input.escaped {
                 return None;
             }
+            // fd 1 and 2 can be written to a file, and fd 0 can be read from one.
+            // In `0>f`, `1<f` and `2<f` the digit is a word.
             match input.char {
-                c if c == u32::from(b'>') => {
+                c if c == u32::from(b'>') && !flags.stdin() => {
                     let _ = self.eat();
                     let is_double = self.eat_simple_redirect_operator(RedirectDirection::Out);
                     if is_double {
@@ -3102,12 +3113,12 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     }
                     Some(flags)
                 }
-                c if c == u32::from(b'<') => {
-                    // Only fd 0 can be read from a file: in `1<f` the `1` is a word.
-                    if !flags.stdin() {
-                        return None;
-                    }
+                c if c == u32::from(b'<') && flags.stdin() => {
                     let _ = self.eat();
+                    let is_double = self.eat_simple_redirect_operator(RedirectDirection::In);
+                    if is_double {
+                        flags |= ast::RedirectFlags::APPEND;
+                    }
                     Some(flags)
                 }
                 _ => None,

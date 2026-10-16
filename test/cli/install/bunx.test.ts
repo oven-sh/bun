@@ -2191,7 +2191,7 @@ require("child_process").execFileSync(process.env.BUN_EXE, ["install"], { cwd: p
         bunx: [bunExe()],
         cwd: join(project, "packages", "member"),
         // The variable names the folder that `bunx` installs into, which is not this project.
-        env: { ...box.env, BUN_INTERNAL_BUNX_INSTALL: box.tree("tool@latest"), BUN_INTERNAL_BUNX_HAS_COPY: "true" },
+        env: { ...box.env, BUN_INTERNAL_BUNX_INSTALL: box.tmp, BUN_INTERNAL_BUNX_HAS_COPY: "true" },
       });
       expect(result.exitCode).toBe(0);
       await installedLikeAnyOther(project);

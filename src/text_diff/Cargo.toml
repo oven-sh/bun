@@ -1,0 +1,17 @@
+[package]
+name = "bun_text_diff"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_core.workspace = true
+bun_wyhash.workspace = true
+
+[dev-dependencies]
+bstr.workspace = true

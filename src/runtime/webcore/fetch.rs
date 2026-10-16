@@ -286,12 +286,9 @@ fn bun_fetch_preconnect(
 
     // `preconnect` is a free fn in `bun_http::async_http`. Ownership
     // of `href_raw` transfers here (`is_url_owned: true`).
-    // A request to an origin the environment proxies never dials it.
-    if VirtualMachine::get()
-        .env_loader()
-        .get_http_proxy_for(&url)
-        .is_some()
-    {
+    // A request to an origin the environment proxies never dials it. One after `tls.DEFAULT_CIPHERS` was assigned does not use the default context.
+    let vm = VirtualMachine::get();
+    if vm.env_loader().get_http_proxy_for(&url).is_some() || vm.tls_default_ciphers().is_some() {
         reclaim_href!();
         return Ok(JSValue::UNDEFINED);
     }
@@ -758,6 +755,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ssl_config = session.ssl_config();
         reject_unauthorized = session.reject_unauthorized().unwrap_or(reject_unauthorized);
         session_check_server_identity = session.check_server_identity().is_some();
+    }
+    if ssl_config.is_none() {
+        ssl_config = crate::socket::http_client_defaults(vm);
     }
 
     // unix: string | undefined
@@ -1529,8 +1529,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         global_this,
                     )),
                 );
-                // HTTPRequestBody has no Drop
-                // impl, so a bare `drop(old)` would leak the S3 Blob.Store ref.
                 old.detach();
                 break 'prepare_body;
             }
@@ -1539,8 +1537,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 global_this.create_error_instance(format_args!("Failed to start s3 stream")),
             )
             .to_js();
-            // HTTPRequestBody has no Drop impl, so a bare `drop(body)` would
-            // leak the S3 Blob.Store ref.
             body.detach();
             return Ok(rejected_value);
         }
@@ -1579,7 +1575,16 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // An explicit `compress` request always wins over the sendfile
             // heuristic — otherwise the same `Bun.file()` body would compress
             // over https/proxy/<32 KiB/Windows but silently not over plain http.
-            if proxy.is_none() && compress.is_none() && http::SendFile::is_eligible(&url) {
+            let env_proxy_is_tls = !proxy_direct
+                && vm
+                    .env_loader()
+                    .get_http_proxy_for(&url)
+                    .is_some_and(|env_proxy| env_proxy.is_https());
+            if proxy.is_none()
+                && !env_proxy_is_tls
+                && compress.is_none()
+                && http::SendFile::is_eligible(&url)
+            {
                 'use_sendfile: {
                     let stat: bun_sys::Stat = match bun_sys::fstat(opened_fd) {
                         Ok(result) => result,

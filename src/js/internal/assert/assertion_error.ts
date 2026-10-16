@@ -4,6 +4,7 @@ const { SafeSet } = require("internal/primordials");
 const { inspect } = require("internal/util/inspect");
 const colors = require("internal/util/colors");
 const { validateObject } = require("internal/validators");
+const { setStackTraceLimitOverride } = require("internal/shared");
 const { printMyersDiff, printSimpleMyersDiff } = require("internal/assert/myers_diff") as typeof Internal;
 
 const ErrorCaptureStackTrace = Error.captureStackTrace;
@@ -274,102 +275,102 @@ class AssertionError extends Error {
     } = options;
     let { actual, expected } = options;
 
-    // NOTE: stack trace is always writable.
-    const limit = Error.stackTraceLimit;
-    Error.stackTraceLimit = 0;
-
-    if (message != null) {
-      if (kMethodsWithCustomMessageDiff.has(operator)) {
-        super(createErrDiff(actual, expected, operator, message, diff));
+    // No frames for this error, which captures its own below, or for one made while the message is rendered.
+    const previousOverride = setStackTraceLimitOverride(0);
+    try {
+      if (message != null) {
+        if (kMethodsWithCustomMessageDiff.has(operator)) {
+          super(createErrDiff(actual, expected, operator, message, diff));
+        } else {
+          super(String(message));
+        }
       } else {
-        super(String(message));
-      }
-    } else {
-      // Reset colors on each call to make sure we handle dynamically set environment
-      // variables correct.
-      colors.refresh();
-      // Prevent the error stack from being visible by duplicating the error
-      // in a very close way to the original in case both sides are actually
-      // instances of Error.
-      if (
-        typeof actual === "object" &&
-        actual !== null &&
-        typeof expected === "object" &&
-        expected !== null &&
-        "stack" in actual &&
-        actual instanceof Error &&
-        "stack" in expected &&
-        expected instanceof Error
-      ) {
-        actual = copyError(actual);
-        expected = copyError(expected);
-      }
-
-      if (kMethodsWithCustomMessageDiff.has(operator)) {
-        super(createErrDiff(actual, expected, operator, message, diff));
-      } else if (operator === "notDeepStrictEqual" || operator === "notStrictEqual") {
-        // In case the objects are equal but the operator requires unequal, show
-        // the first object and say A equals B
-        let base = kReadableOperator[operator];
-        const res = StringPrototypeSplit.$call(inspectValue(actual), "\n");
-
-        // In case "actual" is an object or a function, it should not be
-        // reference equal.
+        // Reset colors on each call to make sure we handle dynamically set environment
+        // variables correct.
+        colors.refresh();
+        // Prevent the error stack from being visible by duplicating the error
+        // in a very close way to the original in case both sides are actually
+        // instances of Error.
         if (
-          operator === "notStrictEqual" &&
-          ((typeof actual === "object" && actual !== null) || typeof actual === "function")
+          typeof actual === "object" &&
+          actual !== null &&
+          typeof expected === "object" &&
+          expected !== null &&
+          "stack" in actual &&
+          actual instanceof Error &&
+          "stack" in expected &&
+          expected instanceof Error
         ) {
-          base = kReadableOperator.notStrictEqualObject;
+          actual = copyError(actual);
+          expected = copyError(expected);
         }
 
-        // Only remove lines in case it makes sense to collapse those.
-        const resLength = res.length;
-        if (resLength > 50 && diff !== "full") {
-          res[46] = `${colors.blue}...${colors.white}`;
-          while (res.length > 47) {
-            ArrayPrototypePop.$call(res);
-          }
-        }
+        if (kMethodsWithCustomMessageDiff.has(operator)) {
+          super(createErrDiff(actual, expected, operator, message, diff));
+        } else if (operator === "notDeepStrictEqual" || operator === "notStrictEqual") {
+          // In case the objects are equal but the operator requires unequal, show
+          // the first object and say A equals B
+          let base = kReadableOperator[operator];
+          const res = StringPrototypeSplit.$call(inspectValue(actual), "\n");
 
-        // Only print a single input.
-        if (res.length === 1) {
-          super(`${base}${res[0].length > 5 ? "\n\n" : " "}${res[0]}`);
-        } else {
-          super(`${base}\n\n${ArrayPrototypeJoin.$call(res, "\n")}\n`);
-        }
-      } else {
-        let res = inspectValue(actual);
-        let other = inspectValue(expected);
-        const knownOperator = kReadableOperator[operator];
-        if (operator === "notDeepEqual" && res === other) {
-          res = `${knownOperator}\n\n${res}`;
-          if (res.length > 1024 && diff !== "full") {
-            res = `${StringPrototypeSlice.$call(res, 0, 1021)}...`;
+          // In case "actual" is an object or a function, it should not be
+          // reference equal.
+          if (
+            operator === "notStrictEqual" &&
+            ((typeof actual === "object" && actual !== null) || typeof actual === "function")
+          ) {
+            base = kReadableOperator.notStrictEqualObject;
           }
-          super(res);
-        } else {
-          if (res.length > kMaxLongStringLength && diff !== "full") {
-            res = `${StringPrototypeSlice.$call(res, 0, 509)}...`;
-          }
-          if (other.length > kMaxLongStringLength && diff !== "full") {
-            other = `${StringPrototypeSlice.$call(other, 0, 509)}...`;
-          }
-          if (operator === "deepEqual") {
-            res = `${knownOperator}\n\n${res}\n\nshould loosely deep-equal\n\n`;
-          } else {
-            const newOp = kReadableOperator[`${operator}Unequal`];
-            if (newOp) {
-              res = `${newOp}\n\n${res}\n\nshould not loosely deep-equal\n\n`;
-            } else {
-              other = ` ${operator} ${other}`;
+
+          // Only remove lines in case it makes sense to collapse those.
+          const resLength = res.length;
+          if (resLength > 50 && diff !== "full") {
+            res[46] = `${colors.blue}...${colors.white}`;
+            while (res.length > 47) {
+              ArrayPrototypePop.$call(res);
             }
           }
-          super(`${res}${other}`);
+
+          // Only print a single input.
+          if (res.length === 1) {
+            super(`${base}${res[0].length > 5 ? "\n\n" : " "}${res[0]}`);
+          } else {
+            super(`${base}\n\n${ArrayPrototypeJoin.$call(res, "\n")}\n`);
+          }
+        } else {
+          let res = inspectValue(actual);
+          let other = inspectValue(expected);
+          const knownOperator = kReadableOperator[operator];
+          if (operator === "notDeepEqual" && res === other) {
+            res = `${knownOperator}\n\n${res}`;
+            if (res.length > 1024 && diff !== "full") {
+              res = `${StringPrototypeSlice.$call(res, 0, 1021)}...`;
+            }
+            super(res);
+          } else {
+            if (res.length > kMaxLongStringLength && diff !== "full") {
+              res = `${StringPrototypeSlice.$call(res, 0, 509)}...`;
+            }
+            if (other.length > kMaxLongStringLength && diff !== "full") {
+              other = `${StringPrototypeSlice.$call(other, 0, 509)}...`;
+            }
+            if (operator === "deepEqual") {
+              res = `${knownOperator}\n\n${res}\n\nshould loosely deep-equal\n\n`;
+            } else {
+              const newOp = kReadableOperator[`${operator}Unequal`];
+              if (newOp) {
+                res = `${newOp}\n\n${res}\n\nshould not loosely deep-equal\n\n`;
+              } else {
+                other = ` ${operator} ${other}`;
+              }
+            }
+            super(`${res}${other}`);
+          }
         }
       }
+    } finally {
+      setStackTraceLimitOverride(previousOverride);
     }
-
-    Error.stackTraceLimit = limit;
 
     this.generatedMessage = !message;
     ObjectDefineProperty(this, "name", {

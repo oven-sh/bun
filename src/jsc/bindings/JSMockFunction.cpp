@@ -1528,6 +1528,11 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     if (object->type() == JSC::JSType::GlobalProxyType)
         object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
 
+    if (object->hasImmutableProperties()) [[unlikely]] {
+        throwTypeError(globalObject, scope, "spyOn(target, prop) cannot replace a property of a target that has immutable properties"_s);
+        return {};
+    }
+
     JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::HasProperty);
     bool hasValue = object->getPropertySlot(globalObject, propertyKey, slot);
     RETURN_IF_EXCEPTION(scope, {});

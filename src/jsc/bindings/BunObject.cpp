@@ -334,7 +334,7 @@ extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
 
 static JSValue constructPasswordObject(VM& vm, JSObject* bunObject)
 {
-    return JSValue::decode(JSPasswordObject__create(bunObject->globalObject()));
+    return namespaceObjectOf(vm, bunObject, JSValue::decode(JSPasswordObject__create(bunObject->globalObject())));
 }
 
 JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
@@ -429,7 +429,7 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirect(vm, JSC::Identifier::fromString(vm, "V4MAPPED"_s), jsNumber(AI_V4MAPPED),
         JSC::PropertyAttribute::DontDelete | 0);
-    return dnsObject;
+    return namespaceObjectOf(vm, bunObject, dnsObject);
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParse);
@@ -632,7 +632,7 @@ static JSValue constructJSONLObject(VM& vm, JSObject* bunObject)
         JSC::PropertyAttribute::DontDelete | 0);
     jsonlObject->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, "JSONL"_s),
         JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
-    return jsonlObject;
+    return namespaceObjectOf(vm, bunObject, jsonlObject);
 }
 
 static JSValue constructBunPeekObject(VM& vm, JSObject* bunObject)
@@ -1089,7 +1089,10 @@ static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalO
 {
     (void)thisEncoded;
     (void)propertyName;
-    return BunObject_setter_main(globalObject, encodedValue);
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    if (throwIfSetterOwnerIsImmutable(globalObject, scope, defaultGlobalObject(globalObject)->bunObject()))
+        return false;
+    RELEASE_AND_RETURN(scope, BunObject_setter_main(globalObject, encodedValue));
 }
 
 // LazyProperty wrappers for stdin/stderr/stdout
@@ -1135,7 +1138,7 @@ static JSValue constructModuleGraphObject(VM& vm, JSObject* bunObject)
 static JSValue constructSecretsObject(VM& vm, JSObject* bunObject)
 {
     auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
-    return Bun::createSecretsObject(vm, zigGlobalObject);
+    return namespaceObjectOf(vm, bunObject, Bun::createSecretsObject(vm, zigGlobalObject));
 }
 
 static JSValue constructWebViewObject(VM& vm, JSObject* bunObject)

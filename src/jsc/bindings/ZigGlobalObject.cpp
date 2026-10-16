@@ -2526,6 +2526,7 @@ void GlobalObject::finishCreation(VM& vm)
              // Node defines `subtle` on Crypto.prototype with a brand check, not on
              // the instance; the getter above enforces the brand.
              JSObject* prototype = crypto->getPrototypeDirect().getObject();
+             JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(init.vm);
              prototype->putDirectCustomAccessor(
                  init.vm,
                  Identifier::fromString(init.vm, "subtle"_s),
@@ -2615,22 +2616,26 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(Bun::createEnvironmentVariablesMap(static_cast<Zig::GlobalObject*>(init.owner)).getObject());
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_requireFunctionUnbound), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+             auto* prototype = RequireFunctionPrototype::create(init.owner);
+             Bun::didCreatePrototype(init.vm, init.owner, prototype);
              init.set(
                  JSFunction::create(
                      init.vm,
                      init.owner,
                      commonJSRequireCodeGenerator(init.vm),
                      init.owner->globalScope(),
-                     JSFunction::createStructure(init.vm, init.owner, RequireFunctionPrototype::create(init.owner))));
+                     JSFunction::createStructure(init.vm, init.owner, prototype)));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_requireResolveFunctionUnbound), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+             auto* prototype = RequireResolveFunctionPrototype::create(init.owner);
+             Bun::didCreatePrototype(init.vm, init.owner, prototype);
              init.set(
                  JSFunction::create(
                      init.vm,
                      init.owner,
                      commonJSRequireResolveCodeGenerator(init.vm),
                      init.owner->globalScope(),
-                     JSFunction::createStructure(init.vm, init.owner, RequireResolveFunctionPrototype::create(init.owner))));
+                     JSFunction::createStructure(init.vm, init.owner, prototype)));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_processBindingBuffer), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              init.set(
@@ -2672,7 +2677,11 @@ void GlobalObject::finishCreation(VM& vm)
 
     static const LazyPropertyInit<JSFunction> lazyFunctionInits[] = {
         { OBJECT_OFFSETOF(GlobalObject, m_errorConstructorPrepareStackTraceInternalValue), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
-             init.set(JSFunction::create(init.vm, init.owner, 2, "ErrorPrepareStackTrace"_s, jsFunctionDefaultErrorPrepareStackTrace, ImplementationVisibility::Public));
+             auto* function = JSFunction::create(init.vm, init.owner, 2, "ErrorPrepareStackTrace"_s, jsFunctionDefaultErrorPrepareStackTrace, ImplementationVisibility::Public);
+             init.set(function);
+             // JSC makes immutable the functions in an immutable object's properties. It cannot see this one, which a native getter of Error returns.
+             if (init.owner->errorConstructor()->hasImmutableProperties())
+                 function->makePropertiesImmutable(init.vm);
          } },
 
         { OBJECT_OFFSETOF(GlobalObject, m_utilInspectFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
@@ -2801,6 +2810,8 @@ void GlobalObject::finishCreation(VM& vm)
 
     addBuiltinGlobals(vm);
 
+    applyImmutableGlobalsOption(vm);
+
     ASSERT(classInfo());
 }
 
@@ -2820,7 +2831,12 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
         throwException(globalObject, scope, returnedException.get());
         return {};
     }
-    console->putDirect(vm, property, result, 0);
+    {
+        JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+        console->putDirect(vm, property, result, 0);
+    }
+    if (console->hasImmutableProperties() && result.isObject())
+        globalObject->makeObjectAndItsFunctionsImmutable(vm, asObject(result));
     return JSValue::encode(result);
 }
 

@@ -55,6 +55,7 @@ using namespace JSC;
     macro(close) \
     macro(cmd) \
     macro(code) \
+    macro(consoleAsyncIterator) \
     macro(createCommonJSModule) \
     macro(createFIFO) \
     macro(createInternalModuleById) \

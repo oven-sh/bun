@@ -6,6 +6,7 @@
 #include <wtf/Compiler.h>
 #include "ZigGeneratedClasses.h"
 #include "S3Error.h"
+#include "BunClientData.h"
 
 namespace Bun {
 
@@ -17,7 +18,9 @@ typedef struct S3Error {
 
 Structure* createS3ErrorStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
-    return JSC::ErrorInstance::createStructure(vm, globalObject, JSC::constructEmptyObject(globalObject, globalObject->errorPrototype()));
+    auto* prototype = JSC::constructEmptyObject(globalObject, globalObject->errorPrototype());
+    Bun::didCreatePrototype(vm, globalObject, prototype);
+    return JSC::ErrorInstance::createStructure(vm, globalObject, prototype);
 }
 
 extern "C" {

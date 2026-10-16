@@ -428,7 +428,6 @@ class MockTimers {
     MockDate.prototype = NativeDateConstructor.prototype;
     MockDate.parse = NativeDateConstructor.parse;
     MockDate.UTC = NativeDateConstructor.UTC;
-    MockDate.prototype.toUTCString = NativeDateConstructor.prototype.toUTCString;
     return MockDate;
   }
 

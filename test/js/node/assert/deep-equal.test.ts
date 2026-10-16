@@ -790,6 +790,14 @@ const cases: Case[] = [
     looseBug: "reports equal",
   },
   {
+    name: "errors that each enumerate one key and hold the key of the other one non-enumerable with another value",
+    a: () => Object.defineProperty(Object.assign(new Error("x"), { a: 1 }), "b", { value: 2, enumerable: false }),
+    b: () => Object.defineProperty(Object.assign(new Error("x"), { b: 3 }), "a", { value: 1, enumerable: false }),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
     name: "an error that bun creates with a code and an error with its class and message",
     a: outOfRangeError,
     b: () => new RangeError(outOfRangeError()!.message),
@@ -1474,6 +1482,13 @@ describe("util.isDeepStrictEqual", () => {
         if (reads !== expectedReads) wrong.push(`${name}: ${reads} reads`);
       }
       expect(wrong).toEqual([]);
+    });
+
+    test("reads an enumerable property of an Error once per side", () => {
+      const make = () => Object.assign(new Error("m"), { data: leaf() });
+      reads = 0;
+      expect(util.isDeepStrictEqual(make(), make())).toBe(true);
+      expect(reads).toBe(2);
     });
 
     test("entries are read in the order of the right Map, left value first", () => {

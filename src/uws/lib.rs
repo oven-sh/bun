@@ -331,7 +331,7 @@ pub mod ssl_wrapper {
     /// BoringSSL calls `us_ssl_wrapper_select_cert` again each time a parked handshake is driven.
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum ServerName {
-        /// Nothing to ask: no `Handlers::on_server_name`, a client, or the answer was used.
+        /// Nothing to ask: no `Handlers::on_server_name`, a client, or the owner answered.
         Off,
         /// The ClientHello has not arrived.
         Armed,
@@ -339,8 +339,6 @@ pub mod ssl_wrapper {
         Parked,
         /// The owner was asked. `SSLWrapper::sni_resolve` is its answer.
         Asked,
-        /// The owner answered: the next callback lets the handshake continue.
-        Resolved,
     }
 
     impl Drop for CallbackState {
@@ -1212,8 +1210,8 @@ pub mod ssl_wrapper {
                 return;
             }
             let Some(ssl) = self.ssl.get() else { return };
+            self.callbacks.server_name.set(ServerName::Off);
             if refuse {
-                self.callbacks.server_name.set(ServerName::Off);
                 self.flags.set_fatal_error(true);
                 self.flags
                     .set_handshake_state(HandshakeState::HandshakeCompleted);
@@ -1226,7 +1224,6 @@ pub mod ssl_wrapper {
                 // callback, where BoringSSL allows the switch. `ssl` takes its own reference.
                 unsafe { us_ssl_apply_selected_ctx(ssl.as_ptr(), ctx.as_ptr()) };
             }
-            self.callbacks.server_name.set(ServerName::Resolved);
             self.handle_traffic();
         }
 
@@ -1462,10 +1459,9 @@ pub mod ssl_wrapper {
                 debug_assert!(
                     self.flags.closed_notified()
                         || self.ssl.get().is_none()
-                        || matches!(
-                            self.callbacks.server_name.get(),
-                            ServerName::Asked | ServerName::Resolved
-                        ),
+                        // Waiting for the owner's answer, or answered from inside the pass.
+                        || self.callbacks.server_name.get() == ServerName::Asked
+                        || self.traffic.get() == Traffic::RerunRequested,
                     "update_handshake_state stopped the pass and left the wrapper open"
                 );
             }
@@ -1645,10 +1641,6 @@ pub mod ssl_wrapper {
                 RETRY
             }
             ServerName::Parked | ServerName::Asked => RETRY,
-            ServerName::Resolved => {
-                state.server_name.set(ServerName::Off);
-                SUCCESS
-            }
         }
     }
 

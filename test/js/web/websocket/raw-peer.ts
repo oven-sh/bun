@@ -462,6 +462,8 @@ export type RequestOptions = {
   trailingBytes?: Buffer;
   secure?: boolean;
   alpn?: string[];
+  /** Extra options for `tls.connect()`. */
+  tls?: tls.ConnectionOptions;
   /** Connect to this unix socket path. */
   socketPath?: string;
   /** Keep this side open after the server sends FIN. By default a FIN is answered with a FIN. */
@@ -493,7 +495,13 @@ export class RawClient extends RawSocket {
   constructor(port: number, options: RequestOptions = {}) {
     super(
       options.secure
-        ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: options.alpn })
+        ? tls.connect({
+            port,
+            host: "127.0.0.1",
+            rejectUnauthorized: false,
+            ALPNProtocols: options.alpn,
+            ...options.tls,
+          })
         : options.socketPath
           ? net.connect(options.socketPath)
           : net.connect({ port, host: "127.0.0.1", allowHalfOpen: options.allowHalfOpen }),

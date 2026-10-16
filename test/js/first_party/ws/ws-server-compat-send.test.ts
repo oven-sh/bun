@@ -23,6 +23,8 @@ import {
   type RawClient,
   repeatA,
   resizable,
+  runScript,
+  scriptTimeout,
   shared,
   show,
   showFrame,
@@ -67,7 +69,7 @@ async function readLargeFrames(client: RawClient, count: number) {
   return lines;
 }
 
-describe.each(implementations)("ws server send ($name)", ({ ws: implementation, builtin }) => {
+describe.each(implementations)("ws server send ($name)", ({ ws: implementation, builtin, specifier }) => {
   const { OPEN, CLOSING, CLOSED } = implementation.WebSocket;
 
   describe("send(data)", () => {
@@ -677,6 +679,45 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
         // Failed writes don't emit 'error' on the WebSocket.
         expect(events).toEqual(["close 1006 Buffer() rs=3"]);
       },
+    );
+
+    // With npm ws on Bun, the node:http socket skips 'close' after terminate() and swallows the exception on a reset.
+    test.concurrent.skipIf(!builtin).each([
+      { how: "terminate()", act: "ws.terminate();" },
+      { how: "a peer reset", act: "socket.resetAndDestroy();" },
+    ])(
+      "a pending callback that throws after $how doesn't skip 'close' or leave the socket in wss.clients",
+      async ({ act }) => {
+        const { lines, exitCode } = await runScript(
+          { specifier },
+          `
+          const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" }, () => {
+            const socket = require("node:net").connect(wss.address().port, "127.0.0.1");
+            socket.on("error", () => {});
+            socket.pause();
+            socket.write(${JSON.stringify(upgradeRequest())});
+            // Nothing is left to keep the process alive, with or without 'close'.
+            process.on("uncaughtException", () => {
+              socket.destroy();
+              wss.close();
+            });
+            wss.on("connection", ws => {
+              ws.on("close", code => console.log("close", code, "clients", wss.clients.size));
+              // More than the kernel will buffer, so this write can't complete.
+              ws.send(Buffer.alloc(${12 * MiB}), error => {
+                console.log("callback", error instanceof Error);
+                throw new Error("thrown by the callback");
+              });
+              ${act}
+            });
+          });
+        `,
+        );
+        // On Node, 'close' comes after the uncaught exception.
+        expect(lines).toEqual(["callback true", "close 1006 clients 0", 'uncaught Error "thrown by the callback"']);
+        expect(exitCode).toBe(0);
+      },
+      scriptTimeout,
     );
   });
 

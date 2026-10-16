@@ -25,6 +25,8 @@ import {
   openServer,
   RawClient,
   recordEvents,
+  runScript,
+  scriptTimeout,
   serve,
   show,
   showError,
@@ -57,7 +59,7 @@ const hideSymbols = (socket: Duplex) =>
     has: (target, property) => typeof property !== "symbol" && Reflect.has(target, property),
   });
 
-describe.each(implementations)("ws server transports ($name)", ({ ws: implementation, builtin }) => {
+describe.each(implementations)("ws server transports ($name)", ({ ws: implementation, builtin, specifier }) => {
   const { WebSocketServer } = implementation;
   const emitConnection = (wss: WebSocketServer, req: http.IncomingMessage) => (ws: WebSocket) =>
     wss.emit("connection", ws, req);
@@ -383,6 +385,44 @@ describe.each(implementations)("ws server transports ($name)", ({ ws: implementa
       ]);
       expect(await client.nextResponse()).toBe("EOF");
     });
+
+    // Here the socket's `_httpMessage` is still the plain request's response when 'upgrade' is emitted.
+    test.concurrent.each<{ state: string; pending: boolean; lines: string[] }>([
+      { state: "has been answered", pending: false, lines: ["HTTP/1.1 200, HTTP/1.1 400"] },
+      { state: "is still pending", pending: true, lines: ["answered the plain request", "HTTP/1.1 400"] },
+    ])(
+      'with server.emit("connection", socket), rejects an invalid handshake sent with a plain request that $state',
+      async ({ pending, lines }) => {
+        const script = `
+          const net = require("node:net");
+          let pendingResponse;
+          const server = require("node:http").createServer((req, res) => {
+            if (${pending}) pendingResponse = res;
+            else res.end("ok");
+          });
+          const wss = new WebSocketServer({ noServer: true });
+          server.on("upgrade", (req, socket, head) => {
+            wss.handleUpgrade(req, socket, head, () => console.log("upgraded"));
+            if (!pendingResponse) return;
+            pendingResponse.writeHead(200).end("ok");
+            console.log("answered the plain request");
+          });
+          const front = net.createServer(socket => server.emit("connection", socket)).listen(0, "127.0.0.1", () => {
+            const client = net.connect(front.address().port, "127.0.0.1");
+            let received = "";
+            client.on("data", chunk => (received += chunk));
+            client.on("close", () => {
+              console.log(received.match(/HTTP\\/1\\.1 \\d+/g).join(", "));
+              front.close();
+            });
+            process.on("uncaughtException", () => process.exit(1));
+            client.write(${JSON.stringify(getRequest + upgradeRequest({ headers: { "Sec-WebSocket-Key": null } }))});
+          });
+        `;
+        expect(await runScript({ specifier }, script)).toEqual({ lines, stderr: "", exitCode: 0 });
+      },
+      scriptTimeout,
+    );
   });
 
   describe("frames that arrive before handleUpgrade() runs", () => {

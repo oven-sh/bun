@@ -622,6 +622,20 @@ describe.each(implementations)("ws server opening handshake ($name)", ({ ws: imp
       client.text("hi");
       expect(await client.next()).toBe('text "echo:hi"');
     });
+
+    test.skipIf(!builtin)("rejects an invalid handshake from a 'request' listener through its response", async () => {
+      const wss = new WebSocketServer({ noServer: true });
+      const { promise: headersSent, resolve } = Promise.withResolvers<boolean>();
+      await using web = await serve(
+        http.createServer((req, res) => {
+          wss.handleUpgrade(req, req.socket, Buffer.alloc(0), () => {});
+          resolve(res.headersSent);
+        }),
+      );
+      const client = web.connect({ headers: { "Sec-WebSocket-Version": "12" } });
+      expect(await headersSent).toBe(true);
+      expect(await client.responseLines()).toEqual(badVersion);
+    });
   });
 
   // Each server handles every upgrade on the http.Server, so the first one rejects requests meant for the second.

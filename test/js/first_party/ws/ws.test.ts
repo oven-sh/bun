@@ -1896,6 +1896,54 @@ describe("client TLS options", () => {
       expect(results).toEqual(Object.keys(connectPaths).map((name): [string, string[]] => [name, expected]));
     });
 
+    // `ws` wraps the callback. The native client reads inherited properties and getters, so a spread would lose them.
+    it("keeps the `tls` option's inherited properties and getters when it has a checkServerIdentity", async () => {
+      using server = await serve(agent1);
+      const checkServerIdentity = () => undefined;
+      class Options {
+        checkServerIdentity = checkServerIdentity;
+        get ca() {
+          return ca1;
+        }
+      }
+      expect({
+        inherited: await dial(server.url, { tls: Object.assign(Object.create({ ca: ca1 }), { checkServerIdentity }) }),
+        getter: await dial(server.url, { tls: new Options() }),
+      }).toEqual({ inherited: anonymous, getter: anonymous });
+    });
+
+    it("ignores a checkServerIdentity set on Object.prototype", async () => {
+      using server = await serve(agent1);
+      await using child = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const WebSocket = require("ws");
+          const ca = require("fs").readFileSync(process.env.TEST_CA);
+          Object.prototype.checkServerIdentity = () => undefined;
+          for (const options of [{ tls: { ca } }, { ca }]) {
+            const ws = new WebSocket(process.env.TEST_URL, options);
+            ws.on("message", data => { console.log(String(data)); ws.terminate(); });
+            ws.on("error", error => console.log("refused", error.code));
+            await new Promise(resolve => ws.on("close", resolve));
+          }
+          `,
+        ],
+        env: {
+          ...bunEnv,
+          TEST_URL: server.url,
+          TEST_CA: path.join(import.meta.dirname, "../../node/test/fixtures/keys/ca1-cert.pem"),
+        },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+      const refused = "refused ERR_TLS_CERT_ALTNAME_INVALID";
+      expect(stdout.trim().split("\n")).toEqual([refused, refused]);
+      expect(exitCode).toBe(0);
+    });
+
     it("ignores options set on Object.prototype", async () => {
       using server = await serve();
       const plain = new WebSocketServer({ port: 0, host: "127.0.0.1" });

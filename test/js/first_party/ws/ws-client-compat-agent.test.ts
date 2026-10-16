@@ -2,6 +2,7 @@
 // through to node:net. The server is a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { tls as certificate, isLinux } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter, once } from "node:events";
 import http from "node:http";
 import https from "node:https";
@@ -428,6 +429,16 @@ describe.each(implementations)("ws client connection options ($name)", ({ ws: im
     await nextEvent(client.ws, "close");
     expect(errors).toEqual([verdict]);
     expect(errors[0]).toBe(verdict);
+  });
+
+  test("checkServerIdentity keeps the AsyncLocalStorage store of the `new WebSocket()` call", async () => {
+    await using peer = await createPeer({ secure: true });
+    const storage = new AsyncLocalStorage<string>();
+    const { promise: store, resolve } = Promise.withResolvers<string | undefined>();
+    using client = storage.run("the caller's", () =>
+      connect(peer.url, { ca: certificate.cert, checkServerIdentity: () => void resolve(storage.getStore()) }),
+    );
+    expect(await store).toBe("the caller's");
   });
 
   test("a checkServerIdentity verdict that rejectUnauthorized: false dropped isn't reported later", async () => {

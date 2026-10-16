@@ -656,6 +656,61 @@ describe.each(implementations)("ws client opening handshake ($name)", ({ ws: imp
       expect(client.events).toEqual(['error Error "Opening handshake has timed out" rs=2', abnormalClose]);
     });
 
+    // In node:http it's the socket's inactivity timeout, which stays armed until the response has been read.
+    describe("handshakeTimeout after 'unexpected-response'", () => {
+      const forbidden = (length: number) => `HTTP/1.1 403 Forbidden\r\nContent-Length: ${length}\r\n\r\nno`;
+
+      test.concurrent.each([
+        { label: "a complete response isn't read", response: forbidden(2), read: false },
+        { label: "an empty response isn't read", response: forbidden(0).slice(0, -2), read: false },
+        { label: "a truncated response isn't read", response: forbidden(9), read: false },
+        { label: "a truncated response is read", response: forbidden(9), read: true },
+      ])("still fires when $label", async ({ response, read }) => {
+        // On a busy machine the timer can beat the response. Retry with a longer one until the response wins.
+        for (let handshakeTimeout = 100; ; handshakeTimeout *= 4) {
+          await using client = await connectClient(implementation, { handshakeTimeout }, { respond: () => response });
+          client.ws.on("unexpected-response", (req, res) => {
+            client.events.push("unexpected-response");
+            if (read) res.resume();
+          });
+          await client.closed;
+          if (client.events.length === 2) continue;
+          expect(client.events).toEqual([
+            "unexpected-response",
+            'error Error "Opening handshake has timed out" rs=2',
+            abnormalClose,
+          ]);
+          break;
+        }
+      });
+
+      // The peer closes the connection, so only a leaked timer could keep the process alive. It would fire before the
+      // process exits and show up in the output.
+      test.concurrent.each([
+        { label: "the response was read to the end", listener: "response.resume();" },
+        { label: "request.abort()", listener: "request.abort();" },
+      ])(
+        "doesn't fire after $label",
+        async ({ listener }) => {
+          await using peer = await createPeer({ respond: conn => (conn.socket.end(forbidden(2)), null) });
+          const script = `
+            const ws = new WebSocket(process.env.PEER_URL, { handshakeTimeout: 5000 });
+            ws.on("error", error => console.log("error " + showError(error)));
+            ws.on("close", code => console.log("close " + code));
+            ws.on("unexpected-response", (request, response) => {
+              console.log("unexpected-response");
+              ${listener}
+            });
+            process.on("exit", () => console.log("readyState " + ws.readyState + " on exit"));
+          `;
+          const { lines, exitCode } = await runScript({ specifier }, script, { PEER_URL: peer.url });
+          expect(lines).toEqual(["unexpected-response", "readyState 0 on exit"]);
+          expect(exitCode).toBe(0);
+        },
+        scriptTimeout,
+      );
+    });
+
     // A leaked timer would fire before the process exits and show up in the output. With a proxy the built-in uses its
     // native client even when `finishRequest` is set.
     test.each([

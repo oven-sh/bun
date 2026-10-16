@@ -5,6 +5,7 @@ import { isWindows, tempDir, tls } from "harness";
 import type { ClientRequest } from "node:http";
 import path from "node:path";
 import {
+  abnormalClose,
   closedBeforeOpen,
   closedPort,
   connectClient,
@@ -35,7 +36,7 @@ function watchRequest(req: ClientRequest) {
   return { events, closed };
 }
 
-describe.each(implementations)("ws client handshake request ($name)", ({ ws: implementation }) => {
+describe.each(implementations)("ws client handshake request ($name)", ({ ws: implementation, builtin }) => {
   const { WebSocket } = implementation;
 
   /**
@@ -532,6 +533,84 @@ describe.each(implementations)("ws client handshake request ($name)", ({ ws: imp
         expect(ws.readyState).toBe(WebSocket.CLOSING);
         await client.closed;
         expect(client.events).toEqual(closedBeforeOpen);
+      },
+    );
+  });
+
+  // The 101 has arrived, so node:http has already handed the socket to the WebSocket.
+  describe("destroy() and abort() after the 101", () => {
+    type Socket = InstanceType<typeof WebSocket>;
+    const found = "HTTP/1.1 302 Found\r\nLocation: /dest\r\nContent-Length: 0\r\n\r\n";
+
+    // npm ws goes on to emit 'open' on the destroyed socket. The built-in's native client fails the handshake instead.
+    test.each([
+      { call: "req.destroy()", act: req => req.destroy(), events: hangUp },
+      { call: "req.destroy(error)", act: req => req.destroy(new Error("boom")), events: boom },
+      { call: "req.abort()", act: req => req.abort(), events: hangUp },
+    ] as { call: string; act: RequestAction; events: string[] }[])(
+      "$call in an 'upgrade' listener closes the socket",
+      async ({ act, events }) => {
+        await using client = await connectClient(implementation);
+        const { ws } = client;
+        const req: ClientRequest = (ws as any)._req;
+        const watched = watchRequest(req);
+        ws.on("upgrade", () => act(req));
+        await watched.closed;
+        expect([() => ws.terminate(), () => ws.close()].map(tryCall)).toEqual(["undefined", "undefined"]);
+        await client.closed;
+        expect(client.events).toEqual(builtin ? ["upgrade 101 rs=0", ...events] : [...openEvents, abnormalClose]);
+      },
+    );
+
+    test.each([
+      { call: "req.destroy()", act: req => req.destroy() },
+      { call: "req.abort()", act: req => req.abort() },
+      { call: "ws.terminate() and req.destroy()", act: (req, ws) => (ws.terminate(), req.destroy()) },
+    ] as { call: string; act(req: ClientRequest, ws: Socket): void }[])(
+      "$call in an 'open' listener emits 'close' 1006",
+      async ({ act }) => {
+        await using client = await connectClient(
+          implementation,
+          { followRedirects: true },
+          { respond: conn => (conn.headLines[0] === "GET / HTTP/1.1" ? found : response101(conn)) },
+        );
+        const { ws } = client;
+        const [, req] = (await nextEvent(ws, "redirect")) as [string, ClientRequest];
+        let calls: string[] = [];
+        ws.on("open", () => {
+          act(req, ws);
+          calls = [() => ws.send("x"), () => ws.terminate(), () => ws.close()].map(tryCall);
+        });
+        await client.opened;
+        expect(calls).toEqual(["undefined", "undefined", "undefined"]);
+        await client.closed;
+        expect(client.events).toEqual([...openEvents, abnormalClose]);
+        expect(await client.peer.connections[1].remainingFrames()).toEqual([]);
+      },
+    );
+
+    // node:http marks the request as destroyed once its 'upgrade' listeners return, and npm ws emits 'open' from one.
+    test.each([
+      { call: "req.destroy()", act: req => req.destroy() },
+      { call: "req.abort()", act: req => req.abort() },
+    ] as { call: string; act: RequestAction }[])(
+      "$call after the 'open' listeners return is a no-op",
+      async ({ act }) => {
+        await using client = await connectClient(implementation, { perMessageDeflate: false });
+        const { ws } = client;
+        const req: ClientRequest = (ws as any)._req;
+        const watched = watchRequest(req);
+        const conn = await client.peer.connection();
+        await client.opened;
+        expect(req.destroyed).toBe(true);
+        expect(watched.events).toEqual(["close"]);
+
+        act(req);
+        ws.send("still");
+        expect(await conn.next()).toBe('text "still"');
+        conn.text("open");
+        await nextEvent(ws, "message");
+        expect(client.events).toEqual([...openEvents, 'message Buffer("open") text rs=1']);
       },
     );
   });

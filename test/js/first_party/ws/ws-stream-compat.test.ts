@@ -1,6 +1,6 @@
 // Tests createWebSocketStream() against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { Duplex, pipeline } from "node:stream";
+import { Duplex, pipeline, Readable } from "node:stream";
 import {
   closedPort,
   connectClient,
@@ -152,6 +152,50 @@ describe.each(implementations)("createWebSocketStream ($name)", ({ ws: implement
       expect(ws.readyState).toBe(WebSocket.CLOSED);
     });
 
+    // A client leaves closing the connection to the server, and only gives up on a slow one after `closeTimeout`.
+    test.each<{ what: string; end(duplex: Duplex): Promise<unknown> }>([
+      { what: "'finish'", end: duplex => nextEvent(duplex.end("last"), "finish") },
+      { what: "end()'s callback", end: duplex => new Promise<void>(resolve => duplex.end("last", resolve)) },
+      {
+        what: "pipeline()'s callback",
+        end: duplex => new Promise(resolve => pipeline(Readable.from([Buffer.from("last")]), duplex, resolve)),
+      },
+    ])("$what follows the closing handshake, even if the peer leaves the connection open", async ({ end }) => {
+      await using client = await openClient(implementation, { perMessageDeflate: false });
+      const { ws, conn } = client;
+      const duplex = createWebSocketStream(ws);
+      const events = watchStream(duplex);
+      duplex.resume();
+      const finished = end(duplex);
+      expect(await conn.nextFrames(2)).toEqual(['binary "last"', "close"]);
+      expect(events).toEqual([]);
+
+      conn.close();
+      await finished;
+      expect(events).toEqual(["finish"]);
+      expect(ws.readyState).toBe(WebSocket.CLOSING);
+
+      conn.end();
+      await nextEvent(duplex, "close");
+      expect(events).toEqual(["finish", "end", "close"]);
+    });
+
+    test("end() after a closing handshake that the peer started finishes while the connection is still open", async () => {
+      await using client = await openClient(implementation);
+      const { ws, conn } = client;
+      const duplex = createWebSocketStream(ws);
+      const events = watchStream(duplex);
+      duplex.resume();
+      conn.close();
+      expect(await conn.next()).toBe("close");
+      // The client's FIN.
+      expect(await conn.next()).toBe("EOF");
+
+      await nextEvent(duplex.end(), "finish");
+      expect(events).toEqual(["finish"]);
+      expect(ws.readyState).toBe(WebSocket.CLOSING);
+    });
+
     test("write() after ws.close() fails and destroys the stream, which terminates the socket", async () => {
       await using client = await openClient(implementation);
       const { ws, conn } = client;
@@ -259,6 +303,24 @@ describe.each(implementations)("createWebSocketStream ($name)", ({ ws: implement
       expect(await received).toEqual(['"in"']);
       duplex.write("out");
       expect(await server.client.next()).toBe('binary "out"');
+    });
+
+    test("'finish' follows the closing handshake and doesn't wait for the client's FIN", async () => {
+      await using server = await openServer(implementation, {}, { allowHalfOpen: true });
+      const { ws, client } = server;
+      const duplex = createWebSocketStream(ws);
+      const events = watchStream(duplex);
+      duplex.resume();
+      const finished = nextEvent(duplex.end(), "finish");
+      expect(await client.next()).toBe("close");
+      client.close();
+      await finished;
+      expect(events).toEqual(["finish"]);
+      expect(ws.readyState).toBe(WebSocket.CLOSING);
+
+      client.end();
+      await nextEvent(duplex, "close");
+      expect(events).toEqual(["finish", "end", "close"]);
     });
 
     test("write() fails after the client disconnected", async () => {

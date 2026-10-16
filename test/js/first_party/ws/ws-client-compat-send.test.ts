@@ -2,12 +2,14 @@
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { once } from "node:events";
 import { openAsBlob } from "node:fs";
 import path from "node:path";
 import {
   closedPort,
   connectClient,
   createInflater,
+  createPeer,
   detached,
   Frame,
   implementations,
@@ -19,6 +21,8 @@ import {
   repeatA,
   resizable,
   response101,
+  runScript,
+  scriptTimeout,
   shared,
   show,
   showFrame,
@@ -275,7 +279,7 @@ const closedSocketCalls: {
 ];
 const totalBufferedBytes = closedSocketCalls.reduce((sum, row) => sum + row.bufferedBytes, 0);
 
-describe.each(implementations)("ws client send ($name)", ({ ws: implementation, builtin }) => {
+describe.each(implementations)("ws client send ($name)", ({ ws: implementation, builtin, specifier }) => {
   const { WebSocket } = implementation;
 
   describe("send(data)", () => {
@@ -732,6 +736,61 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
         Array.from({ length: sent }, (_, index) => `${index} ${index < written ? "null" : "Error"}`),
       );
     });
+
+    // With npm ws on Bun, node:net drops the callbacks of queued writes when the peer resets the connection.
+    test.skipIf(!builtin).each([
+      { transport: "native", options: {} },
+      { transport: "stream", options: { family: 4 } },
+    ])(
+      "a peer reset passes an Error to the callbacks of buffered sends, on the $transport transport",
+      async ({ options }) => {
+        await using client = await openClient(implementation, { perMessageDeflate: false, ...options });
+        const { results, sent } = await fillSendBuffer(client);
+        expect(results.length).toBeLessThanOrEqual(sent - 3);
+        client.conn.reset();
+        await client.closed;
+        expect(results.map(result => result.split(" ")[0])).toEqual(
+          Array.from({ length: sent }, (_, index) => `${index}`),
+        );
+        expect(results.slice(-3)).toEqual([`${sent - 3} Error`, `${sent - 2} Error`, `${sent - 1} Error`]);
+      },
+    );
+
+    // With npm ws on Bun, node:net swallows the exception after terminate() and drops the callback on a reset.
+    // Skipped on Windows because Winsock accepts everything on loopback, so nothing is ever buffered.
+    test.concurrent.skipIf(!builtin || isWindows).each(["terminate()", "a peer reset"])(
+      "a buffered send's callback that throws after %s doesn't skip 'close'",
+      async how => {
+        await using peer = await createPeer();
+        const child = runScript(
+          { specifier },
+          `
+          const ws = new WebSocket(process.env.PEER_URL, { perMessageDeflate: false });
+          ws.on("close", code => console.log("close", code));
+          ws.on("open", () => {
+            // More than the kernel will buffer, so this write can't complete.
+            ws.send(Buffer.alloc(${32 * MiB}), error => {
+              console.log("callback", error instanceof Error);
+              throw new Error("thrown by the callback");
+            });
+            if (process.env.HOW === "terminate()") ws.terminate();
+          });
+        `,
+          { PEER_URL: peer.url, HOW: how },
+        );
+        const conn = await peer.connection();
+        if (how === "a peer reset") {
+          // The first bytes of the message prove that send() has been called.
+          await once(conn.socket, "data");
+          conn.reset();
+        }
+        const { lines, exitCode } = await child;
+        // On Node, 'close' comes after the uncaught exception.
+        expect(lines).toEqual(["callback true", "close 1006", 'uncaught Error "thrown by the callback"']);
+        expect(exitCode).toBe(0);
+      },
+      scriptTimeout,
+    );
   });
 
   describe("on a socket that isn't open", () => {

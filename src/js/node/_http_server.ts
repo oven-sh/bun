@@ -1676,6 +1676,7 @@ function getNodeHTTPServerSocket() {
     #pendingCallback = null;
     #pendingAbortMessage;
     #closeHandled = false;
+    #peer;
     #closingHandle;
     #resetSupported;
     #closeError: Error | undefined = undefined;
@@ -1748,6 +1749,14 @@ function getNodeHTTPServerSocket() {
         if (enable) {
           handle.ondata = this.#onData.bind(this);
           handle.ondrain = this.#onDrain.bind(this);
+          // The 'upgrade' or 'connect' listener now owns the socket. Its 'close' listeners run after the handle is
+          // gone and still ask who the peer was, and the handle can't answer once the connection has closed.
+          this.#peer = {
+            remoteAddress: handle.remoteAddress,
+            servername: handle.servername,
+            peerCertVerified: handle.peerCertVerified,
+            authorizationError: handle.authorizationError,
+          };
         } else {
           handle.ondata = undefined;
           handle.ondrain = undefined;
@@ -1959,7 +1968,7 @@ function getNodeHTTPServerSocket() {
     }
 
     address() {
-      return this[kHandle]?.remoteAddress || null;
+      return (this[kHandle] ?? this.#peer)?.remoteAddress || null;
     }
 
     get bufferSize() {
@@ -2074,7 +2083,7 @@ function getNodeHTTPServerSocket() {
     // client sent none (matches Node's server-side TLSSocket.servername).
     get servername() {
       if (!this.encrypted) return undefined;
-      const name = this[kHandle]?.servername;
+      const name = (this[kHandle] ?? this.#peer)?.servername;
       return typeof name === "string" && name.length > 0 ? name : false;
     }
 
@@ -2084,13 +2093,13 @@ function getNodeHTTPServerSocket() {
     get authorized() {
       if (!this.encrypted) return undefined;
       if (!this.server?.[tlsSymbol]?.requestCert) return false;
-      return this[kHandle]?.peerCertVerified === true;
+      return (this[kHandle] ?? this.#peer)?.peerCertVerified === true;
     }
 
     get authorizationError() {
       if (!this.encrypted) return undefined;
       if (!this.server?.[tlsSymbol]?.requestCert) return null;
-      return this[kHandle]?.authorizationError ?? null;
+      return (this[kHandle] ?? this.#peer)?.authorizationError ?? null;
     }
 
     ref() {

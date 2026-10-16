@@ -1,14 +1,17 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { gc, tls as tlsCerts } from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { getEventListeners, once } from "node:events";
 import { readFileSync } from "node:fs";
-import http, { type IncomingMessage } from "node:http";
+import http, { type ClientRequest, type IncomingMessage } from "node:http";
+import https from "node:https";
 import net from "node:net";
 import path from "node:path";
 import type { ConnectionOptions } from "node:tls";
 import WebSocket from "ws";
 import { connectRequest, startEchoServer, startRecordingProxy } from "../../web/websocket/proxy-test-utils";
+import { createPeer, runScript, scriptTimeout } from "./ws-raw-peer";
 
 // Use dynamic require to avoid linter removing the import
 const { HttpsProxyAgent } = require("https-proxy-agent") as {
@@ -97,6 +100,21 @@ function closeWhileConnecting(ws: WebSocket) {
   ws.close();
 }
 
+/**
+ * Runs `script` in a child process, for a polluted Object.prototype or an environment variable. `connect(url, options)`
+ * resolves with the server's first message, or with `error <code>`.
+ */
+function runClientScript(script: string, env: Record<string, string>) {
+  const prelude = `
+    const connect = (url, options) => new Promise(resolve => {
+      const ws = new WebSocket(url, options);
+      ws.on("message", data => { resolve(String(data)); ws.terminate(); });
+      ws.on("error", error => resolve("error " + error.code));
+    });
+  `;
+  return runScript({ specifier: "ws" }, prelude + script, { NO_PROXY: "", no_proxy: "", ...env });
+}
+
 describe("ws package proxy API", () => {
   // These checks only exercise the constructor. close() follows at once, so
   // nothing needs to listen on the proxy port.
@@ -166,6 +184,60 @@ describe("ws package through HTTP CONNECT proxy", () => {
     gc();
   });
 
+  // The native client reads inherited properties and getters, so `ws` must not copy the object with a spread.
+  test.each<[shape: string, create: (url: string) => object]>([
+    [
+      "a class instance with `url` and `tls` getters",
+      url =>
+        new (class {
+          get url() {
+            return url;
+          }
+          get tls() {
+            return {};
+          }
+        })(),
+    ],
+    ["an object that inherits `url` and has its own `tls`", url => Object.assign(Object.create({ url }), { tls: {} })],
+  ])("`proxy` can be %s", async (_, create) => {
+    using recorded = await startRecordingProxy();
+    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
+      proxy: create(`http://127.0.0.1:${recorded.port}`),
+    } as ClientOptions);
+    expect({ events: await wsEchoSession(ws, "hello"), requests: recorded.requests }).toEqual({
+      events: echoed("hello"),
+      requests: [connectRequest(wsPort)],
+    });
+  });
+
+  test.concurrent(
+    "doesn't read `proxy.tls` from Object.prototype",
+    async () => {
+      using proxy = await startRecordingProxy();
+      using secureProxy = await startRecordingProxy({ tls: true });
+      const { lines, exitCode } = await runClientScript(
+        `
+        const { TARGET, PROXY, SECURE_PROXY } = process.env;
+        Object.prototype.tls = { rejectUnauthorized: false };
+        console.log(await connect(TARGET, { proxy: PROXY }));
+        console.log(await connect(TARGET, { proxy: { url: SECURE_PROXY } }));
+      `,
+        {
+          TARGET: `ws://127.0.0.1:${wsPort}`,
+          PROXY: `http://127.0.0.1:${proxy.port}`,
+          SECURE_PROXY: `https://127.0.0.1:${secureProxy.port}`,
+        },
+      );
+      expect({ lines, requests: proxy.requests, secureRequests: secureProxy.requests }).toEqual({
+        lines: ["connected", "error DEPTH_ZERO_SELF_SIGNED_CERT"],
+        requests: [connectRequest(wsPort)],
+        secureRequests: [],
+      });
+      expect(exitCode).toBe(0);
+    },
+    scriptTimeout,
+  );
+
   // With a proxy the native client connects instead of node:http, so `ws` has to handle `signal` itself. A signal can
   // outlive the connections it was passed to, so a listener left on it would leak.
   describe("`signal` option", () => {
@@ -225,6 +297,30 @@ describe("ws package through HTTP CONNECT proxy", () => {
         expect(getEventListeners(signal, "abort")).toEqual([]);
       },
     );
+  });
+
+  // The native client has accepted the 101, so giving up on the request has to close the WebSocket too.
+  test.each<{ call: string; listener: string; events: ClientEvent[] }>([
+    { call: "controller.abort()", listener: "upgrade", events: failed({ error: "The operation was aborted", code: "ABORT_ERR" }) }, // prettier-ignore
+    { call: "req.destroy()", listener: "upgrade", events: failed({ error: "socket hang up", code: "ECONNRESET" }) },
+    { call: "req.destroy()", listener: "open", events: [{ close: [1006, Buffer.alloc(0)] }] },
+  ])("$call in an '$listener' listener closes the socket", async ({ call, listener, events }) => {
+    using recorded = await startRecordingProxy();
+    await using target = await createPeer();
+    const controller = new AbortController();
+    let req!: ClientRequest;
+    const ws = new WebSocket(target.url, {
+      proxy: `http://127.0.0.1:${recorded.port}`,
+      signal: controller.signal,
+      finishRequest: request => void (req = request).end(),
+    } as ClientOptions);
+    const seen = wsEvents(ws);
+    const requestClosed = new Promise(resolve => req.on("close", resolve));
+    ws.on(listener, () => (call === "req.destroy()" ? req.destroy() : controller.abort()));
+    await requestClosed;
+    expect(() => (ws.terminate(), ws.close())).not.toThrow();
+    expect(await seen).toEqual(events);
+    expect(getEventListeners(controller.signal, "abort")).toEqual([]);
   });
 
   test("ws:// through HTTP proxy when finishRequest calls req.end() asynchronously", async () => {
@@ -354,6 +450,27 @@ describe("ws package through HTTPS proxy (TLS proxy)", () => {
     gc();
   });
 
+  test("`proxy.tls` accepts `pfx` and `passphrase`, like `tls`", async () => {
+    const read = (name: string) => readFileSync(path.join(import.meta.dirname, "../../node/test/fixtures/keys", name));
+    using recorded = await startRecordingProxy({
+      tls: true,
+      tlsOptions: { requestCert: true, rejectUnauthorized: false, ca: read("ca1-cert.pem") },
+    });
+    const options = (passphrase: string) =>
+      ({
+        proxy: {
+          url: `https://127.0.0.1:${recorded.port}`,
+          tls: { ca: tlsCerts.cert, pfx: read("agent1.pfx"), passphrase },
+        },
+      }) as ClientOptions;
+    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, options("sample"));
+    expect({ events: await wsEchoSession(ws, "hello"), clientCertificates: recorded.clientCertificates }).toEqual({
+      events: echoed("hello"),
+      clientCertificates: ["agent1"],
+    });
+    expect(() => new WebSocket(`ws://127.0.0.1:${wsPort}`, options("wrong"))).toThrow(/mac verif/i);
+  });
+
   test("ws:// through HTTPS proxy fails without CA certificate", async () => {
     using recorded = await startRecordingProxy({ tls: true });
     const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
@@ -416,6 +533,39 @@ describe("ws package with HttpsProxyAgent", () => {
       requests: [connectRequest(wsPort, { "proxy-authorization": `Basic ${btoa("proxy_user:proxy_pass")}` })],
     });
     gc();
+  });
+
+  // https-proxy-agent overwrites the header with the URL's credentials. In Bun's own `proxy` option the header wins, as
+  // in fetch().
+  describe("credentials in the proxy URL and a Proxy-Authorization header", () => {
+    const valid = "proxy_user:proxy_pass";
+    const basic = (credentials: string) => `Basic ${btoa(credentials)}`;
+
+    test.each<{ where: string; winner: string; options(port: number): ClientOptions }>([
+      ...["Proxy-Authorization", "proxy-authorization"].map(name => ({
+        where: `\`${name}\` on an HttpsProxyAgent`,
+        winner: "the URL's credentials",
+        options: (port: number) => ({
+          agent: new HttpsProxyAgent(`http://${valid}@127.0.0.1:${port}`, {
+            headers: { [name]: basic("other:other") },
+          }),
+        }),
+      })),
+      {
+        where: "`Proxy-Authorization` in the `proxy` option",
+        winner: "the header",
+        options: port => ({
+          proxy: { url: `http://other:other@127.0.0.1:${port}`, headers: { "Proxy-Authorization": basic(valid) } },
+        }),
+      },
+    ])("$where: sends $winner", async ({ options }) => {
+      using recorded = await startRecordingProxy({ requireAuth: true });
+      const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, options(recorded.port));
+      expect({ events: await wsEchoSession(ws, "hello"), requests: recorded.requests }).toEqual({
+        events: echoed("hello"),
+        requests: [connectRequest(wsPort, { "proxy-authorization": basic(valid) })],
+      });
+    });
   });
 
   test("HttpsProxyAgent with agent.proxy as URL object", async () => {
@@ -567,20 +717,44 @@ describe("TLS options with an HttpsProxyAgent", () => {
     });
   });
 
-  // Bun-only: Node ignores `proxy` on an agent that doesn't implement it.
-  test("`connectOpts` of an agent that can't connect on its own only applies to the proxy", async () => {
-    const agent = (proxy: string, connectOpts?: TrustOptions) =>
-      Object.assign(new http.Agent(), { proxy, connectOpts });
+  // Bun-only: Node ignores `proxy` on an agent that doesn't implement it. hpagent calls it `proxyRequestOptions`.
+  test.each(["connectOpts", "proxyRequestOptions"])(
+    "`%s` of an agent that can't connect on its own only applies to the proxy",
+    async name => {
+      const agent = (proxy: string, options: TrustOptions) =>
+        Object.assign(new http.Agent(), { proxy, [name]: options });
+      expect({
+        http: await connect("http", "wss", url => ({ agent: agent(url, off) })),
+        https: await connect("https", "wss", url => ({ agent: agent(url, off) })),
+        empty: await connect("https", "wss", url => ({ agent: agent(url, {}), ...off })),
+        trusted: await connect("https", "wss", url => ({ agent: agent(url, { ca: proxyCa }), ca: targetCa })),
+      }).toEqual({
+        http: rejectedTarget(),
+        https: rejectedTarget(),
+        empty: rejectedProxy,
+        trusted: opened("wss"),
+      });
+    },
+  );
+
+  // Bun can't tell where such an agent keeps its options for the proxy.
+  test("without `connectOpts`, the WebSocket's and the agent's options apply to the proxy and the target", async () => {
+    const agent = (proxy: string, options?: TrustOptions) => Object.assign(new https.Agent(options), { proxy });
+    const both = { ca: [proxyCa, targetCa] };
     expect({
-      http: await connect("http", "wss", url => ({ agent: agent(url, off) })),
-      https: await connect("https", "wss", url => ({ agent: agent(url, off) })),
-      noConnectOpts: await connect("https", "wss", url => ({ agent: agent(url), ...off })),
-      trusted: await connect("https", "wss", url => ({ agent: agent(url, { ca: proxyCa }), ca: targetCa })),
+      none: await connect("https", "wss", url => ({ agent: agent(url) })),
+      off: await connect("https", "wss", url => ({ agent: agent(url), ...off })),
+      both: await connect("https", "wss", url => ({ agent: agent(url), ...both })),
+      agentOptions: await connect("https", "wss", url => ({ agent: agent(url, both) })),
+      proxyOnly: await connect("https", "wss", url => ({ agent: agent(url), ca: proxyCa })),
+      targetOnly: await connect("https", "wss", url => ({ agent: agent(url), ca: targetCa })),
     }).toEqual({
-      http: rejectedTarget(),
-      https: rejectedTarget(),
-      noConnectOpts: rejectedProxy,
-      trusted: opened("wss"),
+      none: rejectedProxy,
+      off: opened("wss"),
+      both: opened("wss"),
+      agentOptions: opened("wss"),
+      proxyOnly: rejectedTarget(),
+      targetOnly: rejectedProxy,
     });
   });
 
@@ -609,4 +783,54 @@ describe("TLS options with an HttpsProxyAgent", () => {
       checked: ["127.0.0.1"],
     });
   });
+
+  test("both `checkServerIdentity` callbacks keep the AsyncLocalStorage store of the `new WebSocket()` call", async () => {
+    const storage = new AsyncLocalStorage<string>();
+    const stores: Record<string, string | undefined> = {};
+    // @types/ws declares a boolean result.
+    const record = (hop: string) => (): any => void (stores[hop] = storage.getStore());
+    const result = await storage.run("the caller's", () =>
+      connect("https", "wss", url => ({
+        agent: new HttpsProxyAgent(url, { ca: proxyCa, checkServerIdentity: record("proxy") }),
+        ca: targetCa,
+        checkServerIdentity: record("target"),
+      })),
+    );
+    expect({ result, stores }).toEqual({
+      result: opened("wss"),
+      stores: { proxy: "the caller's", target: "the caller's" },
+    });
+  });
+
+  test.concurrent(
+    "with NODE_TLS_REJECT_UNAUTHORIZED=0, the ignored verdict on the proxy isn't reported when the target is rejected",
+    async () => {
+      using recorded = await startRecordingProxy({ tls: true });
+      const { lines, exitCode } = await runClientScript(
+        `
+        const { HttpsProxyAgent } = require(process.env.HTTPS_PROXY_AGENT);
+        const { PROXY, PROXY_CA, TARGET, TARGET_CA } = process.env;
+        const agent = new HttpsProxyAgent(PROXY, {
+          ca: PROXY_CA,
+          checkServerIdentity: () => Object.assign(new Error("pinned"), { code: "PINNED" }),
+        });
+        console.log(await connect(TARGET, { agent, ca: TARGET_CA, rejectUnauthorized: true, servername: "other.example" }));
+      `,
+        {
+          NODE_TLS_REJECT_UNAUTHORIZED: "0",
+          HTTPS_PROXY_AGENT: require.resolve("https-proxy-agent"),
+          PROXY: `https://127.0.0.1:${recorded.port}`,
+          PROXY_CA: proxyCa,
+          TARGET: `wss://127.0.0.1:${portOf("wss")}`,
+          TARGET_CA: targetCa,
+        },
+      );
+      expect({ lines, requests: recorded.requests }).toEqual({
+        lines: ["error ERR_TLS_CERT_ALTNAME_INVALID"],
+        requests: [connectRequest(portOf("wss"))],
+      });
+      expect(exitCode).toBe(0);
+    },
+    scriptTimeout,
+  );
 });

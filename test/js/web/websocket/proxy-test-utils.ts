@@ -38,6 +38,8 @@ export interface ConnectProxyOptions {
   requireAuth?: boolean;
   /** Terminate TLS in front of the proxy (an HTTPS proxy), with the harness certificate. */
   tls?: boolean;
+  /** Extra options for that TLS server, e.g. `requestCert`. */
+  tlsOptions?: tls.TlsOptions;
   /** Observes every CONNECT request the proxy reads, before the proxy answers it. */
   onConnectRequest?: (request: ConnectRequest) => void;
   /**
@@ -159,7 +161,7 @@ export function createConnectProxy(options: ConnectProxyOptions = {}): net.Serve
   };
 
   return options.tls
-    ? tls.createServer({ key: tlsCerts.key, cert: tlsCerts.cert }, onClient)
+    ? tls.createServer({ key: tlsCerts.key, cert: tlsCerts.cert, ...options.tlsOptions }, onClient)
     : net.createServer(onClient);
 }
 
@@ -200,6 +202,7 @@ export function departure(socket: net.Socket): Promise<Departure> {
 export async function startRecordingProxy(options: ConnectProxyOptions = {}) {
   const requests: ConnectRequest[] = [];
   const sni: (string | null)[] = [];
+  const clientCertificates: (string | null)[] = [];
   const departures: Promise<Departure>[] = [];
   let connections = 0;
   const proxy = createConnectProxy({
@@ -214,6 +217,7 @@ export async function startRecordingProxy(options: ConnectProxyOptions = {}) {
   });
   proxy.on("secureConnection", (socket: tls.TLSSocket) => {
     sni.push(socket.servername || null);
+    clientCertificates.push((socket.getPeerCertificate().subject?.CN as string | undefined) ?? null);
   });
   proxy.on(options.tls ? "secureConnection" : "connection", (socket: net.Socket) => {
     departures.push(departure(socket));
@@ -224,6 +228,8 @@ export async function startRecordingProxy(options: ConnectProxyOptions = {}) {
     requests,
     /** With `tls: true`, the SNI of every handshake the proxy completed. `null` when the client sent none. */
     sni,
+    /** With `requestCert`, the CN of the client certificate of every handshake. `null` when the client sent none. */
+    clientCertificates,
     /** One per connection the proxy accepted so far. Each resolves when that connection is gone. */
     departures,
     get connections() {

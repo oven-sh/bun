@@ -53,10 +53,11 @@ pub(crate) fn quantize(
         // Every pixel has its own entry, so there is no error to diffuse.
         Scan::Fits(palette) => palette,
         Scan::Over { seen, at } => {
-            let (mut bins, table) = count_colors(pixels, &seen, &indices[..at], want)?;
-            // More than `want` colours, so this is `want` entries.
-            let palette = split_boxes(&mut bins, want);
-            drop(bins);
+            // More than `want` colours, so the palette is `want` entries.
+            let (palette, table) = match count_colors(pixels, &seen, &indices[..at], want)? {
+                Counted::Bins(mut bins, slots) => (split_boxes(&mut bins, want), Some(slots)),
+                Counted::Pixels(mut copy) => (split_boxes(&mut copy, want), None),
+            };
             let k: u16 = u16::try_from(palette.len() / 4).expect("int cast");
             if opts.dither {
                 drop(table);
@@ -169,11 +170,44 @@ fn scan(pixels: &[[u8; 4]], want: usize, indices: &mut [u8]) -> Scan {
     Scan::Fits(seen)
 }
 
-/// A colour and a number of pixels that have it.
+/// A colour and the number of pixels that have it.
 #[derive(Clone, Copy)]
 struct Bin {
     rgba: [u8; 4],
     count: u32,
+}
+
+/// What a box holds: colours with pixel counts.
+trait Weighted: Copy {
+    fn rgba(self) -> [u8; 4];
+    fn count(self) -> u32;
+}
+
+impl Weighted for Bin {
+    fn rgba(self) -> [u8; 4] {
+        self.rgba
+    }
+    fn count(self) -> u32 {
+        self.count
+    }
+}
+
+/// One pixel.
+impl Weighted for [u8; 4] {
+    fn rgba(self) -> [u8; 4] {
+        self
+    }
+    fn count(self) -> u32 {
+        1
+    }
+}
+
+/// What `count_colors` found.
+enum Counted {
+    /// Every colour once, and the table that counted them (`val` = count).
+    Bins(Vec<Bin>, Vec<Slot>),
+    /// The table gave up: a copy of the pixels. A cut is a value, so equal colours stay together.
+    Pixels(Vec<[u8; 4]>),
 }
 
 /// Colours per palette entry the count table takes before it asks whether they repeat.
@@ -186,7 +220,7 @@ fn table_room(want: usize) -> usize {
     TABLE_COLORS_PER_ENTRY * want
 }
 
-/// Pixel counts by colour. A photo has too many colours for a table to pay: its runs are the bins.
+/// Pixel counts by colour. A photo has too many colours for a table to pay: it gives up.
 struct Counts {
     /// Each `val` is the pixel count of `key`. At most half full.
     slots: Vec<Slot>,
@@ -233,19 +267,19 @@ impl Counts {
     }
 }
 
-/// The colours with their pixel counts, and the table when it took them all (`val` = count).
+/// Count the colours in a table. When it gives up, copy the pixels.
 fn count_colors(
     pixels: &[[u8; 4]],
     seen: &[u8],
     counted: &[u8],
     want: usize,
-) -> Result<(Vec<Bin>, Option<Vec<Slot>>), AllocError> {
+) -> Result<Counted, AllocError> {
     // Never more than the room of a full palette, or one colour per two pixels.
     let most = table_room(256).min(pixels.len() / 2);
     let (seen, _) = seen.as_chunks::<4>();
     // There are more colours than `seen`: they cannot all fit.
     if seen.len() >= most {
-        return Ok((count_runs(pixels)?, None));
+        return copy_pixels(pixels);
     }
     let mut table = Counts {
         slots: try_filled(1024)?,
@@ -272,7 +306,7 @@ fn count_colors(
     for (key, count) in seeds.chain(runs) {
         if !table.add(key, count)? {
             drop(table);
-            return Ok((count_runs(pixels)?, None));
+            return copy_pixels(pixels);
         }
     }
 
@@ -289,19 +323,15 @@ fn count_colors(
                 count: slot.val,
             }),
     );
-    Ok((bins, Some(table.slots)))
+    Ok(Counted::Bins(bins, table.slots))
 }
 
-/// `count_colors` without the table: one bin per run of equal pixels, so a colour can have several.
-fn count_runs(pixels: &[[u8; 4]]) -> Result<Vec<Bin>, AllocError> {
-    let mut bins: Vec<Bin> = Vec::new();
-    bins.try_reserve_exact(pixels.chunk_by(|a, b| a == b).count())
+fn copy_pixels(pixels: &[[u8; 4]]) -> Result<Counted, AllocError> {
+    let mut copy: Vec<[u8; 4]> = Vec::new();
+    copy.try_reserve_exact(pixels.len())
         .map_err(|_| AllocError)?;
-    bins.extend(pixels.chunk_by(|a, b| a == b).map(|run| Bin {
-        rgba: run[0],
-        count: u32::try_from(run.len()).expect("int cast"),
-    }));
-    Ok(bins)
+    copy.extend_from_slice(pixels);
+    Ok(Counted::Pixels(copy))
 }
 
 /// Count, sums and sums of squares of a set of pixels: enough for its mean and squared error.
@@ -313,11 +343,11 @@ struct Moments {
 }
 
 impl Moments {
-    fn add(&mut self, bin: Bin) {
-        let count = u64::from(bin.count);
+    fn add(&mut self, colour: impl Weighted) {
+        let count = u64::from(colour.count());
         self.n += count;
         for c in 0..4usize {
-            let v = u64::from(bin.rgba[c]);
+            let v = u64::from(colour.rgba()[c]);
             self.sum[c] += count * v;
             self.sq[c] += count * v * v;
         }
@@ -386,7 +416,7 @@ impl ColorBox {
 }
 
 /// Split `bins` into `want` boxes (fewer if every box is one colour). Each box's mean is an entry.
-fn split_boxes(bins: &mut [Bin], want: usize) -> Vec<u8> {
+fn split_boxes<W: Weighted>(bins: &mut [W], want: usize) -> Vec<u8> {
     let mut all = Moments::default();
     for &bin in bins.iter() {
         all.add(bin);
@@ -420,7 +450,7 @@ fn split_boxes(bins: &mut [Bin], want: usize) -> Vec<u8> {
         let mut at: usize = 0;
         let mut left = Moments::default();
         for i in 0..slice.len() {
-            if slice[i].rgba[ch] < value {
+            if slice[i].rgba()[ch] < value {
                 left.add(slice[i]);
                 slice.swap(at, i);
                 at += 1;
@@ -444,14 +474,15 @@ struct Sums {
 }
 
 /// The cut of `bins` along `ch` with the least squared error: the least value in the second part.
-fn cut(bins: &[Bin], ch: usize, total: &Moments) -> Option<u8> {
+fn cut<W: Weighted>(bins: &[W], ch: usize, total: &Moments) -> Option<u8> {
     let mut at_value = [Sums::default(); 256];
     for bin in bins {
-        let sums = &mut at_value[usize::from(bin.rgba[ch])];
-        let count = u64::from(bin.count);
+        let rgba = bin.rgba();
+        let sums = &mut at_value[usize::from(rgba[ch])];
+        let count = u64::from(bin.count());
         sums.n += count;
         for c in 0..4usize {
-            sums.sum[c] += count * u64::from(bin.rgba[c]);
+            sums.sum[c] += count * u64::from(rgba[c]);
         }
     }
     // The sum of squares is fixed: least error is the largest L²/nL + R²/nR over the parts' sums.

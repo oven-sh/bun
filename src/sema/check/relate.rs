@@ -11,6 +11,7 @@ use super::infer::{Inference, PRIORITY_ALWAYS_STRICT, PRIORITY_NO_CONSTRAINTS};
 use super::related::Place;
 use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
 use super::*;
+use crate::util::SharedSort;
 use crate::util::{FxHashSet, FxHasher};
 use smallvec::SmallVec;
 use std::hash::Hasher;
@@ -678,7 +679,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isEmptyResolvedType` of the resolved members of `ty`.
     fn is_empty_resolved_type(&mut self, ty: TypeId) -> bool {
         !self.is_any_function_type(ty)
-            && (self.members(ty)).is_some_and(|m| Self::has_no_members(m.shape()))
+            && (self.members(ty)).is_some_and(|m| Self::has_no_members(m.whole_shape()))
     }
 
     /// `isEmptyObjectType`
@@ -729,7 +730,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.is_empty_resolved_type(ty);
         }
         match self.resolved_members(ty) {
-            Some(members) => Self::has_no_members(members.shape()),
+            Some(members) => Self::has_no_members(members.whole_shape()),
             None => self.has_no_members_in_place(ty),
         }
     }
@@ -765,8 +766,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn has_call_or_construct_signatures(&mut self, ty: TypeId) -> bool {
-        self.members(ty)
-            .is_some_and(|m| !(m.shape().call.is_empty() && m.shape().construct.is_empty()))
+        self.members(ty).is_some_and(|m| m.has_signatures())
     }
 
     /// `getNonMissingTypeOfSymbol`: the type of a property as used in comparisons. It includes
@@ -1307,12 +1307,9 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     break 'members false;
                 };
-                let (a, b) = (self.enum_member_type(member), self.enum_member_type(other));
-                let value = |c: &Self, ty: TypeId| match c.data(ty) {
-                    TypeData::EnumLit { value, .. } => Some(*value),
-                    _ => None,
-                };
-                let (code, values) = match (value(self, a), value(self, b)) {
+                let actual = self.enum_member_value_of_symbol(member);
+                let expected = self.enum_member_value_of_symbol(other);
+                let (code, values) = match (actual, expected) {
                     (Some(actual), Some(expected)) if !Self::is_equal_value(actual, expected) => {
                         (4125, [Some(expected), Some(actual)])
                     }
@@ -1873,7 +1870,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut pairs = self.types().mapping(mapper).to_vec();
         for (i, &param) in params.iter().enumerate() {
-            pairs.push((param, self.get_inferred_type(&context, i, false)));
+            // `combineTypeMappers(context.mapper, mapper)`: an inferred type is instantiated
+            // with `mapper`.
+            let inferred = self.get_inferred_type(&context, i, false);
+            pairs.push((param, self.instantiate(inferred, mapper)));
         }
         let combined = self.types().mapper(pairs);
         let declared = self.type_from_node(file, nodes[2]);
@@ -2078,7 +2078,7 @@ impl<'p, 's> Checker<'p, 's> {
                     TypeId::NEVER
                 });
             }
-            key_types.extend(members.shape().index.iter().map(|i| i.key));
+            key_types.extend(self.structured(members).index_infos().iter().map(|i| i.key));
         }
         let mut keys = Vec::with_capacity(key_types.len());
         for key in key_types {
@@ -2736,10 +2736,8 @@ impl<'p, 's> Checker<'p, 's> {
                 && self.is_weak_type(target)
                 && {
                     let apparent = self.reduced_apparent_type_as_object(source);
-                    self.members(apparent).is_some_and(|m| {
-                        let s = m.shape();
-                        !(s.props.is_empty() && s.call.is_empty() && s.construct.is_empty())
-                    })
+                    self.members(apparent)
+                        .is_some_and(|m| !m.shape().props.is_empty() || m.has_signatures())
                 };
             if is_performing_common_property_checks && !self.has_common_properties(source, target) {
                 if REPORT {
@@ -2802,6 +2800,12 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         if REPORT {
+            // `typeRelatedToSomeType` goes on with `getRegularTypeOfObjectLiteral(source)`.
+            let regular = |c: &mut Self, ty| match state & STATE_REGULAR {
+                0 => ty,
+                _ => c.regular_type_of_object_literal(ty),
+            };
+            let (original_source, source) = (regular(self, original_source), regular(self, source));
             self.report_error_results(r, original_source, original_target, source, target, head);
         }
         Ternary::FALSE
@@ -3074,8 +3078,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // A name derived from a symbol is accepted by a string index signature.
                 self.atoms().is_symbol_name(name)
                     && members
-                        .shape()
-                        .index
+                        .index_infos()
                         .iter()
                         .any(|i| i.key == TypeId::STRING)
             }
@@ -3086,7 +3089,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn is_weak_type(&mut self, t: TypeId) -> bool {
         match self.data(t) {
             data if is_object_kind(data) => self.members(t).is_some_and(|m| {
-                let s = m.shape();
+                let s = m.whole_shape();
                 !s.props.is_empty()
                     && s.call.is_empty()
                     && s.construct.is_empty()
@@ -3223,7 +3226,8 @@ impl<'p, 's> Checker<'p, 's> {
             return self.type_related_to_some_type::<false>(r, source, target, state);
         }
         if matches!(td, TypeData::Intersection(_)) {
-            return self.type_related_to_each_type::<REPORT>(r, source, target, STATE_TARGET);
+            let state = STATE_TARGET | state & STATE_REGULAR;
+            return self.type_related_to_each_type::<REPORT>(r, source, target, state);
         }
         // The source is an intersection. `T & 1` with `T extends 1 | 2` must not be comparable to
         // `2`.
@@ -3579,14 +3583,8 @@ impl<'p, 's> Checker<'p, 's> {
             let is_this = matches!(self.data(arg), TypeData::ThisParam(_));
             if is_this || matches!(self.data(arg), TypeData::TypeParam(..)) {
                 // The constraint of a `this` type is the class or interface it belongs to.
-                let is_unconstrained = ignore_constraints
-                    || !is_this && {
-                        // The constraint is resolved only to build the key, so a cycle through here is not an error.
-                        self.eager.push(self.stack.len());
-                        let constraint = self.constraint_of_type_param(arg);
-                        self.eager.pop();
-                        constraint.is_none()
-                    };
+                let is_unconstrained =
+                    ignore_constraints || !is_this && self.constraint_of_type_param(arg).is_none();
                 if !is_unconstrained {
                     key.constrained = true;
                 } else if let Some(index) = key.type_param_index(arg) {
@@ -4369,7 +4367,7 @@ impl<'p, 's> Checker<'p, 's> {
                     props.push(combined);
                 }
             }
-            if of_current.shape().index.is_empty() {
+            if self.structured(of_current).index_infos().is_empty() {
                 break;
             }
         }
@@ -5036,14 +5034,18 @@ impl<'p, 's> Checker<'p, 's> {
                     let mut source_extends = self.cond_extends(source);
                     let target_extends = self.cond_extends(target);
                     let mut mapper = MapperId::IDENTITY;
-                    // Instantiated from one declaration, both sides have the same `infer` type
-                    // parameters: each that occurs in the extends type maps to itself. For one that
-                    // does not, nothing is inferred.
-                    if !source_params.is_empty()
-                        && (source_extends != target_extends
-                            || (self.params_mentioned_in(source_extends, &source_params))
-                                .contains(&false))
-                    {
+                    // Also when both sides have the same extends type: the inference asks for the
+                    // variances of the generic types in it, and in a cycle of variance
+                    // computations what they are depends on who asks first.
+                    // FOR SPEED: once. Instantiated from one declaration, both sides have the same
+                    // `infer` type parameters, and each that occurs in the extends type maps to
+                    // itself: after the first time the inference changes nothing.
+                    let is_repeated = !source_params.is_empty()
+                        && source_extends == target_extends
+                        && !(self.params_mentioned_in(source_extends, &source_params))
+                            .contains(&false)
+                        && !self.inferred_between_same_extends.insert(source_extends);
+                    if !source_params.is_empty() && !is_repeated {
                         let around = self.cond_origin(source).2;
                         let inferred = self.infer_from_types_comparing(
                             &source_params,
@@ -5385,6 +5387,26 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         result
+    }
+
+    /// `members`, for `getPropertiesOfType(ty)`: an intersection has the list of properties that
+    /// `getPropertiesOfUnionOrIntersectionType` assigned, which can lack some that
+    /// `getPropertyOfType` finds by name (`listed_properties`).
+    /// Whether the list of properties that the intersection `ty` keeps lacks the members of a
+    /// constituent (`listed_members`).
+    pub(super) fn has_partial_list(&self, ty: TypeId) -> bool {
+        matches!(self.data(ty), TypeData::Intersection(_))
+            && (self.p.listed_properties.get(&self.task, &ty)).is_some_and(|listed| listed != ty)
+    }
+
+    pub(super) fn listed_members(&mut self, ty: TypeId) -> Option<Members<'p>> {
+        if matches!(self.data(ty), TypeData::Intersection(_))
+            && let Some(listed) = self.p.listed_properties.get(&self.task, &ty)
+            && listed != ty
+        {
+            return self.members(listed);
+        }
+        self.members(ty)
     }
 
     /// The type that `getPropertiesOfType`, `getPropertyOfType` and `getIndexInfosOfType` use:
@@ -5861,11 +5883,16 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let provisional = self.provisional_shapes.len();
         let has_properties = properties.unwrap_or(source);
-        let (Some(sm), Some(tm)) = (self.members(has_properties), self.members(target)) else {
+        let (Some(sm), Some(tm)) = (self.members(has_properties), self.listed_members(target))
+        else {
             return Ternary::FALSE;
         };
-        // A cached shape does not change.
-        if self.provisional_shapes.len() == provisional {
+        // A cached shape does not change. An intersection has its signatures elsewhere.
+        let is_intersection = |c: &Self, ty| matches!(c.data(ty), TypeData::Intersection(_));
+        if self.provisional_shapes.len() == provisional
+            && !is_intersection(self, has_properties)
+            && !is_intersection(self, target)
+        {
             *both = Some((sm, tm));
         }
         // `getPropertyOfType(source, name)`
@@ -5889,16 +5916,17 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // `shouldReportUnmatchedPropertyError`: a function type that lacks the properties of an
             // object type is a mismatch of kind, not a missing property.
-            let (s, t) = (sm.shape(), tm.shape());
+            let both_have =
+                |kind| tm.has_signatures_of_kind(kind) && sm.has_signatures_of_kind(kind);
             if REPORT
-                && (s.call.is_empty() && s.construct.is_empty()
-                    || !s.props.is_empty() && self.is_object_type(source)
-                    || !t.call.is_empty() && !s.call.is_empty()
-                    || !t.construct.is_empty() && !s.construct.is_empty())
+                && (!sm.has_signatures()
+                    || !sm.shape().props.is_empty() && self.is_object_type(source)
+                    || both_have(false)
+                    || both_have(true))
             {
                 // `getUnmatchedProperties`
                 let mut unmatched: Vec<&Prop> = Vec::new();
-                for tp in &t.props {
+                for tp in &tm.shape().props {
                     if !self.is_static_private_name(tp)
                         && (require_optional_properties || !tp.flags.contains(PropFlags::OPTIONAL))
                         && (self.property_among(has_properties, &sm, &mut inherited, tp.name))
@@ -5940,7 +5968,7 @@ impl<'p, 's> Checker<'p, 's> {
                 PropSource::Type(_) => (true, atoms.bytes(tp.name)),
                 _ => (false, &[][..]),
             };
-            in_order.sort_by(|a, b| place(a).cmp(&place(b)));
+            in_order.shared_sort_by(|a, b| place(a).cmp(&place(b)));
         }
         for (i, tp) in tm.shape().props.iter().enumerate() {
             let tp = if REPORT {
@@ -5987,6 +6015,13 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         if (a.0.mapper, a.1) == (b.0.mapper, b.1) {
+            return true;
+        }
+        // `instantiateSymbol` returns it itself, in every type that inherits it.
+        if let PropSource::Symbol(sym) = a.0.source
+            && ((a.0.flags | b.0.flags).contains(PropFlags::THISLESS)
+                || self.is_thisless_for_this_mapper(sym))
+        {
             return true;
         }
         let (a, b) = (self.compose(a.0.mapper, a.1), self.compose(b.0.mapper, b.1));
@@ -6098,7 +6133,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getDeclaringClass`
     pub(super) fn declaring_class(&self, prop: &Prop) -> Option<Sym> {
-        match prop.source {
+        match *Self::value_declaration(prop)? {
             PropSource::Symbol(sym) => self.declaring_class_of_symbol(sym),
             _ => None,
         }
@@ -6278,16 +6313,19 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (sm, tm) = match both {
             Some(both) => both,
-            None => match (self.members(source), self.members(target)) {
+            None => match (
+                self.structured_members(source),
+                self.structured_members(target),
+            ) {
                 (Some(sm), Some(tm)) => (sm, tm),
                 _ => return Ternary::FALSE,
             },
         };
         let pick = |m: &Members| {
             if construct {
-                m.shape().construct.len()
+                m.construct_signatures().len()
             } else {
-                m.shape().call.len()
+                m.call_signatures().len()
             }
         };
         if r.relation == Relation::Identity && pick(&sm) != pick(&tm) {
@@ -6300,9 +6338,9 @@ impl<'p, 's> Checker<'p, 's> {
         let list =
             |c: &mut Self, ty: TypeId, data: &TypeData, m: &Members<'p>| -> List<'p, SigId> {
                 let sigs: &'p [SigId] = if construct {
-                    &m.shape().construct
+                    m.construct_signatures()
                 } else {
-                    &m.shape().call
+                    m.call_signatures()
                 };
                 match sigs {
                     _ if sigs.is_empty() || m.mapper == MapperId::IDENTITY => List::Kept(sigs),
@@ -7150,21 +7188,21 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Ternary {
         let tm = match both {
             Some((_, tm)) => tm,
-            None => match self.members(target) {
+            None => match self.structured_members(target) {
                 Some(tm) => tm,
                 None => return Ternary::FALSE,
             },
         };
         if r.relation == Relation::Identity {
             // `indexSignaturesIdenticalTo`
-            let Some(sm) = self.members(source) else {
+            let Some(sm) = self.structured_members(source) else {
                 return Ternary::FALSE;
             };
-            if sm.shape().index.len() != tm.shape().index.len() {
+            if sm.index_infos().len() != tm.index_infos().len() {
                 return Ternary::FALSE;
             }
-            for info in &tm.shape().index {
-                let Some(other) = sm.shape().index.iter().find(|i| i.key == info.key) else {
+            for info in tm.index_infos() {
+                let Some(other) = sm.index_infos().iter().find(|i| i.key == info.key) else {
                     return Ternary::FALSE;
                 };
                 let (s, t) = (
@@ -7178,12 +7216,12 @@ impl<'p, 's> Checker<'p, 's> {
             }
             return Ternary::TRUE;
         }
-        if tm.shape().index.is_empty() {
+        if tm.index_infos().is_empty() {
             return Ternary::TRUE;
         }
-        let target_has_string_index = tm.shape().index.iter().any(|i| i.key == TypeId::STRING);
+        let target_has_string_index = tm.index_infos().iter().any(|i| i.key == TypeId::STRING);
         let mut result = Ternary::TRUE;
-        for info in &tm.shape().index {
+        for info in tm.index_infos() {
             let expected = self.instantiate(info.value, tm.mapper);
             let related = if r.relation != Relation::StrictSubtype
                 && !source_is_primitive
@@ -7217,7 +7255,8 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(sm) = self.members(source) else {
             return Ternary::FALSE;
         };
-        if let Some(info) = self.applicable_index_info(&sm, key) {
+        let indexed = self.structured(sm);
+        if let Some(info) = self.applicable_index_info(&indexed, key) {
             let (source, target) = ((info.key, info.value), (key, expected));
             return self.index_info_related_to::<REPORT>(r, source, target, state);
         }
@@ -7286,6 +7325,18 @@ impl<'p, 's> Checker<'p, 's> {
             })
             .collect();
         self.intersection(&looks)
+    }
+
+    /// `apparent_type_of_intersection(ty).is_never()`. FOR SPEED: an intersection whose members are
+    /// their own apparent types is not made again.
+    pub(super) fn is_apparent_type_of_intersection_never(&mut self, ty: TypeId) -> bool {
+        let TypeData::Intersection(parts) = self.data(ty) else {
+            return false;
+        };
+        parts
+            .iter()
+            .any(|&p| self.intersection_member_has_other_apparent_type(p))
+            && self.apparent_type_of_intersection(ty).is_never()
     }
 
     /// Whether `apparent_type_of_intersection` replaces the member `p` by another type.
@@ -7378,7 +7429,7 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         r: &mut Relater,
         source: TypeId,
-        sm: &Members,
+        sm: &Members<'p>,
         key: TypeId,
         expected: TypeId,
         state: u8,
@@ -7413,7 +7464,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             result &= related;
         }
-        for info in &sm.shape().index {
+        for info in self.structured(*sm).index_infos() {
             if info.key == key || self.is_applicable_index_type(info.key, key) {
                 let actual = self.instantiate(info.value, sm.mapper);
                 let (source, target) = ((info.key, actual), (key, expected));

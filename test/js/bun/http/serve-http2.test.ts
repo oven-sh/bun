@@ -690,7 +690,7 @@ describe("Bun.serve http2 with http1: false", () => {
       let buf = Buffer.alloc(0);
       sock.on("data", d => {
         buf = Buffer.concat([buf, d as Buffer]);
-        for (let off = 0; off + 9 <= buf.length; ) {
+        for (let off = 0; off + 9 <= buf.length;) {
           const len = buf.readUIntBE(off, 3);
           if (off + 9 + len > buf.length) break;
           if (buf[off + 3] === T.DATA && (buf.readUInt32BE(off + 5) & 0x7fffffff) === 1)

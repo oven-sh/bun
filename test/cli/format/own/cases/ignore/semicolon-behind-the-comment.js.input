@@ -1,0 +1,10 @@
+stmt(   ) // prettier-ignore
+;[].sort()
+stmt(   ) /* prettier-ignore */
+;[].sort()
+a  =  1 // prettier-ignore
+;
+b
+// prettier-ignore
+export const c   =   1
+d()

@@ -398,10 +398,7 @@ await Bun.write("my-project.tar.gz", archive);
 
 ```ts
 type ArchiveInput =
-  | Record<string, string | Blob | Bun.ArrayBufferView | ArrayBufferLike>
-  | Blob
-  | Bun.ArrayBufferView
-  | ArrayBufferLike;
+  Record<string, string | Blob | Bun.ArrayBufferView | ArrayBufferLike> | Blob | Bun.ArrayBufferView | ArrayBufferLike;
 
 type ArchiveOptions = {
   /** Compression algorithm. Currently only "gzip" is supported. */

@@ -1411,8 +1411,12 @@ describe("bun test", () => {
     expect(stderr).not.toContain("(pass) unrelated");
 
     // A `(?-i:...)` group matches case again.
-    const caseSensitive = runTest({ args: ["-t", "(?-i:mixedcase target)"], input, expectExitCode: 1 });
-    expect(caseSensitive).toContain('regex "(?-i:mixedcase target)" matched 0 tests');
+    const wrongCase = runTest({ args: ["-t", "(?-i:mixedcase target)"], input, expectExitCode: 1 });
+    expect(wrongCase).toContain('regex "(?-i:mixedcase target)" matched 0 tests');
+    const rightCase = runTest({ args: ["-t", "(?-i:MixedCase Target)"], input });
+    expect(rightCase).toContain("(pass) MixedCase Target");
+    expect(rightCase).toContain("1 pass");
+    expect(rightCase).not.toContain("(pass) unrelated");
   });
 
   test("Does not print the regex error when a test fails", () => {

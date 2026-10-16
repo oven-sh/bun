@@ -612,7 +612,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--bail <NUMBER>?                 Exit the test suite after \\<NUMBER\\> failures. If you do not specify a number, it defaults to 1."
     ),
     parse_param!(
-        "-t, --test-name-pattern/--grep <STR>    Run only tests with a name that matches the given regex."
+        "-t, --test-name-pattern/--grep <STR>    Run only tests with a name that matches the given regex, ignoring case."
     ),
     parse_param!(
         "--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile), 'dots'. Default: console output."

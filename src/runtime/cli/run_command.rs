@@ -1348,6 +1348,7 @@ impl Run<'_> {
 
         vm.hot_reload = ctx.debug.hot_reload;
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
+        vm.exit_after_entry_failure = Some(exit_with_unhandled_note);
 
         // ── CPU profiler ────────────────────────────────────────────────────
         if ctx.runtime_options.cpu_prof.enabled {
@@ -1494,15 +1495,9 @@ impl Run<'_> {
                 if promise.status() == PromiseStatus::Rejected {
                     // SAFETY: `vm.jsc_vm` set in `init`; FFI takes `*mut`.
                     let result = promise.result(unsafe { &mut *vm.jsc_vm });
-                    let global = vm.global;
-                    // A CJS entry runs synchronously in Node, so its top-level
-                    // throw is an uncaughtException; only an ESM entry
-                    // rejection reports origin "unhandledRejection".
-                    let is_rejection = !vm.entry_point_result.evaluated_as_cjs;
-                    // SAFETY: `global` valid for VM lifetime.
-                    let handled = vm.uncaught_exception(unsafe { &*global }, result, is_rejection);
+                    // What the entry point threw is reported already. This reports what nothing reported yet.
+                    let handled = vm.report_entry_failure(result, true);
                     promise.set_handled();
-                    vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
                     // When --hot/--watch is on (or a user
                     // `uncaughtException` handler swallowed the error), keep the

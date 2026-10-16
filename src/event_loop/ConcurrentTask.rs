@@ -79,6 +79,7 @@ pub mod task_tag {
         Close,
         CppTask,
         DuplexUpgradeContext,
+        EntryLoadEvaluate,        // bun_jsc::virtual_machine::EntryLoad (evaluates a loaded entry graph)
         FetchTasklet,
         FetchTaskletDeinit,
         FetchTaskletPromiseSettle,

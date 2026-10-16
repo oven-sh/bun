@@ -3417,16 +3417,6 @@ JSC::JSObject* JSC__JSString__toObject(JSC::JSString* arg0, JSC::JSGlobalObject*
 // JSC::JSGlobalObject* arg1, JSC__JSModuleRecord* arg2) {
 //     arg2->depen
 // }
-extern "C" JSC::JSPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObject, const BunString* moduleNameStr)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, moduleNameStr->toWTFString()), JSC::Identifier(), nullptr, nullptr);
-
-    EXCEPTION_ASSERT(!!scope.exception() == !promise);
-    return promise;
-}
-
 JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* globalObject, EncodedSlice* keys,
     EncodedSlice* values, size_t initialCapacity, bool clone)
 {

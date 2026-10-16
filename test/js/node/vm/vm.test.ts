@@ -2319,6 +2319,35 @@ test.concurrent("microtasks left on an afterEvaluate context by a timed-out scri
   expect(exitCode).toBe(0);
 });
 
+// The checkpoint of an afterEvaluate context runs its own promise jobs, not what the main context queued.
+test.concurrent.each([
+  [
+    "a tick and a promise job of the main context",
+    `Promise.resolve().then(() => console.log("main job"));
+     process.nextTick(() => console.log("main tick"));
+     vm.runInContext("Promise.resolve().then(() => log('context job'))", context);`,
+    "context job\nafter the run\nmain tick\nmain job\n",
+  ],
+  [
+    "the first tick of the process, queued by a job of the context",
+    `vm.runInContext(
+       "Promise.resolve().then(() => { log('context job 1'); nextTick(() => log('tick')); }); Promise.resolve().then(() => log('context job 2'));",
+       context,
+     );`,
+    "context job 1\ncontext job 2\nafter the run\ntick\n",
+  ],
+])("an afterEvaluate run leaves %s for the main context", async (_name, body, expected) => {
+  const code = `
+    const vm = require("node:vm");
+    const context = vm.createContext({ log: console.log, nextTick: process.nextTick }, { microtaskMode: "afterEvaluate" });
+    ${body}
+    console.log("after the run");
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+});
+
 // POSIX-only: a real SIGINT, sent from a worker while the main thread is stuck in a breakOnSigint run.
 test.skipIf(isWindows)(
   "breakOnSigint interrupts a stuck run with ERR_SCRIPT_EXECUTION_INTERRUPTED and nothing lingers",

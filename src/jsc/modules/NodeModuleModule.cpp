@@ -801,6 +801,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::Ca
 }
 
 extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);
+extern "C" JSPromise* Bun__VirtualMachine__beginRunMain(void* bunVM, const BunString* key);
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -811,6 +812,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
     // JSC::loadAndEvaluateModule() takes a key.
     auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, name), {}, nullptr, /* useImportMap */ true);
     RETURN_IF_EXCEPTION(scope, {});
+
+    // Called by an override that the runner is calling, this is the load of the entry point.
+    BunString keyBun = Bun::toString(key.string());
+    bool isEntryLoad = !!Bun__VirtualMachine__beginRunMain(defaultGlobalObject(globalObject)->bunVM(), &keyBun);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (isEntryLoad)
+        return JSC::JSValue::encode(JSC::jsUndefined());
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});

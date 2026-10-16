@@ -31,8 +31,8 @@ use bun_jsc::virtual_machine::{
     WorkerExecArgvFlags,
 };
 use bun_jsc::{
-    AnyPromise, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSModuleLoader,
-    JSValue, JsResult, ResolvedSource, StringJsc as _,
+    AnyPromise, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue, JsResult,
+    ResolvedSource, StringJsc as _,
 };
 
 use bun_ast::ImportKind;
@@ -725,8 +725,6 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         unsafe { (*vm_for_guard).is_in_preload = false };
     }
 
-    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-    let global: *mut JSGlobalObject = unsafe { &*vm }.global;
     // `vm.transpiler` (hence `transpiler.fs`) is always initialized here:
     // `init_runtime_state` returns `Err` on `Transpiler::init`
     // failure and `VirtualMachine::init` propagates it via `?`, so a VM that
@@ -813,13 +811,9 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                 .text;
             bun_core::String::from_bytes(path_text)
         };
-        // Note: use `import_ptr` (not `import`) so the `*mut` we store in
-        // `pending_internal_promise` keeps the FFI's mutable provenance instead
-        // of being laundered through `&JSInternalPromise -> *const -> *mut`
-        // (UB to write through under Stacked Borrows).
-        let promise: *mut JSInternalPromise = match JSModuleLoader::import_ptr(global, &module_name)
-        {
-            Ok(p) => p.as_ptr(),
+        // SAFETY: per fn contract — short-lived `&mut *vm`.
+        let promise = match unsafe { (*vm).begin_entry_like_load(&module_name) } {
+            Ok(p) => p,
             Err(_) => {
                 // The exception is
                 // already pending on `global`; bubble the tag so

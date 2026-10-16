@@ -2953,11 +2953,10 @@ impl TestCommand {
             match jsc::JSInternalPromise::opaque_mut(promise).status() {
                 jsc::js_promise::Status::Rejected => {
                     // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
-                    // `unhandled_rejection(&mut self, ...)` can reborrow.
+                    // `report_entry_failure(&mut self, ...)` can reborrow.
                     let global = vm.global();
                     let p = jsc::JSInternalPromise::opaque_mut(promise);
-                    let (result, promise_js) = (p.result(global.vm()), p.to_js());
-                    vm.unhandled_rejection(global, result, promise_js);
+                    vm.report_entry_failure(p.result(global.vm()), true);
                     reporter.summary().fail += 1;
 
                     if reporter.jest.bail == reporter.summary().fail {

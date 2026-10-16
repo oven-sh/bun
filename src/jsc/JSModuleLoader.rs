@@ -14,13 +14,12 @@ unsafe extern "C" {
         arg0: &JSGlobalObject,
         arg1: &BunString,
     ) -> *mut JSInternalPromise;
-    safe fn JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(
+    safe fn JSC__JSModuleLoader__resolve(arg0: &JSGlobalObject, arg1: &BunString) -> BunString;
+    safe fn JSC__JSModuleLoader__loadModule(
         arg0: &JSGlobalObject,
         arg1: &BunString,
     ) -> *mut JSInternalPromise;
-
-    // safe: same handle/reference contract as above.
-    safe fn JSModuleLoader__import(
+    safe fn JSC__JSModuleLoader__linkAndEvaluateModule(
         arg0: &JSGlobalObject,
         arg1: &BunString,
     ) -> *mut JSInternalPromise;
@@ -42,35 +41,35 @@ impl JSModuleLoader {
         ))
     }
 
-    /// `JSModuleLoader::resolve` with no importer, then [`Self::load_and_evaluate_module_ptr`]
-    /// of the key. `None`, with the exception pending, if it does not resolve either.
-    pub fn resolve_and_load_and_evaluate_module_ptr(
-        global_object: *mut JSGlobalObject,
+    /// `JSModuleLoader::resolve` with no importer: the key of the module `module_name` names.
+    pub(crate) fn resolve(
+        global_object: &JSGlobalObject,
         module_name: &BunString,
+    ) -> JsResult<BunString> {
+        crate::call_check_slow(global_object, || {
+            JSC__JSModuleLoader__resolve(global_object, module_name)
+        })
+    }
+
+    /// `JSC::loadModule`: fetches the graph of `key` without linking or evaluating it. `None` if the load could not start.
+    pub(crate) fn load_module_ptr(
+        global_object: *mut JSGlobalObject,
+        key: &BunString,
     ) -> Option<core::ptr::NonNull<JSInternalPromise>> {
-        // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
-        // centralised zero-byte deref proof (panics on null).
-        core::ptr::NonNull::new(JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(
+        core::ptr::NonNull::new(JSC__JSModuleLoader__loadModule(
             JSGlobalObject::opaque_ref(global_object),
-            module_name,
+            key,
         ))
     }
 
-    /// Raw-pointer variant of `Self::import`. Returns the FFI
-    /// `*mut JSInternalPromise` directly so callers that need to store or pass
-    /// a mutable cell pointer (e.g. `VirtualMachine::pending_internal_promise`)
-    /// don't launder provenance through `&T -> *mut T`. Mirrors
-    /// [`Self::load_and_evaluate_module_ptr`].
-    pub fn import_ptr(
-        global_object: *mut JSGlobalObject,
-        module_name: &BunString,
+    /// `JSC::linkAndEvaluateModule`: links and evaluates, in this call, the graph that [`Self::load_module_ptr`] loaded.
+    pub(crate) fn link_and_evaluate_module_ptr(
+        global_object: &JSGlobalObject,
+        key: &BunString,
     ) -> JsResult<core::ptr::NonNull<JSInternalPromise>> {
-        // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
-        // centralised zero-byte deref proof (panics on null).
-        core::ptr::NonNull::new(JSModuleLoader__import(
-            JSGlobalObject::opaque_ref(global_object),
-            module_name,
-        ))
-        .ok_or(JsError::Thrown)
+        let promise = crate::call_check_slow(global_object, || {
+            JSC__JSModuleLoader__linkAndEvaluateModule(global_object, key)
+        })?;
+        core::ptr::NonNull::new(promise).ok_or(JsError::Thrown)
     }
 }

@@ -111,7 +111,7 @@ static bool canPerformFastEnumeration(Structure* s)
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
-extern "C" void Bun__VM__noteCommonJSEvaluation(void*, EncodedJSValue);
+extern "C" bool Bun__VM__isEntryModuleKey(void*, const BunString*);
 
 // The module a require() function is bound to.
 static JSCommonJSModule* requirerOf(JSValue require)
@@ -182,16 +182,6 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     if (code.isNull()) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Failed to evaluate module"_s));
         return false;
-    }
-
-    // Node reports a CJS entry's top-level throw as origin "uncaughtException", not
-    // "unhandledRejection"; record the entry mode for the run command. Only the root
-    // module (m_id == ".") can be the entry, so the FFI compare runs at most once.
-    if (auto* id = moduleObject->m_id.get(); id && id->length() == 1) [[unlikely]] {
-        auto view = id->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (view == "."_s)
-            Bun__VM__noteCommonJSEvaluation(globalObject->bunVM(), JSValue::encode(filename));
     }
 
     JSFunction* resolveFunction = nullptr;
@@ -1597,7 +1587,19 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     this->evaluate(globalObject, key, source, false);
 }
 
-static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*);
+static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*, bool isEntry);
+
+// The module of the entry-like load in progress runs when the runner links its graph, not when it is fetched.
+static bool isEntryModuleKey(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSString* key)
+{
+    if (graph)
+        return false;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    WTF::String keyString = key->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    BunString keyBun = Bun::toString(keyString);
+    return Bun__VM__isEntryModuleKey(globalObject->bunVM(), &keyBun);
+}
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
@@ -1613,6 +1615,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     JSMap* requireMap = requireMapOf(globalObject, graph);
     JSValue entry = requireMap->get(globalObject, requireMapKey);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool isEntry = isEntryModuleKey(globalObject, graph, requireMapKey);
     RETURN_IF_EXCEPTION(scope, {});
     bool ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     SourceOrigin sourceOrigin;
@@ -1668,15 +1672,16 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
 
-    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
+    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph, isEntry);
 }
 
 // The module is the entry for the record's key in the require cache of the loader that fetched
 // it: `graph`'s, or the global object's.
-static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph* graph)
+static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph* graph, bool isEntry)
 {
+    auto* createProvider = isEntry ? &JSC::SyntheticSourceProvider::createDeferred : &JSC::SyntheticSourceProvider::create;
     return JSC::SourceCode(
-        JSC::SyntheticSourceProvider::create(
+        createProvider(
             [graph = JSC::Weak<JSModuleGraph>(graph)](JSC::JSGlobalObject* lexicalGlobalObject,
                 const JSC::Identifier& moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
@@ -1748,6 +1753,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     JSMap* requireMap = requireMapOf(globalObject, graph);
     JSValue entry = requireMap->get(globalObject, requireMapKey);
     RETURN_IF_EXCEPTION(scope, {});
+    bool isEntry = isEntryModuleKey(globalObject, graph, requireMapKey);
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (entry) {
         moduleObject = dynamicDowncast<JSCommonJSModule>(entry);
@@ -1783,7 +1790,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
 
-    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
+    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph, isEntry);
 }
 
 JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* graph)

@@ -14,7 +14,7 @@ type Queue = VecDeque<RefPtr<JSMySQLQuery>>;
 pub struct MySQLRequestQueue {
     // `advance()` and `clean()` run JS, which comes back to the queue through `&self`.
     requests: JsCell<Queue>,
-    /// How many requests at the front have nothing left to write.
+    /// How many requests at the front are written and can be followed: the one behind them is next to write.
     written: Cell<usize>,
 }
 
@@ -45,7 +45,7 @@ impl MySQLRequestQueue {
                 queue.requests.with_mut(|q| q.remove(written));
                 continue;
             }
-            if request.is_written() {
+            if request.can_be_followed() {
                 queue.written.set(written + 1);
                 continue;
             }

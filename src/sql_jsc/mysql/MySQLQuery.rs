@@ -1,7 +1,7 @@
 use core::cell::RefCell;
 
 use crate::jsc::{JSArrayIterator, JSGlobalObject, JSValue, MarkedArgumentBuffer};
-use bun_core::String as BunString;
+use bun_core::{String as BunString, strings};
 
 use super::my_sql_value::Value;
 use bun_sql::mysql::mysql_request;
@@ -45,6 +45,10 @@ impl Flags {
     /// head, and the rest of its response is skipped, until the terminator of
     /// its last result set or the end of the reply to its COM_STMT_PREPARE.
     const DISCARD_RESPONSE: u8 = 1 << 4;
+    /// A COM_QUERY whose text has a `;`. A server that is told to KILL QUERY between two statements
+    /// ends the text and says nothing, after it promised a further result: the reply to a command
+    /// written behind it would be taken for that result.
+    const SEVERAL_STATEMENTS: u8 = 1 << 5;
 
     #[inline]
     fn bigint(self) -> bool {
@@ -178,7 +182,11 @@ impl MySQLQuery {
     /// `false`: the request is `Binding`, the caller reads the parameters and calls `execute`.
     pub(crate) fn start(&mut self, connection: &MySQLConnection) -> Result<bool, AnyMySQLError> {
         if self.flags.simple() {
-            mysql_request::execute_query(self.query.to_utf8().slice(), connection.get_writer())?;
+            let query = self.query.to_utf8();
+            mysql_request::execute_query(query.slice(), connection.get_writer())?;
+            if strings::contains_char(query.slice(), b';') {
+                self.flags.0 |= Flags::SEVERAL_STATEMENTS;
+            }
             self.statement = Some(RefPtr::new(MySQLStatement::unprepared()));
             self.status = Status::Running;
             return Ok(true);
@@ -308,9 +316,11 @@ impl MySQLQuery {
         }
     }
 
+    /// It is written, and the next request can be written behind it.
     #[inline]
-    pub(crate) fn is_written(&self) -> bool {
+    pub(crate) fn can_be_followed(&self) -> bool {
         matches!(self.status, Status::Running | Status::PartialResponse)
+            && self.flags.0 & Flags::SEVERAL_STATEMENTS == 0
     }
 
     #[inline]

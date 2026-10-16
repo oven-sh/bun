@@ -56,7 +56,12 @@ pub struct MySQLConnection {
     write_buffer: OffsetByteList,
     read_buffer: OffsetByteList,
     last_message_start: u32,
+    /// The one behind the last packet that was read.
     sequence_id: u8,
+    /// The reply to the head of the queue has begun: its next packet has `sequence_id`. The first
+    /// one has no id to expect: it counts on from the packets of the command, not all of which a
+    /// server reads before it refuses them, and an ERR that nobody asked for has 0.
+    in_reply: bool,
 
     // TODO: move it to JSMySQLConnection
     pub(crate) queue: MySQLRequestQueue,
@@ -96,6 +101,7 @@ impl Default for MySQLConnection {
             read_buffer: OffsetByteList::default(),
             last_message_start: 0,
             sequence_id: 0,
+            in_reply: false,
             queue: MySQLRequestQueue::init(),
             statements: StatementCache::default(),
             server_version: Vec::<u8>::default(),
@@ -501,8 +507,7 @@ impl MySQLConnection {
             }
             let payload = &reader.peek()[PacketHeader::SIZE..packet_length];
             reader.set_offset_from_start(packet_length);
-            self.sequence_id = header.sequence_id.wrapping_add(1);
-            self.handle_packet(payload)?;
+            self.handle_packet(payload, header.sequence_id, header.sequence_id.wrapping_add(1))?;
             // After the SSLRequest, bytes already buffered behind this packet are plaintext a
             // man-in-the-middle could have injected (CVE-2021-23222 class).
             if self.tls_status == TLSStatus::MessageSent && !reader.peek().is_empty() {
@@ -512,7 +517,17 @@ impl MySQLConnection {
     }
 
     /// `payload` is one whole packet, so a handler cannot read into the next one.
-    fn handle_packet(&mut self, payload: &[u8]) -> Result<(), AnyMySQLError> {
+    /// It came with `sequence_id`, and `next_sequence_id` is the one behind its last part.
+    fn handle_packet(
+        &mut self,
+        payload: &[u8],
+        sequence_id: u8,
+        next_sequence_id: u8,
+    ) -> Result<(), AnyMySQLError> {
+        let in_step = !self.in_reply || sequence_id == self.sequence_id;
+        self.sequence_id = next_sequence_id;
+        self.in_reply = self.status == ConnectionState::Connected;
+
         let mut cursor: usize = 0;
         let mut message_start: usize = 0;
         let reader: PacketReader<'_> = StackReader::init(payload, &mut cursor, &mut message_start);
@@ -522,7 +537,8 @@ impl MySQLConnection {
                 self.handle_auth(reader)
             }
             ConnectionState::SessionSetup => self.handle_session_setup(reader),
-            ConnectionState::Connected => self.handle_command(reader),
+            ConnectionState::Connected if in_step => self.handle_command(reader),
+            ConnectionState::Connected => self.handle_unasked(reader),
             _ => {
                 debug!("Unexpected packet in state {}", self.status as u8);
                 Err(AnyMySQLError::UnexpectedPacket)
@@ -815,21 +831,27 @@ impl MySQLConnection {
 
     fn handle_command(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
         let Some(request) = self.queue.current().filter(|r| r.is_in_flight()) else {
-            // Sent unasked: the ERR that says why the server drops the connection (KILL, wait_timeout).
-            if reader.peek().first() == Some(&PacketType::ERROR.0) {
-                let mut err = ErrorPacket::default();
-                err.decode_internal(reader)?;
-                self.js_connection_ref().on_error_packet(None, &err);
-                return Err(AnyMySQLError::ConnectionClosed);
-            }
-            debug!("Received unexpected command response");
-            return Err(AnyMySQLError::UnexpectedPacket);
+            return self.handle_unasked(reader);
         };
         match request.get_statement().map(|statement| statement.status) {
             Some(mysql_statement::Status::Parsing) => self.handle_prepared_statement(reader),
             Some(mysql_statement::Status::Prepared) => self.handle_result_set(reader),
             _ => Err(AnyMySQLError::UnexpectedPacket),
         }
+    }
+
+    /// No request waits for this packet, or it is not the next one of the reply that has begun:
+    /// whose it is cannot be told. Always `Err`, which fails the connection.
+    fn handle_unasked(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
+        // The ERR that says why the server drops the connection (KILL, wait_timeout).
+        if reader.peek().first() == Some(&PacketType::ERROR.0) {
+            let mut err = ErrorPacket::default();
+            err.decode_internal(reader)?;
+            self.js_connection_ref().on_error_packet(None, &err);
+            return Err(AnyMySQLError::ConnectionClosed);
+        }
+        debug!("Received unexpected command response");
+        Err(AnyMySQLError::UnexpectedPacket)
     }
 
     pub(crate) fn send_handshake_response(&mut self) -> Result<(), AnyMySQLError> {
@@ -942,9 +964,10 @@ impl MySQLConnection {
             return Err(AnyMySQLError::UnexpectedPacket);
         }
         let buffered = reader.peek();
-        let mut sequence_id = PacketHeader::decode(buffered)
+        let first_sequence_id = PacketHeader::decode(buffered)
             .ok_or(AnyMySQLError::ShortRead)?
             .sequence_id;
+        let mut sequence_id = first_sequence_id;
         let mut wire_length: usize = 0;
         let mut payload_length: usize = 0;
         loop {
@@ -977,8 +1000,7 @@ impl MySQLConnection {
         }
 
         reader.set_offset_from_start(wire_length);
-        self.sequence_id = sequence_id;
-        self.handle_packet(&payload)
+        self.handle_packet(&payload, first_sequence_id, sequence_id)
     }
 
     pub(crate) fn cached_statement<P: ExecuteParam>(
@@ -1018,6 +1040,7 @@ impl MySQLConnection {
         {
             self.close_statement(statement);
         }
+        self.in_reply = false;
         request.prepared();
         self.advance();
     }
@@ -1168,6 +1191,7 @@ impl MySQLConnection {
         request: &JSMySQLQuery,
         err: &ErrorPacket,
     ) -> Result<(), AnyMySQLError> {
+        self.in_reply = false;
         self.js_connection_ref().on_error_packet(Some(request), err);
         if err.ends_session() {
             return Err(AnyMySQLError::ConnectionClosed);
@@ -1185,6 +1209,7 @@ impl MySQLConnection {
     ) {
         self.status_flags = status_flags;
         let is_last_result = !status_flags.has(StatusFlag::SERVER_MORE_RESULTS_EXISTS);
+        self.in_reply = !is_last_result;
         debug!(
             "handleResultSetOK: {} {}",
             status_flags.to_int(),

@@ -5,12 +5,15 @@ import { once } from "node:events";
 import net from "node:net";
 import {
   listeningServer,
+  loopbackFence,
+  MYSQL_SERVER_MORE_RESULTS_EXISTS,
   mysqlAckSessionSetup,
   mysqlErrPacket,
   mysqlHandshakeV10,
   mysqlOkPacket,
   mysqlRawPacket,
   mysqlReadPackets,
+  mysqlTextResultSet,
 } from "./wire-frames";
 
 const COM_QUIT = 0x01;
@@ -209,7 +212,30 @@ for (const image of ["mysql_plain", "mariadb_plain"] as const) {
         );
         expect({ outcomes, wire: proxy.wire }).toEqual({
           outcomes: [[{ v: "a" }], [], 1062, 1054, [[{ a: 1 }], [{ b: 2 }]], [{ v: "b" }], [{ id: 0 }, { id: 1 }]],
-          wire: ["EXECUTE", "EXECUTE", "EXECUTE", "QUERY", "QUERY", "EXECUTE", "QUERY", "reply"],
+          wire: ["EXECUTE", "EXECUTE", "EXECUTE", "QUERY", "QUERY", "reply", "EXECUTE", "QUERY", "reply"],
+        });
+      });
+
+      test("nothing is written behind a simple query whose text has a ';' until it has ended", async () => {
+        using proxy = await watchingProxy();
+        await using sql = new SQL({ url: proxy.url, max: 1 });
+        const prepared = () => sql.unsafe("SELECT ';' AS a, ? AS b", ["b"]);
+        await prepared();
+        const wireOf = async (first: () => PromiseLike<unknown>) => {
+          proxy.wire.length = 0;
+          await Promise.all([first(), sql`SELECT 'behind' AS v`.simple()]);
+          return proxy.wire.join(" ");
+        };
+        expect({
+          oneStatement: await wireOf(() => sql.unsafe("SELECT 1 AS a").simple()),
+          twoStatements: await wireOf(() => sql.unsafe("SELECT 1 AS a; SELECT 2 AS b").simple()),
+          inALiteral: await wireOf(() => sql.unsafe("SELECT ';' AS a").simple()),
+          prepared: await wireOf(prepared),
+        }).toEqual({
+          oneStatement: "QUERY QUERY reply",
+          twoStatements: "QUERY reply QUERY reply",
+          inALiteral: "QUERY reply QUERY reply",
+          prepared: "EXECUTE QUERY reply",
         });
       });
 
@@ -946,6 +972,88 @@ describe("scripted server", () => {
       expect(await outcome(sql`SELECT 1`.simple())).toEqual({ rejected: "ERR_MYSQL_UNEXPECTED_PACKET" });
       await left.promise;
       expect(commands).toEqual([COM_QUERY]);
+    } finally {
+      server.close();
+    }
+  });
+
+  /** A result of one row, which names the query that it answers. */
+  const owner = (name: string, startSeq: number, statusFlags?: number) =>
+    mysqlTextResultSet(startSeq, [{ name: "owner", type: 0xfd }], [[name]], statusFlags);
+
+  test("a text whose further result does not come has nothing written behind it", async () => {
+    const commands: string[] = [];
+    const promised = Promise.withResolvers<net.Socket>();
+    const { port, server } = await mysqlServer({
+      onCommand(socket, payload) {
+        const text = payload.toString("latin1", 1);
+        commands.push(text);
+        if (text.includes(";")) {
+          socket.write(mysqlOkPacket(1, 0x00, MYSQL_SERVER_MORE_RESULTS_EXISTS));
+          promised.resolve(socket);
+        } else {
+          socket.write(owner(text, 1));
+        }
+      },
+    });
+    try {
+      await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
+      const queries = ["DO 1; DO 2", "A", "B"].map(text => outcome(sql.unsafe(text).simple()));
+      const socket = await promised.promise;
+      await loopbackFence();
+      const whileItWaits = [...commands];
+      socket.write(mysqlOkPacket(2));
+      expect({ whileItWaits, outcomes: await Promise.all(queries), commands }).toEqual({
+        whileItWaits: ["DO 1; DO 2"],
+        outcomes: [[[], []], [{ owner: "A" }], [{ owner: "B" }]],
+        commands: ["DO 1; DO 2", "A", "B"],
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  test("a packet that is not the next one of the reply fails the connection, and nobody gets its rows", async () => {
+    const { port, server } = await mysqlServer({
+      onCommand(socket, payload) {
+        const text = payload.toString("latin1", 1);
+        // The first command is promised a further result. What comes is the reply to the second one, which starts at 1.
+        if (text === "A") socket.write(owner(text, 1, MYSQL_SERVER_MORE_RESULTS_EXISTS));
+        else socket.end(owner(text, 1));
+      },
+    });
+    try {
+      await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
+      expect(await Promise.all(["A", "B", "C"].map(text => outcome(sql.unsafe(text).simple())))).toEqual(
+        Array(3).fill({ rejected: "ERR_MYSQL_UNEXPECTED_PACKET" }),
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  test("an ERR packet in the place of a promised result, with an id of its own, is why the connection ends", async () => {
+    const { port, server } = await mysqlServer({
+      onCommand(socket) {
+        socket.end(
+          Buffer.concat([
+            mysqlOkPacket(1, 0x00, MYSQL_SERVER_MORE_RESULTS_EXISTS),
+            mysqlErrPacket(0, 4031, "HY000", "The client was disconnected by the server because of inactivity."),
+          ]),
+        );
+      },
+    });
+    try {
+      await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
+      const errno = (text: string) =>
+        sql
+          .unsafe(text)
+          .simple()
+          .then(
+            () => "resolved",
+            reason => reason.errno,
+          );
+      expect(await Promise.all(["DO 1; DO 2", "DO 3"].map(errno))).toEqual([4031, 4031]);
     } finally {
       server.close();
     }

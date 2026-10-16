@@ -376,8 +376,8 @@ impl JSMySQLQuery {
         self.query.get().is_in_flight()
     }
     #[inline]
-    pub(crate) fn is_written(&self) -> bool {
-        self.query.get().is_written()
+    pub(crate) fn can_be_followed(&self) -> bool {
+        self.query.get().can_be_followed()
     }
     #[inline]
     pub(crate) fn is_pending(&self) -> bool {

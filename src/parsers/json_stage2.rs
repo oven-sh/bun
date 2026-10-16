@@ -360,9 +360,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    /// Parses a whole document: the root value, then only whitespace and
-    /// comments up to the end of input. This is the only way to get a root or
-    /// the tape out of a `Parser`.
+    /// The root value, then end of input. Whitespace and comments can follow the value.
     pub(crate) fn parse_document(mut self) -> PResult<(Expr, Option<Box<E::JsonTape>>)> {
         let root = self.parse_value()?;
         if !self.at_trailing_end() {

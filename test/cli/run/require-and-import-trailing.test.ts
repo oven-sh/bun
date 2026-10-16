@@ -114,9 +114,8 @@ test.each(contentAfterRoot)("import() of a package.json followed by %s rejects",
   expect((thrown as BuildMessage).message).toBe(message);
 });
 
-// What stderr says here is the subject of another change. This pins only that
-// no script of the first object runs. The parent package.json keeps the lookup
-// inside the temporary directory.
+// Pins only that no script of the first object runs. The parent package.json
+// keeps the script lookup inside the temporary directory.
 test("bun run does not run a script of a package.json followed by git conflict markers", async () => {
   using dir = tempDir("run-content-after-root", {
     "package.json": `{ "name": "parent" }`,

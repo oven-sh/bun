@@ -697,7 +697,7 @@ devTest("css import before create project relative", {
     await dev.fetch("/").expect.toContain("HELLO");
   },
 });
-devTest("css url() that is not an asset does not serve the build directory", {
+devTest("css url() that is not an asset is served as written", {
   files: {
     "index.html": emptyHtmlFile({
       styles: ["styles.css"],
@@ -720,10 +720,7 @@ devTest("css url() that is not an asset does not serve the build directory", {
   async test(dev) {
     const stylesheetHref = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
     const stylesheet = await (await dev.fetch(stylesheetHref)).text();
-    const urls = stylesheet.match(/url\([^)]*\)/g)!;
-    expect(urls).toHaveLength(2);
-    expect(urls[0]).toBe("url(other.css)");
-    expect(urls[1]).not.toContain("bun-dev-test");
+    expect(stylesheet.match(/url\([^)]*\)/g)).toEqual(["url(other.css)", 'url("./other.css")']);
   },
 });
 

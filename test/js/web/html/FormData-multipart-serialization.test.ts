@@ -1,6 +1,6 @@
-import { S3Client } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
+import { s3LocalEndpoint } from "../../bun/s3/s3-local-endpoint";
 
 // Serializing a FormData body (`new Response(formData)` / `new Request(..., { body: formData })`)
 // goes through Blob::from_dom_form_data, which joins the multipart parts out of
@@ -219,22 +219,16 @@ describe("multipart serialization (new Response(formData))", () => {
 // written out as the part headers followed by an empty body: no error, no S3
 // request, and the receiver stored an empty file.
 describe("multipart serialization of S3-backed entries", () => {
-  // Nothing below performs an S3 request, so the endpoint only has to parse.
-  const s3 = new S3Client({
-    endpoint: "http://127.0.0.1:1",
-    bucket: "bucket",
-    accessKeyId: "access-key",
-    secretAccessKey: "secret-key",
-  });
+  const object = "id,name\n1,bun\n";
+  const remedy = "formData.append(name, new Blob([await s3file.bytes()], { type: s3file.type }), s3file.name)";
 
   // `quotedName` is the entry name as the message renders it, quotes included.
   function messageFor(quotedName: string): string {
     return (
       `FormData entry ${quotedName} is an S3 file, which cannot be read while serializing the body. ` +
-      "Read it first: formData.append(name, new Blob([await s3file.bytes()], { type: s3file.type }), s3file.name)"
+      `Read it first: ${remedy}`
     );
   }
-  const expectedMessage = messageFor('"report"');
 
   function formDataWith(entry: Blob, name = "report"): FormData {
     const formData = new FormData();
@@ -244,27 +238,78 @@ describe("multipart serialization of S3-backed entries", () => {
     return formData;
   }
 
-  function thrownBy(fn: () => unknown): unknown {
+  // What `fn` throws, or what the promise it returns rejects with.
+  async function failureOf(fn: () => unknown): Promise<unknown> {
     try {
-      fn();
+      await fn();
     } catch (error) {
       return error;
     }
-    throw new Error("did not throw");
+    throw new Error("did not fail");
   }
 
-  test.each([
-    ["S3Client.file()", () => s3.file("reports/2026.csv", { type: "text/csv" })],
-    ['Bun.file("s3://...")', () => Bun.file("s3://bucket/reports/2026.csv")],
-    ["a slice of an S3 file", () => s3.file("reports/2026.csv").slice(0, 16)],
-    // A single-blob File shares the source blob's store instead of copying it.
-    ["new File([s3file], name)", () => new File([s3.file("reports/2026.csv")], "wrapped.csv")],
-  ])("new Response(formData) throws for %s", (_label, makeEntry) => {
-    const formData = formDataWith(makeEntry());
+  const shapes: [string, (file: Bun.S3File) => Blob][] = [
+    ["S3Client.file()", file => file],
+    ["a slice of an S3 file", file => file.slice(2, 5)],
+    ["new File([s3file], name)", file => new File([file], "wrapped.csv")],
+  ];
+  const consumers: [string, (formData: FormData, url: URL) => unknown][] = [
+    ["new Response(formData)", formData => new Response(formData)],
+    ["new Request(url, { body })", (formData, url) => new Request(url, { method: "POST", body: formData })],
+    ["fetch(url, { body })", (formData, url) => fetch(url, { method: "POST", body: formData })],
+  ];
 
-    const error = thrownBy(() => new Response(formData));
+  describe.each(shapes)("%s", (_shape, makeEntry) => {
+    test.each(consumers)("%s fails and sends nothing", async (_consumer, consume) => {
+      using endpoint = s3LocalEndpoint(object);
+      let received = 0;
+      using receiver = Bun.serve({
+        port: 0,
+        fetch() {
+          received++;
+          return new Response("stored");
+        },
+      });
+      const formData = formDataWith(makeEntry(endpoint.file("text/csv")));
+      const sizeBefore = (formData.get("report") as Blob).size;
+
+      const error = await failureOf(() => consume(formData, receiver.url));
+      expect(error).toBeInstanceOf(TypeError);
+      expect({
+        message: (error as TypeError).message,
+        s3Requests: endpoint.ranges,
+        received,
+        sizeAfter: (formData.get("report") as Blob).size,
+      }).toEqual({
+        message: messageFor('"report"'),
+        s3Requests: [],
+        received: 0,
+        sizeAfter: sizeBefore,
+      });
+    });
+  });
+
+  test('new Response(formData) fails for Bun.file("s3://...")', async () => {
+    const formData = formDataWith(Bun.file("s3://bucket/reports/2026.csv"));
+
+    const error = await failureOf(() => new Response(formData));
     expect(error).toBeInstanceOf(TypeError);
-    expect((error as TypeError).message).toBe(expectedMessage);
+    expect((error as TypeError).message).toBe(messageFor('"report"'));
+  });
+
+  // A File made of several parts copies their bytes when it is made, so it
+  // refuses the S3 part there. It used to become an entry with the other
+  // parts only.
+  test("new File([header, s3file]) fails before it can become an entry", async () => {
+    using endpoint = s3LocalEndpoint(object);
+    const file = endpoint.file("text/csv");
+
+    const error = await failureOf(() => new File(["id,name\n", file], "report.csv"));
+    expect(error).toBeInstanceOf(TypeError);
+    expect({ message: (error as TypeError).message, s3Requests: endpoint.ranges }).toEqual({
+      message: "new Blob() cannot read a file- or S3-backed Blob synchronously; await blob.bytes() first",
+      s3Requests: [],
+    });
   });
 
   test.each([
@@ -272,53 +317,61 @@ describe("multipart serialization of S3-backed entries", () => {
     ["a non-ASCII name", "レポート ☺", '"レポート ☺"'],
     ["a name containing a quote", 'quote"name', '"quote\\"name"'],
     ["a name containing CRLF", "crlf\r\nname", '"crlf\\r\\nname"'],
-  ])("the message quotes %s", (_label, name, quotedName) => {
-    const formData = formDataWith(s3.file("reports/2026.csv"), name);
+  ])("the message quotes %s", async (_label, name, quotedName) => {
+    using endpoint = s3LocalEndpoint(object);
+    const formData = formDataWith(endpoint.file(), name);
 
-    const error = thrownBy(() => new Response(formData));
+    const error = await failureOf(() => new Response(formData));
     expect((error as TypeError).message).toBe(messageFor(quotedName));
   });
 
-  // Serializing used to resolve the entry's size as well, which for an S3 blob
-  // turns the "unknown" NaN into 0.
-  test("serializing leaves the entry's unknown size alone", () => {
-    const formData = formDataWith(s3.file("reports/2026.csv"));
-    expect((formData.get("report") as Blob).size).toBeNaN();
+  // An empty window has no bytes to fetch, so it is a plain empty Blob.
+  test("an empty slice of an S3 file serializes as an empty part", async () => {
+    using endpoint = s3LocalEndpoint(object);
+    const empty = endpoint.file("text/csv").slice(3, 3);
+    const formData = new FormData();
+    formData.append("report", empty, "empty.csv");
 
-    try {
-      new Response(formData);
-    } catch {}
-
-    expect((formData.get("report") as Blob).size).toBeNaN();
-  });
-
-  test("new Request() throws", () => {
-    const formData = formDataWith(s3.file("reports/2026.csv"));
-
-    const error = thrownBy(() => new Request("http://localhost/upload", { method: "POST", body: formData }));
-    expect(error).toBeInstanceOf(TypeError);
-    expect((error as TypeError).message).toBe(expectedMessage);
-  });
-
-  test("fetch() rejects without sending a request", async () => {
-    const receivedBodies: string[] = [];
-    using server = Bun.serve({
-      port: 0,
-      async fetch(request) {
-        receivedBodies.push(await request.text());
-        return new Response("stored");
-      },
+    const response = new Response(formData);
+    const contentType = response.headers.get("Content-Type")!;
+    const boundary = contentType.slice(contentType.indexOf("boundary=") + "boundary=".length);
+    expect({ body: await response.text(), s3Requests: endpoint.ranges }).toEqual({
+      body:
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="report"; filename="empty.csv"\r\n` +
+        `Content-Type: ${empty.type}\r\n\r\n\r\n` +
+        `--${boundary}--\r\n`,
+      s3Requests: [],
     });
-    const formData = formDataWith(s3.file("reports/2026.csv"));
+    expect(empty.type).toStartWith("text/csv");
+  });
 
-    const error = await fetch(server.url, { method: "POST", body: formData }).then(
-      response => {
-        throw new Error(`fetch() resolved with status ${response.status}`);
-      },
-      rejection => rejection,
-    );
-    expect(error).toBeInstanceOf(TypeError);
-    expect((error as TypeError).message).toBe(expectedMessage);
-    expect(receivedBodies).toEqual([]);
+  // Runs the code the message prints, character for character.
+  test("the remedy in the message uploads the bytes, the type and the filename", async () => {
+    using endpoint = s3LocalEndpoint(object);
+    const s3file = endpoint.file("text/csv");
+    const error = await failureOf(() => new Response(formDataWith(s3file)));
+    const printed = (error as TypeError).message.slice((error as TypeError).message.indexOf("formData.append("));
+    expect(printed).toBe(remedy);
+
+    const AsyncFunction = (async () => {}).constructor as new (
+      ...args: string[]
+    ) => (...args: unknown[]) => Promise<void>;
+    const formData = new FormData();
+    await new AsyncFunction("formData", "name", "s3file", `${printed};`)(formData, "report", s3file);
+
+    const response = new Response(formData);
+    const contentType = response.headers.get("Content-Type")!;
+    const boundary = contentType.slice(contentType.indexOf("boundary=") + "boundary=".length);
+    expect({ body: await response.text(), s3Requests: endpoint.ranges }).toEqual({
+      body:
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="report"; filename="${s3file.name}"\r\n` +
+        `Content-Type: ${s3file.type}\r\n\r\n${object}\r\n` +
+        `--${boundary}--\r\n`,
+      s3Requests: [null],
+    });
+    expect(s3file.type).toBe("text/csv");
+    expect(s3file.name).toBe("key");
   });
 });

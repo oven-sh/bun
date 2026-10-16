@@ -2,15 +2,21 @@ import { S3Client } from "bun";
 
 /**
  * A local stand-in for an S3 endpoint that holds one object, under the key "key".
- * It records the Range header of each request. It answers a Range request like a
- * server that clamps the end of the range to the end of the object.
+ * It records the Range header of each download and the size of each upload. It
+ * answers a Range request like a server that clamps the end of the range to the
+ * end of the object.
  */
 export function s3LocalEndpoint(object: string | Uint8Array) {
   const bytes = Buffer.from(object);
   const ranges: (string | null)[] = [];
+  const uploads: number[] = [];
   const server = Bun.serve({
     port: 0,
-    fetch(req) {
+    async fetch(req) {
+      if (req.method === "PUT") {
+        uploads.push((await req.arrayBuffer()).byteLength);
+        return new Response("", { headers: { ETag: '"etag"' } });
+      }
       const range = req.headers.get("range");
       ranges.push(range);
       const match = range && /^bytes=(\d+)-(\d*)$/.exec(range);
@@ -25,8 +31,11 @@ export function s3LocalEndpoint(object: string | Uint8Array) {
   });
   const client = new S3Client({ endpoint: server.url.href, accessKeyId: "x", secretAccessKey: "y", bucket: "b" });
   return {
-    /** The Range header of each request so far. `null` is a request with no Range header. */
+    /** The Range header of each download so far. `null` is a request with no Range header. */
     ranges,
+    /** The size in bytes of each upload (`PUT`) so far. */
+    uploads,
+    client,
     file: (type?: string) => client.file("key", { type }),
     [Symbol.dispose]: () => void server.stop(true),
   };

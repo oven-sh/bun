@@ -1553,7 +1553,7 @@ By default, Bun's SQL client creates named prepared statements for queries it ca
 
 Each PostgreSQL or MySQL connection keeps the 256 statements it used last. When it prepares another one, it closes the least recently used statement on the server.
 
-On PostgreSQL, a prepared statement can stop working: `ALTER TABLE` changes its result (`cached plan must not change result type`), and `DEALLOCATE ALL` or `DISCARD ALL` removes it. Bun then prepares the statement again and runs the query once more. Inside a transaction the query rejects with the server's error, because the transaction is already aborted.
+On PostgreSQL, a prepared statement can stop working: `ALTER TABLE` changes its result (`cached plan must not change result type`), and `DEALLOCATE ALL` or `DISCARD ALL` removes it. Bun then prepares the statement again and runs the query once more. The query rejects with the server's error instead if Bun has already sent another query behind it on that connection, which the server runs first, or inside a transaction, which is already aborted. The next run prepares the statement again.
 
 To disable named prepared statements on PostgreSQL, set `prepare: false` in the connection options. MySQL and MariaDB do not support `prepare: false`.
 

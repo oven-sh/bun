@@ -314,8 +314,8 @@ describe.concurrent("a Bind that finds its prepared statement lost", () => {
     expect(server.wire).toEqual(["P P0", "B P0", "B P0", "C P0", "P P1", "B P1", "C P1", "P P2", "B P2"]);
   });
 
-  // Each goes on until it has parsed the statement itself.
-  test("ends for every query of a burst on a server that keeps no statement", async () => {
+  // What is written behind a query runs whatever becomes of that query, so only the last one is written again.
+  test("rejects every query of a burst on a server that keeps no statement", async () => {
     let forgetful = false;
     using server = await statementServer(statement => (forgetful ? lost(statement) : undefined));
     await using sql = new SQL(server.url, { max: 1 });
@@ -324,12 +324,25 @@ describe.concurrent("a Bind that finds its prepared statement lost", () => {
 
     forgetful = true;
     expect(await Promise.all([echo("b"), echo("c"), echo("d")])).toMatchObject([
+      { errno: "26000", message: lost("P0").M },
+      { errno: "26000", message: lost("P0").M },
       { errno: "26000", message: lost("P1").M },
-      { errno: "26000", message: lost("P2").M },
-      { errno: "26000", message: lost("P3").M },
     ]);
     forgetful = false;
     expect(await echo("e")).toEqual([{ v: "e" }]);
+    expect(server.wire).toEqual([
+      "P P0",
+      "B P0",
+      "B P0",
+      "B P0",
+      "B P0",
+      "C P0",
+      "P P1",
+      "B P1",
+      "C P1",
+      "P P2",
+      "B P2",
+    ]);
   });
 
   // 0A000 is the code of every feature that is not supported.
@@ -352,7 +365,7 @@ describe.concurrent("a Bind that finds its prepared statement lost", () => {
   });
 
   // The server flushes an ErrorResponse, so the ReadyForQuery of the batch can come in a later read.
-  test("goes behind a query that is written before the ReadyForQuery of the failed batch", async () => {
+  test("is retried ahead of a query that is handed over before the ReadyForQuery of the failed batch", async () => {
     let forgotten: string | undefined;
     using server = await statementServer(statement => (statement === forgotten ? lost(statement) : undefined), true);
     await using sql = new SQL(server.url, { max: 1 });
@@ -367,7 +380,7 @@ describe.concurrent("a Bind that finds its prepared statement lost", () => {
     const between = other("e").execute();
     server.release();
     expect(await Promise.all([retried, between])).toEqual([[{ v: "d" }], [{ v: "e" }]]);
-    expect(server.wire.slice(4)).toEqual(["B P1", "B P0", "B P1", "C P0", "P P2", "B P2"]);
+    expect(server.wire.slice(4)).toEqual(["B P1", "B P0", "C P0", "P P2", "B P2", "B P1"]);
   });
 });
 
@@ -1567,7 +1580,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
         expect((await onServer(sql)).map(([name]) => name)).toEqual(["P2"]);
       });
 
-      test("is prepared again after DEALLOCATE ALL, for every query of a burst", async () => {
+      test("is prepared again after DEALLOCATE ALL, for the last query of a burst and for the next burst", async () => {
         await using sql = await connect();
         let conversions = 0;
         const burst = () =>
@@ -1587,13 +1600,13 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
         expect(await burst()).toEqual(expected);
 
         await sql`deallocate all`.simple();
-        expect(await burst()).toEqual(expected);
+        expect(await burst()).toEqual([...Array(14).fill(expect.objectContaining({ errno: "26000" })), [{ x: 8 }]]);
         expect(await burst()).toEqual(expected);
         expect(await onServer(sql)).toHaveLength(6);
         expect(conversions).toBe(3);
       });
 
-      test.each([1, 4])("is prepared again for every query of a burst after ALTER TABLE, max: %i", async max => {
+      test.each([1, 4])("is prepared again for the next burst after ALTER TABLE, max: %i", async max => {
         await using sql = await connect({ max });
         const table = sql("altered_" + randomUUIDv7("hex"));
         await sql`create table ${table} (id int, a int)`;
@@ -1603,7 +1616,12 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
           expect(await burst()).toEqual(Array(20).fill([{ id: 1, a: 1 }]));
 
           await sql`alter table ${table} add column b int`;
-          expect(await burst()).toEqual(Array(20).fill([{ id: 1, a: 1, b: null }]));
+          // On each connection that had prepared it, every query but the last that is written there rejects.
+          const results = await burst();
+          const rejected = results.filter(result => !Array.isArray(result));
+          expect(rejected).toEqual(Array(rejected.length).fill(expect.objectContaining({ errno: "0A000" })));
+          expect(results.filter(Array.isArray)).toEqual(Array(20 - rejected.length).fill([{ id: 1, a: 1, b: null }]));
+          expect(rejected.length).toBeWithin(1, 21 - max);
           expect(await burst()).toEqual(Array(20).fill([{ id: 1, a: 1, b: null }]));
         } finally {
           await sql`drop table ${table}`;
@@ -1652,13 +1670,48 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
         expect((await onServer(sql)).map(([name]) => name)).toEqual(["P0"]);
 
         await sql`deallocate all`.simple();
-        await Promise.all([call(1), call(2)]);
+        expect(await Promise.all([call(1), call(2)].map(settled))).toEqual([
+          expect.objectContaining({ errno: "26000" }),
+          [],
+        ]);
         expect((await onServer(sql)).map(([name]) => name)).toEqual(["P1"]);
         expect(await sql`select tag, count(*)::int as rows from committed group by tag order by tag`.simple()).toEqual([
           { tag: 0, rows: 1 },
-          { tag: 1, rows: 1 },
           { tag: 2, rows: 1 },
         ]);
+      });
+
+      // The second statement is still good, and the server runs it whatever becomes of the first.
+      test.each([
+        [
+          "an UPDATE of the same row",
+          "update altered set a = 2 where id = 1 returning *",
+          "update altered set a = 3 where id = 1",
+          [{ id: 1, a: 3, b: null }],
+        ],
+        [
+          "an UPDATE of the row that it inserts",
+          "insert into altered (id, a) values (2, 2) returning *",
+          "update altered set a = 3 where id = 2",
+          [{ id: 1, a: 1, b: null }],
+        ],
+      ])("rejects with %s written behind it, and does not run after that", async (_, stale, good, rows) => {
+        await using sql = await connect();
+        await altered(sql);
+        await sql
+          .begin(async tx => {
+            await Promise.all([tx.unsafe(stale, []), tx.unsafe(good, [])]);
+            throw new Error("prepared");
+          })
+          .catch(() => {});
+        await addColumn(sql, "b");
+
+        expect(await Promise.all([sql.unsafe(stale, []), sql.unsafe(good, [])].map(settled))).toEqual([
+          expect.objectContaining({ errno: "0A000" }),
+          [],
+        ]);
+        expect(await sql`select * from altered order by id`.simple()).toEqual(rows);
+        expect(await settled(sql.unsafe(stale, []))).toHaveLength(1);
       });
 
       // A retry would get 25P02 in place of the reason.

@@ -231,6 +231,7 @@ impl StatementCache {
         self.discarded.extend(self.cache.remove(statement));
     }
 
+    /// A statement that the request that found `stale` parses itself.
     pub(crate) fn replace(
         &mut self,
         query: &[u8],
@@ -238,16 +239,19 @@ impl StatementCache {
         id: impl FnOnce() -> u64,
     ) -> RefPtr<PostgresSQLStatement> {
         self.discard(stale);
-        // Made for an earlier request that found `stale`. One that only `accepts` can be as stale.
-        self.cache
-            .find(query, |variant| {
-                variant.signature.fields == stale.signature.fields
-            })
-            .unwrap_or_else(|| {
-                let replacement = PostgresSQLStatement::new(stale.signature.renamed(id()));
-                self.cache.add(query, replacement.clone());
-                replacement
-            })
+        // One that only `accepts` can be as stale.
+        if let Some(variant) = self.cache.find(query, |variant| {
+            variant.signature.fields == stale.signature.fields
+        }) {
+            if variant.status == Status::Pending {
+                return variant;
+            }
+            // Prepared for an earlier request that found `stale`, and perhaps lost since.
+            self.discard(&variant);
+        }
+        let replacement = PostgresSQLStatement::new(stale.signature.renamed(id()));
+        self.cache.add(query, replacement.clone());
+        replacement
     }
 
     /// Never one that a request holds.

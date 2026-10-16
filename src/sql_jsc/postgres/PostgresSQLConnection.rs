@@ -31,9 +31,7 @@ use crate::postgres::error_jsc::{
 };
 use crate::postgres::postgres_request as PostgresRequest;
 use crate::postgres::postgres_request::MessageType;
-use crate::postgres::postgres_sql_query::{
-    self, Cancel, RequestCounter, Retry, Status as QueryStatus,
-};
+use crate::postgres::postgres_sql_query::{self, Cancel, RequestCounter, Status as QueryStatus};
 use crate::postgres::postgres_sql_statement::{
     Error as StatementError, StatementCache, Status as StatementStatus,
 };
@@ -1409,7 +1407,6 @@ impl PostgresSQLConnection {
                 request.status.get(),
                 QueryStatus::Pending | QueryStatus::Success | QueryStatus::Fail
             )
-            && request.flags.get().retry != Retry::AtReadyForQuery
     }
 
     pub(crate) fn cancelled_error(&self, hint: Option<&[u8]>) -> JSValue {
@@ -1807,29 +1804,6 @@ impl PostgresSQLConnection {
         true
     }
 
-    /// Behind what is written and the requests that came back earlier: replies come in queue order.
-    fn requeue_head(&self) {
-        let pending = self.pending_requests.get() as usize;
-        self.requests.with_mut(|requests| {
-            let Some(head) = requests.pop_front() else {
-                return;
-            };
-            head.status.set(QueryStatus::Pending);
-            head.update_flags(|f| {
-                f.retry = Retry::CameBack;
-                f.binary = false;
-            });
-            let written = requests.len().saturating_sub(pending);
-            let came_back = requests
-                .iter()
-                .skip(written)
-                .take_while(|queued| queued.flags.get().retry == Retry::CameBack)
-                .count();
-            self.count(&head, RequestCounter::Pending);
-            requests.insert(written + came_back, head);
-        });
-    }
-
     fn reject_unwritten(&self, request: &PostgresSQLQuery, error: JSValue) {
         if self.remove_unwritten(request) {
             request.on_js_error(error, self.global());
@@ -1993,9 +1967,6 @@ impl PostgresSQLConnection {
                 }
                 statement.status = StatementStatus::Parsing;
                 self.update_flags(|f| f.insert(ConnectionFlags::WAITING_TO_PREPARE));
-                if req.flags.get().retry == Retry::CameBack {
-                    req.update_flags(|f| f.retry = Retry::Done);
-                }
                 if describe_first {
                     req.status.set(QueryStatus::Preparing);
                 } else {
@@ -2145,8 +2116,6 @@ impl PostgresSQLConnection {
                         let request = request.ref_guard();
                         self.discard_request(&request);
                         request.end_rejected(self.global());
-                    } else if request.flags.get().retry == Retry::AtReadyForQuery {
-                        self.requeue_head();
                     } else if request.status.get() == QueryStatus::PartialResponse {
                         self.count(&request, RequestCounter::None);
                         // if is a partial response, just signal that the query is now complete
@@ -2711,15 +2680,25 @@ impl PostgresSQLConnection {
                         && request.status.get() == QueryStatus::Binding
                         && err.invalidates_prepared_statement()
                     {
-                        // The failure has aborted a transaction block: a retry there gets 25P02.
-                        if !self.is_in_transaction() && request.flags.get().retry != Retry::Done {
+                        // What is written behind it runs whatever becomes of it, so a retry would run
+                        // after that. In a transaction block a retry gets 25P02.
+                        if self.pipelined_requests.get() == 1
+                            && !request.flags.get().retried
+                            && !self.is_in_transaction()
+                        {
                             let replacement = self.statements.with_mut(|cache| {
                                 cache.replace(request.query.to_utf8().slice(), stmt, || {
                                     self.take_prepared_statement_id()
                                 })
                             });
                             request.statement.set(Some(replacement));
-                            request.update_flags(|f| f.retry = Retry::AtReadyForQuery);
+                            request.update_flags(|f| {
+                                f.retried = true;
+                                f.binary = false;
+                            });
+                            // It keeps its place: nothing is written until its ReadyForQuery, then it.
+                            self.count(&request, RequestCounter::Pending);
+                            request.status.set(QueryStatus::Preparing);
                             return Ok(());
                         }
                         self.statements.with_mut(|cache| cache.discard(stmt));

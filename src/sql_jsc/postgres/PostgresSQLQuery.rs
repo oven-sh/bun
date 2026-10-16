@@ -71,7 +71,8 @@ pub struct Flags {
     pub(crate) cancel: Cancel,
     /// Written by `PostgresSQLConnection::count` alone.
     pub(crate) counter: RequestCounter,
-    pub(crate) retry: Retry,
+    /// The server refused its Bind because the statement was lost or stale, and it was written again.
+    pub(crate) retried: bool,
     pub(crate) copy: CopyStream,
     pub(crate) result_mode: PostgresSQLQueryResultMode,
 }
@@ -96,18 +97,6 @@ pub enum Cancel {
     Wanted,
 }
 
-/// A request whose Bind the server refused because its statement is lost or stale runs again.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Retry {
-    No,
-    /// The ReadyForQuery of the failed batch puts the request back in the queue.
-    AtReadyForQuery,
-    /// It came back. A statement that was parsed for another request can be lost again by now.
-    CameBack,
-    /// It came back and parsed its statement itself. Nothing is written between that and its Bind.
-    Done,
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RequestCounter {
     None,
@@ -129,7 +118,7 @@ impl Default for Flags {
             discard_response: false,
             cancel: Cancel::No,
             counter: RequestCounter::None,
-            retry: Retry::No,
+            retried: false,
             copy: CopyStream::None,
             result_mode: PostgresSQLQueryResultMode::Objects,
         }

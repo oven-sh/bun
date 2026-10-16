@@ -76,7 +76,7 @@ export const openInEditor = b.fn({
 
 export const shellEscape = b.fn({
   args: { input: b.string.loose.withValue },
-  returns: b.any,
+  returns: b.string.utf8,
   capability: "heap",
   throws: true,
 });

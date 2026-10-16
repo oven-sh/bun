@@ -4,10 +4,10 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::{GCLevel, VirtualMachine};
 use bun_jsc::{self as jsc, JSType, JSValue, JsResult};
 
-pub(crate) fn gc_aggression_level(level: Option<i32>) -> i32 {
+pub(crate) fn gc_aggression_level(level: Option<f64>) -> i32 {
     let vm = VirtualMachine::get().as_mut();
     let previous = vm.aggressive_garbage_collection as i32;
-    match level {
+    match level.map(|level| level as i32) {
         Some(1) => vm.aggressive_garbage_collection = GCLevel::Mild,
         Some(2) => vm.aggressive_garbage_collection = GCLevel::Aggressive,
         Some(0) => vm.aggressive_garbage_collection = GCLevel::None,

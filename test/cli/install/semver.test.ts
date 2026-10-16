@@ -313,14 +313,16 @@ describe("Bun.semver.order()", () => {
 describe("Bun.semver.satisfies()", () => {
   test("expected errors", () => {
     expect(satisfies).toBeInstanceOf(Function);
-    // An argument that is left out is `undefined`, so the string "undefined": not a version, and like any range that
-    // is a word, one that every version satisfies.
+    // Nothing satisfies a range that is not there, as in node-semver.
     // @ts-expect-error
     expect(satisfies()).toBe(false);
     // @ts-expect-error
-    expect(satisfies("1.2.3")).toBe(true);
-    expect(satisfies("1.2.3", "undefined")).toBe(true);
-    expect(satisfies("1.2.3", "latest")).toBe(true);
+    expect(satisfies("1.2.3")).toBe(false);
+    for (const noRange of [undefined, null] as any[]) {
+      expect(satisfies("1.2.3", noRange)).toBe(false);
+      expect(nodeSemver.satisfies("1.2.3", noRange)).toBe(false);
+    }
+    expect(satisfies(undefined as any, "1.2.3")).toBe(false);
     // @ts-expect-error
     expect(satisfies("1.2.3", "1.2.3", "blah")).toBeTrue();
     expect(() => {

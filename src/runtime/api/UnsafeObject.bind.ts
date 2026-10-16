@@ -4,7 +4,7 @@ export default b.module({ rustPath: "crate::api::unsafe_object" });
 
 export const unsafe = b.namespace({
   gcAggressionLevel: {
-    args: { level: b.i32.wrap.nullable },
+    args: { level: b.f64.loose.nullable },
     returns: b.i32,
   },
   arrayBufferToString: {

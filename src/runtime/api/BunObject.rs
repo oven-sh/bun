@@ -354,10 +354,13 @@ fn get_cron_object(global_this: &JSGlobalObject, obj: &JSObject) -> JSValue {
 pub(crate) fn shell_escape<'a>(
     heap: &JsHeap<'a>,
     input: WithValue<'a, BunString>,
-) -> bindgen::Result<'a, JsLocal<'a>> {
+) -> bindgen::Result<'a, JsLocal<'a, JSString>> {
     let bunstr = input.converted;
     if !bun_shell_parser::needs_escape_bunstr(&bunstr) {
-        return Ok(input.value);
+        return match input.value.as_string() {
+            Some(string) => Ok(string),
+            None => heap.create_utf8_string(&bunstr.to_utf8()),
+        };
     }
 
     let mut outbuf: Vec<u8> = Vec::new();
@@ -367,7 +370,7 @@ pub(crate) fn shell_escape<'a>(
             bstr::BStr::new(bunstr.byte_slice()),
         )));
     }
-    heap.create_utf8_string(&outbuf).map(JsLocal::as_value)
+    heap.create_utf8_string(&outbuf)
 }
 
 /// `Bun.gc(force)`: heap size after the collection.

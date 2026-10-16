@@ -37,7 +37,10 @@ pub(crate) fn order<'a>(
     )
 }
 
-pub(crate) fn satisfies(version: &[u8], range: &[u8]) -> JsResult<bool> {
+pub(crate) fn satisfies(version: &[u8], range: Option<&[u8]>) -> JsResult<bool> {
+    let Some(range) = range else {
+        return Ok(false);
+    };
     if !strings::is_all_ascii(version) || !strings::is_all_ascii(range) {
         return Ok(false);
     }

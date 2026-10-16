@@ -111,7 +111,9 @@ it("Bun.unsafe.gcAggressionLevel returns the level it replaces", () => {
     expect(Bun.unsafe.gcAggressionLevel(0.9)).toBe(2);
     // Nothing, and a level there is not, change nothing.
     Bun.unsafe.gcAggressionLevel(1);
-    for (const level of [undefined, null, 3, -1]) expect(Bun.unsafe.gcAggressionLevel(level)).toBe(1);
+    for (const level of [undefined, null, 3, -1, 2 ** 32, 2 ** 32 + 2, "4294967298", Infinity]) {
+      expect(Bun.unsafe.gcAggressionLevel(level)).toBe(1);
+    }
     expect(() => Bun.unsafe.gcAggressionLevel(Symbol())).toThrow(
       expect.objectContaining({ name: "TypeError", message: "Cannot convert a symbol to a number" }),
     );

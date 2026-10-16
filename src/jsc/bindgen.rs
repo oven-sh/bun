@@ -294,6 +294,14 @@ impl<'a> JsLocal<'a> {
         self.0.is_undefined()
     }
 
+    /// A string, not a `String` object.
+    #[inline]
+    pub fn as_string(self) -> Option<JsLocal<'a, JSString>> {
+        self.0
+            .is_string_literal()
+            .then(|| JsLocal::from_raw(self.0))
+    }
+
     #[inline]
     pub fn as_callable(self) -> Option<JsLocal<'a, Callable>> {
         self.0.is_callable().then(|| JsLocal::from_raw(self.0))

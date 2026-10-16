@@ -190,13 +190,22 @@ describe("bunshell", () => {
       expect(stdout.toString()).toEqual("a  b\n");
     });
 
-    test("$.escape converts its argument to a string, and returns it as it is when there is nothing to escape", () => {
+    test("$.escape converts its argument to a string, also when there is nothing to escape", () => {
       expect($.escape(1 as any)).toBe('"1"');
       expect($.escape({ toString: () => "a b" } as any)).toBe('"a b"');
-      const plain = { toString: () => "plain" };
-      expect($.escape(plain as any)).toBe(plain as any);
+      expect($.escape({ toString: () => "plain" } as any)).toBe("plain");
+      expect($.escape({ toString: () => "é\u65e5" } as any)).toBe("é\u65e5");
+      expect($.escape(new String("plain") as any)).toBe("plain");
+      expect([true, null, undefined, NaN].map(value => $.escape(value as any))).toEqual([
+        "true",
+        "null",
+        "undefined",
+        "NaN",
+      ]);
       // @ts-expect-error
-      expect($.escape()).toBeUndefined();
+      expect($.escape()).toBe("undefined");
+      // A lone surrogate has no UTF-8, so a string that is returned as it is has to be the same one.
+      expect($.escape("\ud800")).toBe("\ud800");
       expect(() => $.escape(Symbol() as any)).toThrow(
         expect.objectContaining({ name: "TypeError", message: "Cannot convert a symbol to a string" }),
       );

@@ -105,7 +105,7 @@ describeWithContainer(
       }
     });
 
-    test("a mode that verifies does so under NODE_TLS_REJECT_UNAUTHORIZED=0", async () => {
+    test("NODE_TLS_REJECT_UNAUTHORIZED=0 turns verification off, except next to rejectUnauthorized: true", async () => {
       await container.ready;
       const rows = [
         ["?sslmode=require", {}],
@@ -113,6 +113,7 @@ describeWithContainer(
         ["?sslmode=verify-full", {}],
         ["", { tls: { caFile: path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem") } }],
         ["?sslmode=verify-full", { tls: { rejectUnauthorized: false } }],
+        ["?sslmode=verify-full", { tls: { rejectUnauthorized: true } }],
       ];
       await using proc = Bun.spawn({
         cmd: [
@@ -138,10 +139,11 @@ console.log(JSON.stringify(outcomes));`,
       expect(stderr).toBe("");
       expect(JSON.parse(stdout)).toEqual([
         "connected",
-        "DEPTH_ZERO_SELF_SIGNED_CERT",
-        "DEPTH_ZERO_SELF_SIGNED_CERT",
-        "DEPTH_ZERO_SELF_SIGNED_CERT",
         "connected",
+        "connected",
+        "connected",
+        "connected",
+        "DEPTH_ZERO_SELF_SIGNED_CERT",
       ]);
       expect(exitCode).toBe(0);
     });

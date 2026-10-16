@@ -175,32 +175,38 @@ describe.each(adapters)("%s helper keys", (_adapter, makeSql) => {
 });
 
 describe.each(adapters)("%s values of a nested sql.unsafe()", (adapter, makeSql) => {
-  test("must be an array", async () => {
+  test("named parameters are refused where there are any: SQLite would bind NULL", async () => {
     await using sql = makeSql();
-    for (const [values, received] of [
-      [5, "a number"],
-      [0, "a number"],
-      ["", "a string"],
-      [false, "a boolean"],
-      [{ $o: "bob" }, "an object"],
-      [new Uint8Array(1), "an object"],
-    ] as const) {
-      const err = await sql`select ${sql.unsafe("? as a", values as any)}`.catch(e => e);
-      expect(err).toBeInstanceOf(SyntaxError);
-      expect(err.message).toBe("Nested sql.unsafe() fragment values must be an array, received " + received);
+    const outcome = await sql`select ${sql.unsafe("$o as a", { $o: "bob" })}`.catch(e => e);
+    if (adapter === "sqlite") {
+      expect(outcome).toBeInstanceOf(SyntaxError);
+      expect(outcome.message).toBe(
+        "Nested sql.unsafe() cannot have named parameters: the query around it binds by position",
+      );
+    } else {
+      expect(outcome.code).toEndWith("_CONNECTION_REFUSED");
     }
   });
 
-  test("none, null, undefined and an empty array are no values", async () => {
+  test("what has a length is read like an array", async () => {
+    await using sql = makeSql();
+    const outcome = await sql`select ${sql.unsafe("? as a", new Uint8Array([7]) as any)}`.catch(e => e);
+    if (adapter === "sqlite") expect(outcome).toEqual([{ a: 7 }]);
+    else expect(outcome.code).toEndWith("_CONNECTION_REFUSED");
+  });
+
+  test("none, an empty array and what has no length are no values", async () => {
     await using sql = makeSql();
     for (const fragment of [
       sql.unsafe("1 as a"),
-      sql.unsafe("1 as a", null as any),
-      sql.unsafe("1 as a", undefined),
-      sql.unsafe("1 as a", []),
+      ...[null, undefined, [], 5, 0, "", false, true, 1n, Symbol("s"), {}, new Date(0), new Map([[1, 2]])].map(values =>
+        sql.unsafe("1 as a", values as any),
+      ),
+      // the index
+      ...["1 as a", "1 as a"].map(sql.unsafe as any),
     ]) {
-      const outcome = await sql`select ${2} as b, ${fragment}`.catch(e => e);
-      if (adapter === "sqlite") expect(outcome).toEqual([{ b: 2, a: 1 }]);
+      const outcome = await sql`select ${2} as b, ${fragment}, ${3} as c`.catch(e => e);
+      if (adapter === "sqlite") expect(outcome).toEqual([{ b: 2, a: 1, c: 3 }]);
       else expect(outcome.code).toEndWith("_CONNECTION_REFUSED");
     }
   });

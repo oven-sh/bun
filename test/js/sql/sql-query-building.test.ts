@@ -389,8 +389,10 @@ function suite(dialect: Dialect, url: () => string) {
       const table = sql(await tableOf(sql, "id int"));
       await sql`insert into ${table} ${sql({ id: 1 })}`;
       expect(await sql`select id from ${table} where id in ${sql([])}`).toEqual([]);
-      // `x not in (NULL)` is not true either
-      expect(await sql`select id from ${table} where id not in ${sql([])}`).toEqual([]);
+      // SQLite has `()`, which nothing is in. The servers get `(NULL)`, and `x not in (NULL)` is not true either.
+      expect(await sql`select id from ${table} where id not in ${sql([])}`).toEqual(
+        dialect === "sqlite" ? [{ id: 1 }] : [],
+      );
     });
 
     test("any string is a column name", async () => {
@@ -409,18 +411,27 @@ function suite(dialect: Dialect, url: () => string) {
       ]);
     });
 
-    test("sql.json() stores any value as JSON", async () => {
-      await using sql = connect();
-      const table = sql(await tableOf(sql, `id int, j ${jsonColumn[dialect]}`));
-      const values = ["text", '{"not":"an object"}', 1.5, true, null, { a: [1, "b"] }, [1, "b"]];
-      for (let id = 0; id < values.length; id++) {
-        await sql`insert into ${table} (id, j) values (${id}, ${sql.json(values[id])})`;
-      }
-      await sql`insert into ${table} ${sql({ id: values.length, j: sql.json("in a helper") })}`;
-      const text = by({ sqlite: sql`j`, postgres: sql`j::text`, mysql: sql`cast(j as char)` });
-      const stored = await sql`select ${text} as j from ${table} order by id`;
-      expect(stored.map((row: any) => JSON.parse(row.j))).toEqual([...values, "in a helper"]);
-    });
+    test.each<Bun.SQL.Options>(dialect === "postgres" ? [{}, { prepare: false }] : [{}])(
+      "sql.json() stores any value as JSON, once %p",
+      async options => {
+        await using sql = new SQL(url(), { max: 1, ...options });
+        const name = await tableOf(sql, `id int, j ${jsonColumn[dialect]}`);
+        const table = sql(name);
+        const values = ["text", '{"not":"an object"}', "42", 1.5, true, null, { a: [1, "b"] }, [1, "b"], new Date(0)];
+        for (let id = 0; id < values.length; id++) {
+          await sql`insert into ${table} (id, j) values (${id}, ${sql.json(values[id])})`;
+        }
+        await sql`insert into ${table} ${sql({ id: 100, j: sql.json("in a helper") })}`;
+        await sql`update ${table} set ${sql({ j: sql.json("in an update") })} where id = 100`;
+        const placeholder = by({ sqlite: "?", postgres: "$1", mysql: "?" });
+        await sql.unsafe(`insert into ${name} (id, j) values (101, ${placeholder})`, [sql.json("in unsafe()")]);
+        const text = by({ sqlite: sql`j`, postgres: sql`j::text`, mysql: sql`cast(j as char)` });
+        const stored = await sql`select ${text} as j from ${table} order by id`;
+        expect(stored.map((row: any) => (row.j === null ? "SQL NULL" : JSON.parse(row.j)))).toEqual(
+          JSON.parse(JSON.stringify([...values, "in an update", "in unsafe()"])),
+        );
+      },
+    );
   });
 
   describe("sql.unsafe() with values", () => {
@@ -445,6 +456,48 @@ function suite(dialect: Dialect, url: () => string) {
         const [row] = await query;
         expect({ a: Number(row.a), b: Number(row.b) }).toEqual({ a: 2, b: 3 });
       }
+    });
+
+    describe("parts.map(sql.unsafe) passes the index, which is no values", () => {
+      test("as fragments", async () => {
+        await using sql = connect();
+        const [a, b] = ["1 as a", "2 as b"].map(sql.unsafe as any);
+        expect(await sql`select ${a}, ${b}`).toEqual([{ a: 1, b: 2 }]);
+      });
+
+      test("as fragments before a parameter", async () => {
+        await using sql = connect();
+        const [a, b] = ["1 as a", "2 as b"].map(sql.unsafe as any);
+        const [row] = await sql`select ${a}, ${b}, ${3} as c`;
+        expect({ ...row, c: Number(row.c) }).toEqual({ a: 1, b: 2, c: 3 });
+      });
+    });
+
+    describe("a second argument that is not an array", () => {
+      const run = (sql: SQL, text: string, values: unknown) =>
+        sql.unsafe(text, values as any).catch((e: any) => e.message);
+
+      test.skipIf(dialect === "sqlite")("falsy: no values, so the text can hold several statements", async () => {
+        await using sql = connect();
+        for (const values of [0, NaN, "", false, 0n]) {
+          expect(await run(sql, "select 1 as a; select 2 as b", values)).toEqual([[{ a: 1 }], [{ b: 2 }]]);
+        }
+      });
+
+      test.skipIf(dialect === "sqlite")("truthy: refused", async () => {
+        await using sql = connect();
+        for (const values of [1, "x", true, 1n, {}, new Uint8Array(1)]) {
+          expect(await run(sql, "select 1 as a", values)).toBe("values must be an array");
+        }
+      });
+
+      test.skipIf(dialect !== "sqlite")("SQLite: the first parameter, falsy or not", async () => {
+        await using sql = connect();
+        for (const values of [5, 0, "x", ""]) {
+          expect(await run(sql, "select ? as a", values)).toEqual([{ a: values }]);
+        }
+        expect(await run(sql, "select ? as a", false)).toEqual([{ a: 0 }]);
+      });
     });
   });
 

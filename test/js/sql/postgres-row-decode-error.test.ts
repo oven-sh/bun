@@ -95,6 +95,16 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     expect([...(await sql`select pg_backend_pid() as pid`)]).toEqual([{ pid }]);
   });
 
+  // The server quotes an element only where it has to: these arrive as {abc}, {t} and {123}.
+  test.each(["abc", "t", "123"])(
+    "an element of a bytea[] without quotes is no boolean and no number: %s",
+    async text => {
+      await container.ready;
+      await using sql = await connect();
+      expect(await settle([sql.unsafe(`select array['${text}'::bytea] as v`)])).toEqual([rejection]);
+    },
+  );
+
   test("the rest of a rejected query's rows arrives in later reads", async () => {
     await container.ready;
     await using sql = await connect();

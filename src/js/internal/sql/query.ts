@@ -72,11 +72,18 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     }
   }
 
-  /// The server is asked for the formats that go with the mode, so it is fixed when the query starts.
   #setMode(mode: SQLQueryResultMode) {
-    if (!(this[_queryStatus] & SQLQueryStatus.executed)) {
-      this[_flags] = (this[_flags] & ~(3 << resultModeShift)) | (mode << resultModeShift);
+    const flags = this[_flags];
+    if (this[_queryStatus] & SQLQueryStatus.executed) {
+      if (
+        this[_adapter].rawChangesFormat &&
+        (mode === SQLQueryResultMode.raw || ((flags >> resultModeShift) & 3) === SQLQueryResultMode.raw)
+      ) {
+        return this;
+      }
+      this[_handle]?.setMode(mode);
     }
+    this[_flags] = (flags & ~(3 << resultModeShift)) | (mode << resultModeShift);
     return this;
   }
 

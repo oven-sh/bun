@@ -107,7 +107,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       await using sql = connect(options);
       const { name, oid } = await people(sql);
       const text = `select id from ${name} where id = $1 and user_name = $2 and tags = $3 and data = $4`;
-      const result = await sql.unsafe(text, [1, "a", ["x"], '["x"]']);
+      const result = await sql.unsafe(text, [1, "a", ["x"], ["x"]]);
       expect(result).toEqual([{ id: 1 }]);
       expect(result.statement).toEqual({
         string: text,

@@ -130,11 +130,6 @@ impl Tag {
         Short::try_from(oid).map_or(Tag::text, Tag)
     }
 
-    /// In Parse: the server infers the type. In Bind: it has not described the parameter yet.
-    pub fn is_unspecified(self) -> bool {
-        self == Tag::unspecified
-    }
-
     pub fn is_json(self) -> bool {
         matches!(self, Tag::json | Tag::jsonb)
     }

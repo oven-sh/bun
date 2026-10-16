@@ -194,7 +194,7 @@ for (const image of images) {
       );
 
       test.skipIf(image.image !== "mysql_tls")(
-        "a mode that verifies does so under NODE_TLS_REJECT_UNAUTHORIZED=0",
+        "NODE_TLS_REJECT_UNAUTHORIZED=0 turns verification off, except next to rejectUnauthorized: true",
         async () => {
           await container.ready;
           const rows = [
@@ -203,6 +203,7 @@ for (const image of images) {
             ["?sslmode=verify-full", {}],
             ["", { tls: { caFile: path.join(import.meta.dir, "docker-tls", "server.crt") } }],
             ["?sslmode=verify-full", { tls: { rejectUnauthorized: false } }],
+            ["?sslmode=verify-full", { tls: { rejectUnauthorized: true } }],
           ];
           await using proc = Bun.spawn({
             cmd: [
@@ -226,7 +227,14 @@ console.log(JSON.stringify(outcomes));`,
           });
           const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           expect(stderr).toBe("");
-          expect(JSON.parse(stdout)).toEqual(["connected", "refused", "refused", "refused", "connected"]);
+          expect(JSON.parse(stdout)).toEqual([
+            "connected",
+            "connected",
+            "connected",
+            "connected",
+            "connected",
+            "refused",
+          ]);
           expect(exitCode).toBe(0);
         },
       );

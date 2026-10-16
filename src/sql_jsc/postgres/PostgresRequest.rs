@@ -59,10 +59,10 @@ fn parameter_tag(parameter_types: &[Int4], index: usize) -> types::Tag {
 }
 
 fn is_list(js_type: JSType) -> bool {
-    js_type.is_array() || (js_type.is_array_buffer_like() && !tag_jsc::is_bytes(js_type))
+    js_type.is_array() || js_type == JSType::Int32Array
 }
 
-/// A list goes as JSON or an array literal, an object with `toString` as JSON or that string.
+/// A list goes as JSON, an array literal or `String(list)`, an object with `toString` as JSON or that string.
 pub(crate) fn needs_parameter_types(global: &JSGlobalObject, values: JSValue) -> JsResult<bool> {
     let mut iter = JSArrayIterator::init(values, global)?;
     while let Some(value) = iter.next()? {
@@ -81,19 +81,21 @@ pub(crate) fn needs_parameter_types(global: &JSGlobalObject, values: JSValue) ->
     Ok(false)
 }
 
-/// Replaces each value that `write_bind` could not encode without running JS by its text.
+/// Replaces each value by the text that `write_bind` sends for it, unless it can encode the value
+/// itself without running JS. Once per request: it would take that text for a string.
 /// `true`: it replaced one, so user code may have run.
 pub(crate) fn stage_parameters(
     global: &JSGlobalObject,
     values: JSValue,
     parameter_types: &[Int4],
+    prepared: bool,
 ) -> JsResult<bool> {
     let mut iter = JSArrayIterator::init(values, global)?;
     let mut index: u32 = 0;
     let mut replaced = false;
     while let Some(value) = iter.next()? {
         let tag = parameter_tag(parameter_types, index as usize);
-        if let Some(text) = parameter_text(global, value, tag, index)? {
+        if let Some(text) = parameter_text(global, value, tag, index, prepared)? {
             values.put_index(global, index, text)?;
             replaced = true;
         }
@@ -107,12 +109,21 @@ fn parameter_text(
     value: JSValue,
     tag: types::Tag,
     index: u32,
+    prepared: bool,
 ) -> JsResult<Option<JSValue>> {
     let js_type = value.js_type();
-    if value.is_empty_or_undefined_or_null() || js_type.is_string() {
+    if value.is_empty_or_undefined_or_null() {
         return Ok(None);
     }
-    if js_type.is_string_object_like() {
+    if js_type.is_string_like() {
+        // With `prepare: false` the type is only known next to some values, and the same query
+        // has to store the same string the same way next to all of them.
+        if prepared && tag.is_json() {
+            return Ok(Some(value.json_stringify_fast(global)?.into_js(global)?));
+        }
+        if js_type.is_string() {
+            return Ok(None);
+        }
         return Ok(Some(value.to_js_string(global)?.to_js()));
     }
     if tag == types::Tag::bytea {
@@ -132,11 +143,10 @@ fn parameter_text(
     }
 
     if !tag.is_json() {
-        if is_list(js_type) {
-            if !tag.is_unspecified() || !js_type.is_array() {
-                return array_literal(global, value, tag).map(Some);
-            }
-        } else if value.implements_to_string(global)? {
+        if is_list(js_type) && tag.array_element().is_some() {
+            return array_literal(global, value, tag).map(Some);
+        }
+        if is_list(js_type) || value.implements_to_string(global)? {
             return Ok(Some(value.to_js_string(global)?.to_js()));
         }
     }

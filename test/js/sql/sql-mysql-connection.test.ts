@@ -820,11 +820,11 @@ for (const image of ["mysql_plain", "mariadb_plain"] as const) {
 
     describe("results", () => {
       test.each<[string, Record<string, unknown>, string, number]>([
-        ["by default", {}, "", 2],
-        ["with foundRows: true", { foundRows: true }, "", 2],
-        ["with foundRows: false", { foundRows: false }, "", 0],
-        ["with ?foundRows=false", {}, "?foundRows=false", 0],
-      ])("an UPDATE that changes nothing affects the rows it matched %s", async (_, options, query, affected) => {
+        ["none by default", {}, "", 0],
+        ["none with foundRows: false", { foundRows: false }, "", 0],
+        ["the rows it matched with foundRows: true", { foundRows: true }, "", 2],
+        ["the rows it matched with ?foundRows=true", {}, "?foundRows=true", 2],
+      ])("an UPDATE that changes nothing affects %s", async (_, options, query, affected) => {
         await container.ready;
         await using sql = new SQL({ url: url() + query, max: 1, ...options });
         await sql`CREATE TEMPORARY TABLE found_rows (id INT PRIMARY KEY, v INT)`.simple();

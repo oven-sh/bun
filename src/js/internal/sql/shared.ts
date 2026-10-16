@@ -344,6 +344,10 @@ abstract class SQLDialect {
   /// around an identifier
   readonly quote: string = '"';
   readonly begin: string = "BEGIN";
+  /// `in ()` is a syntax error on the servers
+  readonly emptyList: string = "(NULL)";
+  /// the values of sql.unsafe() may be an object
+  readonly namedParameters: boolean = false;
 
   /// `code`: what follows ERR_POSTGRES_, ERR_MYSQL_ or ERR_SQLITE_
   abstract error(code: string, message: string): Error;
@@ -460,19 +464,18 @@ class QueryBuilder {
     }
     this.text += strings;
     if (values == null) return;
-    if (!$isArray(values)) {
-      throw new SyntaxError(
-        "Nested sql.unsafe() fragment values must be an array, received " +
-          (typeof values === "object" ? "an object" : "a " + typeof values),
-      );
+    const count = values.length;
+    if (count === undefined && this.adapter.namedParameters && Object.keys(values).length > 0) {
+      throw new SyntaxError("Nested sql.unsafe() cannot have named parameters: the query around it binds by position");
     }
-    if (values.length === 0) return;
+    // parts.map(sql.unsafe) passes the index
+    if (!(count > 0)) return;
     if (this.values.length > 0 && this.adapter.placeholder(1) !== "?") {
       throw new SyntaxError(
         "Nested sql.unsafe() cannot have values when it follows other parameters: its $1 is the first parameter of the whole query. Use a sql`` fragment for the values",
       );
     }
-    for (let i = 0; i < values.length; i++) this.values.push(values[i]);
+    for (let i = 0; i < count; i++) this.values.push(values[i]);
   }
 
   helper(helper: SQLHelper<any>) {
@@ -566,7 +569,7 @@ class QueryBuilder {
       throw new SyntaxError("Cannot use WHERE IN helper with multiple columns");
     }
     if (items.length === 0) {
-      this.text += "(NULL)";
+      this.text += this.adapter.emptyList;
       return;
     }
     for (let i = 0; i < items.length; i++) {
@@ -641,6 +644,8 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> exte
   get closed(): boolean;
 
   readonly supportsReservedConnections: boolean;
+  /** The server is asked for other formats for raw(), so it is neither chosen nor left once the query has started. */
+  readonly rawChangesFormat?: boolean;
   /** `true`: `onConnected` was still queued and will never run. */
   cancelConnect(onConnected: OnConnected<Connection>): boolean;
   /** Throws `connectionClosedError()` unless the connection is open. */
@@ -652,6 +657,8 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> exte
   copyStream?(query: QueryType<any, any>, writable: boolean): ReadableStream<Uint8Array> | WritableStream<unknown>;
 
   array(values: any[], typeNameOrID?: number | string): SQLArrayParameter;
+  /** The parameter that stores `value` as JSON, where that is not its JSON text. */
+  json?(value: unknown): object;
   getDistributedTransactionCommands(name: string): TransactionCommands | null;
   /** COMMIT PREPARED or ROLLBACK PREPARED */
   getFinishDistributedSQL(commit: boolean, name: string): string;

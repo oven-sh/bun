@@ -38,7 +38,7 @@ describe("the query of a postgres:// URL", () => {
     ],
     ["channel_binding=require", { channelBinding: "require" }],
     ["sslmode=require&channel_binding=require", { sslMode: 2, channelBinding: "require" }],
-    ["sslrootcert=/x/ca.pem", { sslMode: 4, tls: { caFile: "/x/ca.pem", rejectUnauthorized: true, serverName: "uh" } }],
+    ["sslrootcert=/x/ca.pem", { sslMode: 4, tls: { caFile: "/x/ca.pem", serverName: "uh" } }],
     [
       "sslmode=verify-ca&sslrootcert=/x/ca.pem&sslcert=/x/c.pem&sslkey=/x/k.pem&sslpassword=s",
       { sslMode: 3, tls: { caFile: "/x/ca.pem", certFile: "/x/c.pem", keyFile: "/x/k.pem", passphrase: "s" } },
@@ -157,23 +157,25 @@ describe.each(["mysql", "mariadb"] as const)("the query of a %s:// URL", adapter
 
   test("foundRows", () => {
     const foundRows = (...args: unknown[]) => optionsOf(...args).foundRows;
-    expect(foundRows({ adapter })).toBe(true);
-    expect(foundRows({ adapter, foundRows: false })).toBe(false);
-    expect(foundRows({ adapter, foundRows: undefined })).toBe(true);
-    expect(foundRows(`${adapter}://uh/ud?foundRows=false`)).toBe(false);
-    expect(foundRows(`${adapter}://uh/ud?foundRows=0`)).toBe(false);
+    expect(foundRows({ adapter })).toBe(false);
+    expect(foundRows({ adapter, foundRows: true })).toBe(true);
+    expect(foundRows({ adapter, foundRows: undefined })).toBe(false);
     expect(foundRows(`${adapter}://uh/ud?foundRows=true`)).toBe(true);
-    expect(foundRows(`${adapter}://uh/ud?foundRows=false`, { foundRows: true })).toBe(true);
-    expect(optionsOf(`${adapter}://uh/ud?foundRows=false`).query).toBe("");
+    expect(foundRows(`${adapter}://uh/ud?foundRows=1`)).toBe(true);
+    expect(foundRows(`${adapter}://uh/ud?foundRows=false`)).toBe(false);
+    expect(foundRows(`${adapter}://uh/ud?foundRows=true`, { foundRows: false })).toBe(false);
+    expect(optionsOf(`${adapter}://uh/ud?foundRows=true`).query).toBe("");
   });
 
-  test("prepare: false is refused", () => {
-    for (const make of [
-      () => new SQL({ adapter, prepare: false }),
-      () => new SQL(`${adapter}://uh/ud?prepare=false`),
-    ]) {
-      expect(make).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+  test("prepare: false: the mysql adapter refuses the option, and nothing else reads it", () => {
+    if (adapter === "mysql") {
+      expect(() => new SQL({ adapter, prepare: false })).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      );
+    } else {
+      expect(optionsOf({ adapter, prepare: false }).prepare).toBe(false);
     }
+    expect(optionsOf(`${adapter}://uh/ud?prepare=false`).prepare).toBe(true);
     expect(optionsOf({ adapter, prepare: true }).prepare).toBe(true);
   });
 });

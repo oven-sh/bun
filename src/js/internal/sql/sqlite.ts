@@ -58,8 +58,8 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         // Compiles the first statement of the text and runs nothing.
         const stmt = db.prepare<unknown, any[]>(sql);
         try {
-          // A Statement without parameters ignores its arguments. db.run() says that the values have no place.
-          if (stmt.paramsCount > 0 || !((values as unknown[]).length > 0)) {
+          // A Statement without parameters ignores its arguments. db.run() says that an array of values has no place.
+          if (stmt.paramsCount > 0 || !($isArray(values) && values.length > 0)) {
             if (stmt.native.columnsCount > 0) {
               readonly = stmt.readonly;
               if (mode === SQLQueryResultMode.values) {
@@ -118,6 +118,8 @@ class SQLiteAdapter
   public closed: boolean = false;
   /// There is one connection and plain queries always run on it, so reserve() has nothing to give.
   public readonly supportsReservedConnections = false;
+  readonly emptyList = "()";
+  readonly namedParameters = true;
   /// A begin() has the database, and the ones that came after it wait in order. Plain queries do not wait: they join.
   private inBegin: boolean = false;
   private waitingBegins: OnConnected<BunSQLiteModule.Database>[] = [];
@@ -131,7 +133,13 @@ class SQLiteAdapter
     try {
       // not before an SQLite client is made
       const { Database } = require("../../bun/sqlite.ts") as typeof BunSQLiteModule;
-      this.db = new Database(filename, { readonly, create, readwrite, safeIntegers, strict });
+      this.db = new Database(
+        filename,
+        // Read-only wins over `create` and `readwrite`. Else a file that is not there is made, unless `create` is false.
+        readonly || (readwrite !== undefined && !readwrite)
+          ? { readonly: true, safeIntegers, strict }
+          : { readwrite: true, create: create !== false, safeIntegers, strict },
+      );
     } catch (err) {
       // A mistake in the options, not a database that cannot be opened: `new SQL()` throws it.
       if (err instanceof TypeError) throw err;

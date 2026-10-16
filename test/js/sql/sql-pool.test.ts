@@ -578,14 +578,31 @@ for (const server of servers) {
       expect(await sql`select 1 as a; select 2 as b`.values().simple()).toEqual([[[1]], [[2]]]);
     });
 
-    test.each(["raw", "values"] as const)("%s() changes nothing once the query has started", async mode => {
-      await using sql = await pool();
-      // The second time the statement is prepared, and PostgreSQL is asked for binary results.
-      for (let i = 0; i < 2; i++) {
-        const query = sql`select ${7} + 0 as x, ${"a"} as y`.execute();
-        query[mode]();
-        expect(await query).toEqual([{ x: 7, y: "a" }]);
-      }
+    describe("once the query has started", () => {
+      const isPostgres = server.image === "postgres_plain";
+      const query = (sql: SQL) => sql`select ${7} + 0 as x, ${"a"} as y`;
+
+      test("values() counts", async () => {
+        await using sql = await pool();
+        // The second time the statement is prepared.
+        for (let i = 0; i < 2; i++) {
+          const started = query(sql).execute();
+          started.values();
+          expect([await started, await query(sql).execute().values()]).toEqual([[[7, "a"]], [[7, "a"]]]);
+        }
+      });
+
+      test(isPostgres ? "raw() is neither chosen nor left" : "raw() counts", async () => {
+        await using sql = await pool();
+        // The second time the statement is prepared, and PostgreSQL is asked for binary results unless it is raw().
+        for (let i = 0; i < 2; i++) {
+          const raw = await query(sql).raw();
+          expect({
+            chosen: await query(sql).execute().raw(),
+            left: await query(sql).raw().execute().values(),
+          }).toEqual(isPostgres ? { chosen: [{ x: 7, y: "a" }], left: raw } : { chosen: raw, left: [[7, "a"]] });
+        }
+      });
     });
 
     test("the client calls no then(), catch() or finally() of a query that it runs", async () => {

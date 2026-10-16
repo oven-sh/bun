@@ -577,6 +577,11 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     ) {
       throw this.error("UNSAFE_TRANSACTION", "Only use sql.begin, sql.reserved or max: 1");
     }
+    // sql.unsafe(text, 0): parts.map(sql.unsafe) passes the index
+    if (!values) {
+      values = [];
+      flags |= SQLQueryFlags.simple;
+    }
     return this.createNativeQuery(
       sql,
       values,

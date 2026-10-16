@@ -73,6 +73,7 @@ class Client implements Target {
   reserve = reserve.bind(this);
   listen = listen.bind(this);
   array = array.bind(this);
+  json = json.bind(this);
 
   constructor(pool: Pool, options: Bun.SQL.__internal.DefinedOptions & { bigint?: boolean }) {
     this.pool = pool;
@@ -920,8 +921,9 @@ function array(this: Client, values: any[], typeNameOrID?: number | string) {
   return this.pool.array(values, typeNameOrID);
 }
 
-function json(value: unknown) {
-  return JSON.stringify(value);
+function json(this: Client, value: unknown) {
+  const pool = this.pool;
+  return pool.json ? pool.json(value) : JSON.stringify(value);
 }
 
 function onClientConnected(
@@ -987,7 +989,7 @@ function makeHandle(target: Client | Scope) {
   handle.reserve = client.reserve;
   handle.listen = client.listen;
   handle.array = client.array;
-  handle.json = json;
+  handle.json = client.json;
   handle.options = client.options;
   if (target instanceof Client) {
     handle.connect = connectClient.bind(target, handle);

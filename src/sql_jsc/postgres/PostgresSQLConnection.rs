@@ -1823,9 +1823,17 @@ impl PostgresSQLConnection {
 
     /// `false`: user code ran, or threw and the request is rejected. What was read before is stale.
     fn stage(&self, request: &PostgresSQLQuery, values: JSValue, types: &[Int4]) -> bool {
+        if request.flags.get().staged {
+            return true;
+        }
+        request.update_flags(|f| f.staged = true);
         // That code can wait for the reply to a request that is still in the write buffer.
         self.register_auto_flusher();
-        match PostgresRequest::stage_parameters(self.global(), values, types) {
+        let prepared = !self
+            .flags
+            .get()
+            .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS);
+        match PostgresRequest::stage_parameters(self.global(), values, types, prepared) {
             Ok(replaced) => !replaced,
             Err(err) => {
                 let error = self.global().take_exception(err);

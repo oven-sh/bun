@@ -352,6 +352,16 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     expect(exitCode).toBe(0);
   });
 
+  test("the brackets inside an element of a json[] are not dimensions of the array", async () => {
+    await container.ready;
+    await using sql = connect();
+    const nested = Buffer.alloc(150, "[").toString() + "1" + Buffer.alloc(150, "]").toString();
+    const select = `select array['${nested}'::json] as v`;
+    for (const rows of [await sql.unsafe(select).simple(), await sql.unsafe(select + " where 1 = $1", [1])]) {
+      expect(JSON.stringify(rows[0].v)).toBe(`[${nested}]`);
+    }
+  });
+
   test("a numeric with more than 32767 base-10000 digits", async () => {
     await container.ready;
     await using sql = connect();

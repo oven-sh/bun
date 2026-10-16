@@ -66,6 +66,8 @@ pub struct Flags {
     pub(crate) simple: bool,
     /// Parse + Describe go out first and Bind waits for the server's parameter types.
     pub(crate) describe_first: bool,
+    /// Its values are what `write_bind` sends. See `PostgresRequest::stage_parameters`.
+    pub(crate) staged: bool,
     /// It failed while the server still answers it: its response is skipped until `ReadyForQuery`.
     pub(crate) discard_response: bool,
     pub(crate) cancel: Cancel,
@@ -115,6 +117,7 @@ impl Default for Flags {
             bigint: false,
             simple: false,
             describe_first: false,
+            staged: false,
             discard_response: false,
             cancel: Cancel::No,
             counter: RequestCounter::None,

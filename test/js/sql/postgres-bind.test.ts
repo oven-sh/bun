@@ -35,10 +35,21 @@ const textBytes = (text: string) => "\\x" + Buffer.from(text).toString("hex");
 // A column that is not named refuses the value.
 type Cells = Record<string, string>;
 // The last element is what differs with `prepare: false`: Bind is written before the server has described the
-// statement, unless the text of a value depends on the type (an array, a TypedArray of numbers, an own toString).
+// statement, unless the text of a value depends on the type (an array, an Int32Array, an own toString).
+// A string is then sent as it is, also to json and jsonb.
 const matrix: [label: string, value: () => unknown, cells: Cells, unprepared?: Cells][] = [
-  ['"1"', () => "1", { 1: "text int4 int8 float4 float8 numeric json jsonb", true: "bool", [textBytes("1")]: "bytea" }],
-  ["'{\"a\":1}'", () => '{"a":1}', { '{"a":1}': "text json", '{"a": 1}': "jsonb", [textBytes('{"a":1}')]: "bytea" }],
+  [
+    '"1"',
+    () => "1",
+    { 1: "text int4 int8 float4 float8 numeric", '"1"': "json jsonb", true: "bool", [textBytes("1")]: "bytea" },
+    { 1: "json jsonb" },
+  ],
+  [
+    "'{\"a\":1}'",
+    () => '{"a":1}',
+    { '{"a":1}': "text", '"{\\"a\\":1}"': "json jsonb", [textBytes('{"a":1}')]: "bytea" },
+    { '{"a":1}': "json", '{"a": 1}': "jsonb" },
+  ],
   [
     "an ISO string",
     () => iso,
@@ -47,19 +58,27 @@ const matrix: [label: string, value: () => unknown, cells: Cells, unprepared?: C
       "2024-01-02": "date",
       "2024-01-02 03:04:05.678": "timestamp",
       "2024-01-02 03:04:05.678+00": "timestamptz",
+      [`"${iso}"`]: "json jsonb",
       [textBytes(iso)]: "bytea",
     },
+    { rejected: "json jsonb" },
   ],
   [
     '"{1,2}"',
     () => "{1,2}",
-    { "{1,2}": "text int4_array float4_array text_array jsonb_array", [textBytes("{1,2}")]: "bytea" },
+    {
+      "{1,2}": "text int4_array float4_array text_array jsonb_array",
+      '"{1,2}"': "json jsonb",
+      [textBytes("{1,2}")]: "bytea",
+    },
+    { rejected: "json jsonb" },
   ],
-  ['"a"', () => "a", { a: "text mood", [textBytes("a")]: "bytea" }],
+  ['"a"', () => "a", { a: "text mood", '"a"': "json jsonb", [textBytes("a")]: "bytea" }, { rejected: "json jsonb" }],
   [
     'new String("1")',
     () => new String("1"),
-    { 1: "text int4 int8 float4 float8 numeric json jsonb", true: "bool", [textBytes("1")]: "bytea" },
+    { 1: "text int4 int8 float4 float8 numeric", '"1"': "json jsonb", true: "bool", [textBytes("1")]: "bytea" },
+    { 1: "json jsonb" },
   ],
   ["1", () => 1, { 1: "text int4 int8 float4 float8 numeric" }],
   ["1.5", () => 1.5, { "1.5": "text float4 float8 numeric", 2: "int4 int8" }],
@@ -86,22 +105,8 @@ const matrix: [label: string, value: () => unknown, cells: Cells, unprepared?: C
   ],
   ["-0", () => -0, { "-0": "text float4 float8", 0: "int4 int8 numeric" }],
   ["NaN", () => NaN, { NaN: "text float4 float8 numeric" }],
-  [
-    "Infinity",
-    () => Infinity,
-    { Infinity: "text float4 float8 numeric", infinity: "date timestamp timestamptz", ERR_INVALID_ARG_TYPE: "bytea" },
-    { [textBytes("Infinity")]: "bytea" },
-  ],
-  [
-    "-Infinity",
-    () => -Infinity,
-    {
-      "-Infinity": "text float4 float8 numeric",
-      "-infinity": "date timestamp timestamptz",
-      ERR_INVALID_ARG_TYPE: "bytea",
-    },
-    { [textBytes("-Infinity")]: "bytea" },
-  ],
+  ["Infinity", () => Infinity, { Infinity: "text float4 float8 numeric" }],
+  ["-Infinity", () => -Infinity, { "-Infinity": "text float4 float8 numeric" }],
   ["1n", () => 1n, { 1: "text int4 int8 float4 float8 numeric" }],
   [
     "2n ** 63n",
@@ -137,38 +142,40 @@ const matrix: [label: string, value: () => unknown, cells: Cells, unprepared?: C
     "Int32Array [1, 2]",
     () => new Int32Array([1, 2]),
     {
-      '{"1","2"}': "text",
+      "1,2": "text",
       '{"0":1,"1":2}': "json",
       '{"0": 1, "1": 2}': "jsonb",
       "\\x0100000002000000": "bytea",
       "{1,2}": "int4_array float4_array text_array jsonb_array",
     },
   ],
-  [
-    "Float32Array [1.5]",
-    () => new Float32Array([1.5]),
-    {
-      '{"1.5"}': "text",
-      '{"0":1.5}': "json",
-      '{"0": 1.5}': "jsonb",
-      "\\x0000c03f": "bytea",
-      "{1.5}": "float4_array text_array jsonb_array",
-    },
-  ],
+  ["Float32Array [1.5]", () => new Float32Array([1.5]), { "\\x0000c03f": "text bytea" }],
   [
     "[]",
     () => [],
     {
-      "{}": "text int4_array float4_array text_array jsonb_array mood_array",
+      "": "text",
+      "{}": "int4_array float4_array text_array jsonb_array",
       "[]": "json jsonb",
       ERR_INVALID_ARG_TYPE: "bytea",
+    },
+  ],
+  [
+    "[1]",
+    () => [1],
+    {
+      1: "text int4 int8 float4 float8 numeric",
+      true: "bool",
+      "[1]": "json jsonb",
+      ERR_INVALID_ARG_TYPE: "bytea",
+      "{1}": "int4_array float4_array text_array jsonb_array",
     },
   ],
   [
     "[1, 2]",
     () => [1, 2],
     {
-      '{"1","2"}': "text",
+      "1,2": "text",
       "[1,2]": "json",
       "[1, 2]": "jsonb",
       ERR_INVALID_ARG_TYPE: "bytea",
@@ -179,24 +186,36 @@ const matrix: [label: string, value: () => unknown, cells: Cells, unprepared?: C
     '["a", "b"]',
     () => ["a", "b"],
     {
-      '{"a","b"}': "text",
+      "a,b": "text",
       '["a","b"]': "json",
       '["a", "b"]': "jsonb",
       ERR_INVALID_ARG_TYPE: "bytea",
-      "{a,b}": "text_array mood_array",
+      "{a,b}": "text_array",
       '{"\\"a\\"","\\"b\\""}': "jsonb_array",
+    },
+  ],
+  // The OID of a user-defined type does not say whether it is an array type: sql.array(values, "mood") does.
+  [
+    '["a"]',
+    () => ["a"],
+    {
+      a: "text mood",
+      '["a"]': "json jsonb",
+      ERR_INVALID_ARG_TYPE: "bytea",
+      "{a}": "text_array",
+      '{"\\"a\\""}': "jsonb_array",
     },
   ],
   [
     "[true]",
     () => [true],
-    { '{"true"}': "text", "[true]": "json jsonb", ERR_INVALID_ARG_TYPE: "bytea", "{true}": "text_array jsonb_array" },
+    { true: "text bool", "[true]": "json jsonb", ERR_INVALID_ARG_TYPE: "bytea", "{true}": "text_array jsonb_array" },
   ],
   [
     "[1, null]",
     () => [1, null],
     {
-      '{"1",NULL}': "text",
+      "1,": "text",
       "[1,null]": "json",
       "[1, null]": "jsonb",
       ERR_INVALID_ARG_TYPE: "bytea",
@@ -210,7 +229,7 @@ const matrix: [label: string, value: () => unknown, cells: Cells, unprepared?: C
       [3, 4],
     ],
     {
-      '{{"1","2"},{"3","4"}}': "text",
+      "1,2,3,4": "text",
       "[[1,2],[3,4]]": "json",
       "[[1, 2], [3, 4]]": "jsonb",
       ERR_INVALID_ARG_TYPE: "bytea",
@@ -311,7 +330,11 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       [2n ** 63n, "numeric", "9223372036854775808"],
       [-(2n ** 63n) - 1n, "numeric", "-9223372036854775809"],
       [true, "boolean", "true"],
+      [Infinity, "double precision", "Infinity"],
+      [-Infinity, "double precision", "-Infinity"],
       [new Uint8Array([1]), "bytea", "\\x01"],
+      [new Uint16Array([1, 2]), "bytea", "\\x01000200"],
+      [new Float32Array([1.5]), "bytea", "\\x0000c03f"],
       [new DataView(new ArrayBuffer(1)), "bytea", "\\x00"],
     ])("%p is declared as %s", async (value, type, text) => {
       expect(await sql`select pg_typeof(${value})::text as type, ${value}::text as text`).toEqual([{ type, text }]);
@@ -320,12 +343,11 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     // The server types `$1` as boolean. Only a boolean (or a string the server reads as one) may decide it.
     test.each<[string, unknown]>([
       ["[]", []],
-      ["[true]", [true]],
-      ["[1]", [1]],
-      ["['t']", ["t"]],
+      ["[1, 2]", [1, 2]],
+      ["['a']", ["a"]],
       ["{ id: 1 }", { id: 1 }],
       ["a Date", new Date(0)],
-      ["Int32Array [1]", new Int32Array([1])],
+      ["Int32Array [1, 2]", new Int32Array([1, 2])],
     ])("delete ... where ${%s} removes nothing", async (_, condition) => {
       const outcome = await sql`delete from three where ${condition}`.then(
         result => `removed ${result.count}`,
@@ -337,24 +359,68 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       });
     });
 
-    test("what a query returns can be bound again", async () => {
-      const [row] = await sql`
-        select 'infinity'::timestamptz as tstz, '-infinity'::timestamp as ts, 'infinity'::date as date,
-          'infinity'::float4 as float4, '{1,2}'::int4[] as ints, '{1.5,NULL}'::float4[] as floats`;
+    test.each<[string, unknown]>([
+      ["[true]", [true]],
+      ["[1]", [1]],
+      ["['t']", ["t"]],
+      ["Int32Array [1]", new Int32Array([1])],
+    ])("where ${%s} is what the server makes of String(value)", async (_, condition) => {
+      expect(await sql`select 1 as hit where ${condition}`).toEqual([{ hit: 1 }]);
+    });
+
+    test.each<[keyof typeof columns, unknown[], string]>([
+      ["text", ["a", "b"], "a,b"],
+      ["text", [1, 2], "1,2"],
+      ["text", [], ""],
+      ["int4", [1], "1"],
+      ["int8", [1], "1"],
+      ["float8", [1], "1"],
+      ["date", ["2024-01-02"], "2024-01-02"],
+      ["mood", ["a"], "a"],
+    ])("a %s column stores String(%p)", async (column, value, stored) => {
+      expect(await sql`insert into bind ${sql({ [column]: value })} returning ${sql(column)}::text as stored`).toEqual([
+        { stored },
+      ]);
+    });
+
+    test("an array where the server infers no array type is String(value)", async () => {
       expect(
         await sql`
-          select ${row.tstz}::timestamptz::text as tstz, ${row.ts}::timestamp::text as ts, ${row.date}::date::text as date,
-            ${row.float4}::float4::text as float4, ${row.ints}::int4[]::text as ints, ${row.floats}::float4[]::text as floats`,
-      ).toEqual([
-        {
-          tstz: "infinity",
-          ts: "-infinity",
-          date: "infinity",
-          float4: "Infinity",
-          ints: "{1,2}",
-          floats: "{1.5,NULL}",
-        },
-      ]);
+          select ${["a", "b"]} as bare, 'x:' || ${["a", "b"]} as joined, ${[]} as empty,
+            string_to_array(${[1, 2, 3]}, ',')::int[]::text as split`,
+      ).toEqual([{ bare: "a,b", joined: "x:a,b", empty: "", split: "{1,2,3}" }]);
+    });
+
+    test("sql.array() names the type of an array of a user-defined type", async () => {
+      expect(
+        await sql`insert into bind ${sql({ mood_array: sql.array(["a", "b"], "pg_temp.mood") })} returning mood_array::text as stored`,
+      ).toEqual([{ stored: "{a,b}" }]);
+    });
+
+    // Whether Bun asks for the types with `prepare: false` depends on the other values.
+    test.each<[string, unknown]>([
+      ["null", null],
+      ["an array", [1, 2]],
+    ])("the value next to a string does not change what the string is: %s", async (_, neighbour) => {
+      expect(
+        await sql`insert into bind (int4_array, jsonb) values (${neighbour}, ${'{"a":1}'}) returning jsonb_typeof(jsonb) as stored`,
+      ).toEqual([{ stored: prepare ? "string" : "object" }]);
+    });
+
+    test.skipIf(!prepare)("a statement that is prepared a second time sends the same JSON", async () => {
+      const run = () => sql`select ${"a"}::jsonb::text as string, ${{ a: 1 }}::jsonb::text as object`;
+      await run();
+      await sql.unsafe("deallocate all");
+      expect(await run()).toEqual([{ string: '"a"', object: '{"a": 1}' }]);
+    });
+
+    test("what a query returns can be bound again", async () => {
+      const [row] = await sql`
+        select 'infinity'::float4 as float4, '{1,2}'::int4[] as ints, '{1.5,NULL}'::float4[] as floats`;
+      expect(
+        await sql`
+          select ${row.float4}::float4::text as float4, ${row.ints}::int4[]::text as ints, ${row.floats}::float4[]::text as floats`,
+      ).toEqual([{ float4: "Infinity", ints: "{1,2}", floats: "{1.5,NULL}" }]);
     });
 
     test("sql.array() as a value of sql.unsafe()", async () => {

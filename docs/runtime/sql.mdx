@@ -225,11 +225,10 @@ new SQL("sqlite:///absolute/path.db"); // Absolute path
 new SQL("sqlite://data.db?mode=ro"); // Read-only mode
 new SQL("sqlite://data.db?mode=rw"); // Read-write mode (no create)
 new SQL("sqlite://data.db?mode=rwc"); // Read-write-create mode (default)
-new SQL("sqlite://data.db?mode=memory"); // In-memory database
 ```
 
     <Note>
-    A connection string without a protocol (like `"myapp.db"`) needs `{ adapter: "sqlite" }`, because Bun reads it as a PostgreSQL host. It has no query string either: `"data.db?mode=ro"` is a file name.
+    A connection string without a protocol (like `"myapp.db"`) needs `{ adapter: "sqlite" }`, because Bun reads it as a PostgreSQL host. Everything from the first `?` is the query string there too: `"data.db?mode=ro"` opens `data.db` read-only.
     </Note>
 
 </Accordion>
@@ -254,14 +253,14 @@ const sql = new SQL({
 });
 ```
 
-`readwrite: false` means the same as `readonly: true`. Options that contradict each other, such as `readonly: true` with `create: true`, throw a `TypeError`.
+`readwrite: false` means the same as `readonly: true`. A read-only database ignores `create` and `readwrite`. Otherwise Bun creates a missing file unless `create` is `false`.
 
 Bun reads `mode` from the URL to set these options. An option you pass takes priority over `mode`.
 
 - `?mode=ro` → `readonly: true`
-- `?mode=rw` → `create: false`
-- `?mode=rwc` → the default: read, write, and create
-- `?mode=memory` → `filename: ":memory:"`
+- `?mode=rw` → `readonly: false, create: false`
+- `?mode=rwc` → `readonly: false, create: true` (default)
+- `?mode=memory` has no effect. For an in-memory database, use `:memory:`
 - Any other `mode` throws
 
 </Accordion>
@@ -334,15 +333,15 @@ await sql`INSERT INTO users ${sql(user, "name", "email")}`;
 
 Bun converts a parameter by its JavaScript type. On PostgreSQL the type that the server expects for the parameter also counts.
 
-| JavaScript value                                  | PostgreSQL                                                                                    | MySQL / MariaDB   | SQLite                                                       |
-| ------------------------------------------------- | --------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------ |
-| `Date`                                            | The instant for `timestamp` and `timestamptz`. ISO 8601 text for `date`, `time`, `text`       | `DATETIME` in UTC | Not supported. Pass `date.toISOString()` or `date.getTime()` |
-| Plain object                                      | JSON                                                                                          | JSON              | Not supported. Pass `sql.json(value)`                        |
-| `Array`                                           | JSON for a `json` or `jsonb` parameter. An array literal such as `{1,2}` for every other type | JSON              | Not supported. Pass `sql.json(value)`                        |
-| `Uint8Array`, `Buffer`, `ArrayBuffer`, `DataView` | `bytea`                                                                                       | Binary data       | `BLOB`                                                       |
-| Other typed arrays, such as `Int32Array`          | Its numbers for an array parameter. Its bytes for `bytea`                                     | Its bytes         | `BLOB` with its bytes                                        |
-| `string`                                          | Sent as it is, for every type                                                                 | Sent as it is     | `TEXT`                                                       |
-| `null`, `undefined`                               | `NULL`                                                                                        | `NULL`            | `NULL`                                                       |
+| JavaScript value                                             | PostgreSQL                                                                                                                                    | MySQL / MariaDB   | SQLite                                                       |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------ |
+| `Date`                                                       | The instant for `timestamp` and `timestamptz`. ISO 8601 text for `date`, `time`, `text`                                                       | `DATETIME` in UTC | Not supported. Pass `date.toISOString()` or `date.getTime()` |
+| Plain object                                                 | JSON                                                                                                                                          | JSON              | Not supported. Pass `sql.json(value)`                        |
+| `Array`                                                      | An array literal such as `{1,2}` for a built-in array type. JSON for `json` and `jsonb`. `String(value)`, such as `1,2`, for every other type | JSON              | Not supported. Pass `sql.json(value)`                        |
+| `Int32Array`                                                 | Like an `Array` of its numbers. Its bytes for `bytea`                                                                                         | Its bytes         | `BLOB` with its bytes                                        |
+| `Buffer`, `ArrayBuffer`, `DataView`, every other typed array | `bytea`                                                                                                                                       | Binary data       | `BLOB`                                                       |
+| `string`                                                     | A JSON string for `json` and `jsonb`. Sent as it is for every other type                                                                      | Sent as it is     | `TEXT`                                                       |
+| `null`, `undefined`                                          | `NULL`                                                                                                                                        | `NULL`            | `NULL`                                                       |
 
 See [Numbers and BigInt](#numbers-and-bigint) for numbers and [Dates and time zones](#dates-and-time-zones) for `Date`.
 
@@ -353,17 +352,32 @@ await sql`SELECT * FROM users WHERE id = ANY(${[1, 2, 3]})`;
 await sql`INSERT INTO posts ${sql({ title: "Hello", tags: ["bun", "sql"] })}`; // tags text[]
 ```
 
+Use [`sql.array`](#sql-array-helper) for an array of a user-defined type such as an enum, because Bun cannot tell that it is an array type, and for a `Float32Array`, `Float64Array` or `BigInt64Array`:
+
+```ts
+await sql`INSERT INTO people ${sql({ name: "Alice", moods: sql.array(["ok", "happy"], "mood") })}`; // moods mood[]
+await sql`INSERT INTO samples (points) VALUES (${sql.array(new Float32Array([1.5, 2.5]))})`; // points float4[]
+```
+
 ### `sql.json`
 
-Bun sends a string unchanged to a `json` or `jsonb` column too, so the string must already be JSON text. `${'{"a":1}'}` stores an object. `${"dark"}` fails with `invalid input syntax for type json`.
-
-To store a JSON string, number, boolean or `null`, use `sql.json(value)`. It returns `JSON.stringify(value)` and works on every adapter.
+PostgreSQL stores a string in a `json` or `jsonb` column as a JSON string. Pass the object itself, not `JSON.stringify(object)`:
 
 ```ts
 await sql`INSERT INTO settings (data) VALUES (${{ theme: "dark" }})`; // {"theme": "dark"}
-await sql`INSERT INTO settings (data) VALUES (${sql.json("dark")})`; // "dark"
-await sql`INSERT INTO settings (data) VALUES (${sql.json(null)})`; // JSON null. A bare null is SQL NULL
+await sql`INSERT INTO settings (data) VALUES (${"dark"})`; // "dark"
+await sql`INSERT INTO settings (data) VALUES (${'{"theme":"dark"}'})`; // "{\"theme\":\"dark\"}", a string
 ```
+
+`sql.json(value)` stores any value as JSON, on every adapter. Use it for a number, a boolean or `null`:
+
+```ts
+await sql`INSERT INTO settings (data) VALUES (${sql.json(42)})`; // 42
+await sql`INSERT INTO settings (data) VALUES (${sql.json(null)})`; // JSON null. A bare null is SQL NULL
+await sql`INSERT INTO settings (data) VALUES (${sql.json("dark")})`; // "dark"
+```
+
+MySQL, MariaDB, SQLite, and PostgreSQL with [`prepare: false`](#prepared-statements) send a string as it is, so the string must already be JSON text. There, `${"dark"}` is not JSON, and `${sql.json("dark")}` stores `"dark"`.
 
 ---
 
@@ -404,7 +418,7 @@ console.log(rows); // [[Buffer, Buffer], [Buffer, Buffer], [Buffer, Buffer]]
 - On MySQL, each `Buffer` holds the bytes the server sent. They are binary for a prepared query and text for `.simple()`.
 - SQLite returns `Uint8Array` objects.
 
-Call `.values()` or `.raw()` before the query starts, that is before `await`, `.then()` or `.execute()`. After that they have no effect.
+Call `.raw()` before the query starts, that is before `await`, `.then()` or `.execute()`. After that it has no effect on PostgreSQL. On SQLite, `.execute()` has already run the query when it returns, so `.values()` has no effect after it either.
 
 ### Result metadata
 
@@ -569,7 +583,7 @@ const users = [
 await sql`SELECT * FROM users WHERE id IN ${sql(users, "id")}`;
 ```
 
-An empty list becomes `IN (NULL)`, which matches no row. `NOT IN` with an empty list matches no row either.
+An empty list matches no row. On PostgreSQL and MySQL it becomes `IN (NULL)`, so `NOT IN` with an empty list matches no row either. On SQLite it becomes `IN ()`, and `NOT IN ()` matches every row.
 
 ### `sql.array` helper
 
@@ -730,13 +744,17 @@ For each setting, Bun uses the first source that has a value:
 4. A variable for one field, such as `PGHOST` or `MYSQL_USER`
 5. The default
 
-Bun reads a URL from the environment only when you name no target yourself: no connection string, and none of the options `url`, `filename`, `hostname`, `host`, `path` or `socket`. The user, password and `sslmode` of `DATABASE_URL` never go to a host that you chose in code.
+The database name is the exception: `PGDATABASE`, `MYSQL_DATABASE` and `MARIADB_DATABASE` take priority over the database in a URL.
 
-To change one field of an environment URL, pass the URL yourself:
+An options object changes single fields of the URL from the environment. The rest of the URL still applies, including its user, password and `sslmode`:
 
 ```ts
-const replica = new SQL(process.env.DATABASE_URL!, { hostname: "replica.internal" });
+// DATABASE_URL=postgres://app:secret@primary.internal:6543/shop?sslmode=verify-full
+const replica = new SQL({ hostname: "replica.internal" });
+// replica.internal:6543, user app, database shop, sslmode=verify-full
 ```
+
+Bun does not read a URL from the environment when the first argument is a connection string. Next to the `url` option, only the name of the variable counts: `MYSQL_URL` selects MySQL for a `url` without a protocol, and a `TLS_*` variable asks for `sslmode=require`.
 
 ### Automatic Database Detection
 
@@ -769,8 +787,9 @@ Bun uses the first of these variables that is set:
 | 4     | `MARIADB_URL`, `TLS_MARIADB_DATABASE_URL`                      | MariaDB                 |
 | 5     | `SQLITE_URL`                                                   | SQLite                  |
 
-- A URL that Bun reads from a `TLS_*` variable uses at least `sslmode=require`. If you pass `process.env.TLS_DATABASE_URL` to `new SQL()` yourself, add `?sslmode=require` or `tls: true`.
-- With the `adapter` option, Bun reads `DATABASE_URL` and then only that adapter's variables. It skips a `DATABASE_URL` whose protocol names another adapter.
+- A URL that Bun reads from a `TLS_*` variable uses `sslmode=require` unless the URL or an option names a mode. If you pass `process.env.TLS_DATABASE_URL` to `new SQL()` yourself, add `?sslmode=require` or `tls: true`.
+- With the `adapter` option, Bun reads `DATABASE_URL` and then only that adapter's variables. It does not connect to a `DATABASE_URL` whose protocol names another adapter.
+- Next to `hostname`, `host`, `path`, `socket` or `url`, Bun skips a SQLite URL.
 
 ### PostgreSQL Environment Variables
 
@@ -789,7 +808,7 @@ Bun uses the first of these variables that is set:
 
 `PGSSLMODE` also applies next to a connection URL. A URL from a `TLS_*` variable uses at least `require`; `PGSSLMODE=verify-ca` and `PGSSLMODE=verify-full` raise that.
 
-An `sslmode` in the URL takes priority over `PGSSLMODE`, and a mode in the `tls` or `ssl` option takes priority over the URL. None of them goes below the `require` of a `TLS_*` variable: with `?sslmode=disable`, `?ssl=false` or `tls: false`, the connection is still encrypted. `tls: true` and a `tls` object ask for at least `require` and never lower a stricter mode.
+An `sslmode` in the URL takes priority over both, and a mode in the `tls` or `ssl` option takes priority over the URL. `tls: true` and a `tls` object ask for at least `require` and never lower a stricter mode.
 
 ### MySQL and MariaDB Environment Variables
 
@@ -882,7 +901,7 @@ You can configure the connection manually by passing options to the `SQL` constr
 | `connection`              |                           | PostgreSQL. Startup parameters, such as `{ application_name: "api", search_path: "app" }`                         |
 | `channelBinding`          | `prefer`                  | PostgreSQL. [Channel binding](#channel-binding): `"disable"`, `"prefer"` or `"require"`                           |
 | `allowPublicKeyRetrieval` | `false`                   | MySQL. Fetch the server's RSA key to log in without TLS                                                           |
-| `foundRows`               | `true`                    | MySQL. Count the rows an `UPDATE` [matched](#working-with-mysql-result-sets) rather than the rows it changed      |
+| `foundRows`               | `false`                   | MySQL. Count the rows an `UPDATE` [matched](#working-with-mysql-result-sets) rather than the rows it changed      |
 | `transform`               |                           | [Column name transforms](#column-name-transforms), such as `SQL.camel`                                            |
 | `onconnect`, `onclose`    |                           | [Connection callbacks](#connection-callbacks)                                                                     |
 
@@ -1259,7 +1278,7 @@ const sql = new SQL({
 | `verify-ca`   | Verifies server certificate is signed by trusted CA. Fails if verification fails.                                    |
 | `verify-full` | Most secure mode. Verifies certificate and hostname match. Protects against untrusted certificates and MITM attacks. |
 
-- `verify-ca` and `verify-full` always verify the certificate. `NODE_TLS_REJECT_UNAUTHORIZED=0` does not turn them off. To connect without verification, pass `tls: { rejectUnauthorized: false }`.
+- `NODE_TLS_REJECT_UNAUTHORIZED=0` turns certificate verification off, also for `verify-ca` and `verify-full`. `tls: { rejectUnauthorized: true }` verifies whatever the variable says.
 - A `tls` object with `ca`, `caFile`, `checkServerIdentity` or `rejectUnauthorized: true` raises `disable`, `prefer` and `require` to `verify-full`.
 - On a PostgreSQL unix socket, Bun ignores the SSL mode, like libpq.
 
@@ -1555,7 +1574,7 @@ Each PostgreSQL or MySQL connection keeps the 256 statements it used last. When 
 
 On PostgreSQL, a prepared statement can stop working: `ALTER TABLE` changes its result (`cached plan must not change result type`), and `DEALLOCATE ALL` or `DISCARD ALL` removes it. Bun then prepares the statement again and runs the query once more. The query rejects with the server's error instead if Bun has already sent another query behind it on that connection, which the server runs first, or inside a transaction, which is already aborted. The next run prepares the statement again.
 
-To disable named prepared statements on PostgreSQL, set `prepare: false` in the connection options. MySQL and MariaDB do not support `prepare: false`.
+To disable named prepared statements on PostgreSQL, set `prepare: false` in the connection options. MySQL and MariaDB have no such mode: the `mysql` adapter throws, and the `mariadb` adapter ignores the option.
 
 ```ts
 const sql = new SQL({
@@ -1572,8 +1591,9 @@ Queries still use the "extended" protocol, but run as [unnamed prepared statemen
 - The server parses and plans each query from scratch
 - Queries are not [pipelined](https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-FLOW-PIPELINING)
 - Only one command per query is supported (unless you use `sql``.simple()`)
-- A query takes one more round trip when a parameter is an array, a numeric typed array, or an object with its own `toString()`. Bun asks the server for the parameter types first, so that it sends the same value as with prepared statements
+- A query takes one more round trip when a parameter is an array, an `Int32Array`, or an object with its own `toString()`. Bun asks the server for the parameter types first, so that it sends the same value as with prepared statements
 - A `Date` does not work for a `time`, `timetz`, `json` or `jsonb` parameter, because Bun sends it as ISO 8601 text without asking for the type
+- A string for a `json` or `jsonb` parameter is sent as it is, so it must already be JSON text. [`sql.json(value)`](#sql-json) stores the same value with and without prepared statements
 
 You might want to use `prepare: false` when:
 
@@ -1995,7 +2015,7 @@ console.log(result.lastInsertRowid); // MySQL's LAST_INSERT_ID()
 
 // Handling affected rows
 const updated = await mysql`UPDATE users SET active = ${false} WHERE age < ${18}`;
-console.log(updated.affectedRows); // Number of rows matched
+console.log(updated.affectedRows); // Number of rows updated
 console.log(updated.count); // The same number
 
 // Using MySQL-specific functions
@@ -2003,7 +2023,7 @@ const now = await mysql`SELECT NOW() AS now`;
 const uuid = await mysql`SELECT UUID() AS id`;
 ```
 
-- `affectedRows` counts the rows that the `WHERE` clause matched, like `mysql2`, the `mariadb` connector, PostgreSQL and SQLite. An `UPDATE` that sets a row to the values it already has still counts it. For the number of rows that changed, pass `foundRows: false` or add `?foundRows=false` to the URL.
+- `affectedRows` counts the rows that changed. An `UPDATE` that sets a row to the values it already has does not count it. For the number of rows that the `WHERE` clause matched, like `mysql2`, the `mariadb` connector, PostgreSQL and SQLite, pass `foundRows: true` or add `?foundRows=true` to the URL.
 - `lastInsertRowid` is a `number` up to `Number.MAX_SAFE_INTEGER`. A larger key is a string, or a `BigInt` with `bigint: true`.
 - `command` is `null`, because the MySQL protocol does not report it.
 

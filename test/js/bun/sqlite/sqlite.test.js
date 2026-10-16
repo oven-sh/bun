@@ -582,22 +582,17 @@ describe("Database open mode from an options object", () => {
     expect(() => new Database(existing, { readonly: true, create: true })).toThrow(TypeError);
   });
 
-  it.each([[true], ["readonly"], [1n], [() => {}], [Symbol()]])(
-    "options that are not an object or a number throw: %p",
+  it.each([[undefined], [null], [true], [false], ["readonly"], [""], [1n], [() => {}], [Symbol()]])(
+    "options that are not an object or a number are the default: %p",
     options => {
-      const missing = path.join(String(dir), `missing-${files++}.sqlite`);
-      const open = () => new Database(missing, options);
-      expect(open).toThrow(TypeError);
-      expect(open).toThrow(`Expected 'options' to be an object or a number, got '${typeof options}'`);
-      expect(existsSync(missing)).toBe(false);
+      for (const open of [(...args) => new Database(...args), Database.open]) {
+        const missing = path.join(String(dir), `missing-${files++}.sqlite`);
+        using db = open(missing, options);
+        db.run("CREATE TABLE t (a)");
+        expect(existsSync(missing)).toBe(true);
+      }
     },
   );
-
-  it.each([[undefined], [null]])("options %p are the default", options => {
-    const missing = path.join(String(dir), `missing-${files++}.sqlite`);
-    new Database(missing, options).close();
-    expect(existsSync(missing)).toBe(true);
-  });
 });
 
 it("Database.open", () => {
@@ -1273,131 +1268,159 @@ it("db.transaction()", () => {
 });
 
 describe("db.transaction() with a callback that is not synchronous", () => {
-  const refusal = {
-    type: "TypeError",
-    message:
-      "Transaction function cannot return a promise. It must be synchronous: do the awaited work first and pass the results in.",
-  };
-  const thrownBy = fn => {
-    try {
-      fn();
-    } catch (e) {
-      return { type: e.constructor.name, message: e.message };
-    }
-    return "did not throw";
-  };
-  const openAccounts = () => {
+  const open = () => {
     const db = new Database(":memory:");
-    db.run("CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)");
-    db.run("INSERT INTO accounts VALUES (1, 100), (2, 0)");
+    db.run("CREATE TABLE t (a)");
     return db;
   };
-  const balances = db => db.query("SELECT balance FROM accounts ORDER BY id").values().flat();
-  const debit = (db, amount) => db.run("UPDATE accounts SET balance = balance - ? WHERE id = 1", [amount]);
-  const credit = (db, amount) => db.run("UPDATE accounts SET balance = balance + ? WHERE id = 2", [amount]);
+  const rows = db => db.query("SELECT a FROM t").values().flat();
+  const stateOf = result => (result instanceof Promise ? Bun.peek.status(result) : "not a promise");
 
-  // The callback runs every statement and then returns one of these.
-  const promiseResults = {
-    "a resolved promise": () => Promise.resolve("done"),
-    "a pending promise": () => new Promise(() => {}),
-    "a rejected promise": () => {
-      const rejected = Promise.reject(new Error("a rejection that this test handles"));
-      rejected.catch(() => {});
-      return rejected;
-    },
-    "a thenable that is not a promise": () => ({ then() {} }),
-  };
-
-  it.each(Object.keys(promiseResults))("rolls back and throws when the callback returns %s", kind => {
-    using db = openAccounts();
-    const transfer = db.transaction(amount => {
-      debit(db, amount);
-      credit(db, amount);
-      return promiseResults[kind]();
-    });
-
-    for (const call of [transfer, transfer.immediate]) {
-      expect(thrownBy(() => call(40))).toEqual(refusal);
-      expect({ inTransaction: db.inTransaction, balances: balances(db) }).toEqual({
+  // COMMIT goes out when the callback returns. `gate` is a promise that the test fulfills after that.
+  // [callback, what it returns, what that settles to, the rows when it returns, the rows in the end]
+  it.each([
+    [
+      "an async function without an await",
+      insert => async () => (insert(1), insert(2), 7),
+      "fulfilled",
+      7,
+      [1, 2],
+      [1, 2],
+    ],
+    [
+      "an async function with a statement after an await: it lands outside the transaction",
+      (insert, gate) => async () => (insert(1), await gate, insert(2), 7),
+      "pending",
+      7,
+      [1],
+      [1, 2],
+    ],
+    [
+      "an async function that awaits last",
+      (insert, gate) => async () => (insert(1), insert(2), await gate, 7),
+      "pending",
+      7,
+      [1, 2],
+      [1, 2],
+    ],
+    [
+      "an async function that throws before an await: rolled back",
+      insert => async () => {
+        insert(1);
+        throw new Error("thrown");
+      },
+      "rejected",
+      "thrown",
+      [],
+      [],
+    ],
+    [
+      "an async function that throws after an await: nothing is rolled back",
+      (insert, gate) => async () => {
+        insert(1);
+        await gate;
+        insert(2);
+        throw new Error("thrown");
+      },
+      "pending",
+      "thrown",
+      [1],
+      [1, 2],
+    ],
+    [
+      "a function that returns a fulfilled promise",
+      insert => () => (insert(1), insert(2), Promise.resolve(7)),
+      "fulfilled",
+      7,
+      [1, 2],
+      [1, 2],
+    ],
+    [
+      "a function that returns a pending promise",
+      (insert, gate) => () => (insert(1), insert(2), gate.then(() => 7)),
+      "pending",
+      7,
+      [1, 2],
+      [1, 2],
+    ],
+    [
+      "a function that returns a rejected promise: rolled back",
+      insert => () => (insert(1), insert(2), Promise.reject(new Error("thrown"))),
+      "rejected",
+      "thrown",
+      [],
+      [],
+    ],
+    [
+      "a function that returns a thenable",
+      insert => () => (insert(1), insert(2), { then: resolve => resolve(7) }),
+      "not a promise",
+      7,
+      [1, 2],
+      [1, 2],
+    ],
+  ])("%s", async (_, make, state, outcome, atReturn, inTheEnd) => {
+    for (const kind of ["default", "immediate"]) {
+      using db = open();
+      const gate = Promise.withResolvers();
+      const result = db.transaction(make(a => db.run("INSERT INTO t VALUES (?)", [a]), gate.promise))[kind]();
+      expect({ state: stateOf(result), rows: rows(db), inTransaction: db.inTransaction }).toEqual({
+        state,
+        rows: atReturn,
         inTransaction: false,
-        balances: [100, 0],
       });
+      gate.resolve();
+      expect(
+        await Promise.resolve(result).then(
+          value => value,
+          error => error.message,
+        ),
+      ).toBe(outcome);
+      expect({ rows: rows(db), inTransaction: db.inTransaction }).toEqual({ rows: inTheEnd, inTransaction: false });
     }
+  });
 
-    // Nested: only the savepoint of the refused call is undone. The outer transaction commits its own statement.
-    db.transaction(() => {
-      debit(db, 1);
-      expect(thrownBy(() => transfer(40))).toEqual(refusal);
-      expect(db.inTransaction).toBe(true);
+  it("nested: a callback that is rejected when it returns undoes only its savepoint", async () => {
+    using db = open();
+    const insert = a => db.run("INSERT INTO t VALUES (?)", [a]);
+    const inner = db.transaction(async () => {
+      insert(2);
+      throw new Error("thrown");
+    });
+    const result = db.transaction(() => {
+      insert(1);
+      const rejected = inner();
+      expect({ rows: rows(db), inTransaction: db.inTransaction }).toEqual({ rows: [1], inTransaction: true });
+      insert(3);
+      return [rejected];
     })();
-    expect({ inTransaction: db.inTransaction, balances: balances(db) }).toEqual({
-      inTransaction: false,
-      balances: [99, 0],
-    });
+    expect({ rows: rows(db), inTransaction: db.inTransaction }).toEqual({ rows: [1, 3], inTransaction: false });
+    await expect(result[0]).rejects.toThrow("thrown");
   });
 
-  it("rolls back and rethrows when the `then` getter of the result throws", () => {
-    using db = openAccounts();
-    const getterError = new Error("the then getter threw");
-    const transfer = db.transaction(amount => {
-      debit(db, amount);
-      return {
-        get then() {
-          throw getterError;
-        },
-      };
-    });
-    expect(() => transfer(40)).toThrow(getterError);
-    expect({ inTransaction: db.inTransaction, balances: balances(db) }).toEqual({
-      inTransaction: false,
-      balances: [100, 0],
-    });
-  });
-
-  it("commits and returns every other result", () => {
-    using db = openAccounts();
-    const debitAndReturn = db.transaction((amount, result) => {
-      debit(db, amount);
+  it("commits and returns every other result, and does not read its `then`", () => {
+    using db = open();
+    const insertAndReturn = db.transaction(result => {
+      db.run("INSERT INTO t VALUES (1)");
       return result;
     });
-    const results = [{ then: "not a function" }, () => {}, {}, undefined, null, 0, "text", true, 1n];
-    for (const result of results) expect(debitAndReturn(1, result)).toBe(result);
-    expect(balances(db)).toEqual([100 - results.length, 0]);
+    const unread = {
+      get then() {
+        throw new Error("read");
+      },
+    };
+    const results = [unread, { then: "not a function" }, () => {}, {}, undefined, null, 0, "text", true, 1n];
+    for (const result of results) expect(insertAndReturn(result)).toBe(result);
+    expect(rows(db)).toHaveLength(results.length);
   });
 
-  it.each([
-    ["an async arrow function", () => async started => void started.count++],
-    [
-      "an async generator function",
-      () =>
-        async function* (started) {
-          started.count++;
-        },
-    ],
-  ])("refuses %s at the call, before BEGIN, and its body does not start", (_, make) => {
-    using dir = tempDir("sqlite-transaction-refused", {});
-    const file = path.join(String(dir), "locked.sqlite");
-    using holder = new Database(file);
-    using db = new Database(file);
-    holder.run("CREATE TABLE t (x)");
-    const started = { count: 0 };
-
-    // db.transaction() accepts the function, as in better-sqlite3.
-    const tx = db.transaction(make());
-    expect(tx.database).toBe(db);
-
-    // BEGIN IMMEDIATE would fail with SQLITE_BUSY here.
-    holder.run("BEGIN IMMEDIATE");
-    for (const call of [tx, tx.deferred, tx.immediate, tx.exclusive])
-      expect(thrownBy(() => call(started))).toEqual(refusal);
-    holder.run("ROLLBACK");
-
-    // Nested: the outer transaction stays open.
-    db.transaction(() => {
-      expect(thrownBy(() => tx(started))).toEqual(refusal);
-      expect(db.inTransaction).toBe(true);
+  it("an async generator function gets its generator back, and the body has not started", () => {
+    using db = open();
+    const generator = db.transaction(async function* () {
+      db.run("INSERT INTO t VALUES (1)");
     })();
-    expect({ started: started.count, inTransaction: db.inTransaction }).toEqual({ started: 0, inTransaction: false });
+    expect(Object.prototype.toString.call(generator)).toBe("[object AsyncGenerator]");
+    expect({ rows: rows(db), inTransaction: db.inTransaction }).toEqual({ rows: [], inTransaction: false });
   });
 });
 

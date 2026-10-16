@@ -98,6 +98,14 @@ declare module "bun" {
   }
 
   /**
+   * A JSON parameter created by {@link SQL.json} on PostgreSQL
+   */
+  interface SQLJSONParameter {
+    value: unknown;
+    toJSON(key: string): unknown;
+  }
+
+  /**
    * The client passed to transaction callbacks ({@link SQL.begin},
    * {@link SQL.transaction}). Extends {@link SQL} with savepoints.
    *
@@ -381,10 +389,12 @@ declare module "bun" {
        * - `./dev.db`
        * - `:memory:`
        *
-       * A `sqlite:` or `file:` URL can end with `?mode=`: `ro` (read-only),
-       * `rw` (read-write, the file must exist), `rwc` (read-write and create,
-       * the default) or `memory`. Any other mode throws. The `readonly` and
-       * `create` options take priority over it.
+       * Everything from the first `?` is a query string, which can have
+       * `mode=`: `ro` (read-only), `rw` (read-write, the file must exist) or
+       * `rwc` (read-write and create, the default). `memory` has no effect, and
+       * any other mode throws. The `readonly` and `create` options take
+       * priority over it, and a read-only database ignores `create` and
+       * `readwrite`.
        *
        * Without a `filename`, Bun reads a `DATABASE_URL` that is not a
        * PostgreSQL, MySQL or MariaDB URL, then `SQLITE_URL`.
@@ -431,9 +441,9 @@ declare module "bun" {
        * Connection URL, for example `postgres://user:pass@localhost:5432/mydb`.
        *
        * For each setting, an option takes priority over the URL, and the URL
-       * over the environment. Bun reads a URL from the environment, such as
-       * `DATABASE_URL`, only when none of `url`, `hostname`, `host`, `path`
-       * and `socket` is set and no connection string is passed.
+       * over the environment. Without `url` and without a connection string,
+       * Bun reads a URL from the environment, such as `DATABASE_URL`, and the
+       * other options change single fields of it.
        */
       url?: URL | string | undefined;
 
@@ -483,7 +493,8 @@ declare module "bun" {
       pass?: string | (() => MaybePromise<string>) | undefined;
 
       /**
-       * Name of the database to connect to
+       * Name of the database to connect to. `PGDATABASE`, `MYSQL_DATABASE` and
+       * `MARIADB_DATABASE` take priority over the database in a URL.
        * @default The username value for PostgreSQL. MySQL and MariaDB select no database
        */
       database?: string | undefined;
@@ -571,13 +582,12 @@ declare module "bun" {
        * `true` and an options object ask for at least `"require"`. An object
        * with `ca`, `caFile`, `checkServerIdentity` or
        * `rejectUnauthorized: true` raises a mode below `"verify-ca"` to
-       * `"verify-full"`. `"verify-ca"` and `"verify-full"` verify the
-       * certificate even with `NODE_TLS_REJECT_UNAUTHORIZED=0`; only
-       * `rejectUnauthorized: false` turns that off. PostgreSQL ignores this
-       * option on a unix socket.
+       * `"verify-full"`. Without `rejectUnauthorized`,
+       * `NODE_TLS_REJECT_UNAUTHORIZED=0` turns certificate verification off in
+       * every mode. PostgreSQL ignores this option on a unix socket.
        *
-       * A URL that Bun reads from a `TLS_*` environment variable keeps at least
-       * `"require"`, also with `false` or `"disable"` here.
+       * A URL that Bun reads from a `TLS_*` environment variable uses
+       * `"require"` unless the URL or this option names a mode.
        * @default false
        * @example
        * ```ts
@@ -674,7 +684,8 @@ declare module "bun" {
 
       /**
        * PostgreSQL only. Use named prepared statements. Each connection keeps
-       * the 256 it used last. `false` throws for MySQL and MariaDB.
+       * the 256 it used last. `false` throws for MySQL and does nothing for
+       * MariaDB.
        * @default true
        */
       prepare?: boolean | undefined;
@@ -695,11 +706,11 @@ declare module "bun" {
       /**
        * MySQL and MariaDB only. Report the rows that the `WHERE` clause of an
        * `UPDATE` matched in `affectedRows`, as `mysql2`, the `mariadb`
-       * connector, PostgreSQL and SQLite do. With `false`, the server counts
+       * connector, PostgreSQL and SQLite do. Without it, the server counts
        * only the rows whose values changed, so an `UPDATE` that sets a row to
        * the values it already has reports `0`. Also the `?foundRows=`
        * parameter of the URL.
-       * @default true
+       * @default false
        */
       foundRows?: boolean | undefined;
 
@@ -982,7 +993,8 @@ declare module "bun" {
        * PostgreSQL: the text form of each value. MySQL: the bytes the server
        * sent, binary for a prepared query. SQLite: `Uint8Array` objects.
        *
-       * Call it before the query starts. After that it has no effect.
+       * Call it before the query starts. After that it has no effect on
+       * PostgreSQL and SQLite.
        */
       raw(): Query<T>;
 
@@ -990,7 +1002,7 @@ declare module "bun" {
        * Returns each row as an array of values, in the same order as the
        * columns in the query.
        *
-       * Call it before the query starts. After that it has no effect.
+       * It has no effect after `execute()` on SQLite, which has run the query.
        */
       values(): Query<T>;
     }
@@ -1315,20 +1327,23 @@ declare module "bun" {
     array(values: any[] | NodeJS.TypedArray, typeNameOrTypeID?: number | ArrayType): SQLArrayParameter;
 
     /**
-     * Returns `JSON.stringify(value)`, to interpolate into a query.
+     * Returns a parameter that stores `value` as JSON, to interpolate into a
+     * query. It works on every adapter.
      *
-     * Bun sends an object or an array as JSON by itself, and sends a string
-     * unchanged, also to a `json` or `jsonb` column. Use `sql.json` to store a
-     * JSON string, number, boolean or `null`, and to store an object or an
-     * array on SQLite.
+     * Bun sends an object or an array as JSON by itself, and PostgreSQL stores
+     * a string in a `json` or `jsonb` column as a JSON string. Use `sql.json`
+     * to store a JSON number, boolean or `null`, to store an object or an
+     * array on SQLite, and to store a JSON string where Bun sends a string as
+     * it is: MySQL, MariaDB, SQLite, and PostgreSQL with `prepare: false`.
      *
      * @example
      * ```ts
-     * await sql`INSERT INTO settings (data) VALUES (${sql.json("dark")})`; // "dark"
+     * await sql`INSERT INTO settings (data) VALUES (${sql.json(42)})`; // 42
      * await sql`INSERT INTO settings (data) VALUES (${sql.json(null)})`; // JSON null, not SQL NULL
+     * await sql`INSERT INTO settings (data) VALUES (${sql.json("dark")})`; // "dark"
      * ```
      */
-    json(value: unknown): string | undefined;
+    json(value: unknown): SQLJSONParameter | string | undefined;
 
     /**
      * Begins a new transaction.

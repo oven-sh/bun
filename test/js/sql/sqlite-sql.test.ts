@@ -140,26 +140,25 @@ describe("Connection & Initialization", () => {
     const filename = join(String(dir), "missing.db");
     const onconnect = mock();
 
+    expect(() => new SQL({ adapter: "sqlite", filename, onconnect, readOnly: true } as never)).toThrow(TypeError);
+    expect(onconnect).not.toHaveBeenCalled();
+
+    // read-only wins over `create` and `readwrite`
     for (const options of [
+      { readonly: true },
       { readonly: true, create: true },
       { readonly: true, readwrite: true },
       { readwrite: false, create: true },
     ]) {
-      expect(() => new SQL({ adapter: "sqlite", filename, onconnect, ...options })).toThrow(
-        new TypeError(
-          'A read-only database ("readonly: true" or "readwrite: false") cannot have "create: true" or "readwrite: true"',
-        ),
-      );
+      onconnect.mockClear();
+      await using sql = new SQL({ adapter: "sqlite", filename, onconnect, ...options });
+      const cannotOpen = { name: "SQLiteError", code: "SQLITE_CANTOPEN" };
+      expect(onconnect.mock.calls).toEqual([[expect.objectContaining(cannotOpen)]]);
+      const error = await sql`select 1`.catch(e => e);
+      expect(error).toBeInstanceOf(SQL.SQLiteError);
+      expect(error).toMatchObject(cannotOpen);
     }
-    expect(onconnect).not.toHaveBeenCalled();
     expect(existsSync(filename)).toBe(false);
-
-    await using sql = new SQL({ adapter: "sqlite", filename, readonly: true, onconnect });
-    const cannotOpen = { name: "SQLiteError", code: "SQLITE_CANTOPEN" };
-    expect(onconnect.mock.calls).toEqual([[expect.objectContaining(cannotOpen)]]);
-    const error = await sql`select 1`.catch(e => e);
-    expect(error).toBeInstanceOf(SQL.SQLiteError);
-    expect(error).toMatchObject(cannotOpen);
   });
 
   test("should create database file if it doesn't exist", async () => {
@@ -418,6 +417,7 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL(`sqlite://${dbPath}?mode=rw`);
       expect(sql.options.adapter).toBe("sqlite");
+      expect(sql.options.readonly).toBe(false);
       expect(sql.options.create).toBe(false);
 
       await sql`INSERT INTO test VALUES (1)`;
@@ -434,6 +434,8 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL(`sqlite://${dbPath}?mode=rwc`);
       expect(sql.options.adapter).toBe("sqlite");
+      expect(sql.options.readonly).toBe(false);
+      expect(sql.options.create).toBe(true);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       await sql`INSERT INTO test VALUES (1)`;
@@ -451,7 +453,7 @@ describe("Connection & Initialization", () => {
       // Note: Only mode is supported for SQLite, other params should be ignored
       const sql = new SQL(`sqlite://${dbPath}?mode=rwc&cache=shared&timeout=5000`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect(sql.options.filename).toBe(dbPath);
+      expect(sql.options.create).toBe(true);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       await sql.close();
@@ -6248,6 +6250,28 @@ describe("rows or changes", () => {
       expect(await sql.unsafe(text, [42]).catch(e => e.message)).toBe("SQLite query expected 0 values, received 1");
     }
     expect(await sql`select count(*) as n from t`).toEqual([{ n: 3 }]);
+  });
+
+  describe("a named value called length is not a number of values", () => {
+    test("the rows are there", async () => {
+      await using sql = await seeded();
+      expect(await sql.unsafe("select count(*) as n from t", { length: 5 })).toEqual([{ n: 3 }]);
+    });
+
+    test("a later statement with a parameter is still refused", async () => {
+      await using sql = await seeded();
+      const text = "select count(*) as n from t; delete from t where v is not ?";
+      expect(await sql.unsafe(text, { length: 5 }).catch(e => e.message)).toBe(
+        "Only the first statement of a SQLite query can have parameters",
+      );
+      expect(await sql`select count(*) as n from t`).toEqual([{ n: 3 }]);
+    });
+  });
+
+  test("execute() has run the query: values() and raw() come too late", async () => {
+    await using sql = await seeded();
+    expect(await sql`select ${7} as a`.execute().values()).toEqual([{ a: 7 }]);
+    expect(await sql`select ${7} as a`.execute().raw()).toEqual([{ a: 7 }]);
   });
 
   test("a statement that SQLite cannot compile rejects, it does not resolve empty", async () => {

@@ -387,9 +387,14 @@ declare module "bun:sqlite" {
      * transaction is rolled back (and the exception propagates as usual).
      *
      * The function must be synchronous, because the transaction is committed
-     * when it returns. An `async` function, or one that returns a promise,
-     * makes the call throw a `TypeError` and the transaction is rolled back.
-     * Do the awaited work first and pass the results in.
+     * when it returns. An `async` function returns at its first `await`:
+     * everything after that `await` runs outside the transaction, and an error
+     * thrown there does not roll anything back. Do the awaited work first and
+     * pass the results in.
+     *
+     * If the function returns a promise that is already rejected, as an `async`
+     * function does when it throws before its first `await`, the transaction is
+     * rolled back and the promise is returned.
      *
      * @param insideTransaction The synchronous callback which runs inside a transaction
      *

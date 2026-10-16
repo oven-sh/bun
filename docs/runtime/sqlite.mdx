@@ -596,7 +596,13 @@ console.log(`Inserted ${count} cats`);
 
 The driver automatically [begins](https://www.sqlite.org/lang_transaction.html) a transaction when you call `insertCats` and commits it when the wrapped function returns. If an exception is thrown, the driver rolls back the transaction. The exception propagates as usual; the driver does not catch it.
 
-The wrapped function must be synchronous. An `async` function, or one that returns a promise, makes the call throw a `TypeError` and the transaction is rolled back. Do the awaited work first and pass the results in.
+<Warning>
+  The wrapped function must be synchronous. The driver commits when the function returns, and an `async` function
+  returns at its first `await`. Everything after that `await` runs outside the transaction, and an error thrown there
+  does not roll anything back. Do the awaited work first and pass the results in.
+</Warning>
+
+If the function returns a promise that is already rejected, as an `async` function does when it throws before its first `await`, the driver rolls back the transaction and returns the promise.
 
 <Note>
 **Nested transactions** — You can call transaction functions from inside other transaction functions. When you do, the inner transaction becomes a [savepoint](https://www.sqlite.org/lang_savepoint.html).

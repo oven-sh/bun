@@ -5,12 +5,9 @@
 use crate::jsc::{JSGlobalObject, JSType, JSValue, JsResult};
 use bun_sql::postgres::types::tag::Tag;
 
-/// A buffer that stands for its bytes. Every other TypedArray is a list of numbers.
+/// A buffer stands for its bytes. An Int32Array is a list of numbers, like an Array.
 pub(crate) fn is_bytes(js_type: JSType) -> bool {
-    matches!(
-        js_type,
-        JSType::ArrayBuffer | JSType::Uint8Array | JSType::DataView
-    )
+    js_type.is_array_buffer_like() && js_type != JSType::Int32Array
 }
 
 /// The type declared in Parse for `value`.
@@ -70,11 +67,6 @@ pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Tag> 
 }
 
 fn from_double(number: f64) -> Tag {
-    // 'Infinity' is also a date, a timestamp and a numeric.
-    if number.is_infinite() {
-        return Tag::unspecified;
-    }
-
     let is_safe_integer =
         number.trunc() == number && number.abs() <= bun_jsc::MAX_SAFE_INTEGER as f64;
     // An integer type would drop the sign of -0.

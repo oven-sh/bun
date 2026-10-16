@@ -150,6 +150,20 @@ function arrayLiteral(values: ArrayLike<unknown>, kind: ArrayKind): string {
   return literal + "}";
 }
 
+/// What `sql.json(value)` returns. The JSON text of `value` would be a string, which a json parameter stores as a JSON string.
+class SQLJSONParameter {
+  value: unknown;
+  constructor(value: unknown) {
+    this.value = value;
+  }
+  /// JSON.stringify() calls one toJSON(): this one, not that of a Date or a URL in `value`.
+  toJSON(key: string) {
+    const value = this.value;
+    const toJSON = (value as { toJSON?: unknown } | null | undefined)?.toJSON;
+    return $isCallable(toJSON) ? toJSON.$call(value, key) : value;
+  }
+}
+
 function getArrayType(typeNameOrID: number | ArrayType | undefined): ArrayType | undefined {
   const typeOfType = typeof typeNameOrID;
   if (typeOfType === "number") {
@@ -230,6 +244,7 @@ class PostgresAdapter extends BaseSQLAdapter<
   readonly codePrefix = "ERR_POSTGRES_";
   protected readonly commitPrepared = "COMMIT PREPARED";
   protected readonly rollbackPrepared = "ROLLBACK PREPARED";
+  readonly rawChangesFormat = true;
 
   array(values: any[], typeNameOrID?: number | ArrayType): SQLArrayParameter {
     const arrayType = getArrayType(typeNameOrID);
@@ -237,6 +252,10 @@ class PostgresAdapter extends BaseSQLAdapter<
       $isArray(values) || $isTypedArrayView(values) ? arrayLiteral(values, arrayKind(arrayType)) : values,
       arrayType,
     );
+  }
+
+  json(value: unknown) {
+    return new SQLJSONParameter(value);
   }
 
   getDistributedTransactionCommands(name: string): TransactionCommands | null {

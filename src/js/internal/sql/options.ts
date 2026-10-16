@@ -15,6 +15,12 @@ const ObjectDefineProperty = Object.defineProperty;
 const kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
 const env = Bun.env;
 
+// Four decisions that wait for the maintainer. `false` is what main does, and each is read in one place.
+const NAMED_HOST_IGNORES_ENVIRONMENT_URL = false;
+const TLS_VARIABLE_IS_A_FLOOR = false;
+const VERIFY_MODES_IGNORE_NODE_TLS_REJECT_UNAUTHORIZED = false;
+const URL_DATABASE_IS_ABOVE_ITS_VARIABLE = false;
+
 const SQLITE_MEMORY = ":memory:";
 const SUPPORTED_ADAPTERS = `"postgres", "sqlite", "mysql", "mariadb"`;
 
@@ -114,32 +120,40 @@ const ENVIRONMENT_URLS: [Adapter | null, ...string[]][] = [
   ["sqlite", "SQLITE_URL", "SQLITEURL"],
 ];
 
+/**
+ * `server`: the arguments name a server themselves, and the URL only fills in what they leave out. An SQLite URL
+ * cannot. Otherwise the URL names the target, and with `adapter` the URL of another adapter counts as not set.
+ */
 function urlFromEnvironment(
   adapter: Adapter | null,
+  server: boolean,
 ): [url: string | null, adapter: Adapter | null, requireTLS: boolean] {
+  // also from the name of a URL that is passed over
+  let requireTLS = false;
   for (const row of ENVIRONMENT_URLS) {
     const implied = row[0];
-    if (adapter && implied && implied !== adapter) continue;
+    if (implied && (adapter ? implied !== adapter : server && implied === "sqlite")) continue;
 
     for (let i = 1; i < row.length; i++) {
       const name = row[i] as string;
       const url = env[name];
       if (!url) continue;
 
-      if (adapter && !implied) {
-        const named = adapterFromScheme(schemeOf(url));
-        if (named && named !== adapter && !(isMySQL(named) && isMySQL(adapter))) continue;
+      requireTLS ||= name.startsWith("TLS_");
+      const named = adapterFromScheme(schemeOf(url));
+      if (server) {
+        if (named === "sqlite") continue;
+      } else if (!implied && adapter && named && named !== adapter && !(isMySQL(named) && isMySQL(adapter))) {
+        continue;
       }
-      return [url, implied, name.startsWith("TLS_")];
+      // An SQLite URL is one under any name.
+      return [url, named === "sqlite" ? named : implied, requireTLS];
     }
   }
-  return [null, null, false];
+  return [null, null, requireTLS];
 }
 
-/** Without `adapter`, the URL of a server in `filename`, and a `filename` next to what only a server has, is a connection string. */
-function namesServer(filename: string | URL, options: AnyOptions): boolean {
-  const named = adapterFromScheme(schemeOf(filename));
-  if (named) return named !== "sqlite";
+function hasServerOption(options: AnyOptions): boolean {
   return !!(
     options.hostname ||
     options.host ||
@@ -166,26 +180,33 @@ function resolveTarget(
     target = first;
     first = undefined;
   }
+  const readsEnvironment = target === null;
   const options: AnyOptions = { ...first, ...second };
 
-  let adapter: Adapter | null = options.adapter || null;
-  if (adapter && adapter !== "postgres" && adapter !== "sqlite" && !isMySQL(adapter)) {
-    throw new Error(`Unsupported adapter: ${adapter}. Supported adapters: ${SUPPORTED_ADAPTERS}`);
+  const adapterOption: Adapter | null = options.adapter || null;
+  if (adapterOption && adapterOption !== "postgres" && adapterOption !== "sqlite" && !isMySQL(adapterOption)) {
+    throw new Error(`Unsupported adapter: ${adapterOption}. Supported adapters: ${SUPPORTED_ADAPTERS}`);
   }
 
-  const filename = !adapter || adapter === "sqlite" ? options.filename : undefined;
-  if (filename && (adapter || !namesServer(filename, options))) adapter = "sqlite";
+  const filename = !adapterOption || adapterOption === "sqlite" ? options.filename : undefined;
   target = filename || options.url || target || null;
 
-  // A URL is a unit: the credentials of one from the environment belong to its host.
+  // What the arguments say themselves: `adapter`, then the scheme. A `filename` without one is a file,
+  // unless it stands next to what only a server has.
+  let adapter = adapterOption || (target && adapterFromScheme(schemeOf(target)));
+  if (!adapter && filename && !hasServerOption(options)) adapter = "sqlite";
+
+  // The URL from the environment fills in what the options leave out. Next to a URL in the options
+  // the name of its variable still counts: for the adapter, and TLS_ for the SSL mode.
   let requireTLS = false;
-  if (
-    target === null &&
-    (adapter === "sqlite" || !(options.hostname || options.host || options.path || options.socket))
-  ) {
-    let implied: Adapter | null;
-    [target, implied, requireTLS] = urlFromEnvironment(adapter);
-    adapter ||= implied;
+  const namesServer =
+    adapter !== "sqlite" && !!(target || options.hostname || options.host || options.path || options.socket);
+  if (readsEnvironment && !(NAMED_HOST_IGNORES_ENVIRONMENT_URL && namesServer)) {
+    const [url, implied, tls] = urlFromEnvironment(adapterOption, namesServer);
+    target ||= url;
+    // mysql and mariadb are one driver, so between them the name decides, as for a URL without a scheme.
+    if (!adapter || (!adapterOption && implied && isMySQL(adapter) && isMySQL(implied))) adapter = implied;
+    requireTLS = tls;
   }
 
   if (!adapter) {
@@ -219,11 +240,9 @@ function parseSQLiteOptions(target: string | URL | null, options: AnyOptions): B
   const prefix = sqlitePrefix(filename);
   // 0: the URL does not say. Then from the most restrictive to the least.
   let access = 0;
-  let memory = filename.toLowerCase() === "sqlite:memory";
   let channelBinding: string | null | undefined = options.channelBinding;
 
-  // Only a URL has a query: "what?.db" is a file name.
-  const queryIndex = prefix || target instanceof URL ? filename.indexOf("?") : -1;
+  const queryIndex = filename.indexOf("?");
   if (queryIndex !== -1) {
     let query = filename.slice(queryIndex + 1);
     filename = filename.slice(0, queryIndex);
@@ -233,10 +252,8 @@ function parseSQLiteOptions(target: string | URL | null, options: AnyOptions): B
     const parameters = new URLSearchParams(query);
     channelBinding ||= parameters.get("channel_binding");
     for (const mode of parameters.getAll("mode")) {
-      if (mode === "memory") {
-        memory = true;
-        continue;
-      }
+      // not about access: the name says where the database is
+      if (mode === "memory") continue;
       const rank = mode === "ro" ? 1 : mode === "rw" ? 2 : mode === "rwc" ? 3 : 0;
       if (rank === 0) throw $ERR_INVALID_ARG_VALUE("mode", mode, "must be one of: ro, rw, rwc, memory");
       if (access === 0 || rank < access) access = rank;
@@ -244,7 +261,7 @@ function parseSQLiteOptions(target: string | URL | null, options: AnyOptions): B
   }
   refuseRequiredChannelBinding("sqlite", channelBinding);
 
-  if (memory) {
+  if (filename.toLowerCase() === "sqlite:memory") {
     filename = SQLITE_MEMORY;
   } else if (prefix === "file://") {
     try {
@@ -262,11 +279,10 @@ function parseSQLiteOptions(target: string | URL | null, options: AnyOptions): B
     filename: filename || SQLITE_MEMORY,
   };
 
-  // An option that is given replaces what `mode` says. `rwc` is the default.
-  if (access === 1) {
-    if (options.readonly === undefined) sqliteOptions.readonly = true;
-  } else if (access === 2) {
-    if (options.create === undefined) sqliteOptions.create = false;
+  // An option that is given replaces what `mode` says.
+  if (access !== 0) {
+    if (options.readonly === undefined) sqliteOptions.readonly = access === 1;
+    if (access !== 1 && options.create === undefined) sqliteOptions.create = access === 3;
   }
 
   const safeIntegers = options.safeIntegers ?? options.bigint;
@@ -574,6 +590,7 @@ function parseOptions(
   const database =
     options.database ||
     options.db ||
+    (!URL_DATABASE_IS_ABOVE_ITS_VARIABLE && envOf(prefix, "DATABASE")) ||
     query.database ||
     (!isUnixUrl && decodeIfValid(urlPathname.slice(1))) ||
     envOf(prefix, "DATABASE") ||
@@ -619,8 +636,8 @@ function parseOptions(
     throw $ERR_INVALID_ARG_VALUE("options.max", max, "must be a non-negative integer between 1 and 2^31");
   }
 
-  const prepare = (options.prepare ?? queryFlag(query.prepare)) !== false;
-  if (!prepare && !isPostgres) {
+  const prepare = (options.prepare ?? (isPostgres ? queryFlag(query.prepare) : undefined)) !== false;
+  if (!prepare && adapter === "mysql") {
     throw $ERR_INVALID_ARG_VALUE("options.prepare", false, "prepared: false is not supported in MySQL");
   }
 
@@ -642,7 +659,12 @@ function parseOptions(
   }
   const transform = transformOption != null ? parseTransform(transformOption) : undefined;
 
-  let sslMode: SSLMode = isPostgres ? normalizeSSLMode(envOf(prefix, "SSLMODE")) : SSLMode.disable;
+  // The name of a TLS_* URL variable asks for at least `require`.
+  let sslMode: SSLMode = requireTLS ? SSLMode.require : SSLMode.disable;
+  if (isPostgres) {
+    const envSslMode = normalizeSSLMode(envOf(prefix, "SSLMODE"));
+    if (envSslMode > sslMode) sslMode = envSslMode;
+  }
   sslMode = query.sslMode ?? sslMode;
 
   let tls: TLSOptions | (Bun.BunFile & TLSOptions) | boolean | undefined;
@@ -663,8 +685,7 @@ function parseOptions(
   // declines TLS, the connection is aborted instead of continuing in plaintext.
   // Certificate verification is only enabled when explicitly requested
   // (ca, caFile, checkServerIdentity, rejectUnauthorized, or a verify-* sslmode).
-  // The name of a TLS_* URL variable is a floor: no mode that the URL or an option names goes below it.
-  if ((tls || requireTLS) && sslMode <= SSLMode.prefer) {
+  if ((tls || (TLS_VARIABLE_IS_A_FLOOR && requireTLS)) && sslMode <= SSLMode.prefer) {
     sslMode = SSLMode.require;
   }
 
@@ -699,8 +720,13 @@ function parseOptions(
   } else if (sslMode !== SSLMode.disable && (tls === undefined || tls === true || $isObject(tls))) {
     // The native constructor rejects any other `tls`.
     tlsObject.serverName ||= tlsObject.servername || hostname;
-    // As explicit as `rejectUnauthorized: true`, so NODE_TLS_REJECT_UNAUTHORIZED is not asked.
-    if (sslMode >= SSLMode.verify_ca && rejectUnauthorized !== false) tlsObject.rejectUnauthorized = true;
+    if (
+      VERIFY_MODES_IGNORE_NODE_TLS_REJECT_UNAUTHORIZED &&
+      sslMode >= SSLMode.verify_ca &&
+      rejectUnauthorized !== false
+    ) {
+      tlsObject.rejectUnauthorized = true;
+    }
     tls = tlsObject;
   }
 
@@ -714,7 +740,7 @@ function parseOptions(
     tls,
     prepare,
     allowPublicKeyRetrieval: options.allowPublicKeyRetrieval === true,
-    foundRows: !!(options.foundRows ?? queryFlag(query.foundRows) ?? true),
+    foundRows: !!(options.foundRows ?? queryFlag(query.foundRows)),
     channelBinding,
     bigint: options.bigint,
     sslMode,

@@ -1,7 +1,7 @@
 import { SQL } from "bun";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
-import { existsSync, readdirSync } from "node:fs";
+import { tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const URL_VARIABLES = ["DATABASE_URL", "DATABASEURL", "TLS_DATABASE_URL", "SQLITE_URL", "SQLITEURL", "POSTGRES_URL"];
@@ -107,8 +107,8 @@ describe("SQLite URL Parsing Matrix", () => {
     const queryParams = [
       { query: "", readonly: undefined, create: undefined, name: "no params" },
       { query: "?mode=ro", readonly: true, create: undefined, name: "readonly" },
-      { query: "?mode=rw", readonly: undefined, create: false, name: "read-write" },
-      { query: "?mode=rwc", readonly: undefined, create: undefined, name: "read-write-create" },
+      { query: "?mode=rw", readonly: false, create: false, name: "read-write" },
+      { query: "?mode=rwc", readonly: false, create: true, name: "read-write-create" },
       { query: "?other=param", readonly: undefined, create: undefined, name: "other param" },
       { query: "?mode=ro&cache=shared", readonly: true, create: undefined, name: "multiple params" },
     ];
@@ -374,7 +374,7 @@ describe("which string names the database", () => {
     [{ SQLITE_URL: "env.db", DATABASE_URL: server }, [{ adapter: "sqlite" }], "env.db"],
     [{ SQLITE_URL: "env.db", DATABASE_URL: "sqlite://generic.db" }, [{ adapter: "sqlite" }], "generic.db"],
     [{ SQLITE_URL: "env.db" }, [{ adapter: "sqlite", hostname: "h" } as never], "env.db"],
-    [{ SQLITE_URL: "env.db" }, ["", { adapter: "sqlite" }], "env.db"],
+    [{ SQLITE_URL: "env.db" }, ["", { adapter: "sqlite" }], ":memory:"],
 
     [{ DATABASE_URL: server }, [{ adapter: "sqlite" }], ":memory:"],
     [{ DATABASEURL: server }, [{ adapter: "sqlite" }], ":memory:"],
@@ -448,19 +448,27 @@ describe("which string names the database", () => {
     expect(file.options).toMatchObject({ adapter: "sqlite", filename: path });
   });
 
-  test.each(["what?.db", "data.db?mode=ro", "data.db?mode=bogus", "a?b#c.db"])(
-    "%s has no scheme, so it has no query",
-    async name => {
-      for (const sql of [
-        new SQL(name, { adapter: "sqlite", create: false }),
-        new SQL({ filename: name, create: false }),
-      ]) {
-        expect(sql.options.filename).toBe(name);
-        expect(sql.options.readonly).toBeUndefined();
-        await sql.close();
-      }
-    },
-  );
+  // [the string, the file name, readonly]
+  test.each<[string, string, true | undefined]>([
+    ["data.db?mode=ro", "data.db", true],
+    ["data.db?cache=shared", "data.db", undefined],
+    ["what?.db", "what", undefined],
+    ["a?b#c.db", "a", undefined],
+  ])("%s has a query without a scheme too", async (name, filename, readonly) => {
+    for (const sql of [
+      new SQL(name, { adapter: "sqlite", create: false }),
+      new SQL({ adapter: "sqlite", filename: name, create: false }),
+    ]) {
+      expect(sql.options.filename).toBe(filename);
+      expect(sql.options.readonly).toBe(readonly as boolean);
+      await sql.close();
+    }
+  });
+
+  test("so has a `filename` without `adapter`", async () => {
+    await using sql = new SQL({ filename: "data.db?mode=ro" });
+    expect(sql.options).toMatchObject({ adapter: "sqlite", filename: "data.db", readonly: true });
+  });
 
   test("whitespace around the string is not a part of the name", async () => {
     await using sql = parse("  sqlite://dev.db?mode=ro \n");
@@ -469,10 +477,11 @@ describe("which string names the database", () => {
 });
 
 describe("?mode=", () => {
-  // [query, readonly, create, in memory]
-  test.each<[string, true | undefined, false | undefined, boolean?]>([
-    ["?mode=memory", undefined, undefined, true],
-    ["?mode=memory&cache=shared", undefined, undefined, true],
+  // [query, readonly, create]
+  test.each<[string, boolean | undefined, boolean | undefined]>([
+    // not about access, and the name says where the database is
+    ["?mode=memory", undefined, undefined],
+    ["?mode=memory&cache=shared", undefined, undefined],
     ["?cache=shared&mode=ro", true, undefined],
     ["?mode=ro#fragment", true, undefined],
     ["?cache=shared#&mode=ro", undefined, undefined],
@@ -480,13 +489,13 @@ describe("?mode=", () => {
     // Repeated: the most restrictive.
     ["?mode=rw&mode=ro", true, undefined],
     ["?mode=ro&mode=rw", true, undefined],
-    ["?mode=rwc&mode=rw", undefined, false],
-    ["?mode=rw&mode=rwc", undefined, false],
-  ])("%s", async (query, readonly, create, memory = false) => {
+    ["?mode=rwc&mode=rw", false, false],
+    ["?mode=rw&mode=rwc", false, false],
+  ])("%s", async (query, readonly, create) => {
     using dir = tempDir("sqlite-url-mode", {});
     const db = join(String(dir), "mode.db");
     await using sql = new SQL(`sqlite://${db}${query}`);
-    expect(sql.options.filename).toBe(memory ? ":memory:" : db);
+    expect(sql.options.filename).toBe(db);
     expect(sql.options.readonly).toBe(readonly as boolean);
     expect(sql.options.create).toBe(create as boolean);
   });
@@ -508,7 +517,7 @@ describe("?mode=", () => {
     ["?mode=rw", { create: undefined }, { create: false }],
     ["?mode=rw", { create: true }, { create: true }],
     ["?mode=rw", { readonly: true }, { readonly: true, create: false }],
-    ["?mode=rwc", { readonly: true }, { readonly: true, create: undefined }],
+    ["?mode=rwc", { readonly: true }, { readonly: true, create: true }],
     ["?mode=rwc", { create: false }, { create: false }],
     ["", { readwrite: false }, { readwrite: false, readonly: undefined, create: undefined }],
     ["", { readwrite: true }, { readwrite: true, readonly: undefined, create: undefined }],
@@ -559,20 +568,34 @@ describe("?mode=", () => {
     ["?mode=rw", { create: true }, readWrite, readWrite],
     ["", { create: false }, readWrite, cannotOpen],
     ["", { readwrite: false }, readOnly, cannotOpen],
-    ["?mode=memory", {}, { ...readWrite, files: ["open.db"] }, { ...readWrite, files: [] }],
-  ])("sqlite://open.db%s %p opens the file in that mode", async (query, options, existing, missing) => {
+    ["", { readwrite: false, create: true }, readOnly, cannotOpen],
+    ["", { readwrite: true }, readWrite, readWrite],
+    ["?mode=memory", {}, readWrite, readWrite],
+    // read-only wins over `create` and `readwrite`
+    ["", { readonly: true, create: true }, readOnly, cannotOpen],
+    ["", { readonly: true, readwrite: true }, readOnly, cannotOpen],
+    ["", { readonly: true, create: true, readwrite: true }, readOnly, cannotOpen],
+    ["", { readonly: false, create: true, readwrite: true }, readWrite, readWrite],
+    ["?mode=ro", { create: true }, readOnly, cannotOpen],
+    ["?mode=rwc", { readonly: true }, readOnly, cannotOpen],
+  ])("sqlite://open.db%s %j opens the file in that mode", async (query, options, existing, missing) => {
     expect({
       existing: await observe(true, query, options),
       missing: await observe(false, query, options),
     }).toEqual({ existing, missing });
   });
 
-  test.skipIf(isWindows)("a name with a question mark opens that file", async () => {
-    using dir = tempDir("sqlite-url-question-mark", {});
-    const db = join(String(dir), "what?.db");
-    await using sql = new SQL({ filename: db });
-    await sql`CREATE TABLE t (a)`;
-    expect(existsSync(db)).toBe(true);
+  test("a name without a scheme: data.db?mode=ro opens data.db read-only", async () => {
+    using dir = tempDir("sqlite-url-plain-name", {});
+    const db = join(String(dir), "data.db");
+    {
+      await using seed = new SQL({ adapter: "sqlite", filename: db });
+      await seed`CREATE TABLE t (a)`;
+    }
+    await using sql = new SQL(`${db}?mode=ro`, { adapter: "sqlite" });
+    expect(await sql`SELECT * FROM t`).toEqual([]);
+    expect(await sql`CREATE TABLE u (a)`.catch(e => e.code)).toBe("SQLITE_READONLY");
+    expect(readdirSync(String(dir))).toEqual(["data.db"]);
   });
 });
 

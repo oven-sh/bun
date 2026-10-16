@@ -158,7 +158,7 @@ expectType(sql1`COPY users TO STDOUT`.readable()).is<ReadableStream<Uint8Array<A
 expectType(sql1`COPY users TO STDOUT`.readable().pipeTo(sql2`COPY users FROM STDIN`.writable())).is<Promise<void>>();
 sql1`COPY users FROM STDIN`.writable().getWriter().write("1\tAlice\n");
 
-expectType(sql1.json({ a: 1 })).is<string | undefined>();
+expectType(sql1.json({ a: 1 })).is<Bun.SQLJSONParameter | string | undefined>();
 expectType(sql1.array([1, 2, 3])).is<Bun.SQLArrayParameter>();
 expectType(sql1.array(["a"], "TEXT").arrayType).is<Bun.ArrayType | undefined>();
 expectType(sql1.array(new Int32Array(2), "UUID")).is<Bun.SQLArrayParameter>();

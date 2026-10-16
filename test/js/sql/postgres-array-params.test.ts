@@ -75,6 +75,10 @@ const cases: [string, string, any, string][] = [
   ["varchar(3)", "varchar(3)[]", ["abc"], "{abc}"],
 ];
 const expected = Object.fromEntries(cases.map(([label, , , stored]) => [label, stored]));
+// Every typed array but Int32Array is its bytes: sql.array() makes an array of it.
+const bytes = ["Float32Array", "Float64Array", "BigInt64Array"];
+const bare = cases.filter(([label]) => !bytes.includes(label));
+const expectedBare = Object.fromEntries(bare.map(([label, , , stored]) => [label, stored]));
 const elementType = (type: string) => type.slice(0, -2);
 
 describeWithContainer("postgres", { image: "postgres_plain", concurrent: true }, container => {
@@ -135,31 +139,44 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     ])("a plain array, %s", async (_, options) => {
       await using db = await connect(options);
       const { sql } = db;
-      expect(byLabel(await selectEach(sql, (type, value) => sql`${value}::${sql.unsafe(type)}`))).toEqual(expected);
+      expect(byLabel(await selectEach(sql, (type, value) => sql`${value}::${sql.unsafe(type)}`, bare), bare)).toEqual(
+        expectedBare,
+      );
+    });
+
+    test.each(cases.filter(([label]) => bytes.includes(label)))("a %s is bytea", async (_, type, value) => {
+      await using db = await connect();
+      const { sql } = db;
+      expect(await sql`select ${value} as x`).toEqual([{ x: Buffer.from(value.buffer) }]);
+      expect(await sql`select ${value}::${sql.unsafe(type)} as x`.catch(error => error.errno)).toBe("42846");
     });
 
     test("a plain array in sql.unsafe()", async () => {
       await using db = await connect();
       const { sql } = db;
-      const text = "select " + cases.map(([, type], i) => `($${i + 1}::${type})::text as c${i}`).join(", ");
+      const text = "select " + bare.map(([, type], i) => `($${i + 1}::${type})::text as c${i}`).join(", ");
       expect(
         byLabel(
           await sql.unsafe(
             text,
-            cases.map(([, , value]) => value),
+            bare.map(([, , value]) => value),
           ),
+          bare,
         ),
-      ).toEqual(expected);
+      ).toEqual(expectedBare);
     });
 
     test("sql({ column: values })", async () => {
       await using db = await connect();
       const { sql } = db;
       const table = sql(await tableWithOneColumnPerCase(sql));
-      const row = Object.fromEntries(cases.map(([, , value], i) => ["c" + i, value]));
-      expect(byLabel(await sql`insert into ${table} ${sql(row)} returning ${sql.unsafe(everyColumnAsText)}`)).toEqual(
-        expected,
+      const row = Object.fromEntries(
+        cases.map(([label, , value], i) => ["c" + i, bytes.includes(label) ? null : value]),
       );
+      expect(byLabel(await sql`insert into ${table} ${sql(row)} returning ${sql.unsafe(everyColumnAsText)}`)).toEqual({
+        ...expected,
+        ...Object.fromEntries(bytes.map(label => [label, null])),
+      });
     });
 
     test("sql({ column: sql.array(values, type) })", async () => {
@@ -219,11 +236,13 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
         { items: "{red,blue,green}", ints: "{1,2}", ids: `{${uuid}}`, days: "{2024-01-02}", moods: "{ok,happy}" },
       ]);
 
-      // a plain array goes by the server's type too, also when the type is not a built-in one
-      await sql`update tags set ${sql({ moods: ["sad"], items: ["x"] })}`;
+      // a plain array goes by the server's type too, when that is a built-in array type
+      await sql`update tags set ${sql({ moods: sql.array(["sad"]), items: ["x"] })}`;
       expect(await sql`select moods::text, items::text from tags where id = any(${[2, 3]})`).toEqual([
         { moods: "{sad}", items: "{x}" },
       ]);
+      // the OID of any other type does not say whether it is one: String(value)
+      expect(await sql`update tags set ${sql({ moods: ["sad"] })}`.catch(error => error.errno)).toBe("22P02");
     } finally {
       await sql.unsafe(`drop table if exists tags; drop type ${mood}`);
     }

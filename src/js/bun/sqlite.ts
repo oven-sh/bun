@@ -436,8 +436,6 @@ class Database implements SqliteTypes.Database {
       }
     } else if (typeof options === "number") {
       flags = options;
-    } else if (options != null) {
-      throw new TypeError(`Expected 'options' to be an object or a number, got '${typeof options}'`);
     }
 
     const anonymous = filename === "" || filename === ":memory:";
@@ -658,18 +656,16 @@ class Database implements SqliteTypes.Database {
 
     const db = this;
     const controller = getController(db, self);
-    // Not in better-sqlite3: the body of an async function never starts.
-    const wrap = require("node:util/types").isAsyncFunction(fn) ? refuseTransaction : wrapTransaction;
 
     // Each version of the transaction function has these same properties
     const properties = {
-      default: { value: wrap(fn, db, controller.default) },
-      deferred: { value: wrap(fn, db, controller.deferred) },
+      default: { value: wrapTransaction(fn, db, controller.default) },
+      deferred: { value: wrapTransaction(fn, db, controller.deferred) },
       immediate: {
-        value: wrap(fn, db, controller.immediate),
+        value: wrapTransaction(fn, db, controller.immediate),
       },
       exclusive: {
-        value: wrap(fn, db, controller.exclusive),
+        value: wrapTransaction(fn, db, controller.exclusive),
       },
       database: { value: this, enumerable: true },
     };
@@ -713,13 +709,12 @@ const getController = (db, _self) => {
   return controller;
 };
 
-const asyncTransactionMessage =
-  "Transaction function cannot return a promise. It must be synchronous: do the awaited work first and pass the results in.";
-
-const refuseTransaction: typeof wrapTransaction = () =>
-  function transaction() {
-    throw new TypeError(asyncTransactionMessage);
-  };
+function undoTransaction(db, undo, after, rollback) {
+  if (db.inTransaction) {
+    undo.run();
+    if (undo !== rollback) after.run();
+  }
+}
 
 // Return a new transaction function by wrapping the given function
 const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, rollbackTo }) =>
@@ -737,16 +732,15 @@ const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, 
     try {
       before.run();
       const result = fn.$apply(this, args);
-      if ($isObject(result) && ($isPromise(result) || typeof result.then === "function")) {
-        throw new TypeError(asyncTransactionMessage);
+      // 2 is rejected: an async function that threw before its first `await` returns this instead of throwing.
+      if ($isPromise(result) && $peekPromiseStatus(result) === 2) {
+        undoTransaction(db, undo, after, rollback);
+      } else {
+        after.run();
       }
-      after.run();
       return result;
     } catch (ex) {
-      if (db.inTransaction) {
-        undo.run();
-        if (undo !== rollback) after.run();
-      }
+      undoTransaction(db, undo, after, rollback);
       throw ex;
     }
   };

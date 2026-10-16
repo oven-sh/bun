@@ -236,6 +236,155 @@ describe("channelBinding", () => {
   });
 });
 
+describe("what the options object inherits", () => {
+  const inheriting = (inherited: object, own: object = {}) => Object.assign(Object.create(inherited), own);
+  const servers = ["postgres", "mysql", "mariadb"] as const;
+  const fields = { hostname: "ih", port: 7, username: "iu", password: "ip", database: "id", max: 3 };
+
+  describe.each(servers)("%s", adapter => {
+    const url = `${adapter}://uu@uh/ud`;
+
+    // An options object that stands alone behind a URL, or behind nothing, and `adapter` in it.
+    test.each<[string, object, number]>([
+      ["tls: true", { tls: true }, 2],
+      ['ssl: "verify-full"', { ssl: "verify-full" }, 4],
+      ["tls: { ca }", { tls: { ca: "x" } }, 4],
+      ["tls: false", { tls: false }, 0],
+    ])("%s counts behind a URL and behind nothing", (_, inherited, sslMode) => {
+      const query = sslMode === 0 ? "?sslmode=require" : "";
+      expect(optionsOf(url + query, inheriting(inherited, { adapter })).sslMode).toBe(sslMode);
+      expect(optionsOf(new URL(url + query), inheriting(inherited, { adapter })).sslMode).toBe(sslMode);
+      expect(optionsOf(undefined, inheriting(inherited, { adapter, url: url + query })).sslMode).toBe(sslMode);
+      expect(optionsOf(url + query, inheriting({ ...inherited, adapter })).sslMode).toBe(sslMode);
+    });
+
+    test("a getter on the class counts", () => {
+      class Config {
+        adapter = adapter;
+        get tls() {
+          return true;
+        }
+        get password() {
+          return "secret";
+        }
+      }
+      expect(optionsOf(url, new Config())).toMatchObject({ sslMode: 2, password: "secret" });
+    });
+
+    test("hostname, port, username, password, database and max count", () => {
+      expect(optionsOf(url, inheriting(fields, { adapter }))).toMatchObject(fields);
+      expect(optionsOf(undefined, inheriting(fields, { adapter }))).toMatchObject(fields);
+    });
+
+    test("an own key hides the inherited one, undefined too", () => {
+      expect(
+        optionsOf(url, inheriting({ tls: true, password: "ip" }, { adapter, tls: undefined, password: "op" })),
+      ).toMatchObject({ sslMode: 0, password: "op" });
+    });
+
+    test("nothing but adapter, filename and url counts where only the scheme gives the adapter", () => {
+      const fromUrl = { hostname: "uh", username: "uu", password: "", database: "ud", max: 10 };
+      expect(optionsOf(url, inheriting({ ...fields, tls: true }))).toMatchObject({ ...fromUrl, sslMode: 0 });
+      expect(optionsOf(new URL(url), inheriting({ ...fields, tls: true }))).toMatchObject({ ...fromUrl, sslMode: 0 });
+      expect(optionsOf(`${url}?sslmode=require`, inheriting({ tls: false })).sslMode).toBe(2);
+      expect(optionsOf(undefined, inheriting({ ...fields, tls: true, url }))).toMatchObject({ ...fromUrl, sslMode: 0 });
+    });
+
+    test("nothing counts in the first argument", () => {
+      expect(optionsOf(inheriting({ ...fields, tls: true }, { adapter, url }))).toMatchObject({
+        hostname: "uh",
+        username: "uu",
+        password: "",
+        database: "ud",
+        max: 10,
+        sslMode: 0,
+      });
+      expect(optionsOf(inheriting({ adapter: "sqlite" }, { url })).adapter).toBe(adapter);
+      expect(optionsOf({ adapter, url }, inheriting({ tls: true })).sslMode).toBe(0);
+    });
+  });
+
+  test("the name of a variable gives the adapter as `adapter` does, the scheme of its URL does not", () => {
+    process.env.POSTGRES_URL = "postgres://eu@eh/ed";
+    expect(optionsOf(undefined, inheriting({ tls: true, password: "ip" }))).toMatchObject({
+      hostname: "eh",
+      password: "ip",
+      sslMode: 2,
+    });
+    delete process.env.POSTGRES_URL;
+    process.env.DATABASE_URL = "postgres://eu@eh/ed";
+    expect(optionsOf(undefined, inheriting({ tls: true, password: "ip" }))).toMatchObject({
+      hostname: "eh",
+      password: "",
+      sslMode: 0,
+    });
+  });
+
+  test("adapter, filename and url", () => {
+    expect(optionsOf("uh/ud", inheriting({ adapter: "mysql" }))).toMatchObject({ adapter: "mysql", hostname: "uh" });
+    expect(optionsOf(undefined, inheriting({ adapter: "mysql" })).adapter).toBe("mysql");
+    expect(optionsOf(undefined, inheriting({ url: "mysql://uh/ud" }))).toMatchObject({
+      adapter: "mysql",
+      hostname: "uh",
+    });
+    expect(optionsOf(undefined, inheriting({ adapter: "sqlite", filename: ":memory:" }))).toMatchObject({
+      adapter: "sqlite",
+      filename: ":memory:",
+    });
+  });
+
+  // [environment, the inherited key, the own keys, what both spellings give]
+  test.each<[Record<string, string>, object, object, object]>([
+    [{ DATABASE_URL: "x" }, { hostname: "h" }, { adapter: "mysql" }, { hostname: "h", port: 3306 }],
+    [{ DATABASE_URL: "x" }, { host: "h" }, { adapter: "mysql" }, { hostname: "h", port: 3306 }],
+    [{ DATABASE_URL: "x" }, { path: "/run/x.sock" }, { adapter: "mysql" }, { path: "/run/x.sock" }],
+    [{ DATABASE_URL: "x" }, { socket: "/run/x.sock" }, { adapter: "mysql" }, { path: "/run/x.sock" }],
+    [{ POSTGRES_URL: "x" }, { hostname: "h" }, {}, { hostname: "h", port: 5432 }],
+  ])("%j: an inherited %j names the server as an own one does", (env, key, own, expected) => {
+    for (const name in env) process.env[name] = "postgres://eu:ep@eh:7/ed?sslmode=require";
+    for (const options of [optionsOf(undefined, { ...key, ...own }), optionsOf(undefined, inheriting(key, own))]) {
+      expect(options).toMatchObject({ ...expected, password: "", sslMode: 2 });
+      expect(options.username).not.toBe("eu");
+      expect(options.database).not.toBe("ed");
+    }
+  });
+
+  test.each([
+    ["postgres://uu@uh/ud", { adapter: "postgres" }],
+    ["mysql://uu@uh/ud", { adapter: "mysql" }],
+    [":memory:", { adapter: "sqlite" }],
+    ["postgres://uu@uh/ud", {}],
+    ["sqlite://:memory:", {}],
+    [undefined, { adapter: "postgres" }],
+  ])("new SQL(%j, %j) reads every key once and writes none", async (first, own) => {
+    const reads: string[] = [];
+    const writes: PropertyKey[] = [];
+    const logged = new Proxy(own, {
+      get(target, key, receiver) {
+        if (typeof key === "string") reads.push(key);
+        return Reflect.get(target, key, receiver);
+      },
+      has(target, key) {
+        if (typeof key === "string") reads.push(key);
+        return Reflect.has(target, key);
+      },
+      set(_, key) {
+        writes.push(key);
+        return false;
+      },
+      defineProperty(_, key) {
+        writes.push(key);
+        return false;
+      },
+    });
+    await using sql = new SQL(first as string, logged);
+    expect(sql.options.adapter).toBeString();
+    expect(reads).toEqual([...new Set(reads)]);
+    expect(reads.slice(0, 3).toSorted()).toEqual(["adapter", "filename", "url"]);
+    expect(writes).toEqual([]);
+  });
+});
+
 describe("inspecting sql.options", () => {
   const secret = "sekret-password";
 

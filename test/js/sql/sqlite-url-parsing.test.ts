@@ -484,7 +484,21 @@ describe("?mode=", () => {
     ["?mode=memory&cache=shared", undefined, undefined],
     ["?cache=shared&mode=ro", true, undefined],
     ["?mode=ro#fragment", true, undefined],
-    ["?cache=shared#&mode=ro", undefined, undefined],
+    // Behind a `#`, `ro` counts and nothing else does.
+    ["?cache=shared#&mode=ro", true, undefined],
+    ["?cache=shared#fragment&mode=ro", true, undefined],
+    ["?cache=shared#a#b&mode=ro", true, undefined],
+    ["?cache=shared#mode=ro", true, undefined],
+    ["?mode=rw#fragment&mode=ro", true, undefined],
+    ["?mode=rwc#fragment&mode=ro", true, undefined],
+    ["?mode=ro#fragment&mode=rw", true, undefined],
+    ["?cache=shared#fragment&mode=rw&mode=ro", true, undefined],
+    ["?cache=shared#fragment&mode=rw", undefined, undefined],
+    ["?cache=shared#fragment&mode=rwc", undefined, undefined],
+    ["?cache=shared#fragment&mode=memory", undefined, undefined],
+    ["?cache=shared#fragment&mode=bogus", undefined, undefined],
+    ["?cache=shared#fragment&mode=RO", undefined, undefined],
+    ["?cache=shared#fragment&mode=", undefined, undefined],
     ["?MODE=ro", undefined, undefined],
     // Repeated: the most restrictive.
     ["?mode=rw&mode=ro", true, undefined],
@@ -519,7 +533,12 @@ describe("?mode=", () => {
     ["?mode=rw", { readonly: true }, { readonly: true, create: false }],
     ["?mode=rwc", { readonly: true }, { readonly: true, create: true }],
     ["?mode=rwc", { create: false }, { create: false }],
-    ["", { readwrite: false }, { readwrite: false, readonly: undefined, create: undefined }],
+    ["?cache=shared#fragment&mode=ro", { readonly: false }, { readonly: false }],
+    ["", { readwrite: false }, { readwrite: false, readonly: true, create: undefined }],
+    ["", { readwrite: false, readonly: false }, { readwrite: false, readonly: true }],
+    ["", { readwrite: false, create: true }, { readwrite: false, readonly: true, create: true }],
+    ["?mode=rw", { readwrite: false }, { readwrite: false, readonly: true, create: false }],
+    ["", { readwrite: undefined }, { readonly: undefined }],
     ["", { readwrite: true }, { readwrite: true, readonly: undefined, create: undefined }],
     ["", { strict: true }, { strict: true, readonly: undefined, create: undefined, readwrite: undefined }],
   ])("%s next to %p: an option that is given replaces the mode, field by field", async (query, options, expected) => {
@@ -564,6 +583,11 @@ describe("?mode=", () => {
     ["?mode=rwc", {}, readWrite, readWrite],
     ["?mode=rw&mode=ro", {}, readOnly, cannotOpen],
     ["?mode=ro#fragment", {}, readOnly, cannotOpen],
+    ["?cache=shared#fragment&mode=ro", {}, readOnly, cannotOpen],
+    ["?mode=rw#fragment&mode=ro", {}, readOnly, cannotOpen],
+    ["?cache=shared#fragment&mode=rw", {}, readWrite, readWrite],
+    ["?cache=shared#fragment&mode=bogus", {}, readWrite, readWrite],
+    ["?cache=shared#fragment&mode=ro", { readonly: false }, readWrite, readWrite],
     ["?mode=ro", { readonly: undefined }, readOnly, cannotOpen],
     ["?mode=rw", { create: true }, readWrite, readWrite],
     ["", { create: false }, readWrite, cannotOpen],
@@ -596,6 +620,117 @@ describe("?mode=", () => {
     expect(await sql`SELECT * FROM t`).toEqual([]);
     expect(await sql`CREATE TABLE u (a)`.catch(e => e.code)).toBe("SQLITE_READONLY");
     expect(readdirSync(String(dir))).toEqual(["data.db"]);
+  });
+});
+
+describe("what the options object inherits", () => {
+  const inheriting = (inherited: object, own: object = {}) => Object.assign(Object.create(inherited), own);
+
+  // What `make` opens: a database with one row, or a file that is not there.
+  async function observe(exists: boolean, make: (file: string) => SQL) {
+    using dir = tempDir("sqlite-inherited", {});
+    const file = join(String(dir), "open.db");
+    if (exists) {
+      await using seed = new SQL({ adapter: "sqlite", filename: file });
+      await seed`CREATE TABLE t (n)`;
+      await seed`INSERT INTO t VALUES (1)`;
+    }
+    await using sql = make(file);
+    const rows = await sql`SELECT n FROM t`.catch(() => null);
+    return {
+      integer: rows && typeof rows[0].n,
+      writes: await sql`CREATE TABLE u (a)`.then(
+        () => true,
+        () => false,
+      ),
+      files: readdirSync(String(dir)),
+    };
+  }
+
+  // An options object that stands alone behind a URL, or behind nothing, and `adapter` in it.
+  const asItIs: [string, (file: string, inherited: object) => SQL][] = [
+    ["new SQL(file, { adapter })", (file, inherited) => new SQL(file, inheriting(inherited, { adapter: "sqlite" }))],
+    [
+      "new SQL('sqlite://file', { adapter })",
+      (file, inherited) => new SQL(`sqlite://${file}`, inheriting(inherited, { adapter: "sqlite" })),
+    ],
+    [
+      "new SQL(new URL('sqlite://file'), { adapter })",
+      (file, inherited) => new SQL(new URL(`sqlite://${file}`), inheriting(inherited, { adapter: "sqlite" })),
+    ],
+    [
+      "new SQL(undefined, { adapter, filename })",
+      (file, inherited) => new SQL(undefined, inheriting(inherited, { adapter: "sqlite", filename: file })),
+    ],
+    ["an inherited adapter", (file, inherited) => new SQL(file, inheriting({ ...inherited, adapter: "sqlite" }))],
+    [
+      "getters on the class",
+      (file, inherited) => {
+        class Config {
+          adapter = "sqlite";
+        }
+        for (const key in inherited) Object.defineProperty(Config.prototype, key, { get: () => inherited[key] });
+        return new SQL(file, new Config() as SQL.Options);
+      },
+    ],
+  ];
+  describe.each(asItIs)("%s", (_, make) => {
+    test("readonly: true", async () => {
+      expect(await observe(true, file => make(file, { readonly: true }))).toEqual({
+        integer: "number",
+        writes: false,
+        files: ["open.db"],
+      });
+    });
+    test("create: false", async () => {
+      expect(await observe(false, file => make(file, { create: false }))).toEqual({
+        integer: null,
+        writes: false,
+        files: [],
+      });
+    });
+    test("safeIntegers: true", async () => {
+      expect((await observe(true, file => make(file, { safeIntegers: true }))).integer).toBe("bigint");
+    });
+    test("readonly: false replaces ?mode=ro, as an own one does", async () => {
+      await using sql = make("/nonexistent/open.db?mode=ro", { readonly: false });
+      expect(sql.options).toMatchObject({ filename: "/nonexistent/open.db", readonly: false });
+    });
+  });
+
+  test.each([true, false, undefined])("an own readonly: %p hides the inherited one", async readonly => {
+    await using sql = new SQL(
+      "/nonexistent/open.db",
+      inheriting({ readonly: !readonly }, { adapter: "sqlite", readonly }),
+    );
+    expect(sql.options.readonly).toBe(readonly as boolean);
+  });
+
+  // Only the scheme gives the adapter, or the object is the first argument.
+  test.each<[string, (file: string, inherited: object) => SQL]>([
+    ["new SQL('sqlite://file', {})", (file, inherited) => new SQL(`sqlite://${file}`, inheriting(inherited))],
+    [
+      "new SQL(new URL('sqlite://file'), {})",
+      (file, inherited) => new SQL(new URL(`sqlite://${file}`), inheriting(inherited)),
+    ],
+    [
+      "new SQL({ adapter, filename })",
+      (file, inherited) => new SQL(inheriting(inherited, { adapter: "sqlite", filename: file })),
+    ],
+    ["new SQL({ url })", (file, inherited) => new SQL(inheriting(inherited, { url: `sqlite://${file}` }))],
+  ])("%s: nothing that says how the file is opened counts", async (_, make) => {
+    const inherited = { readonly: true, create: false, safeIntegers: true };
+    expect(await observe(true, file => make(file, inherited))).toEqual({
+      integer: "number",
+      writes: true,
+      files: ["open.db"],
+    });
+    expect((await observe(false, file => make(file, inherited))).files).toEqual(["open.db"]);
+  });
+
+  test("an inherited readonly: false does not replace ?mode=ro where only the scheme gives the adapter", async () => {
+    await using sql = new SQL("sqlite://:memory:?mode=ro", inheriting({ readonly: false }));
+    expect(sql.options.readonly).toBe(true);
   });
 });
 

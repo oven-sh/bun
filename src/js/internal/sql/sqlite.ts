@@ -131,14 +131,14 @@ class SQLiteAdapter
     super();
     this.connectionInfo = connectionInfo;
 
-    const { filename, readonly, create, readwrite, safeIntegers, strict, onconnect } = connectionInfo;
+    const { filename, readonly, create, safeIntegers, strict, onconnect } = connectionInfo;
     try {
       // not before an SQLite client is made
       const { Database } = require("../../bun/sqlite.ts") as typeof BunSQLiteModule;
       this.db = new Database(
         filename,
         // Read-only wins over `create` and `readwrite`. Else a file that is not there is made, unless `create` is false.
-        readonly || (readwrite !== undefined && !readwrite)
+        readonly
           ? { readonly: true, safeIntegers, strict }
           : { readwrite: true, create: create !== false, safeIntegers, strict },
       );

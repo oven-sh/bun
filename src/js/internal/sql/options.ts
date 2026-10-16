@@ -12,6 +12,7 @@ type AnyOptions = Bun.SQL.__internal.AnyOptions;
 type TLSOptions = Bun.SQL.TLSOptions;
 
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectHasOwn = Object.hasOwn;
 const kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
 const env = Bun.env;
 
@@ -88,6 +89,10 @@ function adapterFromScheme(scheme: string): Adapter | null {
     default:
       return null;
   }
+}
+
+function isServer(adapter: Adapter | null): boolean {
+  return adapter !== null && adapter !== "sqlite";
 }
 
 function isMySQL(adapter: Adapter): boolean {
@@ -173,6 +178,51 @@ function hasServerOption(options: AnyOptions): boolean {
   );
 }
 
+const TARGET_OPTIONS = ["adapter", "filename", "url"];
+const SQLITE_OPTIONS = ["readonly", "create", "safeIntegers"];
+const SERVER_OPTIONS = [
+  "hostname",
+  "host",
+  "port",
+  "username",
+  "user",
+  "password",
+  "pass",
+  "database",
+  "db",
+  "path",
+  "socket",
+  "tls",
+  "ssl",
+  "connection",
+  "max",
+  "idleTimeout",
+  "idle_timeout",
+  "connectionTimeout",
+  "connection_timeout",
+  "connectTimeout",
+  "connect_timeout",
+  "maxLifetime",
+  "max_lifetime",
+  "bigint",
+  "prepare",
+  "allowPublicKeyRetrieval",
+  "foundRows",
+  "channelBinding",
+  "transform",
+  "onconnect",
+  "onclose",
+];
+
+/** `options` has the own keys of `source` already. Every key is read once: a getter is the caller's code. */
+function readInherited(options: AnyOptions, source: AnyOptions, names: string[]) {
+  for (const name of names) {
+    if (ObjectHasOwn(options, name)) continue;
+    const value = source[name];
+    if (value !== undefined) options[name] = value;
+  }
+}
+
 function resolveTarget(
   first: AnyOptions | string | URL | null | undefined,
   second: AnyOptions,
@@ -184,6 +234,9 @@ function resolveTarget(
   }
   const readsEnvironment = target === null;
   const options: AnyOptions = { ...first, ...second };
+  // An options object that stands alone behind a URL, or behind nothing, also gives what it inherits.
+  const inherits = first ? null : second;
+  if (inherits) readInherited(options, inherits, TARGET_OPTIONS);
 
   const adapterOption: Adapter | null = options.adapter || null;
   if (adapterOption && adapterOption !== "postgres" && adapterOption !== "sqlite" && !isMySQL(adapterOption)) {
@@ -196,6 +249,18 @@ function resolveTarget(
   // What the arguments say themselves: `adapter`, then the scheme. A `filename` without one is a file,
   // unless it stands next to what only a server has.
   let adapter = adapterOption || (target && adapterFromScheme(schemeOf(target)));
+
+  // The rest of what it inherits counts where `adapter`, or the name of a variable, gives the adapter.
+  if (inherits) {
+    if (adapterOption === "sqlite") {
+      readInherited(options, inherits, SQLITE_OPTIONS);
+    } else if (
+      adapterOption ||
+      (adapter !== "sqlite" && readsEnvironment && isServer(urlFromEnvironment(null, false)[1]))
+    ) {
+      readInherited(options, inherits, SERVER_OPTIONS);
+    }
+  }
   if (!adapter && filename && !hasServerOption(options)) adapter = "sqlite";
 
   let requireTLS = false;
@@ -256,7 +321,11 @@ function parseSQLiteOptions(target: string | URL | null, options: AnyOptions): B
     let query = filename.slice(queryIndex + 1);
     filename = filename.slice(0, queryIndex);
     const fragmentIndex = query.indexOf("#");
-    if (fragmentIndex !== -1) query = query.slice(0, fragmentIndex);
+    if (fragmentIndex !== -1) {
+      // Nothing behind the `#` is a mistake, and nothing there opens more than what is in front of it.
+      if (new URLSearchParams(query.slice(fragmentIndex + 1)).getAll("mode").includes("ro")) access = 1;
+      query = query.slice(0, fragmentIndex);
+    }
 
     const parameters = new URLSearchParams(query);
     channelBinding ||= parameters.get("channel_binding");
@@ -293,6 +362,7 @@ function parseSQLiteOptions(target: string | URL | null, options: AnyOptions): B
     if (options.readonly === undefined) sqliteOptions.readonly = access === 1;
     if (access !== 1 && options.create === undefined) sqliteOptions.create = access === 3;
   }
+  if (options.readwrite !== undefined && !options.readwrite) sqliteOptions.readonly = true;
 
   const safeIntegers = options.safeIntegers ?? options.bigint;
   if (safeIntegers !== undefined) sqliteOptions.safeIntegers = safeIntegers;

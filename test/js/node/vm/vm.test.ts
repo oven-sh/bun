@@ -1060,31 +1060,38 @@ describe("a Script built from accepted cachedData", () => {
       Bun.gc(true);
       const after = live("ProgramExecutable", "ProgramCodeBlock");
 
-      // No collection is requested from here on.
+      // No collection is requested from here on. Scripts are built and dropped until the
+      // collector takes one back, or until 256 of them exist.
       const [scriptsBefore] = live("Script");
-      for (let i = 0; i < 32; i++) new vm.Script(source, { cachedData });
-      const [scriptsAfter] = live("Script");
+      let dropped = 0;
+      let reclaimed = false;
+      while (!reclaimed && dropped < 256) {
+        for (let i = 0; i < 16; i++) new vm.Script(source, { cachedData });
+        dropped += 16;
+        reclaimed = live("Script")[0] - scriptsBefore < dropped;
+      }
 
       console.log(JSON.stringify({
         rejected: kept.filter(script => script.cachedDataRejected !== false).length,
         pinnedByKept: after.map((count, i) => count - before[i]),
-        droppedStillLive: scriptsAfter - scriptsBefore,
+        droppedAreReclaimed: reclaimed,
       }));
     `;
-    // --smol: a collection is due after a few MB of allocation, and 32 payloads are about 10 MB.
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--smol", "-e", fixture],
+      cmd: [bunExe(), "-e", fixture],
       env: bunEnv,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const { droppedStillLive, ...rest } = JSON.parse(stdout);
-    // A linked and compiled block pins one ProgramExecutable and one ProgramCodeBlock per kept Script.
-    expect(rest).toEqual({ rejected: 0, pinnedByKept: [0, 0] });
-    // Each dropped Script leaves a decoded block that owns a copy of the blob. While that copy is
-    // not reported, nothing in the loop asks for a collection, and all 32 stay.
-    expect(droppedStillLive).toBeLessThan(32);
+    expect(JSON.parse(stdout)).toEqual({
+      rejected: 0,
+      // A linked and compiled block pins one ProgramExecutable and one ProgramCodeBlock per kept Script.
+      pinnedByKept: [0, 0],
+      // Each dropped Script leaves a decoded block that owns a copy of the blob. While that copy is
+      // not reported, 256 of them (79 MB) do not make a collection due.
+      droppedAreReclaimed: true,
+    });
     expect(exitCode).toBe(0);
   });
 

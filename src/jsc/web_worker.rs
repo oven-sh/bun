@@ -1151,6 +1151,8 @@ fn on_unhandled_rejection(
         return;
     }
 
+    vm.exit_handler.exit_code = 1;
+
     let mut error_instance = error_instance_or_exception
         .to_error()
         .unwrap_or(error_instance_or_exception);

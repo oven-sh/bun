@@ -1001,14 +1001,18 @@ describe("CA with an iPAddress name constraint", () => {
       (err: NodeJS.ErrnoException) => String(err.code),
     );
 
+  // node:https and node:tls report verify errors outside Node's named set as UNSPECIFIED, as Node does. The
+  // message tells the cases apart.
+  const describeError = (err: NodeJS.ErrnoException) => `${err.code}: ${err.message}`;
+
   const viaHttps = (url: string, ca: string) =>
     new Promise<string>(resolve => {
-      https
-        .get(url, { ca }, res => {
-          res.resume();
-          res.on("end", () => resolve(`status ${res.statusCode}`));
-        })
-        .on("error", (err: NodeJS.ErrnoException) => resolve(String(err.code)));
+      const req = https.get(url, { ca }, res => {
+        res.resume();
+        res.on("end", () => resolve(`status ${res.statusCode}`));
+      });
+      req.on("error", err => resolve(describeError(err)));
+      req.on("close", () => resolve("closed without a response"));
     });
 
   const viaTls = (port: number, ca: string) =>
@@ -1017,26 +1021,27 @@ describe("CA with an iPAddress name constraint", () => {
         resolve("authorized");
         socket.destroy();
       });
-      socket.on("error", (err: NodeJS.ErrnoException) => resolve(String(err.code)));
+      socket.on("error", err => resolve(describeError(err)));
+      socket.on("close", () => resolve("closed before the handshake finished"));
     });
 
-  // [name, CA the client trusts, leaf the server sends, expected result from fetch, node:https, node:tls].
-  // node:https and node:tls report verify errors outside Node's named set as UNSPECIFIED, as Node does.
+  // [name, CA the client trusts, leaf the server sends, expected result from fetch, node:https, node:tls]
   const cases: [string, string, string, string[]][] = [
     // root permits IP:127.0.0.1/32, IP:::1/128 and DNS:localhost
     ["IP inside the permitted subtree", "root", "leaf", ["ok", "status 200", "authorized"]],
+    // leaf-other-ip also has IP:127.0.0.1, so the chain check is the only reason it fails
     [
       "IP outside the permitted subtree",
       "root",
       "leaf-other-ip",
-      ["PERMITTED_VIOLATION", "UNSPECIFIED", "UNSPECIFIED"],
+      ["PERMITTED_VIOLATION", "UNSPECIFIED: permitted subtree violation", "UNSPECIFIED: permitted subtree violation"],
     ],
     // root-excluded excludes IP:127.0.0.0/8
     [
       "IP inside an excluded subtree",
       "root-excluded",
       "leaf-excluded",
-      ["EXCLUDED_VIOLATION", "UNSPECIFIED", "UNSPECIFIED"],
+      ["EXCLUDED_VIOLATION", "UNSPECIFIED: excluded subtree violation", "UNSPECIFIED: excluded subtree violation"],
     ],
   ];
   for (const [name, root, leaf, expected] of cases) {

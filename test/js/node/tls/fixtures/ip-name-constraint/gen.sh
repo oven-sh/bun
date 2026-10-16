@@ -7,7 +7,7 @@
 #   root-excluded-cert.pem excludes 127.0.0.0/8.
 # Leaves, all with leaf-key.pem:
 #   leaf-cert.pem          issued by root, SAN DNS:localhost, IP:127.0.0.1, IP:::1 (inside the permitted subtrees)
-#   leaf-other-ip-cert.pem issued by root, SAN IP:10.0.0.1 (outside the permitted iPAddress subtrees)
+#   leaf-other-ip-cert.pem issued by root, SAN IP:127.0.0.1, IP:10.0.0.1 (10.0.0.1 is outside the permitted subtrees)
 #   leaf-excluded-cert.pem issued by root-excluded, SAN IP:127.0.0.1 (inside the excluded subtree)
 set -e
 tmp=$(mktemp -d)
@@ -28,6 +28,6 @@ key leaf
 sign root /CN=ip-name-constraint-root self "$(ca 'permitted;IP:127.0.0.1/255.255.255.255,permitted;IP:::1/ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff,permitted;DNS:localhost')"
 sign root-excluded /CN=ip-name-constraint-root-excluded self "$(ca 'excluded;IP:127.0.0.0/255.0.0.0')"
 sign leaf /CN=localhost root "$(leaf 'DNS:localhost,IP:127.0.0.1,IP:::1')"
-sign leaf-other-ip /CN=other root "$(leaf 'IP:10.0.0.1')" leaf
+sign leaf-other-ip /CN=other root "$(leaf 'IP:127.0.0.1,IP:10.0.0.1')" leaf
 sign leaf-excluded /CN=excluded root-excluded "$(leaf 'IP:127.0.0.1')" leaf
 rm -r "$tmp"

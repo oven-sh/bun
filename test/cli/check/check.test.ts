@@ -14,7 +14,7 @@ import {
 import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import { endChildren, longLimit, spawn } from "../children";
-import { modulesInRings } from "./differential";
+import { env as projectSelectionEnv, modulesInRings, tsc as projectSelectionTsc } from "./differential";
 
 afterAll(endChildren);
 
@@ -17777,6 +17777,1088 @@ describe.concurrent("--check", () => {
       expect(
         stdout.split("\n").map(line => /error TS7022: '(c\d+)' implicitly has type 'any'/.exec(line)?.[1]),
       ).toEqual(range(n + 1).map(i => `c${i}`));
+      expect(exitCode).toBe(1);
+    });
+  });
+});
+
+describe("project ownership", () => {
+  // The project that a named file is checked in. A project reads the sources of a project that it references through
+  // their declaration files, so a file that both list is checked in the referenced one: there `tsc -b` reports it, and
+  // that is the project an editor shows it in.
+  //
+
+  async function run(cwd: string, cmd: string[]) {
+    await using proc = spawn({
+      timeout: longLimit,
+      cmd: [bunExe(), ...cmd],
+      cwd,
+      env: projectSelectionEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const clean = (text: string) => text.replaceAll("\\", "/").trim();
+    return { stdout: clean(stdout), stderr: clean(stderr), exitCode };
+  }
+
+  type Files = Record<string, string>;
+
+  /** A test for each of `commandLines`: in `files`, `bun check` with it prints `errors`. */
+  function checks(name: string, files: Files, errors: string[], commandLines: string[][]) {
+    const cases = commandLines.map(args => [args.join(" ") || "no argument", args] as const);
+    test.each(cases)(`${name}: %s`, async (_, args) => {
+      using dir = tempDir("bun-check-project-of-file", files);
+      const { stdout, exitCode } = await run(String(dir), ["check", ...args]);
+      expect({ errors: stdout.split("\n").filter(Boolean), exitCode }).toEqual({
+        errors,
+        exitCode: errors.length ? 1 : 0,
+      });
+    });
+  }
+
+  // Instead of the library files, which a debug build takes seconds to read.
+  const globals = "Array<T> Boolean CallableFunction Function IArguments NewableFunction Number Object RegExp String"
+    .split(" ")
+    .map(name => `interface ${name} {}\n`)
+    .join("");
+  const strict = { strict: true, noLib: true, types: [] };
+  const loose = { ...strict, strict: false };
+  const emitted = { composite: true, emitDeclarationOnly: true };
+  const config = (compilerOptions: object, more: object = {}) => JSON.stringify({ compilerOptions, ...more });
+  const references = (...paths: string[]) => ({ references: paths.map(path => ({ path })) });
+  const circular = (path: string) => ({ references: [{ path, circular: true }] });
+
+  const wrong = `export const wrong: number = "";\n`;
+  // An error only where `strict` is on: it shows whose options a file is checked with.
+  const implicit = `export function f(x) {\n  return x;\n}\n`;
+  const assignment = (file: string, line = 1) =>
+    `${file}(${line},14): error TS2322: Type 'string' is not assignable to type 'number'.`;
+  const parameter = (file: string) => `${file}(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type.`;
+
+  describe("a file that the nearest tsconfig.json and a project that it references both list", () => {
+    // The tsconfig.json includes everything. Its options are the loose ones.
+    const beside = {
+      "tsconfig.json": config({ ...loose, noEmit: true }, references("./tsconfig.node.json")),
+      "tsconfig.node.json": config(
+        { ...strict, ...emitted, outDir: "out" },
+        { include: ["vite.config.ts", "globals.d.ts"] },
+      ),
+      "globals.d.ts": globals,
+      "vite.config.ts": implicit + wrong,
+      "src/a.ts": `export const ok = 1;\n`,
+    };
+    const ofTheReferenced = [parameter("vite.config.ts"), assignment("vite.config.ts", 4)];
+    checks("is checked with the options of the referenced project", beside, ofTheReferenced, [
+      ["vite.config.ts"],
+      ["src/a.ts", "vite.config.ts"],
+      ["vite.config.ts", "src/a.ts"],
+      ["-p", ".", "vite.config.ts"],
+      ["src", "vite.config.ts"],
+      [".", "vite.config.ts"],
+    ]);
+    checks("is reported by its directory, a build and the referenced project", beside, ofTheReferenced, [
+      ["."],
+      ["-b"],
+      ["-p", "tsconfig.node.json"],
+    ]);
+    // It reads the declaration file, like `tsc`.
+    checks("is not reported by the nearest project", beside, [], [[], ["src/a.ts"]]);
+    // An option of the command line is for every project that a directory reports.
+    checks(
+      "is checked with the command line beside its directory",
+      beside,
+      [assignment("vite.config.ts", 4)],
+      [["--strict", "false", ".", "vite.config.ts"]],
+    );
+
+    // tsconfig.json has the tests too, and the configuration file of the build, which is the loose one, leaves them out.
+    const forTheBuild = {
+      "tsconfig.json": config(
+        { ...strict, noEmit: true },
+        { include: ["src", "test"], ...references("./tsconfig.build.json") },
+      ),
+      "tsconfig.build.json": config({ ...loose, ...emitted, outDir: "dist" }, { include: ["src"] }),
+      "src/globals.d.ts": globals,
+      "src/a.ts": implicit + wrong,
+      "src/ok.ts": `export const ok = 1;\n`,
+      "test/a.test.ts": `import { ok } from "../src/ok";\nexport const t: string = ok;\n`,
+    };
+    const inTheTest = `test/a.test.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'.`;
+    checks(
+      "is checked where the build has it",
+      forTheBuild,
+      [assignment("src/a.ts", 4)],
+      [["src/a.ts"], ["src/a.ts", "src/ok.ts"], ["src"]],
+    );
+    checks(
+      "is reported once beside a file of the nearest project",
+      forTheBuild,
+      [assignment("src/a.ts", 4), inTheTest],
+      [["src/a.ts", "test/a.test.ts"], ["test/a.test.ts", "src/a.ts"], ["test", "src/a.ts"], ["-b"]],
+    );
+    checks(
+      "is not reported with the files of the nearest project",
+      forTheBuild,
+      [inTheTest],
+      [[], ["test/a.test.ts"], ["test"]],
+    );
+    checks(
+      "is reported alone, whatever else the referenced project has",
+      { ...forTheBuild, "src/broken.ts": `export const = ;\n` },
+      [assignment("src/a.ts", 4)],
+      [["src/a.ts"]],
+    );
+    // A directory stands for the referenced project, which another reads, as a whole.
+    checks(
+      "is reported with the other files of the referenced project by a directory in it",
+      { ...forTheBuild, "src/sub/x.ts": wrong },
+      [assignment("src/a.ts", 4), assignment("src/sub/x.ts")],
+      [["src/sub"]],
+    );
+
+    // `a` references `b`, which is the loose one.
+    const nested = {
+      "tsconfig.a.json": config(
+        { ...strict, ...emitted, outDir: "out-a" },
+        { include: ["src"], ...references("./tsconfig.b.json") },
+      ),
+      "tsconfig.b.json": config({ ...loose, ...emitted, outDir: "out-b" }, { include: ["src"] }),
+      "src/globals.d.ts": globals,
+      "src/f.ts": implicit + wrong,
+    };
+    const innermost = [["src/f.ts"], ["-p", "tsconfig.a.json", "src/f.ts"]];
+    checks(
+      "is checked in the innermost project, under a tsconfig.json with nothing but references",
+      { ...nested, "tsconfig.json": JSON.stringify({ files: [], ...references("./tsconfig.a.json") }) },
+      [assignment("src/f.ts", 4)],
+      innermost,
+    );
+    checks(
+      "is checked in the innermost project, under a tsconfig.json that lists it too",
+      { ...nested, "tsconfig.json": config({ ...strict, noEmit: true }, references("./tsconfig.a.json")) },
+      [assignment("src/f.ts", 4)],
+      innermost,
+    );
+
+    const below = "packages/a/src/f.ts";
+    checks(
+      "is checked in a directory that is named, where the tsconfig.json files are below it",
+      {
+        "packages/a/tsconfig.json": config(
+          { ...loose, noEmit: true },
+          { include: ["src"], ...references("./tsconfig.build.json") },
+        ),
+        "packages/a/tsconfig.build.json": config({ ...strict, ...emitted, outDir: "out" }, { include: ["src"] }),
+        "packages/a/src/globals.d.ts": globals,
+        [below]: implicit + wrong,
+      },
+      [parameter(below), assignment(below, 4)],
+      [["."], ["packages"], ["packages/a"], [below]],
+    );
+
+    checks(
+      "stays in the nearest project if it is a declaration file, which both read",
+      {
+        "tsconfig.json": config(
+          { ...strict, noEmit: true },
+          { include: ["src"], ...references("./tsconfig.build.json") },
+        ),
+        "tsconfig.build.json": config({ ...loose, ...emitted, outDir: "out" }, { include: ["src"] }),
+        "src/globals.d.ts": globals,
+        "src/api.d.ts": `declare function f(x);\n`,
+      },
+      [
+        `src/api.d.ts(1,18): error TS7010: 'f', which lacks return-type annotation, implicitly has an 'any' return type.`,
+        `src/api.d.ts(1,20): error TS7006: Parameter 'x' implicitly has an 'any' type.`,
+      ],
+      [["src/api.d.ts"], [], ["."]],
+    );
+  });
+
+  // What is not named is reported as before: as tsc reports it, which reads such a file through its declaration file.
+  describe.skipIf(!projectSelectionTsc)(
+    "without a file name, a project that shares a file with one that it references",
+    () => {
+      const layouts: Record<string, Files> = {
+        "lists everything": {
+          "tsconfig.json": config({ ...strict, noEmit: true }, references("./tsconfig.node.json")),
+          "tsconfig.node.json": config(
+            { ...strict, ...emitted, outDir: "out" },
+            { include: ["vite.config.ts", "globals.d.ts"] },
+          ),
+          "globals.d.ts": globals,
+          "vite.config.ts": wrong,
+          "src/a.ts": wrong,
+        },
+        "is in a cycle of references": {
+          "tsconfig.json": config(
+            { ...strict, ...emitted, outDir: "out-a" },
+            { include: ["a.ts", "globals.d.ts"], ...circular("./tsconfig.other.json") },
+          ),
+          "tsconfig.other.json": config(
+            { ...strict, ...emitted, outDir: "out-b" },
+            { include: ["*.ts"], ...circular("./tsconfig.json") },
+          ),
+          "globals.d.ts": globals,
+          "a.ts": wrong,
+          "b.ts": wrong,
+        },
+        "references one that is not there too": {
+          "tsconfig.json": config(
+            { ...strict, noEmit: true },
+            { include: ["src", "globals.d.ts"], ...references("./gone", "./tsconfig.build.json") },
+          ),
+          "tsconfig.build.json": config(
+            { ...strict, ...emitted, outDir: "dist" },
+            { include: ["src/a.ts", "globals.d.ts"] },
+          ),
+          "globals.d.ts": globals,
+          "src/a.ts": wrong,
+          "src/main.ts": wrong,
+        },
+      };
+      const cells = Object.keys(layouts).flatMap(layout =>
+        [[], ["-p", "."], ["--noEmit"], ["-b"]].map(args => [layout, args.join(" ") || "no argument", args] as const),
+      );
+      test.each(cells)("%s: %s", async (layout, _, args) => {
+        // Each has its own copy: a build writes files.
+        const files = layouts[layout];
+        const copies = Object.entries(files).flatMap(([path, text]) =>
+          ["theirs", "ours"].map(side => [`${side}/${path}`, text]),
+        );
+        using dir = tempDir("bun-check-project-of-file", Object.fromEntries(copies));
+        const outcomeOf = async (cmd: string[], side: string) => {
+          const cwd = join(String(dir), side);
+          await using proc = spawn({
+            timeout: longLimit,
+            cmd,
+            cwd,
+            env: projectSelectionEnv,
+            stdout: "pipe",
+            stderr: "ignore",
+          });
+          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+          const lines = stdout.replaceAll("\\", "/").replaceAll(cwd.replaceAll("\\", "/"), "").split(/\r?\n/);
+          // tsc exits with 2 if it has written files in spite of errors.
+          return { lines: lines.filter(line => line.trim()), fails: exitCode !== 0 };
+        };
+        const theirs = await outcomeOf([projectSelectionTsc!, ...args, "--pretty", "false"], "theirs");
+        expect(await outcomeOf([bunExe(), "check", ...args], "ours")).toEqual(theirs);
+      });
+    },
+  );
+
+  describe("of the projects that a tsconfig.json references, the nearest that lists the file checks it", () => {
+    // `a` references `c`, and `b` and `c` list the file. `c` is the loose one.
+    const files = {
+      "tsconfig.a.json": config(
+        { ...strict, ...emitted, outDir: "out-a" },
+        { files: ["globals.d.ts", "other.ts"], ...references("./tsconfig.c.json") },
+      ),
+      "tsconfig.b.json": config({ ...strict, ...emitted, outDir: "out-b" }, { files: ["globals.d.ts", "f.ts"] }),
+      "tsconfig.c.json": config({ ...loose, ...emitted, outDir: "out-c" }, { files: ["globals.d.ts", "f.ts"] }),
+      "globals.d.ts": globals,
+      "other.ts": `export const other = 1;\n`,
+      "f.ts": implicit,
+    };
+    const both = references("./tsconfig.a.json", "./tsconfig.b.json");
+    checks(
+      "under a tsconfig.json with nothing but references",
+      { ...files, "tsconfig.json": JSON.stringify({ files: [], ...both }) },
+      [parameter("f.ts")],
+      [["f.ts"]],
+    );
+    checks(
+      "under a tsconfig.json that lists it too",
+      {
+        ...files,
+        "tsconfig.json": config({ ...loose, noEmit: true }, { files: ["globals.d.ts", "f.ts", "other.ts"], ...both }),
+      },
+      [parameter("f.ts")],
+      [["f.ts"]],
+    );
+  });
+
+  describe("a file that is named", () => {
+    test.each([
+      ["g.ts", "sub/f.ts"],
+      ["sub/f.ts", "g.ts"],
+    ])(
+      "is checked once, in its own project, if another project that is checked lists it too: %s %s",
+      async (...args) => {
+        using dir = tempDir("bun-check-project-of-file", {
+          "tsconfig.json": config(
+            { ...strict, noEmit: true },
+            { include: ["g.ts", "globals.d.ts", "sub"], ...references("./lib") },
+          ),
+          "lib/tsconfig.json": config(
+            { ...strict, ...emitted, outDir: "out" },
+            { include: ["*.ts", "../globals.d.ts"] },
+          ),
+          "lib/x.ts": `export const x = 1;\n`,
+          "sub/tsconfig.json": config({ ...loose, noEmit: true }, { include: ["*.ts", "../globals.d.ts"] }),
+          "sub/f.ts": implicit,
+          "globals.d.ts": globals,
+          "g.ts": `import { f } from "./sub/f";\nexport const g = f;\n`,
+        });
+        const { stdout, stderr, exitCode } = await run(String(dir), ["check", ...args]);
+        expect([stdout, stderr.replace(/ \[.*\]$/, ""), exitCode]).toEqual([
+          "",
+          "✓ No type errors in 2 files across 2 projects",
+          0,
+        ]);
+      },
+    );
+
+    // Under `--outDir gen` no project lists what is in `gen`: the file is of the nearest one, which is the strict one.
+    // The project that is only read still lists the file.
+    const generated = {
+      "tsconfig.json": config({ ...strict, noEmit: true }, references("./tsconfig.node.json")),
+      "tsconfig.node.json": config({ ...loose, ...emitted, outDir: "out" }, { include: ["gen", "globals.d.ts"] }),
+      "globals.d.ts": globals,
+      "gen/f.ts": implicit + wrong,
+      "src/a.ts": `export const ok = 1;\n`,
+    };
+    checks("is of the referenced project that lists it", generated, [assignment("gen/f.ts", 4)], [["gen/f.ts"]]);
+    checks(
+      "is read from its source where an option of the command line changes what the projects list",
+      generated,
+      [parameter("gen/f.ts"), assignment("gen/f.ts", 4)],
+      [["--outDir", "gen", "gen/f.ts"]],
+    );
+
+    checks(
+      "is read from its source in a cycle of references whose projects all list it",
+      {
+        "tsconfig.json": config(
+          { ...strict, ...emitted, outDir: "out-a" },
+          { include: ["*.ts"], ...circular("./tsconfig.other.json") },
+        ),
+        "tsconfig.other.json": config(
+          { ...strict, ...emitted, outDir: "out-b" },
+          { include: ["*.ts"], ...circular("./tsconfig.json") },
+        ),
+        "globals.d.ts": globals,
+        "a.ts": wrong,
+      },
+      [assignment("a.ts")],
+      [["a.ts"]],
+    );
+    // `a` is the loose one. Without it, the file has the options of no project, which are strict.
+    checks(
+      "is of the first project of such a cycle that lists it",
+      {
+        "tsconfig.json": JSON.stringify({ files: [], ...references("./tsconfig.a.json") }),
+        "tsconfig.a.json": config(
+          { ...loose, ...emitted, outDir: "out-a" },
+          { include: ["*.ts"], ...circular("./tsconfig.b.json") },
+        ),
+        "tsconfig.b.json": config(
+          { ...strict, ...emitted, outDir: "out-b" },
+          { include: ["*.ts"], ...circular("./tsconfig.a.json") },
+        ),
+        "globals.d.ts": globals,
+        "f.ts": implicit + wrong,
+      },
+      [assignment("f.ts", 4)],
+      [["f.ts"]],
+    );
+  });
+
+  describe("--check", () => {
+    // The text that is printed is not in the source.
+    const ran = `console.log("it " + "ran");\n`;
+    const withConsole = `${globals}declare var console: { log(...args: unknown[]): void };\n`;
+    /** The codes that `cmd` prints, whether the entry point ran, and the exit code. */
+    async function outcome(files: Files, cmd: string[]) {
+      using dir = tempDir("bun-check-project-of-file", files);
+      const { stdout, stderr, exitCode } = await run(String(dir), cmd);
+      return { codes: [...new Set((stdout + stderr).match(/\bTS\d+/g))], ran: stdout.includes("it ran"), exitCode };
+    }
+    const stopped = (code: string) => ({ codes: [code], ran: false, exitCode: 1 });
+    // Both list everything. The nearest one is the loose one.
+    const shared = (source: string) => ({
+      "tsconfig.json": config({ ...loose, noEmit: true }, references("./tsconfig.build.json")),
+      "tsconfig.build.json": config({ ...strict, ...emitted, outDir: "dist" }),
+      "globals.d.ts": withConsole,
+      "main.ts": `import { n } from "./imported";\nexport const m: number = n;\n${ran}`,
+      "start.js": `import { n } from "./imported";\nexport const m = n;\n${ran}`,
+      "imported.ts": source,
+      "main.test.ts": `import { n } from "./imported";\nexport const m: number = n;\n${ran}`,
+    });
+
+    const build = `const { success, logs } = await Bun.build({ entrypoints: ["main.ts"], outdir: "out", check: true, throw: false });
+    for (const log of logs) console.error(log.message);
+    process.exit(success ? 0 : 1);`;
+    test.each([
+      ["bun --check", ["--check", "main.ts"]],
+      ["bun run --check", ["run", "--check", "main.ts"]],
+      ["bun build --check", ["build", "--check", "main.ts", "--outdir", "out"]],
+      ["bun build --no-bundle --check", ["build", "--no-bundle", "--check", "main.ts"]],
+      ["bun test --check", ["test", "--check", "main.test.ts"]],
+      ["Bun.build", ["-e", build]],
+      // No project lists it: it is of the referenced one, which would under `allowJs`.
+      ["bun --check, JavaScript", ["--check", "start.js"]],
+      ["bun build --check, JavaScript", ["build", "--check", "start.js", "--outdir", "out"]],
+    ])("does not run an entry point that both list, if what it imports has a type error: %s", async (_, cmd) => {
+      const files = shared(`export const n: number = "1";\n`);
+      expect(await outcome(files, cmd)).toEqual(stopped("TS2322"));
+    });
+
+    test.each(["main.ts", "start.js"])("runs it if there is none: bun --check %s", async entry => {
+      const files = shared(`export const n: number = 1;\n`);
+      expect(await outcome(files, ["--check", entry])).toEqual({ codes: [], ran: true, exitCode: 0 });
+    });
+
+    test.each([
+      ["client.ts", implicit],
+      // It is JavaScript, which no project lists, and what it imports is TypeScript.
+      ["client.js", `import "./typed";\n`],
+    ])("checks the script of a page in the referenced project: %s", async (script, source) => {
+      const files = {
+        "tsconfig.json": config({ ...loose, noEmit: true }, references("./tsconfig.client.json")),
+        "tsconfig.client.json": config(
+          { ...strict, ...emitted, outDir: "out" },
+          { include: ["client.*", "typed.ts", "globals.d.ts"] },
+        ),
+        "globals.d.ts": withConsole,
+        "html.d.ts": `declare module "*.html" {\n  const page: unknown;\n  export default page;\n}\n`,
+        "index.html": `<!doctype html><script type="module" src="./${script}"></script>\n`,
+        [script]: source,
+        "typed.ts": implicit,
+        "server.ts": `/// <reference path="./html.d.ts" />\nimport page from "./index.html";\nexport { page };\n${ran}`,
+      };
+      expect(await outcome(files, ["--check", "server.ts"])).toEqual(stopped("TS7006"));
+    });
+
+    // The nearest tsconfig.json does not allow JavaScript, so it does not list the entry point.
+    const javascript = (more: object) => ({
+      "tsconfig.json": config({ ...strict, noEmit: true }, references("./tsconfig.node.json")),
+      "tsconfig.node.json": config(
+        { ...strict, ...emitted, ...more, outDir: "out" },
+        { include: ["conf.js", "globals.d.ts"] },
+      ),
+      "globals.d.ts": withConsole,
+      "conf.js": `/** @type {number} */\nexport const wrong = "";\n${ran}`,
+      "src/a.ts": `export const ok = 1;\n`,
+    });
+
+    test("a JavaScript entry point is of the referenced project that lists it", async () => {
+      const files = javascript({ allowJs: true, checkJs: true });
+      expect(await outcome(files, ["--check", "conf.js"])).toEqual(stopped("TS2322"));
+    });
+
+    test.each(["scripts/[seed].js", "scripts/s.js"])(
+      "a JavaScript fallback matches explicit files literally: %s",
+      async entry => {
+        const source = `import { f } from "../dep";\nf(1);\n${ran}`;
+        const files = {
+          "tsconfig.json": config({ ...loose, noEmit: true }, references("./tsconfig.node.json")),
+          "tsconfig.node.json": config(
+            { ...strict, ...emitted, outDir: "out" },
+            { files: ["scripts/[seed].js", "dep.ts", "globals.d.ts"], include: [], exclude: ["scripts"] },
+          ),
+          "globals.d.ts": withConsole,
+          "dep.ts": implicit,
+          "scripts/[seed].js": source,
+          "scripts/s.js": source,
+        };
+        const expected = entry === "scripts/[seed].js" ? stopped("TS7006") : { codes: [], ran: true, exitCode: 0 };
+        expect(await outcome(files, ["--check", entry])).toEqual(expected);
+      },
+    );
+
+    test("a JavaScript entry point is of the project that lists it, before one that would", async () => {
+      // The first would list it under `allowJs`, and the second does.
+      const files = {
+        "tsconfig.json": JSON.stringify({ files: [], ...references("./tsconfig.app.json", "./tsconfig.tools.json") }),
+        "tsconfig.app.json": config(
+          { ...strict, ...emitted, outDir: "out-app" },
+          { include: ["scripts", "globals.d.ts"] },
+        ),
+        "tsconfig.tools.json": config(
+          { ...strict, ...emitted, allowJs: true, checkJs: true, outDir: "out-tools" },
+          { include: ["scripts", "globals.d.ts"] },
+        ),
+        "globals.d.ts": withConsole,
+        "scripts/x.js": `/** @type {number} */\nexport const wrong = "";\n${ran}`,
+      };
+      expect(await outcome(files, ["--check", "scripts/x.js"])).toEqual(stopped("TS2322"));
+    });
+
+    test("a JavaScript entry point that only the nearest project allows is of that project", async () => {
+      const files = {
+        "tsconfig.json": config(
+          { ...strict, allowJs: true, checkJs: true, noEmit: true },
+          references("./tsconfig.node.json"),
+        ),
+        "tsconfig.node.json": config(
+          { ...strict, ...emitted, outDir: "out" },
+          { include: ["scripts", "globals.d.ts"] },
+        ),
+        "globals.d.ts": withConsole,
+        "scripts/seed.js": `/** @type {number} */\nexport const wrong = "";\n${ran}`,
+        "scripts/util.ts": `export const ok = 1;\n`,
+      };
+      expect(await outcome(files, ["--check", "scripts/seed.js"])).toEqual(stopped("TS2322"));
+    });
+
+    test("a JavaScript entry point that no project lists is of the referenced one that would", async () => {
+      // `dep.ts` has the options of tsconfig.node.json, which are the loose ones here.
+      const files = {
+        ...javascript({ strict: false }),
+        "conf.js": `import { f } from "./dep";\nf(1);\n${ran}`,
+        "dep.ts": implicit,
+      };
+      expect(await outcome(files, ["--check", "conf.js"])).toEqual({ codes: [], ran: true, exitCode: 0 });
+    });
+  });
+});
+
+describe("listed directory roots", () => {
+  // `bun check <directory>` where no tsconfig.json at or above the directory has files in it: the directory stands for
+  // the files that the projects below it list, however `files`, `include` or `references` name them.
+
+  // Disable AI agent and CI detection regardless of the environment the tests run in.
+  const env = {
+    ...bunEnv,
+    AGENT: "0",
+    CLAUDECODE: undefined,
+    REPL_ID: undefined,
+    GITHUB_ACTIONS: undefined,
+    GITHUB_WORKSPACE: undefined,
+    // Of the script that runs the tests.
+    npm_lifecycle_event: undefined,
+    npm_package_json: undefined,
+    NO_COLOR: "1",
+  };
+
+  async function run(cwd: { toString(): string }, cmd: string[]) {
+    await using proc = spawn({
+      timeout: longLimit,
+      cmd: [bunExe(), ...cmd],
+      cwd: String(cwd),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.replaceAll("\\", "/").trim(), stderr: stderr.replaceAll("\\", "/").trim(), exitCode };
+  }
+
+  // Whether the file system takes `A` for `a`, where the projects of these tests are.
+  const foldsCase = (() => {
+    using dir = tempDir("bun-check-directory", { "probe": "" });
+    return existsSync(join(String(dir), "PROBE"));
+  })();
+
+  // Instead of the library files, which a debug build takes seconds to read.
+  const globals = "Array<T> Boolean CallableFunction Function IArguments NewableFunction Number Object RegExp String"
+    .split(" ")
+    .map(name => `interface ${name} {}\n`)
+    .join("");
+  const config = (more: object = {}, options: object = {}) =>
+    JSON.stringify({ compilerOptions: { strict: true, noLib: true, types: [], ...options }, ...more });
+  const right = `export const right: string = "1";\n`;
+  const wrong = `export const wrong: string = 1;\n`;
+  const error = (file: string, line = 1) =>
+    `apps/site/${file}(${line},14): error TS2322: Type 'number' is not assignable to type 'string'.`;
+  // What `create vite` writes: the nearest tsconfig.json has no files and no options of its own.
+  const solution = JSON.stringify({ files: [], references: [{ path: "./tsconfig.app.json" }] });
+  const javascript = {
+    "tsconfig.app.json": config({ include: ["src", ".types/*"] }, { allowJs: true, checkJs: true, noEmit: true }),
+    ".types/globals.d.ts": globals,
+    "src/legacy.js": `/** @type {string} */\nexport const wrong = 1;\n`,
+  };
+  // The options of a project that another references.
+  const library = { composite: true, emitDeclarationOnly: true, outDir: "dist" };
+
+  // The files of `apps/site`, and what is reported of them from the root, which has no tsconfig.json.
+  const layouts: Record<string, [files: Record<string, string>, reported: string[]]> = {
+    // The `include` of a Next.js app.
+    "a dot directory that `include` names": [
+      {
+        "tsconfig.json": config({ include: ["**/*.ts", ".next/types/**/*.ts"], exclude: ["node_modules"] }),
+        "globals.d.ts": globals,
+        "app/page.ts": right,
+        ".next/types/routes.ts": wrong,
+      },
+      [error(".next/types/routes.ts")],
+    ],
+    "a dot file in `files`": [
+      {
+        "tsconfig.json": config({ files: [".config.ts"], include: ["src"] }),
+        "src/globals.d.ts": globals,
+        ".config.ts": wrong,
+      },
+      [error(".config.ts")],
+    ],
+    "a package folder that `include` names": [
+      {
+        "tsconfig.json": config({ include: ["src", "node_modules/generated/*.ts"] }),
+        "src/globals.d.ts": globals,
+        "node_modules/generated/client.ts": wrong,
+      },
+      [error("node_modules/generated/client.ts")],
+    ],
+    "a file in `files` that `exclude` names": [
+      {
+        "tsconfig.json": config({ files: ["generated/client.ts"], include: ["src"], exclude: ["generated"] }),
+        "src/globals.d.ts": globals,
+        "generated/client.ts": wrong,
+      },
+      [error("generated/client.ts")],
+    ],
+    "JavaScript of a project that a solution references": [
+      { "tsconfig.json": solution, ...javascript, "src/main.ts": wrong },
+      [error("src/legacy.js", 2), error("src/main.ts")],
+    ],
+    // It is of the project that lists it, as in a run in `apps/site`.
+    "a file beside a tsconfig.json in a dot directory, which has no say": [
+      {
+        "tsconfig.json": config({ include: ["src", ".storybook/**/*"] }),
+        "src/globals.d.ts": globals,
+        ".storybook/tsconfig.json": config({}, { strict: false }),
+        ".storybook/main.ts": `${wrong}export function f(x) {\n  return x;\n}\n`,
+      },
+      [
+        error(".storybook/main.ts"),
+        `apps/site/.storybook/main.ts(2,19): error TS7006: Parameter 'x' implicitly has an 'any' type.`,
+      ],
+    ],
+    // The tsconfig.json there has no say either. The project is there, and it checks what it lists with its options.
+    "a project in a dot directory that the tsconfig.json references": [
+      {
+        "tsconfig.json": config({ include: ["src"], references: [{ path: "./.storybook" }] }),
+        "src/globals.d.ts": globals,
+        "src/a.ts": right,
+        ".storybook/tsconfig.json": config({}, { ...library, strict: false }),
+        ".storybook/globals.d.ts": globals,
+        ".storybook/main.ts": `${wrong}export function f(x) {\n  return x;\n}\n`,
+      },
+      [error(".storybook/main.ts")],
+    ],
+    "where the project lists a file, only what it lists": [
+      {
+        "tsconfig.json": config({ include: [".gen/**/*"] }),
+        ".gen/globals.d.ts": globals,
+        ".gen/a.ts": wrong,
+        "scripts/s.ts": wrong,
+      },
+      [error(".gen/a.ts")],
+    ],
+    "where a tsconfig.json below has all that the project lists, what it does not exclude": [
+      {
+        "tsconfig.json": config({ include: ["sub"] }),
+        "sub/tsconfig.json": config(),
+        "sub/globals.d.ts": globals,
+        "sub/x.ts": wrong,
+        "scripts/s.ts": wrong,
+      },
+      [error("scripts/s.ts"), error("sub/x.ts")],
+    ],
+    "a file that two projects list is checked once": [
+      {
+        "tsconfig.json": config(),
+        "globals.d.ts": globals,
+        "a.ts": wrong,
+        "sub/tsconfig.json": config(),
+        "sub/globals.d.ts": globals,
+        "sub/x.ts": wrong,
+      },
+      [error("a.ts"), error("sub/x.ts")],
+    ],
+  };
+
+  // One at a time: a debug build takes half a second to start, and a dozen at once come close to the timeout.
+  describe("a directory without a tsconfig.json at or above it", () => {
+    test.each(Object.entries(layouts))("%s", async (_, [files, reported]) => {
+      using dir = tempDir("bun-check-directory", { "apps/site": files });
+      const { stdout, exitCode } = await run(dir, ["check", "."]);
+      expect({ reported: stdout.split("\n"), exitCode }).toEqual({ reported, exitCode: 1 });
+    });
+
+    // Not the working directory, so what is beside `apps` has no part in it.
+    test.each(["a dot directory that `include` names", "JavaScript of a project that a solution references"])(
+      "the directory above the package, by its name: %s",
+      async name => {
+        const [files, reported] = layouts[name];
+        using dir = tempDir("bun-check-directory", { "apps/site": files, "loose.ts": wrong });
+        const { stdout, exitCode } = await run(dir, ["check", "apps"]);
+        expect({ reported: stdout.split("\n"), exitCode }).toEqual({ reported, exitCode: 1 });
+      },
+    );
+
+    test("JavaScript of a project that a solution references, with no TypeScript file beside it", async () => {
+      using dir = tempDir("bun-check-directory", { "apps/site": { "tsconfig.json": solution, ...javascript } });
+      const { stdout, exitCode } = await run(dir, ["check", "."]);
+      expect({ stdout, exitCode }).toEqual({ stdout: error("src/legacy.js", 2), exitCode: 1 });
+    });
+
+    // The tsconfig.json of `apps/admin` comes first, and what it references is not looked in twice.
+    test("JavaScript of a project that the tsconfig.json of another package references too", async () => {
+      using dir = tempDir("bun-check-directory", {
+        "apps/admin": {
+          "tsconfig.json": config({ include: ["src"], references: [{ path: "../site/tsconfig.app.json" }] }),
+          "src/globals.d.ts": globals,
+          "src/a.ts": right,
+        },
+        "apps/site": {
+          ...javascript,
+          "tsconfig.json": solution,
+          "tsconfig.app.json": config({ include: ["src", ".types/*"] }, { allowJs: true, checkJs: true, ...library }),
+        },
+      });
+      const { stdout, exitCode } = await run(dir, ["check", "."]);
+      expect({ stdout, exitCode }).toEqual({ stdout: error("src/legacy.js", 2), exitCode: 1 });
+    });
+
+    // The link is what a package manager makes for a package of the workspace. What it leads to is not in `node_modules`:
+    // the tsconfig.json that has a say about it is the one in `packages/ui`, if the run is about that directory.
+    test("a project that another references through a link in node_modules is checked where it is", async () => {
+      using dir = tempDir("bun-check-directory", {
+        "apps/site": {
+          "tsconfig.json": config({ include: ["src"], references: [{ path: "./node_modules/ui" }] }),
+          "src/globals.d.ts": globals,
+          "src/a.ts": right,
+        },
+        "packages/ui": {
+          "tsconfig.json": config({ include: ["src"] }, library),
+          "src/globals.d.ts": globals,
+          "src/x.ts": wrong,
+        },
+      });
+      mkdirSync(join(String(dir), "apps", "site", "node_modules"));
+      symlinkSync(
+        join(String(dir), "packages", "ui"),
+        join(String(dir), "apps", "site", "node_modules", "ui"),
+        "junction",
+      );
+      const [all, apps] = await Promise.all([run(dir, ["check", "."]), run(dir, ["check", "apps"])]);
+      expect([all, apps].map(({ stdout, exitCode }) => ({ stdout, exitCode }))).toEqual([
+        {
+          stdout: `packages/ui/src/x.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`,
+          exitCode: 1,
+        },
+        { stdout: "", exitCode: 0 },
+      ]);
+    });
+
+    // The tsconfig.json that references it is read first, and spells it otherwise than the directory is spelled.
+    test.skipIf(!foldsCase)("a project that another references in another case is read once", async () => {
+      using dir = tempDir("bun-check-directory", {
+        "apps/site": {
+          "tsconfig.json": config({ include: ["src"], references: [{ path: "../../Packages/UI" }] }),
+          "src/globals.d.ts": globals,
+          "src/a.ts": right,
+        },
+        "packages/ui": {
+          "tsconfig.json": config({ include: ["src", ".gen/*.ts"] }, library),
+          "src/globals.d.ts": globals,
+          ".gen/x.ts": wrong,
+          "scripts/s.ts": wrong,
+        },
+      });
+      const { stdout, exitCode } = await run(dir, ["check", "."]);
+      expect({ stdout, exitCode }).toEqual({
+        stdout: `packages/ui/.gen/x.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`,
+        exitCode: 1,
+      });
+    });
+
+    // In `node_modules` no tsconfig.json is nearest to `..`, so the one nearest to the working directory is, and it is
+    // also below `..`. The tsconfig.json at the root has no files there.
+    test("the tsconfig.json nearest to the working directory has its say once", async () => {
+      using dir = tempDir("bun-check-directory", {
+        "tsconfig.json": config({ include: ["src"] }),
+        "src/globals.d.ts": globals,
+        "node_modules/pkg/sub": {
+          "tsconfig.json": config({ include: ["lib"] }),
+          "lib/globals.d.ts": globals,
+          "lib/a.ts": wrong,
+          "scripts/s.ts": wrong,
+        },
+      });
+      const { stdout, exitCode } = await run(join(String(dir), "node_modules", "pkg", "sub"), ["check", ".."]);
+      expect({ stdout, exitCode }).toEqual({
+        stdout: `lib/a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`,
+        exitCode: 1,
+      });
+    });
+
+    test.each([
+      [wrong, 1],
+      [right, 0],
+    ])("`bun run --check` runs the script if a file in a dot directory has no error: %j", async (source, code) => {
+      using dir = tempDir("bun-check-directory", {
+        "package.json": JSON.stringify({ scripts: { build: "echo the script ran" } }),
+        "apps/site": { ...layouts["a dot directory that `include` names"][0], ".next/types/routes.ts": source },
+      });
+      const { stdout, stderr, exitCode } = await run(dir, ["run", "--check", "build"]);
+      expect({
+        reports: stderr.includes(error(".next/types/routes.ts")),
+        ran: stdout.includes("the script ran"),
+        exitCode,
+      }).toEqual({ reports: code === 1, ran: code === 0, exitCode: code });
+    });
+  });
+});
+
+describe("empty path requests", () => {
+  // `bun check <paths>`: a path names a file or a directory to check, and a project is named with `-p` or `-b`. A run whose
+  // paths have no TypeScript file does not pass.
+
+  // Disable AI agent and CI detection regardless of the environment the tests run in.
+  const env = {
+    ...bunEnv,
+    AGENT: "0",
+    CLAUDECODE: undefined,
+    REPL_ID: undefined,
+    GITHUB_ACTIONS: undefined,
+    GITHUB_WORKSPACE: undefined,
+    // Of the script that runs the tests.
+    npm_lifecycle_event: undefined,
+    npm_package_json: undefined,
+    BUN_INTERNAL_CHECK_SCRIPTS: undefined,
+    NO_COLOR: "1",
+  };
+
+  // `lib: ["es5"]`: three library files in place of eighty, which a debug build takes long to read.
+  const options = { strict: true, noEmit: true, lib: ["es5"], types: [], skipLibCheck: true };
+  const tsconfig = JSON.stringify({ compilerOptions: options });
+
+  // One type error, in `src/a.ts`.
+  const project = (files: Record<string, string> = {}) =>
+    tempDir("bun-check", {
+      "tsconfig.json": tsconfig,
+      "tsconfig.build.json": `{ "extends": "./tsconfig.json" }`,
+      "jsconfig.json": `{}`,
+      "configs/base.json": tsconfig,
+      "package.json": `{ "name": "app" }`,
+      "args.txt": "tsconfig.build.json",
+      "src/a.ts": `export const wrong: number = "";\n`,
+      "src/ok.ts": `export const ok = 1;\n`,
+      "src/tsconfig.ts": `export const named = 1;\n`,
+      "types/globals.d.ts": `declare const broken: NoSuchType;\n`,
+      "data/d.json": `{ "k": 1 }`,
+      "empty/README.md": "",
+      "empty2/README.md": "",
+      ...files,
+    });
+  const error = `src/a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
+
+  // Whether the file system takes `A` for `a`, where the projects of these tests are.
+  const foldsCase = (() => {
+    using dir = tempDir("bun-check", { "probe": "" });
+    return existsSync(join(String(dir), "PROBE"));
+  })();
+
+  // `cwd` may be another spelling of `root`, which is what the output has.
+  async function run(cwd: string, cmd: string[], root = cwd) {
+    await using proc = spawn({ timeout: longLimit, cmd: [bunExe(), ...cmd], cwd, env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const clean = (text: string) => text.replaceAll("\\", "/").replaceAll(root.replaceAll("\\", "/"), "<dir>").trim();
+    return { stdout: clean(stdout), stderr: clean(stderr), exitCode };
+  }
+
+  const check = (dir: { toString(): string }, args: string[]) => run(String(dir), ["check", ...args]);
+  const outcome = ({ stdout, exitCode }: { stdout: string; exitCode: number }) => ({ stdout, exitCode });
+
+  const isConfig = (config: string) => ({
+    stdout: [
+      `error: '${config}' is a configuration file, not a file to check`,
+      `To use it as the project: bun check -p ${config}`,
+      `To use it with the projects it references: bun check -b ${config}`,
+      `To check the project here: bun check`,
+    ].join("\n"),
+    exitCode: 1,
+  });
+  const nothing = (path: string) => ({
+    stdout: `error: Nothing to check: no TypeScript files in '<dir>/${path}'`,
+    exitCode: 1,
+  });
+
+  describe("a run that names only configuration files", () => {
+    test.each([
+      [["tsconfig.build.json"], "tsconfig.build.json"],
+      [["tsconfig.json"], "tsconfig.json"],
+      [["jsconfig.json"], "jsconfig.json"],
+      [["<dir>/tsconfig.build.json"], "tsconfig.build.json"],
+      [["--", "tsconfig.build.json"], "tsconfig.build.json"],
+      [["@args.txt"], "tsconfig.build.json"],
+      // The first of them.
+      [["tsconfig.build.json", "tsconfig.json"], "tsconfig.build.json"],
+      // The one that `-p` names, whatever its name is.
+      [["-p", "configs/base.json", "configs/base.json"], "configs/base.json"],
+      // The list would be that of the nearest project.
+      [["--listFilesOnly", "tsconfig.build.json"], "tsconfig.build.json"],
+    ])("is refused, with the commands that take one: %j", async (args, config) => {
+      using dir = project();
+      const there = args.map(arg => arg.replace("<dir>", String(dir)));
+      expect(outcome(await check(dir, there))).toEqual(isConfig(config));
+    });
+
+    // Each of these is an error of its own once the project is read.
+    test.each([
+      ["an option of tsconfig.json that is wrong", { "tsconfig.json": `{ "compilerOptions": { "strict": "yes" } }` }],
+      ["a tsconfig.build.json that does not parse", { "tsconfig.build.json": `{ "extends": "./tsconfig.json"` }],
+      [
+        "a project that takes no JSON file",
+        { "tsconfig.json": JSON.stringify({ compilerOptions: { ...options, resolveJsonModule: false } }) },
+      ],
+    ])("is refused before the project is read: %s", async (_, files) => {
+      using dir = project(files);
+      const { stdout, stderr, exitCode } = await check(dir, ["--timing", "tsconfig.build.json"]);
+      expect({ stdout, exitCode }).toEqual(isConfig("tsconfig.build.json"));
+      expect(stderr).toMatch(/^\s*0 files loaded/m);
+    });
+
+    test("is refused where no tsconfig.json is at the root", async () => {
+      using dir = project({ "packages/app/tsconfig.json": tsconfig, "packages/app/a.ts": `export {};\n` });
+      rmSync(join(String(dir), "tsconfig.json"));
+      const refused = await check(dir, ["packages/app/tsconfig.json"]);
+      expect(outcome(refused)).toEqual(isConfig("packages/app/tsconfig.json"));
+    });
+
+    test.each(["tsconfig.json", "tsconfig.app.json"])(
+      "is refused beside a tsconfig.json with nothing but references: %s",
+      async config => {
+        using dir = project({
+          "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "./tsconfig.app.json" }] }),
+          "tsconfig.app.json": tsconfig,
+        });
+        expect(outcome(await check(dir, [config]))).toEqual(isConfig(config));
+      },
+    );
+
+    test.each([0, 1, 2])("is told a command that checks the project: line %i of 3", async line => {
+      using dir = project();
+      const { stdout } = await check(dir, ["tsconfig.build.json"]);
+      const commands = [...stdout.matchAll(/: bun (check.*)$/gm)].map(match => match[1].split(" "));
+      expect(commands.length).toBe(3);
+      expect(outcome(await run(String(dir), commands[line]))).toEqual({ stdout: error, exitCode: 1 });
+    });
+
+    test.skipIf(!foldsCase)("is named from the working directory, however that is spelled", async () => {
+      using dir = project();
+      const root = String(dir);
+      const respelled = join(dirname(root), basename(root).toUpperCase());
+      const refused = await run(respelled, ["check", "tsconfig.build.json"], root);
+      expect(outcome(refused)).toEqual(isConfig("tsconfig.build.json"));
+    });
+
+    test("is not what a directory with such a name is", async () => {
+      using dir = project({ "tsconfig.old.json/a.ts": `export const wrong: number = "";\n` });
+      const checked = await check(dir, ["tsconfig.old.json"]);
+      expect(outcome(checked)).toEqual({ stdout: error.replace("src/", "tsconfig.old.json/"), exitCode: 1 });
+    });
+
+    // Before something runs, it is the module to run.
+    test("is not refused by `bun --check`", async () => {
+      using dir = tempDir("bun-check", { "tsconfig.empty.json": `{}` });
+      const ran = await run(String(dir), ["--loader", ".json:ts", "--check", "tsconfig.empty.json"]);
+      expect({ isRefused: ran.stderr.includes("is a configuration file"), exitCode: ran.exitCode }).toEqual({
+        isRefused: false,
+        exitCode: 0,
+      });
+    });
+  });
+
+  describe("a run whose paths have no TypeScript file", () => {
+    test.each([
+      [["package.json"], "package.json"],
+      [["-p", "tsconfig.build.json", "package.json"], "package.json"],
+      [["data/d.json"], "data/d.json"],
+      // A configuration file whose name does not say so.
+      [["configs/base.json"], "configs/base.json"],
+      // The first of them.
+      [["./tsconfig.json", "package.json"], "tsconfig.json"],
+      [["empty", "package.json"], "empty"],
+      // These two are refused before anything is read, as they were.
+      [["data"], "data"],
+      [["empty", "empty2"], "empty"],
+    ])("is refused: %j", async (args, path) => {
+      using dir = project();
+      expect(outcome(await check(dir, args))).toEqual(nothing(path));
+    });
+
+    test("is refused where there is no tsconfig.json", async () => {
+      using dir = tempDir("bun-check", { "package.json": `{ "name": "app" }` });
+      expect(outcome(await check(dir, ["--lib", "es5", "package.json"]))).toEqual(nothing("package.json"));
+    });
+
+    // A project of JSON files alone. Without a path, what its configuration file selects is its own affair.
+    test.each([
+      [[], { stdout: "", exitCode: 0 }],
+      [["."], { stdout: "error: Nothing to check: no TypeScript files in '<dir>'", exitCode: 1 }],
+      [["locales"], nothing("locales")],
+      [["locales/de.json"], nothing("locales/de.json")],
+    ])("is refused where the project includes the JSON files: %j", async (args, expected) => {
+      using dir = tempDir("bun-check", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: options, include: ["locales/*.json"] }),
+        "locales/de.json": `{ "hello": "hallo" }`,
+      });
+      expect(outcome(await check(dir, args))).toEqual(expected);
+    });
+
+    test.each(["package.json", "tsconfig.build.json"])(
+      "is refused without the text under `--quiet`: %s",
+      async path => {
+        using dir = project();
+        expect(outcome(await check(dir, ["--quiet", path]))).toEqual({ stdout: "", exitCode: 1 });
+      },
+    );
+
+    // `skipLibCheck` leaves the file out, as it does where no path is named. lint-staged names a staged `.d.ts` file by
+    // itself.
+    test.each([[["types/globals.d.ts"]], [["types"]], [["types/globals.d.ts", "package.json"]]])(
+      "passes if one of the paths has a declaration file: %j",
+      async args => {
+        using dir = project();
+        expect(outcome(await check(dir, args))).toEqual({ stdout: "", exitCode: 0 });
+      },
+    );
+
+    // Nothing is said of the other paths, and a configuration file among them is not the project.
+    test.each([
+      [["src/ok.ts", "package.json"], { stdout: "", exitCode: 0 }],
+      [["src/tsconfig.ts"], { stdout: "", exitCode: 0 }],
+      [["tsconfig.build.json", "src/a.ts"], { stdout: error, exitCode: 1 }],
+      [["src", "tsconfig.build.json"], { stdout: error, exitCode: 1 }],
+    ])("is not what a path with a TypeScript file makes: %j", async (args, expected) => {
+      using dir = project();
+      expect(outcome(await check(dir, args))).toEqual(expected);
+    });
+
+    test("is listed by `--listFilesOnly`", async () => {
+      using dir = project();
+      const { stdout, exitCode } = await check(dir, ["--listFilesOnly", "package.json"]);
+      expect(stdout.split("\n").at(-1)).toBe("<dir>/package.json");
+      expect(exitCode).toBe(0);
+    });
+
+    test.each(["tsconfig.build.json", "package.json"])("is not named beside a path that is missing: %s", async path => {
+      using dir = project();
+      const missing = await check(dir, ["nope.ts", path]);
+      expect(outcome(missing)).toEqual({ stdout: "error TS6053: File '<dir>/nope.ts' not found.", exitCode: 1 });
+    });
+
+    test("is not named where a JSON file has a syntax error", async () => {
+      using dir = project({ "data/bad.json": `not json {` });
+      const { stdout, exitCode } = await check(dir, ["data/bad.json"]);
+      const places = stdout.split("\n").map(line => line.replace(/\(\d+,\d+\): error TS1\d+: .*$/, ""));
+      expect([...new Set(places)]).toEqual(["data/bad.json"]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("is not named where the project takes no JSON file", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ compilerOptions: { ...options, resolveJsonModule: false } }),
+      });
+      const { stdout, exitCode } = await check(dir, ["data/d.json"]);
+      expect(stdout.split("\n")[0]).toStartWith("error TS6054: File '<dir>/data/d.json' has an unsupported extension.");
+      expect(stdout).not.toContain("Nothing to check");
       expect(exitCode).toBe(1);
     });
   });

@@ -4064,7 +4064,7 @@ pub(crate) mod __gated_printer {
                     // the identical fold, so emitted output is unchanged.
                     let mut e = E::Template {
                         tag: e.tag,
-                        parts: e.parts,
+                        parts: e.parts.view(),
                         head: match &e.head {
                             E::TemplateContents::Cooked(c) => {
                                 E::TemplateContents::Cooked(c.shallow_clone())
@@ -4115,7 +4115,7 @@ pub(crate) mod __gated_printer {
                             let parts_slice = js_ast::StoreSlice::from_bump(replaced);
                             let mut copy = E::Template {
                                 tag: e.tag,
-                                parts: parts_slice,
+                                parts: E::TemplateParts::borrowed(parts_slice),
                                 head: match &e.head {
                                     E::TemplateContents::Cooked(c) => {
                                         E::TemplateContents::Cooked(c.shallow_clone())
@@ -4144,7 +4144,7 @@ pub(crate) mod __gated_printer {
                                     // point at `copy`.
                                     e = E::Template {
                                         tag: t.tag,
-                                        parts: t.parts,
+                                        parts: t.parts.view(),
                                         head: match &t.head {
                                             E::TemplateContents::Cooked(c) => {
                                                 E::TemplateContents::Cooked(c.shallow_clone())

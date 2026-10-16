@@ -2036,22 +2036,105 @@ impl TemplatePart {
     }
 }
 
+/// The parts of an `E::Template`. Not `Copy`: one handle owns the free slots around them.
+pub struct TemplateParts {
+    slice: crate::StoreSlice<TemplatePart>,
+    /// Free slots on each side of `slice`, in a block that `insert` allocated for this handle.
+    margin: u32,
+}
+
+impl TemplateParts {
+    pub const EMPTY: TemplateParts = TemplateParts::borrowed(crate::StoreSlice::EMPTY);
+
+    /// Parts with no free slots around them: the first `insert` copies them.
+    #[inline]
+    pub const fn borrowed(slice: crate::StoreSlice<TemplatePart>) -> TemplateParts {
+        TemplateParts { slice, margin: 0 }
+    }
+
+    #[inline]
+    pub fn slice(&self) -> &[TemplatePart] {
+        self.slice.slice()
+    }
+
+    #[inline]
+    pub fn slice_mut(&mut self) -> &mut [TemplatePart] {
+        self.slice.slice_mut()
+    }
+
+    /// The same parts, for a copy of the node that only reads them.
+    #[inline]
+    pub fn view(&self) -> TemplateParts {
+        TemplateParts::borrowed(self.slice)
+    }
+
+    /// Moves the parts and the free slots around them out, leaving this handle empty.
+    #[inline]
+    pub fn take(&mut self) -> TemplateParts {
+        core::mem::replace(self, TemplateParts::EMPTY)
+    }
+
+    #[inline]
+    pub fn truncate(&mut self, len: usize) {
+        self.slice.truncate(len);
+    }
+
+    /// `extra ++ parts` with `front`, else `parts ++ extra`, in place while the free slots last.
+    pub fn insert(&mut self, bump: &Bump, extra: &[TemplatePart], front: bool) {
+        let len = self.slice.len();
+        let total = len + extra.len();
+        let mut margin = self.margin as usize;
+        // SAFETY: a non-zero `margin` means `self.slice` came from this function: it sits in a
+        // block with at least `margin` free slots on each side, and `as_ptr` can reach them
+        // because `from_raw_parts` keeps the block's provenance. No other handle knows those
+        // slots (`view()` has a margin of 0, `take()` moves), so nothing else reads or writes
+        // them and `extra` cannot overlap them. A new block has `margin + total + margin` slots,
+        // and `[first, first + total)` is fully written before the slice is formed. A block that
+        // is too small is abandoned, never freed, so views of it stay valid.
+        self.slice = unsafe {
+            let first = if extra.len() > margin {
+                margin = total.div_ceil(2);
+                let block = bump.alloc_uninit_slice::<TemplatePart>(margin + total + margin);
+                let first = block.as_mut_ptr().cast::<TemplatePart>().add(margin);
+                let kept = first.add(if front { extra.len() } else { 0 });
+                for (i, part) in self.slice().iter().enumerate() {
+                    kept.add(i).write(part.shallow_clone());
+                }
+                first
+            } else {
+                margin -= extra.len();
+                let old = self.slice.as_ptr().cast_mut();
+                if front { old.sub(extra.len()) } else { old }
+            };
+            let free = if front { first } else { first.add(len) };
+            for (i, part) in extra.iter().enumerate() {
+                free.add(i).write(part.shallow_clone());
+            }
+            crate::StoreSlice::from_raw_parts(core::ptr::NonNull::new_unchecked(first), total)
+        };
+        self.margin = margin as u32;
+    }
+}
+
 pub struct Template {
     pub tag: Option<ExprNodeIndex>,
     /// Arena-owned mutable slice. Stored as a
     /// `StoreSlice` so writers (`substitute_single_use_symbol_in_expr`, the
     /// visit pass, `foldStringAddition`) retain mutable provenance. Use
     /// `parts()` / `parts_mut()` for ergonomic access; never null.
-    pub parts: crate::StoreSlice<TemplatePart>,
+    pub parts: TemplateParts,
     pub head: TemplateContents,
 }
 
+const _: () = assert!(core::mem::size_of::<TemplateParts>() == 16);
+const _: () = assert!(core::mem::size_of::<Template>() == 72);
+
 impl Template {
-    /// Empty `StoreSlice<TemplatePart>` for parts-less templates (e.g. tagged
+    /// Empty parts for parts-less templates (e.g. tagged
     /// no-substitution literals).
     #[inline]
-    pub fn empty_parts() -> crate::StoreSlice<TemplatePart> {
-        crate::StoreSlice::EMPTY
+    pub fn empty_parts() -> TemplateParts {
+        TemplateParts::EMPTY
     }
 
     #[inline]
@@ -2110,11 +2193,10 @@ impl Template {
             return Expr::init(core::mem::take(self.head.cooked_mut()), loc);
         }
 
-        let mut parts =
-            bun_alloc::ArenaVec::<TemplatePart>::with_capacity_in(self.parts().len(), bump);
-        let mut head = Expr::init(core::mem::take(self.head.cooked_mut()), loc);
-        for part_src in self.parts() {
-            let mut part = part_src.shallow_clone();
+        // `parts[..kept]` are final. Part `i >= kept` is read before slot `kept` is written.
+        let mut kept = 0;
+        for i in 0..self.parts().len() {
+            let mut part = self.parts()[i].shallow_clone();
             debug_assert!(matches!(part.tail, TemplateContents::Cooked(_)));
 
             part.value = part.value.unwrap_inlined();
@@ -2154,7 +2236,7 @@ impl Template {
                     .expect("infallible: variant checked")
                     .is_utf8()
             {
-                if parts.is_empty() {
+                if kept == 0 {
                     if part
                         .value
                         .data
@@ -2163,39 +2245,33 @@ impl Template {
                         .len()
                         > 0
                     {
-                        head.data
+                        self.head.cooked_mut().push(
+                            Expr::init(
+                                part.value
+                                    .data
+                                    .e_string()
+                                    .expect("infallible: variant checked")
+                                    .shallow_clone(),
+                                crate::Loc::EMPTY,
+                            )
+                            .data
                             .e_string_mut()
-                            .expect("infallible: variant checked")
-                            .push(
-                                Expr::init(
-                                    part.value
-                                        .data
-                                        .e_string()
-                                        .expect("infallible: variant checked")
-                                        .shallow_clone(),
-                                    crate::Loc::EMPTY,
-                                )
-                                .data
-                                .e_string_mut()
-                                .unwrap(),
-                            );
+                            .unwrap(),
+                        );
                     }
 
                     if part.tail.cooked().len() > 0 {
-                        head.data
-                            .e_string_mut()
-                            .expect("infallible: variant checked")
-                            .push(
-                                Expr::init(core::mem::take(part.tail.cooked_mut()), part.tail_loc)
-                                    .data
-                                    .e_string_mut()
-                                    .unwrap(),
-                            );
+                        self.head.cooked_mut().push(
+                            Expr::init(core::mem::take(part.tail.cooked_mut()), part.tail_loc)
+                                .data
+                                .e_string_mut()
+                                .unwrap(),
+                        );
                     }
 
                     continue;
                 } else {
-                    let prev_part = parts.last_mut().unwrap();
+                    let prev_part = &mut self.parts_mut()[kept - 1];
                     debug_assert!(matches!(prev_part.tail, TemplateContents::Cooked(_)));
 
                     if prev_part.tail.cooked().is_utf8() {
@@ -2231,16 +2307,18 @@ impl Template {
                             );
                         }
                     } else {
-                        parts.push(part);
+                        self.parts_mut()[kept] = part;
+                        kept += 1;
                     }
                 }
             } else {
-                parts.push(part);
+                self.parts_mut()[kept] = part;
+                kept += 1;
             }
         }
 
-        if parts.is_empty() {
-            // parts.deinit() — drop is implicit
+        if kept == 0 {
+            let mut head = Expr::init(core::mem::take(self.head.cooked_mut()), loc);
             head.data
                 .e_string_mut()
                 .expect("infallible: variant checked")
@@ -2248,21 +2326,11 @@ impl Template {
             return head;
         }
 
-        // Arena-owned mutable slice; `into_bump_slice_mut()` preserves write
-        // provenance for downstream mutators.
-        Expr::init(
-            Template {
-                tag: None,
-                parts: crate::StoreSlice::from_bump(parts),
-                head: TemplateContents::Cooked(
-                    head.data
-                        .e_string()
-                        .expect("infallible: variant checked")
-                        .shallow_clone(),
-                ),
-            },
+        self.parts.truncate(kept);
+        Expr {
+            data: crate::expr::Data::ETemplate(StoreRef::from_bump(self)),
             loc,
-        )
+        }
     }
 }
 

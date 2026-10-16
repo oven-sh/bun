@@ -2867,18 +2867,15 @@ fn transpile_source_code_of_any_provenance(
                     });
                 }
 
-                // Empty .cjs/.cts: synthetic `(function(){})`.
-                if parse_result.empty && matches!(loader, L::Js | L::Ts) {
-                    let ext = bun_paths::extension(source.path.text);
-                    if ext == b".cjs" || ext == b".cts" {
-                        return Ok(ResolvedSource {
-                            source_code: bun_core::String::static_("(function(){})"),
-                            source_url: input_specifier.create_if_different(path.text),
-                            is_commonjs_module: true,
-                            tag: ResolvedSourceTag::Javascript,
-                            ..Default::default()
-                        });
-                    }
+                // An empty CommonJS file: synthetic `(function(){})`.
+                if parse_result.empty && module_type_only_for_wrappables == ModuleType::Cjs {
+                    return Ok(ResolvedSource {
+                        source_code: bun_core::String::static_("(function(){})"),
+                        source_url: input_specifier.create_if_different(path.text),
+                        is_commonjs_module: true,
+                        tag: ResolvedSourceTag::Javascript,
+                        ..Default::default()
+                    });
                 }
 
                 // RuntimeTranspilerCache hit: skip print.

@@ -1016,6 +1016,17 @@ impl TranspilerJob {
             return;
         }
 
+        // An empty CommonJS file: synthetic `(function(){})`.
+        if parse_result.empty && module_type == ModuleType::Cjs {
+            self.resolved_source = ResolvedSource {
+                source_code: String::static_("(function(){})"),
+                is_commonjs_module: true,
+                tag: this_tag,
+                ..Default::default()
+            };
+            return;
+        }
+
         for import_record in parse_result.ast.import_records.as_mut_slice() {
             let import_record: &mut ImportRecord = import_record;
 

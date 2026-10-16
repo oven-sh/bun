@@ -448,8 +448,7 @@ function getSimpleIdlType(type: TypeImpl): string | undefined {
 }
 
 type ExceptionContext =
-  | { type: "none" }
-  | { type: "argument"; argumentIndex: number; name: string; functionName: string };
+  { type: "none" } | { type: "argument"; argumentIndex: number; name: string; functionName: string };
 
 function emitConvertValue(
   storageLocation: string,

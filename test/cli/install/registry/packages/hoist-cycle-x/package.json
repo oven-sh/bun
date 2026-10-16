@@ -1,0 +1,35 @@
+{
+  "_id": "hoist-cycle-x",
+  "name": "hoist-cycle-x",
+  "dist-tags": {
+    "latest": "2.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "hoist-cycle-x",
+      "version": "1.0.0",
+      "dependencies": {
+        "hoist-cycle-y": "1.0.0"
+      },
+      "_id": "hoist-cycle-x@1.0.0",
+      "dist": {
+        "integrity": "sha512-XxY8WzFQ5Bl1KRxuXCjsm+fI5ByOVVRT0c3oTzC8OFZ/ya+bXJwAgbx8ZNmLmfMJVZYPdJbKgLmtmQ7YumXOqw==",
+        "shasum": "8c8c12769463f25bb4bbeacd0d257aa78c23e7fd",
+        "tarball": "http://localhost:4873/hoist-cycle-x/-/hoist-cycle-x-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "hoist-cycle-x",
+      "version": "2.0.0",
+      "dependencies": {
+        "hoist-cycle-y": "2.0.0"
+      },
+      "_id": "hoist-cycle-x@2.0.0",
+      "dist": {
+        "integrity": "sha512-ekGNL6MZSdsQ84pld6v1kcvZNSlR29owcDnPIamnrkuKAIj//DOnvKllLSKpW3ICKtXdvRac65hCt/v7hjQ2Iw==",
+        "shasum": "5fb9f771e881c4f89abc18f0dd75732b44b37380",
+        "tarball": "http://localhost:4873/hoist-cycle-x/-/hoist-cycle-x-2.0.0.tgz"
+      }
+    }
+  }
+}

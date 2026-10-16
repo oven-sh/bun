@@ -1,0 +1,3 @@
+<script lang="tsx">
+const f = <T,>() =>   1;
+</script>

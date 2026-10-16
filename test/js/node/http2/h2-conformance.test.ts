@@ -2424,35 +2424,55 @@ describe("close(code) reset code", () => {
     });
 
     // close(0) ends the readable first, and that emits 'readable' for a stream that was read. The
-    // listeners of 'aborted' still run after that listener threw.
-    test("close(0) when a 'readable' listener throws: the close is complete", async () => {
+    // listeners of 'aborted' still run after that listener threw. Stream id -> the events whose
+    // listener throws.
+    test("close(0) when listeners of 'readable' and 'aborted' throw: the close is complete, and it throws each error", async () => {
+      const throwing: Record<number, string[]> = { 1: ["readable"], 3: ["aborted"], 5: ["readable", "aborted"] };
       const server = http2.createServer();
       await withRawClient(server, async c => {
-        const seen: string[] = [];
-        const { promise: closed, resolve } = Promise.withResolvers<void>();
+        const seen: Record<number, unknown[]> = {};
+        const closed: Promise<void>[] = [];
         server.on("stream", stream => {
+          const events: unknown[] = (seen[stream.id!] = []);
+          const { promise, resolve } = Promise.withResolvers<void>();
+          closed.push(promise);
           stream.on("error", () => {});
           stream.on("close", () => {
-            seen.push("close:" + stream.rstCode);
+            events.push("close:" + stream.rstCode);
             resolve();
           });
-          stream.on("aborted", () => seen.push("aborted"));
-          stream.once("readable", () => {
-            throw new Error("boom");
-          });
+          stream.on("aborted", () => events.push("aborted"));
+          const thrownBy = new Map<unknown, string>();
+          // A close() that stops at the first error leaves a listener. It must not throw in a later test.
+          let insideClose = true;
+          for (const event of throwing[stream.id!]) {
+            const error = new Error(`${event} failed`);
+            thrownBy.set(error, event);
+            stream.once(event, () => {
+              if (insideClose) throw error;
+            });
+          }
           stream.read();
           try {
             stream.close(ErrorCode.NO_ERROR);
           } catch (err) {
-            seen.push("threw:" + (err as Error).message);
+            const errors: unknown[] = err instanceof AggregateError ? err.errors : [err];
+            events.push({ threw: errors.map(error => thrownBy.get(error)), message: (err as Error).message });
           }
+          insideClose = false;
           ping(c, 0);
         });
-        c.send(upload(1));
-        await resetsThenTwoPings(c, [1]);
-        expect([...new Set(c.frames.filter(isReset(1)).map(f => f.payload.readUInt32BE(0)))]).toEqual([0]);
-        await closed;
-        expect(seen).toEqual(["aborted", "threw:boom", "close:0"]);
+        c.send(Buffer.concat(sids.map(upload)));
+        await resetsThenTwoPings(c);
+        expect(
+          sids.map(sid => [...new Set(c.frames.filter(isReset(sid)).map(f => f.payload.readUInt32BE(0)))]),
+        ).toEqual(sids.map(() => [0]));
+        await Promise.all(closed);
+        expect(seen).toEqual({
+          1: ["aborted", { threw: ["readable"], message: "readable failed" }, "close:0"],
+          3: ["aborted", { threw: ["aborted"], message: "aborted failed" }, "close:0"],
+          5: ["aborted", { threw: ["readable", "aborted"], message: "readable failed" }, "close:0"],
+        });
       });
     });
 

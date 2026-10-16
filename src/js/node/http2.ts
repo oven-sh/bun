@@ -27,6 +27,7 @@
  * Modifications were made to the original code.
  */
 const { isTypedArray } = require("node:util/types");
+const { aggregateTwoErrors } = require("internal/errors");
 const { hideFromStack, hasObserver, enqueueNodeEntry, PerformanceNodeEntry } = require("internal/shared");
 const { STATUS_CODES, utcDate } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
@@ -2585,30 +2586,30 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       this[bunHTTP2StreamStatus] |= StreamState.CloseRecorded;
       let thrown: unknown;
       let threw = false;
-      try {
-        if (this.pending || code === NGHTTP2_NO_ERROR || code === NGHTTP2_CANCEL) {
-          // For other rstCodes _destroy ends the readable so 'end' is suppressed.
+      if (this.pending || code === NGHTTP2_NO_ERROR || code === NGHTTP2_CANCEL) {
+        // For other rstCodes _destroy ends the readable so 'end' is suppressed.
+        try {
           this.push(null);
+        } catch (err) {
+          // A listener that throws does not stop the close: node main has submitted its reset by then (nodejs/node#66314).
+          thrown = err;
+          threw = true;
         }
-      } catch (err) {
-        // A listener that throws does not stop the close: node main has submitted its reset by then (nodejs/node#66314).
-        thrown = err;
-        threw = true;
       }
-      try {
-        const { ending } = this._writableState;
-        if (!ending) {
-          // The writable side is still open: set the aborted flag and emit 'aborted'.
-          if (!this.aborted) {
-            this[kAborted] = true;
+      const { ending } = this._writableState;
+      if (!ending) {
+        // If the writable side of the Http2Stream is still open, emit the
+        // 'aborted' event and set the aborted flag.
+        if (!this.aborted) {
+          this[kAborted] = true;
+          try {
             this.emit("aborted");
+          } catch (err) {
+            thrown = threw ? aggregateTwoErrors(err as Error, thrown as Error) : err;
+            threw = true;
           }
-          this.end();
         }
-      } catch (err) {
-        if (!threw) thrown = err;
-        threw = true;
-        if (!this._writableState.ending) this.end();
+        this.end();
       }
       this.rstCode = code;
       markStreamClosed(this);

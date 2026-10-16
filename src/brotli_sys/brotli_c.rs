@@ -8,8 +8,6 @@ type brotli_alloc_func =
     Option<unsafe extern "C" fn(opaque: *mut c_void, size: usize) -> *mut c_void>;
 type brotli_free_func = Option<unsafe extern "C" fn(opaque: *mut c_void, address: *mut c_void)>;
 
-bun_opaque::opaque_ffi! { pub struct struct_BrotliSharedDictionaryStruct; }
-
 pub const BROTLI_SHARED_DICTIONARY_RAW: c_int = 0;
 type enum_BrotliSharedDictionaryType = c_uint;
 pub type BrotliSharedDictionaryType = enum_BrotliSharedDictionaryType;

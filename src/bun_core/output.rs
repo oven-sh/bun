@@ -551,8 +551,6 @@ pub mod windows_stdio {
         } else {
             Fd::INVALID
         });
-        #[cfg(debug_assertions)]
-        fd_internals::WINDOWS_CACHED_FD_SET.store(true, Ordering::Relaxed);
 
         // SAFETY: BUFFERED_STDIN is a static initialized at startup before use.
         unsafe {

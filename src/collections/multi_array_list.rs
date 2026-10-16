@@ -561,7 +561,7 @@ impl<'a, F> ColMut<'a, F> {
     }
 }
 
-/// Index-based comparison context for `sort` / `sort_span` / `sort_unstable`.
+/// Index-based comparison context for `sort`.
 pub trait SortContext {
     fn less_than(&self, a_index: usize, b_index: usize) -> bool;
 }
@@ -1136,20 +1136,13 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         Ok(result)
     }
 
-    fn sort_internal<C: SortContext, const STABLE: bool>(&mut self, a: usize, b: usize, ctx: &C) {
+    /// Stable sort by index-based context.
+    pub fn sort<C: SortContext>(&mut self, ctx: &C) {
         let mut slice = self.slice();
         let swap = |ai: usize, bi: usize| slice.swap_rows(ai, bi);
         let less = |ai: usize, bi: usize| ctx.less_than(ai, bi);
 
-        match STABLE {
-            true => bun_collections_sort_context(a, b, less, swap),
-            false => bun_collections_sort_unstable_context(a, b, less, swap),
-        }
-    }
-
-    /// Stable sort by index-based context.
-    pub fn sort<C: SortContext>(&mut self, ctx: &C) {
-        self.sort_internal::<C, true>(0, self.len, ctx);
+        bun_collections_sort_context(0, self.len, less, swap);
     }
 
     pub(crate) fn capacity_in_bytes(capacity: usize) -> usize {
@@ -1274,7 +1267,7 @@ fn aligned_alloc<T, A: Allocator>(
         .map_err(|_| AllocError)
 }
 
-// Index-based context sorts — port of `mem.sortContext` / `mem.sortUnstableContext`.
+// Index-based context sort — port of `mem.sortContext`.
 
 fn bun_collections_sort_context(
     a: usize,
@@ -1294,62 +1287,6 @@ fn bun_collections_sort_context(
             j -= 1;
         }
         i += 1;
-    }
-}
-
-fn bun_collections_sort_unstable_context(
-    a: usize,
-    b: usize,
-    less: impl Fn(usize, usize) -> bool,
-    mut swap: impl FnMut(usize, usize),
-) {
-    debug_assert!(a <= b);
-    if b - a < 2 {
-        return;
-    }
-
-    let mut i = a + (b - a) / 2;
-    while i > a {
-        i -= 1;
-        sift_down(a, i, b, &less, &mut swap);
-    }
-
-    i = b;
-    while i > a {
-        i -= 1;
-        if i == a {
-            break;
-        }
-        swap(a, i);
-        sift_down(a, a, i, &less, &mut swap);
-    }
-}
-
-fn sift_down(
-    a: usize,
-    target: usize,
-    b: usize,
-    less: &impl Fn(usize, usize) -> bool,
-    swap: &mut impl FnMut(usize, usize),
-) {
-    let mut cur = target;
-    loop {
-        let Some(twice) = (cur - a).checked_mul(2) else {
-            break;
-        };
-        let mut child = twice + a + 1;
-        if !(child < b) {
-            break;
-        }
-        let next_child = child + 1;
-        if next_child < b && less(child, next_child) {
-            child = next_child;
-        }
-        if less(child, cur) {
-            break;
-        }
-        swap(child, cur);
-        cur = child;
     }
 }
 

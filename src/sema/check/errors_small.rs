@@ -10,7 +10,7 @@ use crate::bind::{
 };
 
 /// What `getSymbolAtLocation` returns.
-#[derive(PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum SymbolAtLocation<'p> {
     /// `getMergedSymbol` of a symbol of the binder.
     Symbol(Sym),
@@ -201,10 +201,19 @@ impl<'p> Checker<'p, '_> {
         if is_logical(location) {
             return self.check_known_truthy_types(file, location, whole, body);
         }
-        // Only a right operand is tested by its own type. Anything else uses the type of the whole
-        // condition.
-        let judged_by = if location == test { whole } else { location };
-        let ty = self.type_of_expr(file, judged_by);
+        // Only a right operand is tested by its own type: `c.checkExpression(location)`, in `CheckModeNormal` whatever the mode
+        // `test` is checked under, so a comparison in it is reported with the types that a loop has collected so far. Anything
+        // else uses the type of the whole condition.
+        let ty = if location == test {
+            self.type_of_expr(file, whole)
+        } else if self.is_rechecking() {
+            self.check_expression_ex(file, location, CheckMode::empty())
+        } else {
+            let outside = self.type_only_node.take();
+            let ty = self.type_of_expr(file, location);
+            self.type_only_node = outside;
+            ty
+        };
         let start = self.start_inside_parentheses(file, location);
         // An enum member has a constant value.
         if let (TypeData::EnumLit { value, .. }, ExprKind::Dot { obj, .. }) =
@@ -398,7 +407,11 @@ impl<'p> Checker<'p, '_> {
     /// `getSymbolAtLocation` for an identifier or a `this`. The name of a member, of a property of
     /// an object literal, of a label or of a declared type, and the right side of a qualified name
     /// in a type reference, have a symbol that no tested expression has: `None`.
-    fn get_symbol_at_location(&mut self, file: FileId, node: Node) -> Option<SymbolAtLocation<'p>> {
+    pub(super) fn get_symbol_at_location(
+        &mut self,
+        file: FileId,
+        node: Node,
+    ) -> Option<SymbolAtLocation<'p>> {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         if node.is_none() || hir.is_in_with(hir.start(node)) {
             return None;
@@ -653,13 +666,13 @@ impl<'p> Checker<'p, '_> {
     ) -> Option<SymbolAtLocation<'p>> {
         let ty = self.reduced(ty);
         let ty = self.apparent_type(ty);
-        let members = self.members(ty)?;
+        let members = self.structured_members(ty)?;
         let info = self.applicable_index_info_for_name(&members, name)?;
         if let Some(declaration) = info.declaration {
             return Some(SymbolAtLocation::Index(ty, declaration));
         }
         let key_type = self.string_literal(name, false);
-        let is_declared = members.shape().index.iter().any(|info| {
+        let is_declared = members.index_infos().iter().any(|info| {
             info.declaration.is_some() && self.is_applicable_index_type(key_type, info.key)
         });
         is_declared.then_some(SymbolAtLocation::IndexOfSeveral)

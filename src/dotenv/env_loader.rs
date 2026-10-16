@@ -1454,6 +1454,31 @@ impl Map {
             map: self.map.clone()?,
         })
     }
+
+    /// The process's own (no `.env`), minus `git rev-parse --local-env-vars` except `GIT_CONFIG*`.
+    pub fn for_git_child() -> Result<Map, AllocError> {
+        const REPOSITORY_VARS: &[&[u8]] = &[
+            b"GIT_DIR",
+            b"GIT_WORK_TREE",
+            b"GIT_IMPLICIT_WORK_TREE",
+            b"GIT_INDEX_FILE",
+            b"GIT_NAMESPACE",
+            b"GIT_OBJECT_DIRECTORY",
+            b"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            b"GIT_COMMON_DIR",
+            b"GIT_PREFIX",
+            b"GIT_GRAFT_FILE",
+            b"GIT_SHALLOW_FILE",
+            b"GIT_NO_REPLACE_OBJECTS",
+            b"GIT_REPLACE_REF_BASE",
+        ];
+        let mut loader = Loader::init();
+        loader.load_process()?;
+        for key in REPOSITORY_VARS {
+            loader.map.remove(key);
+        }
+        Ok(loader.map)
+    }
 }
 
 /// Owns the `K=V\0` strings backing a NULL-terminated envp array.

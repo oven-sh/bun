@@ -74,7 +74,7 @@ pub(crate) fn line_end(text: &[u8], mut at: usize) -> usize {
 }
 
 /// `SkipTrivia`: from `at`, past whitespace and comments.
-pub(crate) fn skip_trivia(text: &[u8], at: usize) -> usize {
+pub fn skip_trivia(text: &[u8], at: usize) -> usize {
     skip_trivia_ex(text, at, false)
 }
 
@@ -199,7 +199,7 @@ fn line_comment_start(line: &[u8]) -> Option<usize> {
 
 /// End of the token before `pos`: scans back over whitespace and comments. A missing node is
 /// positioned there (`createMissingNode`).
-pub(crate) fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
+pub fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
     let mut at = pos.min(text.len());
     loop {
         let before = at;
@@ -318,7 +318,7 @@ pub(super) fn word_end(text: &[u8], at: usize) -> usize {
 }
 
 /// `tokenValue` of the identifier `text`: its escapes are decoded.
-pub(crate) fn unescaped_identifier(text: &[u8]) -> Cow<'_, [u8]> {
+pub fn unescaped_identifier(text: &[u8]) -> Cow<'_, [u8]> {
     if !bun_core::strings::contains_char(text, b'\\') {
         return Cow::Borrowed(text);
     }
@@ -570,7 +570,7 @@ const LONG_OPERATORS: [&[u8]; 28] = [
 
 /// `Scan`: the end of the token that starts at `at`. A template ends at its first `${`, and a `/`
 /// is never a regular expression.
-pub(super) fn token_end(text: &[u8], at: usize, is_jsx: bool) -> usize {
+pub fn token_end(text: &[u8], at: usize, is_jsx: bool) -> usize {
     let Some(&first) = text.get(at) else {
         return at.min(text.len());
     };

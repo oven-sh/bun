@@ -473,7 +473,7 @@ impl JSValue {
         if i <= i32::MAX as u64 {
             Self::js_number_from_int32(i as i32)
         } else {
-            Self::js_number(i as f64)
+            Self::js_double_number(i as f64)
         }
     }
     /// `JSValue.jsNumberFromInt64` — int32 fast-path,
@@ -482,7 +482,7 @@ impl JSValue {
         if i <= i32::MAX as i64 && i >= i32::MIN as i64 {
             Self::js_number_from_int32(i as i32)
         } else {
-            Self::js_number(i as f64)
+            Self::js_double_number(i as f64)
         }
     }
     pub fn js_number(n: f64) -> JSValue {

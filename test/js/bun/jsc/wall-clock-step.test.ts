@@ -70,11 +70,12 @@ const fixtures = {
     console.log(JSON.stringify({ wallNow: Date.now(), result, elapsed: performance.now() - start }));
   `,
 
-  // The clock steps back while the main thread is already parked: a child shell arms the shim 100 ms
-  // into a 1 s wait. The kernel wakes the thread on time either way; what kept it waiting was the
-  // re-check of a wall-clock copy of the deadline after the wakeup, which is not specific to Linux.
+  // The clock steps back while the main thread is already parked: a child shell arms the shim 300 ms
+  // into a 1 s wait, after the one early wakeup JSC gives a waiter at 100 ms. The kernel wakes the
+  // thread on time either way; what kept it waiting was the re-check of a wall-clock copy of the
+  // deadline after the wakeup, which is not specific to Linux.
   "atomics-wait-step.js": /* js */ `
-    require("node:child_process").spawn("sh", ["-c", 'sleep 0.1 && : > "$FAKE_REALTIME_AFTER"'], { stdio: "inherit" });
+    require("node:child_process").spawn("sh", ["-c", 'sleep 0.3 && : > "$FAKE_REALTIME_AFTER"'], { stdio: "inherit" });
     const wallBefore = Date.now();
     const start = performance.now();
     const result = Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);

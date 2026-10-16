@@ -718,10 +718,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ── Public API ───────────────────────────────────────
 
-    /// `default_export` is the binding of an `export default class` statement,
-    /// the one class statement that can have no name. Such a class is named
-    /// "default", and takes the binding as its name only when class decorators
-    /// have to rebind it.
+    /// `default_export`: the binding of an `export default class`, named "default" if anonymous.
     pub(crate) fn lower_standard_decorators_stmt(
         &mut self,
         stmt: Stmt,

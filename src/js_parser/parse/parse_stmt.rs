@@ -1043,8 +1043,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ));
                 }
 
-                // "@" is in the lookahead set that rules out an expression after
-                // "export default": a decorator here starts a class declaration.
+                // "@" after "export default" starts a class declaration, never an expression.
                 if p.lexer.token == T::TFunction
                     || p.lexer.token == T::TClass
                     || p.lexer.token == T::TAt
@@ -1087,13 +1086,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // declaration: the nested statement came back as an
                             // expression statement ("export default interface = 2",
                             // "export default interface => 1") or a labeled statement
-                            // ("export default interface: 0"). Decorators that no class
-                            // follows end here too ("export default @dec abstract = 1").
-                            // None of these can be a default export value, so report a
-                            // syntax error instead of building an S.ExportDefault that the
-                            // visit and print passes don't support.
+                            // ("export default interface: 0"). None of these can be a
+                            // default export value, so report a syntax error instead of
+                            // building an S.ExportDefault that the visit and print
+                            // passes don't support.
                             _ => {
-                                // `t_at` has reported the token that is not a class.
+                                // Decorators with no class after them: `t_at` has reported it.
                                 if errors_before_decorators
                                     .is_some_and(|errors| p.log().errors > errors)
                                 {

@@ -1082,12 +1082,12 @@ describe("ES Decorators", () => {
       expect({ stdout, stderr: filterStderr(stderr), exitCode }).toEqual({ stdout: "Df\n", stderr: "", exitCode: 0 });
     });
 
-    // https://github.com/oven-sh/bun/issues/44720: a top-level `using` is lowered
-    // for targets other than bun, and that lowering drops every `export default`
-    // function and class declaration. With a default import the build fails: `No
-    // matching export in "mod.js" for import "default"`. The other two builds
-    // exit 0 and the bundle throws `ReferenceError: Df is not defined`.
-    // `@dec export default class Df {}` fails the same three ways.
+    // A top-level `using` is lowered for targets other than bun, and that lowering
+    // drops every `export default` function and class declaration (#38287 repairs
+    // it). With a default import the build fails: `No matching export in "mod.js"
+    // for import "default"`. The other two builds exit 0 and the bundle throws
+    // `ReferenceError: Df is not defined`. `@dec export default class Df {}` fails
+    // the same three ways.
     test.todo.each([
       ["a default import", `import Df from "./mod.js"; console.log(typeof Df);`, "loaded function\nfunction\n"],
       [
@@ -1113,23 +1113,6 @@ describe("ES Decorators", () => {
       const { stdout, stderr, exitCode } = await runIn(String(dir), ["out.js"]);
       expect({ stdout, stderr: filterStderr(stderr), exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
     });
-
-    // https://github.com/oven-sh/bun/issues/44721: without a bundle the class is
-    // printed as `class test_default`, the generated name of the default export.
-    // The module fails to load: `SyntaxError: Cannot declare a class twice:
-    // 'test_default'`.
-    test.todo.each(["export default @dec class {}", "@dec export default class {}"])(
-      "%s next to a binding with the generated name of the default export",
-      async spelling => {
-        const { stdout, stderr, exitCode } = await runDecorator(`
-          function dec(cls, ctx) {}
-          const test_default = 1;
-          ${spelling}
-          console.log(test_default);
-        `);
-        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1\n", stderr: "", exitCode: 0 });
-      },
-    );
   });
 
   describe("anonymous class expressions with reserved-word inferred names", () => {

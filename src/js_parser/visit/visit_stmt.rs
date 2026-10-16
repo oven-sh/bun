@@ -796,8 +796,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 replace_expr,
                             ) = entry
                             {
-                                // The class is discarded. Lowering it would put it back
-                                // in `data.value`.
+                                // The class is discarded, so it is not lowered.
                                 data.value = js_ast::StmtOrExpr::Expr(replace_expr);
                                 stmts.push(*stmt);
                             } else {
@@ -817,9 +816,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             data.default_name = p.create_default_name(stmt.loc);
                         }
 
-                        // The legacy TS decorator lowering reads `class_name`, so an
-                        // anonymous class takes the default export's symbol as its name.
-                        // The standard lowering takes that symbol as an argument.
+                        // Only the legacy TS decorator lowering needs the class to have a name.
                         if class.class.has_decorators
                             && !class.class.should_lower_standard_decorators
                         {
@@ -861,14 +858,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if p.options.features.server_components.wraps_exports()
                             && !after_class.is_empty()
                         {
-                            // Decorator lowering assigns to the class by name after it, so
-                            // the class stays a declaration and the export wraps its binding.
+                            // Statements after the class assign to its name: keep the declaration.
                             let name = class
                                 .class
                                 .class_name
                                 .expect("decorator lowering names the class");
                             stmts.push(class_stmts[class_stmt_idx]);
                             stmts.extend_from_slice(after_class);
+                            // The export gets its own symbol: a bundle declares it with `var`.
+                            p.record_declared_symbol(name.ref_);
+                            data.default_name = p.create_default_name(stmt.loc);
                             p.record_usage(name.ref_);
                             data.value = js_ast::StmtOrExpr::Expr(
                                 p.wrap_value_for_server_component_reference(

@@ -3162,7 +3162,7 @@ describe.concurrent("yarn.lock entries the migration cannot build a resolution f
   const pinnedEntry = (dependencies = "") =>
     `pinned@^2.0.0:\n  version "2.0.0"\n  resolved "${registryTarball("pinned", "2.0.0")}"\n${dependencies}`;
   const brokenEntry = `broken@^1.0.0:\n  version "not-a-version"\n  resolved "${registryTarball("broken", "1.0.0")}"\n`;
-  const brokenWarning = 'warn: skipped "broken@^1.0.0" from yarn.lock: invalid version "not-a-version"';
+  const brokenWarning = 'warn: skipping "broken@^1.0.0" from yarn.lock: invalid version "not-a-version"';
 
   async function run(cwd: string, registry: string, ...args: string[]) {
     await using proc = Bun.spawn({
@@ -3189,7 +3189,7 @@ describe.concurrent("yarn.lock entries the migration cannot build a resolution f
     const { stderr, exitCode } = await run(String(dir), registry.url.href, "install", "--lockfile-only");
 
     expect(stderr).toContain(brokenWarning);
-    expect(stderr).toContain('warn: yarn.lock has no entry for "broken@^1.0.0", so bun resolved it itself');
+    expect(stderr).toContain('warn: yarn.lock missing "broken@^1.0.0", resolving it');
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
@@ -3220,31 +3220,31 @@ describe.concurrent("yarn.lock entries the migration cannot build a resolution f
       "version is not semver",
       "^1.0.0",
       brokenEntry,
-      'skipped "broken@^1.0.0" from yarn.lock: invalid version "not-a-version"',
+      'skipping "broken@^1.0.0" from yarn.lock: invalid version "not-a-version"',
     ],
     [
       "version is not semver and there is no resolved field",
       "^1.0.0",
       'broken@^1.0.0:\n  version "not-a-version"\n',
-      'skipped "broken@^1.0.0" from yarn.lock: invalid version "not-a-version"',
+      'skipping "broken@^1.0.0" from yarn.lock: invalid version "not-a-version"',
     ],
     [
       "there is no version field",
       "^1.0.0",
       `broken@^1.0.0:\n  resolved "${registryTarball("broken", "1.0.0")}"\n`,
-      'skipped "broken@^1.0.0" from yarn.lock: missing "version" field',
+      'skipping "broken@^1.0.0" from yarn.lock: missing "version" field',
     ],
     [
       "tarball URL spec without a resolved field",
       "https://example.com/broken-1.0.0.tgz",
       '"broken@https://example.com/broken-1.0.0.tgz":\n  version "1.0.0"\n',
-      'skipped "broken@https://example.com/broken-1.0.0.tgz" from yarn.lock: missing "resolved" field',
+      'skipping "broken@https://example.com/broken-1.0.0.tgz" from yarn.lock: missing "resolved" field',
     ],
     [
       "entry shared by several specs",
       "^1.0.0",
       `broken@^1.0.0, broken@^1.2.0:\n  version "not-a-version"\n  resolved "${registryTarball("broken", "1.0.0")}"\n`,
-      'skipped "broken@^1.0.0, broken@^1.2.0" from yarn.lock: invalid version "not-a-version"',
+      'skipping "broken@^1.0.0, broken@^1.2.0" from yarn.lock: invalid version "not-a-version"',
     ],
   ];
 
@@ -3281,7 +3281,7 @@ describe.concurrent("yarn.lock entries the migration cannot build a resolution f
 
     const { stderr, exitCode } = await run(String(dir), registry.url.href, "pm", "migrate", "-f");
 
-    expect(stderr).toContain('warn: skipped "pinned@^1.0.0" from yarn.lock: invalid version "not-a-version"');
+    expect(stderr).toContain('warn: skipping "pinned@^1.0.0" from yarn.lock: invalid version "not-a-version"');
     expect(exitCode).toBe(0);
 
     const bunLock = await Bun.file(join(String(dir), "bun.lock")).text();
@@ -3511,15 +3511,13 @@ test("dependencies with no entry in yarn.lock are reported", async () => {
   // yarn.lock is older than package.json: `b` and `c` were added after it was written
   using stale = project({ a: "^1.0.0", b: "^1.0.0", c: "^1.0.0" }, ["a"]);
   const several = await migrate(String(stale));
-  expect(several.stderr).toContain(
-    'warn: yarn.lock has no entry for "b@^1.0.0" and 1 more (run with --verbose to list them), so bun resolved them itself',
-  );
+  expect(several.stderr).toContain('warn: yarn.lock missing "b@^1.0.0" and 1 more (--verbose to list), resolving them');
   expect(several.stderr).toContain("migrated lockfile from yarn.lock");
   expect(several.exitCode).toBe(0);
 
   const verbose = await migrate(String(stale), "--verbose");
-  expect(verbose.stderr).toContain('warn: yarn.lock has no entry for "b@^1.0.0", so bun resolved it itself');
-  expect(verbose.stderr).toContain('warn: yarn.lock has no entry for "c@^1.0.0", so bun resolved it itself');
+  expect(verbose.stderr).toContain('warn: yarn.lock missing "b@^1.0.0", resolving it');
+  expect(verbose.stderr).toContain('warn: yarn.lock missing "c@^1.0.0", resolving it');
 
   // a range can be a tarball URL with credentials
   const token = "npm_" + Buffer.alloc(36, "A").toString();

@@ -374,9 +374,7 @@ snapshots:
 
       const { migrated, install } = await migrateThenFrozenInstall(String(dir));
       expect(migrated).not.toContain("no-deps");
-      expect(install.stderr).toContain(
-        `warn: Skipping workspace "${fixtureDir}": its package.json has no "name", so its dependencies will not be installed\n`,
-      );
+      expect(install.stderr).toContain(`warn: skipping workspace "${fixtureDir}": package.json has no "name"\n`);
     });
   });
 
@@ -393,7 +391,7 @@ snapshots:
     const { stderr, exitCode } = await migrate(packageDir);
 
     expect(stderr).toContain(
-      'warn: skipped pnpm registry "work" from pnpm-lock.yaml: not in namedRegistries of pnpm-workspace.yaml (resolving its packages from the configured registry)',
+      'warn: skipping pnpm registry "work" from pnpm-lock.yaml: not in namedRegistries of pnpm-workspace.yaml (resolving its packages from the configured registry)',
     );
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
     expect(exitCode).toBe(0);
@@ -762,7 +760,7 @@ snapshots:
       const { stderr, exitCode } = await migrate(packageDir);
 
       expect(stderr).toContain(
-        'warn: skipped pnpm registry "work" from pnpm-lock.yaml: not in namedRegistries of pnpm-workspace.yaml (resolving its packages from the configured registry)',
+        'warn: skipping pnpm registry "work" from pnpm-lock.yaml: not in namedRegistries of pnpm-workspace.yaml (resolving its packages from the configured registry)',
       );
       expect(stderr.split('pnpm registry "work"').length - 1).toBe(1);
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
@@ -988,7 +986,7 @@ importers:
     const { stderr, exitCode } = await migrate(String(dir));
 
     expect(stderr).toContain(
-      'warn: skipped "node@runtime:22.0.0" from pnpm-lock.yaml: runtime dependencies are not supported',
+      'warn: skipping "node@runtime:22.0.0" from pnpm-lock.yaml: runtime dependencies are not supported',
     );
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
     expect(exitCode).toBe(0);
@@ -3294,7 +3292,7 @@ snapshots:
     const { stderr, exitCode } = await migrate(packageDir);
 
     expect(stderr).toContain(
-      'warn: skipped "linked" from the root package: excluded from pnpm-lock.yaml by excludeLinksFromLockfile',
+      'warn: skipping "linked" from the root package: excluded from pnpm-lock.yaml by excludeLinksFromLockfile',
     );
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
     expect(exitCode).toBe(0);
@@ -3326,7 +3324,7 @@ importers:
       const { stderr, exitCode } = await migrate(String(dir));
 
       expect(stderr).toContain(
-        'warn: skipped "x" from workspace "packages/a": excluded from pnpm-lock.yaml by excludeLinksFromLockfile',
+        'warn: skipping "x" from workspace "packages/a": excluded from pnpm-lock.yaml by excludeLinksFromLockfile',
       );
       expect(stderr).not.toContain("from the root package");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
@@ -4264,7 +4262,7 @@ snapshots:
     };
     const movedLine = "copied pnpm.overrides to overrides, copied pnpm-workspace.yaml to workspaces in package.json";
     const frozenNote =
-      "note: the lockfile is frozen, so the migration from pnpm-lock.yaml was not written to bun.lock and package.json; run 'bun install' and commit the result";
+      "note: lockfile is frozen, migration from pnpm-lock.yaml not written to bun.lock and package.json; run 'bun install' and commit the result";
 
     async function expectUntouched(dir: string) {
       expect(await Bun.file(join(dir, "package.json")).text()).toBe(packageJson);
@@ -4454,7 +4452,7 @@ snapshots:
     }
 
     const skipped = (field: string, count: number) =>
-      `warn: "${field}" in pnpm-workspace.yaml has entries that are not strings (${count}); they were not copied to package.json`;
+      `warn: skipping non-string entries of "${field}" in pnpm-workspace.yaml (${count})`;
 
     const stringFields: [string, (entries: object) => object][] = [
       ["overrides", overrides => ({ overrides })],

@@ -183,7 +183,7 @@ test.concurrent("resolution errors escape the dist-tag", async () => {
 test.concurrent("resolution errors escape a file: path", async () => {
   using dir = project("file-path", { dependencies: { dep: `file:./missing-${C1}` } });
   const { stdout, stderr, exitCode } = await run(String(dir), "install");
-  expect(stderr).toContain(`Could not find package.json for "file:missing-${C1_ESCAPED}" dependency "dep"`);
+  expect(stderr).toContain(`package.json not found for "file:missing-${C1_ESCAPED}" dependency "dep"`);
   expect(stdout + stderr).not.toMatch(RAW_CONTROL);
   expect(exitCode).toBe(1);
 });
@@ -336,7 +336,7 @@ const messages: Record<string, Message> = {
       }),
     }),
     command: ["install"],
-    printed: value => `error: Couldn't find patch file: 'patches/${value}.patch'\n`,
+    printed: value => `error: patch file not found: 'patches/${value}.patch'\n`,
     exitCode: 1,
   },
   "a CA file that is not there": {
@@ -361,7 +361,7 @@ const messages: Record<string, Message> = {
       }),
     }),
     command: ["pm", "migrate"],
-    printed: value => `that no package depends on: "node_modules/${value}"\n`,
+    printed: value => `unused package-lock.json entry: "node_modules/${value}"\n`,
     exitCode: 0,
   },
   "a version in yarn.lock that is not one": {
@@ -370,7 +370,7 @@ const messages: Record<string, Message> = {
       "yarn.lock": `# yarn lockfile v1\n\n\ndep@^1.0.0:\n  version "1.0.0_${value}"\n  resolved "${registryUrl}/dep.tgz#aa"\n`,
     }),
     command: ["pm", "migrate"],
-    printed: value => `warn: skipped "dep@^1.0.0" from yarn.lock: invalid version "1.0.0_${value}"\n`,
+    printed: value => `warn: skipping "dep@^1.0.0" from yarn.lock: invalid version "1.0.0_${value}"\n`,
     exitCode: 0,
   },
   "the version that `bun pm version` starts from": {
@@ -472,7 +472,7 @@ test.concurrent("a NUL stays in the line of a file, and is spelled out in the me
 test.concurrent("a name that is not one", async () => {
   using dir = tempDir("escape-controls-name", { "package.json": JSON.stringify({ ...app, name: `a${C1}b` }) });
   const { stdout, stderr, exitCode } = await run(String(dir), "link");
-  expect(stderr).toContain(`error: Invalid package name "a${C1_ESCAPED}b"\n`);
+  expect(stderr).toContain(`error: invalid package name "a${C1_ESCAPED}b"\n`);
   expect(stdout + stderr).not.toMatch(RAW_CONTROL);
   expect(exitCode).toBe(1);
 });

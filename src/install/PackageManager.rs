@@ -933,7 +933,7 @@ impl PackageManager {
         log.add_error_fmt(
             Some(&bun_ast::Source::init_path_string(path, b"")),
             bun_ast::Loc::EMPTY,
-            format_args!("bun will not {verb} packages because it cannot read this file"),
+            format_args!("cannot read config file, refusing to {verb} packages"),
         );
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
         Global::crash();
@@ -2102,7 +2102,7 @@ impl<'a> PackageJsonWalk<'a> {
                 && is_shared_directory(dir)
             {
                 bun_core::warn!(
-                    "other local users can add files to <b>{}<r>, so bun ignored the package.json in it",
+                    "ignoring package.json in <b>{}<r>: directory is writable by other users",
                     bstr::BStr::new(dir),
                 );
                 continue;
@@ -2333,7 +2333,7 @@ fn exit_if_started_in_member_outside(
     };
     let real_path = bun_core::fmt::escape_control_chars(real_path);
     Output::err_generic(
-        "workspace \"{}\" is a symlink to \"{}\", which is outside the project, so nothing was changed",
+        "workspace \"{}\" links to \"{}\" outside the project, no changes made",
         (bun_core::fmt::escape_control_chars(path), &real_path),
     );
     bun_core::note!(
@@ -3230,7 +3230,7 @@ fn init_with_runtime_once(
         log.add_warning_fmt(
             None,
             bun_ast::Loc::EMPTY,
-            format_args!("\"{}\" cannot be read or parsed", bstr::BStr::new(&path)),
+            format_args!("cannot read or parse \"{}\"", bstr::BStr::new(&path)),
         );
         return Err(bun_resolver::Error::UnreadableConfig.into());
     }

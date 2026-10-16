@@ -603,7 +603,7 @@ describe("link: specifier longer than the path buffers", () => {
     await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1", dependencies }));
 
     const missing = await run(package_dir, "install");
-    expect(missing.err).toContain('error: Could not find directory "./vendor/bar" for linked dependency "bar"');
+    expect(missing.err).toContain('error: directory "./vendor/bar" not found for linked dependency "bar"');
     expect(missing.err).not.toContain("ENAMETOOLONG");
     expect(missing.exitCode).toBe(1);
 

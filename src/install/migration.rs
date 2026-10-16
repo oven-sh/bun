@@ -198,7 +198,7 @@ pub fn detect_and_load_other_lockfile<'a>(
         };
         if !manager.options.log_level.is_silent() && !reported_unsupported_lockfile_version(&err) {
             bun_core::warn!(
-                "{} cannot be migrated ({}); trying {}",
+                "cannot migrate {} ({}), trying {}",
                 name,
                 err.value.name(),
                 next,
@@ -361,7 +361,7 @@ fn report_unsupported_lockfile_version(
     Output::flush();
     if let Some(next) = next {
         bun_core::warn!(
-            "{} is lockfileVersion {}, which bun cannot migrate; trying {}",
+            "cannot migrate {}: unsupported lockfileVersion {}, trying {}",
             lockfile_name,
             version,
             next,
@@ -371,13 +371,13 @@ fn report_unsupported_lockfile_version(
     }
     if falls_back_to_package_json(manager) {
         bun_core::warn!(
-            "{} is lockfileVersion {}, which bun cannot migrate; resolving from package.json instead",
+            "cannot migrate {}: unsupported lockfileVersion {}, resolving from package.json",
             lockfile_name,
             version,
         );
     } else {
         bun_core::pretty_errorln!(
-            "<r><red>error<r><d>:<r> {} is lockfileVersion {}, which bun cannot migrate",
+            "<r><red>error<r><d>:<r> cannot migrate {}: unsupported lockfileVersion {}",
             lockfile_name,
             version,
         );
@@ -596,14 +596,14 @@ pub(crate) fn warn_unlocked_dependencies(
         let range = bun_core::fmt::for_terminal(bstr::BStr::new(dep.version.literal.slice(buf)));
         if count == 1 || log_level.is_verbose() {
             bun_core::warn!(
-                "{} has no entry for \"{}@{}\", so bun resolved it itself",
+                "{} missing \"{}@{}\", resolving it",
                 lockfile_name,
                 name,
                 range
             );
         } else {
             bun_core::warn!(
-                "{} has no entry for \"{}@{}\" and {} more (run with --verbose to list them), so bun resolved them itself",
+                "{} missing \"{}@{}\" and {} more (--verbose to list), resolving them",
                 lockfile_name,
                 name,
                 range,

@@ -346,10 +346,7 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     if !plan.linked_folders.is_empty() {
         if !quiet {
             for folder in plan.sorted_linked_folders() {
-                Output::err_generic(
-                    "{} is a symlink, so nothing was pruned",
-                    (native_path(folder),),
-                );
+                Output::err_generic("{} is a symlink, nothing pruned", (native_path(folder),));
             }
             bun_core::note!("to prune this project, remove the link and run 'bun install'");
         }
@@ -1819,7 +1816,7 @@ fn remove_planned(mut plan: Plan, layout: Layout, manager: &PackageManager) {
         {
             for folder in plan.sorted_linked_folders() {
                 bun_core::warn!(
-                    "{} is a symlink, so stale copies in node_modules were not removed",
+                    "{} is a symlink, stale copies in node_modules not removed",
                     native_path(folder)
                 );
             }
@@ -2125,7 +2122,7 @@ impl LinkedNodeModules {
         }
         for folder in folders {
             bun_core::warn!(
-                "{} is a symlink, so the packages that another linker installed there were not removed",
+                "{} is a symlink, packages from another linker not removed",
                 native_path(folder)
             );
         }

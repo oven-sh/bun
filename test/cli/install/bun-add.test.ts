@@ -204,7 +204,7 @@ it("should reject missing package", async () => {
   });
   const err = await stderr.text();
   // The path is reported the way bun.lock records it: forward slashes on every platform.
-  expect(err).toContain(`error: Could not find package.json for "file:${add_path.replaceAll("\\", "/")}" dependency`);
+  expect(err).toContain(`error: package.json not found for "file:${add_path.replaceAll("\\", "/")}" dependency`);
   expect(err).toContain("failed to resolve");
 
   const out = await stdout.text();
@@ -3005,7 +3005,7 @@ describe("a relative local path typed from a directory below package.json", () =
     await writeFile(join(vendored, "package.json"), JSON.stringify({ name: "inner", version: "1.0.0" }));
 
     const { stderr, exitCode } = await run(cwd, "add", "./vendor/inner");
-    expect(stderr).toContain('error: Could not find package.json for "file:src/nested/vendor/inner"');
+    expect(stderr).toContain('error: package.json not found for "file:src/nested/vendor/inner"');
     expect(await file(join(package_dir, "package.json")).json()).toEqual({ name: "app", version: "0.0.1" });
     expect(exitCode).toBe(1);
   });
@@ -3143,7 +3143,7 @@ describe("-g and a relative local path", () => {
     const home = String(dir);
 
     const missing = await runGlobal(home, join(home, "sibling"), "add", "-g", "./pkg");
-    expect(missing.stderr).toContain("error: Could not find package.json for");
+    expect(missing.stderr).toContain("error: package.json not found for");
     expect(missing.exitCode).toBe(1);
 
     const { stderr, exitCode } = await runGlobal(home, join(home, "pkg"), "add", "-g", ".");

@@ -670,9 +670,7 @@ describe.concurrent("a package-lock.json entry of another host without an integr
     using dir = project(registry, "1.0.0", url);
 
     const { stderr, exitCode } = await install(dir);
-    expect(stderr).toContain(
-      `warn: this entry has no integrity hash, so it is downloaded from the configured registry instead of ${url}\n`,
-    );
+    expect(stderr).toContain(`warn: missing integrity, downloading from configured registry instead of ${url}\n`);
     expect(stderr).toContain("package-lock.json:1:");
     expect(stderr).toContain("migrated lockfile from package-lock.json");
     expect(nodeModules(dir)).toEqual({ "a-dep": "1.0.1", "no-deps": "1.0.0" });
@@ -772,8 +770,7 @@ describe.concurrent("a package-lock.json entry of another host without an integr
   test("is not migrated when the registry does not have that version", async () => {
     using registry = localRegistry();
     using other = otherHost();
-    const refused =
-      "error: this entry has no integrity hash, and the configured registry has none for this version either\n";
+    const refused = "error: missing integrity, and configured registry has none for this version\n";
 
     using migrated = project(registry, "1.0.5", `${other.url}no-deps-1.0.5.tgz`);
     const migrate = await run(migrated, "pm", "migrate");
@@ -802,25 +799,25 @@ describe.concurrent("a lockfile that cannot be migrated does not hide the one ne
       "npm 6's package-lock.json",
       "yarn.lock",
       { "package-lock.json": npm6 },
-      "warn: package-lock.json is lockfileVersion 1, which bun cannot migrate; trying yarn.lock\n",
+      "warn: cannot migrate package-lock.json: unsupported lockfileVersion 1, trying yarn.lock\n",
     ],
     [
       "npm 6's package-lock.json",
       "pnpm-lock.yaml",
       { "package-lock.json": npm6 },
-      "warn: package-lock.json is lockfileVersion 1, which bun cannot migrate; trying pnpm-lock.yaml\n",
+      "warn: cannot migrate package-lock.json: unsupported lockfileVersion 1, trying pnpm-lock.yaml\n",
     ],
     [
       "a package-lock.json without packages",
       "yarn.lock",
       { "package-lock.json": "{}" },
-      "warn: package-lock.json cannot be migrated (InvalidNPMLockfile); trying yarn.lock\n",
+      "warn: cannot migrate package-lock.json (InvalidNPMLockfile), trying yarn.lock\n",
     ],
     [
       "an empty yarn.lock",
       "pnpm-lock.yaml",
       { "yarn.lock": "" },
-      "warn: yarn.lock cannot be migrated (UnsupportedYarnLockfileVersion); trying pnpm-lock.yaml\n",
+      "warn: cannot migrate yarn.lock (UnsupportedYarnLockfileVersion), trying pnpm-lock.yaml\n",
     ],
   ];
   test.each(pairs)("%s, %s", async (_, used, leftover, warning) => {
@@ -1054,7 +1051,7 @@ test.concurrent.each([
     // The second install consumes the bun.lock the migration just wrote. It must parse,
     // otherwise --frozen-lockfile is permanently broken after an npm migration.
     const second = await install(testDir, "--frozen-lockfile");
-    expect(second.stderr).not.toContain("Invalid package name");
+    expect(second.stderr).not.toContain("invalid package name");
     expect(second.stderr).not.toContain("Ignoring lockfile");
     expect(second.exitCode).toBe(0);
     expect(await Bun.file(join(testDir, "node_modules", name, "package.json")).json()).toHaveProperty("name", name);
@@ -1647,7 +1644,7 @@ describe("package-lock.json migration fixes", () => {
       using dir = fixture("old-package-lock");
       const { stderr, exitCode } = await run(dir, "pm", "migrate");
       expect(stderr).toBe(
-        "error: package-lock.json is lockfileVersion 1, which bun cannot migrate\nnote: npm install --package-lock-only --lockfile-version=3\n",
+        "error: cannot migrate package-lock.json: unsupported lockfileVersion 1\nnote: npm install --package-lock-only --lockfile-version=3\n",
       );
       expect(exitCode).toBe(1);
     }
@@ -1659,7 +1656,7 @@ describe("package-lock.json migration fixes", () => {
       });
       const { stderr, exitCode } = await run(dir, "install");
       expect(stderr).toContain(
-        "warn: package-lock.json is lockfileVersion 1, which bun cannot migrate; resolving from package.json instead\nnote: npm install --package-lock-only --lockfile-version=3\n",
+        "warn: cannot migrate package-lock.json: unsupported lockfileVersion 1, resolving from package.json\nnote: npm install --package-lock-only --lockfile-version=3\n",
       );
       expect(stderr).not.toContain("failed to migrate");
       expect(exitCode).toBe(0);
@@ -1681,7 +1678,7 @@ describe("package-lock.json migration fixes", () => {
 
     const { stderr, exitCode, lock } = await migrate(dir);
     expect(stderr).toContain(
-      'warn: skipped npm patches for "arg" from package-lock.json\nnote: recreate them with bun patch <pkg>\n',
+      'warn: skipping npm patches for "arg" from package-lock.json\nnote: recreate them with bun patch <pkg>\n',
     );
     expect(lock.overrides).toStrictEqual({ arg: "4.1.3" });
     expect(lock.packages.arg[0]).toBe("arg@4.1.3");
@@ -1739,7 +1736,7 @@ describe("package-lock.json migration fixes", () => {
     async () => {
       using dir = fixture("minimist-git-metadep");
       const { stderr, exitCode, lock } = await migrate(dir);
-      expect(stderr).toContain("that no package depends on");
+      expect(stderr).toContain(" unused package-lock.json entr");
       expect(stderr).toContain('"node_modules/@isaacs/no-thing-here"');
       expect(lock.packages.minimist[0]).toBe(
         "minimist@github:substack/minimist#3754568bfd43a841d2d72d7fb54598635aea8fa4",
@@ -1754,12 +1751,12 @@ describe("package-lock.json migration fixes", () => {
     using dir = fixture("external-link--root");
     const { stderr, exitCode, text, lock } = await migrate(dir);
     expect(stderr).toContain(
-      'skipped "p" from package-lock.json: transitive folder dependency "../m/node_modules/p" is outside the project',
+      'skipping "p" from package-lock.json: transitive folder dependency "../m/node_modules/p" is outside the project',
     );
     expect(stderr).toContain(
-      'skipped "b" from package-lock.json: transitive folder dependency "../a/node_modules/b" is outside the project',
+      'skipping "b" from package-lock.json: transitive folder dependency "../a/node_modules/b" is outside the project',
     );
-    expect(stderr).toContain('skipped 3 package-lock.json entries that no package depends on: "../a", "../i", "../m"');
+    expect(stderr).toContain('skipping 3 unused package-lock.json entries: "../a", "../i", "../m"');
     const registry = (name: string) => `${OFFLINE_REGISTRY}${name}/-/${name}-1.0.0.tgz`;
     // Root-declared out-of-tree folders (j, o, o2) and registry entries under them (k) migrate; transitive out-of-tree folders (p, b) are skipped along with their edges and their own subtree (c).
     expect(
@@ -1831,7 +1828,7 @@ describe("package-lock.json migration fixes", () => {
     using dir = fixture("carbonium");
     const before = await pmHash(dir);
     const { stderr, exitCode, lock } = await migrate(dir);
-    expect(stderr).not.toContain("that no package depends on");
+    expect(stderr).not.toContain(" unused package-lock.json entr");
     expect(exitCode).toBe(0);
     expect(await pmHash(dir)).toBe(before);
     // npm nested four copies of 1.3.0; bun keeps one package and hoists it (2.0.0 stays under eslint).
@@ -1939,7 +1936,7 @@ describe("package-lock.json migration fixes", () => {
 
     const { stderr, exitCode, lock } = await migrate(dir);
     expect(stderr).toContain(
-      'warn: skipped "y@^1.0.0" from package-lock.json: no entry for this dependency of "node_modules/x"',
+      'warn: skipping "y@^1.0.0" from package-lock.json: no entry for this dependency of "node_modules/x"',
     );
     // a range can be a tarball URL with credentials
     expect(stderr).toContain('warn: skipped "z@http://***@localhost:1/z-1.0.0.tgz" from package-lock.json');
@@ -2253,7 +2250,7 @@ describe("package-lock.json migration fixes", () => {
     fs.rmSync(join(String(dir), "b"), { recursive: true });
 
     const { stderr, exitCode, lock } = await migrate(dir);
-    expect(stderr).toContain('skipped 1 package-lock.json entry that no package depends on: "b"');
+    expect(stderr).toContain('skipping 1 unused package-lock.json entry: "b"');
     expect(exitCode).toBe(0);
     expect(lock.workspaces).toStrictEqual({
       "": { name: "workspace-simple" },
@@ -2377,7 +2374,7 @@ describe("package-lock.json migration fixes", () => {
       const { stderr, exitCode, lock } = await migrate(project.dir);
       // The root's own `p` is recorded; the copy `o` reaches through the walk is a transitive out-of-tree folder and is skipped even though it is the same target.
       expect(stderr).toContain(
-        'skipped "p" from package-lock.json: transitive folder dependency "../m/node_modules/p" is outside the project',
+        'skipping "p" from package-lock.json: transitive folder dependency "../m/node_modules/p" is outside the project',
       );
       expect(exitCode).toBe(0);
       expect(lock.packages).toStrictEqual({
@@ -2413,7 +2410,7 @@ describe("package-lock.json migration fixes", () => {
     // Without "p" the lockfile is behind o/package.json. A plain install reads that again and asks the registry for "p".
     const install = await run(project.dir, "install", "--frozen-lockfile", "--linker", linker);
     expect(normalizeBunSnapshot(install.stderr)).toBe(
-      "warn: the dependencies in ../m/node_modules/n/o/package.json changed since the lockfile was saved (run 'bun install' to update it)",
+      "warn: dependencies in ../m/node_modules/n/o/package.json changed since lockfile was saved (run 'bun install')",
     );
     expect(normalizeBunSnapshot(install.stdout)).toMatchInlineSnapshot(`
       "bun install <version> (<revision>)
@@ -2496,7 +2493,7 @@ describe("package-lock.json migration fixes", () => {
 
     const { stderr, exitCode, text, lock } = await migrate(dir);
     expect(stderr).toContain(
-      'skipped "loot" from package-lock.json: transitive folder dependency "../secret" is outside the project',
+      'skipping "loot" from package-lock.json: transitive folder dependency "../secret" is outside the project',
     );
     expect(exitCode).toBe(0);
     expect(Object.keys(lock.packages).sort()).toStrictEqual(["evil", "evil/inner"]);
@@ -2803,7 +2800,7 @@ describe("package-lock.json migration fixes", () => {
 
       const { stderr, text, lock } = await migrate(dir);
       expect(stderr).toContain(
-        `skipped "loot" from package-lock.json: transitive folder dependency "${climbing}" is outside the project`,
+        `skipping "loot" from package-lock.json: transitive folder dependency "${climbing}" is outside the project`,
       );
       expect(Object.keys(lock.packages)).toStrictEqual(["file-dep"]);
       expect(text).not.toContain("secret");
@@ -2827,7 +2824,7 @@ describe("package-lock.json migration fixes", () => {
   // the `file:` spec of its declarer to say, so the entry is skipped and the install resolves the spec.
   describe("file: directories that npm --install-links copied", () => {
     const skipped = (name: string) =>
-      `warn: skipped "${name}" from package-lock.json: a folder npm copied (--install-links)`;
+      `warn: skipping "${name}" from package-lock.json: folder copied by npm (--install-links)`;
 
     test.concurrent("are resolved from the file: specs in package.json", async () => {
       const dependencies = { d: "file:../packages/d", v: "file:vendor/v" };
@@ -2852,7 +2849,7 @@ describe("package-lock.json migration fixes", () => {
       expect(install.stderr).toContain(skipped("d"));
       expect(install.stderr).toContain(skipped("v"));
       // `e` goes with the `d` that declares it
-      expect(install.stderr).not.toContain("that no package depends on");
+      expect(install.stderr).not.toContain(" unused package-lock.json entr");
       expect(install.stderr).not.toContain("error");
       expect(await Bun.file(join(dir, "node_modules", "d", "index.js")).text()).toBe("module.exports = 'd';");
       expect(await Bun.file(join(dir, "node_modules", "v", "package.json")).json()).toEqual({
@@ -2923,14 +2920,14 @@ describe("package-lock.json migration fixes", () => {
     });
     const { stderr, exitCode } = await run(dir, "pm", "migrate");
     expect(stderr).toBe(
-      "error: package-lock.json is lockfileVersion 5, which bun cannot migrate\nnote: npm install --package-lock-only --lockfile-version=3\n",
+      "error: cannot migrate package-lock.json: unsupported lockfileVersion 5\nnote: npm install --package-lock-only --lockfile-version=3\n",
     );
     expect(exitCode).toBe(1);
     expect(fs.existsSync(join(String(dir), "bun.lock"))).toBeFalse();
 
     const install = await run(dir, "install");
     expect(install.stderr).toContain(
-      "warn: package-lock.json is lockfileVersion 5, which bun cannot migrate; resolving from package.json instead\nnote: npm install --package-lock-only --lockfile-version=3\n",
+      "warn: cannot migrate package-lock.json: unsupported lockfileVersion 5, resolving from package.json\nnote: npm install --package-lock-only --lockfile-version=3\n",
     );
     expect(install.stderr).not.toContain("migrated lockfile");
     expect(install.stderr).not.toContain("failed to migrate");
@@ -2968,7 +2965,7 @@ describe("package-lock.json migration fixes", () => {
     });
     const { stderr, lock } = await migrate(dir);
     expect(stderr).toContain(
-      'warn: skipped npm patches for "x", "y" from package-lock.json\nnote: recreate them with bun patch <pkg>\n',
+      'warn: skipping npm patches for "x", "y" from package-lock.json\nnote: recreate them with bun patch <pkg>\n',
     );
     expect(firstsOf(lock.packages)).toStrictEqual(["x@1.0.0", "y@1.0.0"]);
     expect(lock.patchedDependencies).toBeUndefined();
@@ -3135,11 +3132,9 @@ describe("package-lock.json migration fixes", () => {
         }),
       });
       const { stderr, lock } = await migrate(dir);
+      expect(stderr).toContain('warn: skipping 1 unused npm-shrinkwrap.json entry: "node_modules/y"\n');
       expect(stderr).toContain(
-        'warn: skipped 1 npm-shrinkwrap.json entry that no package depends on: "node_modules/y"\n',
-      );
-      expect(stderr).toContain(
-        'warn: skipped npm patches for "x" from npm-shrinkwrap.json\nnote: recreate them with bun patch <pkg>\n',
+        'warn: skipping npm patches for "x" from npm-shrinkwrap.json\nnote: recreate them with bun patch <pkg>\n',
       );
       expect(stderr).not.toContain("package-lock.json");
       expect(firstsOf(lock.packages)).toStrictEqual(["x@1.0.0"]);
@@ -3153,14 +3148,14 @@ describe("package-lock.json migration fixes", () => {
       });
       const { stderr, exitCode } = await run(dir, "pm", "migrate");
       expect(stderr).toBe(
-        "error: npm-shrinkwrap.json is lockfileVersion 1, which bun cannot migrate\nnote: npm install --package-lock-only --lockfile-version=3\n",
+        "error: cannot migrate npm-shrinkwrap.json: unsupported lockfileVersion 1\nnote: npm install --package-lock-only --lockfile-version=3\n",
       );
       expect(exitCode).toBe(1);
       expect(fs.existsSync(join(String(dir), "bun.lock"))).toBeFalse();
 
       const install = await run(dir, "install");
       expect(install.stderr).toContain(
-        "warn: npm-shrinkwrap.json is lockfileVersion 1, which bun cannot migrate; resolving from package.json instead\nnote: npm install --package-lock-only --lockfile-version=3\n",
+        "warn: cannot migrate npm-shrinkwrap.json: unsupported lockfileVersion 1, resolving from package.json\nnote: npm install --package-lock-only --lockfile-version=3\n",
       );
       expect(install.stderr).not.toContain("migrated lockfile");
       expect(install.stderr).not.toContain("failed to migrate");

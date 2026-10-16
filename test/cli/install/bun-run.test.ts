@@ -1533,9 +1533,7 @@ describe.concurrent("bun run", () => {
     const launcher = (name: string) => join(String(dir), "node_modules", ".bin", `${name}.exe`);
     const refused = {
       stdout: "",
-      stderr: expect.stringContaining(
-        "error: an argument with one of % & | < > ^ cannot be passed to a .cmd or .bat file",
-      ),
+      stderr: expect.stringContaining("error: cannot pass an argument containing % & | < > ^ to a .cmd or .bat file"),
       exitCode: 255,
     };
 

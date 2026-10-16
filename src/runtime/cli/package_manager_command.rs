@@ -451,7 +451,7 @@ impl PackageManagerCommand {
 
                 if let Some(what) = protected {
                     Output::err_generic(
-                        "refusing to {s} \"{s}\": it is or contains {s}",
+                        "refusing to {s} \"{s}\": is or contains {s}",
                         (
                             if prune { "prune" } else { "clear" },
                             bstr::BStr::new(rm_path),
@@ -459,7 +459,7 @@ impl PackageManagerCommand {
                         ),
                     );
                     bun_core::note!(
-                        "the cache directory comes from <b>$BUN_INSTALL_CACHE_DIR<r>, <b>--cache-dir<r> or <b>$BUN_INSTALL<r>. Point it at a directory that holds nothing but the bun install cache."
+                        "cache directory comes from <b>$BUN_INSTALL_CACHE_DIR<r>, <b>--cache-dir<r> or <b>$BUN_INSTALL<r>. point it at a directory used only for the bun install cache"
                     );
                     had_err = true;
                 } else if prune {
@@ -482,7 +482,7 @@ impl PackageManagerCommand {
                     }
                     if has_global_store {
                         bun_core::note!(
-                            "the global store {} removed with it. Run 'bun install' again in each project that uses it.",
+                            "global store {} removed too, run 'bun install' in each project that uses it",
                             if dry_run { "would be" } else { "was" },
                         );
                     }

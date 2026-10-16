@@ -408,9 +408,9 @@ Environment variables take priority over `bunfig.toml`.
 | `BUN_CONFIG_SKIP_LOAD_LOCKFILE`    | Don’t load a lockfile                                     |
 | `BUN_CONFIG_SKIP_INSTALL_PACKAGES` | Don’t install any packages                                |
 | `BUN_CONFIG_HTTP_RETRY_COUNT`      | How often a failed request is retried (default: 5)        |
-| `BUN_CONFIG_HTTP_RETRY_BACKOFF`    | Wait before the first retry, in ms (default: 250)         |
+| `BUN_CONFIG_HTTP_RETRY_BACKOFF`    | Wait before the first retry, in ms (default: 50)          |
 
-A request is retried after a connection failure or a 5xx, 429 or 408 response. The wait doubles with every retry, up to 40 times the first one, with ±20% jitter. A longer `Retry-After` header is honored, up to 60 seconds. There is no wait when the connection is refused or the host name does not resolve, so an install fails right away when you are offline. `BUN_CONFIG_HTTP_RETRY_BACKOFF=0` always retries at once. `bun info`, `bun pm whoami`, `bun pm diff` and `bun audit` follow the same rule, but give up after one timeout or a 501. `bun publish` uploads a package once and never retries the upload.
+A request is retried after a connection failure or a 5xx, 429 or 408 response. The wait doubles with every retry, up to 40 times the first one, with ±20% jitter. A longer `Retry-After` header is honored, up to 60 seconds. `BUN_CONFIG_HTTP_RETRY_BACKOFF=0` retries at once. `bun info`, `bun pm whoami`, `bun pm diff` and `bun audit` follow the same rule, but give up after one timeout or a 501. `bun publish` uploads a package once and never retries the upload.
 
 Bun uses the fastest installation method available on the target platform: `clonefile` on macOS and `hardlink` on Linux and Windows. You can change the installation method with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fall back to a platform-specific implementation of copying files.
 

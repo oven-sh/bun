@@ -15,8 +15,10 @@ use crate::{NetworkTask, PackageManager};
 #[derive(Default)]
 pub(crate) struct RetryQueue {
     waiting: Vec<(Instant, *mut NetworkTask)>,
-    /// The highest attempt whose wait was announced since the queue was last empty.
-    announced: u16,
+    /// Without `--verbose`, one line stands for every retry of the install.
+    announced: bool,
+    /// The highest attempt for which a wait that the registry asked for was announced.
+    announced_asked: u16,
 }
 
 impl RetryQueue {
@@ -34,8 +36,8 @@ impl RetryQueue {
     }
 }
 
-/// A wait of this length or more is announced. The default backoff gets this long at the third retry.
-const ANNOUNCED_WAIT: Duration = Duration::from_millis(750);
+/// A shorter wait is not worth a line. The default backoff gets this long at the third retry.
+const ANNOUNCED_WAIT: Duration = Duration::from_millis(150);
 
 /// Returns the wait. `attempt` is 1 for the first retry.
 pub(crate) fn retry(
@@ -49,31 +51,23 @@ pub(crate) fn retry(
         enqueue::enqueue_network_task(manager, task);
         return Duration::ZERO;
     }
-    // An outage hits many requests at once, so a wait is announced once for each attempt number,
-    // not for each request. `--verbose` has a line for each request.
-    if manager.retry_queue.len() == 0 {
-        manager.retry_queue.announced = 0;
-    }
-    if attempt > manager.retry_queue.announced
-        && (asked || wait >= ANNOUNCED_WAIT)
-        && manager.options.log_level != LogLevel::Silent
-    {
-        manager.retry_queue.announced = attempt;
-        if asked {
-            Output::flush();
-            manager.progress.log(format_args!(
-                "warn: the registry asked to wait {}s before the next attempt\n",
-                wait.as_secs(),
-            ));
-        } else if !manager.options.log_level.is_verbose() {
-            Output::flush();
-            manager.progress.log(format_args!(
-                "warn: a request to the registry failed. Retry {}/{} in {}ms...\n",
-                attempt,
-                manager.options.max_retry_count,
-                wait.as_millis(),
-            ));
-        }
+    // An outage hits many requests at once. `--verbose` has a line for each retry of each request.
+    let (queue, log_level) = (&mut manager.retry_queue, manager.options.log_level);
+    let line = if asked && attempt > queue.announced_asked {
+        queue.announced_asked = attempt;
+        Some(format!(
+            "registry asked to wait {}s before retrying",
+            wait.as_secs()
+        ))
+    } else if !asked && !queue.announced && wait >= ANNOUNCED_WAIT && !log_level.is_verbose() {
+        queue.announced = true;
+        Some("registry requests failed, retrying".to_owned())
+    } else {
+        None
+    };
+    if let Some(line) = line.filter(|_| log_level != LogLevel::Silent) {
+        Output::flush();
+        manager.progress.log(format_args!("warn: {line}\n"));
     }
 
     let due = Instant::now() + wait;
@@ -95,6 +89,7 @@ impl PackageManager {
         response_buffer: &mut MutableString,
     ) -> bun_http::Result<HTTPResponseMetadata> {
         let mut attempt: u16 = 0;
+        let mut announced = false;
         loop {
             response_buffer.reset();
             let response = request.send_sync_for_result(response_buffer)?;
@@ -106,17 +101,17 @@ impl PackageManager {
             let (wait, asked) = wait_before(self, attempt, &response);
             if self.options.log_level != LogLevel::Silent {
                 if asked {
+                    bun_core::warn!("registry asked to wait {}s before retrying", wait.as_secs(),);
+                } else if self.options.log_level.is_verbose() {
                     bun_core::warn!(
-                        "the registry asked to wait {}s before the next attempt",
-                        wait.as_secs(),
-                    );
-                } else if wait >= ANNOUNCED_WAIT {
-                    bun_core::warn!(
-                        "the request to the registry failed. Retry {}/{} in {}ms...",
+                        "registry request failed, retry {}/{} in {}ms",
                         attempt,
                         self.options.max_retry_count,
                         wait.as_millis(),
                     );
+                } else if wait >= ANNOUNCED_WAIT && !announced {
+                    announced = true;
+                    bun_core::warn!("registry request failed, retrying");
                 }
             }
             std::thread::sleep(wait);
@@ -135,43 +130,15 @@ fn wait_before(
         .env()
         .get(b"BUN_CONFIG_HTTP_RETRY_BACKOFF")
         .and_then(|ms| bun_core::parse_unsigned::<u32>(ms, 10).ok())
-        .unwrap_or(250);
+        .unwrap_or(50);
     // Under auto-install the JS thread is blocked on this request.
     if base_ms == 0 || manager.options.runtime_auto_install {
-        return (Duration::ZERO, false);
-    }
-    if is_unreachable(response) {
         return (Duration::ZERO, false);
     }
     let wait = backoff(base_ms, attempt);
     match retry_after(response).filter(|asked| *asked > wait) {
         Some(asked) => (asked, true),
         None => (wait, false),
-    }
-}
-
-/// Whether nothing listens at the address, no route leads to it, or its name does not resolve. That
-/// mostly means being offline, so the install should fail right away. A busy server needs time, and
-/// so does a machine that is out of file descriptors or ports, so there the wait helps.
-fn is_unreachable(response: &HTTPClientResult<'static>) -> bool {
-    use bun_errno::SystemErrno as E;
-    // `connect_errno` is a Winsock code on Windows: WSAECONNREFUSED, WSAENETUNREACH, WSAEHOSTUNREACH.
-    const UNREACHABLE: [i32; 3] = if cfg!(windows) {
-        [10061, 10051, 10065]
-    } else {
-        [
-            E::ECONNREFUSED as i32,
-            E::ENETUNREACH as i32,
-            E::EHOSTUNREACH as i32,
-        ]
-    };
-    let errno = response.connect_errno;
-    match response.fail {
-        Some(bun_http::Error::DNSResolveFailed) => true,
-        // This is the name of every failed `connect`. Windows does not always say why it failed.
-        Some(bun_http::Error::ConnectionRefused) => errno == 0 || UNREACHABLE.contains(&errno),
-        Some(bun_http::Error::FailedToOpenSocket) => UNREACHABLE.contains(&errno),
-        _ => false,
     }
 }
 

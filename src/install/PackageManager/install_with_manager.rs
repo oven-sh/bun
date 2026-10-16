@@ -655,12 +655,12 @@ pub fn install_with_manager(
             None,
             bun_ast::Loc::EMPTY,
             format_args!(
-                "{} transitive {} deprecated (run with --verbose to list them)",
+                "{} deprecated transitive {} (--verbose to list)",
                 count,
                 if count == 1 {
-                    "dependency is"
+                    "dependency"
                 } else {
-                    "dependencies are"
+                    "dependencies"
                 },
             ),
         ),
@@ -1553,7 +1553,7 @@ fn warn_unsupported_platform(
             None,
             bun_ast::Loc::EMPTY,
             format_args!(
-                "{}@{} was not installed: unsupported platform (wants {})",
+                "skipping {}@{}: unsupported platform (wants {})",
                 pkgs.items_name()[id as usize].fmt(string_buf),
                 bun_core::fmt::for_terminal(
                     pkgs.items_resolution()[id as usize]
@@ -1583,7 +1583,7 @@ fn note_members_outside(manager: &PackageManager) {
         return;
     }
     bun_core::note!(
-        "skipped the dependencies and scripts of {} workspace{} outside the project: {}",
+        "skipping dependencies and scripts of {} workspace{} outside the project: {}",
         left_alone.len(),
         if left_alone.len() == 1 { "" } else { "s" },
         lockfile::pruned_workspaces::quoted_names(&mut left_alone.iter().copied()),
@@ -2118,7 +2118,7 @@ pub(crate) fn exit_on_empty_package_json(path: &[u8]) -> ! {
         "failed to parse '{}': file is empty",
         (bstr::BStr::new(path),),
     );
-    bun_core::note!("Restore package.json, or write {{}} to it to start without dependencies");
+    bun_core::note!("restore package.json, or write {{}} to start without dependencies");
     Global::exit(1)
 }
 
@@ -2461,7 +2461,7 @@ fn reresolve_rows_outside_overrides(
                 "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
             );
             bun_core::note!(
-                "{} has {}, but {} in package.json asks for {}",
+                "{} has {}, {} in package.json wants {}",
                 lockfile_name,
                 bstr::BStr::new(&crate::dedupe::label(lockfile, first_package)),
                 field,
@@ -2599,7 +2599,7 @@ fn note_migrated_lockfile_not_saved(manager: &PackageManager, source: &str) {
         "bun.lock and package.json"
     };
     bun_core::note!(
-        "the lockfile is frozen, so the migration from {} was not written to {}; run 'bun install' and commit the result",
+        "lockfile is frozen, migration from {} not written to {}; run 'bun install' and commit the result",
         source,
         files,
     );

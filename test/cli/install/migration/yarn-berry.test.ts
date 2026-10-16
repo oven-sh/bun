@@ -372,7 +372,7 @@ describe("yarn berry migration", () => {
   describe("package.json edits", () => {
     const editedLine = "rewrote patch:/portal:/link:/npm: ranges, added patchedDependencies in package.json";
     const frozenNote =
-      "note: the lockfile is frozen, so the migration from yarn.lock was not written to bun.lock and package.json; run 'bun install' and commit the result";
+      "note: lockfile is frozen, migration from yarn.lock not written to bun.lock and package.json; run 'bun install' and commit the result";
     const migratedPackageJson = {
       name: "berry-patch",
       dependencies: { "no-deps": "1.0.0", "one-dep": "^1.0.0", "optional-native": "^1.0.0" },
@@ -743,7 +743,7 @@ describe("yarn berry migration", () => {
     const { stderr, exitCode } = await run(dir, "install");
     expect(stderr).toContain("migrated lockfile from yarn.lock");
     // bun has no protocol for a linked folder whose dependencies are installed too, so it becomes a copy
-    expect(stderr).toContain(`"local-portal@portal:./local-portal" is migrated as "file:local-portal"`);
+    expect(stderr).toContain(`migrating "local-portal@portal:./local-portal" as "file:local-portal"`);
     expect(stderr).not.toContain("bun will resolve");
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
@@ -1468,7 +1468,7 @@ catalogs:
           ],
         }),
       error: () =>
-        `error: yarn.lock fetches "what-bin@1.0.0" from http://127.0.0.1:${testRegistry.port}/what-bin/-/what-bin-1.0.0.tgz, which is not on the registry that bun is configured to use (${testRegistry.registryUrl()}), so bun cannot get its integrity hash`,
+        `error: yarn.lock fetches "what-bin@1.0.0" from http://127.0.0.1:${testRegistry.port}/what-bin/-/what-bin-1.0.0.tgz, outside the configured registry (${testRegistry.registryUrl()}): cannot get integrity`,
     },
     {
       name: "an __archiveUrl on the registry .yarnrc.yml names, which is not bun's",
@@ -1508,7 +1508,7 @@ catalogs:
           ],
         }),
       error: () =>
-        `error: yarn.lock patches 2 packages with several files each ("a-dep@1.0.1" with 3, "no-deps@1.0.0" with 2); bun applies one patch per package — merge the files of each into one`,
+        `error: yarn.lock applies several patch files to 2 packages ("a-dep@1.0.1" with 3, "no-deps@1.0.0" with 2). bun supports one per package, merge them`,
     },
     {
       name: "a yarn.lock that is not YAML",
@@ -1648,7 +1648,7 @@ catalogs:
       manifest: { dependencies: { "no-deps": "^2.0.0" }, devDependencies: { "no-deps": "^1.0.0" } },
       lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
       error: () =>
-        `error: "no-deps" is in several dependency groups of "berry-reject". yarn uses the range "^1.0.0" for all of them, but the version in yarn.lock does not satisfy "^2.0.0"`,
+        `error: "no-deps" is in several dependency groups of "berry-reject": yarn uses "^1.0.0" for all, but yarn.lock version does not satisfy "^2.0.0"`,
     },
   ];
   for (const { name, manifest, files, lock, error } of rejected) {

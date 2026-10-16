@@ -51,7 +51,7 @@ fn parse_platform_flag<T: Npm::NegatableEnum>(
                 let name = value.strip_prefix(b"!").unwrap_or(value);
                 if T::lookup_name(name).is_none() {
                     Output::err_generic(
-                        "Invalid {}: '{}'. Valid values are: *, any, {}. Use !name to negate.",
+                        "invalid {}: '{}'. valid values: *, any, {}. use !name to negate",
                         (what, bstr::BStr::new(value), valid_names),
                     );
                     Global::crash();
@@ -1639,7 +1639,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                     Some(l) => l,
                     None => {
                         Output::err_generic(
-                            "invalid `--audit-level` value: '{}'. Valid values are: low, moderate, high, critical",
+                            "invalid `--audit-level` value: '{}'. valid values: low, moderate, high, critical",
                             (bstr::BStr::new(level),),
                         );
                         Global::crash();

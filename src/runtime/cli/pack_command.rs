@@ -952,7 +952,7 @@ fn find_dependencies_to_bundle(
                     .count();
             if copies_above > 1 {
                 Output::err_generic(
-                    "a cycle of bundled dependencies cannot be laid out in node_modules: \"{}\"",
+                    "bundled dependencies form a cycle: \"{}\"",
                     format_args!(
                         "{}",
                         bun_fmt::escape_control_chars(&bundle.subpath_in(parent, dep_name)),
@@ -2507,7 +2507,7 @@ fn add_archive_entry(
     // zeros, so a file that shrank has to be caught here.
     if (written as i64) < stat.st_size as i64 {
         Output::err_generic(
-            "file shrank while it was being packed: \"{}\"",
+            "file shrank while packing: \"{}\"",
             format_args!("{}", bun_fmt::escape_control_chars(filename.as_bytes())),
         );
         Global::crash();
@@ -2583,7 +2583,7 @@ impl<'a> Substitution<'a> {
                     None => Ok(spec.to_vec()),
                     Some(Substitution::Catalog(_)) => Err((
                         "catalog",
-                        "the catalog entry refers to another catalog".to_owned(),
+                        "catalog entry refers to another catalog".to_owned(),
                     )),
                     Some(found) => found.published(manifests, package_dir, dependency_name),
                 }
@@ -2656,7 +2656,7 @@ fn publish_spec_for_workspace_range_or_directory(
         };
         let Some(version) = manifests.workspace_version(workspace_name) else {
             return Err(format!(
-                "the package.json of workspace \"{}\" has no version",
+                "workspace \"{}\" has no version in package.json",
                 bstr::BStr::new(workspace_name),
             ));
         };
@@ -2669,7 +2669,7 @@ fn publish_spec_for_workspace_range_or_directory(
     if let Some(workspace_name) = manifests.workspace_name_at_path(package_dir, spec) {
         let Some(version) = manifests.workspace_version(workspace_name) else {
             return Err(format!(
-                "the package.json of workspace \"{}\" in the directory \"{}\" has no version",
+                "workspace \"{}\" in \"{}\" has no version in package.json",
                 bstr::BStr::new(workspace_name),
                 bstr::BStr::new(spec),
             ));

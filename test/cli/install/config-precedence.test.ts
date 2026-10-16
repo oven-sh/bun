@@ -1042,7 +1042,7 @@ describe.concurrent("directories named by config files", () => {
   const globalDirs = (globalDir: string, globalBinDir: string) => bunfig({ globalDir, globalBinDir });
   const binNames = (dir: string) => readdirSync(dir).map(name => name.replace(/\.(exe|bunx)$/, ""));
   const ignored = (key: string, env: string) =>
-    `warn: "${key}" is ignored in a project's bunfig.toml. Set it in $HOME/.bunfig.toml or in $${env}\n`;
+    `warn: ignoring "${key}" in project bunfig.toml, set it in $HOME/.bunfig.toml or $${env}\n`;
 
   describe.each([
     ["$XDG_CONFIG_HOME/.bunfig.toml", "home/.bunfig.toml", [], {}],

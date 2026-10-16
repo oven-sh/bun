@@ -44,8 +44,7 @@ pub(crate) fn read_trusted_dependencies(pm: &mut PackageManager) -> Option<Trust
     }
 }
 
-const CANNOT_TRUST: &str =
-    "cannot be trusted by name: add it as a dependency in your own package.json";
+const CANNOT_TRUST: &str = "cannot trust by name: add it to your package.json dependencies";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
@@ -407,7 +406,7 @@ impl TrustCommand {
 
         if !pm.options.do_.run_scripts() {
             Output::err_generic(
-                "lifecycle scripts are turned off (ignore-scripts), so bun pm trust cannot run any",
+                "lifecycle scripts are disabled (ignore-scripts), nothing to run",
                 (),
             );
             Global::crash();
@@ -415,7 +414,7 @@ impl TrustCommand {
 
         if pm.options.enable.frozen_lockfile() && !pm.options.dry_run {
             Output::err_generic(
-                "the lockfile is frozen, but bun pm trust has to update package.json and the lockfile",
+                "lockfile is frozen. refusing to update package.json & lockfile",
                 (),
             );
             Global::crash();

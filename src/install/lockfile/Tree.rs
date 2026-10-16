@@ -870,11 +870,11 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         }
 
         Output::err_generic(
-            "dependency cycle cannot be laid out in node_modules: {}",
+            "cannot install dependency cycle into node_modules: {}",
             (bun_core::fmt::for_terminal(bstr::BStr::new(&cycle)),),
         );
         bun_core::note!(
-            "each of these needs its own nested copy of the next one, which never ends. Use \"overrides\" in package.json to pin one of them to a single version"
+            "each needs a nested copy of the next, forever. Pin one to a single version with \"overrides\" in package.json"
         );
         bun_core::Global::crash();
     }
@@ -1693,7 +1693,7 @@ impl Tree {
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(
-                                "Invalid dependency name \"{}\"",
+                                "invalid dependency name \"{}\"",
                                 bun_core::fmt::for_terminal(bstr::BStr::new(dependency_name)),
                             ),
                         );

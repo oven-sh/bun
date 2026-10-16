@@ -1386,7 +1386,7 @@ impl<'a> Linker<'a> {
                 {
                     bun_core::run_once! {{
                         bun_core::warn!(
-                            "{}: symlinks cannot be created in {}, skipping the links to package binaries",
+                            "{}: cannot create symlinks in {}, skipping bin links",
                             bstr::BStr::new(err.name()),
                             bstr::BStr::new(abs_dest_dir),
                         );

@@ -262,7 +262,7 @@ impl PackageManager {
         if any_failed {
             if root_has_workspaces == Some(false) {
                 bun_core::note!(
-                    "catalogs require a \"workspaces\" field in the root package.json, and bun used {} as the root, which has none",
+                    "catalogs require a \"workspaces\" field in the root package.json. {} was used as root and has none",
                     bun_core::fmt::quote(&root_package_json_path()),
                 );
             }

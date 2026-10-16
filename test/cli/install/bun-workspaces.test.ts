@@ -391,8 +391,7 @@ exec chroot "$NEW_ROOT" /bin/sh -c 'cd "$0" && exec "$@"' "$@"`;
 // pnpm and npm accept workspace members whose package.json has no "name" (vite's
 // pnpm-workspace.yaml matches dozens of test fixtures shaped like `{"type":"module"}`).
 describe("workspace member package.json without a name", () => {
-  const skippedWarning =
-    'warn: Skipping workspace "packages/fixture": its package.json has no "name", so its dependencies will not be installed\n';
+  const skippedWarning = 'warn: skipping workspace "packages/fixture": package.json has no "name"\n';
 
   async function setupMonorepo(packageDir: string, workspaces: string[], fixturePackageJson: object) {
     await Promise.all([
@@ -2005,7 +2004,7 @@ describe("a local devDependency whose target is missing", () => {
   const specs = {
     "workspace:*": 'Workspace dependency "missing-local" not found',
     "link:missing-local": 'Package "missing-local" is not linked',
-    "file:../does-not-exist": 'package.json for "file:../does-not-exist" dependency "missing-local"',
+    "file:../does-not-exist": 'package.json not found for "file:../does-not-exist" dependency "missing-local"',
   } as const;
 
   async function install(ctx: TestCtx, manifest: object, ...args: string[]) {
@@ -4290,7 +4289,7 @@ describe("a workspace outside the project", () => {
   }
 
   const note = (path: string) =>
-    `note: skipped the dependencies and scripts of 1 workspace outside the project: "${path}"\n`;
+    `note: skipping dependencies and scripts of 1 workspace outside the project: "${path}"\n`;
 
   // `entry`: in "workspaces". `spec`: of the root's dependency on it. `path`: in bun.lock.
   const layouts: { entry?: string; spec?: string; path: string; link?: [path: string, target: string] }[] = [
@@ -4538,7 +4537,7 @@ describe.skipIf(isWindows)("in a member that is a link to a folder elsewhere", (
       }).sort();
     }
 
-    const skipped = 'note: skipped the dependencies and scripts of 1 workspace outside the project: "packages/w"\n';
+    const skipped = 'note: skipping dependencies and scripts of 1 workspace outside the project: "packages/w"\n';
 
     test.concurrent.each(["before", "after"])(
       "a command that installs, typed there %s the project is installed, changes nothing",
@@ -4569,7 +4568,7 @@ describe.skipIf(isWindows)("in a member that is a link to a folder elsewhere", (
           expect({ args, err }).toEqual({
             args,
             err:
-              `error: workspace "packages/w" is a symlink to "${real}", which is outside the project, so nothing was changed\n` +
+              `error: workspace "packages/w" links to "${real}" outside the project, no changes made\n` +
               `note: run the command in "${real}" to use that folder as its own project\n`,
           });
           expect({ args, contents: contentsOf(ctx.packageDir) }).toEqual({ args, contents: before });
@@ -4743,7 +4742,7 @@ describe("workspace packages whose name is too long to link", () => {
       env: ctx.env,
     });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(err).toContain(`error: Invalid dependency name "${name}"`);
+    expect(err).toContain(`error: invalid dependency name "${name}"`);
     expect(out).not.toContain("installed");
     expect([await exists(join(packageDir, "bun.lock")), await exists(join(packageDir, "node_modules"))]).toEqual([
       false,

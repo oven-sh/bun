@@ -531,7 +531,7 @@ impl BunxCommand {
             }
             if create && is_shared {
                 bun_core::warn!(
-                    "bunx is installing into the shared temp directory because no cache directory of your own is usable. Set <b>BUN_INSTALL_CACHE_DIR<r> to a directory only you can write."
+                    "no usable private cache directory, installing into shared temp directory. Set <b>BUN_INSTALL_CACHE_DIR<r> to a directory only you can write."
                 );
                 // macOS replaces this process with the tool, which drops what is still buffered.
                 Output::flush();
@@ -981,7 +981,7 @@ impl BunxCommand {
             Self::cache_dir(env_loader, configured_cache, &package_fmt, true)
         else {
             Output::err_generic(
-                "bunx could not create a cache directory that only the current user can access. Set <b>BUN_INSTALL_CACHE_DIR<r> to a directory you own.",
+                "failed to create private cache directory. Set <b>BUN_INSTALL_CACHE_DIR<r> to a directory you own.",
                 (),
             );
             Global::exit(1);
@@ -1179,7 +1179,7 @@ impl BunxCommand {
                         // without a network connection would first wait for another failed attempt.
                         write_package_json(package_json);
                         bun_core::warn!(
-                            "Could not reach the registry. Using the cached copy of <b>{}<r>.",
+                            "registry unreachable, using cached <b>{}<r>",
                             BStr::new(&update_request.name),
                         );
                     }

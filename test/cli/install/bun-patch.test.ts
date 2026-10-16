@@ -1220,7 +1220,7 @@ describe.concurrent("a step that fails leaves node_modules as it was", () => {
         dir,
         env,
         `error: GET ${emptyRegistry.url.href}no-deps/-/no-deps-1.0.0.tgz - 404\n` +
-          "error: no-deps is not in the cache, and downloading it again failed\n",
+          "error: no-deps not in cache, re-download failed\n",
         ...command.split(" ").slice(2),
         "no-deps",
       );
@@ -1535,7 +1535,7 @@ describe.concurrent("a commit whose patch bun install cannot apply changes nothi
 
     const { stderr, exitCode } = await runBun(dir, env, "patch", "--commit", name);
     expect(stderr).toContain("error: failed applying patch file: ");
-    expect(stderr).toContain("nothing was changed");
+    expect(stderr).toContain("no changes made");
     expect(await state()).toEqual(before);
     expect(exitCode).toBe(1);
   });
@@ -1747,7 +1747,7 @@ describe.concurrent("committing a package with every edit undone removes its pat
       await bunOk(dir, env, "patch", "no-deps@1.0.0");
       rmSync(join(dir, "node_modules", "no-deps", "added.js"));
       expect(await bunOk(dir, env, "patch", "--commit", "no-deps@1.0.0")).toContain(
-        "Removed the patch for no-deps@1.0.0 (kept patches/shared.patch, which another package also uses)\n",
+        "Removed the patch for no-deps@1.0.0 (kept patches/shared.patch, used by another package)\n",
       );
       expect((await readPackageJson()).patchedDependencies).toEqual({ "no-deps@2.0.0": otherPath });
       expect(await readdirSorted(join(dir, "patches"))).toEqual(["shared.patch"]);
@@ -1859,11 +1859,7 @@ describe.concurrent("a package with install scripts", () => {
     const stdout = await bunOk(dir, env, "patch", "uses-what-bin");
     expect(stdout).toContain(patchMessage("uses-what-bin", "node_modules/uses-what-bin"));
     expect(stdout.split("\n").filter(line => line.includes("scripts"))).toEqual(
-      trusted
-        ? [
-            "The install scripts of uses-what-bin have not run on this copy. They run again when you run bun patch --commit.",
-          ]
-        : [],
+      trusted ? ["Install scripts of uses-what-bin have not run on this copy. They run on bun patch --commit."] : [],
     );
     expect(written()).toBe(false);
 
@@ -2070,8 +2066,7 @@ describe.concurrent("bun patch keeps the node_modules of the package", () => {
 // workspace with a directory, and read a folder that an installed package ships from the project root.
 describe.concurrent("a folder as the target", () => {
   const refusal = (name: string, what: string) =>
-    `error: cannot patch ${name}: it is ${what}, which bun install never patches\n` +
-    "note: edit the folder itself instead\n";
+    `error: refusing to patch ${what} "${name}"\n` + "note: edit the folder directly\n";
 
   // bundled-file@2.0.0 declares "bundled-file-dep": "file:vendor/bundled-file-dep" and ships that folder.
   const shipped = join("node_modules", "bundled-file", "node_modules", "bundled-file-dep");
@@ -2094,7 +2089,7 @@ describe.concurrent("a folder as the target", () => {
     );
     const { dir, env } = project;
     expect(await shippedIndex(dir)).toBe('module.exports = "bundled-file-dep";\n');
-    await expectRefused(dir, env, refusal("bundled-file-dep", "a file: folder"), ...args);
+    await expectRefused(dir, env, refusal("bundled-file-dep", "file: folder"), ...args);
     expect(await shippedIndex(dir)).toBe('module.exports = "bundled-file-dep";\n');
   });
 
@@ -2124,7 +2119,7 @@ describe.concurrent("a folder as the target", () => {
         },
       },
     );
-    await expectRefused(project.dir, project.env, refusal("bundled-file-dep", "a file: folder"), "bundled-file-dep");
+    await expectRefused(project.dir, project.env, refusal("bundled-file-dep", "file: folder"), "bundled-file-dep");
   });
 
   test("a file: dependency of the project", async () => {
@@ -2138,8 +2133,8 @@ describe.concurrent("a folder as the target", () => {
       },
     );
     const { dir, env } = project;
-    await expectRefused(dir, env, refusal("local-dep", "a file: folder"), "local-dep");
-    await expectRefused(dir, env, refusal("local-dep", "a file: folder"), "--commit", "node_modules/local-dep");
+    await expectRefused(dir, env, refusal("local-dep", "file: folder"), "local-dep");
+    await expectRefused(dir, env, refusal("local-dep", "file: folder"), "--commit", "node_modules/local-dep");
     expect(await Bun.file(join(dir, "node_modules", "local-dep", "index.js")).text()).toBe(
       'module.exports = "local-dep";\n',
     );
@@ -2156,8 +2151,8 @@ describe.concurrent("a folder as the target", () => {
       },
     );
     const { dir, env } = project;
-    await expectRefused(dir, env, refusal("member", "a workspace package"), "member");
-    await expectRefused(dir, env, refusal("member", "a workspace package"), "--commit", "node_modules/member");
+    await expectRefused(dir, env, refusal("member", "workspace package"), "member");
+    await expectRefused(dir, env, refusal("member", "workspace package"), "--commit", "node_modules/member");
     expect(kind(dir, "node_modules", "member")).toBe("link");
   });
 
@@ -2173,8 +2168,8 @@ describe.concurrent("a folder as the target", () => {
     await bunOk(join(dir, "lib"), env, "link");
     await bunOk(dir, env, "install");
 
-    await expectRefused(dir, env, refusal("lib", "a link: dependency"), "lib");
-    await expectRefused(dir, env, refusal("lib", "a link: dependency"), "--commit", "node_modules/lib");
+    await expectRefused(dir, env, refusal("lib", "link: dependency"), "lib");
+    await expectRefused(dir, env, refusal("lib", "link: dependency"), "--commit", "node_modules/lib");
     expect(kind(dir, "node_modules", "lib")).toBe("link");
   });
 });
@@ -2189,7 +2184,7 @@ describe.concurrent("a folder as the target", () => {
 // `bun patch` used to delete the bundled copy and copy the registry's package in its place.
 describe.concurrent("a bundled dependency as the target", () => {
   const refusal = (name: string) =>
-    `error: cannot patch ${name}: it is a bundled dependency, which ships inside another package's tarball\n` +
+    `error: refusing to patch bundled dependency "${name}"\n` +
     "note: patch the package that bundles it, and edit it in that package's node_modules\n";
 
   // A file that only the bundled copy has shows whether `bun patch` replaced the folder.
@@ -2254,10 +2249,10 @@ describe.concurrent("a bundled dependency as the target", () => {
 describe.concurrent("a folder whose version is not in the lockfile as the target", () => {
   const shippedCopy = "node_modules/ships-no-deps/node_modules/no-deps";
   const notInLockfile = (command: string) =>
-    `error: cannot patch ${shippedCopy}: no-deps@1.0.0 is not in the lockfile\n` +
+    `error: cannot patch ${shippedCopy}: no-deps@1.0.0 not in lockfile\n` +
     `note: if the edits changed "version" in its package.json, run ${command} no-deps@<version in the lockfile> instead\n`;
   const needsLabel = (command: string, folder: string, name: string, version: string) =>
-    `error: cannot patch ${folder}: no npm package ${name}@${version} is in the lockfile, and the other packages named ${name} have a git, tarball or folder label. Run ${command} <dependency>@<label> with the dependency name and the label from the lockfile instead.\n`;
+    `error: cannot patch ${folder}: no npm package ${name}@${version} in lockfile. Other packages named ${name} have a git, tarball or folder label: run ${command} <dependency>@<label>\n`;
 
   test.each([
     ["one other version", { "no-deps": "2.0.0" }],
@@ -2453,11 +2448,11 @@ describe.concurrent("an npm: aliased dependency", () => {
     const dir = String(tmp);
     const env = projectEnv(dir);
     const install = await runBun(dir, env, "install");
-    expect(install.stderr).toStartWith('error: Invalid dependency name "a/b"\n');
+    expect(install.stderr).toStartWith('error: invalid dependency name "a/b"\n');
     expect(install.exitCode).toBe(1);
 
     const { stdout, stderr, exitCode } = await runBun(dir, env, "patch", arg);
-    expect(stderr).toStartWith('error: Invalid dependency name "a/b"\n');
+    expect(stderr).toStartWith('error: invalid dependency name "a/b"\n');
     expect(stdout).not.toContain("To patch");
     expect(existsSync(join(dir, "node_modules"))).toBe(false);
     expect(exitCode).toBe(1);
@@ -3102,7 +3097,7 @@ describe.concurrent("isolated linker with the global store", () => {
     expect(stdout).toContain(patchMessage("no-deps", "node_modules/no-deps"));
     // one-fixed-dep is in the store, where its link to no-deps cannot lead to the copy.
     expect(stdout).toContain(
-      "The packages that depend on no-deps load it from the global store. They will see your changes after bun patch --commit.\n",
+      "Dependents of no-deps load it from the global store and will not see changes until bun patch --commit.\n",
     );
     await Bun.write(join(dir, "node_modules", "no-deps", "index.js"), patched);
     await bunOk(dir, env, "install");
@@ -3150,9 +3145,9 @@ describe.concurrent("isolated linker with the global store", () => {
   });
 
   const refusal = (folder: string, commit: boolean) =>
-    `error: ${folder} resolves into the global store, which other projects share; refusing to patch through it\n` +
+    `error: refusing to patch ${folder}: resolves into the shared global store\n` +
     (commit
-      ? "note: run bun patch on the package first. It creates the copy that you edit\n"
+      ? "note: run bun patch on the package first to create an editable copy\n"
       : "note: set globalStore = false under [install] in bunfig.toml, run bun install and patch the package again\n");
 
   // None of these has a link of the project's own as its last part.
@@ -3476,7 +3471,7 @@ describe.concurrent("what bun patch --commit writes", () => {
       await expectRefused(
         dir,
         env,
-        `error: a patch cannot hold a change to a binary file, and git found these in ${folder}:\n` +
+        `error: patches cannot contain binary file changes. found in ${folder}:\n` +
           "  Binary files /dev/null and b/added.bin differ\n" +
           "  Binary files a/data.bin and b/data.bin differ\n" +
           "note: undo the changes to these files, then commit again\n",
@@ -3520,9 +3515,9 @@ describe.concurrent("a patch file that is not there", () => {
     await using project = await withoutPatchFiles(["basic-1"]);
     const { stderr, exitCode } = await runBun(project.dir, project.env, "install");
     expect(stderr).toEndWith(
-      "error: Couldn't find patch file: 'patches/basic-1@1.0.0.patch'\n\n" +
-        "To write it again from the patched package in node_modules, run:\n\n  bun patch --commit basic-1@1.0.0\n\n" +
-        'To install the package without a patch, remove "basic-1@1.0.0" from "patchedDependencies" in package.json\n',
+      "error: patch file not found: 'patches/basic-1@1.0.0.patch'\n\n" +
+        "To recreate it from the patched package in node_modules, run:\n\n  bun patch --commit basic-1@1.0.0\n\n" +
+        'To install without the patch, remove "basic-1@1.0.0" from "patchedDependencies" in package.json\n',
     );
     expect(exitCode).toBe(1);
   });
@@ -3563,21 +3558,21 @@ describe.concurrent("a patch file that is not there", () => {
       };
 
       const { stdout, stderr, exitCode } = await runBun(dir, env, "patch", "basic-1@1.0.0");
-      expect(stderr).toContain("error: Couldn't find patch file: 'patches/");
+      expect(stderr).toContain("error: patch file not found: 'patches/");
       expect(stdout).not.toContain("To patch");
       expect(await state()).toEqual(bothPatched);
       expect(exitCode).toBe(1);
 
       // The file of no-deps is still lost. That stops the install, not the commit.
       const first = await runBun(dir, env, "patch", "--commit", "basic-1");
-      expect(first.stderr).toContain("error: Couldn't find patch file: 'patches/no-deps@1.0.0.patch'\n");
-      expect(first.stderr).toEndWith("note: patches/basic-1@1.0.0.patch was written, but the install did not run\n");
+      expect(first.stderr).toContain("error: patch file not found: 'patches/no-deps@1.0.0.patch'\n");
+      expect(first.stderr).toEndWith("note: wrote patches/basic-1@1.0.0.patch, install did not run\n");
       expect(await state()).toEqual(bothPatched);
       expect(await readdirSorted(join(dir, "patches"))).toEqual(["basic-1@1.0.0.patch"]);
       expect(first.exitCode).toBe(1);
 
       const other = await runBun(dir, env, "patch", "basic-1");
-      expect(other.stderr).toContain("error: Couldn't find patch file: 'patches/no-deps@1.0.0.patch'\n");
+      expect(other.stderr).toContain("error: patch file not found: 'patches/no-deps@1.0.0.patch'\n");
       expect(await state()).toEqual(bothPatched);
       expect(other.exitCode).toBe(1);
 

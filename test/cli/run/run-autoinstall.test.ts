@@ -858,7 +858,7 @@ describe.concurrent("auto-install reads the project's package.json as `bun insta
 
     const { stderr, exitCode } = await runAutoInstall(String(dir), "index.js");
     expect(noteLines(stderr)).toEqual([
-      `note: "no-deps@file:./nowhere" names the folder "${join(String(dir), "nowhere")}", which does not exist`,
+      `note: "no-deps@file:./nowhere": folder "${join(String(dir), "nowhere")}" does not exist`,
     ]);
     expect(registry.requests).toEqual([]);
     expect(exitCode).toBe(1);
@@ -1271,7 +1271,7 @@ describe.concurrent("auto-install throws what it cannot do instead of ending the
 
     expect(stderr).toBe("");
     expect(stdout).toContain("error: Cannot find package 'no-deps' from");
-    expect(stdout).toMatch(/^note: bun is unable to access tempdir: E[A-Z]+$/m);
+    expect(stdout).toMatch(/^note: cannot access tempdir: E[A-Z]+$/m);
     expect(stdout).toEndWith("the program goes on\n");
     expect(registry.tarballs()).toEqual([]);
     expect(exitCode).toBe(0);
@@ -1315,7 +1315,7 @@ describe.concurrent("auto-install throws what it cannot do instead of ending the
 
     expect(stderr).toBe("");
     expect(stdout).toContain("error: Cannot find package 'no-deps' from");
-    expect(stdout).toMatch(/^note: bun is unable to write files: E[A-Z]+$/m);
+    expect(stdout).toMatch(/^note: cannot write files: E[A-Z]+$/m);
     expect(stdout).toEndWith("the program goes on\n");
     expect(exitCode).toBe(0);
   });
@@ -1351,7 +1351,7 @@ describe.concurrent("auto-install throws what it cannot do instead of ending the
 
         expect(stderr).toBe("");
         expect(stdout).toContain("error: Cannot find package 'no-deps' from");
-        expect(stdout).toContain(`note: bun is unable to write files to the cache directory "${cache}": EACCES\n`);
+        expect(stdout).toContain(`note: cannot write files to cache directory "${cache}": EACCES\n`);
         expect(stdout).toEndWith("the program goes on\n");
         expect(exitCode).toBe(0);
       } finally {
@@ -1395,7 +1395,7 @@ describe.concurrent("auto-install throws what it cannot do instead of ending the
 
     expect(stderr).toBe("");
     expect(stdout).toContain("error: Cannot find package 'lib' from");
-    expect(stdout).toMatch(/^note: \w+: failed to open the global directory$/m);
+    expect(stdout).toMatch(/^note: \w+: failed to open global directory$/m);
     expect(stdout).toEndWith("the program goes on\n");
     expect(exitCode).toBe(0);
   });

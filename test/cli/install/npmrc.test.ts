@@ -686,7 +686,7 @@ ${Object.keys(opts)
       dotEnv: { SECRET_AUTH: "" },
     },
     (stdout: string, stderr: string, exitCode: number) => {
-      expect(stderr).toContain("supplies no credentials");
+      expect(stderr).toContain("no credentials set");
       // The empty `_auth` is dropped, so the request carries no credentials and the registry refuses it.
       expect(stderr).toContain("error: @needs-auth/test-pkg@1.0.0 failed to resolve");
       expect(exitCode).toBe(1);
@@ -716,7 +716,7 @@ ${Object.keys(opts)
 
       const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(exitCode).toBe(0);
-      return stderr.includes("supplies no credentials");
+      return stderr.includes("no credentials set");
     }
 
     test("a home line is diagnosed against a registry the project declares", async () => {
@@ -1128,7 +1128,7 @@ registry=https://:TOK@somehost.com/
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("supplies no credentials");
+    expect(stderr).toContain("no credentials set");
     expect(exitCode).toBe(0);
   });
 
@@ -5297,7 +5297,7 @@ describe.skipIf(isWindows)("unreadable config files", () => {
 
   /** The end of the stderr of a command that installs, or publishes. */
   const refusal = (path: string, verb = "install") =>
-    `error: bun will not ${verb} packages because it cannot read this file\n` + `    at <dir>/${path}\n`;
+    `error: cannot read config file, refusing to ${verb} packages\n` + `    at <dir>/${path}\n`;
   const withoutDir = (stderr: string) => stderr.replace(/(?<= at )\S+\/(?=(project|home|xdg)\/)/, "<dir>/");
 
   /** `prepare` for a file that is there and cannot be read. */

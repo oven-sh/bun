@@ -168,7 +168,7 @@ type Hostile = {
 const badName = (name: Bytes, title = JSON.stringify(name.toString())): Hostile => ({
   title: `entry name ${title}`,
   packages: [pkg(name)],
-  error: "not the name of a cache entry",
+  error: "invalid cache entry name",
 });
 
 const inPackage = (
@@ -300,11 +300,11 @@ const hostile: Hostile[] = [
     [file(Buffer.from("a\xafb/c", "latin1"))],
     /ENOENT|EILSEQ/,
   ),
-  { title: "the same package twice", packages: [pkg(evil), pkg(evil)], error: "packages are not in order" },
+  { title: "the same package twice", packages: [pkg(evil), pkg(evil)], error: "packages out of order" },
   {
     title: "packages out of order",
     packages: [pkg("b@1.0.0@@@1"), pkg("a@1.0.0@@@1")],
-    error: "packages are not in order",
+    error: "packages out of order",
   },
 
   // Records in the wrong place.
@@ -334,7 +334,7 @@ const hostile: Hostile[] = [
   {
     title: "a package without a checksum",
     packages: [record(PACKAGE, evil, 0, packageJson)],
-    error: "record runs past the end of its package",
+    error: "record runs past end of package",
   },
   {
     title: "a wrong checksum",
@@ -398,7 +398,7 @@ const hostile: Hostile[] = [
   inPackage(
     "a path that swallows the rest",
     [record(FILE, "a", 0o644, "x", { pathLen: 60 })],
-    /truncated|unsafe path|past the end/,
+    /truncated|unsafe path|past end/,
   ),
   inPackage("a symlink target of 10 000 bytes", [link("l", Buffer.alloc(10_000, "a"))], "symlink target is too long"),
   inPackage("a symlink target of 2^64-1 bytes", [record(SYMLINK, "l", 0o777, "a", { size: U64_MAX })], "truncated"),
@@ -753,7 +753,7 @@ describe("bun pm cache unpack", () => {
 
     const { out, err, code } = await bun(box, ["pm", "cache", "unpack", box.at("some.pack")]);
 
-    expect(err).toContain("warn: did not touch 2 incomplete cache entries");
+    expect(err).toContain("warn: ignoring 2 incomplete cache entries");
     expect(err).not.toContain("error:");
     expect(out).toContain("Unpacked 9 packages (2 new, 5 already cached, ");
     expect(untouched(snapshot(box.cache, true))).toEqual(before);
@@ -993,7 +993,7 @@ describe("bun pm cache pack", () => {
     rmSync(join(box.cache, partial, "package.json"));
 
     let r = await bun(box, ["pm", "cache", "pack", "cache.pack"]);
-    expect(r.err).toContain("warn: skipped 2 packages that the cache does not have");
+    expect(r.err).toContain("warn: skipping 2 packages not in cache");
     expect(r.out).toContain(`Packed ${installedCount - 2} packages (`);
     expect(r.code).toBe(0);
 
@@ -1048,9 +1048,7 @@ describe("bun pm cache pack", () => {
       ]) {
         symlinkSync(target, join(entry, path));
         const r = await bun(box, ["pm", "cache", "pack", "cache.pack"]);
-        expect(r.err).toContain(
-          "error: bun pm cache pack failed: cache entry has a symlink that may point outside of it: ",
-        );
+        expect(r.err).toContain("error: bun pm cache pack failed: cache entry has symlink that may point outside it: ");
         expect(r.err).toContain(`/${path}"`);
         expect(r.out).toBe("");
         expect(r.code).toBe(1);
@@ -1059,7 +1057,7 @@ describe("bun pm cache pack", () => {
 
       writeFileSync(join(entry, "back\\slash"), "");
       const r = await bun(box, ["pm", "cache", "pack", "cache.pack"]);
-      expect(r.err).toContain("cache entry has a path that cannot be packed");
+      expect(r.err).toContain("cache entry path cannot be packed");
       expect(r.code).toBe(1);
 
       expect(readFileSync(join(box.project, "cache.pack"), "utf8")).toBe("the previous pack");

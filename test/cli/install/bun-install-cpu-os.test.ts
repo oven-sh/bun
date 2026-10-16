@@ -633,9 +633,9 @@ describe("bun install --cpu and --os flags", () => {
         expect(exitCode).toBe(0);
         return warningLines(stderr).sort();
       };
-      const win32 = `warn: dep-win32-only@1.0.0 was not installed: unsupported platform (wants os "win32")`;
-      const notLinux = `warn: dep-not-linux@2.0.0 was not installed: unsupported platform (wants os "!linux", cpu [ "arm64", "ppc64", ])`;
-      const s390x = `warn: member-s390x-only@4.0.0 was not installed: unsupported platform (wants cpu "s390x")`;
+      const win32 = `warn: skipping dep-win32-only@1.0.0: unsupported platform (wants os "win32")`;
+      const notLinux = `warn: skipping dep-not-linux@2.0.0: unsupported platform (wants os "!linux", cpu [ "arm64", "ppc64", ])`;
+      const s390x = `warn: skipping member-s390x-only@4.0.0: unsupported platform (wants cpu "s390x")`;
 
       expect(await install()).toEqual([notLinux, win32, s390x]);
       expect(await installedNames()).toEqual(linker === "hoisted" ? ["dep-universal", "member"] : ["dep-universal"]);
@@ -675,9 +675,7 @@ describe("bun install --cpu and --os flags", () => {
 
     expect(stderr).not.toContain("error:");
     expect(warningLines(stderr)).toEqual(
-      field === "dependencies"
-        ? [`warn: dep-win32-only@1.0.0 was not installed: unsupported platform (wants os "win32")`]
-        : [],
+      field === "dependencies" ? [`warn: skipping dep-win32-only@1.0.0: unsupported platform (wants os "win32")`] : [],
     );
     expect(stdout).not.toContain("installed dep-win32-only");
     expect(stdout).toContain("skipped dep-win32-only@1.0.0 (unsupported platform)\n");
@@ -1081,7 +1079,7 @@ describe("bun install --libc flag and the libc field", () => {
     });
 
     const [stderrText, exitCode] = await Promise.all([stderr.text(), exited]);
-    expect(stderrText).toContain(`Invalid libc: '${value}'. Valid values are: *, any, glibc, musl.`);
+    expect(stderrText).toContain(`invalid libc: '${value}'. valid values: *, any, glibc, musl.`);
     expect(exitCode).toBe(1);
   });
 });

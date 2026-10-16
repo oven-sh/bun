@@ -77,24 +77,24 @@ impl PackageManager {
 /// message that the user sees.
 #[derive(thiserror::Error, Debug)]
 pub enum DirectoryError {
-    #[error("bun is unable to write files: {}", bun_fmt::s(.0.name()))]
+    #[error("cannot write files: {}", bun_fmt::s(.0.name()))]
     OpenCache(sys::Error),
-    #[error("bun is unable to access tempdir: {}", bun_fmt::s(.0.name()))]
+    #[error("cannot access tempdir: {}", bun_fmt::s(.0.name()))]
     OpenTemporary(sys::Error),
     #[error(
-        "{} accessing temporary directory. Please set $BUN_TMPDIR or $BUN_INSTALL",
+        "{} accessing temporary directory. set $BUN_TMPDIR or $BUN_INSTALL",
         bun_fmt::s(.0.name())
     )]
     ProbeTemporary(sys::Error),
     #[error(
-        "bun is unable to write files to the cache directory \"{}\": {}",
+        "cannot write files to cache directory \"{}\": {}",
         bun_fmt::s(.cache),
         bun_fmt::s(.err.name())
     )]
     WriteCache { cache: Box<[u8]>, err: sys::Error },
     #[cfg(windows)]
     #[error(
-        "{}: Failed to read temporary directory path: '{}'",
+        "{}: failed to read temporary directory path: '{}'",
         bun_fmt::s(.err.name()),
         bun_fmt::s(.path)
     )]
@@ -104,14 +104,14 @@ pub enum DirectoryError {
     },
     #[error("failed to find a global directory for package caching and global link directories")]
     NoGlobal,
-    #[error("{}: failed to open the global directory", .0.name())]
+    #[error("{}: failed to open global directory", .0.name())]
     OpenGlobal(crate::Error),
     #[error(
         "{}: failed to open global link dir node_modules at '{global_dir}'",
         bun_fmt::s(.err.name())
     )]
     OpenGlobalLink { global_dir: Fd, err: sys::Error },
-    #[error("{}: failed to get the full path of the global directory", bun_fmt::s(.0.name()))]
+    #[error("{}: failed to get full path of global directory", bun_fmt::s(.0.name()))]
     GlobalLinkPath(sys::Error),
 }
 
@@ -282,7 +282,7 @@ fn get_temporary_directory_run(
 
                     if verbose_install() {
                         bun_core::pretty_errorln!(
-                            "<r><yellow>warn<r>: bun is unable to access tempdir: {}, using fallback",
+                            "<r><yellow>warn<r>: cannot access tempdir: {}, using fallback",
                             bun_fmt::s(err2.name())
                         );
                     }
@@ -1168,7 +1168,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
                 cached_tarball_folder_name(manager, integrity, resolution, patch_hash);
             if cache_dir_subpath.is_empty() {
                 Output::err_generic(
-                    "the lockfile has no integrity hash for <b>{}@{}<r>, run <cyan>bun install<r> first",
+                    "no integrity in lockfile for <b>{}@{}<r>, run <cyan>bun install<r> first",
                     (
                         bun_fmt::s(name),
                         bun_fmt::for_terminal(resolution.fmt(

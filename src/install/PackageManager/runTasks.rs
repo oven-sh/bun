@@ -2091,7 +2091,7 @@ fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mu
                 manager.log_mut(),
                 None,
                 bun_ast::Loc::EMPTY,
-                "A request failed twice. Sending at most {} requests at a time",
+                "request failed twice, limiting to {} concurrent requests",
                 lowered,
             );
         }

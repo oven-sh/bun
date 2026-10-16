@@ -754,7 +754,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 };
                 let specs = bstr::join(", ", &entry.specs);
                 bun_core::warn!(
-                    "skipped \"{}\" from yarn.lock: {}",
+                    "skipping \"{}\" from yarn.lock: {}",
                     bun_core::fmt::for_terminal(bstr::BStr::new(&specs)),
                     reason
                 );

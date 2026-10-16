@@ -1925,7 +1925,7 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
 
     const { stderr, exitCode } = await bun(repo, "prune");
 
-    expect(stderr.replaceAll("\\", "/")).toContain("error: node_modules/.bun is a symlink, so nothing was pruned");
+    expect(stderr.replaceAll("\\", "/")).toContain("error: node_modules/.bun is a symlink, nothing pruned");
     await expectVictimUntouched(victim, "stray@1.0.0");
     expect(exitCode).toBe(1);
   });
@@ -1988,7 +1988,7 @@ describe.concurrent.skipIf(isWindows)("what is behind a link at node_modules", (
     "other/package.json": JSON.stringify({ name: "other", version: "1.0.0" }),
   };
   const NOT_CLEARED = (folder: string) =>
-    `warn: ${folder} is a symlink, so the packages that another linker installed there were not removed\n` +
+    `warn: ${folder} is a symlink, packages from another linker not removed\n` +
     "note: remove the link and run 'bun install'";
 
   async function plant(root: string, files = MINE) {
@@ -2089,7 +2089,7 @@ describe.concurrent.skipIf(isWindows)("what is behind a link at node_modules", (
         isLink: true,
       });
       if (args[0] === "prune") {
-        expect(result.stderr).toContain(`error: ${relative(repo, link)} is a symlink, so nothing was pruned`);
+        expect(result.stderr).toContain(`error: ${relative(repo, link)} is a symlink, nothing pruned`);
         expect({ command, exitCode: result.exitCode }).toEqual({ command, exitCode: 1 });
         continue;
       }

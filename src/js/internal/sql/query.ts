@@ -10,6 +10,7 @@ const _values = Symbol("values");
 const _flags = Symbol("flags");
 const _results = Symbol("results");
 const _adapter = Symbol("adapter");
+const _markCancelled = Symbol("markCancelled");
 
 const PublicPromise = Promise;
 
@@ -211,6 +212,11 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     return this[_reject](x);
   }
 
+  /// For close() of a transaction or a reservation: a query that has started stays with its connection.
+  [_markCancelled]() {
+    this[_queryStatus] |= SQLQueryStatus.cancelled;
+  }
+
   cancel() {
     const status = this[_queryStatus];
     if (status & SQLQueryStatus.cancelled) {
@@ -361,5 +367,6 @@ export default {
     _strings,
     _values,
     _results,
+    _markCancelled,
   },
 };

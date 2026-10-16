@@ -13,7 +13,11 @@ interface PooledConnection {
   close(): void;
 }
 
-const { Query, SQLQueryFlags } = require("internal/sql/query");
+const {
+  Query,
+  SQLQueryFlags,
+  symbols: { _markCancelled },
+} = require("internal/sql/query");
 const { PostgresAdapter } = require("internal/sql/postgres");
 const { MySQLAdapter } = require("internal/sql/mysql");
 const { SQLiteAdapter } = require("internal/sql/sqlite");
@@ -500,7 +504,7 @@ const SQL = function SQL(
           const timer = setTimeout(() => {
             state.connectionState |= ReservedConnectionState.closed;
             for (const query of reserveQueries) {
-              (query as Query<any, any>).cancel();
+              (query as Query<any, any>)[_markCancelled]();
             }
             state.connectionState |= ReservedConnectionState.closed;
             pooledConnection.close();
@@ -508,8 +512,7 @@ const SQL = function SQL(
             resolve();
           }, timeout * 1000);
           timer.unref(); // dont block the event loop
-          // allSettled: the timer rejects the pending queries, and nothing else observes this chain.
-          Promise.all([Promise.allSettled(pending_queries), Promise.allSettled(pending_transactions)]).then(() => {
+          Promise.all([Promise.all(pending_queries), Promise.all(pending_transactions)]).finally(() => {
             clearTimeout(timer);
             resolve();
           });
@@ -518,7 +521,7 @@ const SQL = function SQL(
       }
       state.connectionState |= ReservedConnectionState.closed;
       for (const query of reserveQueries) {
-        (query as Query<any, any>).cancel();
+        (query as Query<any, any>)[_markCancelled]();
       }
 
       pooledConnection.close();
@@ -667,21 +670,11 @@ const SQL = function SQL(
       pool.attachConnectionCloseHandler(pooledConnection, onClose);
     }
 
-    // The queries that this scope sends by itself: BEGIN, COMMIT, ROLLBACK and the savepoint statements.
-    const internalQueries = new WeakSet<object>();
     function run_internal_transaction_sql(string) {
       if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.$reject(pool.connectionClosedError());
       }
-      const query = unsafeQueryFromTransaction(string, [], pooledConnection, state.queries);
-      internalQueries.add(query);
-      return query;
-    }
-    // A cancelled COMMIT or ROLLBACK is never sent, and begin() then releases a connection inside the transaction.
-    function cancelQueries() {
-      for (const query of state.queries) {
-        if (!internalQueries.has(query)) (query as Query<any, any>).cancel();
-      }
+      return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries);
     }
     function transaction_sql(
       strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
@@ -794,7 +787,9 @@ const SQL = function SQL(
           const pending_queries = Array.from(transactionQueries);
           const pending_savepoints = Array.from(transactionSavepoints);
           const timer = setTimeout(async () => {
-            cancelQueries();
+            for (const query of transactionQueries) {
+              (query as Query<any, any>)[_markCancelled]();
+            }
             if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
               await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
             }
@@ -803,15 +798,16 @@ const SQL = function SQL(
             resolve();
           }, timeout * 1000);
           timer.unref(); // dont block the event loop
-          // allSettled: the timer rejects the queries that it cancels, and nothing else observes this chain.
-          Promise.all([Promise.allSettled(pending_queries), Promise.allSettled(pending_savepoints)]).then(() => {
+          Promise.all([Promise.all(pending_queries), Promise.all(pending_savepoints)]).finally(() => {
             clearTimeout(timer);
             resolve();
           });
           return promise;
         }
       }
-      cancelQueries();
+      for (const query of transactionQueries) {
+        (query as Query<any, any>)[_markCancelled]();
+      }
       if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
         await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
       }

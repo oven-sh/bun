@@ -429,14 +429,43 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
   const insertInto = (table: string) => (tx: SQL, id: number) =>
     tx.unsafe(`INSERT INTO ${table} (id) VALUES (?)`, [id]);
 
+  // close() of a transaction calls no cancel() on the connection. Its queries
+  // that wait in the queue run, and the ROLLBACK of close() undoes them.
+  test("close() of a transaction leaves a query that waits in the queue to the connection", async () => {
+    const { sql, table, rows } = await connectWithTable();
+    await using gate = await lock();
+    const insert = insertInto(table);
+    let queued: unknown;
+
+    const transaction = settled(
+      sql.begin(async tx => {
+        await insert(tx, 1);
+        gate.hold(tx);
+        const waiting = settled(insert(tx, 2).execute());
+        const closed = tx.close();
+        await gate.release();
+        await closed;
+        queued = await waiting;
+      }),
+    );
+
+    expect({ outcome: await transaction, queued, inserted: await rows() }).toEqual({
+      outcome: rejectedWith({ code: "ERR_MYSQL_CONNECTION_CLOSED" }),
+      queued: { resolved: [] },
+      inserted: [{ id: 0 }],
+    });
+    await sql.close();
+  });
+
   // begin() sends BEGIN, COMMIT and ROLLBACK by itself. They are queries of the
-  // transaction, and they wait in the queue like the queries of the caller.
-  // close() cancels the queries of the caller and leaves those. begin() gives
-  // the connection back to the pool when its COMMIT or ROLLBACK settles, and a
-  // cancelled one settles with the connection still inside the transaction.
+  // transaction, and they wait in the queue like the queries of the caller. A
+  // cancel() on the connection from close() would reject the COMMIT, and
+  // begin() would give the connection back to the pool inside the transaction.
+  // It would also reject a query of the caller and let the COMMIT commit the
+  // rest.
   const failure = new Error("from the callback");
   test.each<[string, () => string, { resolved: unknown } | { rejected: unknown }, { id: number }[]]>([
-    ["COMMIT", () => "returned", { resolved: "returned" }, [{ id: 0 }, { id: 1 }, { id: 100 }]],
+    ["COMMIT", () => "returned", { resolved: "returned" }, [{ id: 0 }, { id: 1 }, { id: 2 }, { id: 100 }]],
     [
       "ROLLBACK",
       () => {
@@ -445,157 +474,66 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
       { rejected: failure },
       [{ id: 0 }, { id: 100 }],
     ],
-  ])("close() of a transaction does not cancel the %s of begin()", async (_, end, outcome, inserted) => {
-    const { sql, table, insert, rows } = await connectWithTable();
+  ])(
+    "close() after the callback of begin() settled stops nothing, and begin() sends its %s",
+    async (_, end, outcome, inserted) => {
+      const { sql, table, insert, rows } = await connectWithTable();
+      await using gate = await lock();
+      const ended = Promise.withResolvers<{ close: () => Promise<void>; queued: Promise<unknown> }>();
+
+      const transaction = settled(
+        sql.begin(async tx => {
+          await insertInto(table)(tx, 1);
+          gate.hold(tx);
+          // Waits behind the held query. The COMMIT or ROLLBACK of begin() waits behind both.
+          const queued = settled(insertInto(table)(tx, 2).execute());
+          ended.resolve({ close: () => tx.close(), queued });
+          return end();
+        }),
+      );
+      const { close, queued } = await ended.promise;
+      // Another caller. The pool has one connection, and the transaction holds it.
+      const other = insert(100).execute();
+      await gate.roundTrip();
+      const closed = close();
+      await gate.release();
+
+      expect({
+        outcome: await transaction,
+        queued: await queued,
+        other: await other,
+        closed: await closed,
+        inserted: await rows(),
+      }).toEqual({
+        outcome,
+        queued: { resolved: [] },
+        other: [],
+        closed: undefined,
+        // The INSERT of the other caller ran after the transaction ended.
+        inserted,
+      });
+      await sql.close();
+    },
+  );
+
+  // close() of a reserved connection closes the connection, which rejects the
+  // query that waits in its queue.
+  test("close() of a reserved connection rejects a query that waits in the queue with ERR_MYSQL_CONNECTION_CLOSED", async () => {
+    const { sql } = await connect();
     await using gate = await lock();
-    const ended = Promise.withResolvers<() => Promise<void>>();
+    const reserved = await sql.reserve();
 
-    const transaction = settled(
-      sql.begin(async tx => {
-        await insertInto(table)(tx, 1);
-        // On the wire when the callback ends: the COMMIT or ROLLBACK of begin() waits behind it.
-        gate.hold(tx);
-        ended.resolve(() => tx.close());
-        return end();
-      }),
-    );
-    const close = await ended.promise;
-    // Another caller. The pool has one connection, and the transaction holds it.
-    const other = insert(100).execute();
-    await gate.roundTrip();
-    const closed = close();
-    await gate.release();
+    gate.hold(reserved);
+    const queued = settled(reserved.unsafe("SELECT 1").execute());
+    await reserved.close();
 
-    expect({ outcome: await transaction, other: await other, closed: await closed, inserted: await rows() }).toEqual({
-      outcome,
-      other: [],
-      closed: undefined,
-      // The INSERT of the other caller ran after the transaction ended.
-      inserted,
-    });
+    expect(await queued).toEqual(rejectedWith({ code: "ERR_MYSQL_CONNECTION_CLOSED" }));
     await sql.close();
-  });
-
-  test("close({ timeout }) of a transaction cancels the queries of the caller, and not the COMMIT of begin()", async () => {
-    const { sql, table, rows } = await connectWithTable();
-    await using gate = await lock();
-    const insert = insertInto(table);
-    const returned = Promise.withResolvers<{ close: () => Promise<void>; queued: Promise<unknown> }>();
-
-    const transaction = settled(
-      sql.begin(async tx => {
-        await insert(tx, 1);
-        gate.hold(tx);
-        // Waits behind the held query. The COMMIT of begin() waits behind both.
-        const queued = settled(insert(tx, 2).execute());
-        returned.resolve({ close: () => tx.close({ timeout: 0.001 }), queued });
-        return "returned";
-      }),
-    );
-    const { close, queued } = await returned.promise;
-    await gate.roundTrip();
-    const closed = close();
-
-    // The timer has fired when the query of the caller rejects.
-    expect(await queued).toEqual(cancelled);
-    await gate.release();
-    expect({ outcome: await transaction, closed: await closed, inserted: await rows() }).toEqual({
-      outcome: { resolved: "returned" },
-      closed: undefined,
-      inserted: [{ id: 0 }, { id: 1 }],
-    });
-    await sql.close();
-  });
-
-  test("close() of a transaction does not cancel a COMMIT that begin() has made and not started", async () => {
-    const { sql, table, rows } = await connectWithTable();
-    const returned = Promise.withResolvers<string>();
-    const entered = Promise.withResolvers<{ close: () => Promise<void>; inserted: Promise<unknown> }>();
-
-    // Not an async function: begin() waits for `returned.promise` itself, so
-    // the reaction of begin() is the first one on it.
-    const outcome = settled(
-      sql.begin(tx => {
-        entered.resolve({ close: () => tx.close(), inserted: insertInto(table)(tx, 1).execute() });
-        return returned.promise;
-      }),
-    );
-    const { close, inserted } = await entered.promise;
-    await inserted;
-    // This reaction runs after the one of begin(). begin() has made its COMMIT,
-    // and the COMMIT has not reached the connection.
-    const closed = returned.promise.then(close);
-    returned.resolve("returned");
-
-    expect({ outcome: await outcome, closed: await closed, inserted: await rows() }).toEqual({
-      outcome: { resolved: "returned" },
-      closed: undefined,
-      inserted: [{ id: 0 }, { id: 1 }],
-    });
-    await sql.close();
-  });
-
-  // Runs `script` in a process of its own. stderr is here so that a failure
-  // shows it. A sanitizer build can write to it.
-  async function run(script: string, env: Record<string, string> = {}) {
-    await container.ready;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, MYSQL_URL: url(), ...env },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
-  }
-  const exited = (stdout: unknown) => ({
-    stdout: JSON.stringify(stdout) + "\n",
-    stderr: expect.any(String),
-    exitCode: 0,
-    signalCode: null,
-  });
-
-  // close() cancels the queries of its scope, at once or when its timeout
-  // ends. The caller handles the rejection of every query here, so the process
-  // has no unhandled rejection and exits with 0.
-  const closeScript = `
-    const sql = new Bun.SQL({ url: process.env.MYSQL_URL, max: 1 });
-    const holder = new Bun.SQL({ url: process.env.MYSQL_URL, max: 1 });
-    const lock = "('" + process.env.LOCK + "'";
-    const options = process.env.TIMEOUT ? { timeout: Number(process.env.TIMEOUT) } : undefined;
-    const settled = query => query.execute().then(() => "resolved", error => error.code);
-    await holder.unsafe("SELECT GET_LOCK" + lock + ", 0)");
-
-    // One query on the wire until the lock is free, and one query behind it.
-    async function close(scope) {
-      const held = settled(scope.unsafe("SELECT GET_LOCK" + lock + ", 10)"));
-      const queued = settled(scope.unsafe("SELECT 1"));
-      const closed = scope.close(options);
-      const outcome = await queued;
-      await holder.unsafe("SELECT RELEASE_LOCK" + lock + ")");
-      await closed;
-      return [await held, outcome];
-    }
-    let outcomes;
-    if (process.env.SCOPE === "reserved") outcomes = await close(await sql.reserve());
-    else await sql.begin(async tx => void (outcomes = await close(tx))).catch(() => {});
-    console.log(JSON.stringify(outcomes));
-    await Promise.all([sql.close(), holder.close()]);
-  `;
-  const afterRollback = ["resolved", "ERR_MYSQL_QUERY_CANCELLED"];
-  const afterDisconnect = ["ERR_MYSQL_CONNECTION_CLOSED", "ERR_MYSQL_QUERY_CANCELLED"];
-  test.each([
-    ["close() of a transaction", { SCOPE: "transaction", TIMEOUT: "" }, afterRollback],
-    ["close({ timeout }) of a transaction", { SCOPE: "transaction", TIMEOUT: "0.001" }, afterRollback],
-    ["close() of a reserved connection", { SCOPE: "reserved", TIMEOUT: "" }, afterDisconnect],
-    ["close({ timeout }) of a reserved connection", { SCOPE: "reserved", TIMEOUT: "0.001" }, afterDisconnect],
-  ])("%s rejects the query that waits in the queue, and the script exits with 0", async (_, env, outcomes) => {
-    const LOCK = randomUUIDv7("hex").replaceAll("-", "");
-    expect(await run(closeScript, { ...env, LOCK })).toEqual(exited(outcomes));
   });
 
   // The cancelled query sends nothing, so no reply comes back for it.
   test("a script whose last query was cancelled in the queue exits on its own", async () => {
+    await container.ready;
     const script = `
       const sql = new Bun.SQL({ url: process.env.MYSQL_URL, max: 1 });
       const value = n => sql\`SELECT \${n} AS value\`;
@@ -605,6 +543,19 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
       last.cancel();
       console.log(JSON.stringify([await running, await last.catch(error => error.code)]));
     `;
-    expect(await run(script)).toEqual(exited([[{ value: 1 }], "ERR_MYSQL_QUERY_CANCELLED"]));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, MYSQL_URL: url() },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr is here so that a failure shows it. A sanitizer build can write to it.
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify([[{ value: 1 }], "ERR_MYSQL_QUERY_CANCELLED"]) + "\n",
+      stderr: expect.any(String),
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 });

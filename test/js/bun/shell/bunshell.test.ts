@@ -1339,13 +1339,30 @@ booga"
       .testMini()
       .runAsTest("a subshell, a pipeline and a command substitution copy values and attributes");
 
-    TestBuilder.command`PWD=junk; OLDPWD=junk; cd .; cd .; echo $PWD; echo $OLDPWD; pwd`
+    TestBuilder.command`PWD=junk; OLDPWD=junk; cd .; cd .; echo $PWD; echo $OLDPWD; pwd; ${BUN} -e ${childEnv} PWD OLDPWD`
+      .env({ ...bunEnv, PWD: undefined, OLDPWD: undefined })
       .stdout(out => {
-        const [pwd, oldpwd, cwd] = out.split("\n");
-        expect({ pwd, oldpwd }).toEqual({ pwd: cwd, oldpwd: cwd });
+        const [pwd, oldpwd, cwd, child] = out.split("\n");
+        expect({ pwd, oldpwd, child }).toEqual({ pwd: cwd, oldpwd: cwd, child: `PWD=${cwd} OLDPWD=${cwd}` });
       })
       .testMini()
-      .runAsTest("cd sets PWD and OLDPWD over a plain assignment");
+      .runAsTest("cd sets and exports PWD and OLDPWD over a plain assignment");
+
+    // OLDPWD gets the export attribute from the first `cd`, as in dash. bash exports it from the start.
+    TestBuilder.command`
+      OLDPWD=junk
+      ${BUN} -e ${childEnv} OLDPWD
+      cd .; cd .
+      pwd
+      ${BUN} -e ${childEnv} OLDPWD
+    `
+      .env({ ...bunEnv, OLDPWD: undefined })
+      .stdout(out => {
+        const [before, cwd, after] = out.split("\n");
+        expect({ before, after }).toEqual({ before: "OLDPWD=<unset>", after: `OLDPWD=${cwd}` });
+      })
+      .testMini()
+      .runAsTest("OLDPWD is not exported before the first cd");
 
     TestBuilder.command`OUTER=changed; export NOVALUE; export`
       .env(env)
@@ -1367,6 +1384,18 @@ booga"
       .testMini()
       .runAsTest("NAME=value export NAME assigns the value to the name");
 
+    // A prefix on `export` assigns only a name that is an operand, as in bash. dash assigns every prefix.
+    TestBuilder.command`
+      D=1 export E; echo "[$D]"
+      OUTER=x export F; echo $OUTER
+      G=1 H=2 export G; echo "[$G][$H]"
+      ${BUN} -e ${childEnv} D OUTER G H
+    `
+      .env(env)
+      .stdout("[]\nfromenv\n[1][]\nD=<unset> OUTER=fromenv G=1 H=<unset>\n")
+      .testMini()
+      .runAsTest("a prefix on export does not assign a name that is not an operand");
+
     TestBuilder.command`
       OUTER=pre NEW=1 ${BUN} -e ${childEnv} OUTER NEW
       ${BUN} -e ${childEnv} OUTER NEW
@@ -1379,6 +1408,14 @@ booga"
       .testMini()
       .runAsTest("a NAME=value prefix reaches one command only");
 
+    // Windows: names are ASCII-case-insensitive, as in process.env, so `outer` is the inherited `OUTER`.
+    TestBuilder.command`outer=changed; echo $OUTER; ${BUN} -e ${childEnv} OUTER`
+      .env(env)
+      .stdout(isWindows ? "changed\nOUTER=changed\n" : "fromenv\nOUTER=fromenv\n")
+      .testMini()
+      .runAsTest("a name in another case is the same variable on Windows only");
+
+    // `env` is a POSIX tool. It prints every entry of the environment it got, duplicates included.
     if (isPosix) {
       TestBuilder.command`
         OUTER=pre env
@@ -1401,16 +1438,68 @@ booga"
         .runAsTest("a NAME=value prefix over an exported name gives the child one entry for the name");
     }
 
-    test.skipIf(isWindows)("a plain assignment to PATH is used by command lookup and by which", async () => {
-      using dir = tempDir("shell-path-assign", {
-        "onlyintool": "#!/bin/sh\necho from-onlyintool\n",
-      });
-      chmodSync(join(String(dir), "onlyintool"), 0o755);
-      const toolDir = String(dir);
+    // `set NAME` of cmd.exe prints every entry of the environment it got whose name starts with NAME.
+    if (isWindows) {
+      TestBuilder.command`
+        OUTER=pre cmd /d /c set OUTER
+        outer=low cmd /d /c set OUTER
+        export MADE=first; made=second cmd /d /c set MADE
+      `
+        .env(env)
+        .stdout(out => {
+          expect(out.split(/\r?\n/).filter(Boolean)).toEqual(["OUTER=pre", "outer=low", "made=second"]);
+        })
+        .testMini()
+        .runAsTest("a NAME=value prefix over an exported name gives the child one entry for the name");
+    }
 
-      const { stdout, stderr, exitCode } = await $`PATH=${toolDir}; onlyintool; which onlyintool`.quiet().nothrow();
+    // Each sequence runs in its own subshell, for a name that is unset at the start and for an inherited name.
+    test.skipIf(isWindows)("sequences of assignments, exports and prefixes give the result of sh", async () => {
+      const ops = ["V=1", "export V", "export V=3", "V=4 printenv V"];
+      const sequences = ops.flatMap(a => [[a], ...ops.flatMap(b => [[a, b], ...ops.map(c => [a, b, c])])]);
+      const script = ["UNSET_AT_START", "OUTER"]
+        .flatMap(name =>
+          sequences.map(sequence => {
+            const statements = sequence.join("; ").replaceAll("V", name);
+            return `(echo '# ${statements}'; ${statements}; printenv ${name} || echo not-in-env; echo "[$${name}]")`;
+          }),
+        )
+        .join("\n");
+
+      const sh = Bun.spawnSync({ cmd: ["sh", "-c", script], env, stderr: "inherit" });
+      const bun = await $`${{ raw: script }}`.env(env).quiet().nothrow();
+      expect(bun.stdout.toString().split("\n")).toEqual(sh.stdout.toString().split("\n"));
+    });
+
+    TestBuilder.command`A=1 $EMPTY; echo "[$A]"`
+      .stdout("[1]\n")
+      .todo("a command with no command word does not keep its assignments yet")
+      .runAsTest("NAME=value before an empty expansion assigns the name");
+
+    test("a plain assignment to PATH is used by which", async () => {
+      const exe = isWindows ? "onlyintool.exe" : "onlyintool";
+      using dir = tempDir("shell-path-assign-which", { [exe]: "" });
+      if (!isWindows) chmodSync(join(String(dir), exe), 0o755);
+
+      const { stdout, stderr, exitCode } = await $`PATH=${String(dir)}; which onlyintool`.quiet().nothrow();
       expect(stderr.toString()).toBe("");
-      expect(stdout.toString()).toBe(`from-onlyintool\n${toolDir}/onlyintool\n`);
+      expect(stdout.toString()).toBe(join(String(dir), exe) + "\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // Windows: the command lookup matches the key PATH byte for byte and the inherited key is spelled Path (#42049).
+    test.todoIf(isWindows)("a plain assignment to PATH is used by command lookup", async () => {
+      using dir = tempDir(
+        "shell-path-assign",
+        isWindows
+          ? { "onlyintool.cmd": "@echo from-onlyintool\r\n" }
+          : { "onlyintool": "#!/bin/sh\necho from-onlyintool\n" },
+      );
+      if (!isWindows) chmodSync(join(String(dir), "onlyintool"), 0o755);
+
+      const { stdout, stderr, exitCode } = await $`PATH=${String(dir)}; onlyintool`.quiet().nothrow();
+      expect(stderr.toString()).toBe("");
+      expect(stdout.toString().trim()).toBe("from-onlyintool");
       expect(exitCode).toBe(0);
     });
   });
@@ -3722,5 +3811,23 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
     expect(stderr.toString()).toBe("");
     expect(stdout.toString()).toBe("from-onlyintool\n");
     expect(exitCode).toBe(0);
+  }
+
+  // A `PATH=` prefix is the PATH of its own command only: a later command is looked up on the shell's PATH.
+  {
+    const { stdout, stderr, exitCode } = await $`PATH=${toolDir}/empty true; onlyintool`
+      .env({ ...bunEnv, PATH: toolDir })
+      .quiet()
+      .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("from-onlyintool\n");
+    expect(exitCode).toBe(0);
+  }
+
+  {
+    const { stdout, stderr, exitCode } = await $`PATH=${toolDir} true; onlyintool`.quiet().nothrow();
+    expect(stderr.toString()).toBe("bun: command not found: onlyintool\n");
+    expect(stdout.toString()).toBe("");
+    expect(exitCode).toBe(1);
   }
 });

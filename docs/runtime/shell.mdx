@@ -345,6 +345,8 @@ await $`NODE_ENV=production; bun -e 'console.log(process.env.NODE_ENV)'`.env({
 await $`BAR=bar; bun -e 'console.log(process.env.BAR)'`; // undefined\n
 ```
 
+On Windows, variable names are ASCII-case-insensitive, as in `process.env`: `PATH`, `Path` and `path` are one variable, so an assignment under any spelling changes what child processes receive.
+
 ### Changing the environment variables
 
 By default, all commands use `process.env` as their environment variables.

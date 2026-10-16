@@ -3287,6 +3287,83 @@ console.log(a)
       expectPrintedMin_(`export const foo = "a" + "b" + 1 + "b" + "c";`, `export const foo = "ab1bc"`);
     });
 
+    // A template literal keeps its parts in one buffer that a `+` fold extends
+    // at either end, and Template::fold rewrites the parts in place. These rows
+    // pin the output of each path through that.
+    it("template literal `+` folds print the same text", () => {
+      const cases = [
+        ["capture(`a${x}b` + `c${y}d`);", "capture(`a${x}bc${y}d`);\n"],
+        [
+          "capture(`a${x}b` + `c${y}d` + `e${z}f` + `g${w}h` + `i${v}j`);",
+          "capture(`a${x}bc${y}de${z}fg${w}hi${v}j`);\n",
+        ],
+        // the accumulator starts at the second operand
+        ["capture(x + `a${y}` + `b${z}` + `c${w}`);", "capture(x + `a${y}b${z}c${w}`);\n"],
+        // a template without substitutions takes over the parts of the next one
+        ["capture(`head` + `a${x}` + `b${y}` + `c${z}`);", "capture(`heada${x}b${y}c${z}`);\n"],
+        ["capture('s' + `a${x}` + `b${y}` + 't' + `c${z}`);", "capture(`sa${x}b${y}tc${z}`);\n"],
+        ["capture(`a${x}` + 's' + `b${y}`);", "capture(`a${x}sb${y}`);\n"],
+        ["capture(`a${x}` + 1 + `b${y}` + null + `c${z}`);", "capture(`a${x}1b${y}nullc${z}`);\n"],
+        ["capture(`a${x}` + `b${y}c${z}d` + `e${w}`);", "capture(`a${x}b${y}c${z}de${w}`);\n"],
+        // a non-constant operand starts a new accumulator
+        [
+          "capture(`a${x}` + y + `b${z}` + `c${w}` + v + `d${u}` + `e${s}`);",
+          "capture(`a${x}` + y + `b${z}c${w}` + v + `d${u}e${s}`);\n",
+        ],
+        // chains inside substitutions fold on their own
+        [
+          "capture(`a${`b${x}` + `c${y}`}d` + `e${`f${z}` + `g${w}`}h` + `i${v}`);",
+          "capture(`a${`b${x}c${y}`}de${`f${z}g${w}`}hi${v}`);\n",
+        ],
+        ["capture(`${x}` + `${y}` + `${z}`);", "capture(`${x}${y}${z}`);\n"],
+        ["capture(`a${x}` + `` + `b${y}` + ``);", "capture(`a${x}b${y}`);\n"],
+        ["capture(tag`a${x}` + `b${y}` + `c${z}`);", "capture(tag`a${x}` + `b${y}c${z}`);\n"],
+        ["capture(`a${x}` + tag`b${y}` + `c${z}`);", "capture(`a${x}` + tag`b${y}` + `c${z}`);\n"],
+        ["capture(`a${1}` + `b${2}` + `c${'3'}`);", 'capture("a1b2c3");\n'],
+        [
+          "const enum E { A = 'a', B = `b` }\ncapture(`x${y}` + E.A + `z${w}` + E.B);",
+          'var E;\n((E) => {\n  E.A = "a";\n  E.B = "b";\n})(E ||= {});\ncapture(`x${y}az${w}b`);\n',
+        ],
+        // the longer right operand keeps its parts, the left ones go in front
+        ["capture(`a${x}` + (`b${y}` + `c${z}` + `d${w}`));", "capture(`a${x}b${y}c${z}d${w}`);\n"],
+        [
+          "capture(`a${x}` + (`b${y}` + (`c${z}` + (`d${w}` + (`e${v}` + `f${u}`)))));",
+          "capture(`a${x}b${y}c${z}d${w}e${v}f${u}`);\n",
+        ],
+        ["capture((`a${x}` + `b${y}`) + (`c${z}` + `d${w}`));", "capture(`a${x}b${y}c${z}d${w}`);\n"],
+        ["capture(`a${x}` + (`b${y}` + `c${z}`) + `d${w}`);", "capture(`a${x}b${y}c${z}d${w}`);\n"],
+        [
+          "capture(`a${x}` + (`b${y}` + (`c${z}` + `d${w}`) + `e${v}`) + `f${u}`);",
+          "capture(`a${x}b${y}c${z}d${w}e${v}f${u}`);\n",
+        ],
+        // a string in front of a folded chain
+        [
+          "capture('s' + (`a${x}` + `b${y}` + `c${z}`) + `d${w}` + `e${v}`);",
+          "capture(`sa${x}b${y}c${z}d${w}e${v}`);\n",
+        ],
+        ["capture('s' + ('t' + (`a${x}` + `b${y}`) + `c${z}`) + `d${w}`);", "capture(`sta${x}b${y}c${z}d${w}`);\n"],
+        // single-use declarations are folded one into the next
+        [
+          "function f(x) {\n  let a = `p${x}q`;\n  let b = a + `r${x}s`;\n  let c = b + `t${x}u`;\n  return c;\n}",
+          "function f(x) {\n  return `p${x}qr${x}st${x}u`;\n}\n",
+        ],
+        [
+          "function f(x) {\n  let a = `p${!x}q`;\n  let b = `r${!x}s` + a;\n  let c = `t${!x}u` + b + `v${!x}w`;\n  return c;\n}",
+          "function f(x) {\n  return `t${!x}ur${!x}sp${!x}qv${!x}w`;\n}\n",
+        ],
+        // constants fold into the text around them
+        ["capture(`a${x}b${1}c${y}d${'s'}e${z}f`);", "capture(`a${x}b1c${y}dse${z}f`);\n"],
+        ["capture(`a${1}b${'s'}c${null}d${true}e${undefined}f${2n}g`);", 'capture("a1bscnulldtrueeundefinedf2g");\n'],
+        ["capture(`${1}${x}${2}${3}${y}${4}`);", "capture(`1${x}23${y}4`);\n"],
+        // text that is not ASCII is not joined, and a constant in front of it stays a substitution
+        ["capture(`a${1}é${x}`);", 'capture(`a${"1"}é${x}`);\n'],
+        ["capture(`a${x}é` + `b${y}` + `c${z}`);", "capture(`a${x}é` + `b${y}c${z}`);\n"],
+        ["capture(`a${x}` + `é${y}` + `c${z}`);", "capture(`a${x}` + `é${y}c${z}`);\n"],
+        ["capture(`é${1}b${x}c${2}é${3}d`);", "capture(`é${1}b${x}c${2}é${3}d`);\n"],
+      ];
+      expect(cases.map(([input]) => [input, ts.parsedMin(input, false)])).toEqual(cases);
+    });
+
     it("numeric constants", () => {
       expectBunPrinted_("export const foo = 1 + 2", "export const foo = 3");
       expectBunPrinted_("export const foo = 1 - 2", "export const foo = -1");

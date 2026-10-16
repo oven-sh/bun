@@ -11,6 +11,7 @@
 use bun_core::String as BunString;
 use bun_jsc::debugger::{DebuggerId, ErasedAgentSlot};
 use bun_jsc::virtual_machine::VirtualMachine;
+use super::*;
 
 bun_opaque::opaque_ffi! {
     /// Opaque C++ `InspectorBunFrontendDevServerAgent` handle.
@@ -219,5 +220,22 @@ mod ffi {
             kind: u8,
             data: &BunString,
         );
+    }
+}
+
+impl DevServer {
+    /// The dev server's inspector agent, or `None` while the
+    /// `BunFrontendDevServer` domain is disabled. The agent's state is
+    /// `Cell`-based, so a shared borrow suffices. JS-thread only.
+    pub(crate) fn inspector(&self) -> Option<&BunFrontendDevServerAgent> {
+        if let Some(debugger) = self.vm().debugger.as_ref() {
+            bun_core::hint::cold();
+            let agent = BunFrontendDevServerAgent::from_slot(&debugger.extension_agent);
+            if agent.is_enabled() {
+                bun_core::hint::cold();
+                return Some(agent);
+            }
+        }
+        None
     }
 }

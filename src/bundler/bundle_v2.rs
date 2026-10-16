@@ -3157,7 +3157,7 @@ pub mod bv2_impl {
             path.assert_pretty_is_valid();
             // intern via `dupe_alloc` BEFORE writing back into `result` /
             // the path-to-source-index map. The dev-server path builds a fresh
-            // `bake_types::EntryPointList` with `Box<[u8]>` keys (DevServer.rs:3027)
+            // `bake_types::EntryPointList` with `Box<[u8]>` keys (bake/dev_server/bundle.rs)
             // that drops as soon as `enqueue_entry_points_dev_server` returns;
             // `resolve_with_framework` then lifetime-erases that key into the
             // returned `Path`, so without interning here `ParseTask.path.text` (and

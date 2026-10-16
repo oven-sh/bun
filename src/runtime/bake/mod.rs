@@ -2,20 +2,9 @@
 //! combines `Bun.build` and `Bun.serve`, providing a hot-reloading development
 //! server, server components, and other integrations. Instead of taking the
 //! role as a framework, Bake is tool for frameworks to build on top of.
-//!
-//! This file holds the keystone DevServer struct + lifecycle so downstream
-//! `server/` and the `bun_bundler::dispatch::DevServerVTable` can be wired.
-//! The heavy method bodies (request handling, finalize_bundle, hot-update
-//! tracing) live in `DevServer.rs` and the other `#[path]` submodules below.
-
 
 use bun_core::Output;
 
-#[path = "DevServer.rs"]
-mod dev_server_body;
-pub(crate) use dev_server_body::get_deinit_count_for_testing;
-pub(crate) use dev_server_body::is_allowed_dev_host;
-pub(crate) use dev_server_body::is_allowed_host_header;
 
 pub(crate) mod router;
 
@@ -39,7 +28,6 @@ pub(crate) mod jsc {
     /// JSC-aware `PluginJscExt` methods are in scope; both paths name the same
     /// nominal type.
     pub(crate) use crate::api::js_bundler::Plugin;
-    pub(crate) use crate::jsc::*;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -90,3 +78,4 @@ pub(crate) fn print_warning() {
 // ══════════════════════════════════════════════════════════════════════════
 pub(crate) mod dev_server;
 pub(crate) use dev_server as DevServer;
+pub(crate) use dev_server::{get_deinit_count_for_testing, is_allowed_dev_host, is_allowed_host_header};

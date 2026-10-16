@@ -1,6 +1,8 @@
 //! The HMR wire protocol: message ids sent and received over the dev server WebSocket.
 //! `src/codegen/bake-codegen.ts` reads these enums to generate the client-side copies.
 
+use super::*;
+
 /// `DevServer.ConsoleLog.Kind` — `enum(u8) { log = 'l', err = 'e' }`.
 /// Discriminants MUST NOT change: `kind as u8` is sent across FFI to
 /// `InspectorBunFrontendDevServerAgent__notifyConsoleLog`.
@@ -97,8 +99,8 @@ impl HmrTopic {
 
     /// Maps a topic to its packed `HmrTopicBits` flag.
     #[inline]
-    pub(crate) fn as_bit(self) -> crate::bake::dev_server_body::HmrTopicBits {
-        use crate::bake::dev_server_body::HmrTopicBits;
+    pub(crate) fn as_bit(self) -> crate::bake::dev_server::HmrTopicBits {
+        use crate::bake::dev_server::HmrTopicBits;
         match self {
             HmrTopic::HotUpdate => HmrTopicBits::HOT_UPDATE,
             HmrTopic::Errors => HmrTopicBits::ERRORS,
@@ -107,5 +109,18 @@ impl HmrTopic {
             HmrTopic::MemoryVisualizer => HmrTopicBits::MEMORY_VISUALIZER,
             HmrTopic::TestingWatchSynchronization => HmrTopicBits::TESTING_WATCH_SYNCHRONIZATION,
         }
+    }
+}
+
+bitflags::bitflags! {
+    // bitflags! requires explicit power-of-two values; field names match enum variants.
+    #[derive(Default, Copy, Clone)]
+    pub struct HmrTopicBits: u8 {
+        const HOT_UPDATE = 1 << 0;
+        const ERRORS = 1 << 1;
+        const BROWSER_ERROR = 1 << 2;
+        const INCREMENTAL_VISUALIZER = 1 << 3;
+        const MEMORY_VISUALIZER = 1 << 4;
+        const TESTING_WATCH_SYNCHRONIZATION = 1 << 5;
     }
 }

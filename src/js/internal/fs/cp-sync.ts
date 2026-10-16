@@ -157,7 +157,36 @@ function isSrcSubdir(src, dest) {
   return ArrayPrototypeEvery.$call(srcArr, (cur, i) => destArr[i] === cur);
 }
 
-function checkPathsSync(src, dest, opts) {
+type BigIntStats = import("node:fs").BigIntStats;
+
+interface CpOptions {
+  dereference: boolean;
+  errorOnExist: boolean;
+  filter: ((src: string, dest: string) => boolean | Promise<boolean>) | undefined;
+  force: boolean;
+  preserveTimestamps: boolean;
+  recursive: boolean;
+  verbatimSymlinks: boolean;
+  mode: number;
+}
+
+interface CheckedPaths {
+  __proto__: null;
+  srcStat: BigIntStats;
+  destStat: BigIntStats | null | undefined;
+  skipped: false;
+}
+
+interface SkippedPaths {
+  __proto__: null;
+  srcStat?: undefined;
+  destStat?: undefined;
+  skipped: true;
+}
+
+function checkPathsSync(src, dest, opts: CpOptions & { filter: undefined }): CheckedPaths;
+function checkPathsSync(src, dest, opts: CpOptions): CheckedPaths | SkippedPaths;
+function checkPathsSync(src, dest, opts: CpOptions): CheckedPaths | SkippedPaths {
   if (opts.filter) {
     const shouldCopy = opts.filter(src, dest);
     if ($isPromise(shouldCopy)) {
@@ -278,7 +307,7 @@ function treeContainsOnlyFilesAndDirsSync(root) {
 
 // node-correct validation before handing off to the native fast path
 // (which performs the copy but does not implement node's cp error codes).
-function tryNativeFastPathSync(src, dest, opts) {
+function tryNativeFastPathSync(src, dest, opts: CpOptions & { filter: undefined }) {
   const checked = checkPathsSync(src, dest, opts);
   const { srcStat, destStat } = checked;
   checkParentPathsSync(src, srcStat, dest);

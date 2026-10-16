@@ -689,8 +689,8 @@ describe("Bun.serve http2 with http1: false", () => {
     const got = await new Promise<string>(resolve => {
       let buf = Buffer.alloc(0);
       sock.on("data", d => {
-        buf = Buffer.concat([buf, d]);
-        for (let off = 0; off + 9 <= buf.length; ) {
+        buf = Buffer.concat([buf, d as Buffer]);
+        for (let off = 0; off + 9 <= buf.length;) {
           const len = buf.readUIntBE(off, 3);
           if (off + 9 + len > buf.length) break;
           if (buf[off + 3] === T.DATA && (buf.readUInt32BE(off + 5) & 0x7fffffff) === 1)
@@ -771,7 +771,7 @@ describe("Bun.serve http2 over a unix socket", () => {
     const sock = join(String(dir), "h2.sock");
     await using server = Bun.serve({
       unix: sock,
-      http2: true,
+      http2: true as any,
       fetch: req => new Response("unix:" + new URL(req.url).pathname),
     });
     const session = http2.connect("http://localhost", {
@@ -795,7 +795,7 @@ describe("Bun.serve http2 in-process", () => {
       routes: { "/r": new Response("route-v1") },
       fetch: () => new Response("fetch-v1"),
     });
-    const session = await connectH2(server.port, false);
+    const session = await connectH2(server.port!, false);
     expect((await request(session, { ":path": "/r" })).body.toString()).toBe("route-v1");
     expect((await request(session, { ":path": "/x" })).body.toString()).toBe("fetch-v1");
     server.reload({ routes: { "/r": new Response("route-v2") }, fetch: () => new Response("fetch-v2") });
@@ -819,7 +819,7 @@ describe("Bun.serve http2 in-process", () => {
         return new Response("handled", { status: 555 });
       },
     });
-    const session = await connectH2(server.port, false);
+    const session = await connectH2(server.port!, false);
     const res = await request(session, { ":path": "/" });
     expect(res.status).toBe(555);
     expect(res.body.toString()).toBe("handled");
@@ -840,7 +840,7 @@ describe("Bun.serve http2 in-process", () => {
         return new Response("late");
       },
     });
-    const session = await connectH2(server.port, false);
+    const session = await connectH2(server.port!, false);
     const req = session.request({ ":path": "/" });
     req.on("error", () => {});
     await gotRequest;
@@ -879,7 +879,7 @@ describe("Bun.serve http2 in-process", () => {
     const settings = Buffer.alloc(6);
     settings.writeUInt16BE(SETTINGS_INITIAL_WINDOW_SIZE, 0);
     settings.writeUInt32BE(4, 2);
-    const raw = await RawH2.connect(server.port, false, { settings });
+    const raw = await RawH2.connect(server.port!, false, { settings });
     raw.headers(1, baseHeaders("/"));
     const first = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1);
     const increment = Buffer.alloc(4);
@@ -897,12 +897,11 @@ describe("Bun.serve http2 in-process", () => {
     await server.stop();
   });
 
-  // The stream close is the only notification left when the pump promise never
-  // settles, so this case cannot be handled in its resolve reaction. The end
-  // has to come from a later microtask: an end inside the first pull() leaves
-  // the response already finished when the stream is attached, which takes a
-  // different path. HTTP/1 has the same shape and still leaks there, because
-  // its socket is not freed per request.
+  // The request hears the controller close, so it does not wait for a pull()
+  // that never settles (the HTTP/1.1 cases are in
+  // serve-direct-readable-stream.test.ts). The end has to come from a later
+  // microtask: an end inside the first pull() leaves the response already
+  // finished when the stream is attached, which takes a different path.
   test("a direct stream whose pull() never settles after it ended the response", async () => {
     await using server = Bun.serve({
       port: 0,
@@ -921,7 +920,7 @@ describe("Bun.serve http2 in-process", () => {
         ),
     });
 
-    const session = await connectH2(server.port, false);
+    const session = await connectH2(server.port!, false);
     const bodies: string[] = [];
     for (let i = 0; i < 3; i++) bodies.push((await request(session, { ":path": "/" })).body.toString());
 
@@ -961,7 +960,7 @@ describe("Bun.serve http2 in-process", () => {
         ),
     });
 
-    const session = await connectH2(server.port, false);
+    const session = await connectH2(server.port!, false);
     // The abrupt stop races the response, so the client may or may not see it.
     await request(session, { ":path": "/" }).catch(() => {});
     session.destroy();

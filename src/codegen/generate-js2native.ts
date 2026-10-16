@@ -52,11 +52,12 @@ const rustIdentifierPaths: Record<string, string> = {
   "Listener.rs": "runtime/socket/Listener.rs",
   "MarkdownObject.rs": "runtime/api/MarkdownObject.rs",
   "SecureContext.rs": "runtime/api/bun/SecureContext.rs",
+  "SemverObject.rs": "semver_jsc/SemverObject.rs",
   "Stat.rs": "runtime/node/Stat.rs",
-  "bindgen_test.rs": "jsc/bindgen_test.rs",
   "collections/linear_fifo.rs": "collections/linear_fifo.rs",
   "crash_handler.rs": "crash_handler/crash_handler.rs",
   "css_internals.rs": "css_jsc/css_internals.rs",
+  "BytecodeOrderRecorder.rs": "jsc/BytecodeOrderRecorder.rs",
   "escapeRegExp.rs": "string/escapeRegExp.rs",
   "event_loop.rs": "jsc/event_loop.rs",
   "ffi.rs": "runtime/ffi/ffi.rs",
@@ -76,7 +77,6 @@ const rustIdentifierPaths: Record<string, string> = {
   "node_fs_binding.rs": "runtime/node/node_fs_binding.rs",
   "node_http_binding.rs": "runtime/node/node_http_binding.rs",
   "node_net_binding.rs": "runtime/node/node_net_binding.rs",
-  "node_os.rs": "runtime/node/node_os.rs",
   "node_quic_binding.rs": "runtime/node/node_quic_binding.rs",
   "node_util_binding.rs": "runtime/node/node_util_binding.rs",
   "node_zlib_binding.rs": "runtime/node/node_zlib_binding.rs",
@@ -97,7 +97,6 @@ const rustIdentifierPaths: Record<string, string> = {
   "string/immutable/unicode.rs": "bun_core/string/immutable/unicode.rs",
   "subprocess.rs": "runtime/api/bun/subprocess.rs",
   "sys.rs": "sys/sys.rs",
-  "sys/Error.rs": "sys/Error.rs",
   "udp_socket.rs": "runtime/socket/udp_socket.rs",
   "upgrade_command.rs": "runtime/cli/upgrade_command.rs",
   "virtual_machine_exports.rs": "jsc/virtual_machine_exports.rs",
@@ -127,7 +126,7 @@ function resolveNativeFileId(call_type: NativeCallType, filename: string) {
 
   const resolved = sourceFiles.find(file => file.endsWith(sep + filename));
   if (!resolved) {
-    const fnName = call_type === "bind" ? "bindgenFn" : call_type;
+    const fnName = call_type === "bind" ? "bindgen" : call_type;
     throw new Error(`Could not find file ${filename} in $${fnName} call`);
   }
 
@@ -404,11 +403,13 @@ export function getJS2NativeRust() {
 
 export function getJS2NativeDTS() {
   return [
-    "declare type NativeFilenameCPP = " +
+    "declare type NativeBasenameCPP = " +
       sourceFiles
         .filter(x => x.endsWith("cpp"))
         .map(x => JSON.stringify(basename(x)))
         .join("|"),
+    // resolveNativeFileId matches any path suffix of a source file, e.g. "streams/BunStreamConsumers.cpp".
+    "declare type NativeFilenameCPP = NativeBasenameCPP | `${string}/${NativeBasenameCPP}`",
     "declare type NativeFilenameRust = " +
       Object.keys(rustIdentifierPaths)
         .map(x => JSON.stringify(x))

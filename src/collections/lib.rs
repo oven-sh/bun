@@ -8,7 +8,7 @@
     const_trait_impl,
     allocator_api
 )]
-#![allow(incomplete_features, internal_features)]
+#![allow(incomplete_features)]
 #![warn(unused_must_use)]
 
 pub mod hive_array;
@@ -41,7 +41,7 @@ pub use paste::paste as __mal_paste;
 pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt, prepend_from};
 
 pub use bit_set::{
-    AutoBitSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet,
+    AutoBitSet, ByteSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet,
 };
 
 // `multi_array_list` imports from here; canonical impl lives in
@@ -257,7 +257,6 @@ impl<T, const N: usize> Extend<T> for SmallList<T, N> {
     }
 }
 
-#[allow(clippy::len_without_is_empty)]
 impl<T, const N: usize> SmallList<T, N> {
     // ── constructors ───────────────────────────────────────────────────────
     #[inline]
@@ -468,6 +467,3 @@ pub mod hash_map {
     /// re-exported from `array_hash_map` rather than duplicated.
     pub use crate::array_hash_map::KV;
 }
-
-pub mod array_list;
-pub use array_list::ArrayListDefault;

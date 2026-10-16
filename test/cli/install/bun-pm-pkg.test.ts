@@ -493,15 +493,19 @@ describe.concurrent("bun pm pkg", () => {
       const original = { name: "n", version: "1.0.0", description: "a\u001b[1mb\v", [all]: all };
       using dir = tempDir("pm-pkg-escapes", { "package.json": JSON.stringify(original, null, 2) });
 
-      const { error, code } = await runPmPkg(["set", "x=1"], String(dir));
+      const { error, code } = await runPmPkg(["set", "x=a\u001b[1mb\v"], String(dir));
       expect(error).toBe("");
       const raw = await readRaw(String(dir));
-      expect(raw).toContain('"description": "a\\u001B[1mb\\u000B"');
-      expect(JSON.parse(raw)).toEqual({ ...original, x: "1" });
+      // What is set is written by the printer. What is there stays as the file spells it.
+      expect(raw).toContain('"x": "a\\u001B[1mb\\u000B"');
+      expect(raw).toContain('"description": "a\\u001b[1mb\\u000b"');
+      expect(JSON.parse(raw)).toEqual({ ...original, x: "a\u001b[1mb\v" });
       expect(code).toBe(0);
 
       const { output } = await runPmPkg(["get", "description"], String(dir));
       expect(output).toBe('"a\\u001B[1mb\\u000B"\n');
+      // `get` prints every key and string of the file.
+      expect(JSON.parse((await runPmPkg(["get"], String(dir))).output)).toEqual({ ...original, x: "a\u001b[1mb\v" });
     });
 
     it("should treat values as strings without --json flag", async () => {
@@ -572,19 +576,19 @@ describe.concurrent("bun pm pkg", () => {
 
       expect(await runPmPkg(["get", "config.max"], String(dir))).toEqual({ output: "null\n", error: "", code: 0 });
 
-      // values that overflow, and a rewrite of the literals that are there
+      // Values that overflow are written as null. The literals that are there are JSON numbers and stay.
       expect(await runPmPkg(["set", "limit=1e400", "low=-1e400", "--json"], String(dir))).toEqual({
         output: "",
         error: "",
         code: 0,
       });
-      expect(JSON.parse(await readRaw(String(dir)))).toEqual({
-        name: "n",
-        version: "1.0.0",
-        config: { max: null, min: null, tiny: 0, ok: 1.5 },
-        limit: null,
-        low: null,
-      });
+      expect(await readRaw(String(dir))).toBe(`{
+  "name": "n",
+  "version": "1.0.0",
+  "config": { "max": 1e400, "min": -1e999, "tiny": 1e-400, "ok": 1.5 },
+  "limit": null,
+  "low": null
+}`);
 
       // bun can read what it wrote
       const after = await runPmPkg(["get", "config"], String(dir));

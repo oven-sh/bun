@@ -929,6 +929,58 @@ fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
     }
 }
 
+/// Token scanners over text that the parser has accepted, for a writer that edits the text in place.
+pub mod scan {
+    use bun_core::strings;
+
+    /// Start of the next token at or after `p`; `None` when only whitespace and comments are left.
+    pub fn next_token(contents: &[u8], p: usize) -> Option<usize> {
+        super::skip_ws_and_comments(contents, p)
+    }
+
+    /// End of the string token that starts at `start`.
+    pub fn string_end(contents: &[u8], start: usize) -> Option<usize> {
+        super::skip_string_token(contents, start)
+    }
+
+    /// End of the value (string, number, keyword, object or array) that starts at `start`.
+    pub fn value_end(contents: &[u8], start: usize) -> Option<usize> {
+        super::skip_json_value(contents, start)
+    }
+
+    /// End of the comment that starts at `start`. A `//` comment ends before its line terminator.
+    pub fn comment_end(contents: &[u8], start: usize) -> Option<usize> {
+        match contents.get(start..start + 2)? {
+            b"//" => {
+                let mut p = start + 2;
+                while p < contents.len()
+                    && !matches!(contents[p], b'\n' | b'\r')
+                    && !crate::json_index::is_ls_ps(contents, p)
+                {
+                    p += 1;
+                }
+                Some(p)
+            }
+            b"/*" => Some(start + 2 + strings::index_of(&contents[start + 2..], b"*/")? + 2),
+            _ => None,
+        }
+    }
+
+    /// What the parser reads the string token `token` as. `None` when it does not accept the token.
+    pub fn string_value<'a>(token: &'a [u8], scratch: &'a mut Vec<u8>) -> Option<&'a [u8]> {
+        if super::skip_string_token(token, 0)? != token.len() {
+            return None;
+        }
+        let body = &token[1..token.len() - 1];
+        if !strings::contains_char(body, b'\\') {
+            return Some(body);
+        }
+        scratch.clear();
+        crate::json_stage2::decode_string_body(body, scratch).ok()?;
+        Some(scratch)
+    }
+}
+
 /// Deep-convert an immutable-AST document into the classic `E::Object` / `E::Array` tree.
 pub fn materialize(
     root: &Expr,

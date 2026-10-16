@@ -782,11 +782,12 @@ describe.concurrent("bun pm version", () => {
       expect(output.trim()).toBe("v1.0.1");
       expect(code).toBe(0);
 
-      expect(JSON.parse(await Bun.file(join(String(testDir), "package.json")).text())).toEqual({
-        name: "test",
-        version: "1.0.1",
-        config: { max: null, min: null },
-      });
+      // `1e400` is a JSON number: it stays as it is written.
+      expect(await Bun.file(join(String(testDir), "package.json")).text()).toBe(`{
+  "name": "test",
+  "version": "1.0.1",
+  "config": { "max": 1e400, "min": -1e400 }
+}`);
     });
   });
 

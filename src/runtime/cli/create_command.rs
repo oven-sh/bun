@@ -10,7 +10,7 @@ use bun_core::{Global, Output, pretty_error, pretty_errorln};
 use bun_core::{MutableString, strings};
 use bun_dotenv as DotEnv;
 use bun_http as HTTP;
-use bun_js_printer as JSPrinter;
+use bun_install::package_manager_real::package_json_text;
 use bun_libarchive::{Archiver, archiver};
 use bun_parsers::json as JSON;
 use bun_paths::{OSPathSlice, PathBuffer};
@@ -1011,24 +1011,24 @@ impl CreateCommand {
                     }
                 }
 
-                let mut buffer_writer = JSPrinter::BufferWriter::init();
-                buffer_writer.append_newline = true;
-                let mut package_json_writer = JSPrinter::BufferPrinter::init(buffer_writer);
-
-                if let Err(err) = JSPrinter::print_json(
-                    &mut package_json_writer,
+                let mut written = match package_json_text::print(
+                    package_json_contents.list.as_slice(),
                     package_json_expr,
-                    &source,
-                    JSPrinter::PrintJsonOptions {
-                        mangled_props: None,
-                        indent: indentation,
-                        ..Default::default()
-                    },
+                    indentation,
                 ) {
-                    bun_core::pretty_errorln!("package.json failed to write due to error {}", err,);
-                    break 'process_package_json;
+                    Ok(written) => written,
+                    Err(err) => {
+                        bun_core::pretty_errorln!(
+                            "package.json failed to write due to error {}",
+                            err,
+                        );
+                        break 'process_package_json;
+                    }
+                };
+                if written.last() != Some(&b'\n') {
+                    written.push(b'\n');
                 }
-                let written = package_json_writer.ctx.get_written();
+                let written = written.as_slice();
                 if let Err(err) = package_json_file.write_all(written).and_then(|()| {
                     bun_sys::ftruncate(package_json_file.handle, written.len() as i64)
                 }) {

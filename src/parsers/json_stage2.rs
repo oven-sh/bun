@@ -1411,6 +1411,18 @@ impl<'s> LexerLog<'s> for MiniLog<'_, 's> {
     }
 }
 
+/// Decodes the escapes of `body`, a string token without its quotes, into `buf`.
+pub(crate) fn decode_string_body(body: &[u8], buf: &mut Vec<u8>) -> crate::Result<()> {
+    let source = Source::init_empty_file(b"");
+    let mut log = Log::init();
+    let mut l = MiniLog {
+        log: &mut log,
+        source: &source,
+        prev_error_loc: Loc::EMPTY,
+    };
+    decode_string_escapes::<false, _>(&mut l, body, buf)
+}
+
 pub(crate) fn decode_auto_quoted(
     source: &Source,
     log: &mut Log,

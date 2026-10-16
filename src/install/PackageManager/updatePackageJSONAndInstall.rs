@@ -10,12 +10,12 @@ use crate::ShellCompletions;
 use crate::bun_fs::FileSystem;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
-use bun_js_printer as js_printer;
 
 use super::add_catalog;
 use super::add_remove_with_filter::{WorkspaceTarget, fetch_entry_root, store_entry};
 use super::command_line_arguments::CommandLineArguments;
 use super::package_json_editor as PackageJSONEditor;
+use super::package_json_text;
 use super::update_request::Array as UpdateRequestArray;
 use super::workspace_selection;
 use super::{
@@ -24,32 +24,14 @@ use super::{
 };
 
 pub(crate) fn print_package_json_into_cache_entry(entry: &mut MapEntry, root: bun_ast::Expr) {
-    let preserve_trailing_newline = entry.source.contents.last() == Some(&b'\n');
-    let mut buffer_writer = js_printer::BufferWriter::init();
-    buffer_writer
-        .buffer
-        .list
-        .reserve((entry.source.contents.len() + 1).saturating_sub(buffer_writer.buffer.list.len()));
-    buffer_writer.append_newline = preserve_trailing_newline;
-    let mut writer = js_printer::BufferPrinter::init(buffer_writer);
-
-    if let Err(e) = js_printer::print_json(
-        &mut writer,
-        root,
-        &entry.source,
-        js_printer::PrintJsonOptions {
-            indent: entry.indentation,
-            mangled_props: None,
-            ..Default::default()
-        },
-    ) {
-        bun_core::pretty_errorln!("package.json failed to write due to error {}", e.name(),);
-        Global::crash();
-    }
-    let old = core::mem::replace(
-        &mut entry.source.contents,
-        Cow::Owned(writer.ctx.written_without_trailing_zero().to_vec()),
-    );
+    let printed = match package_json_text::print(&entry.source.contents, root, entry.indentation) {
+        Ok(printed) => printed,
+        Err(e) => {
+            bun_core::pretty_errorln!("package.json failed to write due to error {}", e.name(),);
+            Global::crash();
+        }
+    };
+    let old = core::mem::replace(&mut entry.source.contents, Cow::Owned(printed));
     entry.stale_contents.push(old);
 }
 

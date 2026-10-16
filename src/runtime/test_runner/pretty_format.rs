@@ -329,6 +329,7 @@ pub(crate) struct Formatter<'a> {
     ancestors: ObjectList,
     copied: usize,
     print_basic_prototype: bool,
+    print_function_name: bool,
     serializers: Option<JSValue>,
     config: Option<JSValue>,
     /// Print the way Vitest's `inspect()` does: one line, single quotes, unsorted unquoted keys, function names.
@@ -360,6 +361,7 @@ impl<'a> Formatter<'a> {
             ancestors: ObjectList::default(),
             copied: 0,
             print_basic_prototype: false,
+            print_function_name: false,
             serializers: None,
             config: None,
             is_inline: false,
@@ -3839,7 +3841,7 @@ impl Formatter<'_> {
     }
 
     fn print_function(&self, out: &mut Vec<u8>, function: JSValue) -> JsResult<()> {
-        if !self.is_inline {
+        if !self.is_inline && !self.print_function_name {
             out.extend_from_slice(b"[Function]");
             return Ok(());
         }
@@ -4244,12 +4246,20 @@ impl Formatter<'_> {
                     let outer = (
                         core::mem::take(&mut self.indent),
                         core::mem::replace(&mut self.print_basic_prototype, true),
+                        core::mem::replace(&mut self.print_function_name, true),
                         core::mem::take(&mut self.is_inline),
                         core::mem::replace(&mut self.max_depth, u32::MAX),
                         core::mem::replace(&mut self.max_width, u32::MAX),
                     );
                     let result = self.print_child(out, argument);
-                    (self.indent, self.print_basic_prototype, self.is_inline, self.max_depth, self.max_width) = outer;
+                    (
+                        self.indent,
+                        self.print_basic_prototype,
+                        self.print_function_name,
+                        self.is_inline,
+                        self.max_depth,
+                        self.max_width,
+                    ) = outer;
                     result?;
                 } else {
                     out.extend_from_slice(argument.to_bun_string(global)?.to_utf8().slice());

@@ -221,6 +221,20 @@ function addProperty(
   properties.$set(key, value);
 }
 
+// Bun's reportError() knows nothing of this window. Node has none, so there React and others dispatch the event themselves.
+function addReportError(win: any, globals: Pick<Environment, "properties" | "keys">) {
+  if (typeof win.reportError === "function") return;
+  function reportError(error: unknown) {
+    if (arguments.length === 0) throw new TypeError("reportError requires at least 1 argument, but only 0 were passed");
+    const message =
+      typeof error === "object" && error !== null && typeof (error as Error).message === "string"
+        ? (error as Error).message
+        : String(error);
+    if (win.dispatchEvent(new win.ErrorEvent("error", { cancelable: true, message, error }))) console.error(error);
+  }
+  addProperty(globals, "reportError", dataProperty(reportError, false));
+}
+
 function createJSDOM(requireFromTest: NodeJS.Require, exports: any, options: any): Environment | string {
   const { CookieJar, JSDOM, ResourceLoader, VirtualConsole } = exports;
   if (typeof JSDOM !== "function") return "the package does not export JSDOM";
@@ -301,6 +315,7 @@ function createJSDOM(requireFromTest: NodeJS.Require, exports: any, options: any
   addProperty(globals, "jsdom", dataProperty(dom, true));
   addProperty(globals, "Request", dataProperty(compat.Request, false));
   addProperty(globals, "URL", dataProperty(compat.URL, false));
+  addReportError(win, globals);
   return { ...globals, forgetLastFile, close: () => win.close() };
 }
 
@@ -313,12 +328,14 @@ function createHappyDOM(_: NodeJS.Require, exports: any, options: any): Environm
     url: options.url || "http://localhost:3000",
     settings: { ...options.settings, disableErrorCapturing: true },
   });
+  // prettier-ignore
+  const globals = windowProperties(win, [
+    "Request", "Response", "MessagePort", "fetch", "Headers", "AbortController", "AbortSignal", "URL",
+    "URLSearchParams", "FormData",
+  ]);
+  addReportError(win, globals);
   return {
-    // prettier-ignore
-    ...windowProperties(win, [
-      "Request", "Response", "MessagePort", "fetch", "Headers", "AbortController", "AbortSignal", "URL",
-      "URLSearchParams", "FormData",
-    ]),
+    ...globals,
     async close() {
       if (win.close && win.happyDOM.abort) {
         await win.happyDOM.abort();

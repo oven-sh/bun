@@ -21,3 +21,5 @@ declare var xit: typeof import("bun:test").xit;
 declare var xtest: typeof import("bun:test").xtest;
 declare var xdescribe: typeof import("bun:test").xdescribe;
 declare var onTestFinished: typeof import("bun:test").onTestFinished;
+declare var aroundEach: typeof import("bun:test").aroundEach;
+declare var aroundAll: typeof import("bun:test").aroundAll;

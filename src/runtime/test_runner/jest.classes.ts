@@ -67,7 +67,7 @@ export default [
     call: true,
     finalize: true,
     JSType: "0b11101110",
-    values: ["testValue"],
+    values: ["testValue", "pattern"],
     configurable: false,
     klass: {},
     proto: {},
@@ -156,7 +156,7 @@ export default [
     call: false,
     finalize: true,
     JSType: "0b11101110",
-    values: ["equalityTesters", "equals", "state", "snapshotSerializers"],
+    values: ["equalityTesters", "equals", "state", "snapshotSerializers", "toSatisfy"],
     configurable: false,
     klass: {},
     proto: {},
@@ -197,6 +197,10 @@ export default [
       },
       stringMatching: {
         fn: "stringMatching",
+        length: 1,
+      },
+      toSatisfy: {
+        fn: "toSatisfy",
         length: 1,
       },
       not: {
@@ -261,6 +265,10 @@ export default [
       },
       stringMatching: {
         fn: "stringMatching",
+        length: 1,
+      },
+      toSatisfy: {
+        fn: "staticToSatisfy",
         length: 1,
       },
       addSnapshotSerializer: {
@@ -964,6 +972,14 @@ export default [
       },
       afterAll: {
         getter: "getAfterAll",
+        cache: true,
+      },
+      aroundEach: {
+        getter: "getAroundEach",
+        cache: true,
+      },
+      aroundAll: {
+        getter: "getAroundAll",
         cache: true,
       },
       describe: {

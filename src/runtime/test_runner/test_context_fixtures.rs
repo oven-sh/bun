@@ -11,7 +11,7 @@ use bun_jsc::{
 
 use super::bun_test::{self, DescribeScope};
 use super::jest::Jest;
-use super::test_context::{Deferred, TestContext};
+use super::test_context::TestContext;
 use super::test_context_parameter::ContextParameter;
 
 /// Ordered by lifetime, so `>` catches a fixture that depends on a shorter-lived one.
@@ -522,7 +522,7 @@ impl TestFixtures {
             // SAFETY: the wrapper owns the payload, and the caller keeps `context` alive.
             let Some(test_context) = test_context.map(|test_context| unsafe { &*test_context }) else {
                 return Err(global.throw(format_args!(
-                    "The test-scoped fixture {} cannot be used in beforeAll() or afterAll(). Give it {{ scope: \"file\" }}, or use beforeEach() or afterEach()",
+                    "The test-scoped fixture {} cannot be used in beforeAll(), afterAll() or aroundAll(). Give it {{ scope: \"file\" }}, or use beforeEach(), afterEach() or aroundEach()",
                     quote(&fixture.name),
                 )));
             };
@@ -636,7 +636,7 @@ impl ActiveFixture {
         let is_deferred = match TestContext::from_js(context) {
             // SAFETY: the wrapper owns the payload, and the slot keeps the wrapper alive.
             Some(test_context) if definition.scope == Scope::Test => unsafe {
-                (*test_context).defer_while_running(context, Deferred::Fixture, tear_down, self.timeout)
+                (*test_context).defer_fixture(context, tear_down, self.timeout)
             },
             _ => {
                 self.generation == Jest::file_generation(global)

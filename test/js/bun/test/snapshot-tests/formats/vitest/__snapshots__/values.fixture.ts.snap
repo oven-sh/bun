@@ -496,6 +496,17 @@ exports[`values > custom asymmetric matcher 1`] = `
 ]
 `;
 
+exports[`values > custom asymmetric matcher of a function 1`] = `
+[
+  toBeBetween<[Function low], [Function anonymous]>,
+  {
+    "nested": not.toBeBetween<Object {
+  "low": [Function low],
+}>,
+  },
+]
+`;
+
 exports[`values > deep 1`] = `
 {
   "o": {
@@ -652,6 +663,18 @@ ObjectContaining {
 exports[`values > expect.stringContaining 1`] = `StringContaining "abc"`;
 
 exports[`values > expect.stringMatching 1`] = `StringMatching /x\\\\d/`;
+
+exports[`values > expect.toSatisfy 1`] = `
+{
+  "anonymous": [
+    toSatisfy<[Function anonymous]>,
+  ],
+  "message": toSatisfy<[Function isOdd], "is odd">,
+  "named": toSatisfy<[Function isOdd]>,
+  "not": not.toSatisfy<[Function isOdd]>,
+  "notMessage": not.toSatisfy<[Function isOdd], "is odd">,
+}
+`;
 
 exports[`values > false 1`] = `false`;
 

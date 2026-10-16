@@ -883,6 +883,56 @@ declare module "bun:test" {
     options?: HookOptions,
   ): void;
   /**
+   * Wraps each test in a function. The function does its setup, awaits `runTest()`, then does its teardown.
+   *
+   * `runTest()` runs the `beforeEach` hooks, the test, the `afterEach` hooks and the `onTestFinished()` callbacks.
+   * They run in the async context `runTest()` is called in, so they see the store of an `AsyncLocalStorage`
+   * whose `run()` calls it. The promise it returns resolves even if the test fails.
+   *
+   * - The first hook registered is the outermost one, and the hooks of an outer `describe()` block go around those of an inner one.
+   * - The hook runs again for each retry and each repeat. It doesn't run for a skipped or todo test.
+   * - The test fails if the hook throws, or if it finishes without calling `runTest()`. A second `runTest()` call rejects.
+   * - The timeout applies to the time before `runTest()` is called, and again to the time after its promise resolves.
+   *   The time in between isn't counted.
+   *
+   * @example
+   * ```ts
+   * aroundEach(async runTest => {
+   *   await database.transaction(runTest);
+   * });
+   * ```
+   *
+   * @param fn the function to run around each test
+   * @param options the timeout in milliseconds. 0 means no timeout
+   */
+  export function aroundEach(
+    fn: (runTest: () => Promise<void>, context: TestContext, suite: TestSuite) => unknown | Promise<unknown>,
+    options?: HookOptions,
+  ): void;
+  /**
+   * Wraps all the tests of the file or `describe()` block in a function. The function does its setup, awaits
+   * `runSuite()`, then does its teardown.
+   *
+   * `runSuite()` runs the block's `beforeAll` hooks, its tests and nested blocks, and its `afterAll` hooks, in the
+   * async context `runSuite()` is called in. If the hook fails before it calls `runSuite()`, none of them run.
+   *
+   * Nesting, failures and the timeout work as in {@link aroundEach}. The hook doesn't run if every test in the block is skipped.
+   *
+   * @example
+   * ```ts
+   * aroundAll(async runSuite => {
+   *   await tracer.trace("suite", runSuite);
+   * });
+   * ```
+   *
+   * @param fn the function to run around the tests
+   * @param options the timeout in milliseconds. 0 means no timeout
+   */
+  export function aroundAll(
+    fn: (runSuite: () => Promise<void>, context: object, suite: TestSuite) => unknown | Promise<unknown>,
+    options?: HookOptions,
+  ): void;
+  /**
    * Runs a function after the test finishes, once all `afterEach` hooks have completed.
    *
    * Can only be called inside a test, not in `describe` blocks.
@@ -1179,6 +1229,8 @@ declare module "bun:test" {
     beforeEach: typeof beforeEach;
     afterEach: typeof afterEach;
     afterAll: typeof afterAll;
+    aroundEach: typeof aroundEach;
+    aroundAll: typeof aroundAll;
     describe: Describe<[]>;
     suite: Describe<[]>;
   }
@@ -1326,6 +1378,10 @@ declare module "bun:test" {
     fn: (context: Context, suite: TestSuite) => unknown | Promise<unknown>,
     options?: HookOptions,
   ) => void;
+  type AroundHook<Context> = (
+    fn: (run: () => Promise<void>, context: Context, suite: TestSuite) => unknown | Promise<unknown>,
+    options?: HookOptions,
+  ) => void;
   type TestOfRows<Row extends ReadonlyArray<unknown>> = {
     // Must be first, or `options` typed as `any` matches the next overload's `fn`. `Parameters<>` uses the last one.
     (label: string, fn: (...args: Row) => void | Promise<unknown>, options: number | TestOptions): void;
@@ -1388,6 +1444,10 @@ declare module "bun:test" {
     /** If the callback returns a function, that function runs after the `afterEach` hooks. */
     beforeEach: ContextHook<Context>;
     afterEach: ContextHook<Context>;
+    /** Like {@link aroundEach}. A fixture the callback destructures is torn down after the callback finishes. */
+    aroundEach: AroundHook<Context & TestContext>;
+    /** Like {@link aroundAll}. The callback receives the `scope: "file"` or `"worker"` fixtures that it destructures. */
+    aroundAll: AroundHook<Context>;
     describe: Describe<[]>;
     suite: Describe<[]>;
   }
@@ -1761,9 +1821,30 @@ declare module "bun:test" {
      */
     stringContaining(str: string | String): AsymmetricMatcher;
     /**
-     * Matches any received string that matches the expected string or regular expression
+     * Matches any received string that matches the regular expression.
+     *
+     * A string is the source of a regular expression, as in `new RegExp(regex)`. It is not searched
+     * for literally, and an invalid one throws a `SyntaxError`. To look for a literal string, use
+     * `expect.stringContaining`.
+     *
+     * @example
+     * expect({ id: "user-42" }).toEqual({ id: expect.stringMatching(/^user-\d+$/) });
+     * expect({ id: "user-42" }).toEqual({ id: expect.stringMatching("^user-\\d+$") });
      */
     stringMatching(regex: string | String | RegExp): AsymmetricMatcher;
+    /**
+     * Matches any received value for which `predicate` returns a truthy value.
+     * Use it inside `toEqual` or `toBeCalledWith` instead of a literal value.
+     *
+     * `message` describes the predicate. It has no effect on the match. It is printed after the
+     * predicate wherever the matcher is printed, such as in a failure message or a snapshot.
+     *
+     * @example
+     * const isOdd = (n: number) => n % 2 === 1;
+     * expect({ count: 3 }).toEqual({ count: expect.toSatisfy(isOdd) });
+     * expect({ count: 3 }).toEqual({ count: expect.toSatisfy(isOdd, "an odd number") });
+     */
+    toSatisfy(predicate: (value: any) => unknown, message?: string): AsymmetricMatcher;
     /**
      * Matches a number close to the provided value.
      * Use it when comparing floating point numbers in object properties or array items.
@@ -1831,6 +1912,12 @@ declare module "bun:test" {
      * `expect.stringMatching`.
      */
     stringMatching(str: string | String | RegExp): AsymmetricMatcher;
+
+    /**
+     * `expect.not.toSatisfy(predicate)` matches any received value for which
+     * `predicate` returns a falsy value. It is the inverse of `expect.toSatisfy`.
+     */
+    toSatisfy(predicate: (value: any) => unknown, message?: string): AsymmetricMatcher;
 
     /**
      * `expect.not.closeTo` matches a number not close to the provided value.
@@ -3245,6 +3332,17 @@ declare module "bun:test" {
     export interface MockInstance<T extends FunctionLike = UnknownFunction> {
       _isMockFunction: true;
       _protoImpl: Function;
+      /**
+       * Returns the mock's implementation, or `undefined` if it has none.
+       *
+       * After `mockReturnValue()`, `mockResolvedValue()`, `mockRejectedValue()`, `mockReturnThis()` or
+       * `mockThrow()`, the implementation is a function that does what that method set up. Calling it
+       * doesn't count as a call of the mock.
+       *
+       * A `mockImplementationOnce()` function that is still waiting for its call is returned first. On a
+       * mock made with `vi`, so is a function for a waiting `mockReturnValueOnce()`,
+       * `mockResolvedValueOnce()`, `mockRejectedValueOnce()` or `mockThrowOnce()`.
+       */
       getMockImplementation(): T | undefined;
       getMockName(): string;
       mock: MockFunctionState<T>;

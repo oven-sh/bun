@@ -922,6 +922,7 @@ impl Expect {
         frame: &CallFrame,
         matcher: Matcher,
     ) -> JsResult<JSValue> {
+        self.matcher_ran.set(true);
         if !self.flags.get().is_plain() {
             return self.call_modified_matcher(global, frame, matcher);
         }
@@ -1046,6 +1047,7 @@ impl Expect {
         // `parent: None` keeps the attempts out of the assertion count. Only the call in `frame` counts.
         let expect = Expect {
             flags: Cell::new(Flags(self.flags.get().0 & Flags::NOT_MASK)),
+            matcher_ran: Cell::new(false),
             parent: None,
             custom_label: self.custom_label.clone(),
         }
@@ -1092,8 +1094,7 @@ impl Expect {
                 promise.map_or(JSValue::NULL, AnyPromise::as_value),
             );
             // bun:test checks a settled promise right away and throws, as it always has. Vitest always returns a promise.
-            let always_defer =
-                self.bun_test().is_some_and(|buntest| self.is_in_vitest_test(buntest.get()));
+            let always_defer = self.is_vitest();
             if let Some(promise) =
                 promise.filter(|promise| always_defer || promise.status() == Status::Pending)
             {
@@ -1133,6 +1134,7 @@ impl Expect {
     fn private_copy(&self, global: &JSGlobalObject, this_value: JSValue) -> JSValue {
         let copy = Expect {
             flags: Cell::new(self.flags.get()),
+            matcher_ran: Cell::new(false),
             parent: self.parent.clone(),
             custom_label: self.custom_label.clone(),
         }

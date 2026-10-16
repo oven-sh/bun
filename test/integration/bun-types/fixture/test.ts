@@ -1,6 +1,8 @@
 import {
   afterAll,
   afterEach,
+  aroundAll,
+  aroundEach,
   beforeAll,
   beforeEach,
   describe,
@@ -586,6 +588,17 @@ extended.afterAll(({ port }, suite) => {
   expectType<number>(port);
   expectType<string>(suite.name);
 });
+extended.aroundEach(async (runTest, { port, task }, suite) => {
+  expectType<number>(port);
+  expectType<string>(task.name);
+  expectType<string>(suite.name);
+  expectType<Promise<void>>(runTest());
+}, 1000);
+extended.aroundAll(async (runSuite, { port }, suite) => {
+  expectType<number>(port);
+  expectType<string>(suite.name);
+  await runSuite();
+});
 extended.override({ label: "another" }).override({ port: async ({}, use) => use(1) });
 // @ts-expect-error
 extended.override({ label: 1 });
@@ -631,7 +644,24 @@ test("no callback");
 test.describe("test.describe", () => {
   test.beforeEach(() => {});
   test.afterAll(done => done());
+  test.aroundEach(runTest => runTest());
+  test.aroundAll(runSuite => runSuite(), { timeout: 1000 });
 });
+
+aroundEach(async (runTest, context, suite) => {
+  expectType<() => Promise<void>>(runTest);
+  expectType<string>(context.task.name);
+  expectType<string>(suite.name);
+  await runTest();
+});
+aroundAll(async (runSuite, {}, suite) => {
+  expectType<"suite">(suite.type);
+  await runSuite();
+}, 1000);
+// @ts-expect-error
+aroundEach();
+// @ts-expect-error
+aroundAll(async (runSuite, { nope }) => {});
 
 expectType(expect(Promise.resolve(1)).resolves.toBe(1)).is<Promise<void>>();
 expectType(expect(Promise.resolve(1)).resolves.not.toBe(2)).is<Promise<void>>();
@@ -644,6 +674,16 @@ expectType(expect(1).not.toBe(2)).is<void>();
 expect(Promise.resolve(1)).resolves.toBe("1");
 // @ts-expect-error
 expect(async () => 1).resolves.toBe("1");
+
+expect({ count: 3 }).toEqual({ count: expect.toSatisfy((n: number) => n % 2 === 1) });
+expect({ count: 3 }).toEqual({ count: expect.toSatisfy(n => n % 2 === 1, "an odd number") });
+expect({ count: 2 }).toEqual({ count: expect.not.toSatisfy(n => n % 2 === 1, "an odd number") });
+// @ts-expect-error
+expect.toSatisfy();
+// @ts-expect-error
+expect.toSatisfy("not a function");
+// @ts-expect-error
+expect.not.toSatisfy(() => true, 1);
 
 declare module "bun:test" {
   interface Matchers<T> {

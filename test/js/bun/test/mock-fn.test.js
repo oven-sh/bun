@@ -1655,11 +1655,51 @@ describe("spyOn", () => {
       test("mockRestore() keeps properties added to the sandbox while the spy was installed", () => {
         if (!isBun) return;
         const { sandbox, global } = makeContext(contextify);
-        const spies = [spyOn(global, "missing"), spyOn(global, "toString"), spyOn(global, "parseInt")];
-        Object.assign(sandbox, { missing: "added", toString: "added", parseInt: "added" });
+        const spies = [spyOn(global, "missing"), spyOn(global, "parseInt")];
+        Object.assign(sandbox, { missing: "added", parseInt: "added" });
         for (const fn of spies) fn.mockRestore();
-        expect(sandbox).toMatchObject({ missing: "added", toString: "added", parseInt: "added" });
+        expect(sandbox).toMatchObject({ missing: "added", parseInt: "added" });
       });
+
+      test("a spy on a key that the sandbox inherits is on the sandbox, where an assignment replaces it", () => {
+        const { sandbox, context, global } = makeContext(contextify);
+        if (!("toString" in sandbox)) return;
+        const fn = spyOn(global, "toString");
+        expect(vm.runInContext("toString", context)).toBe(fn);
+        expect(Object.hasOwn(sandbox, "toString")).toBe(true);
+        sandbox.toString = "added";
+        fn.mockRestore();
+        expect(Object.hasOwn(sandbox, "toString")).toBe(false);
+      });
+    });
+
+    // A window of jsdom is such a context, and its addEventListener() is EventTarget.prototype's.
+    test("made of an instance of a class: spies on a method of the class, calls through and restores it", () => {
+      class Sandbox {
+        method(value) {
+          return "original " + value;
+        }
+      }
+      const { method } = Sandbox.prototype;
+      const sandbox = new Sandbox();
+      const context = vm.createContext(sandbox);
+      const global = vm.runInContext("this", context);
+
+      const fn = spyOn(global, "method");
+      expect(global.method).toBe(fn);
+      expect(global.method(1)).toBe("original 1");
+      expect(vm.runInContext("method(2)", context)).toBe("original 2");
+      expect(sandbox.method(3)).toBe("original 3");
+      expect(fn.mock.calls).toEqual([[1], [2], [3]]);
+      expect(Sandbox.prototype.method).toBe(method);
+
+      fn.mockReturnValue("spied");
+      expect(vm.runInContext("method()", context)).toBe("spied");
+
+      fn.mockRestore();
+      expect(Object.getOwnPropertyNames(sandbox)).toEqual([]);
+      expect(global.method).toBe(method);
+      expect(vm.runInContext("method(4)", context)).toBe("original 4");
     });
 
     test("made of a frozen object throws for the sandbox's properties", () => {
@@ -3688,6 +3728,109 @@ if (isBun) {
     test.each(flavors)("%s: the return value of withImplementation()", (_, isVitest, fn) => {
       const mocked = fn();
       expect(mocked.withImplementation(() => 1, () => {})).toBe(isVitest ? mocked : undefined); // prettier-ignore
+    });
+
+    describe.each(flavors)("%s: getMockImplementation()", (_, isVitest, fn) => {
+      test("is a function after mockReturnValue() and the like", async () => {
+        const receiver = {};
+        const error = new Error("thrown");
+        const returns = fn().mockReturnValue(1).getMockImplementation();
+        const returnsUndefined = fn().mockReturnValue(undefined).getMockImplementation();
+        const returnsThis = fn().mockReturnThis().getMockImplementation();
+        const resolves = fn().mockResolvedValue(2).getMockImplementation();
+        const rejects = fn().mockRejectedValue(3).getMockImplementation();
+        const throws = fn().mockThrow(error).getMockImplementation();
+        expect([returns(), returnsUndefined(), returnsThis.call(receiver) === receiver, returnsThis()]).toEqual([
+          1,
+          undefined,
+          true,
+          undefined,
+        ]);
+        expect(await expectResolves(resolves())).toBe(2);
+        expect(await expectRejects(rejects())).toBe(3);
+        expect(throws).toThrow(error);
+        expect(returns.length).toBe(0);
+      });
+
+      test("is the same function until the mock is configured again, and keeps its value afterwards", () => {
+        const mocked = fn().mockReturnValue(1);
+        const first = mocked.getMockImplementation();
+        expect(mocked.getMockImplementation()).toBe(first);
+        mocked.mockClear();
+        expect(mocked.getMockImplementation()).toBe(first);
+
+        mocked.mockReturnValue(2);
+        const second = mocked.getMockImplementation();
+        expect(second).not.toBe(first);
+        expect([first(), second(), mocked()]).toEqual([1, 2, 2]);
+
+        const implementation = () => 3;
+        expect(mocked.mockImplementation(implementation).getMockImplementation()).toBe(implementation);
+        expect(mocked.mockReturnValue(4).getMockImplementation()()).toBe(4);
+        expect(mocked.mockReset().getMockImplementation()).toBeUndefined();
+      });
+
+      test("is still undefined after mockImplementation() without a function", () => {
+        const implementation = () => 1;
+        expect(fn().mockImplementation().getMockImplementation()).toBeUndefined();
+        expect(fn(implementation).mockImplementation(undefined).getMockImplementation()).toBeUndefined();
+        expect(fn().mockReturnValue(1).mockImplementation().getMockImplementation()).toBeUndefined();
+        expect(fn().mockImplementation().mockReturnValue(undefined).getMockImplementation()).toBeFunction();
+        expect(fn().mockImplementationOnce().getMockImplementation()).toBeUndefined();
+        expect(fn(implementation).mockImplementationOnce().getMockImplementation()).toBe(implementation);
+        expect(fn().mockReturnValue(1).mockImplementationOnce().getMockImplementation()()).toBe(1);
+      });
+
+      test("calling it is not a call of the mock", () => {
+        const mocked = fn().mockReturnValue(1);
+        mocked.getMockImplementation()();
+        expect(mocked).not.toHaveBeenCalled();
+        expect(fn().mockImplementation(mocked.getMockImplementation())()).toBe(1);
+      });
+
+      test("comes back after withImplementation()", () => {
+        const mocked = fn().mockReturnValue(1);
+        const before = mocked.getMockImplementation();
+        expect(before()).toBe(1);
+        const temporary = () => 2;
+        let during;
+        mocked.withImplementation(temporary, () => {
+          during = mocked.getMockImplementation();
+        });
+        expect(during).toBe(temporary);
+        expect(mocked.getMockImplementation()).toBe(before);
+      });
+
+      // Vitest returns what the next call will run. Jest returns the implementation that stays.
+      test("while a mockReturnValueOnce() and the like is waiting", async () => {
+        const implementation = () => "stays";
+        const waiting = {
+          mockReturnValueOnce: fn(implementation).mockReturnValueOnce("once"),
+          mockResolvedValueOnce: fn(implementation).mockResolvedValueOnce("once"),
+          mockRejectedValueOnce: fn(implementation).mockRejectedValueOnce("once"),
+          mockThrowOnce: fn(implementation).mockThrowOnce("once"),
+        };
+        for (const mocked of Object.values(waiting)) {
+          expect(mocked.getMockImplementation() === implementation).toBe(!isVitest);
+        }
+        if (isVitest) {
+          expect(waiting.mockReturnValueOnce.getMockImplementation()()).toBe("once");
+          expect(await expectResolves(waiting.mockResolvedValueOnce.getMockImplementation()())).toBe("once");
+          expect(await expectRejects(waiting.mockRejectedValueOnce.getMockImplementation()())).toBe("once");
+          expect(waiting.mockThrowOnce.getMockImplementation()).toThrow("once");
+        }
+        // Reading it uses nothing up.
+        expect(waiting.mockReturnValueOnce()).toBe("once");
+        expect(waiting.mockReturnValueOnce.getMockImplementation()).toBe(implementation);
+
+        const bare = fn().mockReturnValueOnce("once");
+        expect(typeof bare.getMockImplementation()).toBe(isVitest ? "function" : "undefined");
+        bare();
+        expect(bare.getMockImplementation()).toBeUndefined();
+
+        const afterValue = fn().mockReturnValue("stays").mockReturnValueOnce("once");
+        expect(afterValue.getMockImplementation()()).toBe(isVitest ? "once" : "stays");
+      });
     });
 
     test.each(flavors)("%s: new on a function implementation", (_, isVitest, fn) => {

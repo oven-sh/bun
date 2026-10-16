@@ -305,6 +305,9 @@ pub struct VirtualMachine {
     pub on_unhandled_rejection_ctx: Option<*mut c_void>,
     pub on_unhandled_rejection_exception_list: Option<NonNull<ExceptionList>>,
     pub unhandled_error_counter: usize,
+    /// `bun test`: what is running is a test or a hook of Vitest's, where an error that a `process` listener takes
+    /// is not the runner's.
+    pub process_listeners_take_test_errors: bool,
     /// When set, `print_error_instance_body` calls this with the remapped
     /// `ZigException` (same lifecycle as the GitHub Actions annotation hook),
     /// so observers can read name/message/stack without re-running the
@@ -2174,6 +2177,19 @@ impl VirtualMachine {
         }
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
+            // What a listener throws comes back here, and is the runner's.
+            if self.process_listeners_take_test_errors && !self.is_handling_uncaught_exception {
+                self.is_handling_uncaught_exception = true;
+                let handled = Bun__handleUncaughtException(
+                    global_object,
+                    err.to_error().unwrap_or(err),
+                    if is_rejection { 1 } else { 0 },
+                ) > 0;
+                self.is_handling_uncaught_exception = false;
+                if handled {
+                    return true;
+                }
+            }
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, err);
             return true;
@@ -4471,6 +4487,12 @@ impl VirtualMachine {
         }
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
+            if self.process_listeners_take_test_errors
+                && Bun__handleUnhandledRejection(global_object, reason, promise) > 0
+            {
+                let _ = self.event_loop_mut().drain_microtasks();
+                return;
+            }
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, reason);
             return;

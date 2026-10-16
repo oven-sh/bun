@@ -838,7 +838,7 @@ describe.concurrent(".resolves and .rejects", () => {
         const chain = expect(promise).resolves;
         const first = chain.toBe(1);
         const second = chain.not.toBe(2);
-        const third = chain.not.toBe(1);
+        const third = chain.not.toBe(3);
         resolve(1);
         await Promise.all([first, second, third]);
       });

@@ -13,8 +13,8 @@ use bun_resolver::fs::FileSystem;
 
 use super::bun_test::js_fns::Signature;
 use super::bun_test::{
-    BaseScope, BunTest, BunTestPtr, BunTestPtrWeak, DescribeScope, EntryData, ExecutionEntry, Only,
-    Phase, RefDataValue, ScopeMode,
+    Around, AroundPhase, BaseScope, BunTest, BunTestPtr, BunTestPtrWeak, DescribeScope, EntryData,
+    ExecutionEntry, Only, Phase, RefDataValue, ScopeMode,
 };
 use super::execution::{ExecutionSequence, Result as ExecutionResult};
 use super::expect::Expect;
@@ -31,6 +31,10 @@ pub(crate) enum Deferred {
     Fixture,
     OnTestFinished,
     OnTestFailed,
+    /// The rest of an `aroundEach` hook. Everything above runs before `runTest()` resolves.
+    Around,
+    /// A fixture set up for an `aroundEach` hook.
+    AroundFixture,
 }
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
@@ -44,10 +48,10 @@ pub(crate) struct TestContext {
 }
 
 pub(crate) mod js {
-    bun_jsc::codegen_cached_accessors!("TestContext"; task, signal, result, errors, annotations, fixtures);
+    bun_jsc::codegen_cached_accessors!("TestContext"; task, signal, result, errors, annotations, fixtures, asyncContext);
 }
 
-fn bound(
+pub(crate) fn bound(
     global: &JSGlobalObject,
     this_value: JSValue,
     name: &'static str,
@@ -153,28 +157,35 @@ impl TestContext {
     pub(crate) fn defer(&self, buntest: &mut BunTest, when: Deferred, callback: JSValue, timeout: u32) {
         let gets_context = matches!(when, Deferred::OnTestFinished | Deferred::OnTestFailed);
         let entry = buntest.create_vitest_entry(callback, timeout, gets_context);
+        if when == Deferred::Around {
+            // SAFETY: just allocated.
+            unsafe { (*entry.as_ptr()).around = Some((Around::Each, AroundPhase::TearDown)) };
+        }
         self.deferred.with_mut(|deferred| deferred.push((when, entry)));
     }
 
-    pub(crate) fn defer_while_running(&self, this_value: JSValue, when: Deferred, callback: JSValue, timeout: u32) -> bool {
-        let Some((buntest, _)) = self.running(this_value) else {
+    /// Returns false if the test has finished.
+    pub(crate) fn defer_fixture(&self, this_value: JSValue, tear_down: JSValue, timeout: u32) -> bool {
+        let Some((buntest, sequence)) = self.running(this_value) else {
             return false;
         };
-        self.defer(buntest.get(), when, callback, timeout);
+        // SAFETY: as in `running`.
+        let when = if unsafe { sequence.as_ref() }.is_before_run_test() { Deferred::AroundFixture } else { Deferred::Fixture };
+        self.defer(buntest.get(), when, tear_down, timeout);
         true
     }
 
     pub(crate) fn take_deferred(&self, attempt_failed: bool) -> Option<NonNull<ExecutionEntry>> {
         self.deferred.with_mut(|deferred| {
-            let next = (0..deferred.len()).rev().min_by_key(|&index| deferred[index].0)?;
-            if deferred[next].0 != Deferred::OnTestFailed || attempt_failed {
-                return Some(deferred.remove(next).1);
-            }
-            for (_, entry) in deferred.drain(..) {
+            loop {
+                let next = (0..deferred.len()).rev().min_by_key(|&index| deferred[index].0)?;
+                let (when, entry) = deferred.remove(next);
+                if when != Deferred::OnTestFailed || attempt_failed {
+                    return Some(entry);
+                }
                 // SAFETY: owned by `BunTest::extra_execution_entries`, which outlives the sequence.
                 unsafe { (*entry.as_ptr()).callback = None };
             }
-            None
         })
     }
 
@@ -570,14 +581,20 @@ fn reject_with_this(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 }
 
 /// Only an extended `test`'s hooks have fixtures. Any other callback that destructures one fails when the hook runs.
+/// `context_index` is 1 for `aroundAll`, whose first parameter is `runSuite`.
 pub(crate) fn suite_hook(
     global: &JSGlobalObject,
     name: &str,
     callback: JSValue,
+    context_index: usize,
     has_fixtures: bool,
 ) -> JsResult<JSValue> {
-    let hint = format!("The suite is the second argument: {name}(({{}}, suite) => {{}})");
-    let error = match ContextParameter::of(callback, 0) {
+    let (ordinal, hint) = if context_index == 0 {
+        ("first", format!("The suite is the second argument: {name}(({{}}, suite) => {{}})"))
+    } else {
+        ("second", format!("The suite is the third argument: {name}((runSuite, {{}}, suite) => {{}})"))
+    };
+    let error = match ContextParameter::of(callback, context_index) {
         ContextParameter::Absent => return Ok(callback),
         ContextParameter::Properties(names) if has_fixtures || names.is_empty() => return Ok(callback),
         ContextParameter::Properties(names) => {
@@ -591,11 +608,11 @@ pub(crate) fn suite_hook(
             "{name}() has no fixtures for its callback, which destructures a rest property. {hint}",
         )),
         ContextParameter::Other(Some(parameter)) => global.create_error_instance(format_args!(
-            "{name}() expects the first parameter of its callback to be an object destructuring pattern, received \"{}\". {hint}",
+            "{name}() expects the {ordinal} parameter of its callback to be an object destructuring pattern, received \"{}\". {hint}",
             bstr::BStr::new(&parameter),
         )),
         ContextParameter::Other(None) => global.create_error_instance(format_args!(
-            "{name}() expects the first parameter of its callback to be an object destructuring pattern. {hint}",
+            "{name}() expects the {ordinal} parameter of its callback to be an object destructuring pattern. {hint}",
         )),
     };
     rejecting(global, error)

@@ -95,6 +95,13 @@ impl Order {
         }
         let use_hooks = self.cfg.always_use_hooks || current.base.has_callback;
 
+        // gather aroundAll
+        let aroundall_order: AllOrderResult = if use_hooks {
+            self.generate_all_order(&current.around_all, current.base.has_callback)?
+        } else {
+            AllOrderResult::EMPTY
+        };
+
         // gather beforeAll
         let beforeall_order: AllOrderResult = if use_hooks {
             self.generate_all_order(&current.before_all, current.base.has_callback)?
@@ -137,6 +144,12 @@ impl Order {
 
         // update skip_to values for afterAll to skip the remaining afterAll items
         afterall_order.set_failure_skip_to(self);
+
+        // An aroundAll that fails before `runSuite()` skips to the teardown of the ones around it. Its own slot has no callback.
+        aroundall_order.set_failure_skip_to(self);
+        if use_hooks {
+            self.generate_all_order(&current.around_all_teardown, current.base.has_callback)?;
+        }
 
         Ok(())
     }
@@ -182,6 +195,23 @@ impl Order {
             }
         }
 
+        // gather aroundEach, which goes around every beforeEach
+        if use_each_hooks {
+            let mut parent: Option<*mut DescribeScope> = first_parent;
+            while let Some(p_ptr) = parent {
+                // SAFETY: parent chain consists of live DescribeScope nodes.
+                let p = unsafe { &*p_ptr };
+                for entry in p.around_each.iter().rev() {
+                    let src: *const ExecutionEntry = &raw const **entry;
+                    // SAFETY: `src` is valid for reads; `Drop` never runs on the bitwise copy
+                    // (see ownership note above), so duplicated owning fields are not double-freed.
+                    let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
+                    list.prepend(cloned);
+                }
+                parent = p.base.parent;
+            }
+        }
+
         // append test
         list.append(current.as_ptr()); // add entry to sequence
 
@@ -208,7 +238,12 @@ impl Order {
         while let Some(entry_ptr) = index {
             // SAFETY: list contains valid ExecutionEntry nodes linked via `next`.
             unsafe {
-                (*entry_ptr).failure_skip_past = failure_skip_past; // we could consider matching skip_to in beforeAll to skip directly to the first afterAll from its own scope rather than skipping to the first afterAll from any scope
+                (*entry_ptr).failure_skip_past = if (*entry_ptr).around.is_some() {
+                    // Nothing inside an aroundEach that fails before `runTest()` runs, afterEach included.
+                    list.last
+                } else {
+                    failure_skip_past // we could consider matching skip_to in beforeAll to skip directly to the first afterAll from its own scope rather than skipping to the first afterAll from any scope
+                };
                 if Some(entry_ptr) == failure_skip_past {
                     failure_skip_past = None;
                 }

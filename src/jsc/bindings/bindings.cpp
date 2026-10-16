@@ -314,6 +314,21 @@ extern "C" int8_t AsymmetricMatcherConstructorType__fromJS(JSC::JSGlobalObject* 
     return static_cast<uint8_t>(AsymmetricMatcherConstructorType::none);
 }
 
+// `new RegExp(source)`, including what it throws for an invalid source.
+extern "C" JSC::EncodedJSValue ExpectStringMatching__compile(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedSource)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String source = JSValue::decode(encodedSource).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    RegExp* regExp = RegExp::create(vm, source, {});
+    if (!regExp->isValid()) {
+        throwException(globalObject, scope, regExp->errorToThrow(globalObject));
+        return {};
+    }
+    return JSValue::encode(RegExpObject::create(vm, globalObject->regExpStructure(), regExp));
+}
+
 bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGlobalObject* globalObject, JSValue& value, AsymmetricMatcherConstructorType& constructorType)
 {
     JSC::EncodedJSValue valueEncoded = JSValue::encode(value);
@@ -464,20 +479,8 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
-        JSValue expectedTestValue = expectStringMatching->m_testValue.get();
-
         if (otherProp.isString()) {
-            if (expectedTestValue.isString()) {
-                String otherString = otherProp.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
-
-                String substring = expectedTestValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
-
-                if (otherString.find(substring) != WTF::notFound) {
-                    return AsymmetricMatcherResult::PASS;
-                }
-            } else if (auto* regex = dynamicDowncast<RegExpObject>(expectedTestValue)) {
+            if (auto* regex = dynamicDowncast<RegExpObject>(expectStringMatching->m_pattern.get())) {
                 JSString* otherString = otherProp.toString(globalObject);
                 RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
                 bool matched = !!regex->match(globalObject, otherString);

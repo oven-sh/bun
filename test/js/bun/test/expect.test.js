@@ -142,6 +142,82 @@ describe("expect()", () => {
     ).resolves.toBe(1);
   });
 
+  test("resolves.toThrow() on a value that is neither a function nor an error", async () => {
+    const didNotThrow = isVitest
+      ? "expected promise to throw an error, but it didn't"
+      : "Received function did not throw";
+    for (const value of [5, undefined, null, "text", { message: "text" }]) {
+      await expect(Promise.resolve(value)).resolves.not.toThrow();
+      await expect(Promise.resolve(value)).resolves.not.toThrow("text");
+      await expect((async () => expect(Promise.resolve(value)).resolves.toThrow())()).rejects.toThrow(didNotThrow);
+      await expect((async () => expect(Promise.resolve(value)).resolves.toThrow("text"))()).rejects.toThrow(
+        didNotThrow,
+      );
+    }
+  });
+
+  describe("an expect() that is kept in a variable", () => {
+    test(".not negates every time it is read", () => {
+      const kept = expect(1);
+      kept.not.toBe(2);
+      kept.not.toBe(3);
+      expect(() => kept.not.toBe(1)).toThrow();
+      kept.not.toBe(4);
+
+      const negated = expect(1).not;
+      negated.toBe(2);
+      negated.toBe(3);
+      expect(() => negated.toBe(1)).toThrow();
+    });
+
+    test(".not negates after a matcher without it", () => {
+      const kept = expect(1);
+      kept.toBe(1);
+      kept.not.toBe(2);
+      kept.not.toBe(3);
+    });
+
+    test(".resolves.not and .rejects.not negate every time they are read", async () => {
+      const resolves = expect(Promise.resolve(1)).resolves;
+      await resolves.not.toBe(2);
+      await resolves.not.toBe(3);
+      await expect((async () => resolves.not.toBe(1))()).rejects.toThrow();
+
+      const rejects = expect(Promise.reject(1)).rejects;
+      await rejects.not.toBe(2);
+      await rejects.not.toBe(3);
+      await expect((async () => rejects.not.toBe(1))()).rejects.toThrow();
+    });
+
+    // Vitest replaces the promise in the kept expect() with what it resolved to, so the second .resolves throws.
+    test_skipIf(isVitest)(".resolves and .rejects can be read again", async () => {
+      const fulfilled = expect(Promise.resolve(1));
+      await fulfilled.resolves.toBe(1);
+      await fulfilled.resolves.not.toBe(2);
+      await fulfilled.resolves.not.toBe(3);
+
+      const rejected = expect(Promise.reject(1));
+      await rejected.rejects.toBe(1);
+      await rejected.rejects.not.toBe(2);
+      await rejected.rejects.not.toBe(3);
+    });
+
+    test("a custom matcher sees isNot every time", () => {
+      /** @type {boolean[]} */
+      const seen = [];
+      expect.extend({
+        toRecordIsNot() {
+          seen.push(this.isNot);
+          return { pass: !this.isNot, message: () => "" };
+        },
+      });
+      const kept = ANY(expect(1));
+      kept.not.toRecordIsNot();
+      kept.not.toRecordIsNot();
+      expect(seen).toEqual([true, true]);
+    });
+  });
+
   // https://github.com/oven-sh/bun/issues/18857
   describe("resolves and rejects on a thenable", () => {
     /** @returns {PromiseLike<any>} */
@@ -4891,6 +4967,38 @@ describe("expect()", () => {
     test("StringMatching matches string against string", () => {
       expect(expect.stringMatching("en")).toEqual("queen");
       expect(expect.stringMatching("en")).not.toEqual("queue");
+    });
+
+    test("StringMatching takes a string as the source of a regular expression", () => {
+      expect(expect.stringMatching("^[a-z]+\\d+$")).toEqual("abc123");
+      expect(expect.stringMatching("^[a-z]+\\d+$")).not.toEqual("abc");
+      expect(expect.stringMatching("x.y")).toEqual("xay");
+      expect(expect.stringMatching("a+b")).toEqual("aab");
+      expect(expect.stringMatching("a+b")).not.toEqual("a+b");
+      expect(expect.stringMatching("")).toEqual("anything");
+      expect(expect.stringMatching(new String("x.y"))).toEqual("xay");
+      expect({ s: "x.y" }).toEqual({ s: expect.not.stringMatching("^x\\dy$") });
+      expect({ s: "x1y" }).not.toEqual({ s: expect.not.stringMatching("^x\\dy$") });
+      expect({ s: "x1y" }).toMatchObject({ s: expect.stringMatching("^x\\dy$") });
+      const called = jest.fn();
+      called("x1y");
+      expect(called).toHaveBeenCalledWith(expect.stringMatching("^x\\dy$"));
+    });
+
+    test("StringMatching throws right away if the string is not a valid regular expression", () => {
+      expect(() => expect.stringMatching("(")).toThrow(SyntaxError);
+      expect(() => expect.not.stringMatching("[")).toThrow(SyntaxError);
+      expect(() => expect.stringMatching("(")).toThrow("Invalid regular expression: ");
+    });
+
+    test_skipIf(!isBun)("StringMatching names itself when it refuses its argument", () => {
+      let message = "";
+      try {
+        expect.stringMatching(ANY(1));
+      } catch (e) {
+        message = stripVTControlCharacters(ANY(e).message);
+      }
+      expect(message).toBe("expect.stringMatching(string)\n\nExpected a string or regular expression\n");
     });
 
     test("StringMatching throws if expected value is neither string nor regexp", () => {

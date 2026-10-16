@@ -10,7 +10,7 @@ export default [
     callable: true,
     finalize: true,
     JSType: "0b11101110",
-    values: ["result", "errors", "annotations", "fixtures"],
+    values: ["result", "errors", "annotations", "fixtures", "asyncContext"],
     configurable: false,
     klass: {},
     proto: {

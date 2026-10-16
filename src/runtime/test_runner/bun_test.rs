@@ -136,6 +136,10 @@ pub(crate) mod js_fns {
         AfterEach,
         #[strum(serialize = "afterAll")]
         AfterAll,
+        #[strum(serialize = "aroundEach")]
+        AroundEach,
+        #[strum(serialize = "aroundAll")]
+        AroundAll,
         #[strum(serialize = "onTestFinished")]
         OnTestFinished,
         #[strum(serialize = "onTestFailed")]
@@ -148,6 +152,8 @@ pub(crate) mod js_fns {
                 Self::BeforeEach => Some(HookTag::BeforeEach),
                 Self::AfterEach => Some(HookTag::AfterEach),
                 Self::AfterAll => Some(HookTag::AfterAll),
+                Self::AroundEach => Some(HookTag::AroundEach),
+                Self::AroundAll => Some(HookTag::AroundAll),
                 Self::OnTestFinished | Self::OnTestFailed => None,
             }
         }
@@ -158,6 +164,8 @@ pub(crate) mod js_fns {
                 Self::BeforeEach => b"beforeEach()",
                 Self::AfterEach => b"afterEach()",
                 Self::AfterAll => b"afterAll()",
+                Self::AroundEach => b"aroundEach()",
+                Self::AroundAll => b"aroundAll()",
                 Self::OnTestFinished => b"onTestFinished()",
                 Self::OnTestFailed => b"onTestFailed()",
             }
@@ -166,6 +174,13 @@ pub(crate) mod js_fns {
             match self {
                 Self::OnTestFinished => Some(Deferred::OnTestFinished),
                 Self::OnTestFailed => Some(Deferred::OnTestFailed),
+                _ => None,
+            }
+        }
+        const fn around(self) -> Option<Around> {
+            match self {
+                Self::AroundEach => Some(Around::Each),
+                Self::AroundAll => Some(Around::All),
                 _ => None,
             }
         }
@@ -203,17 +218,20 @@ pub(crate) mod js_fns {
             )?;
 
             let calling = match (flavor, args.callback) {
+                // An around hook's parameters are the same in every flavor.
+                _ if tag.around().is_some() => Calling::Vitest { context: true },
                 (Flavor::Vitest, _) => Calling::Vitest { context: true },
                 (Flavor::Jest, Some(callback)) => Calling::Jest { done: callback.without_async_context().get_length(global_this)? > 0 },
                 (Flavor::Jest, None) => Calling::default(),
             };
-            // An extended `test` binds its `beforeAll` / `afterAll` with its `TestFixtures` as `this`.
+            // An extended `test` binds its `beforeAll` / `afterAll` / `aroundAll` with its `TestFixtures` as `this`.
             let mut fixtures = None;
-            if let (Flavor::Vitest, GenericHookTag::BeforeAll | GenericHookTag::AfterAll, Some(callback)) =
-                (flavor, tag, args.callback)
+            if let (Flavor::Vitest, GenericHookTag::BeforeAll | GenericHookTag::AfterAll, Some(callback))
+            | (_, GenericHookTag::AroundAll, Some(callback)) = (flavor, tag, args.callback)
             {
                 fixtures = Some(call_frame.this()).filter(|&this| TestFixtures::from_js(this).is_some());
-                args.callback = Some(test_context::suite_hook(global_this, tag_name, callback, fixtures.is_some())?);
+                let context_index = usize::from(tag.around().is_some());
+                args.callback = Some(test_context::suite_hook(global_this, tag_name, callback, context_index, fixtures.is_some())?);
             }
 
             let bun_test_root = get_test_root(global_this, Signature::Str(sig_bytes))?;
@@ -222,6 +240,7 @@ pub(crate) mod js_fns {
                 calling,
                 fixtures,
                 timeout: args.options.timeout,
+                around: tag.around().map(|around| (around, AroundPhase::SetUp)),
                 ..Default::default()
             };
 
@@ -265,6 +284,10 @@ pub(crate) mod js_fns {
                     Ok(JSValue::UNDEFINED)
                 }
                 Phase::Execution => {
+                    // Vitest takes a file's hooks when it has collected the file, so one registered by a running test never runs.
+                    if flavor == Flavor::Vitest && tag.deferred().is_none() {
+                        return Ok(JSValue::UNDEFINED);
+                    }
                     let active = bun_test.get_current_state_data();
                     let Some((sequence, _)) = bun_test.execution.get_current_and_valid_execution_sequence(&active) else {
                         return Err(if tag.deferred().is_some() && flavor == Flavor::Vitest {
@@ -404,11 +427,15 @@ pub(crate) mod js_fns {
         hook!(before_each, BeforeEach, Jest);
         hook!(after_each, AfterEach, Jest);
         hook!(after_all, AfterAll, Jest);
+        hook!(around_each, AroundEach, Jest);
+        hook!(around_all, AroundAll, Jest);
         hook!(on_test_finished, OnTestFinished, Jest);
         hook!(vitest_before_all, BeforeAll, Vitest);
         hook!(vitest_before_each, BeforeEach, Vitest);
         hook!(vitest_after_each, AfterEach, Vitest);
         hook!(vitest_after_all, AfterAll, Vitest);
+        hook!(vitest_around_each, AroundEach, Vitest);
+        hook!(vitest_around_all, AroundAll, Vitest);
         hook!(vitest_on_test_finished, OnTestFinished, Vitest);
         hook!(vitest_on_test_failed, OnTestFailed, Vitest);
     }
@@ -1177,10 +1204,15 @@ impl BunTest {
                 });
 
                 let preload = &self.bun_test_root.get().hook_scope;
-                if preload.before_all.iter().chain(&preload.after_all).any(|hook| hook.fixtures.is_some()) {
+                if preload.before_all.iter().chain(&preload.after_all).chain(&preload.around_all).any(|hook| hook.fixtures.is_some()) {
                     self.expect_file_scoped_fixtures();
                 }
                 let root = self.bun_test_root.get();
+                let aroundall_order: Order::AllOrderResult = if self.first_last.first {
+                    order.generate_all_order(&root.hook_scope.around_all, true)?
+                } else {
+                    Order::AllOrderResult::EMPTY
+                };
                 let beforeall_order: Order::AllOrderResult = if self.first_last.first {
                     order.generate_all_order(&root.hook_scope.before_all, true)?
                 } else {
@@ -1215,6 +1247,10 @@ impl BunTest {
                     Order::AllOrderResult::EMPTY
                 };
                 afterall_order.set_failure_skip_to(&mut order);
+                aroundall_order.set_failure_skip_to(&mut order);
+                if self.first_last.last {
+                    order.generate_all_order(&root.hook_scope.around_all_teardown, true)?;
+                }
                 if let Some(file_end) = &self.file_end {
                     order.generate_all_order(core::slice::from_ref(file_end), true)?;
                 }
@@ -1284,13 +1320,18 @@ impl BunTest {
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
         // SAFETY: `this_strong` keeps the cell alive and in place for the whole call.
         let on_stack = unsafe { OnStack::enter(&raw const (*this).execution.on_stack, &cfg_data) };
-        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(vm.test_isolation_state.file_context,
-            cfg_callback,
-            global_this,
-            JSValue::UNDEFINED,
-            args_slice,
-            move || drop(on_stack),
-        ) {
+        let result: JSValue = match vm
+            .event_loop_mut()
+            .run_callback_with_result_and_forcefully_drain_microtasks(
+                vm.test_isolation_state.file_context,
+                cfg_callback,
+                global_this,
+                JSValue::UNDEFINED,
+                args_slice,
+                move || drop(on_stack),
+            )
+            .and_then(|returned| Self::promise_of_thenable(global_this, returned))
+        {
             Ok(v) => v,
             Err(_) => {
                 global_this.clear_termination_exception();
@@ -1420,6 +1461,17 @@ impl BunTest {
             unsafe { (*this).adopt_teardown(&cfg_data, result) };
         }
         Some(cfg_data)
+    }
+
+    /// A promise that follows `returned` if it's a thenable other than a promise. Otherwise `returned`.
+    fn promise_of_thenable(global_this: &JSGlobalObject, returned: JSValue) -> JsResult<JSValue> {
+        if !returned.is_object() || returned.as_promise().is_some() {
+            return Ok(returned);
+        }
+        // Reads `then` once. Only a value without a callable `then` fulfills the promise right away.
+        let promise = bun_jsc::JSPromise::create(global_this);
+        promise.resolve(global_this, returned)?;
+        Ok(if promise.status() == PromiseStatus::Fulfilled { returned } else { promise.to_js() })
     }
 
     /// Vitest runs a function returned by `beforeEach` / `beforeAll` after the matching after-hooks.
@@ -1852,6 +1904,21 @@ impl Calling {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Around {
+    Each,
+    All,
+}
+
+/// An around hook runs in two entries. See `AroundHook`.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum AroundPhase {
+    /// Until the hook calls `runTest()` or `runSuite()`.
+    SetUp,
+    /// After the promise that call returned has resolved.
+    TearDown,
+}
+
 #[derive(Copy, Clone, Default)]
 pub(crate) struct BaseScopeCfg {
     pub(crate) flavor: Flavor,
@@ -2008,6 +2075,15 @@ pub(crate) struct DescribeScope {
     pub(crate) after_each: Vec<Box<ExecutionEntry>>,
     #[expect(clippy::vec_box)]
     pub(crate) after_all: Vec<Box<ExecutionEntry>>,
+    #[expect(clippy::vec_box)]
+    pub(crate) around_each: Vec<Box<ExecutionEntry>>,
+    #[expect(clippy::vec_box)]
+    pub(crate) around_all: Vec<Box<ExecutionEntry>>,
+    /// One slot per `around_all` hook, in reverse order. It has no callback until the hook calls `runSuite()`.
+    #[expect(clippy::vec_box)]
+    pub(crate) around_all_teardown: Vec<Box<ExecutionEntry>>,
+    /// What `test_context_around::capture_async_context()` returned when an `around_all` hook last called `runSuite()`.
+    pub(crate) async_context: Option<Strong>,
 
     /// if true, the describe callback threw an error. do not run any tests declared in this scope.
     pub(crate) failed: bool,
@@ -2025,6 +2101,10 @@ impl DescribeScope {
             before_all: Vec::new(),
             after_all: Vec::new(),
             after_each: Vec::new(),
+            around_each: Vec::new(),
+            around_all: Vec::new(),
+            around_all_teardown: Vec::new(),
+            async_context: None,
             failed: false,
             task: None,
             inherited: Default::default(),
@@ -2101,6 +2181,8 @@ impl DescribeScope {
             HookTag::BeforeEach => &mut self.before_each,
             HookTag::AfterEach => &mut self.after_each,
             HookTag::AfterAll => &mut self.after_all,
+            HookTag::AroundEach => &mut self.around_each,
+            HookTag::AroundAll => &mut self.around_all,
         }
     }
 
@@ -2130,6 +2212,17 @@ impl DescribeScope {
                 self.after_all.insert(first_teardown_slot, slot);
                 self.before_all.push(entry);
             }
+            HookTag::AroundAll => {
+                let slot_cfg = ExecutionEntryCfg {
+                    timeout: cfg.timeout,
+                    calling: Calling::Vitest { context: false },
+                    around: Some((Around::All, AroundPhase::TearDown)),
+                    ..Default::default()
+                };
+                let slot = ExecutionEntry::create(None, None, slot_cfg, Some(std::ptr::from_mut(self)), base, phase);
+                self.around_all_teardown.insert(0, slot);
+                self.around_all.push(entry);
+            }
             // Vitest runs a scope's after-hooks in reverse registration order.
             HookTag::AfterEach | HookTag::AfterAll if is_vitest => self.get_hook_entries(tag).insert(0, entry),
             HookTag::AfterAll => self.after_all.insert(first_teardown_slot, entry),
@@ -2146,6 +2239,17 @@ impl DescribeScope {
         let nth = self.vitest_before_all().position(|candidate| core::ptr::eq(candidate, hook))?;
         self.after_all.iter_mut().nth_back(nth).map(|slot| &mut **slot)
     }
+
+    /// The `around_all` hook `hook` called `runSuite()`.
+    pub(crate) fn enter_around_all(&mut self, hook: *const ExecutionEntry, tear_down: JSValue, async_context: JSValue) {
+        let Some(nth) = self.around_all.iter().position(|candidate| core::ptr::eq(&raw const **candidate, hook)) else {
+            return;
+        };
+        if let Some(slot) = self.around_all_teardown.iter_mut().nth_back(nth) {
+            slot.callback = Some(strong_create(tear_down));
+        }
+        self.async_context = Some(strong_create(async_context));
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -2154,6 +2258,8 @@ pub(crate) enum HookTag {
     BeforeEach,
     AfterEach,
     AfterAll,
+    AroundEach,
+    AroundAll,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -2161,6 +2267,7 @@ pub(crate) struct ExecutionEntryCfg {
     /// 0 = unlimited timeout
     pub(crate) timeout: u32,
     pub(crate) calling: Calling,
+    pub(crate) around: Option<(Around, AroundPhase)>,
     pub(crate) fixtures: Option<JSValue>,
     /// Number of times to retry a failed test (0 = no retries)
     pub(crate) retry_count: u32,
@@ -2181,6 +2288,7 @@ pub(crate) struct ExecutionEntry {
     /// 0 = unlimited timeout
     pub(crate) timeout: u32,
     pub(crate) calling: Calling,
+    pub(crate) around: Option<(Around, AroundPhase)>,
     pub(crate) fixtures: Option<Strong>,
     pub(crate) parameter: Option<SharedContextParameter>,
     /// '.epoch' = not set
@@ -2211,6 +2319,7 @@ impl ExecutionEntry {
             callback: None,
             timeout: cfg.timeout,
             calling: cfg.calling,
+            around: cfg.around,
             fixtures: None,
             parameter: (cfg.calling.is_vitest() && phase != AddedInPhase::Execution).then(Default::default),
             added_in_phase: phase,
@@ -2249,7 +2358,10 @@ impl ExecutionEntry {
                 .test_entry
                 .is_some_and(|p| core::ptr::eq(p.as_ptr().cast_const(), self));
             let has_done_parameter = self.calling == Calling::Jest { done: true };
-            sequence.result = if is_test_entry {
+            sequence.result = if self.around.is_some() {
+                // `Execution::report_around_timeout` fails the sequence with an error.
+                sequence.result
+            } else if is_test_entry {
                 if has_done_parameter {
                     Execution::Result::FailBecauseTimeoutWithDoneCallback
                 } else {

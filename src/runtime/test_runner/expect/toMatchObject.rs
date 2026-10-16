@@ -15,7 +15,7 @@ pub(crate) fn to_match_object(
     // Jest refuses a value that isn't an object. To Vitest it's one that doesn't match.
     if not
         && !(received_object.is_object() && args.first().is_some_and(|expected| expected.is_object()))
-        && this.bun_test().is_some_and(|buntest| this.is_in_vitest_test(buntest.get()))
+        && this.is_vitest()
     {
         return Ok(JSValue::UNDEFINED);
     }

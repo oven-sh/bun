@@ -68,6 +68,7 @@ Mock functions implement the following properties and methods:
 | Property/Method                           | Description                                    |
 | ----------------------------------------- | ---------------------------------------------- |
 | `mockFn.getMockName()`                    | Returns the mock name                          |
+| `mockFn.getMockImplementation()`          | Returns the implementation as a function       |
 | `mockFn.mock.calls`                       | Array of call arguments for each invocation    |
 | `mockFn.mock.results`                     | Array of return values for each invocation     |
 | `mockFn.mock.settledResults`              | Resolved or rejected value for each invocation |
@@ -409,7 +410,7 @@ test("partial mock", () => {
 });
 ```
 
-Outside a factory, use `await vi.importActual("./math")` or `jest.requireActual("./math")` to load the original module.
+Outside a factory, use `await vi.importActual("./math")` or `jest.requireActual("./math")` to load the original module. That doesn't call the factory.
 
 This also works when the mocked module is part of an import cycle. The modules that import it still get the mock.
 
@@ -721,6 +722,7 @@ Bun provides the `vi` object for tests written for Vitest. Where Vitest and Jest
 - `mockReset()` goes back to the original implementation.
 - `vi.restoreAllMocks()` keeps the recorded calls of the spies it restores.
 - `fn.mock` is still the same object after `mockClear()`.
+- `getMockImplementation()` returns what the next call runs, so a `mockReturnValueOnce()` that is still waiting comes first.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, vi } from "bun:test";
@@ -775,7 +777,7 @@ test("lazy import", async () => {
 
 ### Differences from Vitest
 
-- Mocking a module of your own that's already imported updates it in place. Its existing exports change, exports that only the mock has aren't added, and getters are read once.
+- Mocking a module of your own that's already imported updates it in place. Its existing exports change, exports that only the mock has aren't added, and getters are read once. A module that only `vi.importActual()` has loaded stays the original, and the next import calls the factory.
 - Every module outside `node_modules` that imports the mocked module gets the mock. In Vitest, a module that's first loaded while the factory runs gets the original and keeps it.
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.

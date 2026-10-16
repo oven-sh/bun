@@ -78,6 +78,8 @@ Preload scripts run in the project's environment. With `--isolate`, they run aga
 
 With jsdom, an error thrown in an event listener or a timer fails the running test, like in Vitest and Jest. If the file or a preload script has added an `error` listener to `window`, the test doesn't fail.
 
+With jsdom and happy-dom, `reportError()` dispatches an `error` event at `window`, as in a browser. React 19 reports what a component throws through it, so an `error` listener on `window` hears those errors too.
+
 ## Registering happy-dom in a preload
 
 Instead of setting `environment`, you can register the globals yourself in a preload script.

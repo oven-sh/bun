@@ -45,11 +45,12 @@ use bun_core::scoped_log;
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
-    group_begin, AddedInPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
+    group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
     HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
 };
 use super::expect::expect_deferred::ExpectDeferred;
 use super::test_context::{self, TestContext};
+use super::test_context_around::{self, AroundHook};
 use super::test_context_fixtures::{Next as NextFixture, TestFixtures};
 use super::test_context_parameter::ContextParameter;
 use crate::cli::test_command;
@@ -259,6 +260,20 @@ impl ExecutionSequence {
             }
             // SAFETY: as above
             next = nn(unsafe { entry.as_ref() }.next);
+        }
+        false
+    }
+
+    /// Whether an `aroundEach` hook has yet to start. The active entry may be setting up a fixture for it.
+    pub(crate) fn is_before_run_test(&self) -> bool {
+        let mut next = self.active_entry;
+        while let Some(entry) = next {
+            // SAFETY: arena-owned entry
+            let entry = unsafe { entry.as_ref() };
+            if entry.around == Some((Around::Each, AroundPhase::SetUp)) {
+                return true;
+            }
+            next = nn(entry.next);
         }
         false
     }
@@ -668,7 +683,12 @@ impl Execution {
                 if Some(entry_ptr) == sequence.test_entry {
                     sequence.check_expect_assertions();
                 }
-                if entry.added_in_phase == AddedInPhase::Execution {
+                let left_around_all = entry.around == Some((Around::All, AroundPhase::TearDown));
+                if let (true, Some(scope)) = (left_around_all, entry.base.parent) {
+                    // SAFETY: a hook's scope outlives it.
+                    unsafe { (*scope).async_context = None };
+                }
+                if entry.added_in_phase == AddedInPhase::Execution || left_around_all {
                     // SAFETY: arena-owned entry; `entry` is not used again.
                     unsafe { (*entry_ptr.as_ptr()).callback = None };
                 }
@@ -1126,6 +1146,21 @@ fn step_group_one(
     Ok(final_status)
 }
 
+/// `evaluate_timeout` leaves the failure of an around hook that timed out to this error, which says what the reporter can't.
+fn report_around_timeout(
+    buntest_strong: &BunTestPtr,
+    global_this: &JSGlobalObject,
+    entry: &ExecutionEntry,
+    data: &RefDataValue,
+) -> JsResult<()> {
+    let Some((around, phase)) = entry.around else {
+        return Ok(());
+    };
+    let error = around.timeout_error(global_this, phase, entry.timeout)?;
+    buntest_strong.get().on_uncaught_exception(global_this, Some(error), false, data);
+    Ok(())
+}
+
 enum AdvanceSequenceStatus {
     /// the entire sequence is completed.
     Done,
@@ -1186,6 +1221,17 @@ fn step_sequence_one(
             if let Some(context) = sequence.context.as_ref().map(Strong::get) {
                 TestContext::abort_signal(context, global_this);
             }
+            let entry_data = EntryData {
+                sequence_index,
+                entry: active_entry_ptr.as_ptr() as *const (),
+                attempt: sequence.attempt,
+            };
+            report_around_timeout(
+                buntest_strong,
+                global_this,
+                active_entry,
+                &RefDataValue::Execution { group_index: this.group_index, entry_data: Some(entry_data) },
+            )?;
             Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
             return Ok(None); // run again
         }
@@ -1260,7 +1306,8 @@ fn step_sequence_one(
         if let Some(fixtures) = fixtures
             && let Some(parameter) = &next_item.parameter
         {
-            let parameter = parameter.get_or_init(|| ContextParameter::of(cb.get(), 0));
+            // An around hook's first parameter is `runTest` or `runSuite`.
+            let parameter = parameter.get_or_init(|| ContextParameter::of(cb.get(), usize::from(next_item.around.is_some())));
             let into = context.or_else(|| args.first().copied()).unwrap_or(JSValue::UNDEFINED);
             match TestFixtures::next(fixtures, global_this, into, fixtures_scope, parameter, next_item.timeout) {
                 Ok(NextFixture::Ready) => {}
@@ -1284,10 +1331,36 @@ fn step_sequence_one(
             }
         }
 
+        // SAFETY: arena-owned entry
+        let scope = sequence.test_entry.map_or(next_item.base.parent, |test| unsafe { test.as_ref() }.base.parent);
+        let mut callback = cb.get();
+        if let Some(captured) = test_context_around::captured_async_context(context, scope) {
+            callback = test_context_around::in_async_context(global_this, captured, callback)?;
+        }
+        let set_up_args: [JSValue; 4];
+        let args = if let Some((around, AroundPhase::SetUp)) = next_item.around {
+            let suite = match (args.get(1), scope) {
+                (Some(&suite), _) => suite,
+                (None, Some(scope)) => test_context::suite_task(global_this, buntest_strong.get(), scope)?,
+                (None, None) => JSValue::UNDEFINED,
+            };
+            set_up_args = [
+                AroundHook::create(global_this, buntest_strong, callback_data, around, next_item.timeout),
+                callback,
+                args.first().copied().unwrap_or(JSValue::UNDEFINED),
+                suite,
+            ];
+            callback = AroundHook::set_up_function(global_this);
+            &set_up_args[..]
+        } else {
+            args
+        };
+
+        global_this.bun_vm().as_mut().process_listeners_take_test_errors = next_item.calling.is_vitest();
         if BunTest::run_test_callback(
             buntest_strong,
             global_this,
-            cb.get(),
+            callback,
             args,
             next_item.calling == Calling::Jest { done: true },
             callback_data,
@@ -1303,6 +1376,7 @@ fn step_sequence_one(
                 if let Some(context) = context {
                     TestContext::abort_signal(context, global_this);
                 }
+                report_around_timeout(buntest_strong, global_this, next_item, &callback_data)?;
             } else if sequence.waits_for_matchers() {
                 return Ok(Some(AdvanceSequenceStatus::Execute {
                     timeout: next_item.timespec,

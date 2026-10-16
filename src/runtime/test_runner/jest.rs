@@ -433,12 +433,14 @@ pub(crate) mod Jest {
 
         // `#[bun_jsc::host_fn]` emits a `__jsc_host_{name}` shim with the raw
         // C-ABI `JSHostFn` signature; pass that to JSFunction::create.
-        let hooks: [(&'static str, jsc::JSHostFn); 5] = match flavor {
+        let hooks: [(&'static str, jsc::JSHostFn); 7] = match flavor {
             Flavor::Jest => [
                 ("beforeEach", generic_hook::__jsc_host_before_each),
                 ("beforeAll", generic_hook::__jsc_host_before_all),
                 ("afterAll", generic_hook::__jsc_host_after_all),
                 ("afterEach", generic_hook::__jsc_host_after_each),
+                ("aroundEach", generic_hook::__jsc_host_around_each),
+                ("aroundAll", generic_hook::__jsc_host_around_all),
                 ("onTestFinished", generic_hook::__jsc_host_on_test_finished),
             ],
             Flavor::Vitest => [
@@ -446,6 +448,8 @@ pub(crate) mod Jest {
                 ("beforeAll", generic_hook::__jsc_host_vitest_before_all),
                 ("afterAll", generic_hook::__jsc_host_vitest_after_all),
                 ("afterEach", generic_hook::__jsc_host_vitest_after_each),
+                ("aroundEach", generic_hook::__jsc_host_vitest_around_each),
+                ("aroundAll", generic_hook::__jsc_host_vitest_around_all),
                 ("onTestFinished", generic_hook::__jsc_host_vitest_on_test_finished),
             ],
         };

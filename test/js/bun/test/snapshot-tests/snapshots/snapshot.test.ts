@@ -1261,7 +1261,7 @@ const headers = {
 // To add a case, run it under that runner. Never update these with Bun.
 describe.concurrent("the fixtures and snapshot files that another runner wrote", () => {
   const timeout = isDebug ? 120_000 : 20_000;
-  const tests = { vitest: 969, jest: 601 };
+  const tests = { vitest: 971, jest: 601 };
 
   function copyOf(runner: "vitest" | "jest") {
     const dir = tempDir(`snapshot-formats-${runner}`, {});

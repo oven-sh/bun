@@ -321,6 +321,20 @@ const cases: Record<string, () => unknown> = {
     (expect as any).not.toBeBetween("a", { b: 1 }),
     (expect as any).toBeBetween(),
   ],
+  "custom asymmetric matcher of a function": () => [
+    (expect as any).toBeBetween(function low() {}, () => {}),
+    { nested: (expect as any).not.toBeBetween({ low() {} }) },
+  ],
+  "expect.toSatisfy": () => {
+    const isOdd = (n: number) => n % 2 === 1;
+    return {
+      named: expect.toSatisfy(isOdd),
+      message: expect.toSatisfy(isOdd, "is odd"),
+      not: expect.not.toSatisfy(isOdd),
+      notMessage: expect.not.toSatisfy(isOdd, "is odd"),
+      anonymous: [expect.toSatisfy(() => true)],
+    };
+  },
   "asymmetric matchers inside each other": () =>
     expect.objectContaining({
       list: expect.arrayContaining([expect.any(String), expect.objectContaining({ a: expect.stringMatching(/x+/) })]),

@@ -232,6 +232,14 @@ impl ScopeFunctions {
         this.hook(global, "afterAll", generic_hook::__jsc_host_after_all, generic_hook::__jsc_host_vitest_after_all)
     }
     #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_around_each(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        this.hook(global, "aroundEach", generic_hook::__jsc_host_around_each, generic_hook::__jsc_host_vitest_around_each)
+    }
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_around_all(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        this.hook(global, "aroundAll", generic_hook::__jsc_host_around_all, generic_hook::__jsc_host_vitest_around_all)
+    }
+    #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_describe(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         if this.mode == Mode::Describe {
             return Ok(JSValue::UNDEFINED);
@@ -691,6 +699,7 @@ impl ScopeFunctions {
                     callback,
                     bun_test::ExecutionEntryCfg {
                         calling,
+                        around: None,
                         fixtures: Some(self.fixtures).filter(|fixtures| !fixtures.is_empty()),
                         timeout: options.timeout,
                         retry_count: options.retry.unwrap_or(0),

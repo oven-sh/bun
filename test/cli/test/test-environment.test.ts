@@ -1769,6 +1769,100 @@ describe.concurrent("test environment with the real", () => {
     });
   });
 
+  // React 19 calls reportError() where there is one. Node has none, so under vitest React dispatches the event itself.
+  test.each(["jsdom", "happy-dom"])("%s: reportError() dispatches an error event at the window", async name => {
+    using dir = project({
+      "report.test.js": `// ${VITEST} ${name}
+        import { test, expect, spyOn } from "bun:test";
+
+        function report(error, listener) {
+          window.addEventListener("error", listener);
+          try {
+            reportError(error);
+          } finally {
+            window.removeEventListener("error", listener);
+          }
+        }
+
+        test("a listener that cancels it", () => {
+          const log = spyOn(console, "error").mockImplementation(() => {});
+          const error = new Error("canceled");
+          const heard = [];
+          report(error, event => {
+            heard.push(event instanceof ErrorEvent, event.error === error, event.message, event.cancelable);
+            event.preventDefault();
+          });
+          expect(heard).toEqual([true, true, "canceled", true]);
+          expect(log).not.toHaveBeenCalled();
+          log.mockRestore();
+        });
+
+        test("a listener that only looks", () => {
+          const log = spyOn(console, "error").mockImplementation(() => {});
+          const error = new Error("looked at");
+          let heard;
+          report(error, event => (heard = event.error));
+          expect(heard).toBe(error);
+          expect(log.mock.calls).toEqual([[error]]);
+          log.mockRestore();
+        });
+
+        test("what is not an error", () => {
+          const messages = [];
+          // The ErrorEvent of both libraries has null for an \`error\` of undefined.
+          for (const value of ["text", 1, null, undefined, { message: 2 }])
+            report(value, event => (messages.push([event.error === (value ?? null), event.message]), event.preventDefault()));
+          expect(messages).toEqual([
+            [true, "text"],
+            [true, "1"],
+            [true, "null"],
+            [true, "undefined"],
+            [true, "[object Object]"],
+          ]);
+          expect(() => reportError()).toThrow(TypeError);
+        });
+
+        test("it is the window's", () => {
+          expect(window.reportError).toBe(reportError);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await bunTest(String(dir));
+    expect(verdicts(stderr)).toEqual({
+      "a listener that cancels it": "pass",
+      "a listener that only looks": "pass",
+      "what is not an error": "pass",
+      "it is the window's": "pass",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("jsdom: what reportError() reports is the runner's when the file does not listen for errors", async () => {
+    using dir = project({
+      "report.test.js": `// ${VITEST} jsdom
+        import { test } from "bun:test";
+        test("nobody listens", () => reportError(new Error("nobody listens")));
+        test("the next test", () => {});
+      `,
+    });
+    const { stderr, exitCode } = await bunTest(String(dir));
+    expect(stderr).toContain("error: nobody listens");
+    expect(verdicts(stderr)).toEqual({ "nobody listens": "fail", "the next test": "pass" });
+    expect(exitCode).toBe(1);
+  });
+
+  test("reportError() is Bun's again in a file without a DOM", async () => {
+    using dir = project({
+      "a.test.js": `// ${VITEST} jsdom
+        test("with a window", () => expect(reportError.toString()).not.toContain("[native code]"));`,
+      "b.test.js": `
+        test("without one", () => expect(reportError.toString()).toContain("[native code]"));`,
+    });
+    const { stderr, exitCode } = await bunTest(String(dir));
+    expect(verdicts(stderr)).toEqual({ "with a window": "pass", "without one": "pass" });
+    expect(exitCode).toBe(0);
+  });
+
   describe("a window closed by a file", () => {
     const file = (name: string, code: string) => `// ${VITEST} ${name}
       import { test, expect } from "bun:test";

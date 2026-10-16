@@ -789,6 +789,7 @@ describe.concurrent("`bun test` and `bun run`", () => {
   const globals = [
     ...["test", "it", "describe", "expect", "expectTypeOf", "beforeAll", "beforeEach", "afterEach", "afterAll", "jest"],
     ...["vi", "xit", "xtest", "xdescribe", "onTestFinished", "suite", "vitest", "onTestFailed", "assertType"],
+    ...["aroundEach", "aroundAll"],
   ];
   const sources: Record<string, [extension: string, source: string, usesTestApi: boolean]> = {
     "nothing, js": ["js", `import { a } from "./dep.js"; export function f(x) { return a(x); }`, false],

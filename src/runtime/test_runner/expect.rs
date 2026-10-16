@@ -38,13 +38,15 @@ pub(crate) mod expect_deferred;
 /// https://jestjs.io/docs/expect
 // To support async tests, we need to track the test ID
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; the only
-// field mutated post-construction (`flags`, via the `.not`/`.resolves`/`.rejects`
-// chaining getters) is `Cell`-wrapped so the codegen shim can hand out a shared
-// `&*m_ctx` borrow without aliasing UB. `parent` and `custom_label` are
-// read-only after `call()` constructs the wrapper.
+// fields mutated post-construction (`flags`, via the `.not`/`.resolves`/`.rejects`
+// chaining getters, and `matcher_ran`) are `Cell`-wrapped so the codegen shim can
+// hand out a shared `&*m_ctx` borrow without aliasing UB. `parent` and `custom_label`
+// are read-only after `call()` constructs the wrapper.
 #[bun_jsc::JsClass]
 pub(crate) struct Expect {
     pub(crate) flags: Cell<Flags>,
+    /// A matcher has run since `.not` was last read, so the next `.not` is a new chain on a kept `expect()`, not `.not.not`.
+    pub(crate) matcher_ran: Cell<bool>,
     pub(crate) parent: Option<RefPtr<bun_test::RefData>>,
     pub(crate) custom_label: bun_core::String,
 }
@@ -399,7 +401,10 @@ impl Expect {
     // The shim is omitted (codegen owns the actual link name). R-2: mutation
     // of `flags` goes through `Cell` so the receiver is `&Self`.
     pub(crate) fn get_not(this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
-        this.update_flags(|f| f.set_not(!f.not()));
+        let is_new_chain = this.matcher_ran.replace(false);
+        // Vitest's `.not` only turns negation on, so its `.not.not` is still negated.
+        let not = !this.flags.get().not() || is_new_chain || this.is_vitest();
+        this.update_flags(|f| f.set_not(not));
         this_value
     }
 
@@ -690,6 +695,11 @@ impl Expect {
         entry.is_some_and(|entry| unsafe { entry.as_ref() }.calling.is_vitest())
     }
 
+    /// Whether to side with Vitest where it and Jest disagree: the running test was registered through `"vitest"`.
+    pub(crate) fn is_vitest(&self) -> bool {
+        self.bun_test().is_some_and(|buntest| self.is_in_vitest_test(buntest.get()))
+    }
+
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub(crate) fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         Self::call_in(global_this, callframe.arguments(), None)
@@ -723,6 +733,7 @@ impl Expect {
 
         let expect = Expect {
             flags: Cell::new(Flags::default()),
+            matcher_ran: Cell::new(false),
             custom_label,
             parent: active_execution_entry_ref,
         };
@@ -1141,7 +1152,7 @@ impl Expect {
         let needs_write;
 
         // An inline snapshot has no file header naming its format, so go by the module the test was registered through.
-        let is_vitest = this.bun_test().is_some_and(|buntest| this.is_in_vitest_test(buntest.get()));
+        let is_vitest = this.is_vitest();
         let format = if is_vitest { SnapshotFormat::Vitest } else { SnapshotFormat::Bun };
         let mut pretty_value: Vec<u8> = Vec::new();
         let value = Self::value_to_snapshot(global_this, received, format)?;
@@ -1480,6 +1491,46 @@ impl Expect {
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub(crate) fn array_containing(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         ExpectArrayContaining::call(global_this, call_frame)
+    }
+
+    /// `expect.toSatisfy(predicate, message?)`. As in Vitest, it's what `expect.extend({ toSatisfy })` would add.
+    pub(crate) fn static_to_satisfy(
+        global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        if !call_frame.argument(0).is_callable() {
+            return Err(crate::throw_pretty_static!(
+                global_this,
+                "<d>expect.<r>toSatisfy<d>(<r>predicate<d>, message?)<r>\n\nExpected a function\n",
+            ));
+        }
+        let utils = ExpectMatcherUtils::singleton(global_this);
+        let matcher_fn =
+            expect_matcher_utils_js::to_satisfy_get_cached(utils).unwrap_or_else(|| {
+                let matcher_fn = JSFunction::create(
+                    global_this,
+                    "toSatisfy",
+                    to_satisfy_shim,
+                    2,
+                    Default::default(),
+                );
+                expect_matcher_utils_js::to_satisfy_set_cached(utils, global_this, matcher_fn);
+                matcher_fn
+            });
+        ExpectCustomAsymmetricMatcher::create(global_this, call_frame, matcher_fn)
+    }
+
+    fn to_satisfy_as_custom_matcher(
+        global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let [received, predicate] = call_frame.arguments_as_array::<2>();
+        let pass = predicate
+            .call(global_this, JSValue::UNDEFINED, &[received])?
+            .to_boolean();
+        let result = JSValue::create_empty_object(global_this, 1);
+        result.put(global_this, b"pass", JSValue::from(pass));
+        Ok(result)
     }
 
     /// Implements `expect.extend({ ... })`
@@ -2131,6 +2182,15 @@ impl ExpectStatic {
     pub(crate) fn string_matching(&self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         Self::create_asymmetric_matcher_with_flags::<ExpectStringMatching>(self, global_this, call_frame)
     }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn to_satisfy(
+        &self,
+        global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        Expect::static_to_satisfy(global_this, call_frame)
+    }
 }
 
 // Trait used by `create_asymmetric_matcher_with_flags` to dispatch to the
@@ -2478,7 +2538,7 @@ __forward_matcher! {
 // Codegen'd `cache: true` accessors (`.classes.ts`) — Rust has no associated
 // modules, so each lives as a sibling module instead of `Self::js::...`.
 pub(crate) mod expect_string_matching_js {
-    bun_jsc::codegen_cached_accessors!("ExpectStringMatching"; testValue);
+    bun_jsc::codegen_cached_accessors!("ExpectStringMatching"; testValue, pattern);
 }
 pub(crate) mod expect_close_to_js {
     bun_jsc::codegen_cached_accessors!("ExpectCloseTo"; numberValue, digitsValue);
@@ -2499,7 +2559,7 @@ pub(crate) mod expect_custom_asymmetric_matcher_js {
     bun_jsc::codegen_cached_accessors!("ExpectCustomAsymmetricMatcher"; matcherFn, capturedArgs);
 }
 pub(crate) mod expect_matcher_utils_js {
-    bun_jsc::codegen_cached_accessors!("ExpectMatcherUtils"; equalityTesters, equals, state);
+    bun_jsc::codegen_cached_accessors!("ExpectMatcherUtils"; equalityTesters, equals, state, toSatisfy);
 }
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
@@ -2532,14 +2592,23 @@ impl ExpectStringMatching {
         if args.is_empty() || (!args[0].is_string() && !args[0].is_reg_exp()) {
             return Err(crate::throw_pretty_static!(
                 global_this,
-                "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string or regular expression\n",
+                "<d>expect.<r>stringMatching<d>(<r>string<d>)<r>\n\nExpected a string or regular expression\n",
             ));
         }
 
         let test_value = args[0];
+        // Like in Jest and Vitest, a string is the source of a regular expression.
+        let pattern = if test_value.is_reg_exp() {
+            test_value
+        } else {
+            bun_jsc::call_zero_is_throw(global_this, || {
+                ExpectStringMatching__compile(global_this, test_value)
+            })?
+        };
 
         let string_matching_js_value = ExpectStringMatching { flags: Cell::new(Flags::default()) }.to_js(global_this);
         expect_string_matching_js::test_value_set_cached(string_matching_js_value, global_this, test_value);
+        expect_string_matching_js::pattern_set_cached(string_matching_js_value, global_this, pattern);
 
         global_this.bun_vm().auto_garbage_collect();
         Ok(string_matching_js_value)
@@ -2843,6 +2912,22 @@ impl ExpectCustomAsymmetricMatcher {
         dont_throw: bool,
     ) -> crate::Result<bool> {
         let Some(matcher_fn) = expect_custom_asymmetric_matcher_js::matcher_fn_get_cached(this_value) else { return Ok(false) };
+        // `expect.toSatisfy()` prints like in Vitest everywhere: `toSatisfy<[Function isOdd], "is odd">`.
+        let utils = ExpectMatcherUtils::singleton(global_this);
+        if expect_matcher_utils_js::to_satisfy_get_cached(utils) == Some(matcher_fn) {
+            let mut printed: Vec<u8> = Vec::new();
+            if let Err(e) = JestPrettyFormat::print_snapshot(
+                global_this,
+                this_value,
+                None,
+                &mut printed,
+                SnapshotFormat::Vitest,
+            ) {
+                return Self::maybe_clear(global_this, e, dont_throw);
+            }
+            writer.write_all(&printed)?;
+            return Ok(true);
+        }
         let fn_value = match matcher_fn.get(global_this, "toAsymmetricMatcher") {
             Ok(v) => v,
             Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
@@ -2968,6 +3053,7 @@ macro_rules! plain_host_fn {
     };
 }
 plain_host_fn!(equals_shim, ExpectMatcherContext::equals);
+plain_host_fn!(to_satisfy_shim, Expect::to_satisfy_as_custom_matcher);
 plain_host_fn!(stringify_shim, ExpectMatcherUtils::stringify);
 plain_host_fn!(print_expected_shim, ExpectMatcherUtils::print_expected);
 plain_host_fn!(print_received_shim, ExpectMatcherUtils::print_received);
@@ -3672,6 +3758,8 @@ unsafe extern "C" {
     fn Bun__JSWrappingFunction__getWrappedFunction(this: JSValue, global_this: *const JSGlobalObject) -> JSValue;
 
     fn ExpectMatcherUtils__getSingleton(global_this: *const JSGlobalObject) -> JSValue;
+
+    safe fn ExpectStringMatching__compile(global: &JSGlobalObject, source: JSValue) -> JSValue;
 
     fn Expect__getPrototype(global_this: *const JSGlobalObject) -> JSValue;
     fn ExpectStatic__getPrototype(global_this: *const JSGlobalObject) -> JSValue;

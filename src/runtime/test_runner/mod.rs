@@ -145,6 +145,7 @@ cfg_jsc! {
     #[path = "ScopeFunctions.rs"] pub(crate) mod scope_functions;
     #[path = "snapshot.rs"]       pub(crate) mod snapshot;
     #[path = "test_context.rs"]   pub(crate) mod test_context;
+    #[path = "test_context_around.rs"] pub(crate) mod test_context_around;
     #[path = "test_context_fixtures.rs"] pub(crate) mod test_context_fixtures;
     #[path = "test_context_parameter.rs"] mod test_context_parameter;
     #[path = "vi_utils.rs"]       pub(crate) mod vi_utils;

@@ -461,7 +461,8 @@ test("responds", async ({ url }) => {
 
 - By default, a fixture is only set up for tests that destructure it, so the first parameter must be an object destructuring pattern. A fixture declares the fixtures it depends on the same way.
 - `test.beforeEach()` and `test.afterEach()` on the extended `test` receive fixtures, like a test does. `beforeEach` and `afterEach` imported from `"bun:test"` don't. Their parameter is a `done` callback.
-- Fixtures are torn down in reverse order, after the `afterEach` hooks.
+- An [`aroundEach`](/test/lifecycle#wrapping-tests) hook receives fixtures in its second parameter: `aroundEach(async (runTest, { server }) => {})`.
+- Fixtures are torn down in reverse order, after the `afterEach` hooks. A fixture that an `aroundEach` hook destructures is torn down after the hook finishes.
 - A fixture that isn't a function is passed as is.
 - You can call `test.extend()` on an extended `test`. A fixture that replaces one with the same name can destructure the one it replaces.
 
@@ -470,7 +471,7 @@ test("responds", async ({ url }) => {
 | `[fixture, { auto: true }]`        | Sets up the fixture for every test, even tests that don't destructure it                                 |
 | `[fixture, { scope: "file" }]`     | Sets up the fixture once, for the first test that needs it, and tears it down after the file's last test |
 | `test.override({ name: fixture })` | Replaces fixtures in the `describe` block it's called in                                                 |
-| `test.beforeAll(({ name }) => {})` | `beforeAll` and `afterAll` hooks that receive the `scope: "file"` fixtures                               |
+| `test.beforeAll(({ name }) => {})` | `beforeAll`, `afterAll` and `aroundAll` hooks that receive the `scope: "file"` fixtures                  |
 
 ### Test Context
 
@@ -505,7 +506,13 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | Mock functions before each test                           | left alone                           | cleared ([`clearMocks`](/test/configuration#test-execution))         |
 | Default hook timeout                                      | same as a test's                     | 10 seconds, or `--timeout` if it's longer                            |
 | `beforeAll` in a scope with only skipped tests            | runs                                 | doesn't run                                                          |
+| Hook registered while a test runs                         | an error, or runs after that test    | never runs                                                           |
 | `.not.toMatchObject()` with a value that isn't an object  | an error                             | passes                                                               |
+| `toHaveProperty("a.b")` on `{ "a.b": 1 }`                 | fails: `"a.b"` is always a path      | passes: an own key with that name comes before the path              |
+| `toHaveProperty()` on `undefined` or `null`               | fails, so it passes with `.not`      | throws a `TypeError`, with `.not` too                                |
+| `toContain()` on a string with a value that isn't one     | an error                             | converts the value to a string                                       |
+| `.resolves.toThrow()` on a promise resolved to an error   | passes                               | fails                                                                |
+| `.not.not`                                                | cancels out                          | still negates                                                        |
 | `vi.useFakeTimers()`                                      | leaves `setImmediate` real           | fakes `setImmediate` ([list](/test/dates-times#choose-what-to-fake)) |
 
 `"vitest"` also exports `suite`, `vitest`, `onTestFailed`, `assertType` and `TestRunner.getCurrentTest()`, which returns the running test's [`task`](#test-context).
@@ -726,6 +733,8 @@ Bun implements the following matchers. Full Jest compatibility is planned; see t
 | ✅     | `.stringMatching()`   |
 | ✅     | `.arrayContaining()`  |
 
+`expect.stringMatching()` takes a regular expression. A string is the source of one, as in `new RegExp(string)`. To look for a literal string, use `expect.stringContaining()`.
+
 ### Object Matchers
 
 | Status | Matcher                 |
@@ -804,12 +813,24 @@ Bun implements the following matchers. Full Jest compatibility is planned; see t
 | ✅     | `.extend`                  |
 | ✅     | `.anything()`              |
 | ✅     | `.any()`                   |
+| ✅     | `.toSatisfy()`             |
 | ✅     | `.assertions()`            |
 | ✅     | `.hasAssertions()`         |
 | ✅     | `.addEqualityTesters()`    |
 | ✅     | `.getState()`              |
 | ✅     | `.setState()`              |
 | ✅     | `.addSnapshotSerializer()` |
+
+`expect.toSatisfy(predicate)` stands in for a value, like `expect.any()`. It matches any value that `predicate` returns a truthy value for:
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+const isOdd = (n: number) => n % 2 === 1;
+
+test("the count is odd", () => {
+  expect({ count: 3 }).toEqual({ count: expect.toSatisfy(isOdd) });
+  expect({ count: 2 }).toEqual({ count: expect.not.toSatisfy(isOdd) });
+});
+```
 
 ## Best Practices
 

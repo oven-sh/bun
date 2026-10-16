@@ -50,6 +50,8 @@ describe.concurrent("a file that imports from a test module", () => {
     xtest: "function",
     xdescribe: "function",
     onTestFinished: "function",
+    aroundEach: "function",
+    aroundAll: "function",
   };
 
   test.each([

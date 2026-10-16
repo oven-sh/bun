@@ -1531,6 +1531,1026 @@ describe.concurrent("hooks", () => {
   });
 });
 
+describe.concurrent("aroundEach and aroundAll", () => {
+  test.each(["vitest", "bun:test"])(
+    "go around the other hooks, the first one registered outermost: %s",
+    async module => {
+      const { log, results, errors, exitCode } = await runTests({
+        "a.test.js": `
+        import { test, describe, beforeAll, beforeEach, afterEach, afterAll, aroundAll, aroundEach, onTestFinished } from "${module}";
+        aroundAll(async runSuite => { console.log("file aroundAll 1 >"); console.log("runSuite():", await runSuite()); console.log("file aroundAll 1 <"); });
+        aroundAll(async runSuite => { console.log("file aroundAll 2 >"); await runSuite(); console.log("file aroundAll 2 <"); });
+        beforeAll(() => console.log("file beforeAll"));
+        afterAll(() => console.log("file afterAll"));
+        aroundEach(async function (runTest, { task }, suite) {
+          console.log("file aroundEach 1 >", task.name, suite.name, arguments.length, this);
+          console.log("runTest():", await runTest());
+          console.log("file aroundEach 1 <", task.result.state);
+        });
+        aroundEach(async runTest => { console.log("file aroundEach 2 >"); await runTest(); console.log("file aroundEach 2 <"); });
+        beforeEach(() => console.log("file beforeEach"));
+        afterEach(() => console.log("file afterEach"));
+        describe("block", () => {
+          aroundAll(async function (runSuite, {}, suite) {
+            console.log("aroundAll >", JSON.stringify(arguments[1]), suite.name, arguments.length, this);
+            await runSuite();
+            console.log("aroundAll <");
+          });
+          beforeAll(() => console.log("beforeAll"));
+          afterAll(() => console.log("afterAll"));
+          aroundEach(async runTest => { console.log("aroundEach >"); await runTest(); console.log("aroundEach <"); });
+          beforeEach(() => console.log("beforeEach"));
+          afterEach(() => console.log("afterEach"));
+          test("passes", () => { console.log("test"); onTestFinished(() => console.log("finished")); });
+          test("fails", () => { throw new Error("boom"); });
+          test.skip("skipped", () => {});
+          test.todo("todo");
+        });
+        test("outside", () => console.log("test outside"));
+      `,
+      });
+      const inBlock = (name: string, state: string, test: string[]) => [
+        `file aroundEach 1 > ${name} block 3 undefined`,
+        "file aroundEach 2 >",
+        "aroundEach >",
+        "file beforeEach",
+        "beforeEach",
+        ...test,
+        "aroundEach <",
+        "file aroundEach 2 <",
+        "runTest(): undefined",
+        `file aroundEach 1 < ${state}`,
+      ];
+      expect({ log, results, errors, exitCode }).toEqual({
+        log: [
+          "file aroundAll 1 >",
+          "file aroundAll 2 >",
+          "file beforeAll",
+          "aroundAll > {} block 3 undefined",
+          "beforeAll",
+          ...inBlock("passes", "pass", ["test", "afterEach", "file afterEach", "finished"]),
+          ...inBlock("fails", "fail", ["afterEach", "file afterEach"]),
+          "afterAll",
+          "aroundAll <",
+          "file aroundEach 1 > outside a.test.js 3 undefined",
+          "file aroundEach 2 >",
+          "file beforeEach",
+          "test outside",
+          "file afterEach",
+          "file aroundEach 2 <",
+          "runTest(): undefined",
+          "file aroundEach 1 < pass",
+          "file afterAll",
+          "file aroundAll 2 <",
+          "runSuite(): undefined",
+          "file aroundAll 1 <",
+        ],
+        results: [
+          "(pass) block > passes",
+          "(fail) block > fails",
+          "(skip) block > skipped",
+          "(todo) block > todo",
+          "(pass) outside",
+        ],
+        errors: ["error: boom"],
+        exitCode: 1,
+      });
+    },
+  );
+
+  test("teardowns, onTestFinished and onTestFailed run before runTest() resolves", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, beforeEach, aroundEach, onTestFinished, onTestFailed } from "vitest";
+        aroundEach(async (runTest, ctx) => {
+          ctx.onTestFinished(() => console.log("finished, registered by the hook"));
+          await runTest();
+          console.log("aroundEach <");
+        });
+        beforeEach(() => () => console.log("teardown"));
+        test.fails("test", () => {
+          onTestFinished(() => console.log("finished"));
+          onTestFailed(() => console.log("failed"));
+          throw new Error("expected");
+        });
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: ["teardown", "finished", "finished, registered by the hook", "failed", "aroundEach <"],
+      exitCode: 0,
+    });
+  });
+
+  test("aroundEach runs again for each retry and each repeat", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, aroundEach } from "vitest";
+        const contexts = new Set();
+        aroundEach(async (runTest, ctx) => {
+          contexts.add(ctx);
+          console.log(">", ctx.task.name, ctx.task.result.retryCount);
+          await runTest();
+          console.log("<", ctx.task.result.state, ctx.task.result.repeatCount, contexts.size);
+        });
+        let attempt = 0;
+        test("retried", { retry: 2 }, () => { console.log("attempt", ++attempt); if (attempt < 3) throw new Error("again"); });
+        test("repeated", { repeats: 1 }, () => console.log("repeat"));
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "> retried 0",
+        "attempt 1",
+        "< fail 0 1",
+        "> retried 1",
+        "attempt 2",
+        "< fail 0 1",
+        "> retried 2",
+        "attempt 3",
+        "< pass 0 1",
+        "> repeated 0",
+        "repeat",
+        "< pass 0 2",
+        "> repeated 0",
+        "repeat",
+        "< pass 1 2",
+      ],
+      results: ["(pass) retried (attempt 3)", "(pass) repeated (run 2)"],
+      exitCode: 0,
+    });
+  });
+
+  const notCalled = (run: string, hook: string, what: string) =>
+    `AroundHookSetupError: The \`${run}()\` callback was not called in the \`${hook}\` hook. Make sure to call \`${run}()\` to run the ${what}.`;
+  const calledTwice = (run: string, hook: string) =>
+    `AroundHookMultipleCallsError: The \`${run}()\` callback was called multiple times in the \`${hook}\` hook. The callback can only be called once per hook.`;
+
+  test("an aroundEach that fails, fails the test", async () => {
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, aroundEach, beforeEach, afterEach } from "vitest";
+        const outer = () => aroundEach(async (runTest, { task }) => {
+          console.log("outer >", task.suite.name);
+          await runTest();
+          console.log("outer <");
+        });
+        describe("throws before runTest()", () => {
+          outer();
+          aroundEach(async () => { throw new Error("before runTest()"); });
+          aroundEach(() => console.log("unreachable"));
+          beforeEach(() => console.log("unreachable"));
+          afterEach(() => console.log("unreachable"));
+          test("test", () => console.log("unreachable"));
+        });
+        describe("throws synchronously", () => {
+          aroundEach(() => { throw new Error("synchronously"); });
+          test("test", () => console.log("unreachable"));
+        });
+        describe("throws after runTest()", () => {
+          outer();
+          aroundEach(async runTest => { await runTest(); throw new Error("after runTest()"); });
+          afterEach(() => console.log("afterEach"));
+          test("test", () => console.log("test"));
+        });
+        describe("throws after a test that failed", () => {
+          aroundEach(async runTest => { await runTest(); throw new Error("in the hook"); });
+          test("test", () => { throw new Error("in the test"); });
+        });
+        describe("never calls runTest()", () => {
+          outer();
+          aroundEach(async () => {});
+          afterEach(() => console.log("unreachable"));
+          test("test", () => console.log("unreachable"));
+        });
+        describe("never calls runTest(), and is not async", () => {
+          aroundEach(() => {});
+          test("test", () => console.log("unreachable"));
+        });
+        describe("calls runTest() twice", () => {
+          aroundEach(async runTest => {
+            await runTest();
+            const second = runTest();
+            console.log("the second call returns a promise:", second instanceof Promise);
+            await second;
+          });
+          test("test", () => console.log("test"));
+        });
+        describe("calls runTest() twice and catches the error", () => {
+          aroundEach(async runTest => {
+            await runTest();
+            await runTest().catch(error => console.log(error instanceof Error, Object.keys(error), error.name));
+          });
+          test("test", () => console.log("test"));
+        });
+      `,
+    });
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: [
+        "outer > throws before runTest()",
+        "outer <",
+        "outer > throws after runTest()",
+        "test",
+        "afterEach",
+        "outer <",
+        "outer > never calls runTest()",
+        "outer <",
+        "test",
+        "the second call returns a promise: true",
+        "test",
+        `true [ "name" ] AroundHookMultipleCallsError`,
+      ],
+      results: [
+        "(fail) throws before runTest() > test",
+        "(fail) throws synchronously > test",
+        "(fail) throws after runTest() > test",
+        "(fail) throws after a test that failed > test",
+        "(fail) never calls runTest() > test",
+        "(fail) never calls runTest(), and is not async > test",
+        "(fail) calls runTest() twice > test",
+        "(pass) calls runTest() twice and catches the error > test",
+      ],
+      errors: [
+        "error: before runTest()",
+        "error: synchronously",
+        "error: after runTest()",
+        "error: in the test",
+        "error: in the hook",
+        notCalled("runTest", "aroundEach", "test"),
+        notCalled("runTest", "aroundEach", "test"),
+        calledTwice("runTest", "aroundEach"),
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test("an aroundAll that fails before runSuite() skips the block", async () => {
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, aroundAll, beforeAll, afterAll } from "vitest";
+        const outer = () => aroundAll(async (runSuite, {}, suite) => {
+          console.log("outer >", suite.name);
+          await runSuite();
+          console.log("outer <");
+        });
+        describe("throws before runSuite()", () => {
+          outer();
+          aroundAll(async () => { throw new Error("before runSuite()"); });
+          aroundAll(() => console.log("unreachable"));
+          beforeAll(() => console.log("unreachable"));
+          afterAll(() => console.log("unreachable"));
+          test("test", () => console.log("unreachable"));
+          describe("nested", () => {
+            beforeAll(() => console.log("unreachable"));
+            test("test", () => console.log("unreachable"));
+          });
+        });
+        describe("throws after runSuite()", () => {
+          outer();
+          aroundAll(async runSuite => { await runSuite(); throw new Error("after runSuite()"); });
+          afterAll(() => console.log("afterAll"));
+          test("test", () => console.log("test"));
+        });
+        describe("never calls runSuite()", () => {
+          aroundAll(() => {});
+          test("test", () => console.log("unreachable"));
+        });
+        describe("calls runSuite() twice", () => {
+          aroundAll(async runSuite => { await runSuite(); await runSuite(); });
+          test("test", () => console.log("test"));
+        });
+        describe("beforeAll throws", () => {
+          outer();
+          beforeAll(() => { throw new Error("in beforeAll"); });
+          afterAll(() => console.log("afterAll"));
+          test("test", () => console.log("unreachable"));
+        });
+        describe("every test is skipped", () => {
+          aroundAll(() => console.log("unreachable"));
+          test.skip("test", () => {});
+        });
+        describe.skip("skipped", () => {
+          aroundAll(() => console.log("unreachable"));
+          test("test", () => {});
+        });
+        describe("only has nested blocks", () => {
+          outer();
+          describe("nested", () => { test("test", () => console.log("nested test")); });
+        });
+      `,
+    });
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: [
+        "outer > throws before runSuite()",
+        "outer <",
+        "outer > throws after runSuite()",
+        "test",
+        "afterAll",
+        "outer <",
+        "test",
+        "outer > beforeAll throws",
+        "afterAll",
+        "outer <",
+        "outer > only has nested blocks",
+        "nested test",
+        "outer <",
+      ],
+      results: [
+        "(fail) throws before runSuite() > (unnamed)",
+        "(pass) throws after runSuite() > test",
+        "(fail) throws after runSuite() > (unnamed)",
+        "(fail) never calls runSuite() > (unnamed)",
+        "(pass) calls runSuite() twice > test",
+        "(fail) calls runSuite() twice > (unnamed)",
+        "(fail) beforeAll throws > (unnamed)",
+        "(skip) every test is skipped > test",
+        "(skip) skipped > test",
+        "(pass) only has nested blocks > nested > test",
+      ],
+      errors: [
+        "error: before runSuite()",
+        "error: after runSuite()",
+        notCalled("runSuite", "aroundAll", "suite"),
+        calledTwice("runSuite", "aroundAll"),
+        "error: in beforeAll",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test("the timeout is for the time before runTest() and for the time after it, not for the time inside", async () => {
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, aroundEach, aroundAll, afterEach, afterAll } from "vitest";
+        const never = new Promise(() => {});
+        const outer = () => aroundEach(async runTest => { console.log("outer >"); await runTest(); console.log("outer <"); });
+        let callRunTestLate;
+        describe("aroundEach setup", () => {
+          outer();
+          aroundEach(async (runTest, { signal }) => {
+            signal.addEventListener("abort", () => console.log("aborted"));
+            await new Promise(resolve => { callRunTestLate = resolve; });
+            await runTest().catch(error => console.log("late:", error.message));
+            throw new Error("not reported");
+          }, 10);
+          afterEach(() => console.log("unreachable"));
+          test("test", () => console.log("unreachable"));
+        });
+        describe("aroundEach teardown", () => {
+          outer();
+          aroundEach(async runTest => { await runTest(); await never; }, 10);
+          test("test", () => console.log("test"));
+        });
+        describe("aroundAll setup", () => {
+          aroundAll(() => never, 10);
+          afterAll(() => console.log("unreachable"));
+          test("test", () => console.log("unreachable"));
+        });
+        describe("aroundAll teardown", () => {
+          aroundAll(async runSuite => { await runSuite(); await never; }, 10);
+          test("test", () => console.log("test"));
+        });
+        describe("inside", () => {
+          aroundAll(runSuite => runSuite(), 100);
+          aroundEach(runTest => runTest(), 100);
+          test("takes longer than the timeout of the hooks", async () => {
+            const start = performance.now();
+            while (performance.now() - start < 150) await new Promise(resolve => setTimeout(resolve, 10));
+          });
+        });
+        describe("the test times out", () => {
+          aroundEach(async (runTest, { task }) => { await runTest(); console.log("after a timeout:", task.result.state); });
+          test("test", () => never, 10);
+        });
+        test("runTest() after its hook timed out", async () => {
+          callRunTestLate();
+          await new Promise(resolve => setImmediate(resolve));
+        });
+      `,
+    });
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: [
+        "outer >",
+        "aborted",
+        "outer <",
+        "outer >",
+        "test",
+        "outer <",
+        "test",
+        "after a timeout: fail",
+        "late: Cannot call runTest() after the setup phase of the aroundEach hook has ended",
+      ],
+      results: [
+        "(fail) aroundEach setup > test",
+        "(fail) aroundEach teardown > test",
+        "(fail) aroundAll setup > (unnamed)",
+        "(pass) aroundAll teardown > test",
+        "(fail) aroundAll teardown > (unnamed)",
+        "(pass) inside > takes longer than the timeout of the hooks",
+        "(fail) the test times out > test",
+        "(pass) runTest() after its hook timed out",
+      ],
+      errors: [
+        `AroundHookSetupError: The setup phase of "aroundEach" hook timed out after 10ms.`,
+        `AroundHookTeardownError: The teardown phase of "aroundEach" hook timed out after 10ms.`,
+        `AroundHookSetupError: The setup phase of "aroundAll" hook timed out after 10ms.`,
+        `AroundHookTeardownError: The teardown phase of "aroundAll" hook timed out after 10ms.`,
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test.each(["vitest", "bun:test"])(
+    "what runs inside sees the AsyncLocalStorage stores that runTest() and runSuite() were called in: %s",
+    async module => {
+      const { log, exitCode } = await runTests({
+        "a.test.js": `
+          import { AsyncLocalStorage } from "node:async_hooks";
+          import { test, describe, beforeAll, beforeEach, afterEach, afterAll, aroundAll, aroundEach, onTestFinished } from "${module}";
+          const [all, outer, inner] = [new AsyncLocalStorage(), new AsyncLocalStorage(), new AsyncLocalStorage()];
+          const show = where => console.log(where + ":", all.getStore(), outer.getStore(), inner.getStore());
+          aroundAll(async runSuite => { show("aroundAll >"); await all.run("all", runSuite); show("aroundAll <"); });
+          beforeAll(() => show("beforeAll"));
+          afterAll(() => show("afterAll"));
+          let attempt = 0;
+          aroundEach(async runTest => { show("outer >"); await outer.run("outer " + ++attempt, runTest); show("outer <"); });
+          aroundEach(async runTest => { show("inner >"); await inner.run("inner", () => runTest()); show("inner <"); });
+          beforeEach(() => show("beforeEach"));
+          afterEach(async () => { await 1; show("afterEach"); });
+          test("sync", () => { show("test"); onTestFinished(() => show("finished")); });
+          test("async", async () => { await new Promise(resolve => setImmediate(resolve)); show("test"); });
+          test("retried", { retry: 1 }, () => { show("test"); if (attempt === 3) throw new Error("again"); });
+          outer.run("registration", () => test("registered in a store", () => show("test")));
+          describe("a hook that leaves a store", () => {
+            beforeAll(() => show("nested beforeAll"));
+            aroundEach(runTest => outer.exit(runTest));
+            test("test", () => show("test"));
+          });
+        `,
+      });
+      const each = (attempt: number, test: string[]) => [
+        "outer >: all undefined undefined",
+        `inner >: all outer ${attempt} undefined`,
+        `beforeEach: all outer ${attempt} inner`,
+        ...test,
+        `afterEach: all outer ${attempt} inner`,
+      ];
+      const after = (attempt: number) => [
+        `inner <: all outer ${attempt} undefined`,
+        "outer <: all undefined undefined",
+      ];
+      expect({ log, exitCode }).toEqual({
+        log: [
+          "aroundAll >: undefined undefined undefined",
+          "beforeAll: all undefined undefined",
+          ...each(1, ["test: all outer 1 inner"]),
+          "finished: all outer 1 inner",
+          ...after(1),
+          ...each(2, ["test: all outer 2 inner"]),
+          ...after(2),
+          ...each(3, ["test: all outer 3 inner"]),
+          ...after(3),
+          ...each(4, ["test: all outer 4 inner"]),
+          ...after(4),
+          ...each(5, ["test: all outer 5 inner"]),
+          ...after(5),
+          "nested beforeAll: all undefined undefined",
+          "outer >: all undefined undefined",
+          "inner >: all outer 6 undefined",
+          "beforeEach: all undefined inner",
+          "test: all undefined inner",
+          "afterEach: all undefined inner",
+          ...after(6),
+          "afterAll: all undefined undefined",
+          "aroundAll <: undefined undefined undefined",
+        ],
+        exitCode: 0,
+      });
+    },
+  );
+
+  test("concurrent tests each have their own hook calls and stores", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { AsyncLocalStorage } from "node:async_hooks";
+        import { test, aroundEach } from "vitest";
+        const storage = new AsyncLocalStorage();
+        const { promise: secondIsOver, resolve } = Promise.withResolvers();
+        aroundEach(async (runTest, { task }) => {
+          console.log(">", task.name);
+          await storage.run(task.name, runTest);
+          console.log("<", task.name);
+          if (task.name === "second") resolve();
+        });
+        test.concurrent("first", async () => { await secondIsOver; console.log("first sees", storage.getStore()); });
+        test.concurrent("second", async () => { await 1; console.log("second sees", storage.getStore()); });
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["> first", "> second", "second sees second", "< second", "first sees first", "< first"],
+      results: ["(pass) second", "(pass) first"],
+      exitCode: 0,
+    });
+  });
+
+  test("fixtures: those of an aroundEach outlive it, those of what's inside don't", async () => {
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base, describe, aroundEach, aroundAll } from "vitest";
+        const fixture = name => async ({}, use) => { console.log(name, "setup"); await use(name); console.log(name, "teardown"); };
+        const test = base.extend({
+          one: fixture("one"),
+          two: fixture("two"),
+          inside: fixture("inside"),
+          auto: [fixture("auto"), { auto: true }],
+          file: [fixture("file"), { scope: "file" }],
+        });
+        describe("aroundEach", () => {
+          test.aroundEach(async (runTest, { one }) => { console.log("outer >", one); await runTest(); console.log("outer <"); });
+          aroundEach(async (runTest, { two }) => { console.log("inner >", two); await runTest(); console.log("inner <"); });
+          test.beforeEach(({ inside }) => console.log("beforeEach", inside));
+          let attempt = 0;
+          test("test", { retry: 1 }, ({ one, inside }) => { console.log("test", one, inside); if (!attempt++) throw new Error("again"); });
+          base("not extended", () => console.log("test without fixtures"));
+        });
+        describe("aroundAll", () => {
+          test.aroundAll(async (runSuite, { file }, suite) => { console.log("aroundAll >", file, suite.name); await runSuite(); console.log("aroundAll <"); });
+          test("test", ({ file }) => console.log("test", file));
+        });
+        describe("a parameter that is not a destructuring pattern", () => {
+          aroundEach((runTest, context) => runTest());
+          base("not extended", () => console.log("test without fixtures"));
+          test("extended", () => console.log("unreachable"));
+        });
+        describe("aroundAll with a test-scoped fixture", () => {
+          test.aroundAll((runSuite, { one }) => runSuite());
+          test("test", () => console.log("unreachable"));
+        });
+        describe("aroundAll of a test that is not extended", () => {
+          aroundAll((runSuite, { file }) => runSuite());
+          test("test", () => console.log("unreachable"));
+        });
+        describe("aroundAll with a parameter that is not a destructuring pattern", () => {
+          aroundAll((runSuite, suite) => runSuite());
+          test("test", () => console.log("unreachable"));
+        });
+      `,
+    });
+    const attempt = [
+      "one setup",
+      "auto setup",
+      "outer > one",
+      "two setup",
+      "inner > two",
+      "inside setup",
+      "beforeEach inside",
+      "test one inside",
+      "inside teardown",
+      "inner <",
+      "outer <",
+      "two teardown",
+      "auto teardown",
+      "one teardown",
+    ];
+    expect({ log, results, errors: errors.filter(error => error !== "error: again"), exitCode }).toEqual({
+      log: [
+        ...attempt,
+        ...attempt,
+        "outer > undefined",
+        "inner > undefined",
+        "beforeEach undefined",
+        "test without fixtures",
+        "inner <",
+        "outer <",
+        "file setup",
+        "aroundAll > file aroundAll",
+        "auto setup",
+        "test file",
+        "auto teardown",
+        "aroundAll <",
+        "test without fixtures",
+        "file teardown",
+      ],
+      results: [
+        "(pass) aroundEach > test (attempt 2)",
+        "(pass) aroundEach > not extended",
+        "(pass) aroundAll > test",
+        "(pass) a parameter that is not a destructuring pattern > not extended",
+        "(fail) a parameter that is not a destructuring pattern > extended",
+        "(fail) aroundAll with a test-scoped fixture > (unnamed)",
+        "(fail) aroundAll of a test that is not extended > (unnamed)",
+        "(fail) aroundAll with a parameter that is not a destructuring pattern > (unnamed)",
+      ],
+      errors: [
+        `error: The parameter that fixtures are destructured from must be an object destructuring pattern, received "context"`,
+        `error: The test-scoped fixture "one" cannot be used in beforeAll(), afterAll() or aroundAll(). Give it { scope: "file" }, or use beforeEach(), afterEach() or aroundEach()`,
+        `error: aroundAll() has no fixtures for its callback, which destructures "file". The suite is the third argument: aroundAll((runSuite, {}, suite) => {})`,
+        `error: aroundAll() expects the second parameter of its callback to be an object destructuring pattern, received "suite". The suite is the third argument: aroundAll((runSuite, {}, suite) => {})`,
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test("skip() and test.fails", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, aroundEach, afterEach } from "vitest";
+        describe("skip() in the test", () => {
+          aroundEach(async (runTest, { task }) => { await runTest(); console.log("aroundEach <", task.result.state); });
+          afterEach(() => console.log("afterEach"));
+          test("test", ({ skip }) => skip());
+        });
+        describe("skip() before runTest()", () => {
+          aroundEach(async (runTest, { skip }) => { skip(); await runTest(); });
+          afterEach(() => console.log("unreachable"));
+          test("test", () => console.log("unreachable"));
+        });
+        describe("skip() after runTest()", () => {
+          aroundEach(async (runTest, { skip }) => { await runTest(); skip(); });
+          test("test", () => console.log("test"));
+        });
+        describe("test.fails", () => {
+          describe("the hook throws", () => {
+            aroundEach(async runTest => { await runTest(); throw new Error("expected"); });
+            test.fails("test", () => {});
+          });
+          describe("the hook never calls runTest()", () => {
+            aroundEach(() => {});
+            test.fails("test", () => console.log("unreachable"));
+          });
+          describe("the hook times out", () => {
+            aroundEach(() => new Promise(() => {}), 10);
+            test.fails("test", () => console.log("unreachable"));
+          });
+        });
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["afterEach", "aroundEach < skip", "test"],
+      results: [
+        "(skip) skip() in the test > test",
+        "(skip) skip() before runTest() > test",
+        "(skip) skip() after runTest() > test",
+        "(pass) test.fails > the hook throws > test",
+        "(pass) test.fails > the hook never calls runTest() > test",
+        "(pass) test.fails > the hook times out > test",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("a hook that returns a thenable, or doesn't wait for runTest()", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, aroundEach } from "vitest";
+        describe("thenable", () => {
+          aroundEach(runTest => {
+            const ran = runTest();
+            return {
+              get then() {
+                console.log("then is read");
+                return resolve => ran.then(() => setImmediate(() => { console.log("the thenable resolves"); resolve(); }));
+              },
+            };
+          });
+          test("test", () => console.log("test"));
+          test("next", () => console.log("next"));
+        });
+        describe("returns right after it calls runTest()", () => {
+          aroundEach(runTest => { runTest(); console.log("returned"); });
+          test("test", () => console.log("test"));
+        });
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "then is read",
+        "test",
+        "the thenable resolves",
+        "then is read",
+        "next",
+        "the thenable resolves",
+        "returned",
+        "test",
+      ],
+      results: [
+        "(pass) thenable > test",
+        "(pass) thenable > next",
+        "(pass) returns right after it calls runTest() > test",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("in a preload script, aroundAll goes around every file", async () => {
+    const { log, exitCode } = await runTests(
+      {
+        "preload.js": `
+          import { AsyncLocalStorage } from "node:async_hooks";
+          import { beforeAll, afterAll, aroundAll, aroundEach } from "vitest";
+          globalThis.storage = new AsyncLocalStorage();
+          aroundAll(async (runSuite, {}, suite) => { console.log("preload aroundAll >", suite.name); await storage.run("store", runSuite); console.log("preload aroundAll <"); });
+          beforeAll(() => console.log("preload beforeAll", storage.getStore()));
+          afterAll(() => console.log("preload afterAll", storage.getStore()));
+          aroundEach(async (runTest, { task }) => { console.log("preload aroundEach >", task.name, storage.getStore()); await runTest(); console.log("preload aroundEach <"); });
+        `,
+        "a.test.js": `
+          import { test, aroundEach } from "bun:test";
+          aroundEach(async runTest => { console.log("aroundEach >"); await runTest(); console.log("aroundEach <"); });
+          test("a", done => { console.log("a", storage.getStore()); done(); });
+        `,
+        "b.test.js": `
+          import { test } from "vitest";
+          test("b", () => console.log("b", storage.getStore()));
+        `,
+      },
+      ["--preload", "./preload.js"],
+    );
+    expect({ log, exitCode }).toEqual({
+      log: [
+        "preload aroundAll > a.test.js",
+        "preload beforeAll store",
+        "preload aroundEach > a store",
+        "aroundEach >",
+        "a store",
+        "aroundEach <",
+        "preload aroundEach <",
+        "preload aroundEach > b store",
+        "b store",
+        "preload aroundEach <",
+        "preload afterAll store",
+        "preload aroundAll <",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("a hook call and its store survive a GC while the test runs, and are collected afterwards", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { AsyncLocalStorage } from "node:async_hooks";
+        import { test, aroundAll, aroundEach } from "vitest";
+        import { heapStats } from "bun:jsc";
+        const [all, each] = [new AsyncLocalStorage(), new AsyncLocalStorage()];
+        let finished = 0;
+        aroundAll(runSuite => all.run({ big: new Array(1000).fill(0) }, runSuite));
+        aroundEach(async (runTest, { task }) => { await each.run({ name: task.name }, runTest); finished++; });
+        for (let i = 0; i < 60; i++) {
+          test("test " + i, async ({ task }) => {
+            if (i % 20 === 0) Bun.gc(true);
+            await new Promise(resolve => setImmediate(resolve));
+            if (i % 20 === 0) Bun.gc(true);
+            if (each.getStore().name !== task.name || !all.getStore().big) throw new Error("lost");
+          });
+        }
+        test("count", () => {
+          Bun.gc(true);
+          console.log(finished, heapStats().objectTypeCounts.AroundHook < 10);
+        });
+      `,
+    });
+    expect({ log, exitCode }).toEqual({ log: ["60 true"], exitCode: 0 });
+  });
+
+  test("are exported by both modules, are members of test, and are globals", async () => {
+    const show = `
+      const extended = test.extend({});
+      console.log(typeof aroundEach, typeof aroundAll, typeof test.aroundEach, typeof test.aroundAll, typeof extended.aroundEach, typeof extended.aroundAll, describe.aroundEach, describe.aroundAll);
+      for (const hook of [aroundEach, aroundAll]) {
+        console.log(hook.name, hook(run => run(), 1000), hook(run => run(), { timeout: 1000 }));
+        try { hook("not a function"); } catch (error) { console.log(error.message); }
+      }
+      test("test", () => {});
+    `;
+    const expected = [
+      "function function function function function function undefined undefined",
+      "aroundEach undefined undefined",
+      "aroundEach() expects a function as the first argument",
+      "aroundAll undefined undefined",
+      "aroundAll() expects a function as the first argument",
+    ];
+    const runs = await Promise.all([
+      runTests({ "a.test.js": `import { test, describe, aroundEach, aroundAll } from "vitest"; ${show}` }),
+      runTests({ "a.test.js": `import { test, describe, aroundEach, aroundAll } from "bun:test"; ${show}` }),
+      runTests({ "a.test.js": `import { test, describe, aroundEach, aroundAll } from "@jest/globals"; ${show}` }),
+      runTests({ "a.test.js": show }),
+      runTests({ "a.test.cjs": show }),
+      runTests({ "a.test.js": show }, ["--globals=vitest"]),
+    ]);
+    expect(runs.map(({ log, exitCode }) => ({ log, exitCode }))).toEqual(
+      Array(runs.length).fill({ log: expected, exitCode: 0 }),
+    );
+  });
+});
+
+describe.concurrent("a hook registered while a test runs", () => {
+  const register = (names: string[]) => `
+    for (const [name, hook] of Object.entries({ ${names} })) {
+      try { console.log(name, hook(() => console.log("the", name, "hook ran"))); } catch (error) { console.log(error.message); }
+    }
+  `;
+  const four = ["beforeAll", "beforeEach", "afterEach", "afterAll"];
+  const six = [...four, "aroundEach", "aroundAll"];
+
+  test(`never runs if it's from "vitest"`, async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, ${four} } from "vitest";
+        describe("block", () => {
+          beforeEach(({ task }) => { if (task.name === "in a hook") { ${register(four)} } });
+          test("in a test", () => { ${register(four)} });
+          test("in a hook", () => {});
+          test.concurrent("in a concurrent test", () => { ${register(four)} });
+          test.concurrent("another concurrent test", () => {});
+          test("wrong argument", () => { try { afterEach("not a function"); } catch (error) { console.log(error.message); } });
+          describe("nested", () => { test("later", () => console.log("later")); });
+        });
+        test("outside", () => console.log("outside"));
+      `,
+    });
+    const returned = four.map(name => `${name} undefined`);
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        ...returned,
+        ...returned,
+        ...returned,
+        "afterEach() expects a function as the first argument",
+        "later",
+        "outside",
+      ],
+      results: [
+        "(pass) block > in a test",
+        "(pass) block > in a hook",
+        "(pass) block > in a concurrent test",
+        "(pass) block > another concurrent test",
+        "(pass) block > wrong argument",
+        "(pass) block > nested > later",
+        "(pass) outside",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("aroundEach and aroundAll never run either", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, aroundEach, aroundAll } from "vitest";
+        test("registers", () => { ${register(["aroundEach", "aroundAll"])} });
+        test("later", () => console.log("later"));
+      `,
+    });
+    expect({ log, exitCode }).toEqual({ log: ["aroundEach undefined", "aroundAll undefined", "later"], exitCode: 0 });
+  });
+
+  // @testing-library/react registers its cleanup as it loads.
+  test.each([
+    [`imports from "vitest"`, `import { beforeAll, afterEach, afterAll } from "vitest";`, []],
+    [`uses the globals of "vitest"`, ``, ["--globals=vitest"]],
+    [`uses globalThis`, `const { beforeAll, afterEach, afterAll } = globalThis;`, ["--globals=vitest"]],
+  ])("by a module that a test imports, which %s", async (_, header, args) => {
+    const { log, results, exitCode } = await runTests(
+      {
+        "library.js": `
+          ${header}
+          ${register(["beforeAll", "afterEach", "afterAll"])}
+          export const loaded = true;
+        `,
+        "a.test.js": `
+          import { test } from "vitest";
+          test("imports the library", async () => console.log((await import("./library.js")).loaded));
+          test("later", () => console.log("later"));
+        `,
+      },
+      args,
+    );
+    expect({ log, results, exitCode }).toEqual({
+      log: ["beforeAll undefined", "afterEach undefined", "afterAll undefined", "true", "later"],
+      results: ["(pass) imports the library", "(pass) later"],
+      exitCode: 0,
+    });
+  });
+
+  test.each(["bun:test", "@jest/globals"])(
+    "%s: throws, except for afterEach and afterAll, which run after the test",
+    async module => {
+      const { log, exitCode } = await runTests({
+        "a.test.js": `
+        import { test, ${six} } from "${module}";
+        test("registers", () => { ${register(six)} });
+        test("later", () => console.log("later"));
+      `,
+      });
+      const thrown = (name: string) => `Cannot call ${name}() inside a test. Call it inside describe() instead.`;
+      expect({ log, exitCode }).toEqual({
+        log: [
+          thrown("beforeAll"),
+          thrown("beforeEach"),
+          "afterEach undefined",
+          "afterAll undefined",
+          thrown("aroundEach"),
+          thrown("aroundAll"),
+          "the afterAll hook ran",
+          "the afterEach hook ran",
+          "later",
+        ],
+        exitCode: 0,
+      });
+    },
+  );
+});
+
+describe.concurrent.each(["vitest", "bun:test", "@jest/globals"])("a thenable that is not a promise: %s", module => {
+  test("is awaited when a hook, a test or a describe() callback returns it, and then is read once", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, beforeAll, beforeEach, afterEach, afterAll, onTestFinished } from "${module}";
+        const thenable = (name, beforeItResolves) => ({
+          get then() {
+            console.log(name + ": then is read");
+            return resolve => setImmediate(() => { beforeItResolves?.(); console.log(name + ": resolves"); resolve(); });
+          },
+        });
+        beforeAll(() => thenable("beforeAll"));
+        beforeEach(() => thenable("beforeEach"));
+        afterEach(() => thenable("afterEach"));
+        afterAll(() => thenable("afterAll"));
+        describe("block", () => thenable("describe", () => {
+          test("test", () => { console.log("test"); onTestFinished(() => thenable("onTestFinished")); return thenable("test"); });
+        }));
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["describe", "beforeAll", "beforeEach", "test", "afterEach", "onTestFinished", "afterAll"].flatMap(name => [
+        ...(name === "test" ? ["test"] : []),
+        `${name}: then is read`,
+        `${name}: resolves`,
+      ]),
+      results: ["(pass) block > test"],
+      exitCode: 0,
+    });
+  });
+
+  test("fails the test if it rejects, if then() throws or if reading then throws", async () => {
+    const withDone =
+      module !== "vitest" &&
+      `
+        test("waits for done() after it returns an object", done => { setImmediate(() => { console.log("done()"); done(); }); return {}; });
+        test("or a function", done => { setImmediate(() => { console.log("done()"); done(); }); return () => {}; });
+      `;
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test } from "${module}";
+        test("rejects", () => ({ then(resolve, reject) { setImmediate(() => reject(new Error("rejected"))); } }));
+        test("rejects right away", () => ({ then(resolve, reject) { reject(new Error("rejected right away")); } }));
+        test("then() throws", () => ({ then() { throw new Error("then() threw"); } }));
+        test("reading then throws", () => ({ get then() { throw new Error("the getter threw"); } }));
+        test("never settles", () => ({ then() {} }), 10);
+        test("resolves right away", () => ({ then(resolve) { console.log("then()"); resolve(); } }));
+        test("resolves, then rejects and throws", () => ({ then(resolve, reject) { resolve(); reject(new Error("ignored")); throw new Error("ignored"); } }));
+        test("then is not a function", () => ({ then: 1 }));
+        test("a function with then()", () => Object.assign(() => {}, { then(resolve) { setImmediate(() => { console.log("the function resolves"); resolve(); }); } }));
+        ${withDone || ""}
+        test("the next test", () => console.log("the next test"));
+      `,
+    });
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: ["then()", "the function resolves", ...(withDone ? ["done()", "done()"] : []), "the next test"],
+      results: [
+        "(fail) rejects",
+        "(fail) rejects right away",
+        "(fail) then() throws",
+        "(fail) reading then throws",
+        "(fail) never settles",
+        "(pass) resolves right away",
+        "(pass) resolves, then rejects and throws",
+        "(pass) then is not a function",
+        "(pass) a function with then()",
+        ...(withDone ? ["(pass) waits for done() after it returns an object", "(pass) or a function"] : []),
+        "(pass) the next test",
+      ],
+      errors: ["error: rejected", "error: rejected right away", "error: then() threw", "error: the getter threw"],
+      exitCode: 1,
+    });
+  });
+});
+
+test.concurrent("a function that a thenable from beforeEach or beforeAll resolves to is a teardown", async () => {
+  const { log, exitCode } = await runTests({
+    "a.test.js": `
+      import { test, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+      const resolvesTo = value => ({ then(resolve) { setImmediate(resolve, value); } });
+      beforeAll(() => resolvesTo(() => console.log("beforeAll teardown")));
+      beforeEach(() => resolvesTo(() => console.log("beforeEach teardown")));
+      afterEach(() => console.log("afterEach"));
+      afterAll(() => console.log("afterAll"));
+      test("test", () => console.log("test"));
+    `,
+  });
+  expect({ log, exitCode }).toEqual({
+    log: ["test", "afterEach", "beforeEach teardown", "afterAll", "beforeAll teardown"],
+    exitCode: 0,
+  });
+});
+
 describe.concurrent("behavior depends on the module a function is imported from", () => {
   test(`"bun:test" tests get no context and "vitest" tests get no signal until they read it`, async () => {
     const file = (module: string) => `
@@ -1578,6 +2598,306 @@ describe.concurrent("behavior depends on the module a function is imported from"
       ],
       exitCode: 0,
     });
+  });
+
+  test("toHaveProperty() with an own key that is spelled like a path", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        const outcome = fn => { try { fn(); return "passes"; } catch { return "fails"; } };
+        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+          test(name, () => {
+            const both = { "a.b": "own", a: { b: "path" } };
+            console.log(name, "own key:", [
+              outcome(() => expect({ "a.b": 1 }).toHaveProperty("a.b")),
+              outcome(() => expect({ "a.b": 1 }).toHaveProperty("a.b", 1)),
+              outcome(() => expect({ "a.b": undefined }).toHaveProperty("a.b")),
+              outcome(() => expect({ get "a.b"() { return 1; } }).toHaveProperty("a.b", 1)),
+              outcome(() => expect({ "a[0]": 1 }).toHaveProperty("a[0]", 1)),
+              outcome(() => expect(new Proxy({ "a.b": 1 }, {})).toHaveProperty("a.b", 1)),
+              outcome(() => expect(both).toHaveProperty("a.b", "own")),
+            ].join(" "));
+            console.log(name, "the opposite:", [
+              outcome(() => expect({ "a.b": 1 }).not.toHaveProperty("a.b")),
+              outcome(() => expect({ "a.b": 1 }).not.toHaveProperty("a.b", 1)),
+              outcome(() => expect(both).toHaveProperty("a.b", "path")),
+            ].join(" "));
+            console.log(name, "either way:", [
+              outcome(() => expect({ "a.b": 1 }).toHaveProperty("a.b", 2)),
+              outcome(() => expect({ a: { b: 2 } }).toHaveProperty("a.b", 2)),
+              outcome(() => expect(Object.create({ "a.b": 1 })).toHaveProperty("a.b")),
+              outcome(() => expect({ x: { "a.b": 1 } }).toHaveProperty("x.a.b")),
+              outcome(() => expect({ "a.b": 1 }).toHaveProperty(["a.b"], 1)),
+            ].join(" "));
+          });
+        }
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: [
+        "bun own key: fails fails fails fails fails fails fails",
+        "bun the opposite: passes passes passes",
+        "bun either way: fails passes fails fails passes",
+        "vitest own key: passes passes passes passes passes passes passes",
+        "vitest the opposite: fails fails fails",
+        "vitest either way: fails passes fails fails passes",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("toHaveProperty() on undefined and null", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        const failure = error => error instanceof TypeError ? "TypeError: " + error.message : "fails";
+        const outcome = fn => { try { fn(); return "passes"; } catch (error) { return failure(error); } };
+        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+          test(name, async () => {
+            for (const value of [undefined, null]) {
+              console.log(name, outcome(() => expect(value).toHaveProperty("a")));
+              console.log(name, outcome(() => expect(value).not.toHaveProperty("a")));
+              console.log(name, outcome(() => expect(value).not.toHaveProperty("a", 1)));
+              console.log(name, outcome(() => expect(value).not.toHaveProperty(["a"])));
+              console.log(name, outcome(() => expect(value, "label").not.toHaveProperty("a")));
+              console.log(name, await expect(Promise.resolve(value)).resolves.not.toHaveProperty("a").then(() => "passes", failure));
+            }
+            for (const value of ["text", "", 5, 0, false, 1n, Symbol("s")]) {
+              console.log(name, typeof value, outcome(() => expect(value).toHaveProperty("a")), outcome(() => expect(value).not.toHaveProperty("a")));
+            }
+          });
+        }
+      `,
+    });
+    const refused = (value: string) =>
+      `vitest TypeError: .toHaveProperty() expects to receive a valid object, but got ${value}`;
+    const primitives = ["string", "string", "number", "number", "boolean", "bigint", "symbol"];
+    expect({ log, exitCode }).toEqual({
+      log: [
+        ...["bun fails", ...Array(5).fill("bun passes")],
+        ...["bun fails", ...Array(5).fill("bun passes")],
+        ...primitives.map(type => `bun ${type} fails passes`),
+        ...Array(6).fill(refused("undefined")),
+        ...Array(6).fill(refused("null")),
+        ...primitives.map(type => `vitest ${type} fails passes`),
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("toContain() on a string with something that isn't a string", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        const outcome = fn => {
+          try { fn(); return "passes"; } catch (error) {
+            return error instanceof TypeError ? "TypeError" : error.message.startsWith("Received value must be") ? "refused" : "fails";
+          }
+        };
+        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+          test(name, () => {
+            for (const [text, value] of [["abc", undefined], ["is undefined", undefined], ["a null b", null], ["abc1", 1], ["abc", 1], ["[object Object]", {}], ["a,b", ["a", "b"]], ["abc", Symbol("a")]]) {
+              console.log(name, JSON.stringify(text), String(value), "|", outcome(() => expect(text).toContain(value)), "|", outcome(() => expect(text).not.toContain(value)));
+            }
+          });
+        }
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: [
+        ...[
+          `"abc" undefined`,
+          `"is undefined" undefined`,
+          `"a null b" null`,
+          `"abc1" 1`,
+          `"abc" 1`,
+          `"[object Object]" [object Object]`,
+          `"a,b" a,b`,
+          `"abc" Symbol(a)`,
+        ].map(values => `bun ${values} | refused | refused`),
+        `vitest "abc" undefined | fails | passes`,
+        `vitest "is undefined" undefined | passes | fails`,
+        `vitest "a null b" null | passes | fails`,
+        `vitest "abc1" 1 | passes | fails`,
+        `vitest "abc" 1 | fails | passes`,
+        `vitest "[object Object]" [object Object] | passes | fails`,
+        `vitest "a,b" a,b | passes | fails`,
+        `vitest "abc" Symbol(a) | TypeError | TypeError`,
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test(".resolves.toThrow() on a promise that resolved to an error", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        const outcome = async fn => { try { await fn(); return "passes"; } catch { return "fails"; } };
+        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+          test(name, async () => {
+            const resolved = () => expect(Promise.resolve(new Error("message"))).resolves;
+            console.log(name, await outcome(() => resolved().toThrow()), await outcome(() => resolved().toThrow("message")), await outcome(() => resolved().not.toThrow()), await outcome(() => resolved().not.toThrow("message")));
+            console.log(name, await outcome(() => expect(Promise.resolve(5)).resolves.toThrow()), await outcome(() => expect(Promise.resolve(5)).resolves.not.toThrow()));
+            console.log(name, await outcome(() => expect(Promise.reject(5)).rejects.toThrow()), await outcome(() => expect(Promise.reject(5)).rejects.not.toThrow()));
+          });
+        }
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: [
+        "bun passes passes fails fails",
+        "bun fails passes",
+        "bun passes fails",
+        "vitest fails fails passes passes",
+        "vitest fails passes",
+        "vitest passes fails",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test(".not read more than once", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        const outcome = fn => { try { fn(); return "passes"; } catch { return "fails"; } };
+        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+          test(name, () => {
+            console.log(name, ".not.not:", outcome(() => expect(1).not.not.toBe(1)), outcome(() => expect(1).not.not.toBe(2)));
+            console.log(name, ".not.not.not:", outcome(() => expect(1).not.not.not.toBe(1)), outcome(() => expect(1).not.not.not.toBe(2)));
+            const kept = expect(1);
+            console.log(name, "kept:", outcome(() => kept.not.toBe(2)), outcome(() => kept.not.toBe(3)), outcome(() => kept.not.toBe(1)));
+          });
+        }
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: [
+        "bun .not.not: passes fails",
+        "bun .not.not.not: fails passes",
+        "bun kept: passes passes fails",
+        "vitest .not.not: fails passes",
+        "vitest .not.not.not: fails passes",
+        "vitest kept: passes passes fails",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  // Vitest: "if there is another listener, assume that it's handled by user code". Jest's tests get a `process` of their own.
+  test("an error that nobody handles goes to the file's process listeners first, if the test is vitest's", async () => {
+    const body = (module: string) => `
+      import { afterEach, beforeEach, describe, expect, test } from "${module}";
+      const heard = event => new Promise(resolve => process.once(event, (...args) => resolve(args)));
+      const never = new Promise(() => {});
+      afterEach(() => {
+        process.removeAllListeners("unhandledRejection");
+        process.removeAllListeners("uncaughtException");
+      });
+
+      test("a rejection", async () => {
+        const error = new Error("a rejection");
+        const listener = heard("unhandledRejection");
+        const promise = Promise.reject(error);
+        const args = await listener;
+        expect(args.length).toBe(2);
+        expect(args[0]).toBe(error);
+        expect(args[1]).toBe(promise);
+      });
+      test("an exception in a microtask", async () => {
+        const error = new Error("an exception in a microtask");
+        const listener = heard("uncaughtException");
+        queueMicrotask(() => { throw error; });
+        expect(await listener).toEqual([error, "uncaughtException"]);
+      });
+      test("an exception in a timer", async () => {
+        const error = new Error("an exception in a timer");
+        const listener = heard("uncaughtException");
+        setTimeout(() => { throw error; });
+        expect((await listener)[0]).toBe(error);
+      });
+      test("two listeners", async () => {
+        const error = new Error("two listeners");
+        const listeners = Promise.all([heard("unhandledRejection"), heard("unhandledRejection")]);
+        Promise.reject(error);
+        expect((await listeners).map(args => args[0] === error)).toEqual([true, true]);
+      });
+      // Elsewhere the hook would wait for its listener until it times out.
+      describe.skipIf(${module !== "vitest"})("in a hook", () => {
+        let args;
+        beforeEach(async () => {
+          const listener = heard("unhandledRejection");
+          Promise.reject(new Error("in a hook"));
+          args = await listener;
+        });
+        test("in a hook", () => expect(args[0].message).toBe("in a hook"));
+      });
+      test("no listener", async () => {
+        Promise.reject(new Error("no listener"));
+        await never;
+      });
+      test("a listener that was removed", async () => {
+        const listener = () => console.log("not reached");
+        process.on("unhandledRejection", listener);
+        process.off("unhandledRejection", listener);
+        Promise.reject(new Error("a listener that was removed"));
+        await never;
+      });
+      test("a rejection, and a listener for exceptions", async () => {
+        process.on("uncaughtException", () => console.log("not reached"));
+        Promise.reject(new Error("a rejection, and a listener for exceptions"));
+        await never;
+      });
+      test("an exception, and a listener for rejections", async () => {
+        process.on("unhandledRejection", () => console.log("not reached"));
+        queueMicrotask(() => { throw new Error("an exception, and a listener for rejections"); });
+        await never;
+      });
+      test("a listener that throws", async () => {
+        process.on("uncaughtException", () => { throw new Error("thrown by the listener"); });
+        queueMicrotask(() => { throw new Error("a listener that throws"); });
+        await never;
+      });
+      test("the next test", () => {});
+    `;
+    const names = {
+      taken: ["a rejection", "an exception in a microtask", "an exception in a timer", "two listeners"],
+      left: [
+        "no listener",
+        "a listener that was removed",
+        "a rejection, and a listener for exceptions",
+        "an exception, and a listener for rejections",
+      ],
+    };
+
+    const vitest = await runTests({ "a.test.js": body("vitest") });
+    expect({ log: vitest.log, results: vitest.results, errors: vitest.errors }).toEqual({
+      log: [],
+      results: [
+        ...names.taken.map(name => `(pass) ${name}`),
+        "(pass) in a hook > in a hook",
+        ...names.left.map(name => `(fail) ${name}`),
+        "(fail) a listener that throws",
+        "(pass) the next test",
+      ],
+      errors: [...names.left.map(name => `error: ${name}`), "error: thrown by the listener"],
+    });
+    expect(vitest.exitCode).toBe(1);
+
+    const bun = await runTests({ "a.test.js": body("bun:test") });
+    expect({ log: bun.log, results: bun.results.filter(result => !result.includes("in a hook")) }).toEqual({
+      log: [],
+      results: [
+        ...[...names.taken, ...names.left, "a listener that throws"].map(name => `(fail) ${name}`),
+        "(pass) the next test",
+      ],
+    });
+    expect(bun.exitCode).toBe(1);
   });
 
   test(`"bun:test" and "@jest/globals" keep the done callback`, async () => {
@@ -1801,6 +3121,8 @@ describe.concurrent("exports", () => {
     xtest: "function",
     xdescribe: "function",
     onTestFinished: "function",
+    aroundEach: "function",
+    aroundAll: "function",
   };
   const vitestGlobals = { suite: "function", vitest: "object", onTestFailed: "function", assertType: "function" };
   const notOfVitest = { jest: "undefined", xit: "undefined", xtest: "undefined", xdescribe: "undefined" };
@@ -1987,7 +3309,7 @@ describe.concurrent(`[test] globals = "vitest"`, () => {
 
   describe("the globals are properties of globalThis", () => {
     const names =
-      "afterAll,afterEach,assertType,beforeAll,beforeEach,describe,expect,expectTypeOf,it,onTestFailed,onTestFinished,suite,test,vi,vitest";
+      "afterAll,afterEach,aroundAll,aroundEach,assertType,beforeAll,beforeEach,describe,expect,expectTypeOf,it,onTestFailed,onTestFinished,suite,test,vi,vitest";
     const files = {
       // @testing-library/user-event registers its clipboard cleanup this way.
       "node_modules/pkg/package.json": `{ "name": "pkg", "main": "index.js" }`,
@@ -3246,7 +4568,7 @@ describe.concurrent("test.extend()", () => {
         "(pass) retry > test (attempt 2)",
       ],
       errors: [
-        `error: The test-scoped fixture "perTest" cannot be used in beforeAll() or afterAll(). Give it { scope: "file" }, or use beforeEach() or afterEach()`,
+        `error: The test-scoped fixture "perTest" cannot be used in beforeAll(), afterAll() or aroundAll(). Give it { scope: "file" }, or use beforeEach(), afterEach() or aroundEach()`,
         "error: again",
       ],
       exitCode: 1,

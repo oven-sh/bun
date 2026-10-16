@@ -1046,6 +1046,12 @@ extern "C" bool Bun__hasPlugins(Zig::GlobalObject* globalObject)
     return !globalObject->onLoadPlugins.isEmpty() || !globalObject->onResolvePlugins.isEmpty();
 }
 
+extern "C" uint8_t Bun__onResolveNamespaces(Zig::GlobalObject* globalObject)
+{
+    auto& plugins = globalObject->onResolvePlugins;
+    return (plugins.fileNamespace.filters.isEmpty() ? 0 : 1) | (plugins.groups.isEmpty() ? 0 : 2);
+}
+
 extern "C" BunString Bun__resolveVirtualModule(Zig::GlobalObject* globalObject, const BunString* specifier, const BunString* importer)
 {
     auto& plugins = globalObject->onLoadPlugins;

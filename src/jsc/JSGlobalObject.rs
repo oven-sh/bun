@@ -741,6 +741,12 @@ impl JSGlobalObject {
         Bun__hasPlugins(self)
     }
 
+    /// Returns (an `onResolve` is registered in the `file` namespace, one is registered in another namespace).
+    pub(crate) fn has_on_resolve(&self) -> (bool, bool) {
+        let namespaces = Bun__onResolveNamespaces(self);
+        (namespaces & 1 != 0, namespaces & 2 != 0)
+    }
+
     /// The key of the `build.module()` or `mock.module()` module that `specifier` names.
     pub(crate) fn resolve_virtual_module(
         &self,
@@ -753,7 +759,7 @@ impl JSGlobalObject {
 
     /// Whether an `onLoad` would be called to load `key`.
     pub(crate) fn has_on_load(&self, key: &[u8]) -> JsResult<bool> {
-        let Some((namespace_, path)) = crate::module_loader::plugin_namespace_and_path(key) else {
+        let Some((namespace_, path)) = crate::module_loader::on_load_namespace_and_path(key) else {
             return Ok(false);
         };
         let namespace_ = BunString::from_bytes(namespace_);
@@ -1515,6 +1521,7 @@ unsafe extern "C" {
         source: &BunString,
     ) -> JSValue;
     safe fn Bun__hasPlugins(global: &JSGlobalObject) -> bool;
+    safe fn Bun__onResolveNamespaces(global: &JSGlobalObject) -> u8;
     safe fn Bun__resolveVirtualModule(
         global: &JSGlobalObject,
         specifier: &BunString,

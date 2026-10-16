@@ -88,3 +88,34 @@ test('Bun.serve({ app }) reports a framework entry point that a "browser" map di
   expect(stdout).toBe("threw: Framework is missing required files!\n");
   expect(exitCode).toBe(0);
 });
+
+test.concurrent("Bun.serve({ app }) frees the bundler plugin when the config is rejected", async () => {
+  using dir = tempDir("bake-app-plugin-leak", {
+    "fixture.ts": `
+      import { heapStats } from "bun:jsc";
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+      // The framework's plugins are parsed first, then root fails the type check.
+      const app = { framework: { fileSystemRouterTypes: [fsr], plugins: [] }, root: 123 };
+      const count = () => heapStats().protectedObjectTypeCounts.BundlerPlugin ?? 0;
+      const before = count();
+      for (let i = 0; i < 10; i++) {
+        try {
+          Bun.serve({ port: 0, development: true, app, fetch: () => new Response() }).stop(true);
+        } catch {}
+      }
+      console.log("leaked plugins: " + (count() - before));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("leaked plugins: 0\n");
+  expect(exitCode).toBe(0);
+});

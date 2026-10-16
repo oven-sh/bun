@@ -21,6 +21,7 @@
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSJsonWebKey.h"
 #include <JavaScriptCore/AggregateError.h>
+#include <JavaScriptCore/ArrayStorage.h>
 #include <JavaScriptCore/AsyncFunctionPrototype.h>
 #include <JavaScriptCore/BigIntObject.h>
 #include <JavaScriptCore/CallFrame.h>
@@ -29,12 +30,12 @@
 #include <JavaScriptCore/GeneratorFunctionPrototype.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/SparseArrayValueMap.h>
 #include <JavaScriptCore/SymbolObject.h>
 #include "ZigGeneratedClasses.h"
 #include "JSKeyObject.h"
 
 #include "NodeUtilTypesModule.h"
-#include "headers-handwritten.h"
 
 using namespace JSC;
 
@@ -436,6 +437,82 @@ static ALWAYS_INLINE JSValue elementOrHole(JSC::JSGlobalObject* globalObject, JS
     return element;
 }
 
+// Appends the slots of [start, usedLength) that `isPresent` accepts and returns how many it accepts
+// before `start`. Counts them first, so the list grows once and the fill stops at the last one.
+template<typename IsPresent>
+static ALWAYS_INLINE uint32_t appendPresentSlots(unsigned usedLength, uint32_t start, WTF::Vector<uint32_t, 16>& indexes, const IsPresent& isPresent)
+{
+    const unsigned prefix = std::min(start, usedLength);
+    uint32_t before = 0;
+    for (unsigned i = 0; i < prefix; ++i)
+        before += isPresent(i);
+    size_t count = 0;
+    for (unsigned i = prefix; i < usedLength; ++i)
+        count += isPresent(i);
+    indexes.reserveCapacity(indexes.size() + count);
+    for (unsigned i = prefix; count; ++i) {
+        if (isPresent(i)) {
+            indexes.append(i);
+            count--;
+        }
+    }
+    return before;
+}
+
+// The index keys of Object.keys(array) without an Identifier per index: appends the own enumerable
+// indexes at or after `start`, ascending, and returns how many come before `start`. Mirrors the
+// walk of JSObject::getOwnIndexedPropertyNames.
+static uint32_t appendOwnEnumerableIndexes(JSC::JSArray* array, uint32_t start, WTF::Vector<uint32_t, 16>& indexes)
+{
+    switch (array->indexingType()) {
+    case ALL_BLANK_INDEXING_TYPES:
+    case ALL_UNDECIDED_INDEXING_TYPES:
+        return 0;
+
+    case ALL_INT32_INDEXING_TYPES:
+    case ALL_CONTIGUOUS_INDEXING_TYPES: {
+        JSC::Butterfly* butterfly = array->butterfly();
+        return appendPresentSlots(butterfly->publicLength(), start, indexes, [&](unsigned i) -> bool {
+            return !!butterfly->contiguous().at(array, i);
+        });
+    }
+
+    case ALL_DOUBLE_INDEXING_TYPES: {
+        JSC::Butterfly* butterfly = array->butterfly();
+        return appendPresentSlots(butterfly->publicLength(), start, indexes, [&](unsigned i) -> bool {
+            double value = butterfly->contiguousDouble().at(array, i);
+            return value == value;
+        });
+    }
+
+    case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
+        JSC::ArrayStorage* storage = array->butterfly()->arrayStorage();
+        uint32_t before = appendPresentSlots(std::min(storage->length(), storage->vectorLength()), start, indexes, [&](unsigned i) -> bool {
+            return !!storage->m_vector[i];
+        });
+
+        if (JSC::SparseArrayValueMap* map = storage->m_sparseMap.get()) {
+            const size_t firstSparse = indexes.size();
+            indexes.reserveCapacity(firstSparse + map->size());
+            for (const auto& entry : *map) {
+                if (entry.attributes() & JSC::PropertyAttribute::DontEnum)
+                    continue;
+                if (entry.index() < start)
+                    before++;
+                else
+                    indexes.append(entry.index());
+            }
+            std::ranges::sort(indexes.mutableSpan().subspan(firstSparse));
+        }
+        return before;
+    }
+
+    default:
+        ASSERT_NOT_REACHED();
+        return 0;
+    }
+}
+
 // Object.keys(array), listed once at the first hole as node lists it: own enumerable index keys
 // ascending, then named string keys. A real array gives its index keys from its storage, so no
 // Identifier is made per index. A Proxy lists every key through its traps.
@@ -460,7 +537,7 @@ public:
             m_nameCount = m_ownNames->size();
             return;
         }
-        m_before = Bun::appendOwnEnumerableIndexes(uncheckedDowncast<JSC::JSArray>(array), static_cast<uint32_t>(std::min<uint64_t>(start, std::numeric_limits<uint32_t>::max())), m_indexes);
+        m_before = appendOwnEnumerableIndexes(uncheckedDowncast<JSC::JSArray>(array), static_cast<uint32_t>(std::min<uint64_t>(start, std::numeric_limits<uint32_t>::max())), m_indexes);
         if (listedNames) {
             m_names = listedNames;
             while (m_nameCount < listedNames->size() && !(*listedNames)[m_nameCount].isSymbol())

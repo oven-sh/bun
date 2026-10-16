@@ -949,11 +949,12 @@ NEVER_INLINE void JSSQLStatement::refreshRowShape(JSC::JSGlobalObject* lexicalGl
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
     const int64_t count = reprepareCount();
-    if (rowShapeKey < 0 || !recordedColumnNamesMatch()) {
+    const bool wasBuilt = rowShapeKey >= 0;
+    if (!wasBuilt || !recordedColumnNamesMatch()) {
         initializeColumnNames(lexicalGlobalObject, this);
         RETURN_IF_EXCEPTION(scope, void());
-        // Only a statement that SQLite has re-prepared pays for the record: it is likely to be re-prepared again.
-        if (count)
+        // SQLite re-prepared a statement that had its row shape. It is likely to do so again, and the record lets that run compare.
+        if (wasBuilt)
             recordColumnNames();
     }
     rowShapeKey = count;

@@ -2976,8 +2976,9 @@ describe("prepared statements refresh cached column names after a schema change"
     ]);
   });
 
-  // A statement that each bind re-prepares records its names on its first run, and each later run compares them.
-  // Any other statement records its names when SQLite re-prepares it for the first time.
+  // A statement records its column names when SQLite re-prepares it for the first time after a run that returned a row.
+  // Each later re-prepare compares the names with the record. A bind of LIKE ? makes SQLite re-prepare the statement,
+  // so that statement has its record after its second run. The other one has it after the first schema change.
   const statementKinds = [
     ["no parameter", "", []],
     ["LIKE ?", " WHERE 'x' LIKE ?", ["x"]],
@@ -3013,7 +3014,10 @@ describe("prepared statements refresh cached column names after a schema change"
     db.run("CREATE TABLE t1 (a INT); CREATE TABLE t2 (b INT); CREATE TABLE t3 (b INT)");
     db.run("INSERT INTO t1 VALUES (1); INSERT INTO t2 VALUES (2); INSERT INTO t3 VALUES (3)");
     using q = db.prepare("SELECT * FROM t1, t2, t3" + where);
-    expect(q.get(...params)).toEqual({ a: 1, b: 3 });
+    expect([q.get(...params), q.get(...params)]).toEqual([
+      { a: 1, b: 3 },
+      { a: 1, b: 3 },
+    ]);
 
     db.run("ALTER TABLE t2 RENAME COLUMN b TO a");
     expect(q.get(...params)).toEqual({ a: 2, b: 3 });
@@ -3023,7 +3027,10 @@ describe("prepared statements refresh cached column names after a schema change"
     using db = new Database(":memory:");
     db.run("CREATE TABLE t (ab INT, c INT, d INT); INSERT INTO t VALUES (1, 2, 3)");
     using q = db.prepare("SELECT * FROM t" + where);
-    expect(q.get(...params)).toEqual({ ab: 1, c: 2, d: 3 });
+    expect([q.get(...params), q.get(...params)]).toEqual([
+      { ab: 1, c: 2, d: 3 },
+      { ab: 1, c: 2, d: 3 },
+    ]);
 
     // The same characters in the same order, divided between the columns in another way.
     db.run("ALTER TABLE t RENAME COLUMN ab TO a; ALTER TABLE t RENAME COLUMN c TO bc");
@@ -3101,6 +3108,7 @@ describe("prepared statements refresh cached column names after a schema change"
     const SELECT = "SELECT * FROM t0, t1, t2" + where;
     using kept = db.prepare(SELECT);
     kept.get(...params);
+    kept.get(...params);
     const differences = [];
     for (let step = 0; step < 100; step++) {
       setTable(next(3), shapes[next(shapes.length)]);
@@ -3169,7 +3177,7 @@ describe("prepared statements refresh cached column names after a schema change"
         "names that are not ASCII, or empty": [db.prepare("SELECT * FROM n"), []],
       };
       const read = () => Object.entries(statements).map(([name, [q, args]]) => [name, q.get(...args)]);
-      // After its first re-prepare, each statement has the record of its names.
+      // Each statement records its names when SQLite re-prepares it for the first time after a run.
       read();
       db.run("CREATE TABLE unrelated1 (x)");
       // These rows stay alive, so their Structures keep their ids.

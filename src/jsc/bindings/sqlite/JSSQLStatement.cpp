@@ -205,7 +205,6 @@ public:
     explicit VersionSqlite3(sqlite3* db, JSC::VM* vm)
         : db(db)
         , vm(vm)
-        , version(0)
         , reference_count(1)
     {
     }
@@ -215,7 +214,6 @@ public:
     JSC::VM* const vm;
     // The Bun.ModuleGraph context whose script opened it (0: none): closed when that graph is disposed.
     WebCore::ScriptExecutionContextIdentifier graphContext = 0;
-    std::atomic<uint64_t> version;
     size_t reference_count;
     WTF::HashSet<WebCore::JSSQLStatement*> statements;
     // close(false) with live db.prepare() statements: JS-visible closed, sqlite3_close deferred until they drain.
@@ -528,21 +526,62 @@ public:
 
     JSC::JSValue rebind(JSGlobalObject* globalObject, JSC::JSValue values);
 
-    bool need_update() { return version_db->version.load() != version; }
-    void update_version() { version = version_db->version.load(); }
+    // Proof that the cached row shape is the shape of the program `stmt` now runs. Only ensureRowShape() makes one.
+    class RowShape {
+    public:
+        // False: the rebuild threw.
+        explicit operator bool() const { return m_isCurrent; }
+
+    private:
+        friend class JSSQLStatement;
+        explicit RowShape(bool isCurrent)
+            : m_isCurrent(isCurrent)
+        {
+        }
+        bool m_isCurrent;
+    };
+
+    // Call after the first sqlite3_step() of a run, before a row object is built.
+    ALWAYS_INLINE RowShape ensureRowShape(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope)
+    {
+        if (reprepareCount() == rowShapeKey) [[likely]]
+            return RowShape(true);
+        refreshRowShape(globalObject);
+        return RowShape(!scope.exception());
+    }
+    template<bool useBigInt64> static JSC::JSValue constructResultObject(JSC::JSGlobalObject*, JSSQLStatement*, RowShape);
+    void setRowPrototype(JSC::VM&, JSC::JSObject*);
 
     ~JSSQLStatement();
 
     sqlite3_stmt* stmt;
     VersionSqlite3* version_db;
-    uint64_t version = 0;
+
+private:
+    // Column names change only when sqlite3_step() re-prepares the statement, and each re-prepare increments this count.
+    int64_t reprepareCount() const { return static_cast<uint32_t>(sqlite3_stmt_status(stmt, SQLITE_STMTSTATUS_REPREPARE, 0)); }
+    void refreshRowShape(JSC::JSGlobalObject*);
+    static void initializeColumnNames(JSC::JSGlobalObject*, JSSQLStatement*);
+    bool recordedColumnNamesMatch() const;
+    void recordColumnNames();
+
+    struct ColumnNames : PropertyNameArrayBuilder {
+        using PropertyNameArrayBuilder::PropertyNameArrayBuilder;
+        // Every sqlite3_column_name() the builder was filled from, each with its NUL. Empty: not recorded.
+        Vector<char> bytes;
+    };
+
+    // reprepareCount() at which the row shape below was built or verified; -1: not built.
+    int64_t rowShapeKey = -1;
     // Tracks which columns are valid in the current result set. Used to handle duplicate column names.
     // The bit at index i is set if the column at index i is valid.
     WTF::BitVector validColumns;
-    std::unique_ptr<PropertyNameArrayBuilder> columnNames;
+    std::unique_ptr<ColumnNames> columnNames;
     mutable JSC::WriteBarrier<JSC::JSObject> _prototype;
     mutable JSC::WriteBarrier<JSC::Structure> _structure;
     mutable JSC::WriteBarrier<JSC::JSObject> userPrototype;
+
+public:
     size_t extraMemorySize = 0;
     SQLiteBindingsMap m_bindingNames = { 0, false };
     bool hasExecuted : 1 = false;
@@ -556,7 +595,6 @@ protected:
         : Base(globalObject.vm(), structure)
         , stmt(stmt)
         , version_db(version_db)
-        , columnNames(new PropertyNameArrayBuilder(globalObject.vm(), PropertyNameMode::Strings, PrivateSymbolMode::Exclude))
         , extraMemorySize(memorySizeChange > 0 ? memorySizeChange : 0)
     {
     }
@@ -748,19 +786,11 @@ Structure* createJSSQLStatementStructure(JSGlobalObject* globalObject)
     return JSSQLStatement::createStructure(globalObject->vm(), globalObject, prototype);
 }
 
-static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis)
+void JSSQLStatement::initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis)
 {
-    if (!castedThis->hasExecuted) {
-        castedThis->hasExecuted = true;
-    } else {
-        // reinitialize column
-        castedThis->columnNames.reset(new PropertyNameArrayBuilder(
-            castedThis->columnNames->vm(),
-            castedThis->columnNames->propertyNameMode(),
-            castedThis->columnNames->privateSymbolMode()));
-    }
+    castedThis->rowShapeKey = -1;
+    castedThis->columnNames.reset(new ColumnNames(JSC::getVM(lexicalGlobalObject), PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
     castedThis->validColumns.clearAll();
-    castedThis->update_version();
 
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -827,7 +857,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         } else {
             // If for any reason we do not have column names, disable the fast path.
             columnNames->releaseData();
-            castedThis->columnNames.reset(new PropertyNameArrayBuilder(
+            castedThis->columnNames.reset(new ColumnNames(
                 castedThis->columnNames->vm(),
                 castedThis->columnNames->propertyNameMode(),
                 castedThis->columnNames->privateSymbolMode()));
@@ -882,6 +912,59 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
     // We iterated over the columns in reverse order so we need to reverse the columnNames here
     castedThis->columnNames->data()->propertyNameVector().reverse();
     castedThis->_prototype.set(vm, castedThis, object);
+}
+
+// Whether every sqlite3_column_name() still has the bytes that the row shape was built from.
+bool JSSQLStatement::recordedColumnNamesMatch() const
+{
+    std::span<const char> recorded = columnNames->bytes.span();
+    if (recorded.empty())
+        return false;
+    for (int i = 0, count = sqlite3_column_count(stmt); i < count; i++) {
+        const char* name = sqlite3_column_name(stmt, i);
+        if (!name)
+            return false;
+        const size_t size = strlen(name) + 1;
+        if (size > recorded.size() || memcmp(name, recorded.data(), size))
+            return false;
+        recorded = recorded.subspan(size);
+    }
+    return recorded.empty();
+}
+
+void JSSQLStatement::recordColumnNames()
+{
+    auto& bytes = columnNames->bytes;
+    for (int i = 0, count = sqlite3_column_count(stmt); i < count; i++) {
+        const char* name = sqlite3_column_name(stmt, i);
+        if (!name) {
+            bytes.clear();
+            return;
+        }
+        bytes.append(std::span { name, strlen(name) + 1 });
+    }
+}
+
+NEVER_INLINE void JSSQLStatement::refreshRowShape(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
+    const int64_t count = reprepareCount();
+    if (rowShapeKey < 0 || !recordedColumnNamesMatch()) {
+        initializeColumnNames(lexicalGlobalObject, this);
+        RETURN_IF_EXCEPTION(scope, void());
+        // Only a statement that SQLite has re-prepared pays for the record: it is likely to be re-prepared again.
+        if (count)
+            recordColumnNames();
+    }
+    rowShapeKey = count;
+}
+
+void JSSQLStatement::setRowPrototype(JSC::VM& vm, JSC::JSObject* prototype)
+{
+    if (userPrototype.get() == prototype)
+        return;
+    userPrototype.setMayBeNull(vm, this, prototype);
+    rowShapeKey = -1;
 }
 
 void JSSQLStatement::destroy(JSC::JSCell* cell)
@@ -2056,7 +2139,7 @@ void JSSQLStatementConstructor::finishCreation(VM& vm)
 }
 
 template<bool useBigInt64>
-static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis)
+inline JSC::JSValue JSSQLStatement::constructResultObject(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis, RowShape)
 {
     auto& columnNames = castedThis->columnNames->data()->propertyNameVector();
     int count = columnNames.size();
@@ -2175,13 +2258,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetPrototypeFunction, (JSGlobalObject * l
     if (classValue.isObject()) {
         JSObject* classObject = classValue.getObject();
         if (classObject == lexicalGlobalObject->objectConstructor()) {
-            castedThis->userPrototype.clear();
-
-            // Force the prototypes to be re-created
-            if (castedThis->version_db) {
-                castedThis->version_db->version++;
-            }
-
+            castedThis->setRowPrototype(vm, nullptr);
             return JSValue::encode(jsUndefined());
         }
 
@@ -2202,19 +2279,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetPrototypeFunction, (JSGlobalObject * l
             return {};
         }
 
-        castedThis->userPrototype.set(vm, castedThis, prototype.getObject());
-
-        // Force the prototypes to be re-created
-        if (castedThis->version_db) {
-            castedThis->version_db->version++;
-        }
+        castedThis->setRowPrototype(vm, prototype.getObject());
     } else if (classValue.isUndefined()) {
-        castedThis->userPrototype.clear();
-
-        // Force the prototypes to be re-created
-        if (castedThis->version_db) {
-            castedThis->version_db->version++;
-        }
+        castedThis->setRowPrototype(vm, nullptr);
     } else {
         throwTypeError(lexicalGlobalObject, scope, "Expected class to be a constructor or undefined"_s);
         return {};
@@ -2249,21 +2316,17 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionIterate, (JSC::JS
     }
 
     int status = sqlite3_step(stmt);
-    if (!sqlite3_stmt_readonly(stmt)) {
-        castedThis->version_db->version++;
-    }
-
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
-        initializeColumnNames(lexicalGlobalObject, castedThis);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
+    castedThis->hasExecuted = true;
 
     JSValue result = jsNull();
     if (status == SQLITE_ROW) {
+        auto shape = castedThis->ensureRowShape(lexicalGlobalObject, scope);
+        if (!shape) [[unlikely]]
+            return {};
         bool useBigInt64 = castedThis->useBigInt64;
 
-        result = useBigInt64 ? constructResultObject<true>(lexicalGlobalObject, castedThis)
-                             : constructResultObject<false>(lexicalGlobalObject, castedThis);
+        result = useBigInt64 ? JSSQLStatement::constructResultObject<true>(lexicalGlobalObject, castedThis, shape)
+                             : JSSQLStatement::constructResultObject<false>(lexicalGlobalObject, castedThis, shape);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -2301,14 +2364,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
     }
 
     int status = sqlite3_step(stmt);
-    if (!sqlite3_stmt_readonly(stmt)) {
-        castedThis->version_db->version++;
-    }
-
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
-        initializeColumnNames(lexicalGlobalObject, castedThis);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
+    castedThis->hasExecuted = true;
 
     int columnCount = sqlite3_column_count(stmt);
     JSValue result = jsUndefined();
@@ -2321,12 +2377,34 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
                 status = sqlite3_step(stmt);
             }
         } else {
+            auto shape = castedThis->ensureRowShape(lexicalGlobalObject, scope);
+            if (!shape) [[unlikely]]
+                return {};
             bool useBigInt64 = castedThis->useBigInt64;
             JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, static_cast<ArrayAllocationProfile*>(nullptr), 0);
             RETURN_IF_EXCEPTION(scope, {});
-            if (useBigInt64) {
+            if (lexicalGlobalObject->isHavingABadTime()) [[unlikely]] {
+                // An indexed accessor on a prototype makes push() run script, and that script can run this statement again.
                 do {
-                    JSC::JSValue result = constructResultObject<true>(lexicalGlobalObject, castedThis);
+                    JSC::JSValue result = useBigInt64 ? JSSQLStatement::constructResultObject<true>(lexicalGlobalObject, castedThis, shape)
+                                                      : JSSQLStatement::constructResultObject<false>(lexicalGlobalObject, castedThis, shape);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    resultArray->push(lexicalGlobalObject, result);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (castedThis->stmt != stmt) [[unlikely]] {
+                        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, finalizedMessage(castedThis)));
+                        return {};
+                    }
+                    status = sqlite3_step(stmt);
+                    if (status == SQLITE_ROW) {
+                        shape = castedThis->ensureRowShape(lexicalGlobalObject, scope);
+                        if (!shape) [[unlikely]]
+                            return {};
+                    }
+                } while (status == SQLITE_ROW);
+            } else if (useBigInt64) {
+                do {
+                    JSC::JSValue result = JSSQLStatement::constructResultObject<true>(lexicalGlobalObject, castedThis, shape);
                     RETURN_IF_EXCEPTION(scope, {});
                     resultArray->push(lexicalGlobalObject, result);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -2338,7 +2416,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
                 } while (status == SQLITE_ROW);
             } else {
                 do {
-                    JSC::JSValue result = constructResultObject<false>(lexicalGlobalObject, castedThis);
+                    JSC::JSValue result = JSSQLStatement::constructResultObject<false>(lexicalGlobalObject, castedThis, shape);
                     RETURN_IF_EXCEPTION(scope, {});
                     resultArray->push(lexicalGlobalObject, result);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -2394,21 +2472,17 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
     }
 
     int status = sqlite3_step(stmt);
-    if (!sqlite3_stmt_readonly(stmt)) {
-        castedThis->version_db->version++;
-    }
-
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
-        initializeColumnNames(lexicalGlobalObject, castedThis);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
+    castedThis->hasExecuted = true;
 
     JSValue result = jsNull();
     if (status == SQLITE_ROW) {
+        auto shape = castedThis->ensureRowShape(lexicalGlobalObject, scope);
+        if (!shape) [[unlikely]]
+            return {};
         bool useBigInt64 = castedThis->useBigInt64;
 
-        result = useBigInt64 ? constructResultObject<true>(lexicalGlobalObject, castedThis)
-                             : constructResultObject<false>(lexicalGlobalObject, castedThis);
+        result = useBigInt64 ? JSSQLStatement::constructResultObject<true>(lexicalGlobalObject, castedThis, shape)
+                             : JSSQLStatement::constructResultObject<false>(lexicalGlobalObject, castedThis, shape);
         RETURN_IF_EXCEPTION(scope, {});
         while (status == SQLITE_ROW) {
             status = sqlite3_step(stmt);
@@ -2450,19 +2524,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
     }
 
     int status = sqlite3_step(stmt);
-    if (!sqlite3_stmt_readonly(stmt)) {
-        castedThis->version_db->version++;
-    }
-
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
-        initializeColumnNames(lexicalGlobalObject, castedThis);
-
-        if (scope.exception()) [[unlikely]] {
-            // Don't forget to reset before releasing the exception.
-            sqlite3_reset(stmt);
-            RELEASE_AND_RETURN(scope, {});
-        }
-    }
+    castedThis->hasExecuted = true;
 
     size_t columnCount = sqlite3_column_count(stmt);
     JSValue result = jsNull();
@@ -2539,17 +2601,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
     }
 
     int status = sqlite3_step(stmt);
-    if (!sqlite3_stmt_readonly(stmt)) {
-        castedThis->version_db->version++;
-    }
-
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
-        initializeColumnNames(lexicalGlobalObject, castedThis);
-        if (scope.exception()) [[unlikely]] {
-            sqlite3_reset(stmt);
-            RELEASE_AND_RETURN(scope, {});
-        }
-    }
+    castedThis->hasExecuted = true;
 
     size_t columnCount = sqlite3_column_count(stmt);
     JSValue result = jsNull();
@@ -2633,17 +2685,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
     int total_changes_before = sqlite3_total_changes(db);
 
     int status = sqlite3_step(stmt);
-    if (!sqlite3_stmt_readonly(stmt)) {
-        castedThis->version_db->version++;
-    }
-
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
-        initializeColumnNames(lexicalGlobalObject, castedThis);
-        if (scope.exception()) [[unlikely]] {
-            sqlite3_reset(stmt);
-            RELEASE_AND_RETURN(scope, {});
-        }
-    }
+    castedThis->hasExecuted = true;
 
     while (status == SQLITE_ROW) {
         status = sqlite3_step(stmt);
@@ -2752,8 +2794,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
     CHECK_THIS
     CHECK_PREPARED
 
-    int count = sqlite3_column_count(castedThis->stmt);
-
     // We need to reset and step the statement to get fresh types,
     // but only do this for read-only statements to avoid side effects
     bool isReadOnly = sqlite3_stmt_readonly(castedThis->stmt) != 0;
@@ -2775,6 +2815,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
 
     // Step once to get to the first row (safe for read-only statements)
     int stepStatus = sqlite3_step(castedThis->stmt);
+
+    // After the step: sqlite3_step() can re-prepare under a changed column count.
+    int count = sqlite3_column_count(castedThis->stmt);
 
     // If we got a row, get types from it
     if (stepStatus == SQLITE_ROW) {

@@ -67,6 +67,47 @@ describe("as", () => {
       "Expected a constructor prototype to be an object",
     );
   });
+
+  it("applies to the next call of this statement only", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT); INSERT INTO t VALUES (1), (2)");
+    class A {}
+    class B {}
+    using q = db.prepare("SELECT * FROM t");
+    using other = db.prepare("SELECT * FROM t");
+    const classOf = row => row.constructor.name;
+
+    q.as(A);
+    expect(classOf(q.get())).toBe("A");
+    expect(classOf(other.get())).toBe("Object");
+    q.as(A);
+    expect(q.all().map(classOf)).toEqual(["A", "A"]);
+    q.as(B);
+    expect([...q.iterate()].map(classOf)).toEqual(["B", "B"]);
+    q.as(Object);
+    expect(classOf(q.get())).toBe("Object");
+    q.as(B);
+    q.as(undefined);
+    expect(q.all().map(classOf)).toEqual(["Object", "Object"]);
+    expect(classOf(other.get())).toBe("Object");
+  });
+
+  it("applies to the rows that iterate() has not returned yet", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT); INSERT INTO t VALUES (1), (2), (3)");
+    class A {}
+    using q = db.prepare("SELECT * FROM t");
+    const seen = [];
+    for (const row of q.iterate()) {
+      seen.push([row.constructor.name, row.a]);
+      q.as(A);
+    }
+    expect(seen).toEqual([
+      ["Object", 1],
+      ["A", 2],
+      ["A", 3],
+    ]);
+  });
 });
 
 describe("safeIntegers", () => {
@@ -2626,6 +2667,11 @@ it("decodes non-UTF-8 column names leniently instead of dropping the column", ()
   expect(q.columnNames).toEqual(["X\uFFFDa", "Y\uFFFDb"]);
   expect(row).toEqual({ "X\uFFFDa": 1, "Y\uFFFDb": 2 });
 
+  // SQLite re-prepares this statement on each bind, and each time its names are compared with the recorded names.
+  const rebound = db.prepare("SELECT * FROM t WHERE 'x' LIKE ?");
+  expect([rebound.get("x"), rebound.get("x"), rebound.all("x")]).toEqual([row, row, [row]]);
+  rebound.finalize();
+
   db.close();
 });
 
@@ -2675,6 +2721,561 @@ it("decodes declared types leniently and accepts single-character declared types
   s.all();
   expect(s.declaredTypes).toEqual(["INT\uFFFDGER"]);
   db.close();
+});
+
+describe("prepared statements refresh cached column names after a schema change", () => {
+  // SQLite transparently re-prepares a statement when the schema changes. The
+  // cached column names and result object shape must be rebuilt to match.
+  it("ALTER TABLE ADD COLUMN issued through db.run()", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT)");
+    db.run("INSERT INTO t VALUES (1)");
+    const q = db.query("SELECT * FROM t");
+    expect(q.get()).toEqual({ a: 1 });
+
+    db.run("ALTER TABLE t ADD COLUMN b INT DEFAULT 42");
+    expect(q.get()).toEqual({ a: 1, b: 42 });
+    expect(q.all()).toEqual([{ a: 1, b: 42 }]);
+    expect(q.values()).toEqual([[1, 42]]);
+    expect(q.columnNames).toEqual(["a", "b"]);
+  });
+
+  it("DROP + CREATE with a renamed column does not mis-key the row", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT)");
+    db.run("INSERT INTO t VALUES (111)");
+    const q = db.query("SELECT * FROM t");
+    expect(q.get()).toEqual({ a: 111 });
+
+    // Same column count, different name. The new column's value must not be
+    // returned under the old column's name.
+    db.run("DROP TABLE t");
+    db.run("CREATE TABLE t (zzz TEXT)");
+    db.run("INSERT INTO t VALUES ('boom')");
+    expect(q.get()).toEqual({ zzz: "boom" });
+    expect(q.columnNames).toEqual(["zzz"]);
+  });
+
+  it("ALTER TABLE issued through a prepared statement", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT)");
+    db.run("INSERT INTO t VALUES (1)");
+    const q = db.query("SELECT * FROM t");
+    expect(q.get()).toEqual({ a: 1 });
+
+    using alter = db.prepare("ALTER TABLE t ADD COLUMN b INT DEFAULT 7");
+    alter.run();
+    expect(q.get()).toEqual({ a: 1, b: 7 });
+  });
+
+  it("schema change made by a second connection to the same file", () => {
+    const file = tmpbase + `sqlite-reprepare-${Date.now()}-${(Math.random() * 1e9) | 0}.db`;
+    using a = new Database(file, { create: true });
+    a.run("CREATE TABLE t (a INT)");
+    a.run("INSERT INTO t VALUES (1)");
+    const q = a.query("SELECT * FROM t");
+    expect(q.get()).toEqual({ a: 1 });
+
+    {
+      using b = new Database(file);
+      b.run("ALTER TABLE t ADD COLUMN c TEXT DEFAULT 'x'");
+    }
+    expect(q.get()).toEqual({ a: 1, c: "x" });
+  });
+
+  it("schema change made by another process", async () => {
+    // https://github.com/oven-sh/bun/issues/1332
+    const file = tmpbase + `sqlite-xproc-${Date.now()}-${(Math.random() * 1e9) | 0}.db`;
+    using db = new Database(file, { create: true });
+    db.run("PRAGMA journal_mode = wal");
+    db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
+    db.run("INSERT INTO foo (greeting) VALUES (?)", ["Welcome to bun!"]);
+    const q = db.query("SELECT * FROM foo");
+    expect(q.get()).toEqual({ id: 1, greeting: "Welcome to bun!" });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Database } = require("bun:sqlite");` +
+          `const d = new Database(${JSON.stringify(file)});` +
+          `d.run("ALTER TABLE foo RENAME COLUMN greeting TO greeting2");` +
+          `d.close();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+
+    expect(q.get()).toEqual({ id: 1, greeting2: "Welcome to bun!" });
+  });
+
+  it.each([
+    ["dropping a column", "ALTER TABLE t DROP COLUMN a", { id: 1, b: "B", c: "C" }],
+    [
+      "rebuilding the table with another column order",
+      "CREATE TABLE t2 (id INTEGER PRIMARY KEY, c TEXT, b TEXT, a TEXT);" +
+        "INSERT INTO t2 SELECT id, c, b, a FROM t;" +
+        "DROP TABLE t;" +
+        "ALTER TABLE t2 RENAME TO t",
+      { id: 1, c: "C", b: "B", a: "A" },
+    ],
+    ["adding a column", "ALTER TABLE t ADD COLUMN e TEXT DEFAULT 'E'", { id: 1, a: "A", b: "B", c: "C", e: "E" }],
+  ])("%s from another connection reaches every reader of a kept statement", (_name, migration, after) => {
+    using dir = tempDir("sqlite-migration", {});
+    const file = path.join(String(dir), "app.db");
+    using db = new Database(file, { create: true });
+    db.run("CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT, b TEXT, c TEXT)");
+    db.run("INSERT INTO t VALUES (1, 'A', 'B', 'C')");
+    db.run("CREATE TABLE u (tid INTEGER, d TEXT)");
+    db.run("INSERT INTO u VALUES (1, 'D')");
+
+    class Row {}
+    const SELECT = "SELECT * FROM t WHERE id = 1";
+    using kept = db.prepare(SELECT);
+    using asClass = db.prepare(SELECT).as(Row);
+    using join = db.prepare("SELECT * FROM t JOIN u ON u.tid = t.id");
+    const read = () => ({
+      "query().get()": db.query(SELECT).get(),
+      "get()": kept.get(),
+      "keys of get()": Object.keys(kept.get()),
+      "all()": kept.all(),
+      "iterate()": [...kept.iterate()],
+      "as(Class).get()": { ...asClass.get() },
+      "join get()": join.get(),
+    });
+    const expected = row => ({
+      "query().get()": row,
+      "get()": row,
+      "keys of get()": Object.keys(row),
+      "all()": [row],
+      "iterate()": [row],
+      "as(Class).get()": row,
+      "join get()": { ...row, tid: 1, d: "D" },
+    });
+
+    // Run every statement once so each one has cached its column names.
+    expect(read()).toEqual(expected({ id: 1, a: "A", b: "B", c: "C" }));
+
+    {
+      using other = new Database(file);
+      other.run(migration);
+    }
+    expect(read()).toEqual(expected(after));
+  });
+
+  it("PRAGMA full_column_names", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT); CREATE TABLE u (a INT)");
+    db.run("INSERT INTO t VALUES (1); INSERT INTO u VALUES (2)");
+    using q = db.prepare("SELECT t.a, u.a FROM t, u");
+    expect(q.get()).toEqual({ a: 2 });
+
+    db.run("PRAGMA short_column_names = OFF; PRAGMA full_column_names = ON");
+    // A statement that is prepared now has the names that the kept statement must also have.
+    const expected = db.prepare("SELECT t.a, u.a FROM t, u").get();
+    expect(q.get()).toEqual(expected);
+    expect(expected).toEqual({ "t.a": 1, "u.a": 2 });
+  });
+
+  it("a TEMP table that shadows the table", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT, b INT); INSERT INTO t VALUES (1, 2)");
+    using q = db.prepare("SELECT * FROM t");
+    expect(q.get()).toEqual({ a: 1, b: 2 });
+
+    db.run("CREATE TEMP TABLE t (x TEXT); INSERT INTO temp.t VALUES ('temp')");
+    expect(q.get()).toEqual({ x: "temp" });
+  });
+
+  it("a view that is dropped and created again", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT, b INT); INSERT INTO t VALUES (1, 2)");
+    db.run("CREATE VIEW v AS SELECT a, b FROM t");
+    using q = db.prepare("SELECT * FROM v");
+    expect(q.get()).toEqual({ a: 1, b: 2 });
+
+    db.run("DROP VIEW v; CREATE VIEW v AS SELECT b AS x, a AS y, 3 AS z FROM t");
+    expect(q.get()).toEqual({ x: 2, y: 1, z: 3 });
+  });
+
+  // values(), raw(), run() and columnTypes step the statement but build no row object.
+  const stepsWithoutRowObject = [
+    ["values()", q => q.values()],
+    ["raw()", q => q.raw()],
+    ["run()", q => q.run()],
+    ["columnTypes", q => q.columnTypes],
+  ];
+
+  it.each(stepsWithoutRowObject.slice(0, 3))("the first run is %s, then the schema changes", (_name, step) => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT, b INT); INSERT INTO t VALUES (1, 2)");
+    using q = db.prepare("SELECT * FROM t");
+    step(q);
+
+    db.run("ALTER TABLE t RENAME COLUMN a TO z");
+    expect(q.get()).toEqual({ z: 1, b: 2 });
+  });
+
+  it.each(stepsWithoutRowObject)("SQLite re-prepares the statement inside %s", (_name, step) => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT, b INT); INSERT INTO t VALUES (1, 2)");
+    using q = db.prepare("SELECT * FROM t");
+    expect(q.get()).toEqual({ a: 1, b: 2 });
+
+    db.run("ALTER TABLE t RENAME COLUMN a TO z");
+    step(q);
+    expect(q.get()).toEqual({ z: 1, b: 2 });
+    expect(q.all()).toEqual([{ z: 1, b: 2 }]);
+  });
+
+  it.each([
+    ["get()", q => q.get()],
+    ["all()", q => q.all()],
+    ["iterate()", q => [...q.iterate()]],
+    ...stepsWithoutRowObject.slice(0, 3),
+  ])("%s makes declaredTypes available", (_name, step) => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT, b TEXT)");
+    using q = db.prepare("SELECT * FROM t");
+    expect(() => q.declaredTypes).toThrow("Statement must be executed before accessing declaredTypes");
+    step(q);
+    expect(q.declaredTypes).toEqual(["INT", "TEXT"]);
+  });
+
+  it("columnTypes does not make declaredTypes available", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT, b TEXT)");
+    using q = db.prepare("SELECT * FROM t");
+    q.columnTypes;
+    expect(() => q.declaredTypes).toThrow("Statement must be executed before accessing declaredTypes");
+  });
+
+  // A bind makes SQLite re-prepare the statement when its plan depends on the parameter: LIKE ? always, LIMIT ? from SQLite 3.47, OFFSET ? never.
+  it.each([
+    ["LIKE ?", "SELECT * FROM t WHERE b LIKE ?", "b%"],
+    ["LIMIT ?", "SELECT * FROM t LIMIT ?", 1],
+    ["OFFSET ?", "SELECT * FROM t LIMIT 1 OFFSET ?", 0],
+  ])("a statement with %s", (_name, sql, param) => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT, b TEXT); INSERT INTO t VALUES (1, 'bun')");
+    using q = db.prepare(sql);
+    expect([q.get(param), q.get(param), q.all(param)]).toEqual([
+      { a: 1, b: "bun" },
+      { a: 1, b: "bun" },
+      [{ a: 1, b: "bun" }],
+    ]);
+
+    db.run("ALTER TABLE t RENAME COLUMN a TO z");
+    expect([q.get(param), q.get(param), q.all(param)]).toEqual([
+      { z: 1, b: "bun" },
+      { z: 1, b: "bun" },
+      [{ z: 1, b: "bun" }],
+    ]);
+  });
+
+  // A statement that each bind re-prepares records its names on its first run, and each later run compares them.
+  // Any other statement records its names when SQLite re-prepares it for the first time.
+  const statementKinds = [
+    ["no parameter", "", []],
+    ["LIKE ?", " WHERE 'x' LIKE ?", ["x"]],
+  ];
+
+  it.each(statementKinds)("a join with duplicate column names, %s", (_name, where, params) => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (id INT, name TEXT); INSERT INTO t VALUES (1, 't')");
+    db.run("CREATE TABLE u (id INT, name TEXT, extra TEXT); INSERT INTO u VALUES (2, 'u', 'e')");
+    using q = db.prepare("SELECT * FROM t, u" + where);
+    // Of the columns that share a name, the last one owns the property.
+    expect([q.get(...params), q.get(...params)]).toEqual([
+      { id: 2, name: "u", extra: "e" },
+      { id: 2, name: "u", extra: "e" },
+    ]);
+
+    // One duplicate fewer.
+    db.run("ALTER TABLE u RENAME COLUMN name TO label");
+    expect(q.get(...params)).toEqual({ name: "t", id: 2, label: "u", extra: "e" });
+    expect(Object.keys(q.get(...params))).toEqual(["name", "id", "label", "extra"]);
+
+    // The same number of properties as at the start, owned by other columns.
+    db.run("ALTER TABLE t RENAME COLUMN name TO extra");
+    expect(q.get(...params)).toEqual({ id: 2, label: "u", extra: "e" });
+
+    // A duplicate column gets a name that no later column has.
+    db.run("ALTER TABLE t RENAME COLUMN id TO tid");
+    expect(q.all(...params)).toEqual([{ tid: 1, id: 2, label: "u", extra: "e" }]);
+  });
+
+  it.each(statementKinds)("a duplicate column takes a name that an earlier column owns, %s", (_name, where, params) => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t1 (a INT); CREATE TABLE t2 (b INT); CREATE TABLE t3 (b INT)");
+    db.run("INSERT INTO t1 VALUES (1); INSERT INTO t2 VALUES (2); INSERT INTO t3 VALUES (3)");
+    using q = db.prepare("SELECT * FROM t1, t2, t3" + where);
+    expect(q.get(...params)).toEqual({ a: 1, b: 3 });
+
+    db.run("ALTER TABLE t2 RENAME COLUMN b TO a");
+    expect(q.get(...params)).toEqual({ a: 2, b: 3 });
+  });
+
+  it.each(statementKinds)("names that overlap the names before the change, %s", (_name, where, params) => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (ab INT, c INT, d INT); INSERT INTO t VALUES (1, 2, 3)");
+    using q = db.prepare("SELECT * FROM t" + where);
+    expect(q.get(...params)).toEqual({ ab: 1, c: 2, d: 3 });
+
+    // The same characters in the same order, divided between the columns in another way.
+    db.run("ALTER TABLE t RENAME COLUMN ab TO a; ALTER TABLE t RENAME COLUMN c TO bc");
+    expect(q.get(...params)).toEqual({ a: 1, bc: 2, d: 3 });
+    // The names that stay are the end of the names before.
+    db.run("ALTER TABLE t DROP COLUMN a");
+    expect(q.get(...params)).toEqual({ bc: 2, d: 3 });
+    // The names that stay are the start of the names before.
+    db.run("ALTER TABLE t DROP COLUMN d");
+    expect(q.get(...params)).toEqual({ bc: 2 });
+    // The names before are the start of the names now.
+    db.run("ALTER TABLE t ADD COLUMN e INT DEFAULT 5");
+    expect(q.get(...params)).toEqual({ bc: 2, e: 5 });
+  });
+
+  it.each(statementKinds)("column names that are not ASCII, or empty, %s", (_name, where, params) => {
+    using db = new Database(":memory:");
+    db.run('CREATE TABLE t ("é" INT, "日本" INT, "😀" INT, "" INT); INSERT INTO t VALUES (1, 2, 3, 4)');
+    using q = db.prepare("SELECT * FROM t" + where);
+    expect([q.get(...params), q.get(...params)]).toEqual([
+      { "é": 1, "日本": 2, "😀": 3, "": 4 },
+      { "é": 1, "日本": 2, "😀": 3, "": 4 },
+    ]);
+
+    db.run('ALTER TABLE t RENAME COLUMN "é" TO "è"');
+    expect(q.get(...params)).toEqual({ "è": 1, "日本": 2, "😀": 3, "": 4 });
+    db.run('ALTER TABLE t RENAME COLUMN "日本" TO "日本語"');
+    expect(q.get(...params)).toEqual({ "è": 1, "日本語": 2, "😀": 3, "": 4 });
+    db.run('ALTER TABLE t RENAME COLUMN "" TO "ÿ"');
+    expect(q.get(...params)).toEqual({ "è": 1, "日本語": 2, "😀": 3, "ÿ": 4 });
+    db.run('ALTER TABLE t RENAME COLUMN "😀" TO ""');
+    expect(q.get(...params)).toEqual({ "è": 1, "日本語": 2, "": 3, "ÿ": 4 });
+  });
+
+  // JSFinalObject::maxInlineCapacity is 62: below it the rows share one Structure, above it each row is built by name.
+  it.each(statementKinds)("the column count crosses the inline capacity, %s", (_name, where, params) => {
+    using db = new Database(":memory:");
+    const names = Array.from({ length: 60 }, (_, i) => `c${i}`);
+    db.run(`CREATE TABLE t (${names.map(name => `${name} INT`).join(", ")})`);
+    db.run(`INSERT INTO t VALUES (${names.map((_, i) => i).join(", ")})`);
+    const row = () => Object.fromEntries(names.map(name => [name, name === "last" ? 65 : Number(name.slice(1))]));
+    using q = db.prepare("SELECT * FROM t" + where);
+    const read = () => [Object.keys(q.get(...params)), q.get(...params), q.all(...params)];
+    expect(read()).toEqual([names, row(), [row()]]);
+
+    for (let i = 60; i < 66; i++) {
+      db.run(`ALTER TABLE t ADD COLUMN c${i} INT DEFAULT ${i}`);
+      names.push(`c${i}`);
+      expect(read()).toEqual([names, row(), [row()]]);
+    }
+    db.run("ALTER TABLE t RENAME COLUMN c65 TO last");
+    names[65] = "last";
+    expect(read()).toEqual([names, row(), [row()]]);
+    for (let i = 0; i < 6; i++) {
+      db.run(`ALTER TABLE t DROP COLUMN c${i}`);
+      names.shift();
+      expect(read()).toEqual([names, row(), [row()]]);
+    }
+  });
+
+  it.each(statementKinds)("a kept statement returns what a new statement returns, %s", (_name, where, params) => {
+    using db = new Database(":memory:");
+    // A fixed sequence, so that a failure can be repeated.
+    let seed = 0x1332;
+    const next = n => ((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) >>> 8) % n;
+    const columns = ["a", "b", "ab"];
+    const shapes = columns.flatMap(x => [[x], ...columns.filter(y => y !== x).map(y => [x, y])]);
+    const setTable = (t, shape) => {
+      db.run(`DROP TABLE IF EXISTS t${t}`);
+      db.run(`CREATE TABLE t${t} (${shape.map(column => `${column} INT`).join(", ")})`);
+      db.run(`INSERT INTO t${t} VALUES (${shape.map((_, i) => t * 10 + i).join(", ")})`);
+    };
+    for (let t = 0; t < 3; t++) setTable(t, shapes[next(shapes.length)]);
+
+    const SELECT = "SELECT * FROM t0, t1, t2" + where;
+    using kept = db.prepare(SELECT);
+    kept.get(...params);
+    const differences = [];
+    for (let step = 0; step < 100; step++) {
+      setTable(next(3), shapes[next(shapes.length)]);
+      using fresh = db.prepare(SELECT);
+      const actual = JSON.stringify(Object.entries(kept.get(...params)));
+      const expected = JSON.stringify(Object.entries(fresh.get(...params)));
+      if (actual !== expected) differences.push({ step, actual, expected });
+    }
+    expect(differences).toEqual([]);
+  });
+
+  it.each([false, true])("a kept write statement with RETURNING, safeIntegers: %p", safeIntegers => {
+    using db = new Database(":memory:", { safeIntegers });
+    db.run("CREATE TABLE t (a INT, b INT)");
+    const n = value => (safeIntegers ? BigInt(value) : value);
+    using q = db.prepare("INSERT INTO t VALUES (1, 2) RETURNING *");
+    const read = () => [q.get(), q.all(), [...q.iterate()]];
+    expect(read()).toEqual([{ a: n(1), b: n(2) }, [{ a: n(1), b: n(2) }], [{ a: n(1), b: n(2) }]]);
+
+    db.run("ALTER TABLE t RENAME COLUMN a TO z");
+    expect(read()).toEqual([{ z: n(1), b: n(2) }, [{ z: n(1), b: n(2) }], [{ z: n(1), b: n(2) }]]);
+    expect(db.query("SELECT count(*) AS n FROM t").get()).toEqual({ n: n(6) });
+  });
+
+  // SQLite lets the running program finish, and re-prepares the statement at the start of its next run.
+  it.each([
+    ["db.run()", db => db.run("ALTER TABLE t RENAME COLUMN a TO z")],
+    ["a prepared statement", db => db.prepare("ALTER TABLE t RENAME COLUMN a TO z").run()],
+  ])("a schema change through %s in the middle of iterate()", (_name, alter) => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT, b INT); INSERT INTO t VALUES (1, 2), (3, 4), (5, 6)");
+    using q = db.prepare("SELECT * FROM t");
+    const seen = [];
+    for (const row of q.iterate()) {
+      seen.push(row);
+      if (seen.length === 1) alter(db);
+    }
+    expect(seen).toEqual([
+      { a: 1, b: 2 },
+      { a: 3, b: 4 },
+      { a: 5, b: 6 },
+    ]);
+    expect([...q.iterate()]).toEqual([
+      { z: 1, b: 2 },
+      { z: 3, b: 4 },
+      { z: 5, b: 6 },
+    ]);
+    expect(q.get()).toEqual({ z: 1, b: 2 });
+  });
+
+  it("a run that leaves the column names unchanged keeps the Structure of the rows", async () => {
+    // A realm cannot stop "having a bad time", so this runs in a child.
+    const script = `
+      const { Database } = require("bun:sqlite");
+      const { describe } = require("bun:jsc");
+      const structureOf = row => /StructureID: (\\d+)/.exec(describe(row))[1];
+
+      const db = new Database(":memory:");
+      db.run("CREATE TABLE t (id INT, name TEXT); INSERT INTO t VALUES (1, 't')");
+      db.run("CREATE TABLE u (id INT, name TEXT, extra TEXT); INSERT INTO u VALUES (2, 'u', 'e')");
+      db.run('CREATE TABLE n ("é" INT, "日本" INT, "😀" INT, "" INT); INSERT INTO n VALUES (1, 2, 3, 4)');
+      const statements = {
+        "plain": [db.prepare("SELECT * FROM t"), []],
+        "join with duplicate names": [db.prepare("SELECT * FROM t, u"), []],
+        "join with duplicate names, LIKE ?": [db.prepare("SELECT * FROM t, u WHERE 'x' LIKE ?"), ["x"]],
+        "names that are not ASCII, or empty": [db.prepare("SELECT * FROM n"), []],
+      };
+      const read = () => Object.entries(statements).map(([name, [q, args]]) => [name, q.get(...args)]);
+      // After its first re-prepare, each statement has the record of its names.
+      read();
+      db.run("CREATE TABLE unrelated1 (x)");
+      // These rows stay alive, so their Structures keep their ids.
+      const rows = read();
+
+      // JSGlobalObject::haveABadTime() clears the StructureCache of the realm. The next time a statement builds
+      // its row shape, the rows get a new Structure. If the statement keeps its row shape, they do not.
+      Object.defineProperty(Array.prototype, "0", { configurable: true, set() {} });
+      delete Array.prototype[0];
+
+      const kept = () => Object.fromEntries(rows.map(([name, row]) => {
+        const [q, args] = statements[name];
+        return [name, structureOf(q.get(...args)) === structureOf(row)];
+      }));
+      const result = {};
+      db.prepare("UPDATE t SET name = name").run();
+      result["after a prepared write"] = kept();
+      db.prepare("CREATE TABLE unrelated2 (x)").run();
+      result["after SQLite re-prepared every statement"] = kept();
+
+      class Row {}
+      const [q] = statements.plain;
+      q.as(Row);
+      q.as(undefined);
+      result["as() builds the row shape again"] = structureOf(q.get()) !== structureOf(rows[0][1]);
+      console.log(JSON.stringify(result));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const all = {
+      "plain": true,
+      "join with duplicate names": true,
+      "join with duplicate names, LIKE ?": true,
+      "names that are not ASCII, or empty": true,
+    };
+    expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      result: {
+        "after a prepared write": all,
+        "after SQLite re-prepared every statement": all,
+        "as() builds the row shape again": true,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("script that runs the statement again while all() collects its rows", async () => {
+    // An indexed setter on Array.prototype changes every array in the process, so this runs in a child.
+    const script = `
+      const { Database } = require("bun:sqlite");
+      const db = new Database(":memory:");
+      db.run("CREATE TABLE t (a INT, b INT); INSERT INTO t VALUES (1, 2), (3, 4), (5, 6)");
+      const q = db.prepare("SELECT * FROM t");
+      q.all();
+
+      let calls = 0;
+      Object.defineProperty(Array.prototype, "1", {
+        configurable: true,
+        set(value) {
+          Object.defineProperty(this, "1", { value, writable: true, enumerable: true, configurable: true });
+          if (calls++ > 0) return;
+          // columnTypes resets the statement, steps it and resets it again. The first read ends the run of all().
+          // The second read lets SQLite re-prepare the statement where no row object is built.
+          q.columnTypes;
+          db.run("ALTER TABLE t RENAME COLUMN a TO z");
+          q.columnTypes;
+        },
+      });
+      const rows = q.all();
+      delete Array.prototype[1];
+      console.log(JSON.stringify(rows));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // all() built two rows, then its next step started the reset and re-prepared statement from the first row.
+    expect({ rows: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      rows: [
+        { a: 1, b: 2 },
+        { a: 3, b: 4 },
+        { z: 1, b: 2 },
+        { z: 3, b: 4 },
+        { z: 5, b: 6 },
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("columnTypes reflects the new result shape after a schema change", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT)");
+    db.run("INSERT INTO t VALUES (1)");
+    const q = db.query("SELECT * FROM t");
+    expect(q.columnTypes).toEqual(["INTEGER"]);
+
+    // More columns: the array must grow, not stay truncated at the old count.
+    db.run("ALTER TABLE t ADD COLUMN b TEXT DEFAULT 'x'");
+    expect(q.columnTypes).toEqual(["INTEGER", "TEXT"]);
+
+    // Fewer columns: the array must shrink, not be padded with spurious "NULL"
+    // entries read from out-of-range column indexes.
+    db.run("DROP TABLE t");
+    db.run("CREATE TABLE t (z TEXT)");
+    db.run("INSERT INTO t VALUES ('y')");
+    expect(q.columnTypes).toEqual(["TEXT"]);
+  });
 });
 
 // The process-global SQLite database registry is shared by every Worker

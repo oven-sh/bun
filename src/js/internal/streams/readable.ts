@@ -1671,7 +1671,8 @@ function endReadable(stream) {
 
   $debug("endReadable");
   if ((state[kState] & (kEndEmitted | kEndScheduled)) === 0) {
-    state[kState] |= kEnded | kEndScheduled;
+    // Not in Node: with 'end' queued, the 'readable' that a later listener is owed would come behind it.
+    state[kState] = (state[kState] | kEnded | kEndScheduled) & ~kEofReadablePending;
     process.nextTick(endReadableNT, state, stream);
   }
 }

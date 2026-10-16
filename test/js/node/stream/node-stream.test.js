@@ -1793,16 +1793,91 @@ describe("endReadable() queues one tick for 'end' (nodejs/node#65310)", () => {
 });
 
 describe("an EOF that nothing observes owes its 'readable' to a later listener (nodejs/node#65749)", () => {
-  it("read() takes the 'readable' that is owed", async () => {
-    // With autoDestroy, the stream is destroyed at 'end' and emits no 'readable' behind it in any case.
-    const r = new Readable({ read() {}, autoDestroy: false });
-    r.push(null);
-    expect(r.read()).toBe(null);
+  // Every tick of a stream runs before an immediate.
+  const immediate = () => new Promise(resolve => setImmediate(resolve));
+  function watch(r) {
     const events = [];
+    r.on("readable", () => events.push(`readable ${r.read()}`));
+    r.on("end", () => events.push("end"));
+    return events;
+  }
+
+  // The five cases of test-stream-readable-unobserved-eof-readable.js, which Node.js v26.9.0 has.
+  it("a 'readable' listener in the tick of the EOF gets 'readable', then 'end'", async () => {
+    const r = new Readable({ read() {} });
+    r.push(null);
+    const events = watch(r);
+    await immediate();
+    expect(events).toEqual(["readable null", "end"]);
+  });
+
+  it("a 'readable' listener that comes an immediate later gets 'readable', then 'end'", async () => {
+    const r = new Readable({ read() {} });
+    r.push(null);
+    await immediate();
+    const events = watch(r);
+    await immediate();
+    expect(events).toEqual(["readable null", "end"]);
+  });
+
+  it("resume() an immediate later ends the stream", async () => {
+    const r = new Readable({ read() {} });
+    r.push(null);
+    await immediate();
+    const events = [];
+    r.on("end", () => events.push("end"));
+    r.resume();
+    await immediate();
+    expect(events).toEqual(["end"]);
+  });
+
+  it("read() an immediate later ends the stream", async () => {
+    const r = new Readable({ read() {} });
+    r.push(null);
+    await immediate();
+    const events = [`read ${r.read()}`];
+    r.on("end", () => events.push("end"));
+    await immediate();
+    expect(events).toEqual(["read null", "end"]);
+  });
+
+  it("a 'data' listener that comes an immediate later gets the chunk, then 'end'", async () => {
+    const r = new Readable({ read() {} });
+    r.push("x");
+    r.push(null);
+    await immediate();
+    const events = [];
+    r.on("data", chunk => events.push(`data ${chunk}`));
+    r.on("end", () => events.push("end"));
+    await immediate();
+    expect(events).toEqual(["data x", "end"]);
+  });
+
+  // autoDestroy: false in the next two. A stream that 'end' destroyed emits no 'readable' in any case.
+  it("a read() that takes the last chunk takes the 'readable' that is owed", async () => {
+    const r = new Readable({ read() {}, autoDestroy: false });
+    r.push("x");
+    r.push(null);
+    const events = [`read ${r.read(1)}`];
     r.on("readable", () => events.push("readable"));
     r.on("end", () => events.push("end"));
-    // Every tick of the stream runs before an immediate.
-    await new Promise(resolve => setImmediate(resolve));
+    await immediate();
+    expect(events).toEqual(["read x", "end"]);
+  });
+
+  // Node.js v26.11.1 gives ["end", "readable"]: the read(0) of resume() queues 'end' and leaves the 'readable' owed.
+  it("no 'readable' comes behind 'end' after resume() and pause()", async () => {
+    const r = new Readable({ read() {}, autoDestroy: false });
+    r.push(null);
+    r.resume();
+    r.pause();
+    const events = [];
+    // This tick is behind the one of resume(), which queues 'end', and before the one of 'end'.
+    process.nextTick(() => {
+      r.on("readable", () => events.push("readable"));
+      r.on("end", () => events.push("end"));
+    });
+    await immediate();
     expect(events).toEqual(["end"]);
   });
 });

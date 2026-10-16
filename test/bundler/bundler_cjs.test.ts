@@ -1573,6 +1573,7 @@ describe("bundler", () => {
       error: "Error: dep failed to load",
       validate({ stderr }) {
         expect(stderr).toContain('throw new Error("dep failed to load");');
+        expect(stderr).toContain("Error: dep failed to load");
       },
     },
   });

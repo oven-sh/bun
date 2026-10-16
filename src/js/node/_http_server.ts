@@ -731,6 +731,8 @@ Server.prototype.listen = function () {
     }
 
     if (cluster === undefined) cluster = require("node:cluster");
+    // Any listen() makes the primary's answer to an earlier one stale, as node's _listeningId does.
+    const listeningId = ++server[kClusterListeningId];
 
     // exclusive (or reusePort, which implies it) binds in the worker, as in node.
     if (exclusive) {
@@ -739,13 +741,11 @@ Server.prototype.listen = function () {
     }
     // No channel (NODE_UNIQUE_ID without a primary), or Windows, where accept() on copies of one socket blocks.
     if (!process.connected || process.platform === "win32" || !primaryCanBind(port, host, socketPath, fd)) {
-      notifyPrimaryWhenListening(server, port, host, socketPath);
-      // Workers on one fixed port still share it through SO_REUSEPORT.
-      listenOnOwnSocket(server, tls, port, host, socketPath, true, fd);
+      listenOnOwnSocketInWorker(server, tls, port, host, socketPath, fd);
       return this;
     }
 
-    listenInCluster(server, tls, port, host, socketPath, fd);
+    listenInCluster(server, listeningId, tls, port, host, socketPath, fd);
   } catch (err) {
     // A listener that Bun.serve() created before the failure must not stay up behind the 'error'.
     if (server[serverSymbol]) server.close();
@@ -767,14 +767,23 @@ function listenOnOwnSocket(server, tls, port, host, socketPath, reusePort, fd) {
   }
 }
 
+// The primary's bind takes what node's takes. Bun.serve({ unix }) also binds a path longer than sun_path.
 function primaryCanBind(port, host, socketPath, fd) {
   if (fd !== undefined) return true;
-  if (socketPath) return typeof socketPath === "string";
+  if (socketPath) {
+    return typeof socketPath === "string" && Buffer.byteLength(socketPath) < (process.platform === "linux" ? 108 : 104);
+  }
   if (host != null && typeof host !== "string") return false;
   return typeof port === "number" && port === (port | 0) && port >= 0 && port <= 65535;
 }
 
-// A worker that bound its own socket still reports it, so cluster.on("listening") fires.
+// The worker binds its own socket and reports it, so cluster.on("listening") fires. Workers on one
+// fixed port still share it through SO_REUSEPORT.
+function listenOnOwnSocketInWorker(server, tls, port, host, socketPath, fd) {
+  notifyPrimaryWhenListening(server, port, host, socketPath);
+  listenOnOwnSocket(server, tls, port, host, socketPath, true, fd);
+}
+
 function notifyPrimaryWhenListening(server, port, host, socketPath) {
   server.once("listening", () => {
     if (!process.connected) return;
@@ -795,8 +804,7 @@ function notifyPrimaryWhenListening(server, port, host, socketPath) {
 }
 
 // net.Server's listenInCluster, always sharedOnly (as for TLS there): Bun.serve accepts natively.
-function listenInCluster(server, tls, port, host, socketPath, fd) {
-  const listeningId = ++server[kClusterListeningId];
+function listenInCluster(server, listeningId, tls, port, host, socketPath, fd) {
   // The (address, port, addressType, fd) tuple keys the primary's handles, so it must match net.Server's.
   if (fd !== undefined) {
     queryPrimary(server, listeningId, tls, port, host, socketPath, fd, null, null, null);
@@ -834,16 +842,22 @@ function listenInCluster(server, tls, port, host, socketPath, fd) {
 function queryPrimary(server, listeningId, tls, port, host, socketPath, fd, address, queryPort, addressType) {
   const serverQuery = { address, port: queryPort, addressType, fd, flags: 0, sharedOnly: true };
   cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle, reply) {
-    if (listeningId !== server[kClusterListeningId]) {
-      // close() or another listen() came first: give the primary's handle straight back.
+    // close(), another listen() or a disconnect came first: give the primary's handle straight back.
+    if (listeningId !== server[kClusterListeningId] || cluster.worker.exitedAfterDisconnect) {
       handle?.close();
       return;
     }
     const sharedFd = handle?.sharedFd;
     if (!err && typeof sharedFd !== "number") {
-      // A round-robin handle despite sharedOnly (a foreign primary).
+      // A round-robin handle despite sharedOnly: a primary that is not bun. Bind as before the query.
       handle?.close();
-      err = process.binding("uv").UV_EINVAL;
+      try {
+        listenOnOwnSocketInWorker(server, tls, port, host, socketPath, fd);
+      } catch (bindError) {
+        if (server[serverSymbol]) server.close();
+        process.nextTick(emitListenErrorNextTick, server, bindError);
+      }
+      return;
     }
     if (err) {
       const ex = new ExceptionWithHostPort(err, "bind", address, queryPort);
@@ -870,8 +884,8 @@ function queryPrimary(server, listeningId, tls, port, host, socketPath, fd, addr
         handle.adopted = false;
         releaseClusterHandle(server);
       }
-      if (fd !== undefined && err?.syscall === "listen") err = listenFdError(err.code) || err;
-      process.nextTick(emitListenErrorNextTick, server, err);
+      const listenError = fd !== undefined && err?.syscall === "listen" ? listenFdError(err.code) || err : err;
+      process.nextTick(emitListenErrorNextTick, server, listenError);
     }
   });
 }

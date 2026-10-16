@@ -106,12 +106,15 @@ pub(crate) fn set_override_module_run_main(vm: &mut VirtualMachine, is_patched: 
 // HOST_EXPORT(Bun__VirtualMachine__entryPointTakesRunMain, c)
 pub(crate) fn entry_point_takes_run_main(
     vm: &mut VirtualMachine,
+    name: &bun_core::String,
     key: &bun_core::String,
     promise: *mut JSInternalPromise,
 ) -> bool {
     if !vm.has_patched_run_main {
-        // `reload_entry_point` loads the entry point itself.
-        return vm.is_entry_point(key);
+        // `reload_entry_point` loads the entry point itself. Run as `node`, `main` is the path as typed.
+        return key.eql_utf8(bun_jsc::virtual_machine::MAIN_FILE_NAME)
+            || key.eql_utf8(vm.main())
+            || name.eql_utf8(vm.main());
     }
     // `reload_entry_point` takes the first load of the `Module.runMain` that it calls.
     if vm.pending_internal_promise().is_none() {

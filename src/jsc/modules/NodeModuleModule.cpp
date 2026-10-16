@@ -800,7 +800,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::Ca
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" bool Bun__VirtualMachine__entryPointTakesRunMain(void* bunVM, const BunString* key, JSPromise* promise);
+extern "C" bool Bun__VirtualMachine__entryPointTakesRunMain(void* bunVM, const BunString* name, const BunString* key, JSPromise* promise);
 BUN_DECLARE_HOST_FUNCTION(Bun__onRunMainRejected);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -816,8 +816,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
+    BunString nameString = Bun::toString(name);
     BunString keyString = Bun::toString(key.string());
-    if (Bun__VirtualMachine__entryPointTakesRunMain(defaultGlobalObject(globalObject)->bunVM(), &keyString, promise))
+    if (Bun__VirtualMachine__entryPointTakesRunMain(defaultGlobalObject(globalObject)->bunVM(), &nameString, &keyString, promise))
         return JSC::JSValue::encode(JSC::jsUndefined());
 
     // JSC marks this promise as handled. Node raises an uncaught exception: https://github.com/nodejs/node/blob/v26.12.0/lib/internal/modules/run_main.js#L111

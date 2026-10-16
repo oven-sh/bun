@@ -3398,26 +3398,6 @@ impl VirtualMachine {
         self.main = bun_ptr::RawSlice::new(path);
     }
 
-    /// Whether `key` names the module that `bun:main` imports.
-    pub fn is_entry_point(&mut self, key: &bun_core::String) -> bool {
-        let main = self.main;
-        if key.eql_utf8(MAIN_FILE_NAME) || key.eql_utf8(main.slice()) {
-            return true;
-        }
-        // Run as `node`, `main` is the path as typed: the import adds an extension and follows a symlink.
-        let mut resolved = ResolveFunctionResult::default();
-        self._resolve(
-            &mut resolved,
-            main.slice(),
-            MAIN_FILE_NAME,
-            true,
-            false,
-            bun_resolver::GlobalCache::disable,
-        )
-        .is_ok()
-            && key.eql_utf8(resolved.path)
-    }
-
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
     /// `promise` settles. Thin forwarder; body lives in
     /// [`crate::event_loop::EventLoop::wait_for_promise`].

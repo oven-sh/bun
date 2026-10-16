@@ -3816,7 +3816,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let str = value.to_slice(self.global_this)?;
+            let str = value.to_utf8(self.global_this)?;
             let mut rest = str.slice();
             let mut writer = WrappedWriter {
                 ctx: writer_,

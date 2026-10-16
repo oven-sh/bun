@@ -751,9 +751,7 @@ impl Channel {
             sock_state_cb_data: std::ptr::from_ref::<C>(this).cast_mut().cast::<c_void>(),
             timeout: options.timeout.unwrap_or(-1),
             tries: options.tries.unwrap_or(4),
-            // Disable the c-ares query cache (on by default since 1.31, 1 hour
-            // max TTL) like Node does. c-ares caches a NODATA answer for the
-            // full hour regardless of the SOA TTL (c-ares/c-ares#1293).
+            // No query cache, like Node. c-ares defaults to a 1 hour cache.
             qcache_max_ttl: 0,
             ..Default::default()
         };

@@ -28,7 +28,7 @@ const canInjectOpenat2Error =
   }).exitCode === 0;
 
 describe("Bun.serve() directory routes", () => {
-  let server: Server | undefined;
+  let server: Server<undefined> | undefined;
 
   afterEach(() => {
     server?.stop(true);
@@ -44,7 +44,7 @@ describe("Bun.serve() directory routes", () => {
     let buf = "";
     const sock = await Bun.connect({
       hostname: "127.0.0.1",
-      port: server!.port,
+      port: server!.port!,
       socket: {
         data(_s, chunk) {
           buf += chunk.toString("latin1");
@@ -479,6 +479,39 @@ describe("Bun.serve() directory routes", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const trace = await Bun.file(traceFile).text();
     expect(trace, stderr).toMatch(/openat2\(.*"escape-rel".*= -1 EPERM .*\(INJECTED\)/);
+    expect(stdout.trim(), stderr).toBe(`[[404,""],[404,""],[200,"ok"]]`);
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(!isLinux)("keeps clamping symlinks to the root when only Android's variables are set", async () => {
+    using dir = tempDir("serve-dir-android-env", {
+      "secret.txt": "SECRET",
+      "public/ok.txt": "ok",
+    });
+    const root = String(dir);
+    symlinkSync("../secret.txt", join(root, "public", "escape-rel"));
+    symlinkSync(join(root, "secret.txt"), join(root, "public", "escape-abs"));
+
+    const script = `
+        const server = Bun.serve({
+          port: 0,
+          routes: { "/static/*": { dir: ${JSON.stringify(join(root, "public"))} } },
+        });
+        const out = [];
+        for (const p of ["escape-rel", "escape-abs", "ok.txt"]) {
+          const res = await fetch(server.url + "static/" + p);
+          out.push([res.status, await res.text()]);
+        }
+        server.stop(true);
+        console.log(JSON.stringify(out));
+      `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, ANDROID_ROOT: join(root, "system"), ANDROID_DATA: join(root, "data") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim(), stderr).toBe(`[[404,""],[404,""],[200,"ok"]]`);
     expect(exitCode).toBe(0);
   });

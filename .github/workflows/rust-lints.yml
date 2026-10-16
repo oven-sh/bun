@@ -10,6 +10,7 @@ on:
       - "src/**/*.rs"
       - "src/**/Cargo.toml"
       - "src/**/*.classes.ts"
+      - "src/**/*.bind.ts"
       - "src/codegen/**"
       - "scripts/build/**"
       - "scripts/build.ts"

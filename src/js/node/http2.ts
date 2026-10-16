@@ -27,6 +27,7 @@
  * Modifications were made to the original code.
  */
 const { isTypedArray } = require("node:util/types");
+const { aggregateTwoErrors } = require("internal/errors");
 const { hideFromStack, hasObserver, enqueueNodeEntry, PerformanceNodeEntry } = require("internal/shared");
 const { STATUS_CODES, utcDate } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
@@ -2060,6 +2061,8 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
+  // close(code) stored its code, before its listeners ran. _destroy keeps that code, NGHTTP2_NO_ERROR included.
+  CloseRecorded = 1 << 9, // 1000000000 = 512
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2226,6 +2229,10 @@ function markStreamClosed(stream: Http2Stream) {
     markWritableDone(stream);
   }
 }
+// True while close() runs its listeners and end(): the code it stored is then not the code of a reset that happened.
+function isInsideClose(status: number) {
+  return (status & (StreamState.Closed | StreamState.CloseRecorded)) === StreamState.CloseRecorded;
+}
 function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
   session[bunHTTP2Native]?.rstStream(id, rstCode);
@@ -2273,7 +2280,9 @@ function setupRequestEndAndSignal(req: Http2Stream, options: any, signal: AbortS
 // an 'error' event), and stream teardown must not wait a tick.
 function destroyStreamForSessionDestroy(error: Error | undefined, rstCode: number, stream: Http2Stream) {
   if (stream.destroyed) return;
-  if (rstCode && !stream.rstCode) stream.rstCode = rstCode;
+  if (rstCode && !stream.rstCode && (stream[bunHTTP2StreamStatus] & StreamState.CloseRecorded) === 0) {
+    stream.rstCode = rstCode;
+  }
   // A clean session teardown can reach here while a stream's already-received request data is
   // still being drained by its consumer: the native side is done with the stream (state 7,
   // which is what allowed the session to start destroying), but the JS side is not. Destroying
@@ -2570,9 +2579,22 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         validateFunction(callback, "callback");
         this.once("close", callback);
       }
+      // A listener of a close() that is still running called close(): the first code stays, as in node.
+      if ((this[bunHTTP2StreamStatus] & StreamState.CloseRecorded) !== 0) return;
+      // Stored before 'aborted', like https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2013
+      this.rstCode = code;
+      this[bunHTTP2StreamStatus] |= StreamState.CloseRecorded;
+      let thrown: unknown;
+      let threw = false;
       if (this.pending || code === NGHTTP2_NO_ERROR || code === NGHTTP2_CANCEL) {
         // For other rstCodes _destroy ends the readable so 'end' is suppressed.
-        this.push(null);
+        try {
+          this.push(null);
+        } catch (err) {
+          // A listener that throws does not stop the close: node main has submitted its reset by then (nodejs/node#66314).
+          thrown = err;
+          threw = true;
+        }
       }
       const { ending } = this._writableState;
       if (!ending) {
@@ -2580,7 +2602,12 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         // 'aborted' event and set the aborted flag.
         if (!this.aborted) {
           this[kAborted] = true;
-          this.emit("aborted");
+          try {
+            this.emit("aborted");
+          } catch (err) {
+            thrown = threw ? aggregateTwoErrors(err as Error, thrown as Error) : err;
+            threw = true;
+          }
         }
         this.end();
       }
@@ -2591,7 +2618,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
         this.once("ready", sendRstOnReady.bind(this, session, code));
       } else if (this.writableFinished || code) {
-        setImmediate(rstNextTick.bind(session, this.#id, code));
+        // A listener that destroyed the stream made _destroy queue this reset, with the code stored above.
+        if (this[bunHTTP2Session] !== null) setImmediate(rstNextTick.bind(session, this.#id, code));
       } else {
         this.once("finish", rstNextTick.bind(session, this.#id, code));
       }
@@ -2602,6 +2630,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       } else {
         this.once("finish", scheduleDestroyIfNotDestroyed.bind(null, this));
       }
+      if (threw) throw thrown;
     }
   }
   _destroy(err, callback) {
@@ -2609,6 +2638,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     // push(null)) and a throwing listener would otherwise skip the clear and
     // leave a retained stream pinning the store.
     this[bunHTTP2AsyncContextFrame] = undefined;
+    // Read before 'aborted' below: a close(0) from that listener is not a stored NGHTTP2_NO_ERROR for this destroy.
+    const closeRecorded = (this[bunHTTP2StreamStatus] & StreamState.CloseRecorded) !== 0;
     const { ending } = this._writableState;
     this.push(null);
     // A pushed stream's request was synthesized by the server, so its local (writable) half is
@@ -2631,7 +2662,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     assertSession(session);
 
     let rstCode = this.rstCode;
-    if (!rstCode) {
+    // A pushed stream does not keep NGHTTP2_NO_ERROR from close(): native rstStream(id, 0) writes nothing for its id.
+    if (rstCode === undefined || (rstCode === 0 && (!closeRecorded || this[kPush]))) {
       if (err != null) {
         if (err.code === "ABORT_ERR") {
           // Enables using AbortController to cancel requests with RST code 8.
@@ -4111,11 +4143,12 @@ class ServerHttp2Session extends Http2Session {
       }
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
-        stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
+        const status = stream[bunHTTP2StreamStatus];
+        stream[bunHTTP2StreamStatus] = status | StreamState.NativeClosed;
         markStreamClosed(stream);
         self.#connections--;
         if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
-        if (stream.readable && !stream.rstCode) {
+        if (stream.readable && (!stream.rstCode || isInsideClose(status))) {
           // Clean close while data is still buffered on the readable side (e.g. the response
           // ended before the request body was consumed): node defers the destroy until the
           // consumer drains it ('end'), so the buffered request body is not lost.
@@ -5112,10 +5145,11 @@ class ClientHttp2Session extends Http2Session {
 
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
-        stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
+        const status = stream[bunHTTP2StreamStatus];
+        stream[bunHTTP2StreamStatus] = status | StreamState.NativeClosed;
         markStreamClosed(stream);
         self.#connections--;
-        if (stream.readable && !stream.rstCode) {
+        if (stream.readable && (!stream.rstCode || isInsideClose(status))) {
           // Clean close while data is still buffered on the readable side: node defers the
           // destroy until the consumer drains it ('end'), so a late-attaching reader does not
           // lose data.
@@ -5159,7 +5193,8 @@ class ClientHttp2Session extends Http2Session {
         headersTuple: [string[], Record<string, any>, string[] | undefined],
         flags: number,
       ) => {
-        if (!self || typeof stream !== "object" || stream.rstCode) return;
+        if (!self || typeof stream !== "object") return;
+        if (stream.rstCode && !isInsideClose(stream[bunHTTP2StreamStatus])) return;
         let rawheaders = headersTuple[0];
         let headers = headersTuple[1];
         if (self.#strictFieldWhitespaceValidation) {

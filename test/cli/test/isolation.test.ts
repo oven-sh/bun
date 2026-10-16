@@ -1515,6 +1515,22 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect(JSON.parse(lines[0]).slice(0, 5)).toEqual(["function", Math.PI, false, "map", null]);
   });
 
+  test("what a file defines without \`configurable\` is undone too", async () => {
+    const state = `JSON.stringify(["fixed" in Array.prototype, "fixedGlobal" in globalThis, typeof Math.min, Object.getOwnPropertyDescriptor(Math, "min").configurable, "after" in Array.prototype])`;
+    const files = {
+      "a.test.js": `test("a", () => {
+        console.log(${state});
+        Object.defineProperty(Array.prototype, "fixed", { value: 1 });
+        Array.prototype.after = 1;
+        Object.defineProperty(globalThis, "fixedGlobal", { value: 1 });
+        Object.defineProperty(Math, "min", { value: 1, writable: false, configurable: false });
+      });`,
+      "b.test.js": `test("b", () => { console.log(${state}); });`,
+    };
+    const lines = (await passes(files, 2)).split("\n").filter(line => line.startsWith("["));
+    expect(lines).toEqual(Array(2).fill(JSON.stringify([false, false, "function", true, false])));
+  });
+
   test("the global object and the builtin modules are the same for every file", async () => {
     const files = {
       "a.test.js": `import fs from "node:fs"; test("a", () => { fs.arrayOfA = Array; });`,

@@ -12,6 +12,12 @@ const indexesOfChanged: (objects: object[], shapes: unknown[]) => number[] = $ne
   "jsFunctionIndexesOfChangedObjects",
   2,
 );
+// Also deletes a property that isn't configurable.
+const deleteOwnProperty: (object: object, key: PropertyKey) => boolean = $newCppFunction(
+  "TestEnvironment.cpp",
+  "jsFunctionDeleteOwnProperty",
+  2,
+);
 
 // This module is evaluated before any test file runs. Test files can patch builtins later,
 // so only use what's captured here, $-private names, index loops and null-prototype descriptors.
@@ -108,12 +114,17 @@ function restoreProperties(object: object, properties: Properties, size: number)
     // The next file's window replaces these.
     if (object === globalThis && isEnvironmentGlobal(key)) continue;
     if (!saved) {
-      if (isTracked(object, key)) delete (object as any)[key];
+      if (isTracked(object, key)) deleteOwnProperty(object, key);
       continue;
     }
     const current = getOwnPropertyDescriptor(object, key)!;
-    if (!isSame(current, saved) && ($getByIdDirect(current, "configurable") || $getByIdDirect(current, "writable")))
-      defineProperty(object, key, saved);
+    if (isSame(current, saved)) continue;
+    if (!$getByIdDirect(current, "configurable") && !$getByIdDirect(current, "writable")) {
+      // Some builtins have a read-only property that gives a new value each time it's read.
+      if (!saved.configurable) continue;
+      deleteOwnProperty(object, key);
+    }
+    defineProperty(object, key, saved);
   }
   if (found === size) return;
   properties.$forEach((saved, key) => {

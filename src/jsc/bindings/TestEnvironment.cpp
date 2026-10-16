@@ -127,4 +127,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIndexesOfChangedObjects, (JSC::JSGlobalObject
     return JSC::JSValue::encode(JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), changed));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionDeleteOwnProperty, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* object = asObject(callFrame->uncheckedArgument(0));
+    auto key = callFrame->uncheckedArgument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::VM::DeletePropertyModeScope ignoreConfigurable(vm, JSC::VM::DeletePropertyMode::IgnoreConfigurable);
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsBoolean(JSC::JSCell::deleteProperty(object, globalObject, key))));
+}
+
 } // namespace Bun

@@ -2242,8 +2242,7 @@ fn form_data_parse_error(global_object: &JSGlobalObject, err: &crate::Error) -> 
         .to_js()
 }
 
-/// `formData()` of a body whose bytes are in a file or in S3: read them, then
-/// parse them with the encoding that the call decided.
+/// `formData()` of a body in a file or in S3: reads the bytes, then parses them.
 struct FormDataBodyRead {
     encoding: webcore::form_data::Encoding,
     promise: jsc::JSPromiseStrong,
@@ -2259,20 +2258,18 @@ impl FormDataBodyRead {
         source: &Blob,
         encoding: webcore::form_data::Encoding,
     ) -> JsResult<JSValue> {
-        let read = Box::new(FormDataBodyRead {
+        let promise = jsc::JSPromiseStrong::init(global);
+        let promise_value = promise.value();
+        let read = bun_core::heap::into_raw(Box::new(FormDataBodyRead {
             encoding,
-            promise: jsc::JSPromiseStrong::init(global),
+            promise,
             global: bun_ptr::BackRef::new(global),
-        });
-        // Taken before the read starts: a read that cannot start delivers its
-        // failure, which frees `read`, before it returns.
-        let promise = read.promise.value();
-        let read = bun_core::heap::into_raw(read);
+        }));
         // SAFETY: `read` was leaked on the line above and is not used again
         // here. `read_bytes_to_handler` hands it to `on_read_bytes` exactly
         // once, also when it returns `Err`.
         unsafe { source.read_bytes_to_handler(read, &global.js_thread_of_caller(callframe)) }?;
-        Ok(promise)
+        Ok(promise_value)
     }
 }
 

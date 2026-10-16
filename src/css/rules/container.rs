@@ -150,6 +150,8 @@ impl QueryCondition for StyleQuery {
         // The arena gets re-threaded as part of the crate-wide `'bump`
         // lifetime work (see css_parser.rs).
         let opts = css::ParserOptions::default(None);
+        // `style()` holds a declaration, so its `url()` resolves like one and
+        // still matches the rewritten custom property it is compared with.
         let feature = StyleQuery::Feature(Box::new(Property::parse(property_id, input, &opts)?));
         let _ = input.try_parse(css::css_parser::parse_important);
         Ok(feature)

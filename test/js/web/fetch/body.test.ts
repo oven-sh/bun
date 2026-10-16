@@ -2037,3 +2037,94 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     expect(await text).toBe("payload");
   });
 });
+
+// The Content-Type that a Blob-like body gives a Response or Request is set at
+// construction (fetch spec "extract a body"), so reading the body first must
+// not lose it. https://github.com/oven-sh/bun/issues/45245
+describe("the body's Content-Type is still in the headers after the body is consumed", () => {
+  const owners = {
+    Response: (body: BodyInit, init?: ResponseInit) => new Response(body, init),
+    Request: (body: BodyInit, init?: RequestInit) =>
+      new Request("http://example.com/", { method: "POST", body, ...init }),
+  };
+  const bodies: Record<string, [() => BodyInit, string | RegExp]> = {
+    FormData: [
+      () => {
+        const fd = new FormData();
+        fd.append("field", "value");
+        return fd;
+      },
+      /^multipart\/form-data; boundary=.+/,
+    ],
+    URLSearchParams: [() => new URLSearchParams({ field: "value" }), "application/x-www-form-urlencoded;charset=UTF-8"],
+    Blob: [() => new Blob(["value"], { type: "text/x-custom" }), "text/x-custom"],
+  };
+
+  for (const [ownerName, make] of Object.entries(owners)) {
+    for (const [bodyName, [body, expected]] of Object.entries(bodies)) {
+      describe(`${ownerName}(${bodyName})`, () => {
+        const check = (contentType: string | null) =>
+          typeof expected === "string" ? expect(contentType).toBe(expected) : expect(contentType).toMatch(expected);
+
+        test.each(["text", "arrayBuffer", "bytes", "blob"] as const)(".%s() then .headers", async method => {
+          const owner = make(body());
+          await owner[method]();
+          check(owner.headers.get("content-type"));
+        });
+
+        test("draining .body with a reader, then .headers", async () => {
+          const owner = make(body());
+          const reader = owner.body!.getReader();
+          while (!(await reader.read()).done);
+          check(owner.headers.get("content-type"));
+        });
+
+        test("clone(), consume the clone, then clone.headers", async () => {
+          const owner = make(body());
+          const clone = owner.clone();
+          await clone.text();
+          check(clone.headers.get("content-type"));
+          check(owner.headers.get("content-type"));
+        });
+
+        test("an empty headers init, consume, then .headers", async () => {
+          const owner = make(body(), { headers: new Headers() });
+          await owner.text();
+          check(owner.headers.get("content-type"));
+        });
+
+        test("an explicit Content-Type wins, before and after consumption", async () => {
+          const owner = make(body(), { headers: { "content-type": "text/x-explicit" } });
+          await owner.text();
+          expect(owner.headers.get("content-type")).toBe("text/x-explicit");
+        });
+      });
+    }
+
+    test(`${ownerName}(string) has no Content-Type before or after consumption`, async () => {
+      const owner = make("value");
+      const before = owner.headers.get("content-type");
+      await owner.text();
+      expect({ before, after: owner.headers.get("content-type") }).toEqual({ before: null, after: null });
+    });
+
+    test(`${ownerName}(FormData): the boundary in the header is the one in the body read first`, async () => {
+      const owner = make(bodies.FormData[0]());
+      const text = new TextDecoder().decode(await owner.arrayBuffer());
+      const contentType = owner.headers.get("content-type")!;
+      expect(contentType).toStartWith("multipart/form-data; boundary=");
+      expect(text).toStartWith("--" + contentType.slice("multipart/form-data; boundary=".length));
+    });
+  }
+
+  test("Request(ReadableStream) has no Content-Type, like node", () => {
+    const stream = new Blob(["value"], { type: "text/x-custom" }).stream();
+    const req = new Request("http://example.com/", { method: "POST", body: stream });
+    expect(req.headers.get("content-type")).toBeNull();
+  });
+
+  test("new Request(input, { headers }) does not take the Content-Type from the input's body", () => {
+    const input = owners.Request(bodies.Blob[0]());
+    expect(new Request(input, { headers: { "x-a": "1" } }).headers.get("content-type")).toBeNull();
+  });
+});

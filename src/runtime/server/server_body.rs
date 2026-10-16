@@ -1747,17 +1747,16 @@ where
                 .map_or(Utf8Bytes::EMPTY, |value| value.to_utf8().into_owned())
         };
         let upgrade_header = header(HTTPHeaderName::Upgrade);
-        let connection_header = header(HTTPHeaderName::Connection);
         let sec_websocket_key = header(HTTPHeaderName::SecWebSocketKey);
         let sec_websocket_version = header(HTTPHeaderName::SecWebSocketVersion);
         let sec_websocket_extensions = header(HTTPHeaderName::SecWebSocketExtensions);
         let offered_protocols = header(HTTPHeaderName::SecWebSocketProtocol);
 
-        // RFC 6455 §4.2.1: a WebSocket handshake needs "websocket" in |Upgrade|,
-        // "Upgrade" in |Connection|, and 16 base64-encoded bytes in |Sec-WebSocket-Key|.
-        // Otherwise fall through so the caller's fetch() can respond.
+        // RFC 6455 §4.2.1: a WebSocket handshake needs "websocket" in |Upgrade| and 16
+        // base64-encoded bytes in |Sec-WebSocket-Key|. Otherwise fall through so the caller's
+        // fetch() can respond. |Connection| isn't checked: it's hop-by-hop, so a proxy may have
+        // rewritten it.
         if !header_has_token(&upgrade_header, b"websocket")
-            || !header_has_token(&connection_header, b"upgrade")
             || !is_valid_sec_websocket_key(&sec_websocket_key)
         {
             return Ok(JSValue::FALSE);

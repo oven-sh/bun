@@ -405,6 +405,11 @@ impl ServerWebSocket {
         fn_name: &'static str,
         accept: Accept,
     ) -> JsResult<JSValue> {
+        // A closed socket ignores the call, whatever the arguments are. A `close` handler that
+        // passes `undefined` here must not throw.
+        if self.is_closed() {
+            return Ok(JSValue::js_number(0.0));
+        }
         let [message_value, compress_value] = callframe.arguments_as_array::<2>();
         if callframe.arguments_count() < 1 {
             return Err(global_this.throw(format_args!("{fn_name} requires at least 1 argument")));
@@ -457,6 +462,9 @@ impl ServerWebSocket {
         fn_name: &'static str,
         opcode: Opcode,
     ) -> JsResult<JSValue> {
+        if self.is_closed() {
+            return Ok(JSValue::js_number(0.0));
+        }
         let payload =
             payload_from_js(global_this, fn_name, callframe.argument(0), Accept::Control)?;
         let bytes = payload.bytes();
@@ -533,6 +541,9 @@ impl ServerWebSocket {
         fn_name: &'static str,
         op: impl FnOnce(AnyWebSocket, &[u8]) -> bool,
     ) -> JsResult<JSValue> {
+        if self.is_closed() {
+            return Ok(JSValue::FALSE);
+        }
         if callframe.arguments_count() < 1 {
             return Err(global_this.throw(format_args!("{fn_name} requires at least 1 argument")));
         }
@@ -1128,40 +1139,25 @@ impl ServerWebSocket {
         let [code_value, reason_value] = callframe.arguments_as_array::<2>();
         bun_output::scoped_log!(WebSocketServer, "close()");
 
-        let code_number: f64 = if code_value.is_undefined() {
-            1000.0
-        } else if let Some(number) = code_value.get_number() {
-            number
+        if self.is_closed() {
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        let code: i32 = if code_value.is_undefined() {
+            1000
+        } else if code_value.is_number() {
+            code_value.coerce_to_i32(global_this)?
         } else {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "close requires a numeric code or undefined"
             )));
         };
-        // `as` drops the fraction, maps NaN to 0 and saturates, so an out-of-range number stays
-        // out of range. ToInt32 would wrap 2**32 + 1000 to 1000 and Infinity to 0.
-        let code = code_number as i32;
         let reason: Utf8Bytes = if reason_value.is_undefined() {
             Utf8Bytes::EMPTY
         } else {
             reason_value.to_utf8(global_this)?
         };
-        let (code, reason): (i32, &[u8]) =
-            if u16::try_from(code).is_ok_and(bun_http::websocket::is_valid_close_code) {
-                (
-                    code,
-                    bun_core::strings::truncate_to_char_boundary(reason.slice(), MAX_CLOSE_REASON),
-                )
-            } else if matches!(code, 0 | 1005 | 1006 | 1015) {
-                // `close` handlers report these codes when no code was received. Passing one
-                // back in sends an empty Close frame.
-                (1005, [].as_slice())
-            } else {
-                let err = global_this.create_range_error_instance(format_args!(
-                    "The close code must be 1000-1003, 1007-1014 or 3000-4999. Received {}",
-                    bun_core::fmt::double(code_number),
-                ));
-                return Err(global_this.throw_value(err));
-            };
+        let reason = bun_core::strings::truncate_to_char_boundary(reason.slice(), MAX_CLOSE_REASON);
 
         if self.is_closed() {
             return Ok(JSValue::UNDEFINED);

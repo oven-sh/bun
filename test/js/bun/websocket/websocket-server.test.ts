@@ -2523,14 +2523,13 @@ describe("server.upgrade() validates the opening handshake", () => {
     expect((await rawHandshake(["Upgrade: keep-alive, websocket", C, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
     // So is Connection (Firefox sends this one).
     expect((await rawHandshake([U, "Connection: keep-alive, upgrade", `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
-    expect(opened).toBe(4);
+    // Connection is hop-by-hop, so a proxy may have dropped or rewritten it.
+    expect((await rawHandshake([U, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
+    expect((await rawHandshake([U, "Connection: keep-alive", `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
+    expect(opened).toBe(6);
 
     // Upgrade token other than "websocket": not a WebSocket handshake.
     expect((await rawHandshake(["Upgrade: h2c", C, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(400);
-
-    // RFC 6455 §4.2.1 item 4: Connection must include "Upgrade".
-    expect((await rawHandshake([U, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(400);
-    expect((await rawHandshake([U, "Connection: keep-alive", `Sec-WebSocket-Key: ${K}`, V])).status).toBe(400);
 
     // Sec-WebSocket-Key is not valid base64 of 16 bytes.
     for (const key of [
@@ -2553,7 +2552,7 @@ describe("server.upgrade() validates the opening handshake", () => {
     }
 
     // None of the rejected handshakes reached open().
-    expect(opened).toBe(4);
+    expect(opened).toBe(6);
   });
 
   // upgrade() validates and answers the handshake from `req.headers`, the only
@@ -3415,40 +3414,40 @@ describe.concurrent("ServerWebSocket.close(code, reason)", () => {
   });
 
   // A close() handler gets these codes when the peer sent none, and a proxy forwards them to its other connection.
-  it.each([[[0]], [[1005]], [[1006]], [[1015]], [[NaN]], [[1005, "reason"]], [[1006, "Connection ended"]]])(
-    "close(...%j) sends an empty Close frame",
-    async args => {
-      expect(await closeWith(...args)).toEqual({ thrown: undefined, wire: [], handler: [1005, ""] });
-    },
-  );
-
-  // RFC 6455 §7.4: these are invalid on the wire. The peer would fail the connection with 1002 and ignore the code.
-  // The last six are 1000 or 0 after ToInt32, which wraps modulo 2**32 and maps the infinities to 0.
   it.each([
-    [999],
-    [1004],
-    [1016],
-    [2999],
-    [5000],
-    [-1],
-    [66536],
-    [1.5],
-    [2 ** 32 + 1000],
-    [1000 - 2 ** 32],
-    [2 ** 32],
-    [2 ** 53],
-    [Infinity],
-    [-Infinity],
-  ])("close(%p) throws a RangeError and leaves the socket open", async code => {
-    expect(await closeWith(code)).toEqual({
-      thrown: "RangeError readyState=1",
-      wire: [4999, "after the throw"],
-      handler: [4999, "after the throw"],
-    });
+    [[0], 0, ""],
+    [[1005], 1005, ""],
+    [[1006], 1006, ""],
+    [[NaN], 0, ""],
+    [[2 ** 32], 0, ""],
+    [[Infinity], 0, ""],
+    [[-Infinity], 0, ""],
+    [[1005, "reason"], 1005, "reason"],
+    [[1006, "Connection ended"], 1006, "Connection ended"],
+  ] as const)("close(...%j) sends an empty Close frame", async (args, code, reason) => {
+    expect(await closeWith(...args)).toEqual({ thrown: undefined, wire: [], handler: [code, reason] });
+  });
+
+  // RFC 6455 §7.4 doesn't allow these on the wire, but close() has always closed the connection with them. The code goes
+  // through ToInt32, and the frame has its low 16 bits.
+  it.each([
+    [999, 999, 999],
+    [1004, 1004, 1004],
+    [1015, 1015, 1015],
+    [1016, 1016, 1016],
+    [2999, 2999, 2999],
+    [5000, 5000, 5000],
+    [-1, 65535, -1],
+    [66536, 1000, 66536],
+    [1.5, 1, 1],
+    [2 ** 32 + 1000, 1000, 1000],
+    [1000 - 2 ** 32, 1000, 1000],
+  ])("close(%p) closes the connection", async (code, onTheWire, inTheHandler) => {
+    expect(await closeWith(code)).toEqual({ thrown: undefined, wire: [onTheWire, ""], handler: [inTheHandler, ""] });
   });
 });
 
-describe.concurrent("ServerWebSocket validates arguments regardless of socket state", () => {
+describe.concurrent("ServerWebSocket argument validation", () => {
   async function openAndClosedSocket() {
     const sockets: ServerWebSocket<undefined>[] = [];
     const bothOpen = Promise.withResolvers<void>();
@@ -3485,34 +3484,44 @@ describe.concurrent("ServerWebSocket validates arguments regardless of socket st
     };
   }
 
-  const invalidCalls: [string, (ws: any) => unknown, string][] = [
-    ["send()", ws => ws.send(), "send requires at least 1 argument"],
-    ["send(null)", ws => ws.send(null), "send requires a non-empty message"],
-    ["send('x', 'y')", ws => ws.send("x", "y"), "send expects compress to be a boolean"],
-    ["sendText(1)", ws => ws.sendText(1), "sendText expects a string"],
-    ["sendBinary('x')", ws => ws.sendBinary("x"), "sendBinary expects a Blob or BufferSource"],
-    ["ping(5)", ws => ws.ping(5), "ping expects a string, Blob, or BufferSource"],
-    ["pong({})", ws => ws.pong({}), "pong expects a string, Blob, or BufferSource"],
-    ["ping(126 bytes)", ws => ws.ping(new Uint8Array(126)), "The data size must not be greater than 125 bytes"],
-    ["subscribe(1)", ws => ws.subscribe(1), 'The "topic" argument must be of type string'],
-    ["subscribe('')", ws => ws.subscribe(""), "subscribe requires a non-empty topic name"],
-    ["unsubscribe(1)", ws => ws.unsubscribe(1), 'The "topic" argument must be of type string'],
-    ["isSubscribed('')", ws => ws.isSubscribed(""), "isSubscribed requires a non-empty topic name"],
+  // The last column is what a closed socket does. undefined means it throws the same error, because publish() still
+  // publishes and cork() still runs its callback there.
+  const invalidCalls: [string, (ws: any) => unknown, string, string?][] = [
+    ["send()", ws => ws.send(), "send requires at least 1 argument", "returned 0"],
+    ["send(null)", ws => ws.send(null), "send requires a non-empty message", "returned 0"],
+    ["send('x', 'y')", ws => ws.send("x", "y"), "send expects compress to be a boolean", "returned 0"],
+    ["sendText(1)", ws => ws.sendText(1), "sendText expects a string", "returned 0"],
+    ["sendBinary('x')", ws => ws.sendBinary("x"), "sendBinary expects a Blob or BufferSource", "returned 0"],
+    ["ping(5)", ws => ws.ping(5), "ping expects a string, Blob, or BufferSource", "returned 0"],
+    ["pong({})", ws => ws.pong({}), "pong expects a string, Blob, or BufferSource", "returned 0"],
+    [
+      "ping(126 bytes)",
+      ws => ws.ping(new Uint8Array(126)),
+      "The data size must not be greater than 125 bytes",
+      "returned 0",
+    ],
+    ["subscribe(1)", ws => ws.subscribe(1), 'The "topic" argument must be of type string', "returned false"],
+    ["subscribe('')", ws => ws.subscribe(""), "subscribe requires a non-empty topic name", "returned false"],
+    ["unsubscribe(1)", ws => ws.unsubscribe(1), 'The "topic" argument must be of type string', "returned false"],
+    [
+      "unsubscribe(undefined)",
+      ws => ws.unsubscribe(undefined),
+      'The "topic" argument must be of type string',
+      "returned false",
+    ],
+    ["isSubscribed('')", ws => ws.isSubscribed(""), "isSubscribed requires a non-empty topic name", "returned false"],
     ["publish(1, 'x')", ws => ws.publish(1, "x"), 'The "topic" argument must be of type string'],
     ["publish('', 'x')", ws => ws.publish("", "x"), "publish requires a non-empty topic"],
     ["publish('t', null)", ws => ws.publish("t", null), "publish requires a non-empty message"],
     ["publishText()", ws => ws.publishText(), "publishText requires at least 1 argument"],
     ["publishText('t', 1)", ws => ws.publishText("t", 1), "publishText expects a string"],
     ["publishBinary('t', 'x')", ws => ws.publishBinary("t", "x"), "publishBinary expects a Blob or BufferSource"],
-    ["close('x')", ws => ws.close("x"), "close requires a numeric code or undefined"],
-    ["close(999)", ws => ws.close(999), "The close code must be"],
-    ["close(2 ** 32 + 1000)", ws => ws.close(2 ** 32 + 1000), "Received 4294968296"],
-    ["close(Infinity)", ws => ws.close(Infinity), "Received Infinity"],
+    ["close('x')", ws => ws.close("x"), "close requires a numeric code or undefined", "returned undefined"],
     ["cork()", ws => ws.cork(), "Not enough arguments"],
     ["cork(1)", ws => ws.cork(1), 'The "callback" argument must be of type function'],
   ];
 
-  it("invalid arguments throw on both open and closed sockets", async () => {
+  it("invalid arguments throw on an open socket, and a closed socket ignores the call", async () => {
     using sockets = await openAndClosedSocket();
     const getErrorMessage = (call: () => unknown) => {
       try {
@@ -3521,17 +3530,39 @@ describe.concurrent("ServerWebSocket validates arguments regardless of socket st
         return (e as Error).message;
       }
     };
-    for (const [label, call, message] of invalidCalls) {
+    for (const [label, call, message, onClosedSocket] of invalidCalls) {
       expect({ label, open: getErrorMessage(() => call(sockets.open)) }).toEqual({
         label,
         open: expect.stringContaining(message),
       });
       expect({ label, closed: getErrorMessage(() => call(sockets.closed)) }).toEqual({
         label,
-        closed: expect.stringContaining(message),
+        closed: onClosedSocket ?? expect.stringContaining(message),
       });
     }
     expect([sockets.open.readyState, sockets.closed.readyState]).toEqual([1, 3]);
+  });
+
+  it("a close handler that passes undefined to unsubscribe() and send() runs to its end", async () => {
+    const finished = Promise.withResolvers<unknown[]>();
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        if (server.upgrade(req, { data: {} })) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: {
+        message() {},
+        close(ws) {
+          const { room, farewell } = ws.data as { room?: string; farewell?: string };
+          finished.resolve([ws.unsubscribe(room!), ws.isSubscribed(room!), ws.send(farewell!), ws.close(room as any)]);
+        },
+      },
+    });
+    const client = await RawClient.upgrade(server.port!);
+    client.destroy();
+    expect(await finished.promise).toEqual([false, false, 0, undefined]);
   });
 
   it('publishText("") returns 0 instead of throwing like publish("") and publishBinary("")', async () => {

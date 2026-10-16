@@ -259,9 +259,10 @@ private:
 
         }
 
-        /* Every successful send resets the timeout, unless we're paused or waiting for the pong to our timeout ping */
-        if (webSocketContextData->resetIdleTimeoutOnSend && !webSocketData->hasTimedOut && !isPaused()) {
+        /* Every successful send resets the timeout, unless we're paused */
+        if (webSocketContextData->resetIdleTimeoutOnSend && !isPaused()) {
             Super::timeout(webSocketContextData->idleTimeoutComponents.first);
+            webSocketData->hasTimedOut = false;
         }
 
         /* Return success */

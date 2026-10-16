@@ -353,8 +353,8 @@ ws.close(1011, "Something went wrong");
 ws.terminate(); // no Close frame
 ```
 
-- Valid codes are `1000`-`1003`, `1007`-`1014` and `3000`-`4999`. Any other code throws a `RangeError`.
-- `0`, `1005`, `1006` and `1015` don't throw. They send a Close frame with no code, so you can forward the code from a `close` handler to another socket.
+- Clients only accept `1000`-`1003`, `1007`-`1014` and `3000`-`4999`. A browser that receives any other code reports `1006`.
+- `0`, `1005` and `1006` send a Close frame with no code, so you can forward the code from a `close` handler to another socket.
 - The reason is truncated to 123 bytes of UTF-8.
 
 When the client violates the protocol, Bun sends a Close frame with `1002` (protocol error), `1007` (invalid UTF-8 or compressed data) or `1009` (message too big). The `close` handler receives `1006`, with a description of the problem as the reason.

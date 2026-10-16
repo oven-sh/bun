@@ -118,9 +118,8 @@ declare module "bun" {
      * - `3000` through `3999` are reserved for libraries and frameworks
      * - `4000` through `4999` are reserved for applications
      *
-     * Valid codes are `1000`-`1003`, `1007`-`1014` and `3000`-`4999`. Any other code throws a
-     * `RangeError`, except `0`, `1005`, `1006` and `1015`. Those send a Close frame with no code,
-     * so you can forward the code from a `close` handler unchanged.
+     * `0`, `1005` and `1006` send a Close frame with no code, so you can forward the code from a
+     * `close` handler unchanged.
      *
      * To close the connection abruptly, use `terminate()`.
      *

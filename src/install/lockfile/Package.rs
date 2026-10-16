@@ -116,8 +116,7 @@ pub(crate) fn folder_relative_to_top_level_dir<'a>(
         buf,
         &[pkg_dir, folder],
     )?;
-    let relative =
-        resolve_path::relative_platform::<path::platform::AutoLoose, false>(top_level_dir, joined);
+    let relative = resolve_path::relative(top_level_dir, joined);
     // empty when the package depends on itself
     let relative: &[u8] = if relative.is_empty() { b"." } else { relative };
     let len = relative.len();

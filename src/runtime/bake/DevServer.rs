@@ -24,7 +24,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::{LogJsc as _, StringJsc as _};
-use bun_paths::{self as paths, PathBuffer};
+use bun_paths::{self as paths, PathBuffer, platform::AutoLoose};
 use bun_sys as sys;
 use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketUpgradeContext};
 use bun_watcher::WatchItemColumns as _;
@@ -916,7 +916,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             .enumerate()
         {
             let mut buf = paths::path_buffer_pool::get();
-            let joined_root = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+            let joined_root = paths::resolve_path::join_abs_string_buf::<AutoLoose>(
                 &dev.root,
                 &mut buf[..],
                 &[&fsr.root],
@@ -6060,7 +6060,7 @@ impl DevServer {
         // on); capture the length, drop the shared borrow, then re-slice
         // mutably to convert separators in place.
         let rel_len = bun_paths::resolve_path::relative_platform_buf::<
-            bun_paths::resolve_path::platform::Auto,
+            bun_paths::resolve_path::platform::AutoLoose,
             true,
         >(&mut relative_path_buf[..], &self.root, path)
         .len();

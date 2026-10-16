@@ -57,10 +57,10 @@ export class Y {
   );
 });
 
-// https://github.com/oven-sh/bun/issues/17502
 test.skipIf(isWindows)("a backslash in --coverage-dir is part of the directory name", async () => {
   using dir = tempDir("cov-dir-backslash", {
-    "a.test.ts": `import { test } from "bun:test"; test("t", () => {});`,
+    "lib.ts": `export const one = () => 1;`,
+    "a.test.ts": `import { test } from "bun:test"; import { one } from "./lib"; test("t", () => { one(); });`,
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", "--coverage-dir=cv\\r", "./a.test.ts"],
@@ -69,12 +69,14 @@ test.skipIf(isWindows)("a backslash in --coverage-dir is part of the directory n
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(readdirSync(String(dir)).sort()).toEqual(["a.test.ts", "cv\\r"]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("1 pass");
+  expect(readdirSync(String(dir)).sort()).toEqual(["a.test.ts", "cv\\r", "lib.ts"]);
   expect(readdirSync(path.join(String(dir), "cv\\r"))).toEqual(["lcov.info"]);
   expect(exitCode).toBe(0);
 });
 
+// https://github.com/oven-sh/bun/issues/17502
 describe("--coverage-reporter without --coverage turns coverage on", () => {
   const files = {
     "math.ts": `export function add(a: number, b: number) {

@@ -194,7 +194,7 @@ impl Rm {
                                     }
                                     let normalized = resolve_path::normalize_string_buf::<
                                         false,
-                                        platform::Auto,
+                                        platform::AutoLoose,
                                         false,
                                     >(
                                         resolved, &mut normalize_buf[..]

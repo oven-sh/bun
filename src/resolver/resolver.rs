@@ -89,7 +89,7 @@ mod bun_paths {
                     $body
                 }
                 rp::Platform::Posix => {
-                    type $P = platform::Posix;
+                    type $P = platform::PosixLoose;
                     $body
                 }
                 rp::Platform::Nt => {

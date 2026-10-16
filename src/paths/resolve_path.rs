@@ -640,12 +640,13 @@ pub fn dirname_w(str: &[u16]) -> &[u16] {
     &str[..separator]
 }
 
+/// Splits at `\` too, like `relative_buf_z` and `relative_alloc`: most callers pass a path the resolver spelled.
 pub fn relative(from: &[u8], to: &[u8]) -> &'static [u8] {
-    relative_platform::<platform::Auto, false>(from, to)
+    relative_platform::<platform::AutoLoose, false>(from, to)
 }
 
 pub fn relative_buf_z<'a>(buf: &'a mut [u8], from: &[u8], to: &[u8]) -> &'a ZStr {
-    let rel = relative_platform_buf::<platform::Auto, true>(buf, from, to);
+    let rel = relative_platform_buf::<platform::AutoLoose, true>(buf, from, to);
     let len = rel.len();
     // reshaped for borrowck — drop `rel` borrow before mutating buf
     buf[len] = 0;
@@ -745,7 +746,7 @@ pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
 }
 
 pub fn relative_alloc(from: &[u8], to: &[u8]) -> Result<Box<[u8]>, bun_alloc::AllocError> {
-    let result = relative_platform::<platform::Auto, false>(from, to);
+    let result = relative_platform::<platform::AutoLoose, false>(from, to);
     Ok(Box::<[u8]>::from(result))
 }
 
@@ -1148,7 +1149,7 @@ pub mod platform {
     #[cfg(all(not(windows), not(unix)))]
     pub type Auto = Loose;
 
-    /// `Posix` for a path from a manifest or an archive, which may have been written on Windows.
+    /// `Posix` for text out of a file, which may have been written on Windows, and for what is matched against the resolver's paths.
     #[derive(Copy, Clone)]
     pub struct PosixLoose;
     impl sealed::Sealed for PosixLoose {}

@@ -327,7 +327,7 @@ pub mod api {
             }
             let mut buf = bun_paths::path_buffer_pool::get();
             // A joined path that does not fit in `buf` could not be opened anyway, so keep `path`.
-            join_abs_string_buf_checked::<platform::Auto>(dir, &mut buf[..], &[path])
+            join_abs_string_buf_checked::<platform::AutoLoose>(dir, &mut buf[..], &[path])
                 .unwrap_or(path)
                 .into()
         }

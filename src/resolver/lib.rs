@@ -364,7 +364,7 @@ pub mod fs {
         /// Normalizes `str` (separators, `.`/`..` segments) into `buf`.
         pub fn normalize_buf<'b>(&self, buf: &'b mut [u8], str: &[u8]) -> &'b [u8] {
             use bun_paths::resolve_path::{normalize_string_buf, platform};
-            normalize_string_buf::<false, platform::Auto, false>(str, buf)
+            normalize_string_buf::<false, platform::AutoLoose, false>(str, buf)
         }
 
         /// Joins against `top_level_dir`
@@ -1243,7 +1243,7 @@ pub mod fs {
             let combo: [&[u8]; 2] = [dir_, base];
             let mut outpath = bun_paths::path_buffer_pool::get();
             let join_capacity = outpath.len() - 2;
-            let Some(entry_path) = join_abs_string_buf_checked::<platform::Auto>(
+            let Some(entry_path) = join_abs_string_buf_checked::<platform::AutoLoose>(
                 self.cwd,
                 &mut outpath[..join_capacity],
                 &combo,

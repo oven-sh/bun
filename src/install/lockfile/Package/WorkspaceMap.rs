@@ -702,7 +702,7 @@ impl WorkspaceMap {
                 continue;
             }
             // A workspace listed by its exact path is a member even if a negated pattern matches.
-            if resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+            if resolve_path::join_abs_string_buf_checked::<path::platform::AutoLoose>(
                 root_dir,
                 &mut abs_buf.0[..],
                 &[input_path],

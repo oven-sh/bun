@@ -625,7 +625,7 @@ impl Framework {
         for fsr in clone.file_system_router_types.iter_mut() {
             let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
             fsr.root = arena_erase(arena.alloc_slice_copy(paths::resolve_path::join_abs::<
-                paths::platform::Auto,
+                paths::platform::AutoLoose,
             >(top_level_dir, fsr.root)));
             if let Some(entry_client) = &mut fsr.entry_client {
                 self.resolve_helper(

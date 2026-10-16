@@ -364,7 +364,7 @@ impl Framework {
         for fsr in self.file_system_router_types.iter_mut() {
             let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
             fsr.root = Cow::Owned(
-                bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(
+                bun_paths::resolve_path::join_abs::<bun_paths::platform::AutoLoose>(
                     top_level_dir,
                     &fsr.root,
                 )

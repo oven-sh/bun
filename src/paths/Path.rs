@@ -163,8 +163,8 @@ use options::{CheckLength, Error as PathError, Kind, PathSeparators};
 macro_rules! sep_dispatch {
     ($fn:ident ( $($a:expr),* $(,)? )) => {
         match PathSeparators::from_u8(SEP_OPT) {
-            PathSeparators::Any | PathSeparators::Auto => path::$fn::<path::platform::Auto>($($a),*),
-            PathSeparators::Posix => path::$fn::<path::platform::Posix>($($a),*),
+            PathSeparators::Any | PathSeparators::Auto => path::$fn::<path::platform::AutoLoose>($($a),*),
+            PathSeparators::Posix => path::$fn::<path::platform::PosixLoose>($($a),*),
             PathSeparators::Windows => path::$fn::<path::platform::Windows>($($a),*),
         }
     };

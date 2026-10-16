@@ -603,13 +603,13 @@ fn has_types_with(by_extension: &[(Vec<u8>, ScriptKind)], path: &[u8]) -> bool {
 /// That is every file outside `node_modules`: some only have types, some are configuration files.
 /// `None` without a file watcher.
 pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<BeforeRead> {
-    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
+    use bun_paths::{platform::AutoLoose, resolve_path::join_abs_string};
     use bun_sema_driver::host::to_native;
     let (watch, cwd) = (vm.watcher_for_threads()?, working_directory());
     Some(Box::new(move |path| {
         if !bun_core::strings::contains(path, b"/node_modules/") {
             // The watcher knows a file by its path as the system spells it.
-            watch(join_abs_string::<Auto>(&cwd, &[to_native(path)]));
+            watch(join_abs_string::<AutoLoose>(&cwd, &[to_native(path)]));
         }
     }))
 }
@@ -618,10 +618,10 @@ pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<
 /// and its value may start with a byte order mark.
 fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -> AlreadyRead {
     use bun_core::strings::without_utf8_bom;
-    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
+    use bun_paths::{platform::AutoLoose, resolve_path::join_abs_string};
     sources
         .map(|(path, text)| {
-            let path = join_abs_string::<Auto>(cwd, &[path]);
+            let path = join_abs_string::<AutoLoose>(cwd, &[path]);
             let text = without_utf8_bom(text).to_vec();
             (bun_sema_driver::host::from_native(path), text)
         })
@@ -803,8 +803,10 @@ fn pages_of(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
         }
     }
     pages.retain(|page| {
-        let page =
-            bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[page]);
+        let page = bun_paths::resolve_path::join_abs_string::<bun_paths::platform::AutoLoose>(
+            cwd,
+            &[page],
+        );
         !bun_core::strings::contains(page, bun_paths::NODE_MODULES_NEEDLE)
     });
     pages
@@ -813,8 +815,11 @@ fn pages_of(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 /// The absolute paths of the local files the HTML entry point `page` imports, from the bundler's HTML scanner. Empty if the page cannot
 /// be read or parsed, which the bundler reports.
 fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
-    use bun_paths::{platform::Auto, resolve_path};
-    let page = resolve_path::join_abs_string::<Auto>(cwd, &[page]).to_vec();
+    use bun_paths::{
+        platform::{Auto, AutoLoose},
+        resolve_path,
+    };
+    let page = resolve_path::join_abs_string::<AutoLoose>(cwd, &[page]).to_vec();
     let Ok(contents) = bun_sys::File::read_from(bun_core::Fd::cwd(), &page) else {
         return Vec::new();
     };
@@ -830,7 +835,7 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
     (records.unwrap_or_default().iter())
         .map(|record| record.path.text())
         .filter(|path| !is_url(path))
-        .map(|path| resolve_path::join_abs_string::<Auto>(directory, &[path]).to_vec())
+        .map(|path| resolve_path::join_abs_string::<AutoLoose>(directory, &[path]).to_vec())
         .collect()
 }
 

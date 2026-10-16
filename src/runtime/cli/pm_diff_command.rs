@@ -2225,7 +2225,7 @@ fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>
             for (name, path) in &mut pairs {
                 *name = bun_paths::basename(name).to_vec();
                 if let Some(normal) =
-                    join_abs_string_checked::<platform::Posix>(b"/", &[path.as_slice()])
+                    join_abs_string_checked::<platform::PosixLoose>(b"/", &[path.as_slice()])
                 {
                     *path = normal.to_vec();
                 }

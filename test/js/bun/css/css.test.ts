@@ -7982,6 +7982,16 @@ describe("css tests", () => {
       '@import "x.css" supports(selector(a:has(b) c));',
     );
 
+    // A raw condition is printed as written up to its closing parenthesis, so
+    // whitespace and comments after a nested block are kept, as they already
+    // are after any other token.
+    minify_test("@supports selector(:is(a) ){a{color:red}}", "@supports selector(:is(a) ){a{color:red}}");
+    minify_test("@supports selector(:is(a) /* c */){a{color:red}}", "@supports selector(:is(a) /* c */){a{color:red}}");
+    minify_test(
+      "@import url(x.css) supports(transform:translate(1px) );",
+      '@import "x.css" supports(transform:translate(1px) );',
+    );
+
     // Scanning past a block must still reject the error tokens behind it.
     for (const source of [
       "@supports (transform:translate(1px) ]){a{color:red}}",
@@ -8010,12 +8020,14 @@ describe("css tests", () => {
         "dep.css": ".dep { color: blue }",
       });
 
-      const result = await Bun.build({ entrypoints: [join(String(dir), "entry.css")] });
-      const output = await result.outputs[0].text();
-      expect(output).toContain("@supports (transform: translate(1px) rotate(1deg))");
-      expect(output).toContain(".dep {");
-      expect(output).toContain('@supports (mask: url("a.svg") no-repeat)');
-      expect(output).toContain("@supports selector(a:has(b) c)");
+      // Unminified output starts each file with a path comment that depends on
+      // the cwd, so the exact text is compared on the minified bundle.
+      const result = await Bun.build({ entrypoints: [join(String(dir), "entry.css")], minify: true });
+      expect(await result.outputs[0].text()).toBe(
+        "@supports (transform:translate(1px) rotate(1deg)){.dep{color:#00f}}" +
+          '@supports (mask: url("a.svg") no-repeat){.a{color:red}}' +
+          "@supports selector(a:has(b) c){.b{color:green}}\n",
+      );
     });
   });
 

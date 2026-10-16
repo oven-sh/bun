@@ -370,7 +370,9 @@ describe.skipIf(!isWindows).concurrent("bun install renames into the cache while
 
     const result = await runInstall(s.project, { ...s.env, [ENV]: budget }, ["--force"]);
     const blockerOutput = await blocker.finish();
-    console.log(`DIAG [${budget}] --force install: ${JSON.stringify(result)} blocker: ${JSON.stringify(blockerOutput)}`);
+    console.log(
+      `DIAG [${budget}] --force install: ${JSON.stringify(result)} blocker: ${JSON.stringify(blockerOutput)}`,
+    );
     diagBelow(`[${budget}] cache after --force`, s.cache);
     diag(`[${budget}] installed after --force`, join(installed, "files"));
     console.log(`DIAG [${budget}] next to the package: ${readdirSync(join(installed, "..")).join(",")}`);

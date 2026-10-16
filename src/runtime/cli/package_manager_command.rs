@@ -296,6 +296,22 @@ impl PackageManagerCommand {
             setup_global_dir(pm, &&mut *ctx)?;
         }
 
+        // These subcommands only print, and what they print is their result.
+        if matches!(
+            subcommand,
+            b"bin"
+                | b"hash"
+                | b"hash-print"
+                | b"hash-string"
+                | b"ls"
+                | b"untrusted"
+                | b"default-trusted"
+                | b"diff"
+                | b"licenses"
+        ) {
+            Output::stdout_is_the_result();
+        }
+
         if strings::eql_comptime(subcommand, b"scan") {
             ScanCommand::exec_with_manager(&mut *ctx, pm, &cwd)?;
             Global::exit(0);
@@ -565,6 +581,7 @@ impl PackageManagerCommand {
                 Ok(p) => &p[..],
                 Err(err) => Self::crash_getting_cache_directory(err),
             };
+            Output::stdout_is_the_result();
             let _ = Output::writer().write_all(outpath);
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"default-trusted") {

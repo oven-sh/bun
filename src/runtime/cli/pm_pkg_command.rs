@@ -201,6 +201,7 @@ impl PmPkgCommand {
     }
 
     fn exec_get(ctx: &Context, args: &[&[u8]], cwd: &[u8]) -> Result<(), Error> {
+        Output::stdout_is_the_result();
         let pkg = Self::load_package_json(ctx, cwd);
 
         if args.is_empty() {

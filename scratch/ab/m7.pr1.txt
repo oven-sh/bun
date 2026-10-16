@@ -1,0 +1,330 @@
+inspect | URL | default => "URL {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: ''\n}"
+inspect | URL | depth 0 => "URL {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: [Object],\n  hash: ''\n}"
+inspect | URL | raw => "http://example.com/a?k=v"
+inspect | URL | raw, depth 0 => "http://example.com/a?k=v"
+inspect | URL | raw, showHidden => "http://example.com/a?k=v {\n  href: [Getter/Setter],\n  origin: [Getter],\n  protocol: [Getter/Setter],\n  username: [Getter/Setter],\n  password: [Getter/Setter],\n  host: [Getter/Setter],\n  hostname: [Getter/Setter],\n  port: [Getter/Setter],\n  pathname: [Getter/Setter],\n  hash: [Getter/Setter],\n  search: [Getter/Setter],\n  searchParams: [Getter],\n  [Symbol(Symbol.toStringTag)]: 'URL'\n}"
+inspect | URL | raw, showProxy => "http://example.com/a?k=v"
+inspect | URL | raw, getters => "http://example.com/a?k=v"
+format %o | URL => "URL {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: '',\n  Symbol(context): URLContext {\n    href: 'http://example.com/a?k=v',\n    protocol_end: 5,\n    username_end: 7,\n    host_start: 7,\n    host_end: 18,\n    pathname_start: 18,\n    search_start: 20,\n    hash_start: 4294967295,\n    port: 4294967295,\n    scheme_type: 0,\n    [hasPort]: [Getter],\n    [hasSearch]: [Getter],\n    [hasHash]: [Getter]\n  }\n}"
+format %O | URL => "URL {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: ''\n}"
+format %s | URL => "http://example.com/a?k=v"
+Console#dir | URL => "http://example.com/a?k=v\n"
+assert.strictEqual(v, 1) | URL => THROWS AssertionError "Expected values to be strictly equal:\n+ actual - expected\n\n+ http://example.com/a?k=v\n- 1\n"
+assert.deepStrictEqual({a: v}, {a: 1}) | URL => THROWS AssertionError "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   a: http://example.com/a?k=v\n-   a: 1\n  }\n"
+assert.equal(v, 1) | URL => THROWS AssertionError "http://example.com/a?k=v == 1"
+assert.notStrictEqual(v, v) | URL => THROWS AssertionError "Expected \"actual\" not to be reference-equal to \"expected\":\n\nhttp://example.com/a?k=v"
+inspect | URL subclass | default => "MyURL {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: ''\n}"
+inspect | URL subclass | depth 0 => "MyURL {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: [Object],\n  hash: ''\n}"
+inspect | URL subclass | raw => "http://example.com/a?k=v"
+inspect | URL subclass | raw, depth 0 => "http://example.com/a?k=v"
+inspect | URL subclass | raw, showHidden => "http://example.com/a?k=v {\n  href: [Getter/Setter],\n  origin: [Getter],\n  protocol: [Getter/Setter],\n  username: [Getter/Setter],\n  password: [Getter/Setter],\n  host: [Getter/Setter],\n  hostname: [Getter/Setter],\n  port: [Getter/Setter],\n  pathname: [Getter/Setter],\n  hash: [Getter/Setter],\n  search: [Getter/Setter],\n  searchParams: [Getter],\n  [Symbol(Symbol.toStringTag)]: 'URL'\n}"
+inspect | URL subclass | raw, showProxy => "http://example.com/a?k=v"
+inspect | URL subclass | raw, getters => "http://example.com/a?k=v"
+format %o | URL subclass => "MyURL {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: '',\n  Symbol(context): URLContext {\n    href: 'http://example.com/a?k=v',\n    protocol_end: 5,\n    username_end: 7,\n    host_start: 7,\n    host_end: 18,\n    pathname_start: 18,\n    search_start: 20,\n    hash_start: 4294967295,\n    port: 4294967295,\n    scheme_type: 0,\n    [hasPort]: [Getter],\n    [hasSearch]: [Getter],\n    [hasHash]: [Getter]\n  }\n}"
+format %O | URL subclass => "MyURL {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: ''\n}"
+format %s | URL subclass => "http://example.com/a?k=v"
+Console#dir | URL subclass => "http://example.com/a?k=v\n"
+assert.strictEqual(v, 1) | URL subclass => THROWS AssertionError "Expected values to be strictly equal:\n+ actual - expected\n\n+ http://example.com/a?k=v\n- 1\n"
+assert.deepStrictEqual({a: v}, {a: 1}) | URL subclass => THROWS AssertionError "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   a: http://example.com/a?k=v\n-   a: 1\n  }\n"
+assert.equal(v, 1) | URL subclass => THROWS AssertionError "http://example.com/a?k=v == 1"
+assert.notStrictEqual(v, v) | URL subclass => THROWS AssertionError "Expected \"actual\" not to be reference-equal to \"expected\":\n\nhttp://example.com/a?k=v"
+inspect | URL with an own property | default => "URL {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: ''\n}"
+inspect | URL with an own property | depth 0 => "URL {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: [Object],\n  hash: ''\n}"
+inspect | URL with an own property | raw => "http://example.com/a?k=v { extra: 1 }"
+inspect | URL with an own property | raw, depth 0 => "http://example.com/a?k=v { extra: 1 }"
+inspect | URL with an own property | raw, showHidden => "http://example.com/a?k=v {\n  extra: 1,\n  href: [Getter/Setter],\n  origin: [Getter],\n  protocol: [Getter/Setter],\n  username: [Getter/Setter],\n  password: [Getter/Setter],\n  host: [Getter/Setter],\n  hostname: [Getter/Setter],\n  port: [Getter/Setter],\n  pathname: [Getter/Setter],\n  hash: [Getter/Setter],\n  search: [Getter/Setter],\n  searchParams: [Getter],\n  [Symbol(Symbol.toStringTag)]: 'URL'\n}"
+inspect | URL with an own property | raw, showProxy => "http://example.com/a?k=v { extra: 1 }"
+inspect | URL with an own property | raw, getters => "http://example.com/a?k=v { extra: 1 }"
+format %o | URL with an own property => "URL {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: '',\n  Symbol(context): URLContext {\n    href: 'http://example.com/a?k=v',\n    protocol_end: 5,\n    username_end: 7,\n    host_start: 7,\n    host_end: 18,\n    pathname_start: 18,\n    search_start: 20,\n    hash_start: 4294967295,\n    port: 4294967295,\n    scheme_type: 0,\n    [hasPort]: [Getter],\n    [hasSearch]: [Getter],\n    [hasHash]: [Getter]\n  }\n}"
+format %O | URL with an own property => "URL {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: ''\n}"
+format %s | URL with an own property => "http://example.com/a?k=v"
+Console#dir | URL with an own property => "http://example.com/a?k=v { extra: 1 }\n"
+assert.strictEqual(v, 1) | URL with an own property => THROWS AssertionError "Expected values to be strictly equal:\n+ actual - expected\n\n+ http://example.com/a?k=v {\n+   extra: 1\n+ }\n- 1\n"
+assert.deepStrictEqual({a: v}, {a: 1}) | URL with an own property => THROWS AssertionError "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   a: http://example.com/a?k=v {\n+     extra: 1\n+   }\n-   a: 1\n  }\n"
+assert.equal(v, 1) | URL with an own property => THROWS AssertionError "http://example.com/a?k=v {\n  extra: 1\n} == 1"
+assert.notStrictEqual(v, v) | URL with an own property => THROWS AssertionError "Expected \"actual\" not to be reference-equal to \"expected\":\n\nhttp://example.com/a?k=v {\n  extra: 1\n}\n"
+inspect | URL subclass, href getter returns a string | default => "Custom {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: ''\n}"
+inspect | URL subclass, href getter returns a string | depth 0 => "Custom {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: [Object],\n  hash: ''\n}"
+inspect | URL subclass, href getter returns a string | raw => "custom:href"
+inspect | URL subclass, href getter returns a string | raw, depth 0 => "custom:href"
+inspect | URL subclass, href getter returns a string | raw, showHidden => "custom:href {\n  [href]: [Getter],\n  origin: [Getter],\n  protocol: [Getter/Setter],\n  username: [Getter/Setter],\n  password: [Getter/Setter],\n  host: [Getter/Setter],\n  hostname: [Getter/Setter],\n  port: [Getter/Setter],\n  pathname: [Getter/Setter],\n  hash: [Getter/Setter],\n  search: [Getter/Setter],\n  searchParams: [Getter],\n  [Symbol(Symbol.toStringTag)]: 'URL'\n}"
+inspect | URL subclass, href getter returns a string | raw, showProxy => "custom:href"
+inspect | URL subclass, href getter returns a string | raw, getters => "custom:href"
+format %o | URL subclass, href getter returns a string => "Custom {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: '',\n  Symbol(context): URLContext {\n    href: 'http://example.com/a?k=v',\n    protocol_end: 5,\n    username_end: 7,\n    host_start: 7,\n    host_end: 18,\n    pathname_start: 18,\n    search_start: 20,\n    hash_start: 4294967295,\n    port: 4294967295,\n    scheme_type: 0,\n    [hasPort]: [Getter],\n    [hasSearch]: [Getter],\n    [hasHash]: [Getter]\n  }\n}"
+format %O | URL subclass, href getter returns a string => "Custom {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: ''\n}"
+format %s | URL subclass, href getter returns a string => "http://example.com/a?k=v"
+Console#dir | URL subclass, href getter returns a string => "custom:href\n"
+assert.strictEqual(v, 1) | URL subclass, href getter returns a string => THROWS AssertionError "Expected values to be strictly equal:\n\ncustom:href !== 1\n"
+assert.deepStrictEqual({a: v}, {a: 1}) | URL subclass, href getter returns a string => THROWS AssertionError "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   a: custom:href\n-   a: 1\n  }\n"
+assert.equal(v, 1) | URL subclass, href getter returns a string => THROWS AssertionError "custom:href == 1"
+assert.notStrictEqual(v, v) | URL subclass, href getter returns a string => THROWS AssertionError "Expected \"actual\" not to be reference-equal to \"expected\":\n\ncustom:href"
+inspect | URL subclass, href getter returns a number | default => "NumberHref {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: ''\n}"
+inspect | URL subclass, href getter returns a number | depth 0 => "NumberHref {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: [Object],\n  hash: ''\n}"
+inspect | URL subclass, href getter returns a number | raw => "NumberHref [URL] {}"
+inspect | URL subclass, href getter returns a number | raw, depth 0 => "NumberHref [URL] {}"
+inspect | URL subclass, href getter returns a number | raw, showHidden => "NumberHref [URL] {\n  [href]: [Getter],\n  origin: [Getter],\n  protocol: [Getter/Setter],\n  username: [Getter/Setter],\n  password: [Getter/Setter],\n  host: [Getter/Setter],\n  hostname: [Getter/Setter],\n  port: [Getter/Setter],\n  pathname: [Getter/Setter],\n  hash: [Getter/Setter],\n  search: [Getter/Setter],\n  searchParams: [Getter],\n  [Symbol(Symbol.toStringTag)]: 'URL'\n}"
+inspect | URL subclass, href getter returns a number | raw, showProxy => "NumberHref [URL] {}"
+inspect | URL subclass, href getter returns a number | raw, getters => "NumberHref [URL] {}"
+format %o | URL subclass, href getter returns a number => "NumberHref {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: '',\n  Symbol(context): URLContext {\n    href: 'http://example.com/a?k=v',\n    protocol_end: 5,\n    username_end: 7,\n    host_start: 7,\n    host_end: 18,\n    pathname_start: 18,\n    search_start: 20,\n    hash_start: 4294967295,\n    port: 4294967295,\n    scheme_type: 0,\n    [hasPort]: [Getter],\n    [hasSearch]: [Getter],\n    [hasHash]: [Getter]\n  }\n}"
+format %O | URL subclass, href getter returns a number => "NumberHref {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: ''\n}"
+format %s | URL subclass, href getter returns a number => "http://example.com/a?k=v"
+Console#dir | URL subclass, href getter returns a number => "NumberHref [URL] {}\n"
+assert.strictEqual(v, 1) | URL subclass, href getter returns a number => THROWS AssertionError "Expected values to be strictly equal:\n+ actual - expected\n\n+ NumberHref [URL] {}\n- 1\n"
+assert.deepStrictEqual({a: v}, {a: 1}) | URL subclass, href getter returns a number => THROWS AssertionError "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   a: NumberHref [URL] {}\n-   a: 1\n  }\n"
+assert.equal(v, 1) | URL subclass, href getter returns a number => THROWS AssertionError "NumberHref [URL] {} == 1"
+assert.notStrictEqual(v, v) | URL subclass, href getter returns a number => THROWS AssertionError "Expected \"actual\" not to be reference-equal to \"expected\":\n\nNumberHref [URL] {}"
+inspect | URL subclass, href getter returns '' | default => "EmptyHref {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: ''\n}"
+inspect | URL subclass, href getter returns '' | depth 0 => "EmptyHref {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: [Object],\n  hash: ''\n}"
+inspect | URL subclass, href getter returns '' | raw => ""
+inspect | URL subclass, href getter returns '' | raw, depth 0 => ""
+inspect | URL subclass, href getter returns '' | raw, showHidden => "{\n  [href]: [Getter],\n  origin: [Getter],\n  protocol: [Getter/Setter],\n  username: [Getter/Setter],\n  password: [Getter/Setter],\n  host: [Getter/Setter],\n  hostname: [Getter/Setter],\n  port: [Getter/Setter],\n  pathname: [Getter/Setter],\n  hash: [Getter/Setter],\n  search: [Getter/Setter],\n  searchParams: [Getter],\n  [Symbol(Symbol.toStringTag)]: 'URL'\n}"
+inspect | URL subclass, href getter returns '' | raw, showProxy => ""
+inspect | URL subclass, href getter returns '' | raw, getters => ""
+format %o | URL subclass, href getter returns '' => "EmptyHref {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: '',\n  Symbol(context): URLContext {\n    href: 'http://example.com/a?k=v',\n    protocol_end: 5,\n    username_end: 7,\n    host_start: 7,\n    host_end: 18,\n    pathname_start: 18,\n    search_start: 20,\n    hash_start: 4294967295,\n    port: 4294967295,\n    scheme_type: 0,\n    [hasPort]: [Getter],\n    [hasSearch]: [Getter],\n    [hasHash]: [Getter]\n  }\n}"
+format %O | URL subclass, href getter returns '' => "EmptyHref {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: ''\n}"
+format %s | URL subclass, href getter returns '' => "http://example.com/a?k=v"
+Console#dir | URL subclass, href getter returns '' => "\n"
+assert.strictEqual(v, 1) | URL subclass, href getter returns '' => THROWS AssertionError "Expected values to be strictly equal:\n\n !== 1\n"
+assert.deepStrictEqual({a: v}, {a: 1}) | URL subclass, href getter returns '' => THROWS AssertionError "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   a: \n-   a: 1\n  }\n"
+assert.equal(v, 1) | URL subclass, href getter returns '' => THROWS AssertionError " == 1"
+assert.notStrictEqual(v, v) | URL subclass, href getter returns '' => THROWS AssertionError "Expected \"actual\" not to be reference-equal to \"expected\": "
+inspect | URL subclass, href getter throws | default => "BrokenURL {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: ''\n}"
+inspect | URL subclass, href getter throws | depth 0 => "BrokenURL {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: [Object],\n  hash: ''\n}"
+inspect | URL subclass, href getter throws | raw => THROWS Error
+inspect | URL subclass, href getter throws | raw, depth 0 => THROWS Error
+inspect | URL subclass, href getter throws | raw, showHidden => THROWS Error
+inspect | URL subclass, href getter throws | raw, showProxy => THROWS Error
+inspect | URL subclass, href getter throws | raw, getters => THROWS Error
+format %o | URL subclass, href getter throws => "BrokenURL {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: '',\n  Symbol(context): URLContext {\n    href: 'http://example.com/a?k=v',\n    protocol_end: 5,\n    username_end: 7,\n    host_start: 7,\n    host_end: 18,\n    pathname_start: 18,\n    search_start: 20,\n    hash_start: 4294967295,\n    port: 4294967295,\n    scheme_type: 0,\n    [hasPort]: [Getter],\n    [hasSearch]: [Getter],\n    [hasHash]: [Getter]\n  }\n}"
+format %O | URL subclass, href getter throws => "BrokenURL {\n  href: 'http://example.com/a?k=v',\n  origin: 'http://example.com',\n  protocol: 'http:',\n  username: '',\n  password: '',\n  host: 'example.com',\n  hostname: 'example.com',\n  port: '',\n  pathname: '/a',\n  search: '?k=v',\n  searchParams: URLSearchParams { 'k' => 'v' },\n  hash: ''\n}"
+format %s | URL subclass, href getter throws => "http://example.com/a?k=v"
+Console#dir | URL subclass, href getter throws => THROWS Error
+assert.strictEqual(v, 1) | URL subclass, href getter throws => THROWS Error
+assert.deepStrictEqual({a: v}, {a: 1}) | URL subclass, href getter throws => THROWS Error
+assert.equal(v, 1) | URL subclass, href getter throws => THROWS Error
+assert.notStrictEqual(v, v) | URL subclass, href getter throws => THROWS Error
+inspect | URL with the hook shadowed | default => "http://example.com/a?k=v"
+inspect | URL with the hook shadowed | depth 0 => "http://example.com/a?k=v"
+inspect | URL with the hook shadowed | raw => "http://example.com/a?k=v"
+inspect | URL with the hook shadowed | raw, depth 0 => "http://example.com/a?k=v"
+inspect | URL with the hook shadowed | raw, showHidden => "http://example.com/a?k=v {\n  [Symbol(nodejs.util.inspect.custom)]: undefined,\n  href: [Getter/Setter],\n  origin: [Getter],\n  protocol: [Getter/Setter],\n  username: [Getter/Setter],\n  password: [Getter/Setter],\n  host: [Getter/Setter],\n  hostname: [Getter/Setter],\n  port: [Getter/Setter],\n  pathname: [Getter/Setter],\n  hash: [Getter/Setter],\n  search: [Getter/Setter],\n  searchParams: [Getter],\n  [Symbol(Symbol.toStringTag)]: 'URL'\n}"
+inspect | URL with the hook shadowed | raw, showProxy => "http://example.com/a?k=v"
+inspect | URL with the hook shadowed | raw, getters => "http://example.com/a?k=v"
+format %o | URL with the hook shadowed => "http://example.com/a?k=v {\n  [Symbol(nodejs.util.inspect.custom)]: undefined,\n  href: [Getter/Setter],\n  origin: [Getter],\n  protocol: [Getter/Setter],\n  username: [Getter/Setter],\n  password: [Getter/Setter],\n  host: [Getter/Setter],\n  hostname: [Getter/Setter],\n  port: [Getter/Setter],\n  pathname: [Getter/Setter],\n  hash: [Getter/Setter],\n  search: [Getter/Setter],\n  searchParams: [Getter],\n  [Symbol(Symbol.toStringTag)]: 'URL'\n}"
+format %O | URL with the hook shadowed => "http://example.com/a?k=v"
+format %s | URL with the hook shadowed => "http://example.com/a?k=v"
+Console#dir | URL with the hook shadowed => "http://example.com/a?k=v\n"
+assert.strictEqual(v, 1) | URL with the hook shadowed => THROWS AssertionError "Expected values to be strictly equal:\n+ actual - expected\n\n+ http://example.com/a?k=v\n- 1\n"
+assert.deepStrictEqual({a: v}, {a: 1}) | URL with the hook shadowed => THROWS AssertionError "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   a: http://example.com/a?k=v\n-   a: 1\n  }\n"
+assert.equal(v, 1) | URL with the hook shadowed => THROWS AssertionError "http://example.com/a?k=v == 1"
+assert.notStrictEqual(v, v) | URL with the hook shadowed => THROWS AssertionError "Expected \"actual\" not to be reference-equal to \"expected\":\n\nhttp://example.com/a?k=v"
+inspect | Object.create(URL.prototype) | default => THROWS TypeError
+inspect | Object.create(URL.prototype) | depth 0 => THROWS TypeError
+inspect | Object.create(URL.prototype) | raw => THROWS TypeError
+inspect | Object.create(URL.prototype) | raw, depth 0 => THROWS TypeError
+inspect | Object.create(URL.prototype) | raw, showHidden => THROWS TypeError
+inspect | Object.create(URL.prototype) | raw, showProxy => THROWS TypeError
+inspect | Object.create(URL.prototype) | raw, getters => THROWS TypeError
+format %o | Object.create(URL.prototype) => THROWS TypeError
+format %O | Object.create(URL.prototype) => THROWS TypeError
+format %s | Object.create(URL.prototype) => THROWS TypeError
+Console#dir | Object.create(URL.prototype) => THROWS TypeError
+assert.strictEqual(v, 1) | Object.create(URL.prototype) => THROWS TypeError
+assert.deepStrictEqual({a: v}, {a: 1}) | Object.create(URL.prototype) => THROWS TypeError
+assert.equal(v, 1) | Object.create(URL.prototype) => THROWS TypeError
+assert.notStrictEqual(v, v) | Object.create(URL.prototype) => THROWS TypeError
+inspect | prototype of a URL subclass | default => THROWS TypeError
+inspect | prototype of a URL subclass | depth 0 => THROWS TypeError
+inspect | prototype of a URL subclass | raw => THROWS TypeError
+inspect | prototype of a URL subclass | raw, depth 0 => THROWS TypeError
+inspect | prototype of a URL subclass | raw, showHidden => THROWS TypeError
+inspect | prototype of a URL subclass | raw, showProxy => THROWS TypeError
+inspect | prototype of a URL subclass | raw, getters => THROWS TypeError
+format %o | prototype of a URL subclass => THROWS TypeError
+format %O | prototype of a URL subclass => THROWS TypeError
+format %s | prototype of a URL subclass => THROWS TypeError
+Console#dir | prototype of a URL subclass => THROWS TypeError
+assert.strictEqual(v, 1) | prototype of a URL subclass => THROWS TypeError
+assert.deepStrictEqual({a: v}, {a: 1}) | prototype of a URL subclass => THROWS TypeError
+assert.equal(v, 1) | prototype of a URL subclass => THROWS TypeError
+assert.notStrictEqual(v, v) | prototype of a URL subclass => THROWS TypeError
+inspect | { href, __proto__: URL.prototype } | default => "URL { href: 'x' }"
+inspect | { href, __proto__: URL.prototype } | depth 0 => "URL { href: 'x' }"
+inspect | { href, __proto__: URL.prototype } | raw => "URL { href: 'x' }"
+inspect | { href, __proto__: URL.prototype } | raw, depth 0 => "URL { href: 'x' }"
+inspect | { href, __proto__: URL.prototype } | raw, showHidden => "URL {\n  href: 'x',\n  origin: [Getter],\n  protocol: [Getter/Setter],\n  username: [Getter/Setter],\n  password: [Getter/Setter],\n  host: [Getter/Setter],\n  hostname: [Getter/Setter],\n  port: [Getter/Setter],\n  pathname: [Getter/Setter],\n  hash: [Getter/Setter],\n  search: [Getter/Setter],\n  searchParams: [Getter],\n  [Symbol(Symbol.toStringTag)]: 'URL'\n}"
+inspect | { href, __proto__: URL.prototype } | raw, showProxy => "URL { href: 'x' }"
+inspect | { href, __proto__: URL.prototype } | raw, getters => "URL { href: 'x' }"
+format %o | { href, __proto__: URL.prototype } => "URL {\n  href: 'x',\n  origin: [Getter],\n  protocol: [Getter/Setter],\n  username: [Getter/Setter],\n  password: [Getter/Setter],\n  host: [Getter/Setter],\n  hostname: [Getter/Setter],\n  port: [Getter/Setter],\n  pathname: [Getter/Setter],\n  hash: [Getter/Setter],\n  search: [Getter/Setter],\n  searchParams: [Getter],\n  [Symbol(Symbol.toStringTag)]: 'URL'\n}"
+format %O | { href, __proto__: URL.prototype } => "URL { href: 'x' }"
+format %s | { href, __proto__: URL.prototype } => THROWS TypeError
+Console#dir | { href, __proto__: URL.prototype } => "URL { href: 'x' }\n"
+assert.strictEqual(v, 1) | { href, __proto__: URL.prototype } => THROWS AssertionError "Expected values to be strictly equal:\n+ actual - expected\n\n+ URL {\n+   href: 'x'\n+ }\n- 1\n"
+assert.deepStrictEqual({a: v}, {a: 1}) | { href, __proto__: URL.prototype } => THROWS AssertionError "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   a: URL {\n+     href: 'x'\n+   }\n-   a: 1\n  }\n"
+assert.equal(v, 1) | { href, __proto__: URL.prototype } => THROWS TypeError
+assert.notStrictEqual(v, v) | { href, __proto__: URL.prototype } => THROWS AssertionError "Expected \"actual\" not to be reference-equal to \"expected\":\n\nURL {\n  href: 'x'\n}\n"
+inspect | class instance, href getter returns a string | default => "Link {}"
+inspect | class instance, href getter returns a string | depth 0 => "Link {}"
+inspect | class instance, href getter returns a string | raw => "Link {}"
+inspect | class instance, href getter returns a string | raw, depth 0 => "Link {}"
+inspect | class instance, href getter returns a string | raw, showHidden => "Link { [href]: [Getter] }"
+inspect | class instance, href getter returns a string | raw, showProxy => "Link {}"
+inspect | class instance, href getter returns a string | raw, getters => "Link {}"
+format %o | class instance, href getter returns a string => "Link { [href]: [Getter] }"
+format %O | class instance, href getter returns a string => "Link {}"
+format %s | class instance, href getter returns a string => "Link {}"
+Console#dir | class instance, href getter returns a string => "Link {}\n"
+assert.strictEqual(v, 1) | class instance, href getter returns a string => THROWS AssertionError "Expected values to be strictly equal:\n\nLink {} !== 1\n"
+assert.deepStrictEqual({a: v}, {a: 1}) | class instance, href getter returns a string => THROWS AssertionError "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   a: Link {}\n-   a: 1\n  }\n"
+assert.equal(v, 1) | class instance, href getter returns a string => THROWS AssertionError "Link {} == 1"
+assert.notStrictEqual(v, v) | class instance, href getter returns a string => THROWS AssertionError "Expected \"actual\" not to be reference-equal to \"expected\":\n\nLink {}"
+inspect | class instance, href getter throws | default => THROWS Error
+inspect | class instance, href getter throws | depth 0 => THROWS Error
+inspect | class instance, href getter throws | raw => THROWS Error
+inspect | class instance, href getter throws | raw, depth 0 => THROWS Error
+inspect | class instance, href getter throws | raw, showHidden => THROWS Error
+inspect | class instance, href getter throws | raw, showProxy => THROWS Error
+inspect | class instance, href getter throws | raw, getters => THROWS Error
+format %o | class instance, href getter throws => THROWS Error
+format %O | class instance, href getter throws => THROWS Error
+format %s | class instance, href getter throws => THROWS Error
+Console#dir | class instance, href getter throws => THROWS Error
+assert.strictEqual(v, 1) | class instance, href getter throws => THROWS Error
+assert.deepStrictEqual({a: v}, {a: 1}) | class instance, href getter throws => THROWS Error
+assert.equal(v, 1) | class instance, href getter throws => THROWS Error
+assert.notStrictEqual(v, v) | class instance, href getter throws => THROWS Error
+inspect | null-prototype object, href getter returns a string | default => "[Object: null prototype] {}"
+inspect | null-prototype object, href getter returns a string | depth 0 => "[Object: null prototype] {}"
+inspect | null-prototype object, href getter returns a string | raw => "[Object: null prototype] {}"
+inspect | null-prototype object, href getter returns a string | raw, depth 0 => "[Object: null prototype] {}"
+inspect | null-prototype object, href getter returns a string | raw, showHidden => "[Object: null prototype] { [href]: [Getter] }"
+inspect | null-prototype object, href getter returns a string | raw, showProxy => "[Object: null prototype] {}"
+inspect | null-prototype object, href getter returns a string | raw, getters => "[Object: null prototype] {}"
+format %o | null-prototype object, href getter returns a string => "[Object: null prototype] { [href]: [Getter] }"
+format %O | null-prototype object, href getter returns a string => "[Object: null prototype] {}"
+format %s | null-prototype object, href getter returns a string => "[Object: null prototype] {}"
+Console#dir | null-prototype object, href getter returns a string => "[Object: null prototype] {}\n"
+assert.strictEqual(v, 1) | null-prototype object, href getter returns a string => THROWS AssertionError "Expected values to be strictly equal:\n+ actual - expected\n\n+ [Object: null prototype] {}\n- 1\n"
+assert.deepStrictEqual({a: v}, {a: 1}) | null-prototype object, href getter returns a string => THROWS AssertionError "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   a: [Object: null prototype] {}\n-   a: 1\n  }\n"
+assert.equal(v, 1) | null-prototype object, href getter returns a string => THROWS TypeError
+assert.notStrictEqual(v, v) | null-prototype object, href getter returns a string => THROWS AssertionError "Expected \"actual\" not to be reference-equal to \"expected\":\n\n[Object: null prototype] {}"
+inspect | null-prototype object, href getter throws | default => THROWS Error
+inspect | null-prototype object, href getter throws | depth 0 => THROWS Error
+inspect | null-prototype object, href getter throws | raw => THROWS Error
+inspect | null-prototype object, href getter throws | raw, depth 0 => THROWS Error
+inspect | null-prototype object, href getter throws | raw, showHidden => THROWS Error
+inspect | null-prototype object, href getter throws | raw, showProxy => THROWS Error
+inspect | null-prototype object, href getter throws | raw, getters => THROWS Error
+format %o | null-prototype object, href getter throws => THROWS Error
+format %O | null-prototype object, href getter throws => THROWS Error
+format %s | null-prototype object, href getter throws => THROWS Error
+Console#dir | null-prototype object, href getter throws => THROWS Error
+assert.strictEqual(v, 1) | null-prototype object, href getter throws => THROWS Error
+assert.deepStrictEqual({a: v}, {a: 1}) | null-prototype object, href getter throws => THROWS Error
+assert.equal(v, 1) | null-prototype object, href getter throws => THROWS TypeError
+assert.notStrictEqual(v, v) | null-prototype object, href getter throws => THROWS Error
+inspect | Proxy of a URL | default => "http://example.com/a?k=v"
+inspect | Proxy of a URL | depth 0 => "http://example.com/a?k=v"
+inspect | Proxy of a URL | raw => "http://example.com/a?k=v"
+inspect | Proxy of a URL | raw, depth 0 => "http://example.com/a?k=v"
+inspect | Proxy of a URL | raw, showHidden => "http://example.com/a?k=v {\n  href: [Getter/Setter],\n  origin: [Getter],\n  protocol: [Getter/Setter],\n  username: [Getter/Setter],\n  password: [Getter/Setter],\n  host: [Getter/Setter],\n  hostname: [Getter/Setter],\n  port: [Getter/Setter],\n  pathname: [Getter/Setter],\n  hash: [Getter/Setter],\n  search: [Getter/Setter],\n  searchParams: [Getter],\n  [Symbol(Symbol.toStringTag)]: 'URL'\n}"
+inspect | Proxy of a URL | raw, showProxy => "Proxy [ http://example.com/a?k=v, {} ]"
+inspect | Proxy of a URL | raw, getters => "http://example.com/a?k=v"
+format %o | Proxy of a URL => "Proxy [\n  URL {\n    href: 'http://example.com/a?k=v',\n    origin: 'http://example.com',\n    protocol: 'http:',\n    username: '',\n    password: '',\n    host: 'example.com',\n    hostname: 'example.com',\n    port: '',\n    pathname: '/a',\n    search: '?k=v',\n    searchParams: URLSearchParams { 'k' => 'v' },\n    hash: '',\n    Symbol(context): URLContext {\n      href: 'http://example.com/a?k=v',\n      protocol_end: 5,\n      username_end: 7,\n      host_start: 7,\n      host_end: 18,\n      pathname_start: 18,\n      search_start: 20,\n      hash_start: 4294967295,\n      port: 4294967295,\n      scheme_type: 0,\n      [hasPort]: [Getter],\n      [hasSearch]: [Getter],\n      [hasHash]: [Getter]\n    }\n  },\n  {}\n]"
+format %O | Proxy of a URL => "http://example.com/a?k=v"
+format %s | Proxy of a URL => THROWS TypeError
+Console#dir | Proxy of a URL => "http://example.com/a?k=v\n"
+assert.strictEqual(v, 1) | Proxy of a URL => THROWS AssertionError "Expected values to be strictly equal:\n+ actual - expected\n\n+ http://example.com/a?k=v\n- 1\n"
+assert.deepStrictEqual({a: v}, {a: 1}) | Proxy of a URL => THROWS AssertionError "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   a: http://example.com/a?k=v\n-   a: 1\n  }\n"
+assert.equal(v, 1) | Proxy of a URL => THROWS TypeError
+assert.notStrictEqual(v, v) | Proxy of a URL => THROWS AssertionError "Expected \"actual\" not to be reference-equal to \"expected\":\n\nhttp://example.com/a?k=v"
+inspect | Proxy of a Proxy of a URL | default => THROWS TypeError
+inspect | Proxy of a Proxy of a URL | depth 0 => THROWS TypeError
+inspect | Proxy of a Proxy of a URL | raw => THROWS TypeError
+inspect | Proxy of a Proxy of a URL | raw, depth 0 => THROWS TypeError
+inspect | Proxy of a Proxy of a URL | raw, showHidden => THROWS TypeError
+inspect | Proxy of a Proxy of a URL | raw, showProxy => "Proxy [ Proxy [ http://example.com/a?k=v, {} ], {} ]"
+inspect | Proxy of a Proxy of a URL | raw, getters => THROWS TypeError
+format %o | Proxy of a Proxy of a URL => "Proxy [\n  Proxy [\n    URL {\n      href: 'http://example.com/a?k=v',\n      origin: 'http://example.com',\n      protocol: 'http:',\n      username: '',\n      password: '',\n      host: 'example.com',\n      hostname: 'example.com',\n      port: '',\n      pathname: '/a',\n      search: '?k=v',\n      searchParams: URLSearchParams { 'k' => 'v' },\n      hash: '',\n      Symbol(context): URLContext {\n        href: 'http://example.com/a?k=v',\n        protocol_end: 5,\n        username_end: 7,\n        host_start: 7,\n        host_end: 18,\n        pathname_start: 18,\n        search_start: 20,\n        hash_start: 4294967295,\n        port: 4294967295,\n        scheme_type: 0,\n        [hasPort]: [Getter],\n        [hasSearch]: [Getter],\n        [hasHash]: [Getter]\n      }\n    },\n    {}\n  ],\n  {}\n]"
+format %O | Proxy of a Proxy of a URL => THROWS TypeError
+format %s | Proxy of a Proxy of a URL => THROWS TypeError
+Console#dir | Proxy of a Proxy of a URL => THROWS TypeError
+assert.strictEqual(v, 1) | Proxy of a Proxy of a URL => THROWS TypeError
+assert.deepStrictEqual({a: v}, {a: 1}) | Proxy of a Proxy of a URL => THROWS TypeError
+assert.equal(v, 1) | Proxy of a Proxy of a URL => THROWS TypeError
+assert.notStrictEqual(v, v) | Proxy of a Proxy of a URL => THROWS TypeError
+inspect | { a: URL } | default => "{\n  a: URL {\n    href: 'http://example.com/a?k=v',\n    origin: 'http://example.com',\n    protocol: 'http:',\n    username: '',\n    password: '',\n    host: 'example.com',\n    hostname: 'example.com',\n    port: '',\n    pathname: '/a',\n    search: '?k=v',\n    searchParams: URLSearchParams { 'k' => 'v' },\n    hash: ''\n  }\n}"
+inspect | { a: URL } | depth 0 => "{ a: URL {} }"
+inspect | { a: URL } | raw => "{ a: http://example.com/a?k=v }"
+inspect | { a: URL } | raw, depth 0 => "{ a: URL {} }"
+inspect | { a: URL } | raw, showHidden => "{\n  a: http://example.com/a?k=v {\n    href: [Getter/Setter],\n    origin: [Getter],\n    protocol: [Getter/Setter],\n    username: [Getter/Setter],\n    password: [Getter/Setter],\n    host: [Getter/Setter],\n    hostname: [Getter/Setter],\n    port: [Getter/Setter],\n    pathname: [Getter/Setter],\n    hash: [Getter/Setter],\n    search: [Getter/Setter],\n    searchParams: [Getter],\n    [Symbol(Symbol.toStringTag)]: 'URL'\n  }\n}"
+inspect | { a: URL } | raw, showProxy => "{ a: http://example.com/a?k=v }"
+inspect | { a: URL } | raw, getters => "{ a: http://example.com/a?k=v }"
+format %o | { a: URL } => "{\n  a: URL {\n    href: 'http://example.com/a?k=v',\n    origin: 'http://example.com',\n    protocol: 'http:',\n    username: '',\n    password: '',\n    host: 'example.com',\n    hostname: 'example.com',\n    port: '',\n    pathname: '/a',\n    search: '?k=v',\n    searchParams: URLSearchParams { 'k' => 'v' },\n    hash: '',\n    Symbol(context): URLContext {\n      href: 'http://example.com/a?k=v',\n      protocol_end: 5,\n      username_end: 7,\n      host_start: 7,\n      host_end: 18,\n      pathname_start: 18,\n      search_start: 20,\n      hash_start: 4294967295,\n      port: 4294967295,\n      scheme_type: 0,\n      [hasPort]: [Getter],\n      [hasSearch]: [Getter],\n      [hasHash]: [Getter]\n    }\n  }\n}"
+format %O | { a: URL } => "{\n  a: URL {\n    href: 'http://example.com/a?k=v',\n    origin: 'http://example.com',\n    protocol: 'http:',\n    username: '',\n    password: '',\n    host: 'example.com',\n    hostname: 'example.com',\n    port: '',\n    pathname: '/a',\n    search: '?k=v',\n    searchParams: URLSearchParams { 'k' => 'v' },\n    hash: ''\n  }\n}"
+format %s | { a: URL } => "{ a: URL {} }"
+Console#dir | { a: URL } => "{ a: http://example.com/a?k=v }\n"
+assert.strictEqual(v, 1) | { a: URL } => THROWS AssertionError "Expected values to be strictly equal:\n+ actual - expected\n\n+ {\n+   a: http://example.com/a?k=v\n+ }\n- 1\n"
+assert.deepStrictEqual({a: v}, {a: 1}) | { a: URL } => THROWS AssertionError "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   a: {\n+     a: http://example.com/a?k=v\n+   }\n-   a: 1\n  }\n"
+assert.equal(v, 1) | { a: URL } => THROWS AssertionError "{\n  a: http://example.com/a?k=v\n} == 1"
+assert.notStrictEqual(v, v) | { a: URL } => THROWS AssertionError "Expected \"actual\" not to be reference-equal to \"expected\":\n\n{\n  a: http://example.com/a?k=v\n}\n"
+inspect | [URL] | default => "[\n  URL {\n    href: 'http://example.com/a?k=v',\n    origin: 'http://example.com',\n    protocol: 'http:',\n    username: '',\n    password: '',\n    host: 'example.com',\n    hostname: 'example.com',\n    port: '',\n    pathname: '/a',\n    search: '?k=v',\n    searchParams: URLSearchParams { 'k' => 'v' },\n    hash: ''\n  }\n]"
+inspect | [URL] | depth 0 => "[ URL {} ]"
+inspect | [URL] | raw => "[ http://example.com/a?k=v ]"
+inspect | [URL] | raw, depth 0 => "[ URL {} ]"
+inspect | [URL] | raw, showHidden => "[\n  http://example.com/a?k=v {\n    href: [Getter/Setter],\n    origin: [Getter],\n    protocol: [Getter/Setter],\n    username: [Getter/Setter],\n    password: [Getter/Setter],\n    host: [Getter/Setter],\n    hostname: [Getter/Setter],\n    port: [Getter/Setter],\n    pathname: [Getter/Setter],\n    hash: [Getter/Setter],\n    search: [Getter/Setter],\n    searchParams: [Getter],\n    [Symbol(Symbol.toStringTag)]: 'URL'\n  },\n  [length]: 1\n]"
+inspect | [URL] | raw, showProxy => "[ http://example.com/a?k=v ]"
+inspect | [URL] | raw, getters => "[ http://example.com/a?k=v ]"
+format %o | [URL] => "[\n  URL {\n    href: 'http://example.com/a?k=v',\n    origin: 'http://example.com',\n    protocol: 'http:',\n    username: '',\n    password: '',\n    host: 'example.com',\n    hostname: 'example.com',\n    port: '',\n    pathname: '/a',\n    search: '?k=v',\n    searchParams: URLSearchParams { 'k' => 'v' },\n    hash: '',\n    Symbol(context): URLContext {\n      href: 'http://example.com/a?k=v',\n      protocol_end: 5,\n      username_end: 7,\n      host_start: 7,\n      host_end: 18,\n      pathname_start: 18,\n      search_start: 20,\n      hash_start: 4294967295,\n      port: 4294967295,\n      scheme_type: 0,\n      [hasPort]: [Getter],\n      [hasSearch]: [Getter],\n      [hasHash]: [Getter]\n    }\n  },\n  [length]: 1\n]"
+format %O | [URL] => "[\n  URL {\n    href: 'http://example.com/a?k=v',\n    origin: 'http://example.com',\n    protocol: 'http:',\n    username: '',\n    password: '',\n    host: 'example.com',\n    hostname: 'example.com',\n    port: '',\n    pathname: '/a',\n    search: '?k=v',\n    searchParams: URLSearchParams { 'k' => 'v' },\n    hash: ''\n  }\n]"
+format %s | [URL] => "[ URL {} ]"
+Console#dir | [URL] => "[ http://example.com/a?k=v ]\n"
+assert.strictEqual(v, 1) | [URL] => THROWS AssertionError "Expected values to be strictly equal:\n+ actual - expected\n\n+ [\n+   http://example.com/a?k=v\n+ ]\n- 1\n"
+assert.deepStrictEqual({a: v}, {a: 1}) | [URL] => THROWS AssertionError "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   a: [\n+     http://example.com/a?k=v\n+   ]\n-   a: 1\n  }\n"
+assert.equal(v, 1) | [URL] => THROWS AssertionError "[\n  http://example.com/a?k=v\n] == 1"
+assert.notStrictEqual(v, v) | [URL] => THROWS AssertionError "Expected \"actual\" not to be reference-equal to \"expected\":\n\n[\n  http://example.com/a?k=v\n]\n"
+inspect | { a: { b: { c: URL } } } | default => "{ a: { b: { c: URL {} } } }"
+inspect | { a: { b: { c: URL } } } | depth 0 => "{ a: [Object] }"
+inspect | { a: { b: { c: URL } } } | raw => "{ a: { b: { c: URL {} } } }"
+inspect | { a: { b: { c: URL } } } | raw, depth 0 => "{ a: [Object] }"
+inspect | { a: { b: { c: URL } } } | raw, showHidden => "{ a: { b: { c: URL {} } } }"
+inspect | { a: { b: { c: URL } } } | raw, showProxy => "{ a: { b: { c: URL {} } } }"
+inspect | { a: { b: { c: URL } } } | raw, getters => "{ a: { b: { c: URL {} } } }"
+format %o | { a: { b: { c: URL } } } => "{\n  a: {\n    b: {\n      c: URL {\n        href: 'http://example.com/a?k=v',\n        origin: 'http://example.com',\n        protocol: 'http:',\n        username: '',\n        password: '',\n        host: 'example.com',\n        hostname: 'example.com',\n        port: '',\n        pathname: '/a',\n        search: '?k=v',\n        searchParams: URLSearchParams { 'k' => 'v' },\n        hash: '',\n        Symbol(context): URLContext {\n          href: 'http://example.com/a?k=v',\n          protocol_end: 5,\n          username_end: 7,\n          host_start: 7,\n          host_end: 18,\n          pathname_start: 18,\n          search_start: 20,\n          hash_start: 4294967295,\n          port: 4294967295,\n          scheme_type: 0,\n          [hasPort]: [Getter],\n          [hasSearch]: [Getter],\n          [hasHash]: [Getter]\n        }\n      }\n    }\n  }\n}"
+format %O | { a: { b: { c: URL } } } => "{ a: { b: { c: URL {} } } }"
+format %s | { a: { b: { c: URL } } } => "{ a: [Object] }"
+Console#dir | { a: { b: { c: URL } } } => "{ a: { b: { c: URL {} } } }\n"
+assert.strictEqual(v, 1) | { a: { b: { c: URL } } } => THROWS AssertionError "Expected values to be strictly equal:\n+ actual - expected\n\n+ {\n+   a: {\n+     b: {\n+       c: http://example.com/a?k=v\n+     }\n+   }\n+ }\n- 1\n"
+assert.deepStrictEqual({a: v}, {a: 1}) | { a: { b: { c: URL } } } => THROWS AssertionError "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   a: {\n+     a: {\n+       b: {\n+         c: http://example.com/a?k=v\n+       }\n+     }\n+   }\n-   a: 1\n  }\n"
+assert.equal(v, 1) | { a: { b: { c: URL } } } => THROWS AssertionError "{\n  a: {\n    b: {\n      c: http://example.com/a?k=v\n    }\n  }\n} == 1"
+assert.notStrictEqual(v, v) | { a: { b: { c: URL } } } => THROWS AssertionError "Expected \"actual\" not to be reference-equal to \"expected\":\n\n{\n  a: {\n    b: {\n      c: http://example.com/a?k=v\n    }\n  }\n}\n"
+inspect | { a: class instance whose href getter throws } | default => THROWS Error
+inspect | { a: class instance whose href getter throws } | depth 0 => THROWS Error
+inspect | { a: class instance whose href getter throws } | raw => THROWS Error
+inspect | { a: class instance whose href getter throws } | raw, depth 0 => THROWS Error
+inspect | { a: class instance whose href getter throws } | raw, showHidden => THROWS Error
+inspect | { a: class instance whose href getter throws } | raw, showProxy => THROWS Error
+inspect | { a: class instance whose href getter throws } | raw, getters => THROWS Error
+format %o | { a: class instance whose href getter throws } => THROWS Error
+format %O | { a: class instance whose href getter throws } => THROWS Error
+format %s | { a: class instance whose href getter throws } => THROWS Error
+Console#dir | { a: class instance whose href getter throws } => THROWS Error
+assert.strictEqual(v, 1) | { a: class instance whose href getter throws } => THROWS Error
+assert.deepStrictEqual({a: v}, {a: 1}) | { a: class instance whose href getter throws } => THROWS Error
+assert.equal(v, 1) | { a: class instance whose href getter throws } => THROWS Error
+assert.notStrictEqual(v, v) | { a: class instance whose href getter throws } => THROWS Error
+inspect | class extends URL | default => "[class MyURL extends URL]"
+inspect | class extends URL | depth 0 => "[class MyURL extends URL]"
+inspect | class extends URL | raw => "[class MyURL extends URL]"
+inspect | class extends URL | raw, depth 0 => "[class MyURL extends URL]"
+inspect | class extends URL | raw, showHidden => THROWS TypeError
+inspect | class extends URL | raw, showProxy => "[class MyURL extends URL]"
+inspect | class extends URL | raw, getters => "[class MyURL extends URL]"
+format %o | class extends URL => THROWS TypeError
+format %O | class extends URL => "[class MyURL extends URL]"
+format %s | class extends URL => "class MyURL extends URL {\n  }"
+Console#dir | class extends URL => "[class MyURL extends URL]\n"
+assert.strictEqual(v, 1) | class extends URL => THROWS AssertionError "Expected values to be strictly equal:\n+ actual - expected\n\n+ [class MyURL extends URL]\n- 1\n"
+assert.deepStrictEqual({a: v}, {a: 1}) | class extends URL => THROWS AssertionError "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   a: [class MyURL extends URL]\n-   a: 1\n  }\n"
+assert.equal(v, 1) | class extends URL => THROWS AssertionError "[class MyURL extends URL] == 1"
+assert.notStrictEqual(v, v) | class extends URL => THROWS AssertionError "Expected \"actual\" not to be reference-equal to \"expected\":\n\n[class MyURL extends URL]"

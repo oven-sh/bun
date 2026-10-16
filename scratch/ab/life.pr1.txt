@@ -1,0 +1,9 @@
+limit 10, plain mismatch | threw AssertionError | frames on the thrown error: true | limit after: 10
+limit 10, message cannot be made | threw Error | frames on the thrown error: false | limit after: 0
+limit 0 set by the caller, plain mismatch | threw AssertionError | frames on the thrown error: true | limit after: 0
+limit 77, message cannot be made | threw Error | frames on the thrown error: false | limit after: 0
+limit not writable, plain mismatch | threw TypeError | frames on the thrown error: true | limit after: 10 (not writable)
+limit not writable, message cannot be made | threw TypeError | frames on the thrown error: true | limit after: 10 (not writable)
+limit deleted, plain mismatch | threw AssertionError | frames on the thrown error: true | limit after: undefined
+limit is an accessor, plain mismatch | threw AssertionError | frames on the thrown error: true | limit after: accessor | get,set 0,set 10
+limit is an accessor, message cannot be made | threw Error | frames on the thrown error: false | limit after: accessor | get,set 0

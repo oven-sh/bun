@@ -1,0 +1,15 @@
+base nonurl hits=0
+base hooks hits=0
+base control hits=0
+base urls hits=0
+base assert hits=0
+pr1 nonurl hits=0
+pr1 hooks hits=0
+pr1 control hits=0
+pr1 urls hits=1000
+pr1 assert hits=0
+pick nonurl hits=111
+pick hooks hits=111
+pick control hits=0
+pick urls hits=1000
+pick assert hits=0

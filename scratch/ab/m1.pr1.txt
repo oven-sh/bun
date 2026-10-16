@@ -1,0 +1,31 @@
+class instance, getter on the prototype: 1
+subclass instance: 1
+class instance, own getter: 1
+function-constructor instance: 1
+null-prototype object, own getter: 1
+Object.create(object with the getter): 0
+instance of a class with Symbol.iterator: 1
+plain object, own getter: 0
+array, own getter: 0
+Map, own getter: 0
+Set, own getter: 0
+WeakMap, own getter: 0
+WeakSet, own getter: 0
+Promise, own getter: 0
+Date, own getter: 0
+RegExp, own getter: 0
+Error, own getter: 0
+function, own getter: 0
+class, own getter: 0
+Uint8Array, own getter: 0
+ArrayBuffer, own getter: 0
+DataView, own getter: 0
+boxed String, own getter: 0
+boxed Number, own getter: 0
+boxed Symbol, own getter: 0
+arguments object, own getter: 0
+generator object, own getter: 0
+Proxy of a class instance with the getter: 1
+URLSearchParams, own getter: 1
+Blob, own getter: 1
+URL subclass with a getter: 1

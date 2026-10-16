@@ -678,20 +678,38 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       text: "aéb",
     },
     "single string with a BOM": { chunks: () => ["\uFEFFabc"], text: "abc" },
-    "a BOM split across string chunks": { chunks: () => ["\uFEFF", "\uFEFFabc"], text: "abc" },
+    // The bytes are EF BB BF EF BB BF "abc": one decode drops one mark, the second is text.
+    "a BOM split across string chunks": { chunks: () => ["\uFEFF", "\uFEFFabc"], text: "\uFEFFabc" },
     "a BOM string chunk before bytes": { chunks: () => ["\uFEFF", new TextEncoder().encode("abc")], text: "abc" },
     "lone surrogate in a string chunk": { chunks: () => ["a\uD800b"], text: "a\uD800b" },
-    "a BOM string chunk after bytes": { chunks: () => [new TextEncoder().encode("ab"), "\uFEFFcd"], text: "abcd" },
+    "lone surrogate after a BOM in a string chunk": { chunks: () => ["\uFEFFa\uD800b"], text: "a\uD800b" },
+    // A mark that is not at the start of the bytes is text.
+    "a BOM string chunk after bytes": {
+      chunks: () => [new TextEncoder().encode("ab"), "\uFEFFcd"],
+      text: "ab\uFEFFcd",
+    },
     "a surrogate pair split across string chunks after bytes": {
       chunks: () => [new TextEncoder().encode("x"), "\uD83D", "\uDE00"],
       text: "x\u{1F600}",
     },
     "invalid UTF-8 bytes": { chunks: () => [new Uint8Array([0x61, 0xff, 0x62])], text: "a\uFFFDb" },
   };
+  const directSource = chunks =>
+    new ReadableStream({
+      type: "direct",
+      pull(controller) {
+        for (const chunk of chunks) controller.write(chunk);
+        controller.close();
+      },
+    });
   for (const [name, { chunks, text }] of Object.entries(textCases)) {
     it(`text: ${name}`, async () => {
       expect(await Bun.readableStreamToText(source(chunks()))).toBe(text);
       expect(await new Response(source(chunks())).text()).toBe(text);
+    });
+    it(`text of a direct stream: ${name}`, async () => {
+      expect(await Bun.readableStreamToText(directSource(chunks()))).toBe(text);
+      expect(await new Response(directSource(chunks())).text()).toBe(text);
     });
   }
 

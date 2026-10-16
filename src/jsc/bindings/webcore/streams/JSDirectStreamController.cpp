@@ -5,7 +5,6 @@
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
 #include "ErrorCode.h"
-#include "helpers.h"
 #include "JSDOMBinding.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDirectStreamSource.h"
@@ -476,95 +475,14 @@ static JSValue writeToDirectSink(JSGlobalObject* globalObject, JSDirectStreamCon
     return {};
 }
 
-static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
-{
-    auto& accumulator = controller->m_textAccumulator;
-    const bool hasString = accumulator.hasString;
-    const bool hasBuffer = accumulator.hasBuffer;
-    if (!hasString && !hasBuffer)
-        return emptyString();
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    // Pure-string rope: the ONLY arm of the direct Text sink that strips a leading BOM.
-    if (hasString && !hasBuffer) {
-        if (Bun::WebStreams::exceedsStringLimit(accumulator.rope.length())) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            return String();
-        }
-        String rope = accumulator.rope.toString();
-        if (rope.length() && rope[0] == 0xFEFF)
-            return rope.substring(1);
-        return rope;
-    }
-
-    // Sizes are recorded at write() time; rejecting even if buffers were detached later is intended.
-    const double estimatedLength = accumulator.estimatedLength;
-    if (estimatedLength > static_cast<double>(WTF::StringImpl::MaxLength)
-        || Bun::WebStreams::exceedsStringLimit(static_cast<size_t>(estimatedLength))) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return String();
-    }
-    Vector<uint8_t> bytes;
-    if (estimatedLength > 0 && !bytes.tryReserveInitialCapacity(static_cast<size_t>(estimatedLength))) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return String();
-    }
-    for (auto& piece : accumulator.pieces) {
-        JSValue value = piece.get();
-        bool appended = true;
-        if (value.isString()) {
-            String string = asString(value)->value(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            appended = Bun::WebStreams::appendUTF8WithinStringLimit(string, bytes);
-        } else if (auto* view = dynamicDowncast<JSArrayBufferView>(value)) {
-            if (!view->isDetached())
-                appended = bytes.tryAppend(view->span());
-        } else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value)) {
-            auto* impl = buffer->impl();
-            if (impl && !impl->isDetached())
-                appended = bytes.tryAppend(impl->span());
-        }
-        if (!appended) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            return String();
-        }
-    }
-    if (!accumulator.rope.isEmpty()) {
-        String rope = accumulator.rope.toString();
-        if (rope[0] == 0xFEFF)
-            rope = rope.substring(1);
-        if (!Bun::WebStreams::appendUTF8WithinStringLimit(rope, bytes)) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            return String();
-        }
-    }
-    if (Bun::WebStreams::exceedsStringLimit(bytes.size())) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return String();
-    }
-    String text = Zig::convertUTF8ToString(bytes.span());
-    if (text.isNull() && !bytes.isEmpty()) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return String();
-    }
-    return text;
-}
-
 static JSValue endTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (controller->m_calledDone)
         return jsEmptyString(vm);
     controller->m_calledDone = true;
-    String result = finishTextSink(vm, globalObject, controller);
-    // The accumulated payload must not stay alive on the controller (it lives as long
-    // as the stream); the result string owns everything it needs.
-    {
-        Locker locker { controller->cellLock() };
-        controller->m_textAccumulator.reset(locker);
-    }
-    RETURN_IF_EXCEPTION(scope, {});
-    JSString* resultString = jsString(vm, result);
+    // The finisher releases the accumulated payload: the controller lives as long as the stream.
+    JSString* resultString = Bun::WebStreams::finishTextAccumulator(vm, globalObject, controller, controller->m_textAccumulator);
     RETURN_IF_EXCEPTION(scope, {});
     if (auto* closingPromise = controller->closingPromise().get())
         closingPromise->fulfill(vm, resultString);

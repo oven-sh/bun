@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "bun";
+import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import {
   copyFileSync,
@@ -1099,7 +1099,8 @@ for (const [what, name] of [
       // The absolute path does not fit in PATH_MAX, so only a relative name reaches the file.
       const create = `require("node:fs").writeFileSync("${name}", "");`;
       if (name.endsWith(".png")) {
-        expect(spawnSync({ cmd: [bunExe(), "-e", create], cwd, env: bunEnv }).exitCode).toBe(0);
+        await using setup = spawn({ cmd: [bunExe(), "-e", create], cwd, env: bunEnv });
+        expect(await setup.exited).toBe(0);
       }
       writeFileSync(
         join(cwd, "main.ts"),

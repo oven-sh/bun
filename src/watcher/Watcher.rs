@@ -1199,7 +1199,8 @@ impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
     }
 }
 
-#[cfg(test)]
+// The paths in these tests use `/`, which is not `bun_paths::SEP` on Windows.
+#[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;
 

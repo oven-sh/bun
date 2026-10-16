@@ -109,10 +109,6 @@ impl HotReloaderCtx for VirtualMachine {
         VirtualMachine::bust_dir_cache(self, path)
     }
 
-    fn get_loaders(&self) -> &bun_ast::LoaderHashTable {
-        &self.transpiler.options.loaders
-    }
-
     fn log_level_at_least_info(&self) -> bool {
         // Note `Level.atLeast` is `self <= other` (Verbose=0..Err=4), so this is
         // true for Verbose/Debug/Info — i.e. "verbose enough to print info".
@@ -199,9 +195,6 @@ pub trait HotReloaderCtx {
 
     /// Returns whether anything was busted.
     fn bust_dir_cache(&mut self, path: &[u8]) -> bool;
-
-    /// `&transpiler.options.loaders`.
-    fn get_loaders(&self) -> &bun_ast::LoaderHashTable;
 
     fn log_level_at_least_info(&self) -> bool {
         false
@@ -1165,10 +1158,6 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
 
     fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         bun_bundler::BundleV2::bust_dir_cache(self, path)
-    }
-
-    fn get_loaders(&self) -> &bun_ast::LoaderHashTable {
-        &self.transpiler.options.loaders
     }
 
     fn log_level_at_least_info(&self) -> bool {

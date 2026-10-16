@@ -786,9 +786,7 @@ test("only imports the function", () => {
 
   const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
   const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"))!;
-  const executed = Object.fromEntries(
-    [...record.matchAll(/^DA:(\d+),(\d+)$/gm)].map(m => [m[1], Number(m[2]) > 0]),
-  );
+  const executed = Object.fromEntries([...record.matchAll(/^DA:(\d+),(\d+)$/gm)].map(m => [m[1], Number(m[2]) > 0]));
   // Lines 2 to 4 ran at module load. Line 6 is the uncalled function.
   expect({ 2: executed[2], 3: executed[3], 4: executed[4], 6: executed[6] }).toEqual({
     2: true,

@@ -2901,9 +2901,7 @@ pub(crate) fn remove_entries_missing_from(src: &Dir, dest: &Dir) {
         while let Some(entry) = iter.next().ok()? {
             entries.push((entry.name.slice_u8().into(), entry.kind));
         }
-        if iter.dir_was_removed() {
-            return None;
-        }
+        iter.fail_if_removed().ok()?;
         Some(entries)
     }
     let Some(src_entries) = list(src) else {

@@ -136,6 +136,27 @@ function urlFromEnvironment(
   return [null, null, false];
 }
 
+/** Without `adapter`, the URL of a server in `filename`, and a `filename` next to what only a server has, is a connection string. */
+function namesServer(filename: string | URL, options: AnyOptions): boolean {
+  const named = adapterFromScheme(schemeOf(filename));
+  if (named) return named !== "sqlite";
+  return !!(
+    options.hostname ||
+    options.host ||
+    options.port ||
+    options.username ||
+    options.user ||
+    options.password ||
+    options.pass ||
+    options.database ||
+    options.db ||
+    options.path ||
+    options.socket ||
+    options.tls ||
+    options.ssl
+  );
+}
+
 function resolveTarget(
   first: AnyOptions | string | URL | null | undefined,
   second: AnyOptions,
@@ -153,7 +174,7 @@ function resolveTarget(
   }
 
   const filename = !adapter || adapter === "sqlite" ? options.filename : undefined;
-  if (filename) adapter = "sqlite";
+  if (filename && (adapter || !namesServer(filename, options))) adapter = "sqlite";
   target = filename || options.url || target || null;
 
   // A URL is a unit: the credentials of one from the environment belong to its host.

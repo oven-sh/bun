@@ -348,8 +348,10 @@ describe("which string names the database", () => {
     [{}, [{ filename: "./dev.db" }], "./dev.db"],
     [{}, [{ filename: "/abs/dev.db" }], "/abs/dev.db"],
     [{}, [{ filename: "sqlite://dev.db" }], "dev.db"],
-    [{}, [{ filename: server }], server],
-    [{}, [{ filename: "dev.db", hostname: "h" } as never], "dev.db"],
+    [{}, [{ filename: "localhost" }], "localhost"],
+    [{}, [{ adapter: "sqlite", filename: server }], server],
+    [{}, [{ adapter: "sqlite", filename: "dev.db", hostname: "h" } as never], "dev.db"],
+    [{}, [{ filename: "sqlite://dev.db", hostname: "h" } as never], "dev.db"],
     [{ DATABASE_URL: server, SQLITE_URL: "env.db" }, [{ filename: "dev.db" }], "dev.db"],
 
     [{}, [{ adapter: "sqlite", url: "sqlite://url.db" } as never], "url.db"],
@@ -368,6 +370,7 @@ describe("which string names the database", () => {
     [{ SQLITE_URL: "/abs/env.db" }, [], "/abs/env.db"],
     [{ SQLITE_URL: "sqlite://env.db" }, [], "env.db"],
     [{ SQLITEURL: "env.db" }, [{ adapter: "sqlite" }], "env.db"],
+    [{ SQLITEURL: "env.db" }, [], "env.db"],
     [{ SQLITE_URL: "env.db", DATABASE_URL: server }, [{ adapter: "sqlite" }], "env.db"],
     [{ SQLITE_URL: "env.db", DATABASE_URL: "sqlite://generic.db" }, [{ adapter: "sqlite" }], "generic.db"],
     [{ SQLITE_URL: "env.db" }, [{ adapter: "sqlite", hostname: "h" } as never], "env.db"],
@@ -393,6 +396,27 @@ describe("which string names the database", () => {
     await using sql =
       typeof first === "object" && first ? parse(undefined, { ...first, ...second }) : parse(first, second);
     expect(sql.options).toMatchObject({ adapter: "sqlite", filename });
+  });
+
+  // It has always been one. A program that passes its DATABASE_URL there must not end up with a file of that name.
+  test.each<[SQL.Options, object]>([
+    [{ filename: server }, { adapter: "postgres", hostname: "pghost", port: 5432, username: "pu", database: "pgdb" }],
+    [{ filename: new URL(server) }, { adapter: "postgres", hostname: "pghost", database: "pgdb" }],
+    [{ filename: "mysql://mu@myhost/md" }, { adapter: "mysql", hostname: "myhost", database: "md" }],
+    [{ filename: "mariadb://mu@myhost/md" }, { adapter: "mariadb", hostname: "myhost" }],
+    [{ filename: "dev.db", hostname: "h" } as never, { adapter: "postgres", hostname: "h" }],
+    [{ filename: "dev.db", port: 5433 } as never, { adapter: "postgres", hostname: "dev.db", port: 5433 }],
+    [{ filename: "dev.db", username: "u" } as never, { adapter: "postgres", hostname: "dev.db", username: "u" }],
+    [{ filename: "dev.db", database: "d" } as never, { adapter: "postgres", hostname: "dev.db", database: "d" }],
+    [{ filename: "dev.db", tls: true } as never, { adapter: "postgres", hostname: "dev.db" }],
+    [{ filename: "" }, { adapter: "postgres", hostname: "localhost" }],
+  ])("without `adapter`, %j is a connection string", (options, expected) => {
+    expect(new SQL(options).options).toMatchObject(expected);
+  });
+
+  test("a DATABASE_URL that is a plain path selects no adapter", () => {
+    process.env.DATABASE_URL = "plain.db";
+    expect(new SQL().options).toMatchObject({ adapter: "postgres", hostname: "plain.db" });
   });
 
   test("`filename` is not read next to a server adapter", () => {

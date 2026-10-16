@@ -625,7 +625,7 @@ impl Stdio {
         // The parent writes the blob's bytes from memory into the child's pipe.
         if blob.is_s3() {
             return Err(webcore::blob::NotInMemory::S3
-                .throw(global, format_args!("Bun.spawn() cannot read")));
+                .throw(global, format_args!("stdin cannot read")));
         }
 
         // Nothing to write: treat an empty blob the same as "ignore"

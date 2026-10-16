@@ -2,6 +2,7 @@ import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
 import path from "path";
+import { s3LocalEndpoint } from "../bun/s3/s3-local-endpoint";
 import {
   listeningServer,
   mysqlAckSessionSetup,
@@ -116,6 +117,27 @@ if (isDockerEnabled()) {
             e => ({ code: (e as any)?.code ?? String(e) }),
           );
           expect(err).toEqual({ code: "ERR_MYSQL_OVERFLOW" });
+        });
+
+        // A Blob parameter is sent from its bytes in memory. An S3 object has
+        // none, so it used to be sent as an empty value, with no error.
+        test("rejects an S3 file as a bind parameter", async () => {
+          await using db = new SQL({ ...getOptions(), max: 1 });
+          using endpoint = s3LocalEndpoint("from s3");
+
+          expect((await db`select length(${new Blob(["in memory"])}) as n`)[0].n).toBe(9);
+          const err = await db`select length(${endpoint.file()}) as n`.then(
+            rows => ({ message: "resolved with " + JSON.stringify(rows) }),
+            e => ({ name: e.name, message: e.message }),
+          );
+          expect({ err, s3Requests: endpoint.ranges }).toEqual({
+            err: {
+              name: "TypeError",
+              message:
+                "A MySQL parameter cannot read a file- or S3-backed Blob synchronously; await blob.bytes() first",
+            },
+            s3Requests: [],
+          });
         });
 
         test("returns column values that span more than one wire packet intact", async () => {

@@ -741,7 +741,7 @@ impl Builtin {
                         && let Some(not_in_memory @ NotInMemory::S3) = b.not_in_memory()
                     {
                         let _ = not_in_memory
-                            .throw(global, format_args!("A shell builtin cannot read"));
+                            .throw(global, format_args!("stdin cannot read"));
                         return Some(Yield::Failed(cmd));
                     }
                     let original_blob = body.use_();
@@ -774,7 +774,7 @@ impl Builtin {
                         && let Some(not_in_memory @ NotInMemory::S3) = blob_ref.not_in_memory()
                     {
                         let _ = not_in_memory
-                            .throw(global, format_args!("A shell builtin cannot read"));
+                            .throw(global, format_args!("stdin cannot read"));
                         return Some(Yield::Failed(cmd));
                     }
                     let theblob = Arc::new(BuiltinBlob {

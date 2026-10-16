@@ -119,9 +119,26 @@ impl NotInMemory {
     /// what it cannot do, e.g. `format_args!("Bun.hash() cannot read")`.
     #[cold]
     pub fn throw(self, global: &JSGlobalObject, action: core::fmt::Arguments<'_>) -> JsError {
-        global.throw_type_error(format_args!(
-            "{action} a file- or S3-backed Blob synchronously; await blob.bytes() first"
-        ))
+        global.throw_type_error(format_args!("{}", Self::refusal(action)))
+    }
+
+    /// The message of [`Self::throw`], for a reader that reports the refusal
+    /// some other way.
+    pub fn refusal(action: core::fmt::Arguments<'_>) -> Refusal<'_> {
+        Refusal(action)
+    }
+}
+
+/// See [`NotInMemory::refusal`].
+pub struct Refusal<'a>(core::fmt::Arguments<'a>);
+
+impl core::fmt::Display for Refusal<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{} a file- or S3-backed Blob synchronously; await blob.bytes() first",
+            self.0
+        )
     }
 }
 

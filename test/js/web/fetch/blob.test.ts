@@ -3,6 +3,7 @@ import { bunEnv, bunExe, gcTick, isASAN, tempDir } from "harness";
 import type { BlobPropertyBag } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import path from "node:path";
+import { s3LocalEndpoint } from "../../bun/s3/s3-local-endpoint";
 
 test("blob: imports have sourcemapped stacktraces", async () => {
   const blob = new Blob(
@@ -963,4 +964,33 @@ test.each([
 ])("new Blob([], { type: %j }).slice().type", (type, expected) => {
   const blob = new Blob(["abc"], { type });
   expect(blob.slice(0, 1).type).toBe(expected);
+});
+
+// The bytes of a Blob part are copied when the Blob is made. An S3 object has
+// no bytes in memory, so an S3 part used to add nothing: no error, no request.
+describe("an S3 file as a part of new Blob() and new File()", () => {
+  const message = "new Blob() cannot read a file- or S3-backed Blob synchronously; await blob.bytes() first";
+
+  test.each([
+    ["new Blob([text, s3file])", (file: Blob) => new Blob(["id,name\n", file])],
+    // A part that can run user code takes the path that copies each part at once.
+    ["new Blob([text, s3file, object])", (file: Blob) => new Blob(["id,name\n", file, { toString: () => "" }] as any)],
+    ["new File([text, s3file], name)", (file: Blob) => new File(["id,name\n", file], "report.csv")],
+  ])("%s throws", (_label, make) => {
+    using endpoint = s3LocalEndpoint("1,bun\n");
+    expect(() => make(endpoint.file())).toThrow(expect.objectContaining({ name: "TypeError", message }));
+    expect(endpoint.ranges).toEqual([]);
+  });
+
+  test("a Blob made of one S3 file still reads the object", async () => {
+    using endpoint = s3LocalEndpoint("1,bun\n");
+    const blob = new Blob([endpoint.file()]);
+    expect({ text: await blob.text(), requests: endpoint.ranges }).toEqual({ text: "1,bun\n", requests: [null] });
+  });
+
+  test("the remedy in the message gives the bytes", async () => {
+    using endpoint = s3LocalEndpoint("1,bun\n");
+    const blob = new Blob(["id,name\n", await endpoint.file().bytes()]);
+    expect(await blob.text()).toBe("id,name\n1,bun\n");
+  });
 });

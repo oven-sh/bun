@@ -692,11 +692,16 @@ impl<'a> Run<'a> {
                         Ok(bytes) => bytes,
                         // A file-backed blob still inlines as empty.
                         Err(NotInMemory::File) => b"",
-                        Err(not_in_memory @ NotInMemory::S3) => {
-                            return Err(MacroError::Js(not_in_memory.throw(
-                                self.global,
-                                format_args!("A macro cannot return"),
-                            )));
+                        Err(NotInMemory::S3) => {
+                            self.log.add_error_fmt(
+                                Some(self.source),
+                                self.caller.loc,
+                                format_args!(
+                                    "{}",
+                                    NotInMemory::refusal(format_args!("A macro cannot return"))
+                                ),
+                            );
+                            return Err(MacroError::MacroFailed);
                         }
                     };
                     let ct = blob.content_type_slice();

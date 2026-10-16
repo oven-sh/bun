@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { createHash, createHmac } from "node:crypto";
+import { s3LocalEndpoint } from "../s3/s3-local-endpoint";
 
 // Every digest literal in this file was checked against python hashlib (openssl for md4).
 
@@ -17,6 +18,23 @@ test("Bun.file in CryptoHasher is not supported yet", () => {
   expect(() => new Bun.CryptoHasher("sha1").update(file)).toThrow(
     "Bun.file() is not supported here yet (it needs an async version)",
   );
+});
+// The hashers read their input at once. An S3 object has no bytes in memory,
+// so it used to hash as the empty input, with no error and no request.
+test("an S3 file in CryptoHasher throws", () => {
+  using endpoint = s3LocalEndpoint("hello world");
+  const s3file = endpoint.file();
+  const refusal = (api: string) =>
+    expect.objectContaining({
+      name: "TypeError",
+      message: `${api} cannot read a file- or S3-backed Blob synchronously; await blob.bytes() first`,
+    });
+  expect(() => Bun.SHA1.hash(s3file)).toThrow(refusal("This function"));
+  expect(() => Bun.CryptoHasher.hash("sha1", s3file)).toThrow(refusal("This function"));
+  expect(() => new Bun.SHA1().update(s3file)).toThrow(refusal("This function"));
+  expect(() => new Bun.CryptoHasher("sha1").update(s3file)).toThrow(refusal("Bun.CryptoHasher"));
+  expect(() => new Bun.CryptoHasher("sha256", "key").update(s3file)).toThrow(refusal("Bun.CryptoHasher"));
+  expect(endpoint.ranges).toEqual([]);
 });
 test("CryptoHasher update should throw when no parameter/null/undefined is passed", () => {
   const expected = expect.objectContaining({

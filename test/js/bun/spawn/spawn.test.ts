@@ -20,6 +20,7 @@ import {
 } from "harness";
 import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "path";
+import { s3LocalEndpoint } from "../s3/s3-local-endpoint";
 
 let tmp: string;
 
@@ -1407,6 +1408,24 @@ it("error does not UAF", async () => {
     emsg = (e as Error).message;
   }
   expect(emsg).toInclude(" ");
+});
+
+// The parent writes a Blob's bytes from memory into the child's stdin. An S3
+// object has none, so the child used to read an empty stdin, with no error and
+// no request.
+it("throws when an S3 file is used for stdin", () => {
+  using endpoint = s3LocalEndpoint("from s3");
+  const refusal = expect.objectContaining({
+    name: "TypeError",
+    message: "stdin cannot read a file- or S3-backed Blob synchronously; await blob.bytes() first",
+  });
+  const cmd = [bunExe(), "-e", ""];
+  expect(() => spawn({ cmd, env: bunEnv, stdin: endpoint.file() })).toThrow(refusal);
+  expect(() => spawnSync({ cmd, env: bunEnv, stdin: endpoint.file() })).toThrow(refusal);
+  expect(() =>
+    spawn({ cmd, env: bunEnv, stdin: new Request("http://127.0.0.1:1/", { method: "POST", body: endpoint.file() }) }),
+  ).toThrow(refusal);
+  expect(endpoint.ranges).toEqual([]);
 });
 
 it("throws when an ArrayBufferView is used for stdout or stderr", async () => {

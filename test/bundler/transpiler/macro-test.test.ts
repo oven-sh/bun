@@ -197,6 +197,28 @@ test("object argument with a sparse numeric key", async () => {
   });
 });
 
+// A Blob that a macro returns is inlined from its bytes in memory. An S3 object
+// has none, so it used to be inlined as an empty `data:` URL, with no error.
+test("a macro that returns an S3 file fails", async () => {
+  using dir = tempDir("macro-s3-file", {
+    "object.ts": `export function object() {\n  return new Bun.S3Client({ endpoint: "http://127.0.0.1:1", accessKeyId: "a", secretAccessKey: "b", bucket: "c" }).file("key");\n}\n`,
+    "index.ts": `import { object } from "./object.ts" with { type: "macro" };\nconsole.log("inlined " + JSON.stringify(object()));\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(
+    "error: A macro cannot return a file- or S3-backed Blob synchronously; await blob.bytes() first",
+  );
+  expect(stdout).not.toContain("inlined");
+  expect(exitCode).toBe(1);
+});
+
 test("object destructuring of a macro result keeps every bound property regardless of key order or repeated keys", async () => {
   using dir = tempDir("macro-destructure-object", {
     "m.ts": `export function m() {\n  return { a: 1, c: 2 };\n}\n`,

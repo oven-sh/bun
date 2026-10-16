@@ -1,6 +1,7 @@
 import { xxHash3ForTesting } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { gcTick } from "harness";
+import { s3LocalEndpoint } from "../s3/s3-local-endpoint";
 
 it(`Bun.hash()`, () => {
   gcTick();
@@ -258,4 +259,16 @@ it("does not crash when changing Int32Array constructor with Bun.hash.xxHash32 a
   expect(() => {
     arr.map(Bun.hash.xxHash32);
   }).toThrow("species is not a constructor");
+});
+
+// Bun.hash() reads its input at once. An S3 object has no bytes in memory, so
+// it used to hash as the empty input, with no error and no request.
+it("Bun.hash() throws for an S3 file", () => {
+  using endpoint = s3LocalEndpoint("hello world");
+  const message = "Bun.hash() cannot read a file- or S3-backed Blob synchronously; await blob.bytes() first";
+  for (const hash of [Bun.hash, Bun.hash.wyhash, Bun.hash.crc32, Bun.hash.xxHash64]) {
+    expect(() => hash(endpoint.file())).toThrow(expect.objectContaining({ name: "TypeError", message }));
+  }
+  expect(endpoint.ranges).toEqual([]);
+  expect(Bun.hash(new Blob(["hello world"]))).toBe(0x668d5e431c3b2573n);
 });

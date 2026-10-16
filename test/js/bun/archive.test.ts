@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { randomBytes } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync } from "node:fs";
 import { join } from "path";
+import { s3LocalEndpoint } from "./s3/s3-local-endpoint";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
 // a Buffer so tests can put raw, non-UTF-8 byte sequences into the name field.
@@ -169,6 +170,23 @@ describe("Bun.Archive", () => {
       });
 
       expect(archive).toBeInstanceOf(Bun.Archive);
+    });
+
+    // An entry's bytes are copied when the archive is made. An S3 object has
+    // no bytes in memory, so it used to become an empty entry, with no error
+    // and no request.
+    test("throws for an S3 file as an entry", async () => {
+      using endpoint = s3LocalEndpoint("Hello from S3");
+      expect(() => new Bun.Archive({ "object.txt": endpoint.file() })).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          message: "Bun.Archive cannot read a file- or S3-backed Blob synchronously; await blob.bytes() first",
+        }),
+      );
+      expect(endpoint.ranges).toEqual([]);
+
+      const archive = new Bun.Archive({ "object.txt": await endpoint.file().bytes() });
+      expect(await (await archive.files()).get("object.txt")!.text()).toBe("Hello from S3");
     });
 
     test("creates archive from object with Uint8Array values", async () => {

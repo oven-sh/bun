@@ -20,6 +20,7 @@ import {
   tmpdirSync,
 } from "harness";
 import { join, sep } from "path";
+import { s3LocalEndpoint } from "../s3/s3-local-endpoint";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -3440,6 +3441,23 @@ describe("stdin redirect from a zero-length buffer delivers EOF to the spawned c
       stderr: result.stderr.toString(),
       exitCode: result.exitCode,
     }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+});
+
+// `< ${blob}` writes the Blob's bytes from memory. An S3 object has none, so
+// the redirect used to deliver nothing, with no error and no request.
+test("stdin redirect from an S3 file fails", async () => {
+  using endpoint = s3LocalEndpoint("from s3");
+  const outcome = await $`cat < ${endpoint.file()}`.quiet().then(
+    result => ({ resolved: result.stdout.toString() }),
+    error => ({ name: error.name, message: error.message }),
+  );
+  expect({ outcome, s3Requests: endpoint.ranges }).toEqual({
+    outcome: {
+      name: "TypeError",
+      message: "stdin cannot read a file- or S3-backed Blob synchronously; await blob.bytes() first",
+    },
+    s3Requests: [],
   });
 });
 

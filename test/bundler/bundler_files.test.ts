@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { s3LocalEndpoint } from "../js/bun/s3/s3-local-endpoint";
 
 describe("bundler files option", () => {
   test("basic in-memory file bundling", async () => {
@@ -235,6 +236,27 @@ describe("bundler files option", () => {
         },
       }),
     ).toThrow("File blob cannot be used here");
+  });
+
+  // The bundler reads a `files` entry at once. An S3 object has no bytes in
+  // memory, so it used to bundle as an empty file, with no error and no request.
+  test("an S3 file in files throws", () => {
+    using endpoint = s3LocalEndpoint(`console.log("from s3");`);
+
+    expect(() =>
+      Bun.build({
+        entrypoints: ["/entry.js"],
+        files: {
+          "/entry.js": endpoint.file(),
+        },
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        message: "This function cannot read a file- or S3-backed Blob synchronously; await blob.bytes() first",
+      }),
+    );
+    expect(endpoint.ranges).toEqual([]);
   });
 
   test("in-memory file with Uint8Array content", async () => {

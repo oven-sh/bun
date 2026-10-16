@@ -1,6 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "path";
+import { s3LocalEndpoint } from "../../bun/s3/s3-local-endpoint";
 
 describe("FormData", () => {
   it("should be able to append a string", () => {
@@ -352,6 +353,22 @@ describe("FormData", () => {
       a: "b",
       c: "d",
     });
+  });
+
+  // FormData.from() parses its input at once. An S3 object has no bytes in
+  // memory, so it used to parse as an empty body, with no error and no request.
+  test("FormData.from throws for an S3 file", () => {
+    using endpoint = s3LocalEndpoint("a=b&c=d");
+    // @ts-expect-error
+    expect(() => FormData.from(endpoint.file())).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        message: "FormData.from() cannot read a file- or S3-backed Blob synchronously; await blob.bytes() first",
+      }),
+    );
+    expect(endpoint.ranges).toEqual([]);
+    // @ts-expect-error
+    expect(FormData.from(new Blob(["a=b&c=d"])).toJSON()).toEqual({ a: "b", c: "d" });
   });
 
   test("FormData.toJSON doesn't crash with numbers", () => {

@@ -441,17 +441,7 @@ impl Interpreter {
             *out_lex_result = Some(lex_result);
             return Err(ParseError::Lex.into());
         }
-        let jsobjs_raw: &'a mut [bun_shell_parser::JSValueRaw] = {
-            let len = jsobjs.len();
-            let ptr = jsobjs.as_mut_ptr().cast::<bun_shell_parser::JSValueRaw>();
-            // SAFETY: `bun_jsc::JSValue` and `bun_shell_parser::JSValueRaw` are both
-            // `#[repr(transparent)]` over `usize` — see the `JSValueRaw` doc in
-            // `shell_parser/parse.rs`. Reinterpret in place via a typed pointer cast.
-            // Compute `len` before deriving the raw mut pointer so the shared
-            // reborrow inside `len()` does not stack on top of the Unique tag.
-            unsafe { core::slice::from_raw_parts_mut(ptr, len) }
-        };
-        *out_parser = Some(Parser::new(arena, lex_result, jsobjs_raw)?);
+        *out_parser = Some(Parser::new(arena, lex_result)?);
         Ok(out_parser.as_mut().unwrap().parse()?)
     }
 
@@ -1828,10 +1818,8 @@ impl Bufio {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ShellExecEnvKind {
-    #[default]
-    Normal,
     CmdSubst,
     Subshell,
     Pipeline,
@@ -1935,7 +1923,7 @@ impl ShellExecEnv {
 
         // For `.fd` with a captured
         // buffer, borrow that; for `.ignore`, own a fresh one; for `.pipe`,
-        // own when normal/cmd_subst, borrow parent's when subshell/pipeline.
+        // own when cmd_subst, borrow parent's when subshell/pipeline.
         let bufio_for = |out: &OutKind, parent_buf: *mut Vec<u8>| -> Bufio {
             match out {
                 OutKind::Fd(f) => match f.captured {
@@ -1944,9 +1932,7 @@ impl ShellExecEnv {
                 },
                 OutKind::Ignore => Bufio::Owned(Vec::<u8>::default()),
                 OutKind::Pipe => match kind {
-                    ShellExecEnvKind::Normal | ShellExecEnvKind::CmdSubst => {
-                        Bufio::Owned(Vec::<u8>::default())
-                    }
+                    ShellExecEnvKind::CmdSubst => Bufio::Owned(Vec::<u8>::default()),
                     ShellExecEnvKind::Subshell | ShellExecEnvKind::Pipeline => {
                         Bufio::Borrowed(parent_buf)
                     }
@@ -2206,31 +2192,23 @@ pub(crate) use bun_event_loop::EventLoopHandle;
 /// same fd (which breaks epoll/kqueue).
 pub(crate) struct CowFd {
     __fd: Fd,
-    refcount: u32,
 }
 
 impl CowFd {
     pub(crate) fn init(fd: Fd) -> *mut CowFd {
-        let new = bun_core::heap::into_raw(Box::new(CowFd {
-            __fd: fd,
-            refcount: 1,
-        }));
+        let new = bun_core::heap::into_raw(Box::new(CowFd { __fd: fd }));
         bun_core::scoped_log!(CowFd, "init {:x} fd={}", new as usize, fd);
         new
     }
 
     /// # Safety
-    /// `this` must point to a live `CowFd` (refcount ≥ 1). If this drops the
-    /// refcount to 0, `this` is freed and must not be used again.
+    /// `this` must point to a live `CowFd`. `this` is freed and must not be used again.
     pub(crate) fn deref(this: *mut CowFd) {
         // SAFETY: caller upholds the precondition above (`this` is a live `CowFd`).
         unsafe {
-            (*this).refcount -= 1;
-            if (*this).refcount == 0 {
-                // Close the fd before freeing; `closefd` tolerates EBADF.
-                closefd((*this).__fd);
-                drop(bun_core::heap::take(this));
-            }
+            // Close the fd before freeing; `closefd` tolerates EBADF.
+            closefd((*this).__fd);
+            drop(bun_core::heap::take(this));
         }
     }
 }

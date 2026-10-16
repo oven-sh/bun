@@ -4,7 +4,7 @@ bun_core::declare_scope!(RefCountedEnvStr, hidden);
 
 pub(crate) struct RefCountedStr {
     pub(super) refcount: Cell<u32>,
-    // Owning `Box<[u8]>`, so `byte_slice`/`free_str` need no raw-parts rebuild.
+    // Owning `Box<[u8]>`, so `byte_slice` needs no raw-parts rebuild.
     data: Box<[u8]>,
 }
 
@@ -51,14 +51,7 @@ impl RefCountedStr {
                 "deinit: {}",
                 bstr::BStr::new((*this).byte_slice())
             );
-            (*this).free_str();
             drop(bun_core::heap::take(this));
         }
-    }
-
-    fn free_str(&mut self) {
-        // Dropping the old `Box<[u8]>` returns its allocation; an empty box
-        // owns no heap storage so the `len == 0` early-out is preserved.
-        self.data = Box::default();
     }
 }

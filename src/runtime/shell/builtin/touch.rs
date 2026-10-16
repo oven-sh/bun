@@ -109,7 +109,7 @@ impl Touch {
                     exec.tasks_count = argc - args_start;
                 }
                 let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
-                let evtloop = Builtin::event_loop(interp, cmd);
+                let evtloop = Builtin::event_loop(interp);
                 let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 for i in args_start..argc {
                     let path = Builtin::of(interp, cmd).arg_bytes(i).to_vec();

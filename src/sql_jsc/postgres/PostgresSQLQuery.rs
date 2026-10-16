@@ -74,7 +74,6 @@ impl Default for PostgresSQLQuery {
 // Bit-packing is not load-bearing here.
 #[derive(Clone, Copy)]
 pub struct Flags {
-    pub(crate) is_done: bool,
     pub(crate) binary: bool,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
@@ -99,7 +98,6 @@ pub enum RequestCounter {
 impl Default for Flags {
     fn default() -> Self {
         Self {
-            is_done: false,
             binary: false,
             bigint: false,
             simple: false,
@@ -416,12 +414,11 @@ impl PostgresSQLQuery {
     }
 
     pub fn do_done(
-        this: &Self,
+        _this: &Self,
         global_object: &JSGlobalObject,
         _: &CallFrame,
     ) -> JsResult<JSValue> {
         let _ = global_object;
-        this.update_flags(|f| f.is_done = true);
         Ok(JSValue::UNDEFINED)
     }
 

@@ -55,8 +55,7 @@ use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
 use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _, URLJsc as _};
 use bun_sys::FdExt as _;
-// `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
-// brings the trait impl into scope for `JSValue::get_optional_enum::<FetchRedirect>`.
+
 use crate::node;
 use crate::node::types::PathLikeExt as _;
 use crate::node::types::{Encoding, PathOrFileDescriptor};
@@ -69,7 +68,6 @@ use crate::webcore::{
     AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response,
 };
 use crate::webcore::{blob, readable_stream, response};
-use bun_http_jsc as _;
 use bun_http_jsc::headers_jsc::from_fetch_headers;
 use bun_jsc::AbortSignalRef;
 #[cfg(windows)]
@@ -1992,7 +1990,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         session_check_server_identity,
     };
 
-    let _ = FetchTasklet::queue(
+    FetchTasklet::queue(
         &global_this.js_thread(context),
         fetch_options,
         // Pass the Strong value instead of creating a new one, or else we
@@ -2000,7 +1998,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         // see https://github.com/oven-sh/bun/issues/2985
         promise,
     );
-    // `catch |err| bun.handleOom(err)` — FetchTasklet::queue aborts on OOM.
 
     // `body` has been *moved* into `FetchOptions`; the FetchTasklet now owns
     // the single live reference.

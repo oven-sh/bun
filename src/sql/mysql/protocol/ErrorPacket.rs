@@ -5,7 +5,6 @@ use crate::shared::Data;
 pub struct ErrorPacket {
     pub header: u8,
     pub error_code: u16,
-    pub sql_state_marker: Option<u8>,
     pub sql_state: Option<[u8; 5]>,
     pub error_message: Data,
 }
@@ -15,7 +14,6 @@ impl Default for ErrorPacket {
         Self {
             header: 0xff,
             error_code: 0,
-            sql_state_marker: None,
             sql_state: None,
             error_message: Data::empty(),
         }
@@ -47,7 +45,6 @@ impl ErrorPacket {
         // Check if we have a SQL state marker
         let next_byte = reader.int::<u8>()?;
         if next_byte == b'#' {
-            self.sql_state_marker = Some(b'#');
             let sql_state_data = reader.read(5)?;
             // `defer sql_state_data.deinit()` — Drop handles it.
             self.sql_state = Some(

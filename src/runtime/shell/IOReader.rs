@@ -41,7 +41,6 @@ pub(crate) type ReaderImpl = bun_io::BufferedReader;
 
 struct State {
     fd: Fd,
-    buf: Vec<u8>,
     readers: Readers,
     /// The raw `sys::Error`. `SystemError` is not `Clone`
     /// in the Rust port yet, so we keep the source error to re-derive a fresh
@@ -135,7 +134,6 @@ impl IOReader {
             reader: UnsafeCell::new(reader),
             state: UnsafeCell::new(State {
                 fd,
-                buf: Vec::new(),
                 readers: Readers::new(),
                 raw_err: None,
                 evtloop,
@@ -177,9 +175,7 @@ impl IOReader {
 
     pub(crate) fn memory_cost(&self) -> usize {
         let s = self.state();
-        core::mem::size_of::<IOReader>()
-            + s.buf.capacity()
-            + s.readers.capacity() * core::mem::size_of::<ChildPtr>()
+        core::mem::size_of::<IOReader>() + s.readers.capacity() * core::mem::size_of::<ChildPtr>()
     }
 
     /// `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer

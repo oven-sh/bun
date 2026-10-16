@@ -913,7 +913,6 @@ impl Value {
         // `to_readable_stream()` below (freed by the GC finalizer).
         let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
             webcore::readable_stream::NewSource {
-                // `ByteStream::default()` is the post-setup state.
                 context: ByteStream::default(),
                 global_this: Some(bun_ptr::BackRef::new(cx.global())),
                 ..Default::default()
@@ -922,7 +921,6 @@ impl Value {
 
         reader.producer.set(locked.producer);
 
-        reader.context.setup();
         reader.context.apply_drain_result(drain_result);
 
         let context_ptr: *mut ByteStream = &raw mut reader.context;
@@ -1413,7 +1411,6 @@ impl Value {
             if !locked.deinit {
                 locked.deinit = true;
                 locked.readable.deinit();
-                locked.readable = Default::default();
             }
             return;
         }
@@ -1512,7 +1509,6 @@ impl Value {
             },
         );
 
-        reader.context.setup();
         reader.context.apply_drain_result(drain_result);
 
         // reshaped for borrowck — re-borrow locked after the early *self = Null path above.

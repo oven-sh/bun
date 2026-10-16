@@ -949,7 +949,6 @@ impl MySQLConnection {
                 self.set_status(ConnectionState::Connected);
 
                 self.status_flags = ok.status_flags;
-                self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                 self.queue.mark_as_ready_for_query();
                 self.advance();
                 Ok(())
@@ -1026,14 +1025,12 @@ impl MySQLConnection {
                     let error_response = ErrorPacket {
                         header: statement.error_response.header,
                         error_code: statement.error_response.error_code,
-                        sql_state_marker: statement.error_response.sql_state_marker,
                         sql_state: statement.error_response.sql_state,
                         error_message: Data::create(statement.error_response.error_message.slice())
                             .unwrap_or(Data::Empty),
                     };
                     // The queue flush is an explicit call after
                     // `on_error_packet` below.
-                    self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                     self.queue.mark_as_ready_for_query();
                     self.queue.mark_current_request_as_finished(request);
                     // R-2: `on_error_packet` is `&self`; route through the
@@ -1228,8 +1225,6 @@ impl MySQLConnection {
             && statement.params_received as usize == statement.params.len()
         {
             statement.status = mysql_statement::Status::Prepared;
-            self.flags.remove(ConnectionFlags::WAITING_TO_PREPARE);
-            self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
             self.queue.mark_as_ready_for_query();
             self.queue.mark_as_prepared();
             statement.reset();
@@ -1346,7 +1341,6 @@ impl MySQLConnection {
                 err.decode_internal(reader)?;
                 // The queue advance is an explicit call after
                 // `on_error_packet` below.
-                self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                 statement.status = mysql_statement::Status::Failed;
                 // err.error_message is a Data{ .temporary = ... } slice into the socket read
                 // buffer which will be overwritten by the next packet. The statement is cached
@@ -1359,7 +1353,6 @@ impl MySQLConnection {
                 statement.error_response = ErrorPacket {
                     header: err.header,
                     error_code: err.error_code,
-                    sql_state_marker: err.sql_state_marker,
                     sql_state: err.sql_state,
                     error_message: Data::create(err.error_message.slice())
                         .map_err(|_| AnyMySQLError::OutOfMemory)?,
@@ -1413,8 +1406,6 @@ impl MySQLConnection {
             is_last_result
         );
         // The queue flush is an explicit tail call.
-        self.flags
-            .set(ConnectionFlags::IS_READY_FOR_QUERY, is_last_result);
         if is_last_result {
             self.queue.mark_as_ready_for_query();
             self.queue.mark_current_request_as_finished(request);
@@ -1486,7 +1477,6 @@ impl MySQLConnection {
                     statement.reset();
                 }
 
-                self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                 self.queue.mark_as_ready_for_query();
                 self.queue.mark_current_request_as_finished(request);
 

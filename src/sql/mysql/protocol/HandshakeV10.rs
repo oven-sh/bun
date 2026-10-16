@@ -3,7 +3,6 @@
 use crate::mysql::Capabilities;
 use crate::mysql::StatusFlags;
 use crate::mysql::capabilities::MariaDBCapabilities;
-use crate::mysql::protocol::CharacterSet;
 use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::Data;
@@ -16,7 +15,6 @@ pub struct HandshakeV10 {
     pub auth_plugin_data_part_2: Box<[u8]>,
     pub capability_flags: Capabilities,
     pub mariadb_capability_flags: MariaDBCapabilities,
-    pub(crate) character_set: CharacterSet,
     pub status_flags: StatusFlags,
     pub auth_plugin_name: Data,
 }
@@ -31,7 +29,6 @@ impl Default for HandshakeV10 {
             auth_plugin_data_part_2: Box::default(),
             capability_flags: Capabilities::default(),
             mariadb_capability_flags: MariaDBCapabilities::default(),
-            character_set: CharacterSet::default(),
             status_flags: StatusFlags::default(),
             auth_plugin_name: Data::empty(),
         }
@@ -66,8 +63,8 @@ impl HandshakeV10 {
         // Capability flags (lower 2 bytes)
         let capabilities_lower = reader.int::<u16>()?;
 
-        // Character set — any byte is valid; unknown collation ids are preserved.
-        self.character_set = CharacterSet::from_raw(reader.int::<u8>()?);
+        // Character set
+        let _ = reader.int::<u8>()?;
 
         // Status flags
         self.status_flags = StatusFlags::from_int(reader.int::<u16>()?);

@@ -188,7 +188,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         log!("clearData");
         self.unref_keep_alive();
         self.clear_receive_buffers(true);
-        self.clear_send_buffers(true);
+        self.clear_send_buffers();
         self.control_frame_started.set(false);
         self.ping_len.set(0);
         self.close_dispatch_pending.take();
@@ -335,18 +335,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.receive_body_remain.set(0);
     }
 
-    fn clear_send_buffers(&self, free: bool) {
-        // see clear_receive_buffers — discard instead of poking
-        // private `head`/`count`.
-        {
-            let mut send_buffer = self.send_buffer.borrow_mut();
-            let len = send_buffer.readable_length();
-            send_buffer.discard(len);
-        }
-        if free {
-            self.send_buffer
-                .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
-        }
+    fn clear_send_buffers(&self) {
+        self.send_buffer
+            .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
     }
 
     fn dispatch_compressed_data(&self, data: &[u8], kind: Opcode) {

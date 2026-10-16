@@ -403,9 +403,6 @@ pub(crate) trait JsSinkType: Sized + JsSinkAbi {
         // real `js_construct` short-circuits before this.
         debug_assert!(!Self::HAS_CONSTRUCT, "JsSinkType::construct missing");
     }
-    fn get_pending_error(&mut self) -> Option<JSValue> {
-        None
-    }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         None
     }
@@ -519,10 +516,6 @@ impl<T: JsSinkType> JSSink<T> {
             return Ok(JSValue::js_number(0.0));
         };
 
-        if let Some(err) = this.sink.get_pending_error() {
-            return Err(global.throw_value(err));
-        }
-
         if frame.arguments_count() == 0 {
             return Err(global.throw_value(global.to_type_error(
                 bun_jsc::ErrorCode::MISSING_ARGS,
@@ -597,10 +590,6 @@ impl<T: JsSinkType> JSSink<T> {
             return Ok(crate::webcore::jsc::JSValue::js_number(0.0));
         };
 
-        if let Some(err) = this.sink.get_pending_error() {
-            return Err(global.throw_value(err));
-        }
-
         if T::HAS_FLUSH_FROM_JS {
             let wait = frame.arguments_count() > 0
                 && frame.argument(0).is_boolean()
@@ -643,10 +632,6 @@ impl<T: JsSinkType> JSSink<T> {
             return Ok(JSValue::UNDEFINED);
         };
 
-        if let Some(err) = this.sink.get_pending_error() {
-            return Err(global.throw_value(err));
-        }
-
         match this
             .sink
             .start(config, global.bun_vm().context_of_caller(frame))
@@ -668,10 +653,6 @@ impl<T: JsSinkType> JSSink<T> {
         let Some(this) = Self::get_this(global, frame)? else {
             return Ok(JSValue::js_number(0.0));
         };
-
-        if let Some(err) = this.sink.get_pending_error() {
-            return Err(global.throw_value(err));
-        }
 
         let result = match this.sink.end_from_js(&cx) {
             sys::Result::Ok(value) => Ok(value),
@@ -750,18 +731,8 @@ impl<T: JsSinkType> JSSink<T> {
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
-        // SAFETY: caller contract; the borrow ends before `close_with_error`,
-        // which may re-enter or free the sink.
-        if let Some(err) = unsafe { (*this).get_pending_error() } {
-            // `throw_error` sets the pending JS exception and returns the
-            // `JsError` for `?`-propagation; this host fn returns bare
-            // `JSValue`, so report and return ZERO (caller checks exception).
-            let _ = global.vm().throw_error(global, err);
-            return JSValue::ZERO;
-        }
-
         let result = if reason.is_empty() {
-            // SAFETY: as above; `end` does not free the sink.
+            // SAFETY: caller contract; `end` does not free the sink.
             unsafe { (*this).end(None) }
         } else {
             // SAFETY: caller contract.
@@ -790,11 +761,6 @@ impl<T: JsSinkType> JSSink<T> {
         use crate::webcore::jsc::JSValue;
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
-
-        if let Some(err) = this.get_pending_error() {
-            let _ = global.throw_value(err);
-            return JSValue::ZERO;
-        }
 
         // TODO: properly propagate exception upwards
         match this.end_from_js(&global.js_thread_of_caller_no_frame()) {
@@ -910,9 +876,7 @@ pub(crate) unsafe fn sink_handle_from_id(
 ///
 /// Return shape matches [`streams::result::Writable::to_js`] so
 /// `nativeSinkWriteIsBackpressure` reads a negative number / pending promise
-/// exactly as the previous `js_write_bytes` path produced. No
-/// [`JsSinkType::get_pending_error`] guard: every sink uses the trait-default
-/// `None`, so omitting it is behavior-preserving.
+/// exactly as the previous `js_write_bytes` path produced.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__NativeTransformSink__writeBytes(
     sink_id: u8,

@@ -25,7 +25,7 @@ use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
-    JsResult, Node, StringJsc as _, VirtualMachine, host_fn,
+    JsResult, Node, StringJsc as _, host_fn,
 };
 use bun_paths as paths;
 use bun_ptr::RefPtr;
@@ -533,9 +533,7 @@ pub(crate) mod BunInfo {
         }
     }
 
-    /// `_transpiler` is an unused witness; expressions allocate from the
-    /// global expr `Store` used by `Expr::init`.
-    pub(crate) fn generate<B>(_transpiler: B) -> Result<Expr, crate::Error> {
+    pub(crate) fn generate() -> Expr {
         let info = BunInfo {
             bun_version: Global::package_json_version.as_bytes(),
             platform: generate_platform::for_os(),
@@ -563,14 +561,14 @@ pub(crate) mod BunInfo {
             prop(b"bun_version", str_expr(info.bun_version)),
             prop(b"platform", platform_expr),
         ]);
-        Ok(Expr::init(
+        Expr::init(
             E::Object {
                 properties: root_props,
                 is_single_line: false,
                 ..E::Object::default()
             },
             Loc::EMPTY,
-        ))
+        )
     }
 }
 
@@ -731,11 +729,7 @@ impl AnyRoute {
 
             return Ok(AnyRoute::File(FileRoute::init_from_blob(
                 blob,
-                &super::file_route::InitOptions {
-                    server: None,
-                    status_code: 200,
-                    headers,
-                },
+                &super::file_route::InitOptions { headers },
             )));
         }
 
@@ -2561,7 +2555,6 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_protocol(&self, global: &JSGlobalObject) -> JSValue {
-        let _ = self;
         if SSL {
             global.common_strings().https()
         } else {
@@ -2682,10 +2675,9 @@ where
         let buffer_writer = bun_js_printer::BufferWriter::init();
         let mut writer = bun_js_printer::BufferPrinter::init(buffer_writer);
         let source = bun_ast::Source::init_empty_file(b"info.json");
-        let transpiler = &VirtualMachine::VirtualMachine::get().transpiler;
         let _ = bun_js_printer::print_json(
             &mut writer,
-            BunInfo::generate(transpiler).expect("unreachable"),
+            BunInfo::generate(),
             &source,
             bun_js_printer::PrintJsonOptions {
                 mangled_props: None,

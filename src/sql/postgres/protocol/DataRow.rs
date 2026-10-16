@@ -2,12 +2,9 @@ use crate::postgres::AnyPostgresError;
 use crate::postgres::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::Data;
 
-// The opaque context is forwarded by value to the callback each iteration,
-// so require `C: Copy`.
-pub fn decode<C: Copy, R: ReaderContext>(
-    context: C,
+pub fn decode<R: ReaderContext>(
     reader: &mut NewReader<R>,
-    mut for_each: impl FnMut(C, u32, Option<&mut Data>) -> Result<bool, AnyPostgresError>,
+    mut for_each: impl FnMut(u32, Option<&mut Data>) -> Result<bool, AnyPostgresError>,
 ) -> Result<(), AnyPostgresError> {
     // The Int32 message length bounds every read below; a field count or cell
     // length that overruns it is a malformed DataRow (libpq: "insufficient
@@ -30,16 +27,16 @@ pub fn decode<C: Copy, R: ReaderContext>(
         let more = match byte_length {
             0 => {
                 let mut empty = Data::EMPTY;
-                for_each(context, index, Some(&mut empty))
+                for_each(index, Some(&mut empty))
             }
-            NULL_INT4 => for_each(context, index, None),
+            NULL_INT4 => for_each(index, None),
             _ => {
                 if byte_length > remaining_bytes {
                     return Err(AnyPostgresError::InvalidMessage);
                 }
                 remaining_bytes -= byte_length;
                 let mut bytes = reader.bytes(usize::try_from(byte_length).expect("int cast"))?;
-                for_each(context, index, Some(&mut bytes))
+                for_each(index, Some(&mut bytes))
             }
         };
         match more {

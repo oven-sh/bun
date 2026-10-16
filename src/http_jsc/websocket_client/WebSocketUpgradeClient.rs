@@ -237,7 +237,7 @@ where
             }
         }
 
-        let request_result = match build_request_body(
+        let request_result = build_request_body(
             vm,
             pathname_slice.slice(),
             target_is_secure,
@@ -247,10 +247,7 @@ where
             &extra_headers,
             target_authorization_slice.as_ref().map(|s| s.slice()),
             offer_permessage_deflate,
-        ) {
-            Ok(r) => r,
-            Err(_) => return None,
-        };
+        );
         let body = request_result.body;
 
         // Build proxy state if using proxy.
@@ -1695,7 +1692,7 @@ fn build_request_body(
     // `perMessageDeflate: false`). When true, send the default extension
     // offer `permessage-deflate; client_max_window_bits`.
     offer_permessage_deflate: bool,
-) -> Result<BuildRequestResult, bun_alloc::AllocError> {
+) -> BuildRequestResult {
     // Check for user overrides
     let mut user_host: Option<&[u8]> = None;
     let mut user_key: Option<&[u8]> = None;
@@ -1824,10 +1821,10 @@ fn build_request_body(
             bstr::BStr::new(&extra_headers_buf),
         )
         .unwrap();
-        return Ok(BuildRequestResult {
+        return BuildRequestResult {
             body,
             expected_accept,
-        });
+        };
     }
 
     write!(
@@ -1848,10 +1845,10 @@ fn build_request_body(
         bstr::BStr::new(&extra_headers_buf),
     )
     .unwrap();
-    Ok(BuildRequestResult {
+    BuildRequestResult {
         body,
         expected_accept,
-    })
+    }
 }
 
 /// Compute the expected Sec-WebSocket-Accept value per RFC 6455 §4.2.2:

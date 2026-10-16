@@ -339,7 +339,6 @@ impl Snapshots {
             }
         }
 
-        let _ = &mut ast;
         Ok(())
     }
 

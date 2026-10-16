@@ -1069,12 +1069,6 @@ fn parse_binary_numeric<'a>(
         result.push(b'-');
     }
 
-    // Calculate decimal point position
-    let mut decimal_pos: i32 = (weight as i32 + 1) * 4;
-    if decimal_pos <= 0 {
-        decimal_pos = 1;
-    }
-    let _ = decimal_pos; // computed but unused below
     // Output all digits before the decimal point
 
     if weight < 0 {

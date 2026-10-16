@@ -199,13 +199,13 @@ pub(crate) mod js_fns {
                 }
                 bun_core::scoped_log!(bun_test_group, "genericHook in preload");
 
-                let _ = bun_test_root.hook_scope.append_hook(
+                bun_test_root.hook_scope.append_hook(
                     tag.as_hook_tag().unwrap(),
                     args.callback,
                     cfg,
                     BaseScopeCfg::default(),
                     AddedInPhase::Preload,
-                )?;
+                );
                 return Ok(JSValue::UNDEFINED);
             };
 
@@ -217,13 +217,13 @@ pub(crate) mod js_fns {
                             tag_name
                         )));
                     }
-                    let _ = bun_test.collection.active_scope_mut().append_hook(
+                    bun_test.collection.active_scope_mut().append_hook(
                         tag.as_hook_tag().unwrap(),
                         args.callback,
                         cfg,
                         BaseScopeCfg::default(),
                         AddedInPhase::Collection,
-                    )?;
+                    );
                     Ok(JSValue::UNDEFINED)
                 }
                 Phase::Execution => {
@@ -765,7 +765,7 @@ impl BunTest {
         let this = this_strong.get();
 
         if is_catch {
-            this.on_uncaught_exception(global_this, Some(result), true, &refdata.phase);
+            this.on_uncaught_exception(global_this, Some(result), &refdata.phase);
         }
         if !has_one_ref && !is_catch {
             bun_core::scoped_log!(bun_test_group, "bunTestThenOrCatch -> refdata has multiple refs; don't add result until the last ref");
@@ -868,16 +868,14 @@ impl BunTest {
             match (*this).phase {
                 Phase::Collection => {}
                 Phase::Execution => {
-                    if let Err(e) = (*this).execution.handle_timeout(global) {
-                        (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, &RefDataValue::Done);
-                    }
+                    (*this).execution.handle_timeout(global);
                 }
                 Phase::Done => {}
             }
         }
         if let Err(e) = Self::run(this_strong, global) {
             // SAFETY: re-derive after `run` returned; no `&mut` was held across it.
-            unsafe { (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, &RefDataValue::Done) };
+            unsafe { (*this).on_uncaught_exception(global, Some(global.take_exception(e)), &RefDataValue::Done) };
         }
     }
 
@@ -955,13 +953,12 @@ impl BunTest {
         }
 
         // SAFETY: loop done; sole `&mut` for the timer update.
-        unsafe { (*this).update_min_timeout(global_this, &min_timeout) };
+        unsafe { (*this).update_min_timeout(&min_timeout) };
         Ok(())
     }
 
-    fn update_min_timeout(&mut self, global_this: &JSGlobalObject, min_timeout: &Timespec) {
+    fn update_min_timeout(&mut self, min_timeout: &Timespec) {
         let _g = group_begin!();
-        let _ = global_this;
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
         bun_core::scoped_log!(
             bun_test_group,
@@ -1121,14 +1118,14 @@ impl BunTest {
                 Ok(v) => v,
                 Err(e) => {
                     // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point.
-                    unsafe { (*this).on_uncaught_exception(global_this, Some(global_this.take_exception(e)), false, &cfg_data) };
+                    unsafe { (*this).on_uncaught_exception(global_this, Some(global_this.take_exception(e)), &cfg_data) };
                     JSValue::ZERO // failed to bind done callback
                 }
             };
         }
 
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
-        unsafe { (*this).update_min_timeout(global_this, timeout) };
+        unsafe { (*this).update_min_timeout(timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
         let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(bun_event_loop::ContextId::NONE, 
             cfg_callback,
@@ -1140,7 +1137,7 @@ impl BunTest {
             Err(_) => {
                 global_this.clear_termination_exception();
                 // SAFETY: re-derive after JS callback returned; no outer `&mut` was held across it.
-                unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, &cfg_data) };
+                unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), &cfg_data) };
                 bun_core::scoped_log!(bun_test_group, "callTestCallback -> error");
                 JSValue::ZERO
             }
@@ -1240,7 +1237,7 @@ impl BunTest {
                         let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
                         // SAFETY: re-derive via `UnsafeCell` after the JS/microtask
                         // drain above; sole `&mut` at this point.
-                        unsafe { (*this).on_uncaught_exception(global_this, Some(value), true, &cfg_data) };
+                        unsafe { (*this).on_uncaught_exception(global_this, Some(value), &cfg_data) };
 
                         // We previously marked it as handled above.
 
@@ -1265,12 +1262,9 @@ impl BunTest {
         &mut self,
         global_this: &JSGlobalObject,
         exception: Option<JSValue>,
-        is_rejection: bool,
         user_data: &RefDataValue,
     ) {
         let _g = group_begin!();
-
-        let _ = is_rejection;
 
         let handle_status: HandleUncaughtExceptionResult = match self.phase {
             Phase::Collection => self.collection.handle_uncaught_exception(user_data),
@@ -1528,7 +1522,6 @@ impl RunTestsTask {
             bt.on_uncaught_exception(
                 &this.global_this,
                 Some(this.global_this.take_exception(e)),
-                false,
                 &this.phase,
             );
         }
@@ -1806,15 +1799,11 @@ impl DescribeScope {
         cfg: ExecutionEntryCfg,
         base: BaseScopeCfg,
         phase: AddedInPhase,
-    ) -> JsResult<&mut ExecutionEntry> {
+    ) {
         let mut entry = ExecutionEntry::create(name_not_owned, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
         let has_cb = entry.callback.is_some();
         entry.base.propagate(has_cb);
         self.entries.push(TestScheduleEntry::TestCallback(entry));
-        match self.entries.last_mut().unwrap() {
-            TestScheduleEntry::TestCallback(e) => Ok(&mut **e),
-            _ => unreachable!(),
-        }
     }
 
     // `Box` is load-bearing: see the `before_all` field comment.
@@ -1835,11 +1824,10 @@ impl DescribeScope {
         cfg: ExecutionEntryCfg,
         base: BaseScopeCfg,
         phase: AddedInPhase,
-    ) -> JsResult<&mut ExecutionEntry> {
+    ) {
         let entry = ExecutionEntry::create(None, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
         let list = self.get_hook_entries(tag);
         list.push(entry);
-        Ok(&mut **list.last_mut().unwrap())
     }
 }
 

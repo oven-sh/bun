@@ -24,7 +24,6 @@ pub(crate) enum State {
     MultiArgs {
         arg_idx: usize,
         had_not_found: bool,
-        waiting_write: bool,
     },
 }
 
@@ -80,7 +79,6 @@ impl Which {
         Self::state_mut(interp, cmd).state = State::MultiArgs {
             arg_idx: 0,
             had_not_found: false,
-            waiting_write: false,
         };
         Self::next(interp, cmd)
     }
@@ -105,14 +103,10 @@ impl Which {
         let child = ChildPtr::new(cmd, WriterTag::Builtin);
         match resolved {
             None => {
-                if let State::MultiArgs {
-                    had_not_found,
-                    waiting_write,
-                    ..
-                } = &mut Self::state_mut(interp, cmd).state
+                if let State::MultiArgs { had_not_found, .. } =
+                    &mut Self::state_mut(interp, cmd).state
                 {
                     *had_not_found = true;
-                    *waiting_write = true;
                 }
                 if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
                     return Builtin::of_mut(interp, cmd).stdout.enqueue_fmt(
@@ -133,11 +127,6 @@ impl Which {
                 Self::arg_complete(interp, cmd)
             }
             Some(resolved) => {
-                if let State::MultiArgs { waiting_write, .. } =
-                    &mut Self::state_mut(interp, cmd).state
-                {
-                    *waiting_write = true;
-                }
                 if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
                     return Builtin::of_mut(interp, cmd).stdout.enqueue_fmt(
                         child,
@@ -160,14 +149,8 @@ impl Which {
     }
 
     fn arg_complete(interp: &Interpreter, cmd: NodeId) -> Yield {
-        if let State::MultiArgs {
-            arg_idx,
-            waiting_write,
-            ..
-        } = &mut Self::state_mut(interp, cmd).state
-        {
+        if let State::MultiArgs { arg_idx, .. } = &mut Self::state_mut(interp, cmd).state {
             *arg_idx += 1;
-            *waiting_write = false;
         }
         Self::next(interp, cmd)
     }

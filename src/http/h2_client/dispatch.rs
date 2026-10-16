@@ -28,13 +28,12 @@ pub(crate) fn parse_frames(session: &mut ClientSession, buf: &[u8]) -> usize {
         if remaining.len() < wire::FrameHeader::BYTE_SIZE {
             break;
         }
-        let mut header = wire::FrameHeader::decode(
+        let header = wire::FrameHeader::decode(
             remaining[0..wire::FrameHeader::BYTE_SIZE]
                 .try_into()
                 .unwrap(),
         );
         let sid = wire::UInt31WithReserved::from(header.stream_identifier).uint31();
-        header.stream_identifier = sid;
         let length = header.length;
         // RFC 9113 §4.2: a frame larger than the local SETTINGS_MAX_FRAME_SIZE
         // (we never advertise above the 16384 default) is a connection
@@ -134,10 +133,9 @@ fn dispatch_frame(
             let mut i: usize = 0;
             while i + wire::SettingsPayloadUnit::BYTE_SIZE <= payload.len() {
                 let mut unit = wire::SettingsPayloadUnit::default();
-                wire::SettingsPayloadUnit::from::<true>(
+                wire::SettingsPayloadUnit::from(
                     &mut unit,
                     &payload[i..i + wire::SettingsPayloadUnit::BYTE_SIZE],
-                    0,
                 );
                 // Brace-expr copies of packed fields (unaligned-safe).
                 let utype = { unit.type_ };

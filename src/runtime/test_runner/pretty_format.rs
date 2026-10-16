@@ -406,21 +406,6 @@ pub(crate) enum Tag {
 }
 
 impl Tag {
-    pub(crate) fn is_primitive(self) -> bool {
-        matches!(
-            self,
-            Tag::String
-                | Tag::StringPossiblyFormatted
-                | Tag::Undefined
-                | Tag::Double
-                | Tag::Integer
-                | Tag::Null
-                | Tag::Boolean
-                | Tag::Symbol
-                | Tag::BigInt
-        )
-    }
-
     #[inline]
     pub(crate) const fn can_have_circular_references(self) -> bool {
         matches!(self, Tag::Array | Tag::Object | Tag::Map | Tag::Set)
@@ -1401,7 +1386,6 @@ impl<'a> Formatter<'a> {
                         writer.write_all(b"\n");
                     }
 
-                    let mut was_good_time = self.always_newline_scope;
                     {
                         self.indent += 1;
 
@@ -1417,10 +1401,6 @@ impl<'a> Formatter<'a> {
                             {
                                 let element = value.get_index(self.global_this, 0)?;
                                 let tag = Tag::get(element, self.global_this)?;
-
-                                was_good_time = was_good_time
-                                    || !tag.tag.is_primitive()
-                                    || self.good_time_for_a_new_line();
 
                                 self.reset_line();
                                 writer.write_all(b"[");
@@ -2025,11 +2005,7 @@ impl<'a> Formatter<'a> {
 
                     if let Some(key_value) = value.get(self.global_this, "key")? {
                         if !key_value.is_undefined_or_null() {
-                            if needs_space {
-                                writer.write_all(b" key=");
-                            } else {
-                                writer.write_all(b"key=");
-                            }
+                            writer.write_all(b" key=");
 
                             let old_quote_strings = self.quote_strings;
                             self.quote_strings = true;
@@ -2044,7 +2020,6 @@ impl<'a> Formatter<'a> {
                             })();
                             self.quote_strings = old_quote_strings;
                             inner?;
-                            needs_space = true;
                         }
                     }
 

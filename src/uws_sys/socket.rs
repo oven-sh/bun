@@ -448,9 +448,10 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     /// See `us_socket_t::reject_sends`. Only a connected socket has a loop
     /// to close it: the other kinds own their own failure delivery.
-    pub fn reject_sends(&self) {
-        if let InternalSocket::Connected(s) = self.socket {
-            sock(s).reject_sends();
+    pub fn reject_sends(&self) -> bool {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).reject_sends(),
+            _ => false,
         }
     }
 

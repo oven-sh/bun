@@ -6832,7 +6832,7 @@ it("originSet is undefined on a destroyed TLS session that never read it", async
   }
 });
 
-describe.concurrent("a peer reset that one of the session's own writes sees first", () => {
+describe.concurrent("a write of the session is the first to see that the peer is gone", () => {
   // The kernel rejects the write, and on linux that send() consumes the socket's error: a read
   // after it returns what the peer sent before the reset and then a clean EOF. So the rejected
   // send is the only report of the reset, and the loop has to read before anything closes.
@@ -6894,7 +6894,8 @@ describe.concurrent("a peer reset that one of the session's own writes sees firs
   // (`silent`: nothing at all). When the client says that it is busy, the peer waits for
   // `until` (a frame of the client's that it has to have read), writes `answer`, and leaves.
   async function runClient(scenario, options = {}) {
-    const { answer, until, silent, connectOptions, leave = socket => socket.resetAndDestroy() } = options;
+    const { answer, until, silent, connectOptions, unix, leave = socket => socket.resetAndDestroy() } = options;
+    using dir = unix ? tempDir("h2-unix-peer", {}) : null;
     const connection = Promise.withResolvers();
     const seen = { headers: Promise.withResolvers() };
     const server = net.createServer(socket => {
@@ -6919,11 +6920,16 @@ describe.concurrent("a peer reset that one of the session's own writes sees firs
         }
       });
     });
-    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    if (unix) await new Promise(resolve => server.listen(path.join(String(dir), "peer.sock"), resolve));
+    else await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
     try {
+      // Over a unix socket the port only completes the URL.
+      const peer = unix
+        ? { H2_PEER_PORT: "80", H2_PEER_PATH: server.address() }
+        : { H2_PEER_PORT: String(server.address().port) };
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", clientPrelude(connectOptions) + scenario],
-        env: { ...bunEnv, H2_PEER_PORT: String(server.address().port) },
+        env: { ...bunEnv, ...peer },
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -7051,6 +7057,22 @@ describe.concurrent("a peer reset that one of the session's own writes sees firs
     },
   );
 
+  // A unix socket has no reset: the peer closes, and the send after that gets EPIPE. A path
+  // is a named pipe on Windows.
+  const UNIX = {
+    unix: true,
+    leave: socket => socket.destroy(),
+    connectOptions: `, { createConnection: () => require("node:net").connect(process.env.H2_PEER_PATH) }`,
+  };
+  it.skipIf(isWindows)("over a unix socket, a request after the peer closed is cancelled", async () => {
+    expect(await runClient(newRequest(0), UNIX)).toEqual(["request close 8", "session close"]);
+  });
+
+  it.skipIf(isWindows)("over a unix socket, a response that is queued ahead of the close is heard", async () => {
+    const events = await runClient(openStream(100), { ...UNIX, until: "headers", answer: RESPONSE });
+    expect(events).toEqual(["request close 0", "request response 200", "session close"]);
+  });
+
   it.skipIf(isWindows)("a paused socket hears the queued response when it resumes", async () => {
     // Nothing is read for an owner that paused: the response waits in the kernel. The two
     // turns of the loop let the event of the rejected send come before the resume.
@@ -7110,6 +7132,57 @@ describe.concurrent("a peer reset that one of the session's own writes sees firs
       }`,
     });
     expect(events).toEqual(["request close 8", "session close"]);
+  });
+
+  // One process holds both ends and starts no timer, so the two sockets are its only handles:
+  // the events have to arrive before it exits on its own. The peer resets and the client
+  // writes in the same turn. How that reset looks differs by kernel, so ECONNRESET is the
+  // one error these accept. They run on every platform.
+  it.each([
+    ["from setImmediate", "() => setImmediate(resetThenRequest)"],
+    ["inside a read callback", "resetThenRequest"],
+  ])("in one process, a request made %s closes with its session", async (_, whenSettingsArrive) => {
+    const fixture = `
+      const http2 = require("node:http2");
+      const seen = { streamClosed: false, sessionClosed: false, unexpectedErrors: [] };
+      const onError = err => {
+        if (err.code !== "ECONNRESET") seen.unexpectedErrors.push(err.code);
+      };
+      let peer;
+      const listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(socket) {
+            peer = socket;
+            listener.stop();
+            socket.write(Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0])); // empty SETTINGS
+          },
+          data() {},
+          error() {},
+        },
+      });
+      const session = http2.connect("http://127.0.0.1:" + listener.port);
+      session.on("error", onError);
+      session.on("close", () => (seen.sessionClosed = true));
+      function resetThenRequest() {
+        peer.terminate(); // closes with an RST
+        const req = session.request({ ":path": "/" });
+        req.on("error", onError);
+        req.on("close", () => (seen.streamClosed = true));
+        req.resume();
+        req.end();
+      }
+      session.on("remoteSettings", ${whenSettingsArrive});
+      process.on("exit", () => console.log(JSON.stringify(seen)));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ seen: stdout.trim(), stderr, exitCode }).toEqual({
+      seen: JSON.stringify({ streamClosed: true, sessionClosed: true, unexpectedErrors: [] }),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // ":method POST", ":scheme http" and ":path /" from the static table, then a literal ":authority".

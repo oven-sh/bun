@@ -412,6 +412,15 @@ describe.concurrent.skipIf(skip)("node:http2 transport write errors", () => {
     expect(events).toEqual(["request close " + http2.constants.NGHTTP2_CANCEL, "session close"]);
   });
 
+  test.each([
+    ["from a timer", fromATimer],
+    ["inside a read-driven event", (write: string) => `settled(() => { ${write} });`],
+  ])("a read error after a rejected send is the report: %s", async (_, run) => {
+    // The loop reads after the rejected send, and the error of that read closes the socket.
+    const write = `reject("send", "ECONNRESET"); reject("recv", "ETIMEDOUT"); request();`;
+    expect(await runClient(run(write))).toEqual(reported("ETIMEDOUT"));
+  });
+
   test("send → ECONNRESET inside the connect flush", async () => {
     // The connect flush sends the preface (the first send) and then the queued request.
     const events = await runClient(`reject("send", "ECONNRESET", 1); request();`, { silent: true });
@@ -527,5 +536,72 @@ describe.concurrent.skipIf(skip)("node:http2 transport write errors", () => {
     const lines = stdout.trim().split("\n");
     expect(JSON.parse(lines[lines.length - 1])).toEqual(["stream", "stream.close(rstCode=0)", "session.close"]);
     expect(exitCode).toBe(0);
+  });
+
+  test("a server whose open response is rejected closes the stream, with the listener closed", async () => {
+    // The response stays open, so only the transport can close the stream. The listener is
+    // closed, so the accepted socket is the last handle: the events have to come before the
+    // process exits on its own. The stream has no 'error' listener.
+    const fixture = `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const fs = require("node:fs");
+      const http2 = require("node:http2");
+      const seen = { streamClosed: false, sessionClosed: false };
+      const server = http2.createServer();
+      server.on("session", session => session.on("close", () => (seen.sessionClosed = true)));
+      server.on("stream", stream => {
+        stream.on("close", () => (seen.streamClosed = true));
+        server.close();
+        stream.once("data", () => {
+          fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: -1 });
+          stream.respond({ ":status": 200 });
+          stream.write("x");
+        });
+        fs.writeSync(1, "stream\\n");
+      });
+      process.on("exit", () => fs.writeSync(1, JSON.stringify(seen) + "\\n"));
+      server.listen(0, "127.0.0.1", () => fs.writeSync(1, "port=" + server.address().port + "\\n"));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    // :method POST, :scheme http and :path / from the static table, then a literal :authority.
+    const requestBlock = Buffer.concat([Buffer.from([0x83, 0x86, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+    // Drained while the loop below reacts to stdout: a full stderr pipe would block the child.
+    const stderrText = proc.stderr.text();
+    let stdout = "";
+    let client: net.Socket | undefined;
+    let sentBody = false;
+    try {
+      for await (const chunk of proc.stdout) {
+        stdout += Buffer.from(chunk).toString();
+        const port = /port=(\d+)/.exec(stdout);
+        if (port && !client) {
+          // A raw client: preface, SETTINGS, and the headers of one POST. Its body follows once
+          // the server has the stream, so the response is written in a later turn than close().
+          client = net.connect(Number(port[1]), "127.0.0.1", () => {
+            client!.write(
+              Buffer.concat([
+                Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1"),
+                frame(4, 0),
+                frame(1, 0x4, 1, requestBlock),
+              ]),
+            );
+          });
+          client.on("error", () => {});
+        }
+        if (!sentBody && stdout.includes("stream\n")) {
+          sentBody = true;
+          client!.write(frame(0, 0, 1, Buffer.from("body")));
+        }
+      }
+      const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
+      const seen = stdout.trim().split("\n").at(-1);
+      expect({ seen, stderr, exitCode }).toEqual({
+        seen: JSON.stringify({ streamClosed: true, sessionClosed: true }),
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      client?.destroy();
+    }
   });
 });

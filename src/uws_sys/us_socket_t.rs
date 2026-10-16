@@ -435,10 +435,11 @@ impl us_socket_t {
 
     /// The owner's send was rejected with a fatal code of
     /// [`Self::write_check_error`] or [`Self::raw_writev_check_error`]. Ends
-    /// the write side: the loop reads what the peer sent, then closes.
-    pub(crate) fn reject_sends(&mut self) {
+    /// the write side: the loop reads what the peer sent, then closes. False
+    /// when the socket can not write now, and nothing was done.
+    pub(crate) fn reject_sends(&mut self) -> bool {
         bun_core::scoped_log!(uws, "us_socket_reject_sends({:p})", self);
-        c::us_socket_reject_sends(self);
+        c::us_socket_reject_sends(self) != 0
     }
 
     /// Bypass TLS — raw bytes to the fd even if `is_tls()`.
@@ -571,7 +572,7 @@ mod c {
             count: i32,
             fatal_write_error: *mut i32,
         ) -> i32;
-        pub(super) safe fn us_socket_reject_sends(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_reject_sends(s: &mut us_socket_t) -> i32;
         pub(super) fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32)
         -> i32;
         pub(super) safe fn us_socket_flush(s: &mut us_socket_t);

@@ -603,14 +603,15 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
     return written;
 }
 
-void us_socket_reject_sends(struct us_socket_t *s) {
+int us_socket_reject_sends(struct us_socket_t *s) {
     if (s->ssl || !us_socket_is_established(s) || !us_internal_socket_can_raw_write(s)) {
-        return;
+        return 0;
     }
     s->send_rejected = 1;
     us_internal_socket_raw_shutdown(s);
     /* No write may close under its caller: the writable event does, after the loop has read. */
     us_internal_rearm_writable(s);
+    return 1;
 }
 
 int us_socket_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {

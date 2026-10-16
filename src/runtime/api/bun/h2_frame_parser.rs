@@ -3003,15 +3003,14 @@ impl H2FrameParser {
     /// Nothing here closes the transport: a close before the loop's next read drops what the
     /// peer sent first. The write side ends, and the loop closes the socket after that read.
     fn note_transport_write_fatal(&self, result: i32) {
-        if let BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) = self.native_socket.get() {
-            if self.rejected_send.get() == RejectedSend::None {
-                self.rejected_send.set(if self.in_native_read.get() {
-                    RejectedSend::Dropped
-                } else {
-                    RejectedSend::Errno(-result)
-                });
-            }
-            socket.get().reject_sends();
+        if let BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) = self.native_socket.get()
+            && socket.get().reject_sends()
+        {
+            self.rejected_send.set(if self.in_native_read.get() {
+                RejectedSend::Dropped
+            } else {
+                RejectedSend::Errno(-result)
+            });
         }
     }
 

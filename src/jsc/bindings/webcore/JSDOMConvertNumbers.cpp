@@ -49,7 +49,7 @@ static String rangeErrorString(double value, double min, double max)
     return makeString("Value "_s, value, " is outside the range ["_s, min, ", "_s, max, ']');
 }
 
-static double enforceRange(JSGlobalObject& lexicalGlobalObject, double x, double minimum, double maximum)
+double enforceRange(JSGlobalObject& lexicalGlobalObject, double x, double minimum, double maximum)
 {
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

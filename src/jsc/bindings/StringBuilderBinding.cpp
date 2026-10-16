@@ -45,9 +45,9 @@ extern "C" void StringBuilder__appendString(WTF::StringBuilder* builder, const B
     str->appendToBuilder(*builder);
 }
 
-extern "C" void StringBuilder__appendLChar(WTF::StringBuilder* builder, Latin1Character c)
+extern "C" void StringBuilder__appendLChar(WTF::StringBuilder* builder, uint8_t c)
 {
-    builder->append(c);
+    builder->append(Latin1Character { c });
 }
 
 extern "C" void StringBuilder__appendUChar(WTF::StringBuilder* builder, UChar c)

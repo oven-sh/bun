@@ -360,8 +360,8 @@ impl<'a> State<'a> {
                     write!(
                         &mut self.draw_buf,
                         "{} {}: {}",
-                        bstr::BStr::new(&handle.config.package_name),
-                        bstr::BStr::new(&handle.config.script_name),
+                        bun_core::fmt::escape_control_chars(&handle.config.package_name),
+                        bun_core::fmt::escape_control_chars(&handle.config.script_name),
                         bstr::BStr::new(&handle.buffer),
                     )?;
                     handle.buffer.clear();
@@ -376,8 +376,8 @@ impl<'a> State<'a> {
                 write!(
                     &mut self.draw_buf,
                     "{} {}: {}",
-                    bstr::BStr::new(&handle.config.package_name),
-                    bstr::BStr::new(&handle.config.script_name),
+                    bun_core::fmt::escape_control_chars(&handle.config.package_name),
+                    bun_core::fmt::escape_control_chars(&handle.config.script_name),
                     bstr::BStr::new(line),
                 )?;
                 content = &content[i + 1..];
@@ -427,7 +427,7 @@ impl<'a> State<'a> {
                 writeln!(
                     &mut self.draw_buf,
                     "{}: {}",
-                    bstr::BStr::new(&handle.config.package_name),
+                    bun_core::fmt::escape_control_chars(&handle.config.package_name),
                     bstr::BStr::new(&handle.buffer),
                 )?;
                 handle.buffer.clear();
@@ -438,8 +438,8 @@ impl<'a> State<'a> {
                     writeln!(
                         &mut self.draw_buf,
                         "{} {}: Exited with code {}",
-                        bstr::BStr::new(&handle.config.package_name),
-                        bstr::BStr::new(&handle.config.script_name),
+                        bun_core::fmt::escape_control_chars(&handle.config.package_name),
+                        bun_core::fmt::escape_control_chars(&handle.config.script_name),
                         exited.code,
                     )?;
                 }
@@ -447,8 +447,8 @@ impl<'a> State<'a> {
                     writeln!(
                         &mut self.draw_buf,
                         "{} {}: Signaled with code {}",
-                        bstr::BStr::new(&handle.config.package_name),
-                        bstr::BStr::new(&handle.config.script_name),
+                        bun_core::fmt::escape_control_chars(&handle.config.package_name),
+                        bun_core::fmt::escape_control_chars(&handle.config.script_name),
                         bun_sys::SignalCode(*signal).name().unwrap_or("UNKNOWN"),
                     )?;
                 }
@@ -550,9 +550,9 @@ impl<'a> State<'a> {
             write!(
                 &mut self.draw_buf,
                 fmt!("<b>{s}<r> {s} $ <d>{s}<r>\n"),
-                bstr::BStr::new(&handle.config.package_name),
-                bstr::BStr::new(&handle.config.script_name),
-                bstr::BStr::new(&handle.config.script_content),
+                bun_core::fmt::escape_control_chars(&handle.config.package_name),
+                bun_core::fmt::escape_control_chars(&handle.config.script_name),
+                bun_core::fmt::escape_control_chars(&handle.config.script_content),
             )?;
             if e.elided_count > 0 {
                 write!(

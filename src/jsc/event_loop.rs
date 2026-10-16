@@ -1331,10 +1331,12 @@ impl EventLoop {
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        // SAFETY: as above — the tick runs loop callbacks that reach the loop
-        // themselves, so the exclusive borrow is scoped to this call only.
+        // SAFETY: as above. The tick runs loop callbacks that reach the loop
+        // through their own pointer (e.g. `FilePoll::register_with_fd`), so no
+        // `&mut` to the loop is held while it runs.
         unsafe {
-            (*loop_ptr).tick_with_timeout(
+            uws::Loop::tick_with_timeout_raw(
+                loop_ptr,
                 Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
                 uws::NOW_NS_UNKNOWN,
             )

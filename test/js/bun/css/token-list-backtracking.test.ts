@@ -116,7 +116,7 @@ test("valid and recovered color function values are unchanged", () => {
     [".a{--x: light-dark(var(--l), var(--d))}", ".a{--x:light-dark(var(--l),var(--d))}"],
     [".a{--x: rgb(1 1 1/var(--a))}", ".a{--x:rgb(1 1 1/var(--a))}"],
     [".a{--x: hsl(120deg 50% 50%/var(--o, 0.5))}", ".a{--x:hsl(120 50% 50%/var(--o,.5))}"],
-    [".a{--x: rgb(var(--r) 0 0/1)}", ".a{--x:rgb(var(--r)0 0/1)}"],
+    [".a{--x: rgb(var(--r) 0 0/1)}", ".a{--x:rgb(var(--r) 0 0/1)}"],
     [".a{--x: f(light-dark(red))}", ".a{--x:f(light-dark(red))}"],
     [".a{--x: var(--a, light-dark(x y))}", ".a{--x:var(--a,light-dark(x y))}"],
     [".a{--x: env(safe-area-inset-top, light-dark(a, b))}", ".a{--x:env(safe-area-inset-top,light-dark(a,b))}"],

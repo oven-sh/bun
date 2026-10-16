@@ -15,6 +15,7 @@ use crate::printer::Printer;
 
 use crate::values as css_values;
 use css_values::angle::Angle;
+use css_values::calc::CalcUnit;
 use css_values::color::{ColorFallbackKind, CssColor};
 use css_values::ident::{
     CustomIdent, CustomIdentFns, DashedIdent, DashedIdentReference, Ident, IdentFns,
@@ -300,21 +301,30 @@ impl TokenList {
     // deinit(): body only freed owned `Vec` fields — handled by `Drop` on `Vec`.
 
     pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+        // Unless minifying, the `:`, `,` or `/` that the caller wrote ends in a blank, and
+        // that blank is the whole of a whitespace-only value (`--foo: ;`).
         if !dest.minify && self.v.len() == 1 && self.v[0].is_whitespace() {
             return Ok(());
         }
+        self.write_tokens(dest, is_custom_property, false)
+    }
 
-        let mut has_whitespace = false;
-        for (i, token_or_value) in self.v.iter().enumerate() {
+    /// Prints the stored tokens. The grammar of the list is unknown: a blank can be a
+    /// descendant combinator (`--sel: .a .b`) or a separator for another tool, so the printer
+    /// adds none. `in_math` is for the arguments of a math function.
+    fn write_tokens(
+        &self,
+        dest: &mut Printer,
+        is_custom_property: bool,
+        in_math: bool,
+    ) -> PrintResult<()> {
+        let Some(tokens) = self.tokens_to_print(dest)? else {
+            return Ok(());
+        };
+        for (i, token_or_value) in tokens.iter().enumerate() {
             match token_or_value {
-                TokenOrValue::Color(color) => {
-                    color.to_css(dest)?;
-                    has_whitespace = false;
-                }
-                TokenOrValue::UnresolvedColor(color) => {
-                    color.to_css(dest, is_custom_property)?;
-                    has_whitespace = false;
-                }
+                TokenOrValue::Color(color) => color.to_css(dest)?,
+                TokenOrValue::UnresolvedColor(color) => color.to_css(dest, is_custom_property)?,
                 TokenOrValue::Url(url) => {
                     if dest.dependencies.is_some()
                         && is_custom_property
@@ -331,100 +341,30 @@ impl TokenList {
                         );
                     }
                     ext::url_to_css(url, dest)?;
-                    has_whitespace = false;
                 }
-                TokenOrValue::Var(var) => {
-                    var.to_css(dest, is_custom_property)?;
-                    has_whitespace = self.write_whitespace_if_needed(i, dest)?;
-                }
-                TokenOrValue::Env(env) => {
-                    env.to_css(dest, is_custom_property)?;
-                    has_whitespace = self.write_whitespace_if_needed(i, dest)?;
-                }
-                TokenOrValue::Function(f) => {
-                    f.to_css(dest, is_custom_property)?;
-                    has_whitespace = self.write_whitespace_if_needed(i, dest)?;
-                }
+                TokenOrValue::Var(var) => var.to_css(dest, is_custom_property)?,
+                TokenOrValue::Env(env) => env.to_css(dest, is_custom_property)?,
+                TokenOrValue::Function(f) => f.to_css(dest, is_custom_property)?,
                 TokenOrValue::Length(v) => {
                     // Do not serialize unitless zero lengths in custom properties as it may break calc().
                     let (value, unit) = v.to_unit_value();
                     css_parser::serializer::serialize_dimension(value, unit, dest)?;
-                    has_whitespace = false;
                 }
-                TokenOrValue::Angle(v) => {
-                    v.to_css(dest)?;
-                    has_whitespace = false;
-                }
-                TokenOrValue::Time(v) => {
-                    v.to_css(dest)?;
-                    has_whitespace = false;
-                }
-                TokenOrValue::Resolution(v) => {
-                    v.to_css(dest)?;
-                    has_whitespace = false;
-                }
-                TokenOrValue::DashedIdent(v) => {
-                    dest.write_dashed_ident(v, true)?;
-                    has_whitespace = false;
-                }
-                TokenOrValue::AnimationName(v) => {
-                    v.to_css(dest)?;
-                    has_whitespace = false;
-                }
+                TokenOrValue::Angle(v) => v.to_css(dest)?,
+                TokenOrValue::Time(v) => v.to_css(dest)?,
+                TokenOrValue::Resolution(v) => v.to_css(dest)?,
+                TokenOrValue::DashedIdent(v) => dest.write_dashed_ident(v, true)?,
+                TokenOrValue::AnimationName(v) => v.to_css(dest)?,
                 TokenOrValue::Token(token) => match token {
-                    Token::Delim(d) => {
-                        if *d == b'+' as u32 || *d == b'-' as u32 {
-                            dest.write_char(b' ')?;
-                            debug_assert!(*d <= 0x7F);
-                            dest.write_char(*d as u8)?;
-                            dest.write_char(b' ')?;
-                        } else {
-                            let ws_before =
-                                !has_whitespace && (*d == b'/' as u32 || *d == b'*' as u32);
-                            debug_assert!(*d <= 0x7F);
-                            dest.delim(*d as u8, ws_before)?;
-                            // `delim()` emits no surrounding whitespace when minifying, so
-                            // consecutive `/` and `*` delims would be printed adjacently and
-                            // form a `/*` or `*/` comment delimiter. Emit a real space when
-                            // the next token is the other half of that pair.
-                            if dest.minify && (*d == b'/' as u32 || *d == b'*' as u32) {
-                                let needs_space = match self.v.get(i + 1) {
-                                    Some(TokenOrValue::Token(Token::Delim(next))) => {
-                                        (*d == b'/' as u32 && *next == b'*' as u32)
-                                            || (*d == b'*' as u32 && *next == b'/' as u32)
-                                    }
-                                    Some(TokenOrValue::Token(Token::SubstringMatch)) => {
-                                        *d == b'/' as u32
-                                    }
-                                    _ => false,
-                                };
-                                if needs_space {
-                                    dest.write_char(b' ')?;
-                                }
-                            }
-                        }
-                        has_whitespace = true;
-                    }
-                    Token::Comma => {
-                        dest.delim(b',', false)?;
-                        has_whitespace = true;
-                    }
-                    Token::CloseParen | Token::CloseSquare | Token::CloseCurly => {
-                        token.to_css(dest)?;
-                        has_whitespace = self.write_whitespace_if_needed(i, dest)?;
-                    }
                     Token::Dimension(dim) => {
-                        css_parser::serializer::serialize_dimension(dim.num.value, dim.unit, dest)?;
-                        has_whitespace = false;
+                        let value = write_sign(&dim.num, dest)?;
+                        css_parser::serializer::serialize_dimension(value, dim.unit, dest)?;
                     }
-                    Token::Number(v) => {
-                        CSSNumberFns::to_css(v.value, dest)?;
-                        has_whitespace = false;
+                    Token::Number(num) => {
+                        let value = write_sign(num, dest)?;
+                        CSSNumberFns::to_css(value, dest)?;
                     }
-                    _ => {
-                        token.to_css(dest)?;
-                        has_whitespace = matches!(token, Token::Whitespace(_));
-                    }
+                    _ => Self::write_token(tokens, i, token, in_math, dest)?,
                 },
             }
         }
@@ -432,33 +372,132 @@ impl TokenList {
     }
 
     pub(crate) fn to_css_raw(&self, dest: &mut Printer) -> PrintResult<()> {
-        for token_or_value in self.v.iter() {
-            if let TokenOrValue::Token(token) = token_or_value {
-                token.to_css(dest)?;
-            } else {
+        let Some(tokens) = self.tokens_to_print(dest)? else {
+            return Ok(());
+        };
+        for (i, token_or_value) in tokens.iter().enumerate() {
+            let TokenOrValue::Token(token) = token_or_value else {
                 return Err(dest.add_fmt_error());
-            }
+            };
+            Self::write_token(tokens, i, token, false, dest)?;
         }
         Ok(())
     }
 
-    pub(crate) fn write_whitespace_if_needed(
-        &self,
+    /// The tokens that print. When whitespace and comments are collapsed, the run of them at
+    /// each end of the list does not print: the text next to it is the printer's own, so
+    /// nothing there can join two tokens. `None` if nothing else is left, which is a blank
+    /// value, and this prints it.
+    fn tokens_to_print(&self, dest: &mut Printer) -> PrintResult<Option<&[TokenOrValue]>> {
+        if !dest.collapse_token_whitespace {
+            return Ok(Some(&self.v));
+        }
+        let Some(start) = self.v.iter().position(|t| !t.is_whitespace_or_comment()) else {
+            // Printed as `/**/`, a comment alone is an empty value, which older browsers
+            // reject. The diff print has its blank from the separator before the list.
+            if dest.minify && !self.v.is_empty() {
+                dest.write_char(b' ')?;
+            }
+            return Ok(None);
+        };
+        let end = self
+            .v
+            .iter()
+            .rposition(|t| !t.is_whitespace_or_comment())
+            .map_or(start, |last| last + 1);
+        Ok(Some(&self.v[start..end]))
+    }
+
+    /// Prints a token whose text depends on the tokens next to it: whitespace, a comment and
+    /// `\` always, a comma and a math operator in the diff print. Any other token prints as
+    /// it is.
+    fn write_token(
+        tokens: &[TokenOrValue],
         i: usize,
+        token: &Token,
+        in_math: bool,
         dest: &mut Printer,
-    ) -> PrintResult<bool> {
-        if !dest.minify
-            && i != self.v.len() - 1
-            && !matches!(
-                &self.v[i + 1],
-                TokenOrValue::Token(Token::Comma | Token::CloseParen)
-            )
-        {
-            // Whitespace is removed during parsing, so add it back if we aren't minifying.
-            dest.write_char(b' ')?;
-            Ok(true)
+    ) -> PrintResult<()> {
+        let diff_print = dest.collapse_token_whitespace && !dest.minify;
+        match token {
+            Token::Whitespace(_) | Token::Comment(_) if dest.collapse_token_whitespace => {
+                Self::write_collapsed_run(tokens, i, in_math, dest)
+            }
+            Token::Whitespace(text) => write_line_breaks_as_lf(text, dest),
+            Token::Comment(text) => {
+                dest.write_str("/*")?;
+                write_line_breaks_as_lf(text, dest)?;
+                dest.write_str("*/")
+            }
+            Token::Delim(d) if *d == u32::from(b'\\') => {
+                // The tokenizer makes this token only where a newline follows it. Before
+                // any other text the `\` is an escape.
+                dest.write_char(b'\\')?;
+                let newline_follows = !dest.collapse_token_whitespace
+                    && tokens.get(i + 1).is_some_and(TokenOrValue::is_whitespace);
+                if newline_follows {
+                    Ok(())
+                } else {
+                    dest.write_char(b'\n')
+                }
+            }
+            Token::Comma if diff_print => {
+                dest.write_char(b',')?;
+                if i + 1 < tokens.len() {
+                    dest.write_char(b' ')?;
+                }
+                Ok(())
+            }
+            Token::Delim(d) if diff_print && in_math && is_math_operator(*d) => {
+                dest.write_char(b' ')?;
+                dest.write_char(*d as u8)?;
+                dest.write_char(b' ')
+            }
+            _ => token.to_css(dest),
+        }
+    }
+
+    /// Prints the one separator of the run of whitespace and comments that `i` is in, at the
+    /// first token of the run: a blank if the run holds whitespace, else `/**/`. A comment can
+    /// be all that keeps two tokens apart (`a/**/b` is not `ab`, `/` `/**/` `*` is not `/*`),
+    /// so it never prints as nothing, which is what lightningcss does.
+    fn write_collapsed_run(
+        tokens: &[TokenOrValue],
+        i: usize,
+        in_math: bool,
+        dest: &mut Printer,
+    ) -> PrintResult<()> {
+        let before = i.checked_sub(1).and_then(|previous| tokens.get(previous));
+        if before.is_some_and(TokenOrValue::is_whitespace_or_comment) {
+            return Ok(());
+        }
+        let run = tokens[i..]
+            .iter()
+            .take_while(|t| t.is_whitespace_or_comment());
+        let (mut len, mut has_whitespace) = (0, false);
+        for t in run {
+            len += 1;
+            has_whitespace |= t.is_whitespace();
+        }
+        let after = tokens.get(i + len);
+        // `\` printed the newline that it needs.
+        if matches!(before, Some(TokenOrValue::Token(Token::Delim(d))) if *d == u32::from(b'\\')) {
+            return Ok(());
+        }
+        // No grammar reads a blank next to a comma, or next to `*` and `/` in a math
+        // function, so the diff print gives these one form.
+        let has_one_form = |t: &TokenOrValue| match t {
+            TokenOrValue::Token(Token::Comma) => true,
+            TokenOrValue::Token(Token::Delim(d)) => in_math && is_math_operator(*d),
+            _ => false,
+        };
+        if !dest.minify && (before.is_some_and(has_one_form) || after.is_some_and(has_one_form)) {
+            return Ok(());
+        }
+        if has_whitespace {
+            dest.write_char(b' ')
         } else {
-            Ok(false)
+            dest.write_str("/**/")
         }
     }
 
@@ -492,7 +531,7 @@ impl TokenList {
 
         loop {
             let state = input.state();
-            let Ok(token) = input.next_including_whitespace() else {
+            let Ok(token) = input.next_including_whitespace_and_comments() else {
                 break;
             };
             match token {
@@ -558,40 +597,26 @@ impl TokenList {
             return Err(input.new_custom_error(ParserError::maximum_nesting_depth));
         }
 
-        let mut last_is_delim = false;
-        let mut last_is_whitespace = false;
-
+        // Whitespace and comments are stored like any other token. What a minified list
+        // can lose is decided when it is printed.
         loop {
             let state = input.state();
-            let Ok(tok) = input.next_including_whitespace() else {
+            let Ok(tok) = input.next_including_whitespace_and_comments() else {
                 break;
             };
             // Clone the token so we can call &mut methods on `input` below.
             let tok = *tok;
             match &tok {
-                Token::Whitespace(_) | Token::Comment(_) => {
-                    // Skip whitespace if the last token was a delimiter.
-                    // Otherwise, replace all whitespace and comments with a single space character.
-                    if !last_is_delim {
-                        tokens.push(TokenOrValue::Token(Token::Whitespace(b" ")));
-                        last_is_whitespace = true;
-                    }
-                    continue;
-                }
                 Token::Function(f) => {
                     // Attempt to parse embedded color values into hex tokens.
                     if let Some(color) = try_parse_color_token(f, &state, input) {
                         tokens.push(TokenOrValue::Color(color));
-                        last_is_delim = false;
-                        last_is_whitespace = false;
                         continue;
                     }
                     let failures_before = input.token_list_parse_failures();
                     match input.try_parse(|i| UnresolvedColor::parse(i, f, options, depth)) {
                         Ok(color) => {
                             tokens.push(TokenOrValue::UnresolvedColor(color));
-                            last_is_delim = false;
-                            last_is_whitespace = false;
                             continue;
                         }
                         Err(err) => {
@@ -610,16 +635,12 @@ impl TokenList {
                     if strings::eql(*f, b"url") {
                         input.reset(&state);
                         tokens.push(TokenOrValue::Url(ext::url_parse(input)?));
-                        last_is_delim = false;
-                        last_is_whitespace = false;
                     } else if strings::eql(*f, b"var") {
                         let var = input.parse_nested_block(|input2| {
                             let thevar = Variable::parse(input2, options, depth + 1)?;
                             Ok(TokenOrValue::Var(thevar))
                         })?;
                         tokens.push(var);
-                        last_is_delim = true;
-                        last_is_whitespace = false;
                     } else if strings::eql(*f, b"env") {
                         let env = input.parse_nested_block(|input2| {
                             let env =
@@ -627,8 +648,6 @@ impl TokenList {
                             Ok(TokenOrValue::Env(env))
                         })?;
                         tokens.push(env);
-                        last_is_delim = true;
-                        last_is_whitespace = false;
                     } else {
                         let arguments = input.parse_nested_block(|input2| {
                             TokenListFns::parse(input2, options, depth + 1)
@@ -639,8 +658,6 @@ impl TokenList {
                             },
                             arguments,
                         }));
-                        last_is_delim = true; // Whitespace is not required after any of these chars.
-                        last_is_whitespace = false;
                     }
                     continue;
                 }
@@ -652,15 +669,11 @@ impl TokenList {
                         };
                         tokens.push(TokenOrValue::Color(CssColor::Rgba(rgba)));
                     }
-                    last_is_delim = false;
-                    last_is_whitespace = false;
                     continue;
                 }
                 Token::UnquotedUrl(_) => {
                     input.reset(&state);
                     tokens.push(TokenOrValue::Url(ext::url_parse(input)?));
-                    last_is_delim = false;
-                    last_is_whitespace = false;
                     continue;
                 }
                 Token::Ident(name) => {
@@ -668,8 +681,6 @@ impl TokenList {
                         tokens.push(TokenOrValue::DashedIdent(DashedIdent {
                             v: std::ptr::from_ref::<[u8]>(*name),
                         }));
-                        last_is_delim = false;
-                        last_is_whitespace = false;
                         continue;
                     }
                 }
@@ -685,12 +696,13 @@ impl TokenList {
                         TokenListFns::parse_into(input2, tokens, options, depth + 1)
                     })?;
                     tokens.push(TokenOrValue::Token(closing_delimiter));
-                    last_is_delim = true; // Whitespace is not required after any of these chars.
-                    last_is_whitespace = false;
                     continue;
                 }
-                Token::Dimension(_) => {
-                    let value = if let Ok(length) = LengthValue::try_from_token(&tok) {
+                Token::Dimension(dim) => {
+                    // A typed value does not keep a written `+`, and `2n+1px` is not `2n1px`.
+                    let value = if dim.num.has_sign && dim.num.value >= 0.0 {
+                        TokenOrValue::Token(tok)
+                    } else if let Ok(length) = LengthValue::try_from_token(&tok) {
                         TokenOrValue::Length(length)
                     } else if let Ok(angle) = Angle::try_from_token(&tok) {
                         TokenOrValue::Angle(angle)
@@ -703,9 +715,6 @@ impl TokenList {
                     };
 
                     tokens.push(value);
-
-                    last_is_delim = false;
-                    last_is_whitespace = false;
                     continue;
                 }
                 _ => {}
@@ -717,18 +726,7 @@ impl TokenList {
                     location: state.source_location(),
                 });
             }
-            last_is_delim = matches!(&tok, Token::Delim(_) | Token::Comma);
-
-            // If this is a delimiter, and the last token was whitespace,
-            // replace the whitespace with the delimiter since both are not required.
-            if last_is_delim && last_is_whitespace {
-                let last = tokens.last_mut().expect("unreachable");
-                *last = TokenOrValue::Token(tok);
-            } else {
-                tokens.push(TokenOrValue::Token(tok));
-            }
-
-            last_is_whitespace = false;
+            tokens.push(TokenOrValue::Token(tok));
         }
 
         Ok(())
@@ -838,6 +836,39 @@ impl TokenList {
 
 pub type TokenListFns = TokenList;
 
+/// `*` and `/`: in the arguments of a math function no grammar reads the blanks next to them.
+fn is_math_operator(delim: u32) -> bool {
+    delim == u32::from(b'*') || delim == u32::from(b'/')
+}
+
+/// Writes the sign that a number was written with and returns the value to print after it.
+/// The sign is part of the token: without it `2n+1` prints as `2n1`.
+fn write_sign(num: &crate::Num, dest: &mut Printer) -> PrintResult<f32> {
+    if !num.has_sign {
+        return Ok(num.value);
+    }
+    dest.write_char(if num.value.is_sign_negative() {
+        b'-'
+    } else {
+        b'+'
+    })?;
+    Ok(num.value.abs())
+}
+
+/// Prints the text of whitespace or of a comment as it was written, except that each line
+/// break that CSS reads as one (CR LF, CR, FF) prints as `\n`: the output does not follow the
+/// line endings of the checkout.
+fn write_line_breaks_as_lf(text: &[u8], dest: &mut Printer) -> PrintResult<()> {
+    let mut rest = text;
+    while let Some(i) = strings::index_of_any(rest, b"\r\x0C") {
+        dest.write_bytes(&rest[..i])?;
+        dest.write_char(b'\n')?;
+        let is_crlf = rest[i] == b'\r' && rest.get(i + 1) == Some(&b'\n');
+        rest = &rest[i + 1 + usize::from(is_crlf)..];
+    }
+    dest.write_bytes(rest)
+}
+
 pub(crate) type Fallbacks = (SupportsCondition, TokenList);
 
 /// A color value with an unresolved alpha value (e.g. a variable).
@@ -911,7 +942,7 @@ impl UnresolvedColor {
                 css_parser::to_css::integer(conv(*g), dest)?;
                 dest.write_char(b' ')?;
                 css_parser::to_css::integer(conv(*b), dest)?;
-                dest.delim(b'/', true)?;
+                Self::write_alpha_slash(alpha, dest)?;
                 alpha.to_css(dest, is_custom_property)?;
                 dest.write_char(b')')
             }
@@ -938,7 +969,7 @@ impl UnresolvedColor {
                 Percentage { v: *s }.to_css(dest)?;
                 dest.write_char(b' ')?;
                 Percentage { v: *l }.to_css(dest)?;
-                dest.delim(b'/', true)?;
+                Self::write_alpha_slash(alpha, dest)?;
                 alpha.to_css(dest, is_custom_property)?;
                 dest.write_char(b')')
             }
@@ -956,12 +987,29 @@ impl UnresolvedColor {
                 }
 
                 dest.write_str("light-dark(")?;
-                light.to_css(dest, is_custom_property)?;
+                light.write_tokens(dest, is_custom_property, false)?;
                 dest.delim(b',', false)?;
                 dark.to_css(dest, is_custom_property)?;
                 dest.write_char(b')')
             }
         }
+    }
+
+    /// Writes the `/` before an unresolved alpha. When minifying, no blank
+    /// follows it, and a `*` or `*=` directly after it would open a comment.
+    fn write_alpha_slash(alpha: &TokenList, dest: &mut Printer) -> PrintResult<()> {
+        dest.delim(b'/', true)?;
+        // The whitespace and comments at the start of the list do not print.
+        let first = alpha.v.iter().find(|t| !t.is_whitespace_or_comment());
+        let opens_comment = match first {
+            Some(TokenOrValue::Token(Token::Delim(d))) => *d == u32::from(b'*'),
+            Some(TokenOrValue::Token(Token::SubstringMatch)) => true,
+            _ => false,
+        };
+        if dest.minify && opens_comment {
+            dest.write_char(b' ')?;
+        }
+        Ok(())
     }
 
     fn parse(
@@ -1301,7 +1349,12 @@ impl Function {
     fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         IdentFns::to_css(&self.name, dest)?;
         dest.write_char(b'(')?;
-        self.arguments.to_css(dest, is_custom_property)?;
+        // Only the diff print reads this.
+        let in_math = dest.collapse_token_whitespace
+            && !dest.minify
+            && CalcUnit::get_any_case(self.name.v()).is_some();
+        self.arguments
+            .write_tokens(dest, is_custom_property, in_math)?;
         dest.write_char(b')')
     }
 
@@ -1353,6 +1406,13 @@ impl TokenOrValue {
 
     fn is_whitespace(&self) -> bool {
         matches!(self, TokenOrValue::Token(Token::Whitespace(_)))
+    }
+
+    fn is_whitespace_or_comment(&self) -> bool {
+        matches!(
+            self,
+            TokenOrValue::Token(Token::Whitespace(_) | Token::Comment(_))
+        )
     }
 }
 

@@ -28,11 +28,16 @@ const base = require("./gen.cjs");
 const { BODY, STALLED, frameOf, u32, windowUpdate, settings, responseHeaders, dataFrame, trailersFrame } = base;
 const { nextTurn, deferred, listen, CALLS } = base;
 
-const KEY = fs.readFileSync(__dirname + "/key.pem");
-const CERT = fs.readFileSync(__dirname + "/cert.pem");
+const KEYS = __dirname + "/../../test/fixtures/keys";
+const KEY = fs.readFileSync(KEYS + "/agent1-key.pem");
+const CERT = fs.readFileSync(KEYS + "/agent1-cert.pem");
 // As long as BODY: a file response stalls like write(BODY).
-const BIG = __dirname + "/big.bin";
-const SMALL = __dirname + "/small.bin";
+const FILES = fs.mkdtempSync(require("node:os").tmpdir() + "/close-matrix-");
+const BIG = FILES + "/big.bin";
+const SMALL = FILES + "/small.bin";
+fs.writeFileSync(BIG, Buffer.alloc(BODY.length, "f"));
+fs.writeFileSync(SMALL, Buffer.alloc(1000, "f"));
+process.on("exit", () => fs.rmSync(FILES, { recursive: true, force: true }));
 
 const noop = () => {};
 const codeOf = err => String((err && (err.code || err.message)) || err);
@@ -72,7 +77,6 @@ async function quiet(c) {
     previous = now;
   }
 }
-
 
 // AXGAP_JS_IDLE=1: over a JS stream, two turns of the event loop after a settle. node completes
 // a write to a JS stream in a setImmediate callback, so without them the answer to the PING of
@@ -120,7 +124,8 @@ async function clientSetup(c, options) {
 
 async function serverSetup(c, onStream) {
   const transport = c.spec.transport;
-  const server = (c.server = transport === "tls" ? http2.createSecureServer({ key: KEY, cert: CERT }) : http2.createServer());
+  const server = (c.server =
+    transport === "tls" ? http2.createSecureServer({ key: KEY, cert: CERT }) : http2.createServer());
   server.on("error", noop);
   server.on("sessionError", noop);
   server.on("tlsClientError", noop);
@@ -490,11 +495,17 @@ const NEW_SERVER_SITES = {
   "finish-wu": { reads: { wu: ["POST", [], grantFrames()] }, owns: ["endBODY"] },
   drain: { reads: { wu: ["POST", [], grantFrames()] }, owns: ["stalled"] },
   close: { reads: { "es-this": ["GET", [], []] }, owns: ["ended"] },
-  "close-rst": { reads: { rst8: ["POST", [], [rst(1, 8)]], rst2: ["POST", [], [rst(1, 2)]] }, owns: ["open", "stalled"] },
+  "close-rst": {
+    reads: { rst8: ["POST", [], [rst(1, 8)]], rst2: ["POST", [], [rst(1, 2)]] },
+    owns: ["open", "stalled"],
+  },
   timeout: { reads: { none: ["POST", [], []] }, owns: BASE_SERVER_OWN },
   wantTrailers: { reads: { none: ["POST", [], []] }, owns: ["wt-open"] },
   "wantTrailers-wu": { reads: { wu: ["POST", [], grantFrames()] }, owns: ["wt-stalled"] },
-  goaway: { reads: { "ga-at": ["POST", [], [goaway(0, 0)]], "ga-err": ["POST", [], [goaway(0, 2)]] }, owns: BASE_SERVER_OWN },
+  goaway: {
+    reads: { "ga-at": ["POST", [], [goaway(0, 0)]], "ga-err": ["POST", [], [goaway(0, 2)]] },
+    owns: BASE_SERVER_OWN,
+  },
   remoteSettings: {
     reads: {
       set: ["POST", [], [settings(4, BIG_WINDOW)]],
@@ -576,7 +587,16 @@ const PUSH_CLIENT_SITES = {
 function cells() {
   const list = [];
   const add = (fam, transport, role, site, read, own, call) =>
-    list.push({ id: `${fam}|${transport}|${role}|${site}|${read}|${own}|${call}`, fam, transport, role, site, read, own, call });
+    list.push({
+      id: `${fam}|${transport}|${role}|${site}|${read}|${own}|${call}`,
+      fam,
+      transport,
+      role,
+      site,
+      read,
+      own,
+      call,
+    });
   const calls = Object.keys(CALLS);
 
   // base and transport: the cells of gen.cjs, over tcp, tls and a JS stream.
@@ -642,7 +662,8 @@ function cells() {
 
   // pending: a request made before the session has connected.
   for (const site of ["sync", "tick", "ready", "connect"]) {
-    for (const own of Object.keys(PENDING_OWN)) for (const call of calls) add("pending", "tcp", "client", site, "none", own, call);
+    for (const own of Object.keys(PENDING_OWN))
+      for (const call of calls) add("pending", "tcp", "client", site, "none", own, call);
   }
 
   // push
@@ -1224,15 +1245,25 @@ async function runCell(spec, timeoutMs) {
 }
 
 function parseArgs(argv) {
-  const args = { fam: undefined, filter: undefined, concurrency: 16, list: false, timeout: 4000, from: 0, ids: undefined };
+  const args = {
+    fam: undefined,
+    filter: undefined,
+    concurrency: 16,
+    list: false,
+    timeout: 4000,
+    from: 0,
+    ids: undefined,
+  };
   for (const arg of argv) {
     if (arg === "--list") args.list = true;
     else if (arg.startsWith("--fam=")) args.fam = arg.slice("--fam=".length).split(",");
     else if (arg.startsWith("--filter=")) args.filter = arg.slice("--filter=".length);
-    else if (arg.startsWith("--concurrency=")) args.concurrency = Math.max(1, Number(arg.slice("--concurrency=".length)) | 0);
+    else if (arg.startsWith("--concurrency="))
+      args.concurrency = Math.max(1, Number(arg.slice("--concurrency=".length)) | 0);
     else if (arg.startsWith("--timeout=")) args.timeout = Math.max(1, Number(arg.slice("--timeout=".length)) | 0);
     else if (arg.startsWith("--from=")) args.from = Math.max(0, Number(arg.slice("--from=".length)) | 0);
-    else if (arg.startsWith("--ids=")) args.ids = new Set(fs.readFileSync(arg.slice("--ids=".length), "utf8").split("\n").filter(Boolean));
+    else if (arg.startsWith("--ids="))
+      args.ids = new Set(fs.readFileSync(arg.slice("--ids=".length), "utf8").split("\n").filter(Boolean));
     else {
       process.stderr.write(`unknown argument ${arg}\n`);
       process.exit(2);

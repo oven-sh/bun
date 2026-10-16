@@ -678,10 +678,13 @@ function parseArgs(argv) {
   for (const arg of argv) {
     if (arg === "--list") args.list = true;
     else if (arg.startsWith("--filter=")) args.filter = arg.slice("--filter=".length);
-    else if (arg.startsWith("--concurrency=")) args.concurrency = Math.max(1, Number(arg.slice("--concurrency=".length)) | 0);
+    else if (arg.startsWith("--concurrency="))
+      args.concurrency = Math.max(1, Number(arg.slice("--concurrency=".length)) | 0);
     else if (arg.startsWith("--timeout=")) args.timeout = Math.max(1, Number(arg.slice("--timeout=".length)) | 0);
     else {
-      process.stderr.write(`unknown argument ${arg}\nusage: gen.cjs [--filter=<substr>] [--concurrency=N] [--list] [--timeout=ms]\n`);
+      process.stderr.write(
+        `unknown argument ${arg}\nusage: gen.cjs [--filter=<substr>] [--concurrency=N] [--list] [--timeout=ms]\n`,
+      );
       process.exit(2);
     }
   }

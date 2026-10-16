@@ -2220,6 +2220,54 @@ describe("s3 file size stays unknown", () => {
     ).toEqual(untouched);
   });
 
+  it("after port.postMessage()", async () => {
+    expect(
+      await readsAfter(file => {
+        const channel = new MessageChannel();
+        try {
+          channel.port1.postMessage(file);
+        } catch {
+        } finally {
+          channel.port1.close();
+          channel.port2.close();
+        }
+      }),
+    ).toEqual(untouched);
+  });
+
+  it("write() copies the whole object after each of them", async () => {
+    using endpoint = s3LocalEndpoint(payload);
+    const looks: ((file: Bun.S3File) => unknown)[] = [
+      file => expect(() => expect(file).toHaveLength(0)).toThrow("Received length"),
+      file => {
+        try {
+          structuredClone(file);
+        } catch {}
+      },
+      file => {
+        const channel = new MessageChannel();
+        try {
+          channel.port1.postMessage(file);
+        } catch {
+        } finally {
+          channel.port1.close();
+          channel.port2.close();
+        }
+      },
+    ];
+    const written: number[] = [];
+    for (const look of looks) {
+      const file = endpoint.file();
+      look(file);
+      written.push(await endpoint.client.write("copy", file));
+    }
+    expect({ written, uploads: endpoint.uploads, downloads: endpoint.ranges }).toEqual({
+      written: [payload.length, payload.length, payload.length],
+      uploads: [payload.length, payload.length, payload.length],
+      downloads: [null, null, null],
+    });
+  });
+
   it("for a FormData entry after the FormData became a body", async () => {
     using endpoint = s3LocalEndpoint(payload);
     const form = new FormData();

@@ -475,9 +475,17 @@ fn finite_number(
     } else {
         f64::NAN
     };
-    let in_range = if allow_zero { number >= 0.0 } else { number > 0.0 };
+    let in_range = if allow_zero {
+        number >= 0.0
+    } else {
+        number > 0.0
+    };
     if !(number.is_finite() && in_range) {
-        let kind = if allow_zero { "non-negative" } else { "positive" };
+        let kind = if allow_zero {
+            "non-negative"
+        } else {
+            "positive"
+        };
         return Err(global.throw_invalid_arguments(format_args!(
             "FetchSession: '{object_name}.{name}' must be a {kind} number"
         )));

@@ -941,18 +941,22 @@ test.concurrent.each(["http", "https"])(
 );
 
 /**
- * A keep-alive http server that counts its connections and answers every
- * request with `extraHeaders` added, so a test can tell a reused connection
- * from a new one.
+ * A keep-alive http server that counts its connections, and how each one
+ * ended (a FIN or a reset), and answers every request with `extraHeaders`
+ * added, so a test can tell a reused connection from a new one.
  */
 async function countingServer(extraHeaders = "") {
   let connections = 0;
+  const closes = { ended: 0, reset: 0 };
   const sockets = new Set<import("net").Socket>();
   const server = createServer(sock => {
     connections++;
     sockets.add(sock);
     sock.on("close", () => sockets.delete(sock));
-    sock.on("error", () => {});
+    sock.on("end", () => closes.ended++);
+    sock.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "ECONNRESET") closes.reset++;
+    });
     let buf = "";
     sock.on("data", d => {
       buf += d.toString("latin1");
@@ -970,6 +974,7 @@ async function countingServer(extraHeaders = "") {
     get connections() {
       return connections;
     },
+    closes,
     [Symbol.dispose]() {
       for (const sock of sockets) sock.destroy();
       server.close();
@@ -1008,6 +1013,9 @@ describe("keep-alive pool reuse window", () => {
     await Bun.sleep(1_100);
     expect(await post()).toBe("ok");
     expect(server.connections).toBe(2);
+    // The first connection was healthy: it retires with a FIN, not a reset.
+    while (server.closes.ended + server.closes.reset === 0) await Bun.sleep(10);
+    expect(server.closes).toEqual({ ended: 1, reset: 0 });
   });
 
   test.concurrent(

@@ -356,6 +356,38 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     }
   });
 
+  // An HTTP/1 connection with no Keep-Alive hint is not reused after 4 s
+  // idle. An h2 session announces its close with GOAWAY, so it keeps the
+  // 300 s window, and only a session idleTimeout bounds it.
+  test("an idle h2 session is reused past 4 s, and not past keepAlive.idleTimeout", async () => {
+    let sessions = 0;
+    await withH2Server(
+      (req, res) => {
+        res.end("ok");
+      },
+      async (url, server) => {
+        server.on("session", () => sessions++);
+        await using proc = await spawnFetch(`
+            const opts = { tls: { rejectUnauthorized: false } };
+            await fetch("${url}/a", opts).then(r => r.text());
+            await Bun.sleep(4_500);
+            await fetch("${url}/b", opts).then(r => r.text());
+            const session = new Bun.FetchSession({ keepAlive: { idleTimeout: 1 }, tls: { rejectUnauthorized: false } });
+            await session.fetch("${url}/c").then(r => r.text());
+            await Bun.sleep(1_200);
+            await session.fetch("${url}/d").then(r => r.text());
+            console.log("done");
+          `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim()).toBe("done");
+        expect(exitCode).toBe(0);
+        // 1 for /a and /b together, then one each for /c and /d.
+        expect(sessions).toBe(3);
+      },
+    );
+  }, 20_000);
+
   test("POST with ReadableStream body streams as raw DATA frames", async () => {
     let received = "";
     await withH2Server(

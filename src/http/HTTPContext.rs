@@ -248,7 +248,7 @@ pub struct PooledSocket<const SSL: bool> {
     /// is armed from.
     pub(crate) reuse_seconds: u32,
     /// `http_thread().timer` reading (ns) past which `find_in` closes this
-    /// socket instead of handing it out. Not consulted for HTTP/2 sessions.
+    /// socket instead of handing it out.
     pub(crate) reuse_deadline_ns: u64,
 }
 
@@ -793,15 +793,20 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// Seconds a socket parked now may be handed out for. 0 means do not
     /// park it.
     ///
-    /// The origin closes an idle connection on its own schedule. `Keep-Alive:
-    /// timeout=N` announces it, minus [`http::KEEPALIVE_HINT_MARGIN_SECONDS`]
-    /// so a request never lands on the socket at the moment the origin closes
-    /// it (undici `keepAliveTimeoutThreshold`). Without a hint the window is
-    /// [`http::DEFAULT_REUSE_SECONDS`] (undici `keepAliveTimeout`). The
-    /// session's `idleTimeout` caps both.
+    /// The origin closes an idle connection on its own schedule, and a
+    /// request written at that moment fails without a retry unless it is
+    /// idempotent. `Keep-Alive: timeout=N` announces the schedule: the window
+    /// is `N` minus [`http::KEEPALIVE_HINT_MARGIN_SECONDS`] (undici
+    /// `keepAliveTimeoutThreshold`). Without a hint it is
+    /// [`http::DEFAULT_REUSE_SECONDS`] (undici `keepAliveTimeout`). A session
+    /// `idleTimeout` replaces the default and caps the hint. Only a session
+    /// without one takes undici's [`http::MAX_KEEPALIVE_HINT_SECONDS`] cap.
     ///
-    /// An HTTP/2 session proves its own liveness (PING, GOAWAY, the idle frame
-    /// handlers), so it keeps the long default and ignores the hint.
+    /// HTTP/2 has no `Keep-Alive` header (RFC 9113 section 8.2.2), and an
+    /// origin announces the close of an idle connection with GOAWAY, which
+    /// `on_idle_data` records. So a session is not torn down every 4 s: its
+    /// window is the session `idleTimeout` or
+    /// [`http::DEFAULT_H2_REUSE_SECONDS`].
     fn reuse_window_seconds(
         pool: crate::PoolOptions,
         keepalive_hint_seconds: Option<u32>,
@@ -814,14 +819,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if is_h2 {
             return session.unwrap_or(http::DEFAULT_H2_REUSE_SECONDS);
         }
-        let hint = keepalive_hint_seconds.map(|n| {
-            n.saturating_sub(http::KEEPALIVE_HINT_MARGIN_SECONDS)
-                .min(http::MAX_KEEPALIVE_HINT_SECONDS)
-        });
+        let hint =
+            keepalive_hint_seconds.map(|n| n.saturating_sub(http::KEEPALIVE_HINT_MARGIN_SECONDS));
         match (session, hint) {
             (Some(s), Some(h)) => s.min(h),
             (Some(s), None) => s,
-            (None, Some(h)) => h,
+            (None, Some(h)) => h.min(http::MAX_KEEPALIVE_HINT_SECONDS),
             (None, None) => http::DEFAULT_REUSE_SECONDS,
         }
     }
@@ -977,7 +980,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 // Past its reuse window: the origin closes it any moment now,
                 // and a request written onto it cannot be replayed unless it
                 // is idempotent. Retire it with a FIN and dial a new one.
-                if socket.h2_session.is_none() && now_ns >= socket.reuse_deadline_ns {
+                if now_ns >= socket.reuse_deadline_ns {
                     bun_core::scoped_log!(HTTPContext, "Keep-Alive reuse window over");
                     Self::close_socket(http_socket);
                     continue;
@@ -1634,7 +1637,10 @@ impl<const SSL: bool> Handler<SSL> {
         if tagged.is::<PooledSocket<SSL>>() {
             // An idle keep-alive socket we are done with: a FIN, so the
             // origin does not observe a reset for a connection nothing was
-            // wrong with.
+            // wrong with. This was a RST while no timer bounded a graceful
+            // TLS close started from the timeout handler; uSockets now gives
+            // the close_notify wait `US_SSL_CLOSE_AFTER_SPILL_TIMEOUT`. The
+            // FIN leaves this side in TIME_WAIT, as in node and undici.
             bun_core::scoped_log!(HTTPContext, "Keep-Alive idle timeout");
             HTTPContext::<SSL>::close_socket(socket);
             return;

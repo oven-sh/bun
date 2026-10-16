@@ -9067,14 +9067,16 @@ declare module "bun" {
           /**
            * Seconds an idle connection is reused for. After that it is no
            * longer handed to a request, and a coarse timer closes it soon
-           * after (within 4 seconds up to four minutes of idle time, within a
-           * minute beyond that). The longest is 238 minutes (14280), and a
-           * larger value means that.
+           * after (within 8 seconds up to four minutes of idle time, within
+           * two minutes beyond that). The longest is 238 minutes (14280), and
+           * a larger value means that.
            *
-           * It caps the server's `Keep-Alive: timeout=N` (reused for `N - 2`
-           * seconds) and the 4 second default Bun uses when the server sends
-           * no such header. An HTTP/2 connection ignores both and is reused
-           * for `idleTimeout` seconds (300 without one).
+           * It replaces the 4 second default Bun uses when the server sends
+           * no `Keep-Alive` header. The server's `Keep-Alive: timeout=N`
+           * still lowers it to `N - 2` seconds. Without `idleTimeout` a hint
+           * above 600 seconds counts as 600. An HTTP/2 connection has no
+           * `Keep-Alive` header and is reused for `idleTimeout` seconds (300
+           * without one).
            *
            * @default 4
            */

@@ -369,8 +369,8 @@ pub(crate) const DEFAULT_REUSE_SECONDS: u32 = 4;
 /// `keepAliveTimeoutThreshold`). `N` at or below this closes the socket
 /// instead of parking it.
 pub(crate) const KEEPALIVE_HINT_MARGIN_SECONDS: u32 = 2;
-/// Longest reuse window a `Keep-Alive: timeout=N` hint can set (undici
-/// `keepAliveMaxTimeout`).
+/// Longest reuse window a `Keep-Alive: timeout=N` hint can set for a session
+/// without its own `idleTimeout` (undici `keepAliveMaxTimeout`).
 pub(crate) const MAX_KEEPALIVE_HINT_SECONDS: u32 = 600;
 /// Seconds a parked HTTP/2 session stays in the pool without a session
 /// `idleTimeout`.

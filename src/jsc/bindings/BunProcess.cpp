@@ -51,6 +51,10 @@
 #include "wtf-bindings.h"
 #include "EventLoopTask.h"
 #include "JSEventListener.h"
+#include "EventNames.h"
+#include "GlobalEventScope.h"
+#include "PromiseRejectionEvent.h"
+#include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/StructureCache.h>
 
 #include <webcore/SerializedScriptValue.h>
@@ -1484,6 +1488,27 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
     CLEAR_IF_EXCEPTION(scope);
 }
 
+// The web channel of the two promise rejection hooks below (HTML "notify about rejected promises").
+// Dispatches a trusted PromiseRejectionEvent on the global scope when a listener is registered for
+// `type`. Returns null when nothing was dispatched. A non-promise `promise` (a direct caller that
+// has none) gets no event: the attribute is typed Promise<any>.
+static RefPtr<WebCore::PromiseRejectionEvent> dispatchPromiseRejectionEvent(Zig::GlobalObject* globalObject, const AtomString& type, JSC::JSValue promise, JSC::JSValue reason, bool cancelable)
+{
+    auto& eventTarget = globalObject->globalEventScope.get();
+    if (!eventTarget.hasEventListeners(type))
+        return nullptr;
+    if (!dynamicDowncast<JSC::JSPromise>(promise))
+        return nullptr;
+
+    WebCore::PromiseRejectionEvent::Init init;
+    init.cancelable = cancelable;
+    init.promise = promise;
+    init.reason = reason;
+    auto event = WebCore::PromiseRejectionEvent::create(type, init, WebCore::EventIsTrusted::Yes);
+    eventTarget.dispatchEvent(event);
+    return event;
+}
+
 extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue reason, JSC::JSValue promise)
 {
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
@@ -1496,6 +1521,13 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     // As in Bun__handleUncaughtException.
     Bun::ErrorHandlerContextScope inRealmsContext(globalObject, nullptr);
 
+    // A cancelled web event counts as handled, the same as an installed process listener. The
+    // process listener still runs after it, so both channels see every rejection.
+    auto event = dispatchPromiseRejectionEvent(globalObject, WebCore::eventNames().unhandledrejectionEvent, promise, reason, true);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return true;
+    bool handled = event && event->defaultPrevented();
+
     auto eventType = Identifier::fromString(vm, "unhandledRejection"_s);
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
@@ -1506,7 +1538,7 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
         return true;
     }
 
-    return false;
+    return handled;
 }
 
 extern "C" bool Bun__VM__allowRejectionHandledWarning(void* vm);
@@ -1530,6 +1562,13 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
         if (vm.hasPendingTerminationException()) [[unlikely]]
             return true;
     }
+    JSValue reason = jsUndefined();
+    if (auto* jsPromise = dynamicDowncast<JSC::JSPromise>(promise))
+        reason = jsPromise->result();
+    bool dispatched = !!dispatchPromiseRejectionEvent(globalObject, WebCore::eventNames().rejectionhandledEvent, promise, reason, false);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return true;
+
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
         MarkedArgumentBuffer args;
@@ -1539,7 +1578,7 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
         return true;
     }
 
-    return false;
+    return dispatched;
 }
 
 extern "C" void Bun__refChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);

@@ -1498,10 +1498,7 @@ fn link_entries(from: &[u8], to: &[u8], except: &[u8]) -> sys::Result<()> {
         }
     }
     // What a folder held that was removed is not linked.
-    if iter.dir_was_removed() {
-        return Err(sys::Error::from_code(sys::E::ENOENT, sys::Tag::getdents64));
-    }
-    Ok(())
+    iter.fail_if_removed()
 }
 
 /// On POSIX, returns `path` relative to `cwd` with a leading `./`, because the project's own path

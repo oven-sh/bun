@@ -117,9 +117,7 @@ impl Dir {
             names.push(entry.name.slice_u8().to_vec());
         }
         // No rmdir follows here that would tell a directory that is gone from one that only reads so.
-        if entries.dir_was_removed() {
-            return Err(Error::from_code(E::ENOENT, Tag::getdents64));
-        }
+        entries.fail_if_removed()?;
         let mut result = Ok(());
         for name in &names {
             let deleted = self.delete_tree(name);

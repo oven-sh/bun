@@ -177,9 +177,7 @@ pub unsafe fn getdents64(fd: Fd, buf: *mut u8, len: usize) -> Maybe<Option<usize
 }
 
 pub mod dir_iterator {
-    use super::{EntryKind, Fd, Result};
-    #[cfg(windows)]
-    use super::{Error, Tag};
+    use super::{E, EntryKind, Error, Fd, Result, Tag};
     use bun_paths::OSPathChar;
 
     const BUF_SIZE: usize = 8192;
@@ -819,6 +817,14 @@ pub mod dir_iterator {
             {
                 false
             }
+        }
+        /// For a reader that copies, links or compares what it lists: ENOENT when `dir_was_removed`, as the read gave.
+        #[inline]
+        pub fn fail_if_removed(&self) -> Result<()> {
+            if self.dir_was_removed() {
+                return Err(Error::from_code(E::ENOENT, Tag::getdents64));
+            }
+            Ok(())
         }
         /// Windows-only kernel-side name filter (passed to `NtQueryDirectoryFile`).
         /// On POSIX this is a no-op; callers must filter themselves.

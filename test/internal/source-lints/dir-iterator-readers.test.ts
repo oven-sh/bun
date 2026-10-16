@@ -6,13 +6,13 @@
 // For a reader that lists, or that deletes what it lists, that is right: nothing is left in a
 // directory that was removed. It is wrong for a reader that copies, links, compares or mirrors what
 // it lists. That reader would report a copy as complete, or two trees as equal, after one side
-// disappeared. It must ask `dir_was_removed()` once the listing ends, and fail.
+// disappeared. It must call `fail_if_removed()` once the listing ends.
 //
 // Nothing in the types makes the author of a new reader choose, so this lint does. Every function
 // that constructs an iterator is in dir-iterator-readers.inventory.json with one of these classes:
 //
 //   "removed-is-end"     lists, or deletes what it lists: a directory that was removed is an empty one
-//   "asks"               copies, links, compares or mirrors: the function calls `dir_was_removed()`
+//   "asks"               copies, links, compares or mirrors: the function calls `fail_if_removed()`
 //   "asks in <fn>"       the same, and the function `<fn>` of that file reads the iterator and asks
 //   "ends-on-any-error"  already takes every failed read as the end (`while let Ok(Some(..))`)
 //
@@ -138,22 +138,22 @@ describe("readers of a directory", () => {
     expect(
       missing,
       "A new reader of a directory. When the directory is removed while it is read, `next()` returns `Ok(None)`. " +
-        "If the reader copies, links, compares or mirrors what it lists, it must ask `dir_was_removed()` once " +
-        "the listing ends, and fail. Then add the function to dir-iterator-readers.inventory.json with its " +
+        "If the reader copies, links, compares or mirrors what it lists, it must call `fail_if_removed()` once " +
+        "the listing ends. Then add the function to dir-iterator-readers.inventory.json with its " +
         "class: see the header of this lint.",
     ).toEqual([]);
   });
 
-  test('a function with the class "asks" calls dir_was_removed()', () => {
+  test('a function with the class "asks" calls fail_if_removed()', () => {
     const silent: string[] = [];
     for (const [source, byFunction] of Object.entries(inventory)) {
       for (const [name, cls] of Object.entries(byFunction)) {
         const asks = CLASS.exec(cls);
         if (!cls.startsWith("asks") || !asks || !readers[source]?.[name]) continue;
         const body = bodies[source]?.[asks[1] ?? name] ?? "";
-        if (!body.includes("dir_was_removed()")) silent.push(`${source}: fn ${asks[1] ?? name}`);
+        if (!body.includes("fail_if_removed()")) silent.push(`${source}: fn ${asks[1] ?? name}`);
       }
     }
-    expect(silent, "this reader copies, links, compares or mirrors: it must ask `dir_was_removed()`").toEqual([]);
+    expect(silent, "this reader copies, links, compares or mirrors: it must call `fail_if_removed()`").toEqual([]);
   });
 });

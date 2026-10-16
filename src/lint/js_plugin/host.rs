@@ -240,12 +240,14 @@ impl<'e> Host<'e> {
         Host { type_aware, ..self }
     }
 
-    /// Whether the rules that need types run on `file`: what the driver decides for the rules in Rust, for a
-    /// configuration of ESLint. A rule in JavaScript gets no types. On such a file `parserServices.program`
-    /// throws what `getParserServices` of `@typescript-eslint/utils` throws, instead of being null as the parser
-    /// gives it without a project, so that a rule that reads it does not run without them.
+    /// Whether the configuration of `file` asks for types, which typescript-eslint's parser then gives to a rule
+    /// as `parserServices.program`. A rule in JavaScript gets none here. On such a file `program` throws what
+    /// `getParserServices` of `@typescript-eslint/utils` throws, instead of being null as the parser gives it
+    /// without a project, so that a rule that reads it does not report what ESLint does not. Not with
+    /// `--no-type-aware`, which skips the rules that need types. Not with `--type-aware` alone: without a project
+    /// ESLint has no program either, and the rule reports what ESLint reports.
     pub fn wants_types_of(&self, file: &File) -> bool {
-        self.type_aware.unwrap_or(file.language().wants_types)
+        self.type_aware != Some(false) && file.language().wants_types
     }
 
     pub(super) fn count_one_for_eslint(&self) {
@@ -368,11 +370,21 @@ impl<'e> Host<'e> {
         true
     }
 
-    /// The rules that [have asked for types](Host::has_asked_for_types), by their names.
-    pub fn rules_that_asked_for_types(&self) -> Vec<Arc<Rule>> {
-        let mut rules: Vec<Arc<Rule>> =
-            (self.state.lock().asked_for_types.iter()).map(|it| Arc::clone(&it.rule)).collect();
-        crate::utils::sort::sort_by(&mut rules, |a, b| a.id.cmp(&b.id));
+    /// The rules that [have asked for types](Host::has_asked_for_types), by their names, and whether each ran on
+    /// no more file. The others ran on the files that do not want types. A rule that two configuration files load
+    /// is one rule here.
+    pub fn rules_that_asked_for_types(&self) -> Vec<(Arc<Rule>, bool)> {
+        let mut rules: Vec<(Arc<Rule>, bool)> = (self.state.lock().asked_for_types.iter())
+            .map(|it| (Arc::clone(&it.rule), it.without_types))
+            .collect();
+        crate::utils::sort::sort_by(&mut rules, |a, b| a.0.id.cmp(&b.0.id));
+        rules.dedup_by(|a, b| {
+            let same = a.0.id == b.0.id;
+            if same {
+                b.1 |= a.1;
+            }
+            same
+        });
         rules
     }
 

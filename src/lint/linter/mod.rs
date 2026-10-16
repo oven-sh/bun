@@ -725,16 +725,20 @@ impl<S: RuleSet> Linter<S> {
             && !running_js.is_empty()
         {
             let wants_types = host.wants_types_of(file);
-            // What a rule that does not run would have reported cannot be told.
-            running_js.retain(|it| {
-                let has_asked = host.has_asked_for_types(&it.configured.rule, wants_types);
-                if has_asked {
-                    rules_to_ignore.push(RuleId::Js(Arc::clone(&it.configured.rule)));
-                }
-                !has_asked
-            });
             // Once more for each rule that asks for types.
-            while !running_js.is_empty() {
+            loop {
+                // What a rule that does not run would have reported cannot be told. Another thread may have found
+                // out since the last round.
+                running_js.retain(|it| {
+                    let has_asked = host.has_asked_for_types(&it.configured.rule, wants_types);
+                    if has_asked {
+                        rules_to_ignore.push(RuleId::Js(Arc::clone(&it.configured.rule)));
+                    }
+                    !has_asked
+                });
+                if running_js.is_empty() {
+                    break;
+                }
                 let enabled: Vec<&js_plugin::Configured> =
                     running_js.iter().map(|it| &**it.configured).collect();
                 match host.run_on_block(

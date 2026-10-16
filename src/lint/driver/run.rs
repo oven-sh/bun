@@ -1128,9 +1128,14 @@ impl Run<'_> {
         for warning in warnings.iter().filter(|_| !(is_native && options.silent)) {
             self.warn(warning);
         }
-        let without_types = js_plugins.rules_that_asked_for_types();
-        if !without_types.is_empty() {
-            let ids: Vec<&[u8]> = without_types.iter().map(|it| &it.id[..]).collect();
+        let asked_for_types = js_plugins.rules_that_asked_for_types();
+        // Those that ran on no more file, then those that ran on the files whose configuration does not ask for types.
+        for on_no_file in [true, false] {
+            let rules = asked_for_types.iter().filter(|it| it.1 == on_no_file);
+            let ids: Vec<&[u8]> = rules.map(|it| &it.0.id[..]).collect();
+            if ids.is_empty() {
+                continue;
+            }
             let noun: &[u8] = match ids.len() {
                 1 => b" rule",
                 _ => b" rules",
@@ -1138,7 +1143,11 @@ impl Run<'_> {
             loader.cannot_do(&[
                 ids.len().to_string().as_bytes(),
                 noun,
-                b" did not run because rules that run in JavaScript cannot use type information: ",
+                match on_no_file {
+                    true => &b" did not run"[..],
+                    false => b" did not run on the files that are configured for types",
+                },
+                b" because rules that run in JavaScript cannot use type information: ",
                 &ids.join(&b", "[..]),
                 match linter.registry().answers_for(b"@typescript-eslint")
                     || !ids.iter().any(|id| id.starts_with(b"@typescript-eslint/"))

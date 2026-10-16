@@ -170,13 +170,12 @@ pub(crate) fn encode(
     rgba: &[u8],
     width: u32,
     height: u32,
-    opts: &codecs::EncodeOptions,
+    format: codecs::Format,
+    opts: codecs::HeifOptions,
 ) -> Result<Vec<u8>, BackendError> {
-    // codecs::encode only routes heic/avif here, so the "knob ImageIO can't
-    // express" bailouts (palette/compressionLevel/lossless) are dead — kept
-    // only as a guard if a future caller passes png/webp directly.
-    debug_assert!(opts.format == codecs::Format::Heic || opts.format == codecs::Format::Avif);
-    let fmt: i32 = opts.format as i32;
+    // codecs::encode only routes heic/avif here.
+    debug_assert!(format == codecs::Format::Heic || format == codecs::Format::Avif);
+    let fmt: i32 = format as i32;
     let mut len: usize = 0;
     // Phase 1: encode into a thread-local CFData inside the shim, return size.
     // SAFETY: rgba is valid; out=null signals "size probe" to the shim.

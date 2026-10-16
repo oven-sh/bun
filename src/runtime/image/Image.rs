@@ -2,11 +2,14 @@
 //! libjpeg-turbo / libspng / libwebp codecs and the highway resize kernel.
 //!
 //! Shape: the constructor only captures the *input* (path or bytes). Chainable
-//! mutators (`resize`, `rotate`, `flip`, `flop`, `jpeg`/`png`/`webp`) each
-//! write one slot of `Pipeline` and return `this` — there is no op list, so
-//! calling a setter twice overwrites. The actual decode → transform → encode
-//! work happens off-thread when a terminal (`bytes`/`buffer`/`blob`/
-//! `toBase64`/`metadata`) is awaited, as a `bun_jsc::Job` (`PipelineTask`).
+//! mutators (`resize`, `rotate`, `flip`, `flop`) each write one slot of
+//! `Pipeline` and return `this` — there is no op list, so calling a setter
+//! twice overwrites. The format setters (`jpeg`/`png`/`webp`/`heic`/`avif`)
+//! select the output and each own one options slot: a call sets the keys it
+//! names in its own slot, so options persist per format and never cross
+//! formats. The actual decode → transform → encode work happens off-thread
+//! when a terminal (`bytes`/`buffer`/`blob`/`toBase64`/`metadata`) is
+//! awaited, as a `bun_jsc::Job` (`PipelineTask`).
 
 use core::cell::Cell;
 use core::mem;
@@ -205,9 +208,41 @@ pub(crate) struct Pipeline {
     pub(crate) flop: bool,  // horizontal
     pub(crate) resize: Option<Resize>,
     pub(crate) modulate: Option<Modulate>,
-    /// Output settings from `.jpeg()/.png()/.webp()`. `None` ⇒ re-encode in
-    /// source format.
-    pub(crate) output: Option<codecs::EncodeOptions>,
+    /// The format setter called last. `None` ⇒ re-encode in source format.
+    pub(crate) output: Option<OutputFormat>,
+    /// One options slot per format setter, as Sharp: a call writes the keys
+    /// it names into its own slot, so an option is kept for a later call of
+    /// the same format and never reaches the encoder of another one.
+    pub(crate) jpeg: codecs::JpegOptions,
+    pub(crate) png: codecs::PngOptions,
+    pub(crate) webp: codecs::WebpOptions,
+    /// Not shared with `avif`: Sharp has one slot for both only because its
+    /// `avif()` is `heif({ compression: "av1" })`.
+    pub(crate) heic: codecs::HeifOptions,
+    pub(crate) avif: codecs::HeifOptions,
+}
+
+/// The formats that have a setter.
+#[derive(Clone, Copy)]
+pub(crate) enum OutputFormat {
+    Jpeg,
+    Png,
+    Webp,
+    Heic,
+    Avif,
+}
+
+impl Pipeline {
+    /// What a terminal encodes: the selected format with its own options slot.
+    fn encode(&self) -> Option<codecs::Encode> {
+        Some(match self.output? {
+            OutputFormat::Jpeg => codecs::Encode::Jpeg(self.jpeg),
+            OutputFormat::Png => codecs::Encode::Png(self.png),
+            OutputFormat::Webp => codecs::Encode::Webp(self.webp),
+            OutputFormat::Heic => codecs::Encode::Heic(self.heic),
+            OutputFormat::Avif => codecs::Encode::Avif(self.avif),
+        })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -552,76 +587,108 @@ impl Image {
         Ok(callframe.this())
     }
 
-    fn set_format(
-        &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-        fmt: codecs::Format,
-    ) -> JsResult<JSValue> {
-        let mut enc: codecs::EncodeOptions =
-            self.pipeline
-                .get()
-                .output
-                .unwrap_or_else(|| codecs::EncodeOptions {
-                    format: fmt,
-                    ..Default::default()
-                });
-        enc.format = fmt;
-        let args = callframe.arguments();
-        if args.len() > 0 && args[0].is_object() {
-            let opt = args[0];
-            if let Some(q) = opt.get(global, "quality")? {
-                if q.is_number() {
-                    enc.quality = coerce_int!(u8, q.as_number(), 1.0, 100.0);
-                }
-            }
-            if let Some(l) = opt.get(global, "lossless")? {
-                enc.lossless = l.to_boolean();
-            }
-            if let Some(c) = opt.get(global, "compressionLevel")? {
-                if c.is_number() {
-                    enc.compression_level = coerce_int!(i8, c.as_number(), 0.0, 9.0);
-                }
-            }
-            if let Some(p) = opt.get(global, "palette")? {
-                enc.palette = p.to_boolean();
-            }
-            if let Some(c) = opt.get(global, "colors")? {
-                if c.is_number() {
-                    enc.colors = coerce_int!(u16, c.as_number(), 2.0, 256.0);
-                }
-            }
-            if let Some(d) = opt.get(global, "dither")? {
-                enc.dither = d.to_boolean();
-            }
-            if let Some(p) = opt.get(global, "progressive")? {
-                enc.progressive = p.to_boolean();
-            }
-        }
-        self.update_pipeline(|p| p.output = Some(enc));
-        Ok(callframe.this())
-    }
+    // Format setters. Each one reads its own keys first and writes the
+    // pipeline after the last read: a getter on the options object can throw
+    // or call another setter, and neither may leave or lose a partial update.
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_format_jpeg(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.set_format(g, cf, codecs::Format::Jpeg)
+        let (mut quality, mut progressive) = (None, None);
+        if let Some(opt) = format_options(cf) {
+            quality = quality_option(opt, g)?;
+            progressive = opt.get(g, "progressive")?.map(|v| v.to_boolean());
+        }
+        self.update_pipeline(|p| {
+            p.jpeg.quality = quality.unwrap_or(p.jpeg.quality);
+            p.jpeg.progressive = progressive.unwrap_or(p.jpeg.progressive);
+            p.output = Some(OutputFormat::Jpeg);
+        });
+        Ok(cf.this())
     }
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_format_png(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.set_format(g, cf, codecs::Format::Png)
+        let (mut level, mut palette, mut colors, mut dither) = (None, None, None, None);
+        if let Some(opt) = format_options(cf) {
+            level =
+                number_option(opt, g, "compressionLevel")?.map(|c| coerce_int!(i8, c, 0.0, 9.0));
+            palette = opt.get(g, "palette")?.map(|v| v.to_boolean());
+            colors = number_option(opt, g, "colors")?.map(|c| coerce_int!(u16, c, 2.0, 256.0));
+            dither = opt.get(g, "dither")?.map(|v| v.to_boolean());
+        }
+        self.update_pipeline(|p| {
+            p.png.compression_level = level.unwrap_or(p.png.compression_level);
+            p.png.palette = palette.unwrap_or(p.png.palette);
+            p.png.colors = colors.unwrap_or(p.png.colors);
+            p.png.dither = dither.unwrap_or(p.png.dither);
+            p.output = Some(OutputFormat::Png);
+        });
+        Ok(cf.this())
     }
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_format_webp(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.set_format(g, cf, codecs::Format::Webp)
+        let (mut quality, mut lossless) = (None, None);
+        if let Some(opt) = format_options(cf) {
+            quality = quality_option(opt, g)?;
+            lossless = opt.get(g, "lossless")?.map(|v| v.to_boolean());
+        }
+        self.update_pipeline(|p| {
+            p.webp.quality = quality.unwrap_or(p.webp.quality);
+            p.webp.lossless = lossless.unwrap_or(p.webp.lossless);
+            p.output = Some(OutputFormat::Webp);
+        });
+        Ok(cf.this())
     }
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_format_heic(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.set_format(g, cf, codecs::Format::Heic)
+        let mut quality = None;
+        if let Some(opt) = format_options(cf) {
+            quality = quality_option(opt, g)?;
+        }
+        self.update_pipeline(|p| {
+            p.heic.quality = quality.unwrap_or(p.heic.quality);
+            p.output = Some(OutputFormat::Heic);
+        });
+        Ok(cf.this())
     }
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_format_avif(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.set_format(g, cf, codecs::Format::Avif)
+        let mut quality = None;
+        if let Some(opt) = format_options(cf) {
+            quality = quality_option(opt, g)?;
+        }
+        self.update_pipeline(|p| {
+            p.avif.quality = quality.unwrap_or(p.avif.quality);
+            p.output = Some(OutputFormat::Avif);
+        });
+        Ok(cf.this())
     }
+}
+
+/// The options object of a format setter, if the call passed one.
+fn format_options(callframe: &CallFrame) -> Option<JSValue> {
+    let args = callframe.arguments();
+    (args.len() > 0 && args[0].is_object()).then(|| args[0])
+}
+
+/// A numeric option. `None` (the call does not name it) when the key is
+/// absent, `undefined`, or not a number.
+fn number_option(
+    opt: JSValue,
+    global: &JSGlobalObject,
+    name: &'static str,
+) -> JsResult<Option<f64>> {
+    Ok(match opt.get(global, name)? {
+        Some(v) if v.is_number() => Some(v.as_number()),
+        _ => None,
+    })
+}
+
+fn quality_option(opt: JSValue, global: &JSGlobalObject) -> JsResult<Option<u8>> {
+    Ok(number_option(opt, global, "quality")?.map(|q| coerce_int!(u8, q, 1.0, 100.0)))
 }
 
 /// Stable `.code` so callers can branch without parsing the message — and so
@@ -970,7 +1037,7 @@ impl Image {
         self.schedule(
             &cx,
             cf.this(),
-            Kind::Encode(self.pipeline.get().output),
+            Kind::Encode(self.pipeline.get().encode()),
             Deliver::Uint8Array,
         )
     }
@@ -981,7 +1048,7 @@ impl Image {
         self.schedule(
             &cx,
             cf.this(),
-            Kind::Encode(self.pipeline.get().output),
+            Kind::Encode(self.pipeline.get().encode()),
             Deliver::Buffer,
         )
     }
@@ -992,7 +1059,7 @@ impl Image {
         self.schedule(
             &cx,
             cf.this(),
-            Kind::Encode(self.pipeline.get().output),
+            Kind::Encode(self.pipeline.get().encode()),
             Deliver::Blob,
         )
     }
@@ -1007,7 +1074,7 @@ impl Image {
         self.schedule(
             &cx,
             cf.this(),
-            Kind::Encode(self.pipeline.get().output),
+            Kind::Encode(self.pipeline.get().encode()),
             Deliver::Base64,
         )
     }
@@ -1020,7 +1087,7 @@ impl Image {
         self.schedule(
             &cx,
             cf.this(),
-            Kind::Encode(self.pipeline.get().output),
+            Kind::Encode(self.pipeline.get().encode()),
             Deliver::DataUrl,
         )
     }
@@ -1068,7 +1135,7 @@ impl Image {
             )));
         }
 
-        let mut output = self.pipeline.get().output;
+        let mut output = self.pipeline.get().encode();
         // Extension inference only when dest is a plain string. BunFile/S3 dests
         // carry no extension contract, so the explicit `.png()` etc. (or source
         // format) decides.
@@ -1076,21 +1143,9 @@ impl Image {
             let str = args[0].to_bun_string(global)?;
             let utf8 = str.to_utf8();
             if let Some(f) = codecs::Format::from_extension(utf8.slice()) {
-                match f {
-                    // Only infer formats we can ENCODE; decode-only extensions
-                    // (.bmp/.tiff/.gif) fall through to the source-format default.
-                    codecs::Format::Jpeg
-                    | codecs::Format::Png
-                    | codecs::Format::Webp
-                    | codecs::Format::Heic
-                    | codecs::Format::Avif => {
-                        output = Some(codecs::EncodeOptions {
-                            format: f,
-                            ..Default::default()
-                        });
-                    }
-                    _ => {}
-                }
+                // Only infer formats we can ENCODE; decode-only extensions
+                // (.bmp/.tiff/.gif) fall through to the source-format default.
+                output = codecs::Encode::default_for(f);
             }
         }
         self.schedule(
@@ -1205,7 +1260,7 @@ impl Image {
         let mut task = PipelineTask {
             pipeline: self.pipeline.get(),
             input,
-            kind: Kind::Encode(self.pipeline.get().output),
+            kind: Kind::Encode(self.pipeline.get().encode()),
             max_pixels: self.max_pixels,
             auto_orient: self.auto_orient,
             result: TaskResult::Err(codecs::Error::DecodeFailed),
@@ -1512,7 +1567,7 @@ pub(crate) enum Deliver {
 
 pub(crate) enum Kind {
     /// `None` ⇒ re-encode in the source format (resolved after decode).
-    Encode(Option<codecs::EncodeOptions>),
+    Encode(Option<codecs::Encode>),
     Metadata,
     /// `.placeholder()` — decode → box-resize ≤100 → ThumbHash → render
     /// → PNG → `data:` URL. The whole chain runs on the worker; the
@@ -1718,27 +1773,21 @@ impl PipelineTask {
         let Kind::Encode(enc_opt) = &self.kind else {
             unreachable!()
         };
-        let mut enc: codecs::EncodeOptions = enc_opt.unwrap_or(codecs::EncodeOptions {
-            format: match src_format {
-                codecs::Format::Bmp | codecs::Format::Tiff | codecs::Format::Gif => {
-                    codecs::Format::Png
-                }
-                f => f,
-            },
-            ..Default::default()
-        });
-        // Carry the source ICC profile through to the encoder unless the
-        // caller already set one (reserved for a future `.withIccProfile()`
-        // method). The pipeline doesn't colour-convert the RGBA, so dropping
-        // the profile reinterprets a non-sRGB source (Display-P3, Adobe RGB,
-        // Jpegli XYB) as sRGB and visibly shifts the colours — see #30197.
-        // JPEG/PNG/WebP embed it; HEIC/AVIF via the system backend do not.
-        if enc.icc_profile.is_none() {
-            // `EncodeOptions.icc_profile` borrows for the duration of `encode()`
-            // (raw `NonNull<[u8]>`); `decoded` outlives the call below.
-            enc.icc_profile = decoded.icc_profile.as_deref().map(core::ptr::NonNull::from);
-        }
-        let out = match codecs::encode(&decoded.rgba, decoded.width, decoded.height, enc) {
+        let enc = enc_opt
+            .or_else(|| codecs::Encode::default_for(src_format))
+            .unwrap_or_else(|| codecs::Encode::Png(codecs::PngOptions::default()));
+        // Carry the source ICC profile through to the encoder. The pipeline
+        // doesn't colour-convert the RGBA, so dropping the profile
+        // reinterprets a non-sRGB source (Display-P3, Adobe RGB, Jpegli XYB)
+        // as sRGB and visibly shifts the colours — see #30197. JPEG/PNG/WebP
+        // embed it; HEIC/AVIF via the system backend do not.
+        let out = match codecs::encode(
+            &decoded.rgba,
+            decoded.width,
+            decoded.height,
+            enc,
+            decoded.icc_profile.as_deref(),
+        ) {
             Ok(o) => o,
             Err(e) => {
                 self.result = TaskResult::Err(e);
@@ -1748,7 +1797,7 @@ impl PipelineTask {
 
         self.result = TaskResult::Encoded {
             out,
-            format: enc.format,
+            format: enc.format(),
             w: decoded.width,
             h: decoded.height,
         };

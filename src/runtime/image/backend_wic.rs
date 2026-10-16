@@ -167,7 +167,8 @@ pub(crate) fn encode(
     rgba: &[u8],
     width: u32,
     height: u32,
-    opts: &codecs::EncodeOptions,
+    format: codecs::Format,
+    opts: codecs::HeifOptions,
 ) -> Result<Vec<u8>, BackendError> {
     // Punt to the static codecs for everything WIC can't express the same way:
     //   • palette PNG — WIC's PNG encoder won't quantise for us;
@@ -176,7 +177,7 @@ pub(crate) fn encode(
     // codecs.encode() only routes .heic/.avif here; jpeg/png/webp use the
     // static codecs unconditionally so output (and the quality scale) is
     // identical across platforms.
-    debug_assert!(opts.format == codecs::Format::Heic || opts.format == codecs::Format::Avif);
+    debug_assert!(format == codecs::Format::Heic || format == codecs::Format::Avif);
     // WritePixels/WriteSource take a UINT byte count — same DWORD ceiling
     // as CopyPixels (maxPixels-raised edge).
     if rgba.len() as u64 > u32::MAX as u64 {
@@ -196,7 +197,7 @@ pub(crate) fn encode(
     // WINCODEC_ERR_COMPONENTNOTFOUND when the HEIF/AV1 store extension isn't
     // installed → BackendUnavailable so codecs.encode() falls through to
     // UnsupportedOnPlatform instead of a generic "encode failed".
-    let guid = container_guid(opts.format).ok_or(BackendUnavailable)?;
+    let guid = container_guid(format).ok_or(BackendUnavailable)?;
     let enc = f.create_encoder(guid).ok_or(BackendUnavailable)?;
     scopeguard::defer! { release(enc.as_ptr()); }
     // WICBitmapEncoderNoCache = 2.
@@ -224,7 +225,7 @@ pub(crate) fn encode(
             (opts.quality as f32) / 100.0,
         )
     };
-    let method: u8 = if opts.format == codecs::Format::Avif {
+    let method: u8 = if format == codecs::Format::Avif {
         WICHeifCompressionAV1
     } else {
         WICHeifCompressionHEVC

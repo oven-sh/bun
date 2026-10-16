@@ -425,44 +425,106 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
 }
 
 #[derive(Copy, Clone)]
-pub(crate) struct EncodeOptions {
-    pub(crate) format: Format,
-    /// 0–100 for JPEG/WebP-lossy. Ignored for PNG.
+pub(crate) struct JpegOptions {
+    /// 1–100.
     pub(crate) quality: u8,
-    /// WebP only: emit lossless VP8L instead of lossy VP8.
-    pub(crate) lossless: bool,
-    /// PNG only: zlib level 0–9. -1 = libspng default.
-    pub(crate) compression_level: i8,
-    /// PNG only: quantize to ≤ `colors` and emit an indexed PNG.
-    pub(crate) palette: bool,
-    pub(crate) colors: u16,
-    /// PNG palette only: Floyd–Steinberg error-diffusion dither.
-    pub(crate) dither: bool,
-    /// JPEG only: emit a progressive scan script (coarse-to-fine render).
+    /// Emit a progressive scan script (coarse-to-fine render).
     pub(crate) progressive: bool,
-    /// ICC profile to embed in the output container (JPEG APP2, PNG iCCP,
-    /// WebP ICCP). `None` ⇒ no profile chunk/marker is written. The
-    /// pipeline forwards this from the decode step so a non-sRGB source
-    /// (P3, Adobe RGB, XYB/Jpegli) preserves its colour meaning through
-    /// re-encode. Borrowed; the caller retains ownership.
-    // SAFETY invariant: borrowed from the caller and only valid for the
-    // duration of `encode()`; raw ptr instead of a lifetime param per the
-    // repo rule against lifetime params on structs.
-    pub(crate) icc_profile: Option<NonNull<[u8]>>,
 }
 
-impl Default for EncodeOptions {
+impl Default for JpegOptions {
     fn default() -> Self {
         Self {
-            format: Format::Png, // arbitrary; callers set it at construction
             quality: 80,
-            lossless: false,
+            progressive: false,
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+pub(crate) struct PngOptions {
+    /// zlib level 0–9. -1 = libspng default.
+    pub(crate) compression_level: i8,
+    /// Quantize to ≤ `colors` and emit an indexed PNG.
+    pub(crate) palette: bool,
+    pub(crate) colors: u16,
+    /// Palette only: Floyd–Steinberg error-diffusion dither.
+    pub(crate) dither: bool,
+}
+
+impl Default for PngOptions {
+    fn default() -> Self {
+        Self {
             compression_level: -1,
             palette: false,
             colors: 256,
             dither: false,
-            progressive: false,
-            icc_profile: None,
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+pub(crate) struct WebpOptions {
+    /// 1–100. Lossy only.
+    pub(crate) quality: u8,
+    /// Emit lossless VP8L instead of lossy VP8.
+    pub(crate) lossless: bool,
+}
+
+impl Default for WebpOptions {
+    fn default() -> Self {
+        Self {
+            quality: 80,
+            lossless: false,
+        }
+    }
+}
+
+/// HEIC and AVIF: both are written by the system backend from one knob.
+#[derive(Copy, Clone)]
+pub(crate) struct HeifOptions {
+    /// 1–100.
+    pub(crate) quality: u8,
+}
+
+impl Default for HeifOptions {
+    fn default() -> Self {
+        Self { quality: 80 }
+    }
+}
+
+/// An output format together with the options of that format, and of no
+/// other. There is no field that two formats share, so an encoder cannot be
+/// handed an option that was set for a different format.
+#[derive(Copy, Clone)]
+pub(crate) enum Encode {
+    Jpeg(JpegOptions),
+    Png(PngOptions),
+    Webp(WebpOptions),
+    Heic(HeifOptions),
+    Avif(HeifOptions),
+}
+
+impl Encode {
+    /// `format` with its default options. `None` for the decode-only formats.
+    pub(crate) fn default_for(format: Format) -> Option<Encode> {
+        match format {
+            Format::Jpeg => Some(Encode::Jpeg(JpegOptions::default())),
+            Format::Png => Some(Encode::Png(PngOptions::default())),
+            Format::Webp => Some(Encode::Webp(WebpOptions::default())),
+            Format::Heic => Some(Encode::Heic(HeifOptions::default())),
+            Format::Avif => Some(Encode::Avif(HeifOptions::default())),
+            Format::Bmp | Format::Tiff | Format::Gif => None,
+        }
+    }
+
+    pub(crate) fn format(self) -> Format {
+        match self {
+            Encode::Jpeg(_) => Format::Jpeg,
+            Encode::Png(_) => Format::Png,
+            Encode::Webp(_) => Format::Webp,
+            Encode::Heic(_) => Format::Heic,
+            Encode::Avif(_) => Format::Avif,
         }
     }
 }
@@ -529,22 +591,31 @@ impl Encoded {
     }
 }
 
+/// `icc_profile` is embedded in the output container (JPEG APP2, PNG iCCP,
+/// WebP ICCP); `None` ⇒ no profile chunk/marker is written. The pipeline
+/// forwards it from the decode step so a non-sRGB source (P3, Adobe RGB,
+/// XYB/Jpegli) preserves its colour meaning through re-encode.
 pub(crate) fn encode(
     rgba: &[u8],
     width: u32,
     height: u32,
-    opts: EncodeOptions,
+    enc: Encode,
+    icc_profile: Option<&[u8]>,
 ) -> Result<Encoded, Error> {
-    // SAFETY: `EncodeOptions.icc_profile` is borrowed from the caller for the
-    // duration of this call (raw-ptr stand-in for a lifetime param).
-    let icc: Option<&[u8]> = opts.icc_profile.map(|p| unsafe { p.as_ref() });
-    match opts.format {
-        Format::Jpeg => jpeg::encode(rgba, width, height, opts.quality, opts.progressive, icc),
+    match enc {
+        Encode::Jpeg(opts) => jpeg::encode(
+            rgba,
+            width,
+            height,
+            opts.quality,
+            opts.progressive,
+            icc_profile,
+        ),
         // PNG carries iCCP on both truecolour and indexed images — quantise
         // operates on raw RGB numbers without converting colour spaces, so
         // the palette entries are still in the source space and need the
         // profile to be interpreted correctly (see PNG spec §11.3.3.3).
-        Format::Png => {
+        Encode::Png(opts) => {
             if opts.palette {
                 png::encode_indexed(
                     rgba,
@@ -553,23 +624,34 @@ pub(crate) fn encode(
                     opts.compression_level,
                     opts.colors,
                     opts.dither,
-                    icc,
+                    icc_profile,
                 )
             } else {
-                png::encode(rgba, width, height, opts.compression_level, icc)
+                png::encode(rgba, width, height, opts.compression_level, icc_profile)
             }
         }
-        Format::Webp => webp::encode(rgba, width, height, opts.quality, opts.lossless, icc),
+        Encode::Webp(opts) => webp::encode(
+            rgba,
+            width,
+            height,
+            opts.quality,
+            opts.lossless,
+            icc_profile,
+        ),
         // Same routing rationale as decode(): the OS encoder is a capability
         // fallback, not a fast path — ImageIO's quality scale doesn't match
         // libjpeg-turbo's, and it can't honour compressionLevel/palette/
         // lossless, so using it for jpeg/png/webp would make output bytes
         // diverge from Linux for no speed win.
-        Format::Heic | Format::Avif => {
+        Encode::Heic(_opts) | Encode::Avif(_opts) => {
             #[cfg(any(target_os = "macos", windows))]
             if use_system() {
                 return match system_backend::BackendError::split(system_backend::encode(
-                    rgba, width, height, &opts,
+                    rgba,
+                    width,
+                    height,
+                    enc.format(),
+                    _opts,
                 )) {
                     Ok(Some(buf)) => Ok(Encoded::from_owned(buf)),
                     // BackendUnavailable collapses into UnsupportedOnPlatform.
@@ -579,10 +661,6 @@ pub(crate) fn encode(
             }
             Err(Error::UnsupportedOnPlatform)
         }
-        // Decode-only formats — no .bmp()/.tiff()/.gif() chain methods, so the
-        // pipeline never sets these on EncodeOptions.format. Exhaustiveness
-        // arm only.
-        Format::Bmp | Format::Tiff | Format::Gif => Err(Error::UnsupportedOnPlatform),
     }
 }
 

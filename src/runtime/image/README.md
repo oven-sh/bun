@@ -45,8 +45,12 @@ flag stays set only when the call ran to completion. `codec_jpeg.rs` accepts a d
 1. New `scripts/build/deps/<lib>.ts` (copy `libspng.ts` for the simple case).
 2. Extend `Format` + `sniff()` + `mime()` in `codecs.rs`, add a `<fmt>` module with
    `decode`/`encode` functions alongside the others.
-3. If the format carries EXIF, extend `exif.rs`.
-4. `LICENSE.md` row.
+3. If Bun encodes it: add its options struct and `Encode` variant in `codecs.rs`, and
+   its `Pipeline` slot, `OutputFormat` variant and `do_format_<fmt>` setter in `Image.rs`.
+   A setter reads only its own keys and writes only its own slot, so options persist
+   per format and never cross formats.
+4. If the format carries EXIF, extend `exif.rs`.
+5. `LICENSE.md` row.
 
 ## Invariants
 

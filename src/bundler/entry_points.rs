@@ -225,44 +225,23 @@ impl MacroEntryPoint {
                 break 'brk cursor.position() as usize;
             }
 
-            // An absolute path is imported as a file URL: a `?` in it is part of a name.
-            let mut macro_specifier: Vec<u8> = Vec::new();
-            if bun_paths::is_absolute(dir_to_use) {
-                let macro_path = [dir_to_use, import_path.filename].concat();
-                let macro_url =
-                    bun_url::file_url_from_string(&bun_core::String::borrow_utf8(&macro_path));
-                write!(
-                    &mut macro_specifier,
-                    "{}",
-                    strings::format_escapes(
-                        &macro_url.to_utf8(),
-                        strings::QuoteEscapeFormatFlags {
-                            quote_char: b'\'',
-                            ..Default::default()
-                        }
-                    ),
-                )
-            } else {
-                write!(
-                    &mut macro_specifier,
-                    "{}{}",
-                    bun_fmt::fmt_path_u8(
-                        dir_to_use,
-                        bun_fmt::PathFormatOptions {
-                            escape_backslashes: true,
-                            ..Default::default()
-                        }
-                    ),
-                    bun_fmt::fmt_path_u8(
-                        import_path.filename,
-                        bun_fmt::PathFormatOptions {
-                            escape_backslashes: true,
-                            ..Default::default()
-                        }
-                    ),
-                )
-            }
-            .map_err(|_| crate::Error::FormatError)?;
+            // In a specifier a `?` starts a query. In the path of the macro it is part of a name, which a file URL says.
+            let macro_url = (bun_paths::is_absolute(dir_to_use)
+                && (strings::contains_char(dir_to_use, b'?')
+                    || strings::contains_char(import_path.filename, b'?')))
+            .then(|| {
+                let url = bun_url::file_url_from_string(&bun_core::String::clone_utf8(
+                    &[dir_to_use, import_path.filename].concat(),
+                ));
+                // The URL is in a string with single quotes.
+                strings::split(&url.to_utf8(), b"'")
+                    .collect::<Vec<_>>()
+                    .join(&b"%27"[..])
+            });
+            let (url, dir, filename): (&[u8], &[u8], &[u8]) = match &macro_url {
+                Some(url) => (url, b"", b""),
+                None => (b"", dir_to_use, import_path.filename),
+            };
 
             let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[label_len..]);
             write!(
@@ -270,7 +249,7 @@ impl MacroEntryPoint {
                 "//Auto-generated file\n\
                  var Macros;\n\
                  try {{\n\
-                 \x20 Macros = await import('{}');\n\
+                 \x20 Macros = await import('{}{}{}');\n\
                  }} catch (err) {{\n\
                  \x20  console.error(\"Error importing macro\");\n\
                  \x20  throw err;\n\
@@ -280,7 +259,21 @@ impl MacroEntryPoint {
                  }}\n\
                  \n\
                  Bun.registerMacro({}, Macros['{}']);",
-                BStr::new(&macro_specifier),
+                BStr::new(url),
+                bun_fmt::fmt_path_u8(
+                    dir,
+                    bun_fmt::PathFormatOptions {
+                        escape_backslashes: true,
+                        ..Default::default()
+                    }
+                ),
+                bun_fmt::fmt_path_u8(
+                    filename,
+                    bun_fmt::PathFormatOptions {
+                        escape_backslashes: true,
+                        ..Default::default()
+                    }
+                ),
                 BStr::new(function_name),
                 BStr::new(function_name),
                 bun_fmt::fmt_path_u8(

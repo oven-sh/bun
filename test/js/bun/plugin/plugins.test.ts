@@ -1389,6 +1389,63 @@ describe.concurrent.skipIf(isWindows)("with a folder that has `?` in its name", 
   });
 });
 
+// A plugin writes a path and can add a query to it. That is so for each thing Bun loads: an entry point,
+// a preload, a test file and the path of a file URL are not specifiers, but the answer about them is still the plugin's.
+describe.concurrent("a query after the path that onResolve answers with", () => {
+  const files = {
+    "real.mjs": `console.log("real.mjs" + new URL(import.meta.url).search);`,
+    "real.test.js": `console.log("real.test.js" + new URL(import.meta.url).search); require("bun:test").test("passes", () => {});`,
+    // Not these: the plugin answers about them.
+    "asked.mjs": `console.log("asked.mjs");`,
+    "asked.test.js": `console.log("asked.test.js"); require("bun:test").test("passes", () => {});`,
+    "empty.mjs": ``,
+    "plugin.ts": `
+      import { join } from "node:path";
+      Bun.plugin({
+        name: "answers with a query",
+        setup(build) {
+          build.onResolve({ filter: /asked(\\.test)?\\.m?js$/ }, ({ path }) => ({
+            path: join(import.meta.dir, path.endsWith(".test.js") ? "real.test.js" : "real.mjs") + "?v=1",
+          }));
+        },
+      });
+    `,
+  };
+  async function run(args: string[], source = "") {
+    using dir = tempDir("plugin-onresolve-query", { ...files, "entry.cjs": source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  it.each([
+    ["the entry point", ["./asked.mjs"], ""],
+    ["a later preload", ["--preload", "./asked.mjs", "./empty.mjs"], ""],
+    ["Module.runMain()", ["./entry.cjs"], `require("node:module").runMain("./asked.mjs");`],
+    ["import() of a file URL", ["./entry.cjs"], `import(Bun.pathToFileURL(__dirname + "/asked.mjs").href);`],
+    ["import() of a path", ["./entry.cjs"], `import(__dirname + "/asked.mjs");`],
+    ["require()", ["./entry.cjs"], `require("./asked.mjs");`],
+  ])("is kept for %s", async (_, args, source) => {
+    expect(await run(["--preload", "./plugin.ts", ...args], source)).toEqual({
+      stdout: ["real.mjs?v=1"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is kept for a test file", async () => {
+    const { stdout, exitCode } = await run(["test", "--preload", "./plugin.ts", "./asked.test.js"]);
+    // (After the version.)
+    expect({ stdout: stdout.slice(1), exitCode }).toEqual({ stdout: ["real.test.js?v=1"], exitCode: 0 });
+  });
+});
+
 // Without a node_modules directory, Bun installs the package it does not find.
 describe.concurrent("the registry is not asked for a bare name that onResolve answers about as well", () => {
   // onResolve answers the first with itself, so it is not asked again. It is about the name it answers the second with.

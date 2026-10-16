@@ -3734,7 +3734,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
 
     auto moduleKeyBun = Bun::toString(moduleKey);
     // ".node" at the end of a `?query` is not an addon's.
-    if (moduleKey.endsWith(".node"_s) && (moduleKey.find('?') == WTF::notFound || Bun__VM__moduleKeyPathLength(static_cast<Zig::GlobalObject*>(globalObject)->bunVM(), &moduleKeyBun) == moduleKey.length())) {
+    if (moduleKey.endsWith(".node"_s) && Bun__VM__moduleKeyPathLength(static_cast<Zig::GlobalObject*>(globalObject)->bunVM(), &moduleKeyBun) == moduleKey.length()) {
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 

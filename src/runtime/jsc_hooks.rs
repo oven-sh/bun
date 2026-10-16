@@ -3884,15 +3884,9 @@ unsafe fn normalize_specifier_for_loader<'a>(
     if opath.len() > 1 && slice.starts_with(opath) {
         slice = &slice[opath.len()..];
     }
-    let specifier = slice;
-    let mut query: &[u8] = b"";
-    if bun_core::strings::contains_char(slice, b'?') {
-        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-        let path_len = unsafe { &mut *jsc_vm }.module_key_path_len(slice);
-        query = &slice[path_len..];
-        slice = &slice[..path_len];
-    }
-    (slice, specifier, query)
+    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+    let path_len = unsafe { &mut *jsc_vm }.module_key_path_len(slice);
+    (&slice[..path_len], slice, &slice[path_len..])
 }
 
 /// Result of [`get_loader_and_virtual_source`] — mirrors

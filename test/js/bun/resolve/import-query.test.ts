@@ -279,6 +279,8 @@ describe.concurrent.skipIf(isWindows)("a `?` in a file or folder name", () => {
     "a.mjs": `export default "a.mjs with " + new URL(import.meta.url).search;`,
     "c.mjs?/d.mjs": `export default "the file d.mjs";`,
     "c.mjs": `export default "c.mjs";`,
+    "e.cjs?f.cjs": `module.exports = "the file e.cjs?f.cjs";`,
+    "e.cjs": `module.exports = "e.cjs";`,
     "x.mjs": `export default "x.mjs";`,
     "end?/addon.node": "",
   };
@@ -426,6 +428,7 @@ describe.concurrent.skipIf(isWindows)("a `?` in a file or folder name", () => {
         "./a.cjs?v=1 again": load("./a.cjs?v=1"),
         "./a.cjs?a=/b/c": load("./a.cjs?a=/b/c"),
         "./a.cjs?/b.cjs": load("./a.cjs?/b.cjs"),
+        "./e.cjs?f.cjs": load("./e.cjs?f.cjs"),
         "./q?/x.cjs": load("./q?/x.cjs"),
         "createRequire": createRequire(resolve("q?/x.cjs"))("./dep.cjs"),
         "./end%3F/dep.cjs": load("./end%3F/dep.cjs"),
@@ -443,6 +446,7 @@ describe.concurrent.skipIf(isWindows)("a `?` in a file or folder name", () => {
         "./a.cjs?v=1 again": ["a.cjs?v=1", "a.cjs"],
         "./a.cjs?a=/b/c": ["a.cjs?a=/b/c", "a.cjs"],
         "./a.cjs?/b.cjs": ["a.cjs?/b.cjs", "a.cjs?/b.cjs"],
+        "./e.cjs?f.cjs": ["e.cjs?f.cjs", "the file e.cjs?f.cjs"],
         "./q?/x.cjs": ["q?/x.cjs", "q?/dep.cjs"],
         "createRequire": "q?/dep.cjs",
         "./end%3F/dep.cjs": "MODULE_NOT_FOUND",
@@ -468,6 +472,7 @@ describe.concurrent.skipIf(isWindows)("a `?` in a file or folder name", () => {
         "./end?/dep.mjs": await load("./end?/dep.mjs"),
         "./we?ird.mjs": await load("./we?ird.mjs"),
         "./a.mjs?/b.mjs": await load("./a.mjs?/b.mjs"),
+        "./e.cjs?f.cjs": await load("./e.cjs?f.cjs"),
         "./a.mjs?v=1": await load("./a.mjs?v=1"),
         "./a.mjs?a=/b/c": await load("./a.mjs?a=/b/c"),
         "file URL of end?/dep.mjs": await load(url("end?/dep.mjs")),
@@ -482,6 +487,7 @@ describe.concurrent.skipIf(isWindows)("a `?` in a file or folder name", () => {
         "./end?/dep.mjs": "ERR_MODULE_NOT_FOUND",
         "./we?ird.mjs": "ERR_MODULE_NOT_FOUND",
         "./a.mjs?/b.mjs": "a.mjs with ?/b.mjs",
+        "./e.cjs?f.cjs": "e.cjs",
         "./a.mjs?v=1": "a.mjs with ?v=1",
         "./a.mjs?a=/b/c": "a.mjs with ?a=/b/c",
         "file URL of end?/dep.mjs": "dep.mjs",
@@ -489,6 +495,27 @@ describe.concurrent.skipIf(isWindows)("a `?` in a file or folder name", () => {
         "file URL of c.mjs?/d.mjs": "the file d.mjs",
         "Bun.resolveSync of a file URL": "/mi?d/dep.mjs",
       },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The resolver keeps the listing of a folder that it read.
+  test.each([
+    ["by a file URL", `(await import(Bun.pathToFileURL(import.meta.dir + "/late?/entry.mjs").href)).default`],
+    ["by require()", `require("./late?/entry.cjs")`],
+  ])("a folder that is made after its parent was read is loaded from %s", async (_, load) => {
+    const source = `
+      import { mkdirSync, writeFileSync } from "node:fs";
+      await import("./x.mjs");
+      mkdirSync("late?");
+      writeFileSync("late?/dep.mjs", 'export default import.meta.url.split("/").slice(-2).join("/");');
+      writeFileSync("late?/entry.mjs", 'import dep from "./dep.mjs"; export default [dep, import.meta.dir.split("/").pop()];');
+      writeFileSync("late?/entry.cjs", 'module.exports = [require("./dep.mjs").default, __dirname.split("/").pop()];');
+      console.log(JSON.stringify(${load}));
+    `;
+    expect(await run("entry.mjs", source)).toEqual({
+      stdout: `["late%3F/dep.mjs","late?"]`,
       stderr: "",
       exitCode: 0,
     });
@@ -525,24 +552,29 @@ describe.concurrent.skipIf(isWindows)("a `?` in a file or folder name", () => {
 });
 
 // `bun <file>.html` imports the file it was given, and the plugins that bunfig.toml names. Windows does not allow `?` in a file name.
-test.skipIf(isWindows)("bun serves an HTML entry point, with a plugin, in a folder with `?` in its name", async () => {
+test.skipIf(isWindows).each([
+  ["pa?ge", "./plugin.ts", ""],
+  // The query of a plugin is part of the key of its module.
+  ["page", "./plugin.ts?v=1", "?v=1"],
+])("bun serves an HTML entry point in the folder %s, with the plugin %s", async (folder, plugin, search) => {
   using dir = tempDir("import-query-question-mark-html", {
-    "pa?ge/bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
-    "pa?ge/plugin.ts": `
+    [`${folder}/bunfig.toml`]: `[serve.static]\nplugins = ["${plugin}"]\n`,
+    [`${folder}/plugin.ts`]: `
+      const contents = "from the plugin" + new URL(import.meta.url).search;
       export default {
         name: "text",
         setup(build) {
-          build.onLoad({ filter: /\\.txt$/ }, () => ({ loader: "text", contents: "from the plugin" }));
+          build.onLoad({ filter: /\\.txt$/ }, () => ({ loader: "text", contents }));
         },
       };
     `,
-    "pa?ge/index.html": `<!DOCTYPE html><html><head><title>in pa?ge</title><link rel="stylesheet" href="./styles.css"></head><body></body></html>`,
-    "pa?ge/styles.css": `body { content: url("./example.txt"); }`,
-    "pa?ge/example.txt": "",
+    [`${folder}/index.html`]: `<!DOCTYPE html><html><head><title>in ${folder}</title><link rel="stylesheet" href="./styles.css"></head><body></body></html>`,
+    [`${folder}/styles.css`]: `body { content: url("./example.txt"); }`,
+    [`${folder}/example.txt`]: "",
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "./index.html", "--port=0"],
-    cwd: join(String(dir), "pa?ge"),
+    cwd: join(String(dir), folder),
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -559,7 +591,7 @@ test.skipIf(isWindows)("bun serves an HTML entry point, with a plugin, in a fold
   const html = await (await fetch(url!)).text();
   const css = await (await fetch(new URL(html.match(/href="([^"]+\.css)"/)?.[1] ?? "/no-stylesheet", url))).text();
   expect({ title: html.match(/<title>(.*)<\/title>/)?.[1], css: css.match(/url\(.*\)/)?.[0] }).toEqual({
-    title: "in pa?ge",
-    css: `url("data:text/plain;base64,${btoa("from the plugin")}")`,
+    title: `in ${folder}`,
+    css: `url("data:text/plain;base64,${btoa("from the plugin" + search)}")`,
   });
 });

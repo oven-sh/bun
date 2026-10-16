@@ -3943,7 +3943,7 @@ pub enum ResolveMode {
     Require,
     /// `require.resolve()`: returns the bare specifier for Node builtins.
     RequireResolve,
-    /// `Esm`, for a string that is a filesystem path: a `?` in it is part of a name.
+    /// `Esm`, for a string that is a filesystem path and not a specifier: what has no importer, the path of a file URL, what a plugin answers.
     Path,
 }
 
@@ -3983,9 +3983,11 @@ pub struct ResolveFunctionResult {
     // which outlives every `ResolveFunctionResult`.
     pub path: &'static [u8],
     pub(crate) query_string: &'static [u8],
+    /// A `?` of the specifier was read as part of a name in `path`.
+    pub(crate) path_has_question_mark: bool,
 }
 
-/// The module key `<path>?<query>` that the last resolve with a query made, and the length of its `<path>`.
+/// The last module key with a `?` that a resolve decided about, and the length of its `<path>`.
 #[derive(Default)]
 pub struct ModuleKeyQuery {
     key: bun_core::String,
@@ -5115,8 +5117,11 @@ impl VirtualMachine {
         key
     }
 
-    /// Byte length of `<path>` in the module key `<path>?<query>`: the one the last resolve joined, or else up to the first `?` that the folder listings do not have in a name.
+    /// Byte length of `<path>` in the module key `<path>` or `<path>?<query>`: what the last resolve decided for it, or else up to the first `?` that is not in the name of a file or folder the resolver knows.
     pub fn module_key_path_len(&mut self, key: &[u8]) -> usize {
+        let Some(first) = bun_core::strings::index_of_char_usize(key, b'?') else {
+            return key.len();
+        };
         if self.module_key_query.key.eql_utf8(key) {
             // A code unit is a byte in a key that is all ASCII. In any other key they are counted.
             let units = self.module_key_query.path_len as usize;
@@ -5138,9 +5143,6 @@ impl VirtualMachine {
         if bun_core::strings::has_prefix_comptime(key, b"data:") {
             return key.len();
         }
-        let Some(first) = bun_core::strings::index_of_char_usize(key, b'?') else {
-            return key.len();
-        };
         if cfg!(windows) || !bun_paths::is_absolute(key) {
             return first;
         }
@@ -5251,29 +5253,29 @@ impl VirtualMachine {
             top_level_dir
         };
 
-        // The writer of the string decides what a `?` is: the entry point and `ResolveMode::Path` have no query, an ES specifier has one from its first `?`, and `require()` takes a path in which a name that exists wins.
+        // The writer of the string decides what a `?` is. An ES specifier is a URL: its first `?` starts the query. Every other string is a path, with a query after it or not: a `?` is part of a name that exists.
         let mut query_string: &[u8] = b"";
         let mut normalized_specifier = specifier;
-        let mut first_question_mark: Option<usize> = None;
-        if let Some(first) = bun_core::strings::index_of_char_usize(specifier, b'?') {
-            // In a `data:` URL everything after the comma is the payload.
-            if !is_special_source
-                && mode != ResolveMode::Path
-                && !bun_core::strings::has_prefix_comptime(specifier, b"data:")
+        let mut question_mark_in_path: Option<usize> = None;
+        let first = bun_core::strings::index_of_char_usize(specifier, b'?');
+        // In a `data:` URL everything after the comma is the payload.
+        if let Some(first) = first
+            && !bun_core::strings::has_prefix_comptime(specifier, b"data:")
+        {
+            let mut query = Some(first);
+            if !cfg!(windows)
+                && (is_special_source || mode != ResolveMode::Esm)
+                && !bun_resolver::is_package_path(specifier)
             {
-                let mut query = Some(first);
-                if !cfg!(windows) && !mode.is_esm() && !bun_resolver::is_package_path(specifier) {
-                    first_question_mark = Some(first);
-                    query = self.transpiler.resolver.query_start_in_path(
-                        source_to_use,
-                        specifier,
-                        first,
-                    );
-                }
-                if let Some(query) = query {
-                    query_string = &specifier[query..];
-                    normalized_specifier = &specifier[..query];
-                }
+                question_mark_in_path = Some(first);
+                query =
+                    self.transpiler
+                        .resolver
+                        .query_start_in_path(source_to_use, specifier, first);
+            }
+            if let Some(query) = query {
+                query_string = &specifier[query..];
+                normalized_specifier = &specifier[..query];
             }
         }
 
@@ -5346,7 +5348,7 @@ impl VirtualMachine {
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
                     ) {
                         // The name with the `?` may be newer than the listing that was read.
-                        if let Some(first) = first_question_mark {
+                        if let Some(first) = question_mark_in_path {
                             let query = self
                                 .transpiler
                                 .resolver
@@ -5369,6 +5371,7 @@ impl VirtualMachine {
         // SAFETY: PORT — `query_string` re-slices `specifier` (caller-owned;
         // see lifetime erasure note above).
         ret.query_string = unsafe { bun_ptr::detach_lifetime(query_string) };
+        ret.path_has_question_mark = first.is_some_and(|first| first < normalized_specifier.len());
         let result_path = result
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
@@ -5417,54 +5420,19 @@ impl VirtualMachine {
                     } else {
                         global.bun_vm().transpiler.resolver.opts.global_cache
                     };
-                    // An absolute path that a plugin answered with has a `?` in a name when that name exists.
-                    let mut answer_path_and_query = None;
-                    if mode == ResolveMode::Esm && !cfg!(windows) {
-                        let answer_utf8 = answer.to_utf8();
-                        if bun_paths::is_absolute(&answer_utf8)
-                            && let Some(first) =
-                                bun_core::strings::index_of_char_usize(&answer_utf8, b'?')
-                        {
-                            // SAFETY: per-thread VM is live (caller is on the JS thread).
-                            let query = unsafe { &mut *global.bun_vm_ptr() }
-                                .transpiler
-                                .resolver
-                                .query_start_in_path(b"", &answer_utf8, first)
-                                .unwrap_or(answer_utf8.len());
-                            if query != first {
-                                answer_path_and_query = Some((
-                                    bun_core::String::clone_utf8(&answer_utf8[..query]),
-                                    bun_core::String::clone_utf8(&answer_utf8[query..]),
-                                ));
-                            }
-                        }
-                    }
-                    let resolved = match &answer_path_and_query {
-                        Some((path, query)) => {
-                            let resolved = Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
-                                global,
-                                path,
-                                source,
-                                None,
-                                ResolveMode::Path,
-                                global_cache,
-                            )?;
-                            if resolved.is_ok()
-                                && let Some(out) = query_string
-                            {
-                                *out = query.clone();
-                            }
-                            resolved
-                        }
-                        None => Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
-                            global,
-                            &answer,
-                            source,
-                            query_string,
-                            mode,
-                            global_cache,
-                        )?,
-                    };
+                    let resolved = Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
+                        global,
+                        &answer,
+                        source,
+                        query_string,
+                        // A plugin writes a path, not the specifier of the import.
+                        if mode.is_esm() {
+                            ResolveMode::Path
+                        } else {
+                            mode
+                        },
+                        global_cache,
+                    )?;
                     // Not on disk, for an `onLoad` to serve.
                     if resolved.is_err() && global.has_on_load(&answer.to_utf8())? {
                         return Ok(Ok(answer));
@@ -5687,7 +5655,14 @@ impl VirtualMachine {
             *query = bun_core::String::clone_utf8(result.query_string);
         }
 
-        Ok(Ok(bun_core::String::clone_utf8(result.path)))
+        let path = bun_core::String::clone_utf8(result.path);
+        if result.path_has_question_mark {
+            jsc_vm.module_key_query = ModuleKeyQuery {
+                path_len: path.length() as u32,
+                key: path.clone(),
+            };
+        }
+        Ok(Ok(path))
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {
@@ -7885,12 +7860,8 @@ fn run_on_resolve(
     };
     // The importer's key ends in the query it was imported with.
     let importer = importer.to_utf8();
-    let importer = if bun_core::strings::contains_char(&importer, b'?') {
-        // SAFETY: per-thread VM is live (caller is on the JS thread).
-        &importer[..unsafe { &mut *global.bun_vm_ptr() }.module_key_path_len(&importer)]
-    } else {
-        &importer[..]
-    };
+    // SAFETY: per-thread VM is live (caller is on the JS thread).
+    let importer = &importer[..unsafe { &mut *global.bun_vm_ptr() }.module_key_path_len(&importer)];
     let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
         &bun_core::String::from_bytes(if namespace == b"file" { b"" } else { namespace }),
         &bun_core::String::borrow_utf8(path),

@@ -1454,7 +1454,7 @@ extern "C" fn Zig__GlobalObject__resolve(
     );
 }
 
-/// [`Zig__GlobalObject__resolve`] for a filesystem path: a `?` in it is part of a name.
+/// [`Zig__GlobalObject__resolve`] for a filesystem path, which is not a specifier: a `?` in it is part of a name that exists.
 #[unsafe(no_mangle)]
 extern "C" fn Zig__GlobalObject__resolvePath(
     res: &mut ErrorableString,

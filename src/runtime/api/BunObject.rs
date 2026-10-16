@@ -1123,7 +1123,7 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
     let mut mode = mode;
     let specifier_for_resolve = if specifier.starts_with_ascii(b"file://") {
         decoded_specifier = bun_url::path_from_file_url(specifier);
-        // The path of a file URL has no query.
+        // The path of a file URL is a path, not a specifier.
         if mode == ResolveMode::Esm {
             mode = ResolveMode::Path;
         }

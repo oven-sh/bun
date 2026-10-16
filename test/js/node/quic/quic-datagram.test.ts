@@ -36,6 +36,13 @@ const WARM_UP = 24;
 // packet before the ACK came.
 const arrived = expect.stringMatching(/^(acknowledged|lost)$/);
 
+/** Rejects `waits` when `session` fails or closes before they settle. */
+function failWith(session: any, ...waits: PromiseWithResolvers<any>[]) {
+  const fail = (error: unknown) => waits.forEach(wait => wait.reject(error));
+  for (const wait of waits) wait.promise.catch(() => {});
+  session.closed.then(() => fail(new Error("the session closed")), fail);
+}
+
 /** A UDP relay between a client and the server at `serverPort`. */
 async function relayTo(serverPort: number) {
   const front = createSocket("udp4");
@@ -98,12 +105,16 @@ async function relayTo(serverPort: number) {
 async function sessionThroughRelay() {
   const received: number[] = [];
   let onReceived = () => {};
+  // Each wait below races this, so a test that loses a session fails with
+  // the cause.
+  const failed = Promise.withResolvers<never>();
   const serverSession = Promise.withResolvers<any>();
   const serverSessionClosed = Promise.withResolvers<void>();
   const server = await listen(
     session => {
       serverSession.resolve(session);
-      session.onerror = () => {};
+      session.onerror = failed.reject;
+      failWith(session, failed);
       session.closed.then(serverSessionClosed.resolve, serverSessionClosed.resolve);
       // The server echoes what the client writes to a stream.
       session.onstream = async (stream: any) => {
@@ -137,7 +148,7 @@ async function sessionThroughRelay() {
       servername: "localhost",
       verifyPeer: "manual",
       transportParams: { maxIdleTimeout: 10 },
-      onerror() {},
+      onerror: failed.reject,
       ondatagram() {
         fromServer++;
         onServerDatagram();
@@ -155,16 +166,20 @@ async function sessionThroughRelay() {
       },
     },
   );
+  failWith(client, failed);
   await client.opened;
 
   const ids: Promise<bigint>[] = [];
-  /** Resolves once `done()` holds. `listen` installs the check at its source. */
+  /** Resolves once `done()` holds. `listen` installs the check at its source. Rejects when a session fails. */
   const until = (done: () => boolean, listen: (check: () => void) => void) =>
-    new Promise<void>(resolve => {
-      const check = () => done() && resolve();
-      listen(check);
-      check();
-    });
+    Promise.race([
+      failed.promise,
+      new Promise<void>(resolve => {
+        const check = () => done() && resolve();
+        listen(check);
+        check();
+      }),
+    ]);
   /** Sends a datagram of `size` bytes. Returns its id: ids count from 1. */
   const send = (size = LARGE) => {
     ids.push(client.sendDatagram(Buffer.alloc(size, ids.length + 1)));
@@ -181,6 +196,7 @@ async function sessionThroughRelay() {
     relay,
     send,
     status,
+    until,
     /** The ids of the datagrams that the server received, in ascending order. */
     received: () => received.toSorted((a, b) => a - b),
     /** Every status reported for each id: one per id when all is right. */
@@ -210,10 +226,18 @@ async function sessionThroughRelay() {
         () => received.includes(last),
         check => (onReceived = check),
       );
-      const read = new Promise<void>(resolve => (onServerStream = resolve));
+      let read = false;
+      let onRead = () => {};
+      onServerStream = () => {
+        read = true;
+        onRead();
+      };
       const stream = await (await serverSession.promise).createUnidirectionalStream({ body: new Uint8Array(1) });
       stream.closed.catch(() => {});
-      await read;
+      await until(
+        () => read,
+        check => (onRead = check),
+      );
       await new Promise<void>(resolve => setImmediate(resolve));
       expect((await Promise.all(ids)).map(Number)).toEqual(ids.map((_, i) => i + 1));
     },
@@ -282,17 +306,28 @@ async function sessionThroughRelay() {
       relay.lose = carriesLarge;
       relay.outage = true;
       const inOutage = send();
-      await new Promise<void>(resolve => (relay.onClientPacket = () => resolve()));
+      let atRelay = false;
+      await until(
+        () => atRelay,
+        check =>
+          (relay.onClientPacket = () => {
+            atRelay = true;
+            check();
+          }),
+      );
       echo.write(64);
       expect(await status(inOutage)).toBe("lost");
       await new Promise<void>(resolve => setImmediate(resolve));
     },
     async [Symbol.asyncDispose]() {
-      // Both sides close through the relay, which passes everything again.
+      // The client closes through the relay, which passes everything again.
       relay.lose = () => false;
       relay.release();
       client.close();
-      await Promise.all([client.closed.catch(() => {}), serverSessionClosed.promise]);
+      await client.closed.catch(() => {});
+      // A client that failed did not tell the server.
+      (await serverSession.promise).destroy();
+      await serverSessionClosed.promise;
       relay[Symbol.dispose]();
       await server[Symbol.asyncDispose]();
     },
@@ -361,9 +396,14 @@ describe("ondatagramstatus", () => {
     relay.lose = carriesLarge;
     relay.outage = true;
     let chunks = 0;
-    const kept = new Promise<void>(resolve => {
-      relay.onClientPacket = packet => carriesChunk(packet) && ++chunks === 6 && resolve();
-    });
+    const kept = net.until(
+      () => chunks >= 6,
+      check =>
+        (relay.onClientPacket = packet => {
+          chunks += +carriesChunk(packet);
+          check();
+        }),
+    );
     net.send(MEDIUM);
     net.send();
     for (let i = 0; i < 6; i++) echo.write(CHUNK);
@@ -516,6 +556,7 @@ describe("ondatagramstatus", () => {
       onsessionticket: ticket.resolve,
       onnewtoken: token.resolve,
     });
+    failWith(firstClient, ticket, token);
     await Promise.all([firstClient.opened, ticket.promise, token.promise]);
     await firstClient.close();
     await first.close();
@@ -541,6 +582,7 @@ describe("ondatagramstatus", () => {
       },
     );
     const statuses = new Map<number, string[]>();
+    const reported = Promise.withResolvers<void>();
     const client = await connect(second.address, {
       alpn: "quic-test",
       verifyPeer: "manual",
@@ -553,16 +595,16 @@ describe("ondatagramstatus", () => {
         onProgress();
       },
     });
-    client.closed.catch(() => {});
+    failWith(client, reported);
 
     // Datagram 1 leaves in the 0-RTT flight, datagrams 2 to 4 after the
     // handshake. No packet is lost. As in Node, datagram 1 gets no status.
     const ids = [await client.sendDatagram(new Uint8Array([1]))];
     const { earlyDataAttempted, earlyDataAccepted } = await client.opened;
     for (let i = 2; i <= 4; i++) ids.push(await client.sendDatagram(new Uint8Array([i])));
-    await new Promise<void>(resolve => {
-      onProgress = () => statuses.size >= 3 && received.length >= 3 && resolve();
-    });
+    onProgress = () => statuses.size >= 3 && received.length >= 3 && reported.resolve();
+    onProgress();
+    await reported.promise;
     client.destroy();
     (await serverSession.promise).destroy();
 

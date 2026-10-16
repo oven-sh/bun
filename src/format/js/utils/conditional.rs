@@ -1,7 +1,7 @@
 //! `a ? b : c` and `A extends B ? C : D`. Prettier's `printTernary`.
 
-use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use super::typecast::is_cast_target_that_hides_its_kind;
+use crate::js::format::format_node;
 use crate::js::print::binary_like_expression::is_angular_pipe;
 use crate::prelude::*;
 use crate::write;
@@ -47,13 +47,6 @@ impl Operand<'_> {
 }
 
 impl<'a> ConditionalLike<'a> {
-    fn span(&self) -> Span {
-        match self {
-            ConditionalLike::ConditionalExpression(e) => e.span(),
-            ConditionalLike::TSConditionalType(ty) => ty.span(),
-        }
-    }
-
     fn parent(&self) -> AstNodes<'a> {
         match self {
             ConditionalLike::ConditionalExpression(e) => e.ast_parent(),
@@ -195,40 +188,7 @@ impl ConditionalLayout {
     }
 }
 
-/// Writes the comments after an operand, up to `operator` or to the end of the line. `gap`: what is
-/// between the operand and the next one.
-fn format_operand_trailing_comments<'a>(gap: Span, operator: u8, f: &mut Formatter<'a>) {
-    if f.is_quiet() {
-        return;
-    }
-    let Span { mut start, end } = gap;
-    let comments = f.comments().unprinted_comments();
-    let source_text = f.source_text();
-    let mut index_before_operator = None;
-    let mut count = None;
-    for (index, comment) in comments.iter().enumerate() {
-        if comment.end() > end {
-            count = Some(index_before_operator.unwrap_or(index));
-            break;
-        }
-        if source_text.contains_newline(Span::before(start, comment.span)) {
-            // It is on a new line.
-            count = Some(index);
-            break;
-        } else if comment.is_line() || comment.followed_by_newline() {
-            // Prettier's `handleClosureTypeCastComments`: `a ? /** @type {T} */ ⏎ b : c`
-            count = Some(index + usize::from(!f.comments().looks_like_type_cast_comment(comment)));
-            break;
-        } else if source_text.contains_byte(Span::before(start, comment.span), operator) {
-            index_before_operator = Some(index);
-        }
-        start = comment.span.end;
-    }
-    let count = count.unwrap_or_else(|| index_before_operator.unwrap_or(comments.len()));
-    FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default()).fmt(f);
-}
-
-fn is_jsx_conditional_chain(e: Expr<'_>) -> bool {
+pub(crate) fn is_jsx_conditional_chain(e: Expr<'_>) -> bool {
     let mut pending = smallvec::SmallVec::<[Expr<'_>; 8]>::new();
     pending.push(e);
     while let Some(e) = pending.pop() {
@@ -294,49 +254,19 @@ impl<'a> FormatConditionalLike<'a> {
     }
 
     fn format_test(&self, f: &mut Formatter<'a>, layout: ConditionalLayout) {
-        let format_inner = format_with(|f| {
-            let gap = match self.conditional {
-                ConditionalLike::ConditionalExpression(conditional) => {
-                    let ExprKind::Cond { test, yes, .. } = conditional.kind() else {
-                        return;
-                    };
-                    write!(f, FormatNodeWithoutTrailingComments(&test));
-                    test.span().between(yes.span())
+        let format_inner = format_with(|f| match self.conditional {
+            ConditionalLike::ConditionalExpression(conditional) => {
+                write!(f, conditional.test());
+            }
+            ConditionalLike::TSConditionalType(conditional) => {
+                if let TypeKind::Cond { check, extends, .. } = conditional.kind() {
+                    write!(f, [check, space(), "extends", space(), extends]);
                 }
-                ConditionalLike::TSConditionalType(conditional) => {
-                    let TypeKind::Cond {
-                        check,
-                        extends,
-                        yes,
-                        ..
-                    } = conditional.kind()
-                    else {
-                        return;
-                    };
-                    write!(f, [check, space(), "extends", space()]);
-                    // A union writes the comments after it in its own group.
-                    match extends.kind() {
-                        TypeKind::Union(types) if types.len() > 1 => write!(f, extends),
-                        _ => write!(f, FormatNodeWithoutTrailingComments(&extends)),
-                    }
-                    extends.span().between(yes.span())
-                }
-            };
-            format_operand_trailing_comments(gap, b'?', f);
+            }
         });
-
-        if layout.is_nested_alternate() {
-            // The comments before it are not aligned.
-            let comments = f.comments().comments_before(self.conditional.span().start);
-            write!(
-                f,
-                [
-                    FormatLeadingComments::Comments(comments),
-                    align(2, &format_inner)
-                ]
-            );
-        } else {
-            write!(f, format_inner);
+        match layout.is_nested_alternate() {
+            true => write!(f, align(2, &format_inner)),
+            false => write!(f, format_inner),
         }
     }
 
@@ -345,35 +275,29 @@ impl<'a> FormatConditionalLike<'a> {
             return;
         };
         let is_space = f.options().indent_style.is_space();
-        write!(f, [soft_line_break_or_space(), "?", space()]);
-
-        let format_consequent_with_trailing_comments = format_with(|f| {
-            write!(f, FormatNodeWithoutTrailingComments(&consequent));
-            format_operand_trailing_comments(consequent.span().between(alternate.span()), b':', f);
-        });
-        let format_consequent = format_with(|f| match is_space {
-            true => write!(f, align(2, &format_consequent_with_trailing_comments)),
-            false => write!(f, indent(&format_consequent_with_trailing_comments)),
-        });
+        let format_branch = |branch: Operand<'a>| {
+            format_with(move |f: &mut Formatter<'a>| match is_space {
+                true => write!(f, align(2, &branch)),
+                false => write!(f, indent(&branch)),
+            })
+        };
         // `a ? (b ? c : d) : e`
         let is_nested_consequent = consequent.is_conditional();
         write!(
             f,
             [
+                soft_line_break_or_space(),
+                "?",
+                space(),
                 is_nested_consequent.then_some(if_group_fits_on_line(&"(")),
-                format_consequent,
+                format_branch(consequent),
                 is_nested_consequent.then_some(if_group_fits_on_line(&")")),
                 soft_line_break_or_space(),
                 ":",
-                space()
+                space(),
+                format_branch(alternate)
             ]
         );
-
-        let format_alternate = FormatNodeWithoutTrailingComments(&alternate);
-        match is_space {
-            true => write!(f, align(2, &format_alternate)),
-            false => write!(f, indent(&format_alternate)),
-        }
     }
 }
 
@@ -419,14 +343,14 @@ impl<'a> Format<'a> for FormatConditionalLike<'a> {
                         space(),
                         FormatJsxChainExpression {
                             expression: yes,
-                            following: Some(no)
+                            is_alternate: false
                         },
                         space(),
                         ":",
                         space(),
                         FormatJsxChainExpression {
                             expression: no,
-                            following: None
+                            is_alternate: true
                         }
                     ]
                 );
@@ -484,8 +408,8 @@ impl<'a> Format<'a> for FormatConditionalLike<'a> {
 /// ```
 struct FormatJsxChainExpression<'a> {
     expression: Expr<'a>,
-    /// What is after the `:`, if `expression` is what is before it.
-    following: Option<Expr<'a>>,
+    /// It is what is after the `:`.
+    is_alternate: bool,
 }
 
 impl<'a> Format<'a> for FormatJsxChainExpression<'a> {
@@ -495,30 +419,23 @@ impl<'a> Format<'a> for FormatJsxChainExpression<'a> {
             return;
         }
         let expression = self.expression;
-        let is_conditional = matches!(expression.kind(), ExprKind::Cond { .. });
+        let is_conditional = matches!(expression.kind(), ExprKind::Cond { .. })
+            && !is_cast_target_that_hides_its_kind(expression, f);
         let no_wrap = match expression.kind() {
             ExprKind::Ident(name) => name.bytes() == b"undefined",
             ExprKind::Null => true,
-            _ => is_conditional && self.following.is_none(),
+            _ => is_conditional && self.is_alternate,
         };
 
         let format_expression = format_with(|f| match is_conditional {
-            true => FormatConditionalLike {
-                conditional: ConditionalLike::ConditionalExpression(expression),
-                jsx_chain: true,
-            }
-            .fmt(f),
-            false => match self.following {
-                Some(following) => {
-                    write!(f, FormatNodeWithoutTrailingComments(&expression));
-                    format_operand_trailing_comments(
-                        expression.span().between(following.span()),
-                        b':',
-                        f,
-                    );
+            true => format_node(expression.as_ast_nodes(), f, |f| {
+                FormatConditionalLike {
+                    conditional: ConditionalLike::ConditionalExpression(expression),
+                    jsx_chain: true,
                 }
-                None => expression.fmt(f),
-            },
+                .fmt(f);
+            }),
+            false => expression.fmt(f),
         });
 
         if no_wrap {

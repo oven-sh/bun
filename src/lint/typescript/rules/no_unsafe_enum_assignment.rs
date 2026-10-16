@@ -4,7 +4,7 @@ use bun_lint::types::utils::{
     FunctionSignature, get_enum_types, get_enum_value_type, get_static_member_access_value,
     get_type_flags, is_number_like, is_string_like,
 };
-use bun_lint::types::{SyntaxKind, TsNode, Type, TypeFlags};
+use bun_lint::types::{IdMap, IdSet, SyntaxKind, TsNode, Type, TypeFlags};
 use bun_lint::utils::ts_utils::get_parent_function_node;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -45,7 +45,7 @@ type Context<'a> = Cx<'a, NoUnsafeEnumAssignment>;
 pub struct State<'a> {
     /// The array and object literals inside a value that has been reported, which are not reported
     /// element by element.
-    checked_nodes: FxHashSet<Expr<'a>>,
+    checked_nodes: IdSet<Expr<'a>>,
     /// The array and object literals that have something to report, unless they turn out to be
     /// among `checked_nodes`.
     pending: Vec<Expr<'a>>,
@@ -56,7 +56,7 @@ pub struct State<'a> {
     about_themselves: Vec<(Span, Message, Vec<u8>)>,
     types: TypeCache<'a>,
     /// [`describe_enum_types`] of one type.
-    descriptions: FxHashMap<Type<'a>, Vec<u8>>,
+    descriptions: IdMap<Type<'a>, Vec<u8>>,
 }
 
 fn get_constraint_type(ty: Type<'_>) -> Type<'_> {
@@ -110,7 +110,7 @@ fn is_mismatched_enum_assignment_types<'a>(sender_type: Type<'a>, receiver_type:
 /// What has been found out about types, as long as the file is linted.
 #[derive(Default)]
 struct TypeCache<'a> {
-    generic_types: FxHashMap<Type<'a>, bool>,
+    generic_types: IdMap<Type<'a>, bool>,
     top_level_mismatches: FxHashMap<(Type<'a>, Type<'a>), bool>,
     /// The pairs that the comparison at hand has looked at: recursive types would be visited
     /// endlessly.
@@ -119,7 +119,7 @@ struct TypeCache<'a> {
 
 impl<'a> TypeCache<'a> {
     fn is_generic_type(&mut self, ty: Type<'a>) -> bool {
-        if let Some(&generic) = self.generic_types.get(&ty) {
+        if let Some(&generic) = self.generic_types.get(ty) {
             return generic;
         }
         let parts_of = |ty: Type<'a>| {
@@ -146,7 +146,7 @@ impl<'a> TypeCache<'a> {
                 };
                 match parts
                     .next()
-                    .map(|part| (part, self.generic_types.get(&part).copied()))
+                    .map(|part| (part, self.generic_types.get(part).copied()))
                 {
                     None => {
                         open.pop();
@@ -155,14 +155,14 @@ impl<'a> TypeCache<'a> {
                     Some((part, None)) => break part,
                     Some((_, Some(true))) => {
                         self.generic_types
-                            .extend(open.iter().map(|&(outer, _)| (outer, true)));
+                            .extend(open.iter().map(|it| (it.0, true)));
                         return true;
                     }
                 }
             };
         }
         self.generic_types
-            .extend(open.iter().map(|&(outer, _)| (outer, true)));
+            .extend(open.iter().map(|it| (it.0, true)));
         true
     }
 
@@ -267,8 +267,8 @@ impl<'a> TypeCache<'a> {
 /// `[Fruit, Set<Vegetable>]` is `'Fruit', 'Vegetable'`.
 fn describe_enum_types(types: &[Type]) -> Vec<u8> {
     let mut enum_names: Vec<Vec<u8>> = Vec::new();
-    let mut enum_types = FxHashSet::default();
-    let mut visited = FxHashSet::default();
+    let mut enum_types = IdSet::new();
+    let mut visited = IdSet::new();
     let mut pending = types.to_vec();
     while let Some(ty) = pending.pop() {
         let constrained_type = get_constraint_type(ty);
@@ -308,8 +308,7 @@ fn report<'a>(cx: &mut Context<'a>, node: Span, message: Message, receiver_types
         &[only] => cx
             .state
             .descriptions
-            .entry(only)
-            .or_insert_with(|| describe_enum_types(receiver_types))
+            .get_or_insert_with(only, || describe_enum_types(receiver_types))
             .clone(),
         _ => describe_enum_types(receiver_types),
     };
@@ -963,7 +962,7 @@ impl Rule for NoUnsafeEnumAssignment {
         let mut pending = std::mem::take(&mut cx.state.pending);
         utils::sort::sort_unstable_by_key(&mut pending, |literal| literal.span().start);
         for literal in pending {
-            if !cx.state.checked_nodes.contains(&literal) {
+            if !cx.state.checked_nodes.contains(literal) {
                 check_literal(cx, literal, true);
             }
         }

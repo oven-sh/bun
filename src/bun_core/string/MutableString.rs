@@ -260,14 +260,6 @@ impl MutableString {
         unsafe { self.list.set_len(index) };
     }
 
-    pub fn inflate(&mut self, amount: usize) -> Result<(), AllocError> {
-        // Callers always overwrite the inflated region, so the
-        // zero-fill here is technically redundant — but it lowers to a single
-        // memset and avoids `clippy::uninit_vec` / a `set_len` over uninit bytes.
-        self.list.resize(amount, 0);
-        Ok(())
-    }
-
     #[inline]
     pub fn append_char(&mut self, char: u8) -> Result<(), AllocError> {
         self.list.push(char);

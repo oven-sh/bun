@@ -2218,7 +2218,7 @@ impl Oddities {
     }
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// Whether the errors of this file are wanted.
     #[inline(always)]
     pub(super) fn reports_like_oxc(&self) -> bool {

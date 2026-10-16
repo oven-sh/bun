@@ -6,8 +6,9 @@
 //! [`RuleSet`].
 
 use crate::options::Options;
-use crate::rule::{Meta, On, Rule};
+use crate::rule::{Meta, On, Plugin, Rule};
 use crate::runner::Starts;
+use bun_core::strings::const_str_eq;
 
 /// A set of rules, by their numbers.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -29,6 +30,18 @@ impl RuleBits {
     }
 
     #[inline]
+    pub(crate) const fn intersects(&self, other: &RuleBits) -> bool {
+        let mut word = 0;
+        while word < RuleBits::WORDS {
+            if self.0[word] & other.0[word] != 0 {
+                return true;
+            }
+            word += 1;
+        }
+        false
+    }
+
+    #[inline]
     pub const fn or(mut self, other: &RuleBits) -> RuleBits {
         let mut word = 0;
         while word < RuleBits::WORDS {
@@ -47,6 +60,7 @@ pub trait RuleSet: Starts + Sized + 'static {
     const LISTENS: &'static [RuleBits; On::ROWS];
     /// For each of [`On::KINDS`], the rules that name a row of it.
     const LISTENS_TO_KINDS: &'static [RuleBits; On::KINDS.len()] = &of_kinds(Self::LISTENS);
+    const PAIRS: &'static Pairs = &Pairs::of(Self::METAS);
 
     /// [`Rule::new`](crate::rule::Rule::new). `None`: no rule has the number.
     fn build(rule: u16, options: &Options) -> Option<Self>;
@@ -54,6 +68,56 @@ pub trait RuleSet: Starts + Sized + 'static {
     fn validate(rule: u16, options: &Options) -> Result<(), Vec<u8>>;
     /// Its number.
     fn number(&self) -> u16;
+}
+
+/// The rules without types whose check a rule of typescript-eslint makes with types: the core rule that it extends, and
+/// unicorn's rule for the same code. A problem is reported once: with an `.oxlintrc.json` and types for the file, where both
+/// are on, the rule with types [claims](crate::context::Report::claims) each node that it reports, and what the other has to
+/// say about that node [is not shown](crate::context::Report::unless_claimed). Neither knows what the other looks at.
+pub struct Pairs {
+    pub(crate) without_types: RuleBits,
+    /// For each of them, by its number: the number of the rule with types.
+    pub(crate) typed: [u16; NUMBERS],
+}
+
+impl Pairs {
+    const fn of(metas: &[Option<&'static Meta>]) -> Pairs {
+        let mut pairs = Pairs {
+            without_types: RuleBits::EMPTY,
+            typed: [u16::MAX; NUMBERS],
+        };
+        let mut typed = 0;
+        while typed < metas.len() {
+            let with_types = match metas[typed] {
+                Some(it) if it.requires_types && matches!(it.plugin, Plugin::TypeScript) => it,
+                _ => {
+                    typed += 1;
+                    continue;
+                }
+            };
+            let mut number = 0;
+            while number < metas.len() {
+                if let Some(it) = metas[number]
+                    && !it.requires_types
+                {
+                    let is_pair = match (it.with_types, with_types.extends_base_rule) {
+                        (Some(name), _) => const_str_eq(name, with_types.name),
+                        (None, Some(base)) => {
+                            matches!(it.plugin, Plugin::Eslint) && const_str_eq(base, it.name)
+                        }
+                        (None, None) => false,
+                    };
+                    if is_pair {
+                        pairs.without_types.insert(number as u16);
+                        pairs.typed[number] = typed as u16;
+                    }
+                }
+                number += 1;
+            }
+            typed += 1;
+        }
+        pairs
+    }
 }
 
 const fn of_kinds(rows: &[RuleBits; On::ROWS]) -> [RuleBits; On::KINDS.len()] {

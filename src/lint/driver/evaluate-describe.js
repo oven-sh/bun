@@ -26,6 +26,8 @@ function objectId(object) {
 // How a worker for JavaScript plugins gets hold of a plugin: `{ module, export }`, the file of a module that is loaded and
 // the path to the plugin in what it exports. `null` if there is no such module: then it is where the configuration has it.
 const located = new Map();
+// By object: all the modules that export it, as what they export or as the `default` of that. One re-exports what another has.
+const exportedBy = new Map();
 // The modules that have been looked at.
 const scanned = new Set();
 // What the module that is the configuration file can be called: its path as the system writes it, and that without links.
@@ -50,6 +52,10 @@ function scan() {
       if (value === null || typeof value !== "object") return;
       const [before, found] = [located.get(value), { module, export: path }];
       if (before === undefined || order(found) < order(before)) located.set(value, found);
+      if (path.length === 0 || (path.length === 1 && path[0] === "default")) {
+        if (!exportedBy.has(value)) exportedBy.set(value, []);
+        if (!exportedBy.get(value).includes(module)) exportedBy.get(value).push(module);
+      }
     };
     try {
       note(exports, []);
@@ -66,6 +72,31 @@ function scan() {
 
 function locate(plugin) {
   return located.get(plugin) ?? locateWrapped(plugin);
+}
+
+// What a package starts with for who requires it and for who imports it, if `module` is one of the two: two builds of one thing.
+function buildsOf(module) {
+  const [, above, name] =
+    /^(.*[\\/])node_modules[\\/]((?:@[^\\/]+[\\/])?[^\\/]+)[\\/](?!.*[\\/]node_modules[\\/])/.exec(module) ?? [];
+  if (name === undefined) return [];
+  const found = [];
+  for (const find of [
+    () => require("node:module").createRequire(`${above}noop.js`).resolve(name),
+    () => Bun.resolveSync(name, above),
+  ]) {
+    try {
+      found.push(fs.realpathSync(find()));
+    } catch {}
+  }
+  return found.includes(module) ? found : [];
+}
+
+// The modules that are `plugin`, if there is more than the one that `locate` has.
+function otherModulesOf(plugin) {
+  scan();
+  const modules = exportedBy.get(plugin) ?? [];
+  const all = [...new Set([...modules, ...modules.flatMap(buildsOf)])];
+  return all.length > 1 ? all : undefined;
 }
 
 // By plugin, parser or processor: what `locateDeep` has found.

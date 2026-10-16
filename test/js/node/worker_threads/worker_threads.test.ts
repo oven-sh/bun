@@ -3354,7 +3354,10 @@ describe("Worker exit listener cleanup", () => {
       stdout: {
         before: { message: 0, messageerrors: 0, messageerror: 1, error: 2, online: 1, custom: 1 },
         after: { message: 0, messageerrors: 0, messageerror: 0, error: 0, online: 0, custom: 0, exit: 0 },
-        eventNames: [],
+        eventNames: ["newListener", "removeListener"],
+        internalCounts: { newListener: 1, removeListener: 1 },
+        symbolCount: 0,
+        removalNotifications: [true, true, true],
         collected: [true, true, true, true],
         controlCollected: true,
         code: mode === "normal" ? 0 : 1,

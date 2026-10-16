@@ -236,6 +236,12 @@ impl Entry {
         self.cache().kind
     }
 
+    /// The real path that [`Entry::kind`] cached: a symlink's target. Empty: no link, or no known target.
+    #[inline]
+    pub fn symlink_target(&self) -> &'static [u8] {
+        self.cache().symlink.as_bytes()
+    }
+
     ///
     /// # Safety
     /// `fs` must point to a live `EntryKindResolver` (the process-global

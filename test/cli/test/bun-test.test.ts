@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
 describe("bun test", () => {
@@ -2118,5 +2118,232 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(Number(stdout.match(/OPEN_FDS=(\d+)/)?.[1])).toBeLessThan(N);
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
+  });
+
+  // Directory links. The scan follows them and names what it finds by the link path. It passes over
+  // a link, or a directory behind a link, that leads back to a directory the scan is already inside.
+  const named = (name: string) => `import { test } from "bun:test"; test("${name}", () => {});`;
+
+  // `links` maps the path of a link to its target, relative to the link's directory.
+  function linkedTree(files: Record<string, string>, links: Record<string, string>) {
+    const dir = tempDir("scanner-links", files);
+    for (const [at, target] of Object.entries(links)) {
+      const link = join(String(dir), at);
+      mkdirSync(dirname(link), { recursive: true });
+      // A junction needs no privilege on Windows. Its target must be absolute.
+      if (isWindows) symlinkSync(resolve(dirname(link), target), link, "junction");
+      else symlinkSync(target, link);
+    }
+    return dir;
+  }
+
+  async function testLinkedTree(cwd: string, args: readonly string[], env: Record<string, string> = {}) {
+    const cmd = [bunExe(), "test", ...args];
+    await using proc = Bun.spawn({
+      // A scan that follows a link back up stops only when no file descriptor is left.
+      // The limit makes that a fast failure.
+      cmd: isWindows ? cmd : ["/bin/sh", "-c", 'ulimit -n 64 && exec "$@"', "sh", ...cmd],
+      env: { ...bunEnv, ...env },
+      cwd,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return {
+      summary:
+        stderr.match(/^Ran \d+ tests? across \d+ files?\./m)?.[0] ??
+        stderr.match(/^\d+ files were searched/m)?.[0] ??
+        stderr,
+      headers: [...stderr.matchAll(/^(\S+\.test\.js):$/gm)].map(match => match[1].replaceAll(sep, "/")),
+      signalCode: proc.signalCode,
+      exitCode,
+    };
+  }
+
+  const ranOne = "Ran 1 test across 1 file.";
+  const ranTwo = "Ran 2 tests across 2 files.";
+  const loop = { files: { "s.test.js": named("s"), "a/b.test.js": named("b") }, links: { "a/loop": ".." } };
+  const shared = {
+    files: { "outside/o.test.js": named("o"), "outside/fixtures/f.test.js": named("f") },
+    links: { "proj/shared": "../outside" },
+    cwd: "proj",
+  };
+  const alias = { files: { "packages/v2/v2.test.js": named("v2") }, links: { latest: "packages/v2" } };
+  // Three directories below a dot-directory. The root holds two links to the first, and each
+  // directory holds two links to the next: 1 + 2 + 4 + 8 paths lead to the 4 test files.
+  const stacked = {
+    files: {
+      "t0.test.js": named("t0"),
+      ".stack/L1/t1.test.js": named("t1"),
+      ".stack/L2/t2.test.js": named("t2"),
+      ".stack/L3/t3.test.js": named("t3"),
+    },
+    links: {
+      a: ".stack/L1",
+      b: ".stack/L1",
+      ".stack/L1/a": "../L2",
+      ".stack/L1/b": "../L2",
+      ".stack/L2/a": "../L3",
+      ".stack/L2/b": "../L3",
+    },
+  };
+
+  test.each<{
+    name: string;
+    files: Record<string, string>;
+    links: Record<string, string>;
+    cwd?: string;
+    args?: string[];
+    summary: string;
+    exitCode?: number;
+  }>([
+    // A link back up. Without the rule these scans do not end, or they list a test many times.
+    { name: "two links to the root", files: { "s.test.js": named("s") }, links: { x: ".", y: "." }, summary: ranOne },
+    { name: "a link to the root", ...loop, summary: ranTwo },
+    { name: "a link to the root, --isolate", ...loop, args: ["--isolate"], summary: ranTwo },
+    { name: "a link to the root, --parallel", ...loop, args: ["--parallel=2"], summary: ranTwo },
+    {
+      name: "a link to the parent of the root: the root is not entered again through it",
+      files: { "base/proj/s.test.js": named("s"), "base/sibling/b.test.js": named("b") },
+      links: { "base/proj/up": ".." },
+      cwd: "base/proj",
+      summary: ranTwo,
+    },
+    {
+      name: "a link to its own directory, in a directory behind a link",
+      files: { "outside/o.test.js": named("o") },
+      links: { "proj/shared": "../outside", "outside/self": "." },
+      cwd: "proj",
+      summary: ranOne,
+    },
+    {
+      name: "two packages that link to each other",
+      files: { "packages/a/a.test.js": named("a"), "packages/b/b.test.js": named("b") },
+      links: { "packages/a/vendor/b": "../../b", "packages/b/vendor/a": "../../a" },
+      summary: "Ran 2 tests across 4 files.",
+    },
+    {
+      name: "a link to the parent of the root from bunfig.toml",
+      files: { "bunfig.toml": `[test]\nroot = "tests"\n`, "tests/a.test.js": named("a"), "lib/l.test.js": named("l") },
+      links: { "tests/up": ".." },
+      summary: ranTwo,
+    },
+    {
+      name: "the root is a link, with a link to its parent inside",
+      files: { "packages/v2/v2.test.js": named("v2"), "packages/other/o.test.js": named("o") },
+      links: { latest: "packages/v2", "packages/v2/sub/up": "../.." },
+      args: ["./latest"],
+      summary: ranTwo,
+    },
+    {
+      name: "a link to the root of the second of two roots",
+      files: { "one/o.test.js": named("o"), "two/t.test.js": named("t") },
+      links: { "two/loop": "." },
+      args: ["./one", "./two"],
+      summary: ranTwo,
+    },
+    // What changes: a path through a link back up names nothing.
+    {
+      name: "a filter that names a link to the root",
+      ...loop,
+      args: ["loop"],
+      summary: "3 files were searched",
+      exitCode: 1,
+    },
+    {
+      name: "a filter that matches nothing, two links to the root",
+      files: { "s.test.js": named("s") },
+      links: { x: ".", y: "." },
+      args: ["zzz-no-such-test"],
+      summary: "1 files were searched",
+      exitCode: 1,
+    },
+    // What stays: a link that does not lead back up is followed, and its path is the name.
+    { name: "a filter that names a link", ...shared, args: ["shared"], summary: ranTwo },
+    {
+      name: "an ignore pattern below a link",
+      ...shared,
+      args: ["--path-ignore-patterns", "shared/fixtures/**"],
+      summary: ranOne,
+    },
+    { name: "a link beside its target", ...alias, summary: "Ran 1 test across 2 files." },
+    { name: "a link beside its target, filter on the link", ...alias, args: ["latest/"], summary: ranOne },
+    { name: "a link beside its target, filter on the target", ...alias, args: ["packages/v2/"], summary: ranOne },
+    {
+      name: "a link to a directory whose name starts with the name of the directory that holds the link",
+      files: { "a/t.test.js": named("t") },
+      links: { "ab/l": "../a" },
+      summary: "Ran 1 test across 2 files.",
+    },
+    { name: "two links to each of three directories in a row", ...stacked, summary: "Ran 4 tests across 15 files." },
+    {
+      name: "a linked workspace whose directories link back into the project",
+      files: { "proj/src/s.test.js": named("s"), "proj/tools/t.test.js": named("t") },
+      links: {
+        "proj/out": "../execroot/ws",
+        "execroot/ws/src": "../../proj/src",
+        "execroot/ws/tools": "../../proj/tools",
+      },
+      cwd: "proj",
+      summary: "Ran 2 tests across 4 files.",
+    },
+    {
+      name: "two roots with a link to the same directory",
+      files: { "outside/o.test.js": named("o") },
+      links: { "a/shared": "../outside", "b/shared": "../outside" },
+      args: ["./a", "./b"],
+      summary: "Ran 1 test across 2 files.",
+    },
+    {
+      name: "a link and its target as two roots",
+      ...alias,
+      args: ["./latest", "./packages/v2"],
+      summary: "Ran 1 test across 2 files.",
+    },
+    {
+      name: "a target and its link as two roots",
+      ...alias,
+      args: ["./packages/v2", "./latest"],
+      summary: "Ran 1 test across 2 files.",
+    },
+  ])("directory links: $name", async ({ files, links, cwd = ".", args = [], summary, exitCode = 0 }) => {
+    using dir = linkedTree(files, links);
+    const result = await testLinkedTree(join(String(dir), cwd), args);
+    expect({ signalCode: result.signalCode, summary: result.summary, exitCode: result.exitCode }).toEqual({
+      signalCode: null,
+      summary,
+      exitCode,
+    });
+  });
+
+  // With the links preserved, the test file is loaded from its link path. The package that it
+  // imports is only there: the real directory of the test has no node_modules above it.
+  test.each([
+    { how: "--preserve-symlinks", args: ["--preserve-symlinks"], env: {} },
+    { how: "NODE_PRESERVE_SYMLINKS=1", args: [], env: { NODE_PRESERVE_SYMLINKS: "1" } },
+  ])("directory links: $how loads a test from its link path", async ({ args, env }) => {
+    using dir = linkedTree(
+      {
+        "proj/node_modules/dep/package.json": `{ "name": "dep", "version": "1.0.0", "main": "index.js" }`,
+        "proj/node_modules/dep/index.js": `module.exports = 42;`,
+        "outside/o.test.js": `import { expect, test } from "bun:test"; import dep from "dep"; test("o", () => { expect(dep).toBe(42); });`,
+      },
+      { "proj/shared": "../outside" },
+    );
+    expect(await testLinkedTree(join(String(dir), "proj"), [...args, "o.test"], env)).toEqual({
+      summary: ranOne,
+      headers: ["shared/o.test.js"],
+      signalCode: null,
+      exitCode: 0,
+    });
+  });
+
+  test("directory links: --shard halves run every path once", async () => {
+    using dir = linkedTree({ ...alias.files, "x.test.js": named("x") }, alias.links);
+    const halves = await Promise.all(["1/2", "2/2"].map(shard => testLinkedTree(String(dir), [`--shard=${shard}`])));
+    expect(halves.map(({ summary, signalCode, exitCode }) => ({ summary, signalCode, exitCode }))).toEqual([
+      { summary: "Ran 2 tests across 2 files.", signalCode: null, exitCode: 0 },
+      { summary: ranOne, signalCode: null, exitCode: 0 },
+    ]);
   });
 });

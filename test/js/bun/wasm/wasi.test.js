@@ -110,6 +110,63 @@ it("path_open reports the host errno to the guest when the open fails", () => {
   expect(wasi.FD_MAP.has(4)).toBe(false);
 });
 
+it("path_open resolves dev/tty and proc/* in the preopen like any other path", () => {
+  using dir = tempDir("wasi-path-open-names", {
+    "full/dev/tty": "the file dev/tty",
+    "full/proc/version": "the file proc/version",
+    "empty": {},
+  });
+  const wasi = new WASI({
+    preopens: { "/full": path.join(String(dir), "full"), "/empty": path.join(String(dir), "empty") },
+  });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const memory = Buffer.from(wasi.memory.buffer);
+  const view = new DataView(wasi.memory.buffer);
+
+  const WASI_ESUCCESS = 0;
+  const WASI_ENOENT = 44;
+  const WASI_RIGHT_FD_READ = BigInt(2);
+  const fullFd = 3;
+  const emptyFd = 4;
+  const pathPtr = 1024;
+  const fdPtr = 1536;
+  const iovsPtr = 2048;
+  const nreadPtr = 3072;
+  const bufPtr = 4096;
+  const sentinel = 0x12345678;
+
+  const open = (dirfd, guestPath) => {
+    const len = memory.write(guestPath, pathPtr);
+    view.setUint32(fdPtr, sentinel, true);
+    const errno = wasi.wasiImport.path_open(dirfd, 0, pathPtr, len, 0, WASI_RIGHT_FD_READ, BigInt(0), 0, fdPtr);
+    return { errno, fd: view.getUint32(fdPtr, true) };
+  };
+  const read = fd => {
+    view.setUint32(iovsPtr, bufPtr, true);
+    view.setUint32(iovsPtr + 4, 64, true);
+    expect(wasi.wasiImport.fd_read(fd, iovsPtr, 1, nreadPtr)).toBe(WASI_ESUCCESS);
+    return memory.toString("latin1", bufPtr, bufPtr + view.getUint32(nreadPtr, true));
+  };
+
+  // Each file exists in the preopen: the guest gets a new descriptor for that file.
+  expect(open(fullFd, "dev/tty")).toEqual({ errno: WASI_ESUCCESS, fd: 5 });
+  expect(read(5)).toBe("the file dev/tty");
+  expect(open(fullFd, "proc/version")).toEqual({ errno: WASI_ESUCCESS, fd: 6 });
+  expect(read(6)).toBe("the file proc/version");
+
+  // No such file in the preopen: ENOENT, and no descriptor.
+  expect({
+    "empty: dev/tty": open(emptyFd, "dev/tty"),
+    "empty: proc/version": open(emptyFd, "proc/version"),
+    "full: proc/missing": open(fullFd, "proc/missing"),
+  }).toEqual({
+    "empty: dev/tty": { errno: WASI_ENOENT, fd: sentinel },
+    "empty: proc/version": { errno: WASI_ENOENT, fd: sentinel },
+    "full: proc/missing": { errno: WASI_ENOENT, fd: sentinel },
+  });
+  expect([...wasi.FD_MAP.keys()]).toEqual([0, 1, 2, 3, 4, 5, 6]);
+});
+
 it("path_* syscalls cannot escape the preopened directory", () => {
   using dir = tempDir("wasi-sandbox", {
     "secret.txt": "outside",

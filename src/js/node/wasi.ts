@@ -1365,13 +1365,6 @@ class WASI {
             }
             this.refreshMemory();
             const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
-            if (p == "dev/tty") {
-              this.view.setUint32(fdPtr, WASI_STDIN_FILENO, true);
-              return WASI_ESUCCESS;
-            }
-            if (p.startsWith("proc/")) {
-              throw new WASIError(WASI_EBADF);
-            }
             const fullUnresolved = RESOLVE_PATH(stats, p);
             let full;
             try {

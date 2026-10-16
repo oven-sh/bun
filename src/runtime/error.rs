@@ -34,6 +34,8 @@ pub enum Error {
     BoundaryIsTooLong,
     #[error("missing final boundary")]
     MissingFinalBoundary,
+    #[error("boundary is not at the start of a line")]
+    BoundaryNotAtLineStart,
     #[error("is missing header end")]
     IsMissingHeaderEnd,
     #[error("is missing header line end")]
@@ -353,6 +355,7 @@ impl Error {
             Self::FailedToParseMultipartData => "failed to parse multipart data",
             Self::BoundaryIsTooLong => "boundary is too long",
             Self::MissingFinalBoundary => "missing final boundary",
+            Self::BoundaryNotAtLineStart => "boundary is not at the start of a line",
             Self::IsMissingHeaderEnd => "is missing header end",
             Self::IsMissingHeaderLineEnd => "is missing header line end",
             Self::IsMissingHeaderColonSeparator => "is missing header colon separator",

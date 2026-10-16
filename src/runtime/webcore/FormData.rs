@@ -238,68 +238,155 @@ pub(crate) fn to_js_from_multipart_data(
     Ok(form_data_value)
 }
 
+/// A line that starts with `--boundary` (RFC 2046 §5.1.1).
+enum BoundaryLine {
+    /// `--boundary`, optional spaces or tabs, CRLF. Holds the index of that CRLF.
+    Delimiter(usize),
+    /// `--boundary--`: the close delimiter. Holds the index after it.
+    Close(usize),
+}
+
+enum Walk {
+    /// Before the opening delimiter.
+    Opening,
+    /// In a part. `line_end` is the CRLF that ends the delimiter line above it.
+    Part { line_end: usize },
+    /// After the close delimiter.
+    Closed,
+}
+
+/// The parts of a multipart body in one forward pass. The first close delimiter ends the body.
+struct Parts<'a> {
+    input: &'a [u8],
+    /// `\r\n--{boundary}`: the CRLF in front of a boundary line belongs to that line.
+    line: [u8; 76],
+    line_len: usize,
+    walk: Walk,
+}
+
+impl<'a> Parts<'a> {
+    fn new(input: &'a [u8], boundary: &[u8]) -> crate::Result<Self> {
+        let mut line = [0u8; 76];
+        let line_len = boundary.len() + 4;
+        if line_len > line.len() {
+            return Err(crate::Error::BoundaryIsTooLong);
+        }
+        line[..4].copy_from_slice(b"\r\n--");
+        line[4..line_len].copy_from_slice(boundary);
+        Ok(Self {
+            input,
+            line,
+            line_len,
+            walk: Walk::Opening,
+        })
+    }
+
+    /// Reads what follows a `--boundary` at index `after`. `None`: the line is not a boundary line.
+    fn boundary_line(&self, after: usize) -> Option<BoundaryLine> {
+        let rest = &self.input[after..];
+        if rest.starts_with(b"--") {
+            return Some(BoundaryLine::Close(after + 2));
+        }
+        let mut padding = 0;
+        while let Some(b' ' | b'\t') = rest.get(padding) {
+            padding += 1;
+        }
+        rest[padding..]
+            .starts_with(b"\r\n")
+            .then_some(BoundaryLine::Delimiter(after + padding))
+    }
+
+    /// The next boundary line from `from` on, with the index of the CRLF in front of it.
+    fn next_boundary_line(&self, mut from: usize) -> crate::Result<(usize, BoundaryLine)> {
+        let needle = &self.line[..self.line_len];
+        loop {
+            let found = strings::index_of(&self.input[from..], needle);
+            let line = from + found.ok_or(crate::Error::MissingFinalBoundary)?;
+            match self.boundary_line(line + needle.len()) {
+                Some(boundary_line) => return Ok((line, boundary_line)),
+                // Past the CRLF only: a boundary that holds a CR lets the next line start inside this hit.
+                None => from = line + 2,
+            }
+        }
+    }
+
+    /// The CRLF that ends the opening delimiter line. `None`: the body closes before any part.
+    fn open(&self) -> crate::Result<Option<usize>> {
+        let dash_boundary = &self.line[2..self.line_len];
+        // The first boundary line, wherever it starts. Most bodies start with it.
+        let mut at = 0;
+        let first = loop {
+            if !self.input[at..].starts_with(dash_boundary) {
+                let found = strings::index_of(&self.input[at..], dash_boundary);
+                at += found.ok_or(crate::Error::MissingFinalBoundary)?;
+            }
+            match self.boundary_line(at + dash_boundary.len()) {
+                Some(boundary_line) => break boundary_line,
+                None => at += 1,
+            }
+        };
+        // Not at a line start: read as preamble, the part below it would be dropped without an error.
+        if at != 0 && !self.input[..at].ends_with(b"\r\n") {
+            return Err(crate::Error::BoundaryNotAtLineStart);
+        }
+
+        match first {
+            BoundaryLine::Delimiter(line_end) => Ok(Some(line_end)),
+            BoundaryLine::Close(after) => {
+                // With no part above it, the close delimiter must be the whole line.
+                let mut rest = &self.input[after..];
+                while let [b' ' | b'\t', tail @ ..] = rest {
+                    rest = tail;
+                }
+                if rest.is_empty() || rest.starts_with(b"\r\n") {
+                    Ok(None)
+                } else {
+                    Err(crate::Error::MissingFinalBoundary)
+                }
+            }
+        }
+    }
+
+    /// The next part (headers, blank line, value), or `None` at the close delimiter.
+    fn next(&mut self) -> crate::Result<Option<&'a [u8]>> {
+        let line_end = match self.walk {
+            Walk::Closed => return Ok(None),
+            Walk::Part { line_end } => line_end,
+            Walk::Opening => match self.open()? {
+                Some(line_end) => line_end,
+                None => {
+                    self.walk = Walk::Closed;
+                    return Ok(None);
+                }
+            },
+        };
+        // From the CRLF that ends the delimiter line: a boundary line directly below it counts too.
+        let (line, boundary_line) = self.next_boundary_line(line_end)?;
+        self.walk = match boundary_line {
+            BoundaryLine::Delimiter(line_end) => Walk::Part { line_end },
+            BoundaryLine::Close(_) => Walk::Closed,
+        };
+        // `None`: the two boundary lines share one CRLF, with no part between.
+        let part = self.input.get(line_end + 2..line);
+        part.map(Some).ok_or(crate::Error::IsMissingHeaderEnd)
+    }
+}
+
 pub(crate) fn for_each_multipart_entry<C>(
     input: &[u8],
     boundary: &[u8],
     ctx: &mut C,
     mut iterator: impl FnMut(&mut C, bun_semver::String, &Field<'_>, &[u8]),
 ) -> crate::Result<()> {
-    let mut slice = input;
     let subslicer = SlicedString::init(input, input);
+    let mut parts = Parts::new(input, boundary)?;
 
-    // RFC 2046 §5.1.1: the CRLF before `--boundary` is part of the delimiter.
-    let mut buf = [0u8; 78];
-    {
-        // `\r\n--{boundary}--` (boundary is raw bytes, so no `core::fmt`).
-        let need = boundary.len() + 6;
-        if need > buf.len() {
-            return Err(crate::Error::BoundaryIsTooLong);
-        }
-        buf[..2].copy_from_slice(b"\r\n");
-        buf[2..4].copy_from_slice(b"--");
-        buf[4..4 + boundary.len()].copy_from_slice(boundary);
-        buf[4 + boundary.len()..need].copy_from_slice(b"--");
-        let final_boundary = &buf[..need];
-
-        if slice.starts_with(&final_boundary[2..]) {
-            // `--{boundary}--` at offset 0: everything after is epilogue.
-            return Ok(());
-        } else if let Some(i) = strings::index_of(slice, final_boundary) {
-            slice = &slice[..i];
-        } else {
-            return Err(crate::Error::MissingFinalBoundary);
-        }
-    }
-
-    // `\r\n--{boundary}\r\n` (length bound already checked above).
-    let sep_len = boundary.len() + 6;
-    buf[4 + boundary.len()..sep_len].copy_from_slice(b"\r\n");
-    let separator = &buf[..sep_len];
-
-    // RFC 2046 permits the opening `--boundary` at offset 0 with no CRLF.
-    if slice.starts_with(&separator[2..]) {
-        slice = &slice[separator.len() - 2..];
-    } else if let Some(i) = strings::index_of(slice, separator) {
-        slice = &slice[i + separator.len()..];
-    } else {
-        return Ok(());
-    }
-
-    let mut splitter = strings::split(slice, separator);
-
-    while let Some(chunk) = splitter.next() {
+    while let Some(chunk) = parts.next()? {
         let mut remain = chunk;
-        let header;
-        if let Some(header_end) = strings::index_of(remain, b"\r\n\r\n") {
-            header = &remain[..header_end + 2];
-            remain = &remain[header_end + 4..];
-        } else if remain.ends_with(b"\r\n") {
-            // `body-part := MIME-part-headers [CRLF *OCTET]` permits no body.
-            header = remain;
-            remain = b"";
-        } else {
-            return Err(crate::Error::IsMissingHeaderEnd);
-        }
+        let header_end =
+            strings::index_of(remain, b"\r\n\r\n").ok_or(crate::Error::IsMissingHeaderEnd)?;
+        let header = &remain[..header_end + 2];
+        remain = &remain[header_end + 4..];
 
         let mut field = Field::default();
         let mut name = bun_semver::String::default();

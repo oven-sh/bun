@@ -69,6 +69,20 @@ describe('with type: "module"', () => {
   });
 });
 
+describe('with type: "module" in a nameless package.json of a parent directory', () => {
+  // The "type" that decides whether the annotation counts comes from the nearest
+  // package.json, with or without a "name" (DirInfo.package_json_for_module_type).
+  test("exports.default = true; exports.__esModule = true;", async () => {
+    using dir = tempDir("esmodule-annotation-nameless-scope", {
+      "package.json": `{ "type": "module" }`,
+      "lib/export-esModule-annotation.cjs": `exports.default = true;\nexports.__esModule = true;\n`,
+    });
+    const ns = await import(join(String(dir), "lib/export-esModule-annotation.cjs"));
+    expect(ns.default).toEqual({ default: true, __esModule: true });
+    expect(ns.__esModule).toBeTrue();
+  });
+});
+
 describe("CJS exports the ESM wrapper cannot enumerate", () => {
   // Building the synthetic ESM namespace enumerates module.exports; if that throws, the import
   // fails with the real error instead of yielding an empty namespace.

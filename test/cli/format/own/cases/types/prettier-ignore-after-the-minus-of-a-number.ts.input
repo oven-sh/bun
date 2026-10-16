@@ -1,0 +1,4 @@
+type A = 1 | - /* prettier-ignore */ 1 | 2;
+type B = -
+// prettier-ignore
+1;

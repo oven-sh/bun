@@ -113,15 +113,15 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextEncoderDOMConstruc
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSTextEncoderDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
+    auto* structure = structureForNewTarget<TextEncoder>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = TextEncoder::create();
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<TextEncoder>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<TextEncoder>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
-    setSubclassStructureIfNeeded<TextEncoder>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSTextEncoderDOMConstructorConstruct, JSTextEncoderDOMConstructor::construct);
@@ -228,25 +228,23 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
     JSC::JSString* input = argument0.value().toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     JSC::EncodedJSValue res;
-    StringView str;
-    if (input->is8Bit()) {
-        if (input->isNonSubstringRope()) {
-            GCDeferralContext gcDeferralContext(vm);
-            auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
-            if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
-                RELEASE_AND_RETURN(throwScope, encodedValue);
-            }
-
-            RETURN_IF_EXCEPTION(throwScope, {});
+    if (input->is8Bit() && input->isNonSubstringRope()) {
+        GCDeferralContext gcDeferralContext(vm);
+        auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
+        if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
+            RELEASE_AND_RETURN(throwScope, encodedValue);
         }
 
-        str = input->view(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
-        res = TextEncoder__encode8(lexicalGlobalObject, str.span8().data(), str.length());
+    }
+
+    // A substring's view has the width of its base string now, which can differ from input->is8Bit().
+    auto str = input->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (str->is8Bit()) {
+        res = TextEncoder__encode8(lexicalGlobalObject, str->span8().data(), str->length());
     } else {
-        str = input->view(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        res = TextEncoder__encode16(lexicalGlobalObject, str.span16().data(), str.length());
+        res = TextEncoder__encode16(lexicalGlobalObject, str->span16().data(), str->length());
     }
 
     RETURN_IF_EXCEPTION(throwScope, {});

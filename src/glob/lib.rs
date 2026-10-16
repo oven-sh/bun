@@ -2,16 +2,72 @@
 #[path = "GlobWalker.rs"]
 pub mod glob_walker;
 pub mod matcher;
+pub mod pattern;
+pub mod scan;
 
 // `match` is a Rust keyword; re-export with raw identifier.
 pub use crate::glob_walker as walk;
-pub use crate::matcher::{MatchResult, r#match};
+pub use crate::matcher::{Dots, MatchResult, r#match};
+pub use crate::pattern::{Candidate, Pattern};
 pub use walk::GlobWalker;
+
+/// A pattern whose groups were found once. Use it to match one pattern against many paths.
+pub struct Prepared<P> {
+    pattern: P,
+    shape: matcher::Shape,
+}
+
+impl<P: AsRef<[u8]>> Prepared<P> {
+    pub fn new(pattern: P) -> Prepared<P> {
+        let shape = matcher::Shape::of(pattern.as_ref());
+        Prepared { pattern, shape }
+    }
+
+    pub fn pattern(&self) -> &[u8] {
+        self.pattern.as_ref()
+    }
+
+    /// What `new` was given.
+    pub fn source(&self) -> &P {
+        &self.pattern
+    }
+
+    /// Answers like [`r#match`].
+    pub fn r#match(&self, path: &[u8]) -> MatchResult {
+        let pattern = self.pattern.as_ref();
+        matcher::match_prepared::<{ cfg!(windows) }>(pattern, &self.shape, path, Dots::Match)
+    }
+
+    /// Whether `path` is under the directory `base` ([`strip_base`]) and this pattern, which is empty or starts with a separator, matches the rest.
+    pub fn match_under(&self, base: &[u8], path: &[u8]) -> bool {
+        let is_rooted =
+            |pattern: &[u8]| pattern.first().is_none_or(|&c| bun_paths::is_sep_native(c));
+        debug_assert!(is_rooted(self.pattern()));
+        strip_base(base, path).is_some_and(|below| self.r#match(below).matches())
+    }
+}
 
 // `ignore_filter_fn` is a runtime fn-pointer field supplied at `init()` rather than a type
 // parameter (const-generic fn ptrs are unstable).
 pub type BunGlobWalker = walk::GlobWalker<walk::SyscallAccessor, false>;
 pub type BunGlobWalkerZ = walk::GlobWalker<walk::SyscallAccessor, true>;
+
+/// Returns true if `text` has an unescaped `@(`, `+(` or `!(`.
+/// The other two extglob prefixes, `?` and `*`, are glob syntax on their own.
+pub fn has_extglob_prefix(text: &[u8]) -> bool {
+    let mut from = 0;
+    while let Some(paren) = bun_core::strings::index_of_char_pos(text, b'(', from) {
+        if paren > 0 && matches!(text[paren - 1], b'@' | b'+' | b'!') {
+            let before = &text[..paren - 1];
+            let backslashes = before.iter().rev().take_while(|it| **it == b'\\').count();
+            if backslashes % 2 == 0 {
+                return true;
+            }
+        }
+        from = paren + 1;
+    }
+    false
+}
 
 /// Returns true if the given string contains glob syntax,
 /// excluding those escaped with backslashes
@@ -20,6 +76,10 @@ pub type BunGlobWalkerZ = walk::GlobWalker<walk::SyscallAccessor, true>;
 pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
     // Negation only allowed in the beginning of the pattern
     if !potential_pattern.is_empty() && potential_pattern[0] == b'!' {
+        return true;
+    }
+
+    if has_extglob_prefix(potential_pattern) {
         return true;
     }
 
@@ -84,13 +144,7 @@ pub fn strip_base<'a>(base: &[u8], path: &'a [u8]) -> Option<&'a [u8]> {
     head.iter().zip(base).all(same).then_some(below)
 }
 
-/// Whether `path` is under the directory `base` ([`strip_base`]) and `glob`, which is empty or starts with a separator, matches the rest.
-pub fn match_under(base: &[u8], glob: &[u8], path: &[u8]) -> bool {
-    debug_assert!(glob.first().is_none_or(|&c| bun_paths::is_sep_native(c)));
-    strip_base(base, path).is_some_and(|below| r#match(glob, below).matches())
-}
-
-// Run with `cargo test -p bun_glob` (also the Miri lane, `bun run rust:miri -p bun_glob`).
+// Run with `bun run rust:miri -p bun_glob`. A plain `cargo test` does not link the highway kernels.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,7 +211,10 @@ mod tests {
             ("/t/a?b", "", "/t/axb", false),
             ("/t/[!c]", "/*", "/t/[!c]/a.js", true),
             ("/t/[!c]", "/*", "/t/d/a.js", false),
-            // A base that no glob can spell.
+            ("/t/+(a)", "/*.js", "/t/+(a)/a.js", true),
+            ("/t/+(a)", "/*.js", "/t/aa/a.js", false),
+            ("/t/{1..3}", "", "/t/{1..3}", true),
+            ("/t/{1..3}", "", "/t/2", false),
             ("/t/a[b", "/*.js", "/t/a[b/a.js", true),
             ("/t/a{b", "/*.js", "/t/a{b/a.js", true),
             // The glob stays a glob.
@@ -192,10 +249,9 @@ mod tests {
             ("/t/app", "", "/t/app", true),
             ("", "/t/*/a.js", "/t/app/a.js", true),
         ] {
-            let matched = match_under(base.as_bytes(), glob.as_bytes(), path.as_bytes());
+            let matched = Prepared::new(glob).match_under(base.as_bytes(), path.as_bytes());
             assert_eq!(matched, expected, "{base:?} {glob:?} {path:?}");
         }
-        // A name that is not UTF-8: the matcher reads `\xe3[x]` as one malformed sequence.
-        assert!(match_under(b"/t/\xe3[x]", b"/*.js", b"/t/\xe3[x]/a.js"));
+        assert!(Prepared::new(b"/*.js").match_under(b"/t/\xe3[x]", b"/t/\xe3[x]/a.js"));
     }
 }

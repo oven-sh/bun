@@ -3,8 +3,11 @@ use std::collections::VecDeque;
 use bstr::BStr;
 use bun_collections::{DynamicBitSet, HashMap, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
+use bun_glob::Prepared;
 use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{join_abs_string_buf, platform};
+use bun_paths::resolve_path::{
+    join_abs_string_buf, join_abs_string_buf_checked, platform, platform_to_posix_in_place,
+};
 
 use crate::bun_fs::FileSystem;
 use crate::dependency::Behavior;
@@ -47,21 +50,21 @@ pub struct WorkspaceGraph {
 
 enum Base {
     All,
-    Name(Box<[u8]>),
-    Path(PathGlob),
-    Subtree(PathGlob),
+    Name(Prepared<Box<[u8]>>),
+    Path(Prepared<PathGlob>),
+    Subtree(Prepared<PathGlob>),
 }
 
-/// A path selector joined onto the directory that the command runs in.
+/// A path selector joined onto the directory that the command runs in. As a pattern it is `joined[base_len..]`.
 struct PathGlob {
-    glob: Box<[u8]>,
-    /// `glob[..base_len]` is as much of that directory as the selector stays under (less after `..`). It is a name, not a glob.
+    joined: Box<[u8]>,
+    /// `joined[..base_len]` is as much of that directory as the selector stays under (less after `..`). It is a name, not a glob.
     base_len: usize,
 }
 
-impl PathGlob {
-    fn base_and_tail(&self) -> (&[u8], &[u8]) {
-        self.glob.split_at(self.base_len)
+impl AsRef<[u8]> for PathGlob {
+    fn as_ref(&self) -> &[u8] {
+        &self.joined[self.base_len..]
     }
 }
 
@@ -81,6 +84,38 @@ fn strip_negations(raw: &[u8]) -> (&[u8], bool) {
         remain = rest;
     }
     (remain, negated)
+}
+
+/// The `!` entries of a `workspaces` array: one rule for `bun install` and `bun run --filter`.
+#[derive(Default)]
+pub struct NegatedWorkspaces(Vec<Box<[u8]>>);
+
+impl NegatedWorkspaces {
+    /// Whether `entry` is negated: it is kept, in the shape of a matched directory, and not walked.
+    pub fn take(&mut self, entry: &[u8]) -> bool {
+        let (glob, negated) = strip_negations(entry);
+        if negated {
+            let mut glob = glob.to_vec();
+            platform_to_posix_in_place::<u8>(&mut glob);
+            let mut remain: &[u8] = &glob;
+            while let Some(rest) = remain.strip_prefix(b"./") {
+                remain = rest;
+            }
+            self.0.push(strings::without_trailing_slash(remain).into());
+        }
+        negated
+    }
+
+    /// For a `dir` that a glob entry matched. One listed by its path stays a member: do not ask.
+    pub fn excludes(&self, dir: &[u8]) -> bool {
+        // `dir/**` also removes `dir` itself, as in npm.
+        self.0.iter().any(|glob| {
+            bun_glob::r#match(glob, dir).matches()
+                || glob
+                    .strip_suffix(b"/**")
+                    .is_some_and(|base| bun_glob::r#match(base, dir).matches())
+        })
+    }
 }
 
 /// Accepted shapes: `!`* then `...`/`...^` prefix and/or `...`/`^...` suffix around `*`, `{dir}`, `./path` or a name glob.
@@ -121,7 +156,7 @@ fn parse(
         Global::crash();
     }
 
-    let mut resolve = |part: &[u8], path_buf: &mut [u8]| -> PathGlob {
+    let mut resolve = |part: &[u8], path_buf: &mut [u8]| -> Prepared<PathGlob> {
         let mut join = |part: &[u8]| -> Box<[u8]> {
             strings::without_trailing_slash(join_abs_string_buf::<platform::Posix>(
                 original_cwd,
@@ -130,10 +165,10 @@ fn parse(
             ))
             .into()
         };
-        let glob = join(part);
+        let joined = join(part);
         let cwd_posix = cwd_posix.get_or_insert_with(|| join(b"."));
-        let base_len = bun_glob::literal_base_len(cwd_posix, &glob);
-        PathGlob { glob, base_len }
+        let base_len = bun_glob::literal_base_len(cwd_posix, &joined);
+        Prepared::new(PathGlob { joined, base_len })
     };
 
     let base = if remain == b"*" || remain == b"**" {
@@ -143,7 +178,7 @@ fn parse(
     } else if remain.first() == Some(&b'.') {
         Base::Path(resolve(remain, path_buf))
     } else {
-        Base::Name(remain.into())
+        Base::Name(Prepared::new(remain.into()))
     };
 
     Selector {
@@ -165,19 +200,20 @@ fn base_matches(base: &Base, c: &Candidate<'_>, explicit_root_only: bool) -> boo
                 !c.name.is_empty()
             }
         }
-        Base::Name(glob) => bun_glob::r#match(glob, c.name).matches(),
+        Base::Name(glob) => glob.r#match(c.name).matches(),
         // A selector that spells a workspace directory selects it, whatever else it matches as a glob.
         Base::Path(path) => {
-            let (base, tail) = path.base_and_tail();
-            c.abs_posix_dir == &*path.glob || bun_glob::match_under(base, tail, c.abs_posix_dir)
+            let PathGlob { joined, base_len } = path.source();
+            c.abs_posix_dir == &**joined || path.match_under(&joined[..*base_len], c.abs_posix_dir)
         }
         Base::Subtree(path) => {
-            let (base, tail) = path.base_and_tail();
+            let PathGlob { joined, base_len } = path.source();
+            let (base, tail) = joined.split_at(*base_len);
             let Some(mut below) = bun_glob::strip_base(base, c.abs_posix_dir) else {
                 return false;
             };
             loop {
-                if below == tail || bun_glob::r#match(tail, below).matches() {
+                if below == tail || path.r#match(below).matches() {
                     return true;
                 }
                 match strings::last_index_of_char(below, b'/') {
@@ -385,6 +421,55 @@ impl WorkspaceGraph {
         graph
     }
 
+    /// Candidate indices, each after those it depends on. A cycle is broken at one of its members.
+    pub(crate) fn dependency_order(&self) -> Vec<u32> {
+        let n = self.dependencies.len();
+        let mut remaining: Vec<usize> = self.dependencies.iter().map(Vec::len).collect();
+        let mut order: Vec<u32> = Vec::with_capacity(n);
+        let mut queued = bitset(n);
+        let mut queue: VecDeque<u32> = VecDeque::new();
+        for i in 0..n {
+            if remaining[i] == 0 {
+                queued.set(i);
+                queue.push_back(i as u32);
+            }
+        }
+
+        loop {
+            while let Some(u) = queue.pop_front() {
+                order.push(u);
+                for &v in &self.dependents[u as usize] {
+                    if queued.is_set(v as usize) {
+                        continue;
+                    }
+                    remaining[v as usize] -= 1;
+                    if remaining[v as usize] == 0 {
+                        queued.set(v as usize);
+                        queue.push_back(v);
+                    }
+                }
+            }
+            if order.len() == n {
+                return order;
+            }
+            // Stalled on a cycle. Follow unmet edges until one repeats: that candidate is on it.
+            let mut on_walk = bitset(n);
+            let mut cur = (0..n)
+                .find(|&i| !queued.is_set(i))
+                .expect("order.len() < n");
+            while !on_walk.is_set(cur) {
+                on_walk.set(cur);
+                cur = self.dependencies[cur]
+                    .iter()
+                    .map(|&d| d as usize)
+                    .find(|&d| !queued.is_set(d))
+                    .expect("remaining[cur] > 0");
+            }
+            queued.set(cur);
+            queue.push_back(cur as u32);
+        }
+    }
+
     pub fn from_dependency_names<D, I>(names: &[&[u8]], mut dependency_names: D) -> WorkspaceGraph
     where
         D: FnMut(usize) -> I,
@@ -455,11 +540,15 @@ pub fn select_lockfile_workspaces(
                 ResolutionTag::Workspace => res.workspace().slice(string_buf),
                 _ => b".",
             };
-            strings::without_trailing_slash(join_abs_string_buf::<platform::Posix>(
-                top_level_dir,
-                &mut path_buf.0,
-                &[rel],
-            ))
+            // A path out of bun.lock that fits no path buffer is selected by its name only.
+            strings::without_trailing_slash(
+                join_abs_string_buf_checked::<platform::Posix>(
+                    top_level_dir,
+                    &mut path_buf.0,
+                    &[rel],
+                )
+                .unwrap_or_default(),
+            )
             .into()
         })
         .collect();

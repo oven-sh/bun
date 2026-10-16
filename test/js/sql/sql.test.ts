@@ -12711,6 +12711,18 @@ describe("shared createInstance validation (no server)", () => {
     },
   );
 
+  test.concurrent.each(["postgres", "mysql"] as const)("%s rejects a hostname containing null bytes", async adapter => {
+    for (const hostname of ["127.0.0.1\0evil.example.invalid", "127.0.0.1\0"]) {
+      await using sql = new SQL({ ...base, adapter, hostname, username: "u" });
+      const err: any = await sql`select 1`.then(
+        () => null,
+        e => e,
+      );
+      expect(err?.message).toBe("hostname must not contain null bytes");
+      expect(err?.code).toBe("ERR_INVALID_ARG_TYPE");
+    }
+  });
+
   test.concurrent("SSL_CTX creation failure throws the structured BoringSSL error", async () => {
     // An unparseable CA makes `SSL_CTX` creation fail synchronously inside
     // createInstance, before any socket exists. The failure carries

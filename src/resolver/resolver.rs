@@ -2577,17 +2577,11 @@ impl<'a> Resolver<'a> {
                                 == Fs::file_system::EntryKind::Dir
                     }
                     // The listing can be older than a folder that the resolver then read.
-                    None => is_folder
-                        && self
-                            .dir_cache_mut()
-                            .get(bun_paths::resolve_path::join_abs_string_buf::<
-                                bun_paths::resolve_path::platform::Auto,
-                            >(
-                                dir,
-                                &mut buf.get_or_insert_with(bun_paths::path_buffer_pool::get)[..],
-                                &[&path[..name_end]],
-                            ))
-                            .is_some(),
+                    None => {
+                        is_folder
+                            && dir.is_empty()
+                            && self.dir_cache_mut().get(&path[..name_end]).is_some()
+                    }
                 };
                 if known {
                     break;

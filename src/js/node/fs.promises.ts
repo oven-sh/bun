@@ -362,7 +362,7 @@ const exports = {
       return fs.rm(path, options);
     }
     // Like Node's rimraf, wait for the next attempt on a timer: no thread is held.
-    for (let retries = 0; ; ) {
+    for (let retries = 0; ;) {
       try {
         return await fs.rm(path, options);
       } catch (err) {

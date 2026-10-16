@@ -51,6 +51,8 @@ unsafe extern "C" {
         peak_commit: *mut usize,
         page_faults: *mut usize,
     );
+    /// The smallest range `mi_manage_os_memory_ex` takes as an arena. No preconditions.
+    pub safe fn mi_arena_min_size() -> usize;
     /// No preconditions; returns null on failure.
     pub safe fn mi_malloc_aligned(size: usize, alignment: usize) -> *mut c_void;
     /// No preconditions; returns null on failure.

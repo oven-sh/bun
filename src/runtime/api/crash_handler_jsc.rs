@@ -23,6 +23,10 @@ pub(crate) mod js_bindings {
             ("segfaultInDll", __jsc_host_js_segfault_in_dll),
             ("panic", __jsc_host_js_panic),
             ("rootError", __jsc_host_js_root_error),
+            (
+                "structureHeapReservationFailed",
+                __jsc_host_js_structure_heap_reservation_failed,
+            ),
             ("outOfMemory", __jsc_host_js_out_of_memory),
             ("abort", __jsc_host_js_abort),
             ("fastfail", __jsc_host_js_fastfail),
@@ -198,6 +202,21 @@ pub(crate) mod js_bindings {
     #[bun_jsc::host_fn]
     fn js_root_error(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::handle_root_error("Unexpected");
+    }
+
+    /// Calls what JavaScriptCore calls when it cannot set up its Structure heap, with the sizes
+    /// given as byte counts. Returns when that function does.
+    #[bun_jsc::host_fn]
+    fn js_structure_heap_reservation_failed(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let mut sizes = [0usize; 3];
+        for (i, size) in sizes.iter_mut().enumerate() {
+            *size = frame.argument(i).coerce_to_int64(global)? as usize;
+        }
+        crash_handler::Bun__structureHeapReservationFailed(sizes[0], sizes[1], sizes[2]);
+        Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn]

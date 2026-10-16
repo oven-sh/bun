@@ -146,6 +146,7 @@ export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") a
   segfault: () => void;
   panic: () => void;
   rootError: () => void;
+  structureHeapReservationFailed: (largest: number, smallest: number, reserved: number) => void;
   outOfMemory: () => void;
   abort: () => void;
   fastfail: () => void;

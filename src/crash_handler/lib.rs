@@ -1248,7 +1248,8 @@ mod draft {
             match self.0.trailing_zeros() {
                 30.. => write!(f, "{} GB", self.0 >> 30),
                 20..30 => write!(f, "{} MB", self.0 >> 20),
-                _ => write!(f, "{} KB", self.0 >> 10),
+                10..20 => write!(f, "{} KB", self.0 >> 10),
+                _ => write!(f, "{} bytes", self.0),
             }
         }
     }
@@ -1256,20 +1257,22 @@ mod draft {
     /// JavaScriptCore calls this when it cannot set up its Structure heap at startup
     /// (`StructureAlignedMemoryAllocator.cpp`). `reserved` is 0 when the OS refused every size from
     /// `largest` down to `smallest`. Otherwise `reserved` bytes fit and mimalloc refused them.
+    /// Exits with an error when the environment explains that. Else returns, and JavaScriptCore crashes.
     #[unsafe(no_mangle)]
     #[cold]
-    extern "C" fn Bun__structureHeapReservationFailed(
+    pub extern "C" fn Bun__structureHeapReservationFailed(
         largest: usize,
         smallest: usize,
         reserved: usize,
-    ) -> ! {
+    ) {
         use bun_core::write_pretty;
 
-        // JavaScriptCore can start on a thread that has no `Output` source. The raw writer needs none.
-        Output::flush();
-        let writer = &mut stderr_writer();
+        // mimalloc takes no range under its smallest arena, and JavaScriptCore keeps the first
+        // block of the range for itself.
+        let arena_min = bun_alloc::mimalloc::mi_arena_min_size();
+        let mut message = BoundedArray::<u8, 1024>::default();
+        let writer = &mut message.writer();
         let colors = enable_ansi_colors_stderr();
-        let refused_by_os = reserved == 0 || largest > reserved;
         let _ = if reserved == 0 {
             write_pretty!(
                 writer,
@@ -1279,8 +1282,18 @@ mod draft {
                 HeapSize(largest),
                 HeapSize(smallest),
             )
-        } else if refused_by_os {
-            // mimalloc takes every size above its 32 MB minimum, so what it refused here is too small.
+        } else if reserved > arena_min {
+            // The range is large enough, so mimalloc could not commit its bookkeeping for it. Only
+            // Windows refuses that commit. Anywhere else this is a bug, and it stays a crash.
+            #[cfg(not(windows))]
+            return;
+            #[cfg(windows)]
+            write_pretty!(
+                writer,
+                colors,
+                "<r><red>error<r><d>:<r> could not commit memory for the JavaScript heap\n<blue>note<r><d>:<r> the system commit limit or the memory limit of a job object was reached: close other programs or enlarge the page file\n",
+            )
+        } else if largest > reserved {
             write_pretty!(
                 writer,
                 colors,
@@ -1291,25 +1304,30 @@ mod draft {
                 HeapSize(reserved),
             )
         } else {
+            // Nothing was refused, so the size is the one that was asked for.
             write_pretty!(
                 writer,
                 colors,
-                "<r><red>error<r><d>:<r> could not use the {} of address space reserved for the JavaScript heap\n",
+                "<r><red>error<r><d>:<r> {} of address space is too small for the JavaScript heap\n<blue>note<r><d>:<r> BUN_JSC_structureHeapSizeInKB must be at least {}\n",
                 HeapSize(reserved),
+                (arena_min * 2) >> 10,
             )
         };
 
+        // The OS refused at least one size. Name what can make it do that.
         #[cfg(unix)]
-        if refused_by_os {
+        if largest > reserved {
             use bun_sys::posix::{RlimitResource, getrlimit};
 
-            // `ulimit` takes and prints both limits in KB.
+            // `ulimit` takes and prints its limits in KB.
             let limit_kb = |resource| {
                 let limit = getrlimit(resource).ok()?.cur;
                 (limit != libc::RLIM_INFINITY as u64).then_some(limit / 1024)
             };
             let limits = [
                 ('v', limit_kb(RlimitResource::AS)),
+                // Only Linux is known to charge a mapping to the data limit.
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 ('d', limit_kb(RlimitResource::DATA)),
             ];
             for (flag, limit) in limits {
@@ -1317,32 +1335,41 @@ mod draft {
                 let _ = write_pretty!(
                     writer,
                     colors,
-                    "<blue>note<r><d>:<r> 'ulimit -{}' is {} KB, run 'ulimit -{} unlimited' to remove the limit\n",
+                    "<blue>note<r><d>:<r> 'ulimit -{}' is {} KB, raise or remove that limit\n",
                     flag,
                     limit,
-                    flag,
                 );
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if limits.iter().all(|(_, limit)| limit.is_none()) {
-                let _ = write_pretty!(
-                    writer,
-                    colors,
-                    "<blue>note<r><d>:<r> 'ulimit -v' and 'ulimit -d' are unlimited, check if vm.overcommit_memory is 2 and check the limits of the container or sandbox\n",
-                );
+                // Mode 2 charges a reservation to the commit limit, `MAP_NORESERVE` or not.
+                let mut mode = [0u8; 1];
+                let strict = bun_sys::File::open(
+                    bun_core::zstr!("/proc/sys/vm/overcommit_memory"),
+                    bun_sys::O::RDONLY,
+                    0,
+                )
+                .and_then(|file| file.read(&mut mode))
+                .is_ok_and(|read| read == 1 && mode[0] == b'2');
+                let _ = if strict {
+                    write_pretty!(
+                        writer,
+                        colors,
+                        "<blue>note<r><d>:<r> vm.overcommit_memory is 2, which refuses a reservation over the commit limit: free memory, add swap or raise vm.overcommit_ratio\n",
+                    )
+                } else {
+                    write_pretty!(
+                        writer,
+                        colors,
+                        "<blue>note<r><d>:<r> 'ulimit -v' and 'ulimit -d' are unlimited, check the sandbox this process runs in\n",
+                    )
+                };
             }
         }
-        // Windows has no rlimits, and a reservation is charged to nothing there. What fails is the
-        // commit of mimalloc's bookkeeping for the range.
-        #[cfg(windows)]
-        if reserved != 0 {
-            let _ = write_pretty!(
-                writer,
-                colors,
-                "<blue>note<r><d>:<r> check the system commit limit and the memory limit of the job object, if this process runs in one\n",
-            );
-        }
 
+        // One write, with no `Output` source: JavaScriptCore can start on any thread.
+        Output::flush();
+        let _ = stderr_writer().write_all(message.slice());
         Global::exit(1);
     }
 

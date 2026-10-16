@@ -68,7 +68,7 @@ test("ok", () => expect(add(1, 1)).toBe(2));
 
 // lcov.info is written to a temporary name in coverage/ and renamed over the
 // previous report. Nothing of the previous report stays under the temporary name.
-test("lcov reporter leaves only lcov.info in the coverage dir on repeated runs", async () => {
+test.concurrent("lcov reporter leaves only lcov.info in the coverage dir on repeated runs", async () => {
   using dir = tempDir("cov-lcov-rerun", lcovRerunFiles);
   for (let i = 0; i < 2; i++) {
     await using proc = Bun.spawn({
@@ -86,7 +86,7 @@ test("lcov reporter leaves only lcov.info in the coverage dir on repeated runs",
 });
 
 // A rename does not replace a directory that has entries. The directory stays where it is.
-test("lcov reporter fails when lcov.info is a directory with entries, and leaves it in place", async () => {
+test.concurrent("lcov reporter fails when lcov.info is a directory with entries, and leaves it in place", async () => {
   using dir = tempDir("cov-lcov-is-dir", {
     ...lcovRerunFiles,
     "coverage/lcov.info/keep.txt": "keep",
@@ -107,7 +107,7 @@ test("lcov reporter fails when lcov.info is a directory with entries, and leaves
   expect(exitCode).toBe(1);
 });
 
-test("lcov reporter replaces an empty directory at lcov.info", async () => {
+test.concurrent("lcov reporter replaces an empty directory at lcov.info", async () => {
   using dir = tempDir("cov-lcov-is-empty-dir", lcovRerunFiles);
   mkdirSync(path.join(String(dir), "coverage", "lcov.info"), { recursive: true });
   await using proc = Bun.spawn({

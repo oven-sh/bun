@@ -4,7 +4,6 @@
 // --- Getters ---
 #define FOR_EACH_GETTER(macro) \
     macro(Archive) \
-    macro(CSRF) \
     macro(CryptoHasher) \
     macro(FFI) \
     macro(FetchSession) \
@@ -39,8 +38,6 @@
     macro(isStandaloneExecutable) \
     macro(origin) \
     macro(s3) \
-    macro(semver) \
-    macro(unsafe) \
     macro(valkey) \
 
 // --- Callbacks ---

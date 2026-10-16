@@ -71,6 +71,26 @@ To reach the function:
 - from `src/js`: `$bindgen("bindgen_test.bind.ts", "add")`, which is typed from the schema;
 - from a C++ static property table: `Bun::Bindgen::Generated::BindgenTest::jsAdd` in `GeneratedBindgenTest.h`.
 
+### Namespaces
+
+`b.namespace` is a plain object that holds functions, like `Bun.semver`. Each is written as
+the argument of `b.fn` is:
+
+```ts src/semver_jsc/SemverObject.bind.ts icon="/icons/typescript.svg"
+export const semver = b.namespace({
+  satisfies: {
+    args: { version: b.string.loose.utf8, range: b.string.loose.utf8 },
+    returns: b.bool,
+    throws: true,
+  },
+  order: { .. },
+});
+```
+
+`Bun::Bindgen::Generated::SemverObject::createSemver` makes the object. It has the signature of
+a `PropertyCallback` of a static property table, so the object is made when the property is
+first read.
+
 ### What a function may do: `capability`
 
 What a function can do to the JS heap is a parameter it is given, so it is

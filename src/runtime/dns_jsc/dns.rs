@@ -2799,43 +2799,15 @@ pub(crate) mod internal {
     static DNS_CACHE_ERRORS: AtomicUsize = AtomicUsize::new(0);
     static GETADDRINFO_CALLS: AtomicUsize = AtomicUsize::new(0);
 
-    #[host_fn]
-    pub(crate) fn get_dns_cache_stats(
-        global_object: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let object = JSValue::create_empty_object(global_object, 6);
-        object.put(
-            global_object,
-            b"cacheHitsCompleted",
-            JSValue::js_number(DNS_CACHE_HITS_COMPLETED.load(Ordering::Relaxed) as f64),
-        );
-        object.put(
-            global_object,
-            b"cacheHitsInflight",
-            JSValue::js_number(DNS_CACHE_HITS_INFLIGHT.load(Ordering::Relaxed) as f64),
-        );
-        object.put(
-            global_object,
-            b"cacheMisses",
-            JSValue::js_number(DNS_CACHE_MISSES.load(Ordering::Relaxed) as f64),
-        );
-        object.put(
-            global_object,
-            b"size",
-            JSValue::js_number(DNS_CACHE_SIZE.load(Ordering::Relaxed) as f64),
-        );
-        object.put(
-            global_object,
-            b"errors",
-            JSValue::js_number(DNS_CACHE_ERRORS.load(Ordering::Relaxed) as f64),
-        );
-        object.put(
-            global_object,
-            b"totalCount",
-            JSValue::js_number(GETADDRINFO_CALLS.load(Ordering::Relaxed) as f64),
-        );
-        Ok(object)
+    pub(crate) fn get_cache_stats() -> crate::generated_bindgen::dns::DNSCacheStats {
+        crate::generated_bindgen::dns::DNSCacheStats {
+            cache_hits_completed: DNS_CACHE_HITS_COMPLETED.load(Ordering::Relaxed),
+            cache_hits_inflight: DNS_CACHE_HITS_INFLIGHT.load(Ordering::Relaxed),
+            cache_misses: DNS_CACHE_MISSES.load(Ordering::Relaxed),
+            size: DNS_CACHE_SIZE.load(Ordering::Relaxed),
+            errors: DNS_CACHE_ERRORS.load(Ordering::Relaxed),
+            total_count: GETADDRINFO_CALLS.load(Ordering::Relaxed),
+        }
     }
 
     /// The `addresses: string[]` argument of the testing hooks below, as sockaddrs.
@@ -3116,50 +3088,13 @@ pub(crate) mod internal {
         });
     }
 
-    #[host_fn]
-    pub(crate) fn prefetch_from_js(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-
-        if arguments.len() < 1 {
-            return Err(global_this.throw_not_enough_arguments("prefetch", 1, arguments.len()));
-        }
-
-        let hostname_or_url = arguments[0];
-
-        let hostname_slice = if hostname_or_url.is_string() {
-            hostname_or_url.to_utf8(global_this)?
-        } else {
-            return Err(
-                global_this.throw_invalid_arguments(format_args!("hostname must be a string"))
-            );
-        };
-
-        let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
-
-        let port: u16 = if arguments.len() > 1 && !arguments[1].is_undefined_or_null() {
-            global_this.validate_integer_range::<u16>(
-                arguments[1],
-                443,
-                jsc::IntegerRange {
-                    field_name: b"port",
-                    always_allow_zero: true,
-                    ..Default::default()
-                },
-            )?
-        } else {
-            443
-        };
-
-        // SAFETY: `VirtualMachine::get()` returns the live thread-local VM (panics if absent).
+    pub(crate) fn prefetch_from_js(hostname: &[u8], port: u16) {
+        let hostname_z = bun::ZBox::from_bytes(hostname);
         prefetch(
             VirtualMachine::get().as_mut().uws_loop(),
             Some(hostname_z.as_zstr()),
             port,
         );
-        Ok(JSValue::UNDEFINED)
     }
 
     pub(crate) fn prefetch(loop_: *mut Loop, hostname: Option<&ZStr>, port: u16) {
@@ -6128,8 +6063,6 @@ export_host_fn!(Resolver::get_global_servers, "Bun__DNS__getServers");
 export_host_fn!(Resolver::set_global_servers, "Bun__DNS__setServers");
 export_host_fn!(Resolver::global_reverse, "Bun__DNS__reverse");
 export_host_fn!(Resolver::global_lookup_service, "Bun__DNS__lookupService");
-export_host_fn!(internal::prefetch_from_js, "Bun__DNS__prefetch");
-export_host_fn!(internal::get_dns_cache_stats, "Bun__DNS__getCacheStats");
 // JS2Native ($newRustFunction) entry points — see GeneratedJS2Native.h
 export_host_fn!(
     Resolver::new_resolver,

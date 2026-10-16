@@ -15,6 +15,7 @@ import {
   type Method,
   type ModuleDefinition,
   NamedType,
+  type NamespaceDefinition,
   OptionalType,
   type Origin,
   type OverloadDispatch,
@@ -35,7 +36,9 @@ export interface SchemaFile {
   moduleDefinition: ModuleDefinition | null;
   /** In dependency order. */
   types: NamedType[];
+  /** Those of `namespaces` too. */
   functions: FunctionDefinition[];
+  namespaces: NamespaceDefinition[];
 }
 
 export interface Tables {
@@ -385,7 +388,9 @@ ${[...headers].map(header => `#include "${header}"\n`).join("")}${file.types.map
     file.functions.length > 0
       ? `
 namespace Bun::Bindgen::Generated::${file.origin.namespace} {
-${file.functions.map(fn => `JSC_DECLARE_HOST_FUNCTION(${hostFunctionName(fn)});`).join("\n")}
+${file.functions.map(fn => `JSC_DECLARE_HOST_FUNCTION(${hostFunctionName(fn)});`).join("\n")}${file.namespaces
+          .map(namespace => `\n// A PropertyCallback of a static property table.\n${cppNamespaceSignature(namespace)};`)
+          .join("")}
 }
 `
       : ""
@@ -393,6 +398,28 @@ ${file.functions.map(fn => `JSC_DECLARE_HOST_FUNCTION(${hostFunctionName(fn)});`
 }
 
 const hostFunctionName = (fn: FunctionDefinition) => `js${cap(fn.name.replace(/^_+/, ""))}`;
+
+const cppNamespaceSignature = (namespace: NamespaceDefinition) =>
+  `JSC::JSValue create${cap(namespace.name)}(JSC::VM& vm, JSC::JSObject* owner)`;
+
+function cppSourceForNamespace(namespace: NamespaceDefinition, origin: Origin): string {
+  return `
+namespace Bun::Bindgen::Generated::${origin.namespace} {
+${cppNamespaceSignature(namespace)}
+{
+    JSC::JSGlobalObject* globalObject = owner->globalObject();
+    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min<unsigned>(${namespace.functions.length}, JSC::JSFinalObject::maxInlineCapacity));
+${namespace.functions
+  .map(
+    ([name, fn]) =>
+      `    object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, ${asciiLiteral(name)}), ${fn.length}, ${hostFunctionName(fn)}, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, 0);`,
+  )
+  .join("\n")}
+    return object;
+}
+}
+`;
+}
 
 function cppSourceForEnum(type: EnumerationType): string {
   const pairs = type.spellings
@@ -850,7 +877,9 @@ ${[...headers].map(header => `#include "${header}"\n`).join("")}${systemHeaders.
             ? cppSourceForClass(type)
             : "",
     )
-    .join("")}${file.functions.map(cppSourceForFunction).join("")}`;
+    .join("")}${file.functions.map(cppSourceForFunction).join("")}${file.namespaces
+    .map(namespace => cppSourceForNamespace(namespace, file.origin))
+    .join("")}`;
 }
 
 /** Included by headers most of the C++ includes, so it holds only what sizes their members. */

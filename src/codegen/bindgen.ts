@@ -18,6 +18,7 @@ import {
   FunctionDefinition,
   ModuleDefinition,
   NamedType,
+  NamespaceDefinition,
   type Origin,
   pascalCase,
   snakeCase,
@@ -30,7 +31,7 @@ async function load(source: string): Promise<SchemaFile> {
   const file = source.slice(crate.length + 1);
   const stem = path.basename(file, ".bind.ts");
   const origin: Origin = { stem, namespace: pascalCase(stem), rustModule: snakeCase(stem), crate };
-  const result: SchemaFile = { origin, moduleDefinition: null, types: [], functions: [] };
+  const result: SchemaFile = { origin, moduleDefinition: null, types: [], functions: [], namespaces: [] };
   const exports: Record<string, unknown> = await import(pathToFileURL(file).href).catch(error => {
     throw new Error(`${file}: ${error.message}`, { cause: error });
   });
@@ -42,6 +43,14 @@ async function load(source: string): Promise<SchemaFile> {
       value.name = name;
       value.origin = origin;
       result.functions.push(value);
+    } else if (value instanceof NamespaceDefinition) {
+      value.name = name;
+      for (const [property, fn] of value.functions) {
+        fn.name = property;
+        fn.origin = origin;
+        result.functions.push(fn);
+      }
+      result.namespaces.push(value);
     } else if (value instanceof NamedType) {
       // Re-exporting an import is fine; the first file to export a type owns it.
       if (value.origin) continue;
@@ -50,7 +59,7 @@ async function load(source: string): Promise<SchemaFile> {
       value.origin = origin;
       result.types.push(value);
     } else {
-      throw new TypeError(`${stem}.bind.ts: export ${name} is not a type, a function or b.module()`);
+      throw new TypeError(`${stem}.bind.ts: export ${name} is not a type, a function, a namespace or b.module()`);
     }
   }
   return result;

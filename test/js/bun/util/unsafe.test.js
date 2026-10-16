@@ -80,3 +80,75 @@ it("Bun.allocUnsafe takes an integer that fits 32 bits", () => {
     );
   }
 });
+
+it("Bun.unsafe is a plain object of functions", () => {
+  expect(Object.getPrototypeOf(Bun.unsafe)).toBe(Object.prototype);
+  expect(Bun.unsafe).toBe(Bun.unsafe);
+  expect(
+    Object.entries(Object.getOwnPropertyDescriptors(Bun.unsafe)).map(([key, { value, ...attributes }]) => ({
+      key,
+      name: value.name,
+      length: value.length,
+      ...attributes,
+    })),
+  ).toEqual(
+    [
+      ["gcAggressionLevel", 0],
+      ["arrayBufferToString", 1],
+      ["mimallocDump", 0],
+      ["memoryFootprint", 0],
+      ["setJITPolicy", 1],
+    ].map(([key, length]) => ({ key, name: key, length, writable: true, enumerable: true, configurable: true })),
+  );
+});
+
+it("Bun.unsafe.gcAggressionLevel returns the level it replaces", () => {
+  const initial = Bun.unsafe.gcAggressionLevel();
+  try {
+    Bun.unsafe.gcAggressionLevel(0);
+    expect(Bun.unsafe.gcAggressionLevel(1)).toBe(0);
+    expect(Bun.unsafe.gcAggressionLevel("2")).toBe(1);
+    expect(Bun.unsafe.gcAggressionLevel(0.9)).toBe(2);
+    // Nothing, and a level there is not, change nothing.
+    Bun.unsafe.gcAggressionLevel(1);
+    for (const level of [undefined, null, 3, -1]) expect(Bun.unsafe.gcAggressionLevel(level)).toBe(1);
+    expect(() => Bun.unsafe.gcAggressionLevel(Symbol())).toThrow(TypeError);
+    expect(Bun.unsafe.gcAggressionLevel()).toBe(1);
+  } finally {
+    Bun.unsafe.gcAggressionLevel(initial);
+  }
+});
+
+it("Bun.unsafe.arrayBufferToString takes a typed array or an ArrayBuffer", () => {
+  expect(Bun.unsafe.arrayBufferToString(new Uint8Array([104, 105, 233]))).toBe("hi\xe9");
+  expect(Bun.unsafe.arrayBufferToString(new Uint8Array([104, 105]).buffer)).toBe("hi");
+  expect(Bun.unsafe.arrayBufferToString(new Uint16Array([104, 0x65e5]))).toBe("h\u65e5");
+  for (const notABuffer of [undefined, null, 1, "hi", {}, []]) {
+    expect(() => Bun.unsafe.arrayBufferToString(notABuffer)).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "Expected an ArrayBuffer" }),
+    );
+  }
+});
+
+it("Bun.unsafe.memoryFootprint is a number of bytes, or undefined where the platform does not say", () => {
+  const bytes = Bun.unsafe.memoryFootprint();
+  expect(bytes === undefined || (Number.isInteger(bytes) && bytes > 1024 * 1024)).toBe(true);
+});
+
+it("Bun.unsafe.setJITPolicy takes a finite number that is at least 1", () => {
+  for (const scale of [undefined, null, "2", 2n, {}, { valueOf: () => 2 }]) {
+    expect(() => Bun.unsafe.setJITPolicy(scale)).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "scale must be a number" }),
+    );
+  }
+  for (const scale of [0, 0.999, -1, NaN, Infinity]) {
+    expect(() => Bun.unsafe.setJITPolicy(scale)).toThrow(
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "scale" is out of range. It must be a finite number >= 1. Received ${scale}`,
+      }),
+    );
+  }
+  expect(Bun.unsafe.setJITPolicy(1)).toBeUndefined();
+});

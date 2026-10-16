@@ -176,6 +176,12 @@ impl<'a> Error<'a> {
     }
 }
 
+impl From<JsError> for Error<'_> {
+    #[inline(always)]
+    fn from(error: JsError) -> Self {
+        Error::pending(error)
+    }
+}
 impl From<bun_alloc::AllocError> for Error<'_> {
     #[cold]
     fn from(error: bun_alloc::AllocError) -> Self {

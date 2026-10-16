@@ -1749,6 +1749,16 @@ export class ClassType extends NamedType {
   }
 }
 
+/** A plain object whose properties are native functions, as WebIDL's `namespace`. */
+export class NamespaceDefinition {
+  readonly functions: readonly (readonly [name: string, fn: FunctionDefinition])[];
+  name = "";
+  constructor(functions: Record<string, SignatureOptions>) {
+    this.functions = Object.entries(functions).map(([name, options]) => [name, new FunctionDefinition([options])]);
+    assert(this.functions.length > 0, "a namespace with no functions");
+  }
+}
+
 export class ModuleDefinition {
   /** Rust path the file's functions live under, e.g. `crate::node::node_os`. */
   readonly rustPath: string;

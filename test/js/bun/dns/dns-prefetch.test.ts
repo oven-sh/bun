@@ -40,7 +40,61 @@ test("a failed connect evicts the host's DNS cache entry", async () => {
   });
 });
 
+test("dns.getCacheStats returns a new plain object of integers", () => {
+  const stats = dns.getCacheStats();
+  expect(Object.getPrototypeOf(stats)).toBe(Object.prototype);
+  expect(Object.keys(stats)).toEqual([
+    "cacheHitsCompleted",
+    "cacheHitsInflight",
+    "cacheMisses",
+    "size",
+    "errors",
+    "totalCount",
+  ]);
+  for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(stats))) {
+    expect(descriptor).toEqual({ value: expect.any(Number), writable: true, enumerable: true, configurable: true });
+    expect(descriptor.value).toBeInteger();
+  }
+  expect(dns.getCacheStats()).not.toBe(stats);
+});
+
 describe("dns.prefetch", () => {
+  it("checks its arguments", () => {
+    for (const hostname of [undefined, null, 1, {}, [], Symbol(), { toString: () => "localhost" }] as any[]) {
+      expect(() => dns.prefetch(hostname)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "hostname must be a string",
+        }),
+      );
+    }
+    for (const port of ["80", true, {}, { valueOf: () => 80 }] as any[]) {
+      expect(() => dns.prefetch("localhost", port)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "port must be a number" }),
+      );
+    }
+    for (const port of [80.5, NaN, Infinity]) {
+      expect(() => dns.prefetch("localhost", port)).toThrow(
+        expect.objectContaining({
+          name: "RangeError",
+          code: "ERR_OUT_OF_RANGE",
+          message: `port must be an integer (received ${port})`,
+        }),
+      );
+    }
+    for (const port of [-1, 65536]) {
+      expect(() => dns.prefetch("localhost", port)).toThrow(
+        expect.objectContaining({
+          name: "RangeError",
+          code: "ERR_OUT_OF_RANGE",
+          message: `port must be in the range [0, 65535] (received ${port})`,
+        }),
+      );
+    }
+    for (const port of [undefined, null, 0, 65535] as any[]) expect(dns.prefetch("localhost", port)).toBeUndefined();
+  });
+
   it("should prefetch", async () => {
     // A local server keeps the test off the external network. "localhost" gets a
     // cache entry like any other name, which prefetch and fetch share.

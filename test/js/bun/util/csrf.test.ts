@@ -161,27 +161,101 @@ describe("Bun.CSRF", () => {
   });
 
   test("error handling", () => {
+    const invalid = (message: string) =>
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message });
+
     // Empty token
-    expect(() => CSRF.verify("", { secret })).toThrow();
+    expect(() => CSRF.verify("", { secret })).toThrow(invalid("Token must be a non-empty string"));
 
     // Empty secret for generation
-    expect(() => CSRF.generate("")).toThrow();
+    expect(() => CSRF.generate("")).toThrow(invalid("Secret must be a non-empty string"));
 
     // Empty secret for verification
-    expect(() => CSRF.verify("some-token", { secret: "" })).toThrow();
+    expect(() => CSRF.verify("some-token", { secret: "" })).toThrow(invalid("Secret must be a non-empty string"));
 
     // Empty sessionId for generation
-    expect(() => CSRF.generate(secret, { sessionId: "" })).toThrow();
+    expect(() => CSRF.generate(secret, { sessionId: "" })).toThrow(invalid("sessionId must be a non-empty string"));
 
     // Empty sessionId for verification
     const token = CSRF.generate(secret);
-    expect(() => CSRF.verify(token, { secret, sessionId: "" })).toThrow();
+    expect(() => CSRF.verify(token, { secret, sessionId: "" })).toThrow(
+      invalid("sessionId must be a non-empty string"),
+    );
 
     // Non-string sessionId
     // @ts-expect-error - testing invalid input
-    expect(() => CSRF.generate(secret, { sessionId: 123 })).toThrow();
+    expect(() => CSRF.generate(secret, { sessionId: 123 })).toThrow(
+      invalid("CSRFGenerateOptions.sessionId must be a string"),
+    );
     // @ts-expect-error - testing invalid input
-    expect(() => CSRF.verify(token, { secret, sessionId: 123 })).toThrow();
+    expect(() => CSRF.verify(token, { secret, sessionId: 123 })).toThrow(
+      invalid("CSRFVerifyOptions.sessionId must be a string"),
+    );
+
+    for (const notAString of [null, 1, true, {}, { toString: () => secret }] as any[]) {
+      expect(() => CSRF.generate(notAString)).toThrow(invalid("secret must be a string"));
+      expect(() => CSRF.verify(notAString, { secret })).toThrow(invalid("token must be a string"));
+      expect(() => CSRF.generate(secret, { algorithm: notAString })).toThrow(
+        invalid("CSRFGenerateOptions.algorithm must be a string"),
+      );
+    }
+    // @ts-expect-error - testing invalid input
+    expect(() => CSRF.verify()).toThrow(invalid("token must be a string"));
+    for (const algorithm of ["md5", "sha1", "bogus", ""] as any[]) {
+      expect(() => CSRF.generate(secret, { algorithm })).toThrow(invalid("Algorithm not supported"));
+      expect(() => CSRF.verify(token, { secret, algorithm })).toThrow(invalid("Algorithm not supported"));
+    }
+  });
+
+  test("a secret that is undefined is the default secret", () => {
+    for (const token of [CSRF.generate(), CSRF.generate(undefined), CSRF.generate(undefined, { encoding: "hex" })]) {
+      const encoding = /^[0-9a-f]+$/.test(token) ? "hex" : "base64url";
+      expect(CSRF.verify(token, { encoding })).toBe(true);
+      expect(CSRF.verify(token, { encoding, secret: undefined })).toBe(true);
+      expect(CSRF.verify(token, { encoding, secret })).toBe(false);
+    }
+  });
+
+  test("options are read in order, each once, and not from Object.prototype", () => {
+    const spy = (members: Record<string, unknown>, log: string[]) => {
+      const options = {};
+      for (const [member, value] of Object.entries(members)) {
+        Object.defineProperty(options, member, {
+          get() {
+            log.push(member);
+            return value;
+          },
+        });
+      }
+      return options;
+    };
+    const generated: string[] = [];
+    const token = CSRF.generate(
+      secret,
+      spy({ algorithm: "SHA512", encoding: "HEX", sessionId: "s", expiresIn: 1000 }, generated),
+    );
+    expect(generated).toEqual(["expiresIn", "sessionId", "encoding", "algorithm"]);
+    expect(token).toMatch(/^[0-9a-f]+$/);
+
+    const verified: string[] = [];
+    expect(
+      CSRF.verify(token, spy({ algorithm: "sha512", encoding: "hex", maxAge: 1000, sessionId: "s", secret }, verified)),
+    ).toBe(true);
+    expect(verified).toEqual(["secret", "sessionId", "maxAge", "encoding", "algorithm"]);
+
+    expect(CSRF.generate(secret, Object.create({ encoding: "hex" }))).toMatch(/^[0-9a-f]+$/);
+    for (const ignored of [null, undefined, 1, "hex", true] as any[]) {
+      expect(CSRF.verify(CSRF.generate(secret, ignored), { secret })).toBe(true);
+    }
+    (Object.prototype as any).encoding = "hex";
+    (Object.prototype as any).secret = "other";
+    try {
+      expect(CSRF.verify(CSRF.generate(secret, {}), { secret, encoding: "base64url" })).toBe(true);
+      expect(CSRF.verify(CSRF.generate(), {})).toBe(true);
+    } finally {
+      delete (Object.prototype as any).encoding;
+      delete (Object.prototype as any).secret;
+    }
   });
 
   describe.each([
@@ -197,49 +271,53 @@ describe("Bun.CSRF", () => {
       throw new Error(`expected ${field}: ${String(value)} to throw`);
     }
 
-    test("NaN is treated as an absent option", () => {
-      expect(() => call(NaN)).not.toThrow();
-      expect(CSRF.verify(CSRF.generate(secret, { expiresIn: NaN }), { secret, maxAge: NaN })).toBe(true);
+    const member = `${field === "expiresIn" ? "CSRFGenerateOptions" : "CSRFVerifyOptions"}.${field}`;
 
-      // The token embeds expiresIn as a big-endian u64 at bytes 24..32, after
-      // the timestamp and the nonce. 0 there means the token never expires.
-      const embeddedExpiresIn = (options?: { expiresIn: number }) =>
-        Buffer.from(CSRF.generate(secret, options), "base64url").readBigUInt64BE(24);
-      expect(embeddedExpiresIn({ expiresIn: 0 })).toBe(0n);
-      expect(embeddedExpiresIn({ expiresIn: NaN })).toBe(embeddedExpiresIn());
-      expect(embeddedExpiresIn({ expiresIn: NaN })).toBe(BigInt(24 * 60 * 60 * 1000));
+    // 0 means that the token never expires, which NaN must not turn into.
+    test("NaN is refused", () => {
+      expect(thrown(NaN)).toEqual({
+        constructor: RangeError,
+        code: "ERR_OUT_OF_RANGE",
+        message: `${member} must be an integer (received NaN)`,
+      });
     });
 
-    test("out-of-range values throw RangeError [ERR_OUT_OF_RANGE]", () => {
-      const prefix = `The value of "${field}" is out of range. It must be >= 0 and <= 9007199254740991.`;
+    test("undefined is an absent option", () => {
+      expect(() => call(undefined)).not.toThrow();
+      // The token embeds expiresIn as a big-endian u64 at bytes 24..32, after
+      // the timestamp and the nonce.
+      const embeddedExpiresIn = (options?: { expiresIn?: number | bigint }) =>
+        Buffer.from(CSRF.generate(secret, options as any), "base64url").readBigUInt64BE(24);
+      expect(embeddedExpiresIn({ expiresIn: 0 })).toBe(0n);
+      expect(embeddedExpiresIn({ expiresIn: undefined })).toBe(embeddedExpiresIn());
+      expect(embeddedExpiresIn()).toBe(BigInt(24 * 60 * 60 * 1000));
+      expect(embeddedExpiresIn({ expiresIn: 2 ** 53 - 1 })).toBe(BigInt(2 ** 53 - 1));
+      expect(embeddedExpiresIn({ expiresIn: 2n ** 64n - 1n })).toBe(2n ** 64n - 1n);
+    });
+
+    test("out-of-range and non-integer values throw RangeError [ERR_OUT_OF_RANGE]", () => {
       expect(thrown(-1)).toEqual({
         constructor: RangeError,
         code: "ERR_OUT_OF_RANGE",
-        message: `${prefix} Received -1`,
+        message: `${member} must be in the range [0, 18446744073709551615] (received -1)`,
       });
-      expect(thrown(2 ** 53)).toEqual({
-        constructor: RangeError,
-        code: "ERR_OUT_OF_RANGE",
-        message: `${prefix} Received 9007199254740992`,
-      });
-      expect(thrown(Infinity)).toEqual({
-        constructor: RangeError,
-        code: "ERR_OUT_OF_RANGE",
-        message: `${prefix} Received Infinity`,
-      });
+      for (const value of [2 ** 53, Infinity, 1.5]) {
+        expect(thrown(value)).toEqual({
+          constructor: RangeError,
+          code: "ERR_OUT_OF_RANGE",
+          message: `${member} must be an integer (received ${value})`,
+        });
+      }
     });
 
-    test("non-integer and non-number values throw TypeError [ERR_INVALID_ARG_TYPE]", () => {
-      expect(thrown(1.5)).toEqual({
-        constructor: TypeError,
-        code: "ERR_INVALID_ARG_TYPE",
-        message: `The "${field}" property must be of type integer. Received number`,
-      });
-      expect(thrown("100")).toEqual({
-        constructor: TypeError,
-        code: "ERR_INVALID_ARG_TYPE",
-        message: `The "${field}" property must be of type number. Received string`,
-      });
+    test("non-number values throw TypeError [ERR_INVALID_ARG_TYPE]", () => {
+      for (const value of ["100", null, true, {}, { valueOf: () => 1 }]) {
+        expect(thrown(value)).toEqual({
+          constructor: TypeError,
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `${member} must be a number`,
+        });
+      }
     });
   });
 

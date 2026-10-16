@@ -80,8 +80,7 @@ use bun_shell_parser::braces as Braces;
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_zlib as zlib;
 
-use crate::api::csrf_jsc;
-use crate::api::{HashObject, JSON5Object, TOMLObject, UnsafeObject, XMLObject, YAMLObject};
+use crate::api::{HashObject, JSON5Object, TOMLObject, XMLObject, YAMLObject};
 use crate::crypto as Crypto;
 use crate::node;
 use crate::test_runner::jest::Jest;
@@ -286,7 +285,6 @@ pub(crate) mod bun_object {
     export_lazy_prop_callbacks! {
         BunObject_lazyPropCb_Archive => super::get_archive_constructor,
         BunObject_lazyPropCb_CryptoHasher => Crypto::CryptoHasher::getter,
-        BunObject_lazyPropCb_CSRF => super::get_csrf_object,
         BunObject_lazyPropCb_FFI => crate::ffi::ffi_object_draft::getter,
         BunObject_lazyPropCb_FetchSession => super::get_fetch_session_constructor,
         BunObject_lazyPropCb_FileSystemRouter => super::get_file_system_router,
@@ -316,8 +314,6 @@ pub(crate) mod bun_object {
         BunObject_lazyPropCb_hash => super::get_hash_object,
         BunObject_lazyPropCb_inspect => super::get_inspect,
         BunObject_lazyPropCb_origin => super::get_origin,
-        BunObject_lazyPropCb_semver => super::get_semver,
-        BunObject_lazyPropCb_unsafe => super::get_unsafe,
         BunObject_lazyPropCb_S3Client => super::get_s3_client_constructor,
         BunObject_lazyPropCb_s3 => super::get_s3_default_client,
         BunObject_lazyPropCb_ValkeyClient => super::get_valkey_client_constructor,
@@ -1771,77 +1767,8 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
     Ok(array)
 }
 
-fn get_semver(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    bun_semver_jsc::SemverObject::create(global_this)
-}
-
-fn get_unsafe(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    UnsafeObject::create(global_this)
-}
-
 /// EnvironmentVariables is runtime defined.
 /// Also, you can't iterate over process.env normally since it only exists at build-time otherwise
-fn get_csrf_object(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
-    CSRFObject::create(global_object)
-}
-
-struct CSRFObject;
-
-impl CSRFObject {
-    fn create(global_this: &JSGlobalObject) -> JSValue {
-        let object = JSValue::create_empty_object(global_this, 2);
-
-        // NOTE: `JSFunction::create` takes the raw JSC-ABI host fn pointer,
-        // so wrap the safe Rust-style `JsResult` fns via `to_js_host_call`.
-        bun_jsc::jsc_host_abi! {
-            unsafe fn csrf_generate_shim(
-                g: *mut JSGlobalObject,
-                f: *mut CallFrame,
-            ) -> JSValue {
-                // SAFETY: JSC always passes valid pointers here.
-                let (g, f) = unsafe { (&*g, &*f) };
-                bun_jsc::to_js_host_call(g, || csrf_jsc::csrf__generate(g, f))
-            }
-        }
-        bun_jsc::jsc_host_abi! {
-            unsafe fn csrf_verify_shim(
-                g: *mut JSGlobalObject,
-                f: *mut CallFrame,
-            ) -> JSValue {
-                // SAFETY: JSC always passes valid pointers here.
-                let (g, f) = unsafe { (&*g, &*f) };
-                bun_jsc::to_js_host_call(g, || csrf_jsc::csrf__verify(g, f))
-            }
-        }
-
-        object.put(
-            global_this,
-            b"generate",
-            JSFunction::create(
-                global_this,
-                "generate",
-                csrf_generate_shim,
-                1,
-                Default::default(),
-            ),
-        );
-
-        object.put(
-            global_this,
-            b"verify",
-            JSFunction::create(
-                global_this,
-                "verify",
-                csrf_verify_shim,
-                1,
-                Default::default(),
-            ),
-        );
-
-        object
-    }
-}
-
 // This is aliased to Bun.env
 pub(crate) mod environment_variables {
     use super::*;

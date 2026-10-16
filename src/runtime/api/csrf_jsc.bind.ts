@@ -1,0 +1,45 @@
+import * as b from "../../codegen/bindgen-lib.ts";
+
+export default b.module({ rustPath: "crate::api::csrf_jsc" });
+
+export const CSRFGenerateOptions = b.dictionary(
+  {
+    expiresIn: b.u64.optional,
+    sessionId: b.string.utf8.nullable,
+    encoding: b.string.loose.utf8.optional,
+    algorithm: b.string.utf8.optional,
+  },
+  { allowArray: true, nonObjectAsEmpty: true },
+);
+
+export const CSRFVerifyOptions = b.dictionary(
+  {
+    secret: b.string.utf8.nullable,
+    sessionId: b.string.utf8.nullable,
+    maxAge: b.u64.optional,
+    encoding: b.string.loose.utf8.optional,
+    algorithm: b.string.utf8.optional,
+  },
+  { allowArray: true, nonObjectAsEmpty: true },
+);
+
+export const CSRF = b.namespace({
+  generate: {
+    args: {
+      secret: b.string.utf8.optional,
+      options: CSRFGenerateOptions.nullable.default({}),
+    },
+    returns: b.any,
+    capability: "js",
+    throws: true,
+  },
+  verify: {
+    args: {
+      token: b.string.utf8,
+      options: CSRFVerifyOptions.nullable.default({}),
+    },
+    returns: b.bool,
+    capability: "heap",
+    throws: true,
+  },
+});

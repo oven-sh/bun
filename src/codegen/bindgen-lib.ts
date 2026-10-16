@@ -15,6 +15,7 @@ import {
   integers,
   type MemberOptions,
   ModuleDefinition,
+  NamespaceDefinition,
   RefType,
   type SignatureOptions,
   StringType,
@@ -80,6 +81,9 @@ export const fn = (signature: SignatureOptions) => new FunctionDefinition([signa
 
 /** One JS function, several signatures, told apart by the kinds of their arguments. */
 export const overloads = (...signatures: SignatureOptions[]) => new FunctionDefinition(signatures);
+
+/** `export const semver = b.namespace({ satisfies: { args, returns }, .. })`: an object that holds those functions. */
+export const namespace = (functions: Record<string, SignatureOptions>) => new NamespaceDefinition(functions);
 
 /** `export default b.module({ rustPath: "crate::node::os" })`: where the file's Rust functions are. */
 export const module = (options: { rustPath: string }) => new ModuleDefinition(options);

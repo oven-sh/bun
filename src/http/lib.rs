@@ -3228,14 +3228,13 @@ impl<'a> HTTPClient<'a> {
             if socket.is_closed() || socket.is_shutdown() {
                 return Err(crate::Error::ConnectionClosed);
             }
-            let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
             // Any Err is backpressure: WantRead/WantWrite retry on the next
             // on_writable, and a fatal SSL error already ran on_close (and
             // may have freed *self), so bail via Ok(true) without touching
             // self — same as the other ProxyTunnel::write callers.
             let pending = buffer.slice().len();
             if pending > 0 {
-                let Ok(n) = ProxyTunnel::write(proxy, buffer.slice()) else {
+                let Ok(n) = ProxyTunnel::write(proxy_ptr, buffer.slice()) else {
                     let _ = buffer.write(data);
                     return Ok(true);
                 };
@@ -3248,7 +3247,7 @@ impl<'a> HTTPClient<'a> {
                 buffer.reset();
             }
             if !data.is_empty() {
-                let Ok(n) = ProxyTunnel::write(proxy, data) else {
+                let Ok(n) = ProxyTunnel::write(proxy_ptr, data) else {
                     let _ = buffer.write(data);
                     return Ok(true);
                 };
@@ -3555,18 +3554,16 @@ impl<'a> HTTPClient<'a> {
             RequestStage::ProxyBody => {
                 bun_core::scoped_log!(fetch, "send proxy body");
                 if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
-                    // Detached upgrade so `&mut self` can be reborrowed below;
-                    // the tunnel is a disjoint heap allocation (see
-                    // `proxy_tunnel::raw_as_mut` INVARIANT).
-                    let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
                     match &self.state.original_request_body {
                         HTTPRequestBody::Bytes(_) => {
                             self.set_timeout(&socket);
 
                             let to_send = self.request_body();
                             // just wait and retry when onWritable! if closed internally will call proxy.onClose
-                            let Ok(sent) = ProxyTunnel::write(proxy, to_send) else {
-                                return;
+                            let sent = match ProxyTunnel::write(proxy_ptr, to_send) {
+                                Ok(n) => n,
+                                // WantRead/WantWrite, or the tunnel closed (on_close already ran).
+                                Err(_) => return,
                             };
 
                             self.state.request_sent_len += sent;
@@ -3592,10 +3589,6 @@ impl<'a> HTTPClient<'a> {
             RequestStage::ProxyHeaders => {
                 bun_core::scoped_log!(fetch, "send proxy headers");
                 if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
-                    // Detached upgrade so `&mut self` can be reborrowed below;
-                    // the tunnel is a disjoint heap allocation (see
-                    // `proxy_tunnel::raw_as_mut` INVARIANT).
-                    let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
                     self.set_timeout(&socket);
                     // Proxy-tunnel writes can be partial across event-loop ticks
                     // — compress straight into the Vec.
@@ -3634,8 +3627,10 @@ impl<'a> HTTPClient<'a> {
                         return;
                     }
                     // just wait and retry when onWritable! if closed internally will call proxy.onClose
-                    let Ok(amount) = ProxyTunnel::write(proxy, to_send) else {
-                        return;
+                    let amount = match ProxyTunnel::write(proxy_ptr, to_send) {
+                        Ok(n) => n,
+                        // WantRead/WantWrite, or the tunnel closed (on_close already ran).
+                        Err(_) => return,
                     };
 
                     if IS_FIRST_CALL {

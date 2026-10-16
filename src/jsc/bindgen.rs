@@ -547,7 +547,29 @@ pub mod to_js {
         items: I,
         mut convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsLocal<'a>>,
     ) -> Result<'a, JsLocal<'a>> {
+        // A short array is made with one call. A longer one takes a call per element.
+        let mut short = [JSValue::ZERO; 8];
+        let mut items = items.into_iter();
+        for count in 0..short.len() {
+            let Some(item) = items.next() else {
+                // SAFETY: `count` initialized values.
+                return JsLocal::from_js_result(crate::call_zero_is_throw(
+                    heap.global(),
+                    || unsafe {
+                        extern_types::Bun__Bindgen__constructArrayFromValues(
+                            heap.global_ptr(),
+                            short.as_ptr(),
+                            count,
+                        )
+                    },
+                ));
+            };
+            short[count] = convert(heap, item)?.0;
+        }
         MarkedArgumentBuffer::new(|values| {
+            for value in short {
+                values.append(value);
+            }
             for item in items {
                 values.append(convert(heap, item)?.0);
             }

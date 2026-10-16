@@ -30,7 +30,19 @@ struct WebCore::Converter<Bun::Bindgen::IDLEnforceRange<T, Min, Max>> : WebCore:
 
 template<std::integral T, T Min, T Max>
 struct WebCore::Converter<Bun::Bindgen::IDLValidateInteger<T, Min, Max>> : WebCore::DefaultConverter<Bun::Bindgen::IDLValidateInteger<T, Min, Max>> {
+    // Inlined so that an int32 in range costs its tests and nothing else.
     static T convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, WTF::ASCIILiteral name)
+    {
+        if (value.isInt32()) [[likely]] {
+            int64_t number = value.asInt32();
+            if (number >= static_cast<int64_t>(Min) && number <= static_cast<int64_t>(Max)) [[likely]]
+                return static_cast<T>(number);
+        }
+        return convertSlow(globalObject, value, name);
+    }
+
+private:
+    NEVER_INLINE static T convertSlow(JSC::JSGlobalObject& globalObject, JSC::JSValue value, WTF::ASCIILiteral name)
     {
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);

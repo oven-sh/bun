@@ -25,6 +25,11 @@ extern "C" EncodedJSValue Bun__Bindgen__enumerationValueToJS(JSGlobalObject* glo
     return JSValue::encode(schemaStrings(getVM(globalObject)).enumerationValue(index));
 }
 
+extern "C" EncodedJSValue Bun__Bindgen__constructArrayFromValues(JSGlobalObject* globalObject, const JSValue* values, size_t count)
+{
+    return JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values, count));
+}
+
 extern "C" EncodedJSValue Bun__Bindgen__constructArray(JSGlobalObject* globalObject, MarkedArgumentBuffer* values)
 {
     VM& vm = getVM(globalObject);

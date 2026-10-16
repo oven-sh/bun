@@ -1653,23 +1653,6 @@ const diagnosedRuns = [
     label: "the test every 75 s on an idle machine",
     files: ["cli/install/bun-install-windows-rename-retry-"],
   },
-  {
-    key: "natural",
-    label: "after the files that come before it in its shard",
-    files: [
-      "bake/dev/bundle.test.ts",
-      "bake/dev/css.test.ts",
-      "bake/dev/esm.test.ts",
-      "bundler/bundler_edgecase.test.ts",
-      "bundler/transpiler/transpiler.test.js",
-      "cli/check/conformance/1.test.ts",
-      "cli/check/differential-cases-1.test.ts",
-      "cli/format/format-doctor.test.ts",
-      "cli/format/tailwind/tailwind.test.ts",
-      "cli/install/bun-install-env-file.test.ts",
-      "cli/install/bun-install-windows-rename-retry.test.ts",
-    ],
-  },
 ];
 
 async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | undefined> {

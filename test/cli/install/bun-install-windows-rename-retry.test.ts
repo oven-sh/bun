@@ -103,7 +103,25 @@ beforeAll(async () => {
   for (let i = 0; i < 300; i++) files[`package/files/${i}.txt`] = `${i}\n`;
   pkgDir = tempDir("rename-retry-pkg", files);
   const tgz = join(String(pkgDir), `${PKG}-1.0.0.tgz`);
-  await Bun.$`tar -czf ${tgz} -C ${String(pkgDir)} package`.quiet();
+  const packed = await Bun.$`tar -czf ${tgz} -C ${String(pkgDir)} package`.quiet().nothrow();
+  console.log(`DIAG tar -czf: exit ${packed.exitCode} stderr ${JSON.stringify(packed.stderr.toString())}`);
+  // The NTFS record number: the file id without the sequence number in its high 16 bits.
+  const record = (path: string) => Number(statSync(path, { bigint: true }).ino & 0xffff_ffff_ffffn);
+  const archiveRecord = record(tgz);
+  const archiveLow = archiveRecord % 2 ** 32;
+  const archiveHash = (archiveLow ^ (archiveLow >>> 16)) & 0xffff;
+  const records = expectedFiles.map(name => record(join(String(pkgDir), "package", "files", name)));
+  const runs: string[] = [];
+  for (let i = 0; i < records.length;) {
+    let end = i;
+    while (end + 1 < records.length && records[end + 1] === records[end] + 1) end++;
+    runs.push(`${i}..${end}=${records[i]}..${records[end]}`);
+    i = end + 1;
+  }
+  console.log(
+    `DIAG file ids: archive record=${archiveRecord} its 16-bit hash=${archiveHash} file with that record=[${expectedFiles.filter((_, i) => records[i] === archiveHash).join(",")}]`,
+  );
+  console.log(`DIAG file ids: files (index=record) ${runs.join(" ")}`);
   tgzBytes = readFileSync(tgz);
   tgzSha1 = createHash("sha1").update(tgzBytes).digest("hex");
 

@@ -1582,6 +1582,39 @@ for (const linker of ["hoisted", "isolated"]) {
   });
 }
 
+// The author of `lib` wrote these for their own monorepo. In the user's project `mine` is another package.
+test.concurrent("a file: folder inside a git dependency does not reach into the project that installs it", async () => {
+  using dir = tempDir("git-dep-contained-folder-project", {});
+  const root = String(dir);
+  const repoUrl = `git+${pathToFileURL(join(root, "shared-repo.git"))}`;
+  await makeSharedRepo(root, [
+    libWithFolders(
+      { sub: "file:./packages/sub" },
+      {
+        files: {
+          "packages/sub/package.json": JSON.stringify({
+            name: "sub",
+            version: "1.0.0",
+            dependencies: { mine: "workspace:*", theirs: "workspace:*", linked: "link:linked", listed: "catalog:" },
+          }),
+        },
+      },
+    ),
+  ]);
+  const project = writeProject(root, { lib: `${repoUrl}#lib` });
+  writeFileSync(
+    join(project, "package.json"),
+    JSON.stringify({ name: "project", workspaces: ["packages/*"], dependencies: { lib: `${repoUrl}#lib` } }),
+  );
+  mkdirSync(join(project, "packages", "mine"), { recursive: true });
+  writeFileSync(join(project, "packages", "mine", "package.json"), JSON.stringify({ name: "mine", version: "1.0.0" }));
+
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(stderr).not.toContain("error:");
+  expect((await lockedPackages(project)).lib[1]).toEqual({ dependencies: { sub: "file:./packages/sub" } });
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("a file: folder that a git dependency does not have is an error", async () => {
   using dir = tempDir("git-dep-missing-folder", {});
   const root = String(dir);

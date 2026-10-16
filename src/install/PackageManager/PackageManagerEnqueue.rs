@@ -2417,7 +2417,12 @@ fn report_resolve_error(
             if !dependency.behavior.is_required() {
                 return Ok(());
             }
-            if dependency.behavior.is_peer() {
+            // `update_transitive::reresolve` passes a copy of a peer without its peer bit.
+            if dependency.behavior.is_peer()
+                || this.lockfile.buffers.dependencies[id as usize]
+                    .behavior
+                    .is_peer()
+            {
                 warn_unmet_peer_dependency(this, name, version, err);
                 return Ok(());
             }

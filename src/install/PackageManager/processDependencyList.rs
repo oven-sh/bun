@@ -324,10 +324,23 @@ impl PackageManager {
                 {
                     continue;
                 }
-                let adopted = if declared.version.tag == VersionTag::Folder {
-                    self.rebase_contained_folder(declared, &folder)?
-                } else {
-                    declared
+                let adopted = match declared.version.tag {
+                    VersionTag::Folder => self.rebase_contained_folder(declared, &folder)?,
+                    VersionTag::Npm
+                    | VersionTag::DistTag
+                    | VersionTag::Git
+                    | VersionTag::Github => declared,
+                    VersionTag::Tarball
+                        if matches!(
+                            declared.version.tarball().uri,
+                            dependency::tarball::Uri::Remote(_)
+                        ) =>
+                    {
+                        declared
+                    }
+                    // `workspace:`, `link:`, `catalog:` and a tarball's path mean something in the
+                    // project of the package's author. Here they would be read in the user's.
+                    _ => continue,
                 };
                 self.lockfile.buffers.dependencies.push(adopted);
                 self.lockfile.buffers.resolutions.push(INVALID_PACKAGE_ID);

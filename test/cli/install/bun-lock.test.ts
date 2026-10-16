@@ -4628,6 +4628,53 @@ it("a tarball dependency is installed when the one before it cannot be downloade
   expect(instancesOf(lock, "z")).toEqual({ "z": "z@1.0.5" });
 });
 
+// Dependencies are resolved in a fixed order, but none of them waits for its turn to start its requests.
+it("a tarball dependency is downloaded while the dependency before it waits for its manifest", async () => {
+  const ordered = await registryWithHolds({ a: { "1.0.0": {} }, x: { "1.0.0": {} } });
+  using server = ordered.server;
+  ordered.hold([{ manifest: "a", until: "/x-1.0.0.tgz" }]);
+  const lock = await freshInstallLock(server, {
+    "package.json": { name: "foo", dependencies: { a: "1.0.0", ...dependenciesOnTarballs(server, ["x"]) } },
+  });
+  expect(instancesOf(lock, "x")).toEqual({ "x": `x@${server.url.origin}/x-1.0.0.tgz` });
+});
+
+it("what a file: folder depends on is requested while the dependency before it waits for its manifest", async () => {
+  const ordered = await registryWithHolds({ a: { "1.0.0": {} }, y: { "1.0.0": {} } });
+  using server = ordered.server;
+  ordered.hold([{ manifest: "a", until: "/y" }]);
+  const lock = await freshInstallLock(server, {
+    "package.json": { name: "foo", dependencies: { a: "1.0.0", w: "file:./w" } },
+    "w/package.json": { name: "w", version: "1.0.0", dependencies: { y: "1.0.0" } },
+  });
+  expect(instancesOf(lock, "y")).toEqual({ "y": "y@1.0.0" });
+});
+
+it("an override that no version of an installed peer matches is a warning, as on a fresh install", async () => {
+  using registry = await serveRegistry({
+    a: { "1.0.0": { peerDependencies: { p: "1.x" } } },
+    p: { "1.0.0": {}, "2.0.0": {} },
+  });
+  const packageJson = { name: "foo", dependencies: { a: "1.0.0" } };
+  using dir = tempDir("override-unmet-peer", {
+    "package.json": JSON.stringify(packageJson),
+    "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker: "hoisted" } }),
+  });
+  const lockfile = () => file(join(String(dir), "bun.lock")).text();
+  await installWithOwnCache(String(dir));
+  expect(instancesOf(await lockfile(), "p")).toEqual({ "p": "p@1.0.0" });
+
+  await write(join(String(dir), "package.json"), JSON.stringify({ ...packageJson, overrides: { p: "^9.0.0" } }));
+  const { err } = await installWithOwnCache(String(dir));
+  expect(err).toContain('warn: No version matching "^9.0.0" found for peer dependency "p" (but package exists)');
+  const overLockfile = await lockfile();
+  expect(instancesOf(overLockfile, "p")).toEqual({});
+
+  await rm(join(String(dir), "bun.lock"));
+  await installWithOwnCache(String(dir));
+  expect(await lockfile()).toBe(overLockfile);
+});
+
 it("a peer no version in the tree satisfies stays on the one it was bound to", async () => {
   using server = (
     await registryWithHolds({

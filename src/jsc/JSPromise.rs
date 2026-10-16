@@ -261,14 +261,20 @@ impl JSPromise {
     /// What `await value` waits on, spec `PromiseResolve(%Promise%, value)`: the realm's own promise as is,
     /// anything else with a `then` through a promise that adopts it. `None`: nothing to wait on.
     #[inline]
-    pub fn awaitable(global: &JSGlobalObject, value: JSValue, thenables: Thenables) -> JsResult<Option<&mut JSPromise>> {
+    pub fn awaitable(
+        global: &JSGlobalObject,
+        value: JSValue,
+        thenables: Thenables,
+    ) -> JsResult<Option<&mut JSPromise>> {
         // Inline, so that a value that is not an object costs no call.
         if !value.is_object() {
             return Ok(None);
         }
-        let promise = crate::cpp::JSC__JSPromise__awaitable(global, value, thenables == Thenables::Adopt)?;
+        let promise =
+            crate::cpp::JSC__JSPromise__awaitable(global, value, thenables == Thenables::Adopt)?;
         // `undefined` or a `JSPromise` cell, whose `JSValue` is its pointer.
-        Ok((!promise.is_undefined()).then(|| JSPromise::opaque_mut(promise.encoded() as *mut JSPromise)))
+        Ok((!promise.is_undefined())
+            .then(|| JSPromise::opaque_mut(promise.encoded() as *mut JSPromise)))
     }
 
     /// Create a new resolved promise resolving to a given value.

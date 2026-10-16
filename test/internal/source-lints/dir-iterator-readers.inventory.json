@@ -106,7 +106,7 @@
     "list": "ends-on-any-error"
   },
   "src/sys/dir.rs": {
-    "delete_children": "removed-is-end",
+    "delete_children": "asks",
     "delete_tree": "removed-is-end"
   },
   "src/sys/walker_skippable.rs": {

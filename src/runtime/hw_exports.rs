@@ -103,7 +103,6 @@ pub(crate) fn set_override_module_run_main(vm: &mut VirtualMachine, is_patched: 
     }
 }
 
-/// Whether the entry point reports the load that `Module.runMain(key)` started. If not, the call does.
 // HOST_EXPORT(Bun__VirtualMachine__entryPointTakesRunMain, c)
 pub(crate) fn entry_point_takes_run_main(
     vm: &mut VirtualMachine,

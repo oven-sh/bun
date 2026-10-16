@@ -724,7 +724,7 @@ const rules: Record<string, Case[]> = {
     `readJson("a.json");`,
   ],
 
-  "prefer-lazy-schema": [
+  "zod-prefer-lazy-schema": [
     ...[
       `const A = «z.string()»;`,
       `const A = «z.string().min(1).optional()»;`,
@@ -835,7 +835,7 @@ const rules: Record<string, Case[]> = {
     `import "a";`,
   ],
 
-  "no-unseeded-random-in-property-test": [
+  "fast-check-no-unseeded-random": [
     { code: `${fastCheck}fc.property(fc.integer(), a => «fc.sample(fc.integer(), 1)»);`, ids: ["sample"] },
     { code: `${fastCheck}fc.property(fc.integer(), a => a > «Math.random()»);`, ids: ["random"] },
     `${fastCheck}fc.assert(\n  fc.property(fc.integer(), a => {\n    const [b] = «fc.sample(fc.integer(), 1)»;\n    return a + b === b + a;\n  }),\n);`,
@@ -1221,7 +1221,7 @@ const rules: Record<string, Case[]> = {
     `import axios from "axios";`,
   ],
 
-  "no-unbounded-requests": [
+  "axios-no-unbounded-requests": [
     `${axios}«axios.get»("/a");`,
     `${axios}await «axios.get»("/a");`,
     `${axios}«axios.get»("/a", {});`,
@@ -2473,9 +2473,9 @@ describe.concurrent("the plugin bun", () => {
 "bun/no-console-window-flash" = "error"
 "bun/no-unportable-commands" = "error"
 "bun/no-cwd-dependent-path" = "error"
-"bun/prefer-lazy-schema" = "error"
+"bun/zod-prefer-lazy-schema" = "error"
 "bun/no-side-effects-on-import" = "error"
-"bun/no-unseeded-random-in-property-test" = "error"
+"bun/fast-check-no-unseeded-random" = "error"
 "bun/react-no-namespace-hooks" = "error"
 "bun/react-no-latest-value-ref" = "error"
 "bun/jsx-no-forbidden-nesting" = "error"
@@ -2485,7 +2485,7 @@ describe.concurrent("the plugin bun", () => {
 "bun/prefer-url-for-sibling-files" = "error"
 "bun/react-no-local-render-helpers" = "error"
 "bun/prefer-local-module" = ["error", { modules = [{ package = "axios", use = "@/http" }] }]
-"bun/no-unbounded-requests" = "error"
+"bun/axios-no-unbounded-requests" = "error"
 "bun/no-unhandled-emitter-errors" = "error"
 "bun/no-cast-to-brand" = ["error", { branded = [{ module = "src/ids", type = "UserId", mint = ["toUserId"], mintedIn = ["src/session.ts"] }] }]
 `,
@@ -2557,7 +2557,11 @@ const b = toUserId(text);
       .flatMap(it => it.messages)
       .filter(it => it.ruleId?.startsWith("bun/"));
     expect([...new Set(messages.map(it => `${it.ruleId}: ${it.message}`))].sort()).toEqual([
+      "bun/axios-no-unbounded-requests: This axios request has no time limit. Set `timeout` or pass a `signal`.",
+      "bun/axios-no-unbounded-requests: `timeout: 0` means no time limit.",
       "bun/consistent-directive-prefix: Use `eslint` instead of `oxlint`.",
+      "bun/fast-check-no-unseeded-random: `Math.random()` ignores the seed of the run, so a failure cannot be replayed or shrunk. Make the value a parameter of the property.",
+      "bun/fast-check-no-unseeded-random: `sample()` ignores the seed of the run, so a failure cannot be replayed or shrunk. Make the value a parameter of the property.",
       "bun/jsx-no-forbidden-nesting: `<a>` cannot be inside `<a>`.",
       "bun/no-array-just-to-count: `split()` builds an array only to read its length. Count the separators instead.",
       "bun/no-cast-to-brand: This cast creates a `UserId` from an unchecked value. Only `src/ids` should create one.",
@@ -2574,19 +2578,14 @@ const b = toUserId(text);
       "bun/no-restricted-text: `foo` matches the restricted pattern `foo`.",
       "bun/no-side-effects-on-import: This changes an object as soon as the module is imported. Move it into an exported function.",
       "bun/no-side-effects-on-import: This runs as soon as the module is imported. Move it into an exported function.",
-      "bun/no-unbounded-requests: This axios request has no time limit. Set `timeout` or pass a `signal`.",
-      "bun/no-unbounded-requests: `timeout: 0` means no time limit.",
       "bun/no-unhandled-emitter-errors: `spawn()` emits `error` when it fails, which crashes the process if nothing listens. Add an `error` listener.",
       "bun/no-unportable-commands: On Windows, `npm` is the script `npm.cmd`, which cannot run without a shell.",
       "bun/no-unportable-commands: `&&` is shell syntax, and the shell differs between systems.",
       "bun/no-unportable-commands: `ls` does not exist on Windows.",
       "bun/no-unportable-commands: `ps` does not exist on Windows.",
       "bun/no-unportable-commands: `ps` options differ between systems, and `ps` does not exist on Windows.",
-      "bun/no-unseeded-random-in-property-test: `Math.random()` ignores the seed of the run, so a failure cannot be replayed or shrunk. Make the value a parameter of the property.",
-      "bun/no-unseeded-random-in-property-test: `sample()` ignores the seed of the run, so a failure cannot be replayed or shrunk. Make the value a parameter of the property.",
       "bun/no-useless-spread-fallback: This empty object is not needed. Spreading `false`, `null` or `undefined` into an object does nothing.",
       "bun/prefer-builtin-sleep: This promise only waits. Use `Bun.sleep(ms)` or `setTimeout(ms)` from `node:timers/promises`.",
-      "bun/prefer-lazy-schema: This schema is built as soon as the module is imported. Build it when it is first used.",
       "bun/prefer-local-module: Import from `@/http` instead of `axios`.",
       "bun/prefer-timeout-signal: Only a timer aborts this controller. Use `AbortSignal.timeout(ms)` instead.",
       'bun/prefer-url-for-sibling-files: Bundlers cannot follow this path. Use `new URL("./file", import.meta.url)`.',
@@ -2595,6 +2594,7 @@ const b = toUserId(text);
       "bun/react-no-local-render-helpers: `renderCell` is created again on every render, and React does not see it as a component. Move it out and make it a component.",
       'bun/react-no-namespace-hooks: Import `useState` by name from "react".',
       "bun/react-prefer-updater-function: `rows` may be out of date when `setRows` is called. Pass a function: `setRows(previous => ..)`.",
+      "bun/zod-prefer-lazy-schema: This schema is built as soon as the module is imported. Build it when it is first used.",
     ]);
     expect(exitCode).toBe(1);
   });

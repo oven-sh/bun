@@ -66,6 +66,6 @@ test.concurrent("what is nested too deeply is left as it is, and that is said", 
   };
   const result = await format(files, { printWidth: 320 });
   expect(result.files).toEqual({ ...files, "ok.toml": files["ok.toml"].replace("a   =", "a =") });
-  expect(result.stderr).toContain("[error] huge.toml:");
+  expect(result.stderr).toStartWith("error: The code is nested too deeply\n    at huge.toml\n\n");
   expect(result.exitCode).toBe(2);
 });

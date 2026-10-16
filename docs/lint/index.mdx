@@ -85,7 +85,7 @@ Each rule's page says what differs and how to change it.
 
 ## Configure rules
 
-Rules live in `bunfig.toml`. Every built-in rule works the same way. There are no plugins to install.
+Rules live in `bunfig.toml`. Every built-in rule works the same way, with nothing to install.
 
 ```toml bunfig.toml icon="settings"
 [lint.rules]
@@ -119,6 +119,19 @@ bun lint --rules                 # list every rule
 bun lint --explain prefer-const  # what it does, examples, options
 ```
 
+### Add an ESLint plugin
+
+Need a rule that isn't built in? Load any [ESLint plugin](/lint/plugins), from npm or your own. The default rules stay on.
+
+```toml bunfig.toml icon="settings"
+[lint]
+plugins = ["eslint-plugin-perfectionist", "./lint/plugin.js"]
+
+[lint.rules]
+"perfectionist/sort-imports" = "error"
+"local/no-todo" = "warn"
+```
+
 ### Turn on a group of rules
 
 Categories switch on many rules at once: `correctness`, `suspicious`, `pedantic`, `perf`, `style`, `restriction`, `nursery`.
@@ -127,6 +140,19 @@ Categories switch on many rules at once: `correctness`, `suspicious`, `pedantic`
 [lint.categories]
 suspicious = "warn"
 perf = "warn"
+```
+
+A category includes the React, Next.js, Jest and Vitest rules only if your `package.json` lists that package. See [`lint.categories`](/runtime/bunfig#lint-categories).
+
+### Turn a plugin off
+
+Use `*` as the rule name to turn off every rule of a plugin. A setting for a single rule overrides it.
+
+```toml bunfig.toml icon="settings"
+[lint.rules]
+"jsx-a11y/*" = "off"
+"unicorn/*" = "off"
+"unicorn/no-null" = "warn"
 ```
 
 ## Ignore files
@@ -138,7 +164,7 @@ ignorePatterns = ["vendor/", "**/*.gen.ts"]
 
 ## Disable a rule in code
 
-`bun lint` uses ESLint's comments, so existing ones keep working.
+`bun lint` uses ESLint's comments, so existing ones keep working. oxlint's `oxlint-disable` comments mean the same, except next to an ESLint config, where they are ordinary comments as in ESLint.
 
 ```ts
 // eslint-disable-next-line no-console -- the CLI prints its version
@@ -181,6 +207,22 @@ Only want one of them? Turn it on like any other rule. You don't need `typeAware
 ```
 
 To report type errors too, like `bun check` does, set `typeCheck = true` or pass `--type-check`.
+
+### Choosing a `tsconfig.json`
+
+Each file is type checked with the `tsconfig.json` your editor would use for it. To use one `tsconfig.json` for the whole run, pass `--tsconfig`.
+
+```bash terminal icon="terminal"
+bun lint --type-aware --tsconfig tsconfig.lint.json
+```
+
+A `tsconfig.json` without `"include"` covers every file below it. At the root of a monorepo, that can mean loading the whole repository to lint one package. Bun warns you when that happens.
+
+```txt
+warn: Loaded 10,114 files in 1.4s to lint 1 file: vite.config.ts
+  ../../tsconfig.json has no "include", so every file below it is part of its project.
+  To lint faster, add "include" to it, or pass --tsconfig.
+```
 
 ## Git hooks
 

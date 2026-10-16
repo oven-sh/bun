@@ -16,7 +16,7 @@ use crate::oxlint::{find, property_around};
 use bun_core::strings;
 use bun_lint::ast::{BinOp, File};
 use bun_lint::span::{Position, Span};
-use bun_lint::utils::code_frame::{self, Frame, Place, Version};
+use bun_lint::utils::code_frame::{self, Frame, Place};
 use bun_lint::utils::sort;
 use bun_react_compiler::diagnostics::{
     CompilerSuggestionOperation, ErrorCategory, format_category_heading,
@@ -341,7 +341,6 @@ fn write_frame(
         column: Some(at.column + 1),
     };
     let frame = Frame {
-        version: Version::Seven,
         start: place(start),
         end: Some(place(end)),
         message,

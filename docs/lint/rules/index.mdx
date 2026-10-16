@@ -883,7 +883,9 @@ description: "Every rule built into bun lint"
 
 | Rule | Description | Default | Fixable | Needs types |
 | --- | --- | --- | --- | --- |
+| [`bun/axios-no-unbounded-requests`](/lint/rules/bun/axios-no-unbounded-requests) | Require an axios request to have a `timeout` or a `signal` |  |  |  |
 | [`bun/consistent-directive-prefix`](/lint/rules/bun/consistent-directive-prefix) | Require comments that turn rules off to start with the same word, `eslint` or `oxlint` |  | yes |  |
+| [`bun/fast-check-no-unseeded-random`](/lint/rules/bun/fast-check-no-unseeded-random) | Disallow `Math.random()` and `fc.sample()` inside a fast-check property |  |  |  |
 | [`bun/format`](/lint/rules/bun/format) | Require code to be formatted the way `bun fmt` prints it |  | yes |  |
 | [`bun/jsx-no-forbidden-nesting`](/lint/rules/bun/jsx-no-forbidden-nesting) | Disallow a JSX element inside another element that cannot contain it |  |  |  |
 | [`bun/no-array-just-to-count`](/lint/rules/bun/no-array-just-to-count) | Disallow `.split(separator).length` with a one-character separator |  | yes |  |
@@ -898,13 +900,10 @@ description: "Every rule built into bun lint"
 | [`bun/no-redundant-catch-type`](/lint/rules/bun/no-redundant-catch-type) | Disallow `: unknown` on the variable of a `catch` clause |  | yes |  |
 | [`bun/no-restricted-text`](/lint/rules/bun/no-restricted-text) | Disallow text that matches a pattern in strings, templates, JSX text, comments, and regular expressions |  |  |  |
 | [`bun/no-side-effects-on-import`](/lint/rules/bun/no-side-effects-on-import) | Disallow top-level statements that call something or assign to a property |  |  |  |
-| [`bun/no-unbounded-requests`](/lint/rules/bun/no-unbounded-requests) | Require an axios request to have a `timeout` or a `signal` |  |  |  |
 | [`bun/no-unhandled-emitter-errors`](/lint/rules/bun/no-unhandled-emitter-errors) | Require an `error` listener on event emitters that Node.js functions return |  |  |  |
 | [`bun/no-unportable-commands`](/lint/rules/bun/no-unportable-commands) | Disallow starting a process with a command that does not work the same on every system |  |  |  |
-| [`bun/no-unseeded-random-in-property-test`](/lint/rules/bun/no-unseeded-random-in-property-test) | Disallow `Math.random()` and `fc.sample()` inside a fast-check property |  |  |  |
 | [`bun/no-useless-spread-fallback`](/lint/rules/bun/no-useless-spread-fallback) | Disallow an empty object as the fallback in `...(condition ? value : {})` |  | suggestion |  |
 | [`bun/prefer-builtin-sleep`](/lint/rules/bun/prefer-builtin-sleep) | Prefer `Bun.sleep()` to a promise that only waits for `setTimeout` |  | suggestion |  |
-| [`bun/prefer-lazy-schema`](/lint/rules/bun/prefer-lazy-schema) | Disallow building a validation schema while the module loads |  |  |  |
 | [`bun/prefer-local-module`](/lint/rules/bun/prefer-local-module) | Require importing a package through the module in your project that wraps it |  | yes |  |
 | [`bun/prefer-timeout-signal`](/lint/rules/bun/prefer-timeout-signal) | Prefer `AbortSignal.timeout()` to an `AbortController` that only a timer aborts |  |  |  |
 | [`bun/prefer-url-for-sibling-files`](/lint/rules/bun/prefer-url-for-sibling-files) | Prefer `new URL("./file", import.meta.url)` to a path joined onto the module's directory |  |  |  |
@@ -912,6 +911,7 @@ description: "Every rule built into bun lint"
 | [`bun/react-no-local-render-helpers`](/lint/rules/bun/react-no-local-render-helpers) | Disallow `renderItem()` functions that are defined inside a component and used in its JSX |  |  |  |
 | [`bun/react-no-namespace-hooks`](/lint/rules/bun/react-no-namespace-hooks) | Require React hooks to be imported by name: `useState()`, not `React.useState()` |  | yes |  |
 | [`bun/react-prefer-updater-function`](/lint/rules/bun/react-prefer-updater-function) | Prefer `setItems(previous => ..)` to a new array or object made from the state of the last render |  |  |  |
+| [`bun/zod-prefer-lazy-schema`](/lint/rules/bun/zod-prefer-lazy-schema) | Disallow building a validation schema while the module loads |  |  |  |
 
 ## bun:test
 

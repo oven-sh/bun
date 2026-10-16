@@ -99,7 +99,7 @@ impl Rule for NoImpliedEval {
                 Some(eslint_utils::StaticValue::String(_))
             );
         if is_string {
-            cx.report(e, if is_exec_script { EXEC_SCRIPT } else { IMPLIED_EVAL });
+            cx.report(e, if is_exec_script { EXEC_SCRIPT } else { IMPLIED_EVAL }).unless_claimed(e);
         }
     }
 }

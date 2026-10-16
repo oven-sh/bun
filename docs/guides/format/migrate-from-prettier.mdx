@@ -99,21 +99,30 @@ Bun doesn't load Prettier plugins. These are built in, with all their options, s
 - `@ianvs/prettier-plugin-sort-imports`
 - `prettier-plugin-organize-imports`
 - `@prettier/plugin-oxc`
+- `prettier-plugin-svelte`
+
+Svelte files are formatted like `prettier-plugin-svelte` 4.1.1 formats them. If you have another version installed, they go to your installed Prettier, because it prints some components differently. Update the plugin to 4.1.1 or uninstall it, and Bun formats them. The version is looked up from the directory you run `bun fmt` in, which is where your Prettier is loaded from.
+
+The plugin's options are those of 4.1.1: `svelteSortOrder`, `svelteAllowShorthand`, and `svelteIndentScriptAndStyle`. 4.1.1 has no `svelteStrictMode`, so Bun ignores it with a warning, like any unknown option. With another version installed, your Prettier formats the files with that version's options.
+
+Svelte files also go to your installed Prettier with `rangeStart`, `rangeEnd`, or `cursorOffset`, as flags or in the config.
+
+[`svelte` in `bunfig.toml`](/runtime/bunfig#format-svelte) overrides all of this: with `svelte = true` Bun formats the files whichever version is installed, and with `svelte = false` nothing does.
 
 ---
 
-Svelte, Astro, and other languages that come from a plugin go to your installed Prettier. So does `package.json` if you use `prettier-plugin-packagejson`. Keep `prettier` and every plugin in `plugins` installed. `--doctor` shows which files those are.
+Astro and other languages that come from a plugin go to your installed Prettier. So does `package.json` if you use `prettier-plugin-packagejson`. Keep `prettier` and every plugin in `plugins` installed. `--doctor` shows which files those are.
 
 ```txt
 Using .prettierrc (Prettier config)
 
     3 files are formatted natively
-    1 file goes to your installed Prettier: 1 *.svelte
+    1 file goes to your installed Prettier: 1 *.astro
 
 Built-in plugins: @ianvs/prettier-plugin-sort-imports
-Plugins that use your installed Prettier: prettier-plugin-svelte
+Plugins that use your installed Prettier: prettier-plugin-astro
 
-Still needed:   @ianvs/prettier-plugin-sort-imports, prettier, prettier-plugin-svelte (some files go to them)
+Still needed:   @ianvs/prettier-plugin-sort-imports, prettier, prettier-plugin-astro (some files go to them)
 ```
 
 ---
@@ -121,8 +130,8 @@ Still needed:   @ianvs/prettier-plugin-sort-imports, prettier, prettier-plugin-s
 With any other plugin, Bun skips the files that config covers and exits with code `2`. A plugin could print them differently, and Bun won't guess. Pass `--allow-unsupported` to format them without the plugin.
 
 ```txt
-[error] 3 files were not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style
-[error]   Use --allow-unsupported to format them without the plugins.
+error: 3 files were not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style
+  Use --allow-unsupported to format them without the plugins.
 ```
 
 ---
@@ -135,7 +144,7 @@ semi = false
 singleQuote = true
 ```
 
-Without a Prettier config, `bun fmt` also formats TOML files, and `--check` prints a shorter report.
+Without a Prettier config, `bun fmt` also formats TOML files, formats Svelte files without the plugin in a config, and `--check` prints a shorter report.
 
 ---
 
@@ -150,7 +159,7 @@ If `bun fmt` and Prettier 3 print different code, that's a bug. [Open an issue](
 - **`--cache` does nothing.** Every run formats every file.
 - **Exit code `2` means something went wrong**, like a syntax error or a skipped file. Prettier uses `1` for some of these.
 - **Bytes that aren't valid UTF-8 are kept.** Prettier replaces them.
-- **Where Prettier's output changes what a file means, Bun's differs.** That's rare. In a Handlebars template Prettier drops `<!DOCTYPE html>`, and it joins the lines of a `<script>`, so a `// comment` swallows the code after it. In CSS it turns `Font\ Awesome` into `Font\Awesome`. Bun keeps all three.
+- **Where Prettier's output changes what a file means, Bun's differs.** That's rare. In a Handlebars template Prettier drops `<!DOCTYPE html>`, and it joins the lines of a `<script>`, so a `// comment` swallows the code after it. In CSS it turns `Font\ Awesome` into `Font\Awesome`. In Svelte the plugin drops the comment in `{#if a /* b */}`, the space in `<hr />some <b>words</b>`, and an empty `{:catch}`, and it empties the `<script>` after a comment that mentions `<style>`. Bun keeps all of them.
 - **Symlinks that lead out of the repository aren't written through.**
 - **`console.log` in your config file is hidden** unless the config fails to load.
 

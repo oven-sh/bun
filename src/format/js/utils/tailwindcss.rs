@@ -42,7 +42,7 @@ pub(crate) struct Collapse {
 }
 
 impl Collapse {
-    const ALL: Collapse = Collapse {
+    pub(crate) const ALL: Collapse = Collapse {
         start: true,
         end: true,
     };

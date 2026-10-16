@@ -86,6 +86,7 @@ impl Host for Tester<'_> {
             memory: &names,
             skipped_in_comments: &bun_threading::Guarded::new(Vec::new()),
             out_of_stack: &bun_threading::Guarded::new(Vec::new()),
+            without_include: &bun_threading::Guarded::new(Vec::new()),
             broken_fixes: &bun_threading::Guarded::new(Vec::new()),
             handed_back: &bun_threading::Guarded::new(Vec::new()),
             unread: &bun_threading::Guarded::new(Vec::new()),
@@ -180,6 +181,7 @@ fn configuration_case(registry: &Registry, case: &Json) -> Json {
                 rules: None,
                 plugins_from: None,
                 cascade: 1,
+                named: &[],
             },
             &mut [LegacyFile {
                 path: paths::join(base_path, b".eslintrc.json"),

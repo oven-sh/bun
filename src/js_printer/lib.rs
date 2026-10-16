@@ -2613,7 +2613,7 @@ pub(crate) mod __gated_printer {
                 &mut writer,
                 quote,
                 ASCII_ONLY,
-                false,
+                IS_JSON,
             );
         }
 
@@ -2626,7 +2626,7 @@ pub(crate) mod __gated_printer {
                 &mut writer,
                 quote,
                 ASCII_ONLY,
-                false,
+                IS_JSON,
             );
         }
 
@@ -5070,7 +5070,7 @@ pub(crate) mod __gated_printer {
                             }
                         }
                     } else {
-                        let c = best_quote_char_for_string(key_str.slice16(), false);
+                        let c = Self::best_quote_char_for_e_string(&key_str, false);
                         self.print(c);
                         self.print_string_characters_utf16(key_str.slice16(), c);
                         self.print(c);
@@ -6888,7 +6888,11 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn print_number(&mut self, value: f64, level: Level) {
             let abs_value = value.abs();
-            if value.is_nan() {
+            if IS_JSON && !value.is_finite() {
+                // JSON has no token for these. As JSON.stringify.
+                self.print_space_before_identifier();
+                self.print(b"null");
+            } else if value.is_nan() {
                 self.print_space_before_identifier();
                 self.print(b"NaN");
             } else if value.is_infinite() {
@@ -6909,7 +6913,7 @@ pub(crate) mod __gated_printer {
                 }
 
                 // If we are not running the symbol renamer, we must not print "Infinity".
-                if IS_JSON || (!self.options.minify_syntax && self.options.has_run_symbol_renamer) {
+                if !self.options.minify_syntax && self.options.has_run_symbol_renamer {
                     self.print(b"Infinity");
                 } else if self.options.minify_whitespace {
                     self.print(b"1/0");

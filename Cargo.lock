@@ -155,14 +155,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_api"
-version = "0.0.0"
-dependencies = [
- "bun_alloc",
- "bun_options_types",
-]
-
-[[package]]
 name = "bun_ast"
 version = "0.0.0"
 dependencies = [
@@ -307,7 +299,6 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_analytics",
- "bun_api",
  "bun_ast",
  "bun_bundler",
  "bun_clap",
@@ -322,7 +313,6 @@ dependencies = [
  "bun_standalone_graph",
  "bun_sys",
  "enum-map",
- "scopeguard",
  "thiserror",
 ]
 
@@ -707,7 +697,6 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_alloc",
- "bun_api",
  "bun_ast",
  "bun_base64",
  "bun_collections",
@@ -715,6 +704,7 @@ dependencies = [
  "bun_dotenv",
  "bun_install_types",
  "bun_js_parser",
+ "bun_options_types",
  "bun_parsers",
  "bun_url",
  "strum",
@@ -782,7 +772,6 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_alloc",
- "bun_api",
  "bun_ast",
  "bun_core",
  "bun_dotenv",
@@ -790,6 +779,7 @@ dependencies = [
  "bun_install",
  "bun_js_parser_jsc",
  "bun_jsc",
+ "bun_options_types",
  "bun_paths",
  "bun_sys",
  "scopeguard",
@@ -1282,7 +1272,6 @@ name = "bun_patch"
 version = "0.0.0"
 dependencies = [
  "bstr",
- "bun_collections",
  "bun_core",
  "bun_errno",
  "bun_event_loop",
@@ -1290,7 +1279,6 @@ dependencies = [
  "bun_spawn",
  "bun_sys",
  "bun_which",
- "scopeguard",
  "strum",
  "thiserror",
 ]

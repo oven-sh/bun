@@ -1,6 +1,11 @@
 "use strict";
 
-const { isNodeStream, isWebStream, kControllerErrorFunction } = require("internal/streams/utils");
+const {
+  isNodeStream,
+  isReadableStream,
+  isWritableStream,
+  kControllerErrorFunction,
+} = require("internal/streams/utils");
 const eos = require("internal/streams/end-of-stream");
 
 const SymbolDispose = Symbol.dispose;
@@ -18,7 +23,8 @@ const validateAbortSignal = (signal, name) => {
 
 function addAbortSignal(signal, stream) {
   validateAbortSignal(signal, "signal");
-  if (!isNodeStream(stream) && !isWebStream(stream)) {
+  // eos() takes no TransformStream. Reject it before the abort listener is added: nodejs/node#62450.
+  if (!isNodeStream(stream) && !isReadableStream(stream) && !isWritableStream(stream)) {
     throw $ERR_INVALID_ARG_TYPE("stream", ["ReadableStream", "WritableStream", "Stream"], stream);
   }
   return addAbortSignalNoValidate(signal, stream);

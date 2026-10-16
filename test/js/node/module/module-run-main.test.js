@@ -555,7 +555,6 @@ describe.concurrent("Module.runMain of a script that fails", () => {
         fs.writeFileSync(script, version(written));
       }
       const alive = proc.exitCode === null && proc.signalCode === null;
-      proc.kill();
 
       // A save can reload more than once, so a run can repeat: the first of each line counts.
       const said = [...new Set(stderr.match(/^(run \d+|error: failure \d+|done \d+)$/gm))];

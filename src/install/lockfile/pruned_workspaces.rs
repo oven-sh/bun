@@ -122,7 +122,8 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
             let target = target as usize;
             debug_assert_eq!(pkg_res[target].tag, ResolutionTag::Workspace);
             let target_name = BStr::new(names[target].slice(from_buf));
-            let target_path = BStr::new(pkg_res[target].workspace().slice(from_buf));
+            let target_path =
+                bun_core::fmt::escape_control_chars(pkg_res[target].workspace().slice(from_buf));
             if i == 0 {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> the root package depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",

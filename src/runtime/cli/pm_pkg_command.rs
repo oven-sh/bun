@@ -360,7 +360,10 @@ impl PmPkgCommand {
                 );
 
                 if !bun_sys::exists_z(full_path) {
-                    bun_core::warn!("No bin file found at {}", bstr::BStr::new(bin_path));
+                    bun_core::warn!(
+                        "No bin file found at {}",
+                        bun_core::fmt::EscapeControlChars(bstr::BStr::new(bin_path))
+                    );
                 }
             }
         }
@@ -602,8 +605,8 @@ impl PmPkgCommand {
         let source = Source::init_path_string(key, data);
         let mut log = Log::init();
         match json::parse_utf8_impl::<true>(&source, &mut log, cli_arena()) {
-            Ok(expr) => expr,
-            Err(_) => {
+            Ok(expr) if Self::has_only_json_literals(expr, data) => expr,
+            _ => {
                 let reason: &[u8] = log
                     .msgs
                     .iter()
@@ -619,6 +622,42 @@ impl PmPkgCommand {
                 Global::exit(1);
             }
         }
+    }
+
+    /// The JSON parser also accepts JavaScript literals that are not valid JSON, which this
+    /// rejects: `010` (parsed as 8), `0x10`, `1_000`, `.5`, `5.`, `'text'`.
+    fn has_only_json_literals(root: Expr, source: &[u8]) -> bool {
+        let mut pending = vec![root];
+        while let Some(expr) = pending.pop() {
+            let text = &source[expr.loc.i()..];
+            let is_json = match &expr.data {
+                ExprData::EString(_) => text.starts_with(b"\""),
+                ExprData::ENumber(_) => {
+                    let end = strings::index_of_any(text, b",]} \t\r\n").unwrap_or(text.len());
+                    let text = text[..end].strip_prefix(b"-").unwrap_or(&text[..end]);
+                    let digits = text.iter().take_while(|c| c.is_ascii_digit()).count();
+                    let (int, rest) = text.split_at(digits);
+                    (int == b"0" || int.first().is_some_and(|&c| c != b'0'))
+                        && matches!(rest, [] | [b'e' | b'E', ..] | [b'.', b'0'..=b'9', ..])
+                        && !strings::contains_char(rest, b'_')
+                }
+                ExprData::EArray(array) => {
+                    pending.extend_from_slice(array.items.slice());
+                    true
+                }
+                ExprData::EObject(object) => {
+                    for prop in object.properties.slice() {
+                        pending.extend(prop.key.iter().chain(&prop.value));
+                    }
+                    true
+                }
+                _ => true,
+            };
+            if !is_json {
+                return false;
+            }
+        }
+        true
     }
 
     /// Splices out an array element or removes a property; returns whether anything was removed.

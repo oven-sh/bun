@@ -55,7 +55,6 @@
     macro(file) \
     macro(gunzipSync) \
     macro(gzipSync) \
-    macro(indexOfLine) \
     macro(inflateSync) \
     macro(jest) \
     macro(listen) \

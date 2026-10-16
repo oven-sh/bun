@@ -528,6 +528,144 @@ new file mode 100644
     expect(exitCode).toBe(1);
   });
 
+  // The package is installed already, so the linker is what meets the patch. The isolated linker
+  // used to carry on, and saved package.json and bun.lock.
+  test.each(["hoisted", "isolated"] as const)(
+    "bun add writes nothing when the patch of an installed package does not apply (%s linker)",
+    async linker => {
+      await using project = createProject("patch-stale-hunk-add", {
+        "package.json": packageJson({ "is-even": "1.0.0" }),
+        "bunfig.toml": `[install]\nlinker = "${linker}"\n`,
+        patches: { "is-even@1.0.0.patch": "--- a/index.js\n+++ b/index.js\n@@ -1 +1 @@\n-no such line\n+patched\n" },
+      });
+      const { dir, env } = project;
+      await bunOk(dir, env, "install");
+      await Bun.write(
+        join(dir, "package.json"),
+        packageJson({ "is-even": "1.0.0" }, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" }),
+      );
+      const written = async () => [await file(dir, "package.json").text(), await file(dir, "bun.lock").text()];
+      const before = await written();
+
+      const { stderr, exitCode } = await runBun(dir, env, "add", "no-deps@1.0.0");
+      expect(stderr).toContain("error: failed applying patch file: hunk #1 does not apply to index.js");
+      expect(await written()).toEqual(before);
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  // Older versions of bun, and other tools, wrote these into patch files that install: a binary
+  // change without its content, a copy or colors because of the user's git config. They did
+  // nothing then, without a word. isEvenPatch() has 8 lines.
+  const binary = "binary file, content not in patch";
+  const nothing = "no applicable changes";
+
+  /** What is printed about line `line` of `patch`: the line, a caret, the message and the place. */
+  const diagnostic = (kind: "warn" | "error", patch: string, line: number, message: string) =>
+    `${line} | ${patch.split("\n")[line - 1].replaceAll("\x1b", "\\x1b")}\n` +
+    `${Buffer.alloc(`${line} | `.length, " ")}^\n` +
+    `${kind}: ${message}\n` +
+    `${Buffer.alloc(kind.length - 1, " ")}at patches/is-even@1.0.0.patch:${line}:1`;
+
+  describe.each(["hoisted", "isolated"])(
+    "what the install cannot apply is left out with a warning (%s linker)",
+    linker => {
+      test.each([
+        [
+          "a changed binary file",
+          isEvenPatch("is-even patched") +
+            "diff --git a/img.bin b/img.bin\nindex 1111111..2222222 100644\nBinary files a/img.bin and b/img.bin differ\n",
+          9,
+          `skipping img.bin: ${binary}`,
+        ],
+        [
+          "a new binary file",
+          isEvenPatch("is-even patched") +
+            "diff --git a/img.bin b/img.bin\nnew file mode 100644\nindex 0000000..2222222\nBinary files /dev/null and b/img.bin differ\n",
+          9,
+          `skipping img.bin: ${binary}`,
+        ],
+        [
+          "a copy",
+          isEvenPatch("is-even patched") +
+            "diff --git a/index.js b/copy.js\nsimilarity index 100%\ncopy from index.js\ncopy to copy.js\n",
+          9,
+          `skipping copy.js: ${nothing}`,
+        ],
+        [
+          "a header alone",
+          isEvenPatch("is-even patched") + "diff --git a/other.js b/other.js\nindex 1111111..2222222 100644\n",
+          9,
+          `skipping other.js: ${nothing}`,
+        ],
+        [
+          "text after the last hunk",
+          isEvenPatch("is-even patched") + "Only in b: new.js\n",
+          9,
+          `skipping non-patch text: ${nothing}`,
+        ],
+        [
+          "a patch with colors",
+          isEvenPatch("is-even in colors").replace(/^.+$/gm, line => `\x1b[1m${line}\x1b[m`),
+          1,
+          `skipping non-patch text: ${nothing}`,
+        ],
+      ])("%s", async (_name, patch, line, message) => {
+        await using project = createProject("patch-left-out", {
+          "package.json": packageJson({ "is-even": "1.0.0" }, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" }),
+          patches: { "is-even@1.0.0.patch": patch },
+        });
+        const { dir, env } = project;
+
+        const { stderr, exitCode } = await runBun(dir, env, "install", `--linker=${linker}`);
+        expect(stderr).toContain(
+          diagnostic("warn", patch, line, message) +
+            "\n\nnote: recreate the patch with bun patch, or delete these lines\n",
+        );
+        expect(stderr.match(/^(warn|error): /gm)).toEqual(["warn: "]);
+        // The rest of the patch is applied.
+        expect((await file(dir, "node_modules", "is-even", "index.js").text()).includes("is-even patched")).toBe(
+          line > 1,
+        );
+        expect(await file(dir, "node_modules", "is-even", "img.bin").exists()).toBe(false);
+        expect(exitCode).toBe(0);
+      });
+    },
+  );
+
+  // None of bun, patch-package, pnpm and yarn writes these, and each holds a change that would be lost.
+  test.each([
+    [
+      "a binary patch",
+      isEvenPatch("is-even patched") +
+        "diff --git a/img.bin b/img.bin\nindex 1111111..2222222 100644\nGIT binary patch\nliteral 3\nKcmZQzWC8#H2LJ>B\n\nliteral 3\nKcmZQzWCj2L2ml2D\n\n",
+      11,
+      "git_binary_patch_not_supported",
+    ],
+    ["a hunk of no file", "some text\n@@ -1 +1 @@\n-a\n+b\n", 2, "no_path_given_for_hunk"],
+    [
+      "a hunk with fewer lines than its header says",
+      "diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n@@ -1,3 +1,3 @@\n-a\n+b\n",
+      4,
+      "hunk_header_integrity_check_failed",
+    ],
+    ["a quoted path", isEvenPatch("is-even patched") + 'diff --git "a/a b.js" "b/a b.js"\n', 9, "bad_diff_line"],
+  ])("%s fails the install, and the error shows the line", async (_name, patch, line, error) => {
+    await using project = createProject("patch-parse-error", {
+      "package.json": packageJson({ "is-even": "1.0.0" }, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" }),
+      patches: { "is-even@1.0.0.patch": patch },
+    });
+    const { dir, env } = project;
+
+    const { stderr, exitCode } = await runBun(dir, env, "install", "--linker=hoisted");
+    expect(normalizeBunSnapshot(stderr)).toBe(
+      "Resolving dependencies\n" +
+        diagnostic("error", patch, line, `failed to parse patchfile: ${error}`) +
+        "\nerror: failed to apply patchfile (patches/is-even@1.0.0.patch)",
+    );
+    expect(exitCode).toBe(1);
+  });
+
   test("a hunk with a stale + start is placed by its context", async () => {
     await using project = createProject("patch-stale-start", {
       "package.json": packageJson({ "is-even": "1.0.0" }, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" }),
@@ -1007,7 +1145,7 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
   const ignoredWarnings = (err: string) =>
     [
       ...err.matchAll(
-        /^warn: "patchedDependencies" is ignored in a workspace package\. Move it to the root package\.json\r?\n\s+at .*?[\\/](packages[\\/][^\r\n]*)/gm,
+        /^warn: ignoring "patchedDependencies" in workspace package, move it to the root package\.json\r?\n\s+at .*?[\\/](packages[\\/][^\r\n]*)/gm,
       ),
     ].map(match => match[1].replaceAll("\\", "/"));
 

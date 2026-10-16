@@ -175,6 +175,13 @@ public:
         if (!idle) {
             return false;
         }
+        /* Bun.serve: a response that completed through end() can still have
+         * bytes in the backpressure buffer, which close() drops. Not idle
+         * until they are out: the graceful stop() that asks marks the
+         * connection, and onWritable closes it after the drain. */
+        if (!HttpContext<SSL>::fromSocket((us_socket_t *) this)->isNodeHttp() && !Super::hasFullyDrained()) {
+            return false;
+        }
         /* A socket is idle from the moment its response completes. When
          * that happens inside onData's parse loop the response can still
          * sit in the cork buffer, and JS that runs before the loop ends

@@ -2191,12 +2191,20 @@ where
         let Some(resp) = this.resp.get() else {
             return false;
         };
-        if let Some(wrapper) = this.sink_mut() {
-            // `resp` must not be read once the sink ended the response. An
-            // `end()` that parked on backpressure has chosen the framing.
-            if !wrapper.sink.ended_response && !wrapper.sink.requested_end {
-                resp.commit_head();
-            }
+        // No sink: the stream settled inside the drain. What took the sink
+        // down ends the response, and only it knows if `resp` can be read.
+        let Some(wrapper) = this.sink_mut() else {
+            return false;
+        };
+        // `resp` must not be read once the sink ended the response. An
+        // `end()` that parked on backpressure has chosen the framing. A flush
+        // that is queued behind this task writes the rest of the head with
+        // its bytes, in one send.
+        if !wrapper.sink.ended_response
+            && !wrapper.sink.requested_end
+            && !wrapper.sink.has_queued_flush()
+        {
+            resp.commit_head();
         }
         false
     }

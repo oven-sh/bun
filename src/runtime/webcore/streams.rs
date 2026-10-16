@@ -1806,6 +1806,12 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         source.abort(CommonAbortReason::ConnectionClosed);
     }
 
+    /// The auto flusher is registered and has bytes to write: `on_auto_flush`
+    /// sends them when the deferred tasks of the current drain run.
+    pub(crate) fn has_queued_flush(&self) -> bool {
+        self.auto_flusher.registered.get() && !self.readable_slice().is_empty()
+    }
+
     fn unregister_auto_flusher(&mut self) {
         if self.auto_flusher.registered.get() {
             let vm = self.global_this().bun_vm();

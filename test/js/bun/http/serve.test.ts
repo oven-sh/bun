@@ -5147,6 +5147,7 @@ describe("the response head does not wait for a body that is not ready", () => {
       const lineEnd = body.indexOf("\r\n", at);
       if (lineEnd < 0) throw new Error("chunked body has no terminating chunk: " + JSON.stringify(body));
       const size = parseInt(body.slice(at, lineEnd), 16);
+      if (Number.isNaN(size)) throw new Error("bad chunk size line: " + JSON.stringify(body.slice(at, lineEnd)));
       if (size === 0) return out;
       out += body.slice(lineEnd + 2, lineEnd + 2 + size);
       at = lineEnd + 2 + size + 2;
@@ -5396,6 +5397,53 @@ describe("the response head does not wait for a body that is not ready", () => {
         missing: "500 error() got NoSuchKey",
         denied: "500 error() got AccessDenied",
       });
+    });
+  });
+
+  // A body that ends after its head was sent ends through end(), not through
+  // a tryEnd() that parks. The response is then complete while most of its
+  // bytes are still queued for the socket, and a graceful stop() waits for them.
+  describe("a graceful stop() right after the body ended delivers the whole body", () => {
+    const payload = Buffer.alloc(8 * 1024 * 1024, "a");
+
+    it.each([
+      ["a body that wrote before it ended", undefined, false],
+      ["a body that ended in one step", payload.length + 1, false],
+      ["over https, a body that wrote before it ended", undefined, true],
+    ] as const)("%s", async (_name, highWaterMark, secure) => {
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        idleTimeout: 0,
+        tls: secure ? tls : undefined,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(controller: any) {
+                // With a highWaterMark above the payload, write() only buffers.
+                if (highWaterMark !== undefined) controller.start({ highWaterMark });
+                await later();
+                controller.write(payload);
+                controller.end();
+                server.stop();
+              },
+            } as any),
+          ),
+      });
+      const wire = exchange(server.port!, secure, "GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      try {
+        const [head, body] = await Promise.all([wire.head, wire.body]);
+        const chunked = field(head, "transfer-encoding") === "chunked";
+        const framing = chunked ? `${payload.length.toString(16)}\r\n`.length + "\r\n0\r\n\r\n".length : 0;
+        expect({ bytes: body.length, end: chunked ? body.slice(-5) : "" }).toEqual({
+          bytes: payload.length + framing,
+          end: chunked ? "0\r\n\r\n" : "",
+        });
+      } finally {
+        wire.socket.destroy();
+        server.stop(true);
+      }
     });
   });
 

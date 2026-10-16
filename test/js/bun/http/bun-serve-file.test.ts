@@ -1226,13 +1226,14 @@ describe.concurrent("Bun.file(fd) of a regular file from a fetch handler", () =>
       // The first response left the descriptor at byte 0. This read moves it to byte 3.
       const readByCaller = readAtPosition(fd, 3);
       const second = await get("/");
-      const afterClone = await get("/after-clone");
+      // A stream response can be chunked, so fetch() reads it.
+      const afterClone = await (await fetch(new URL("/after-clone", server.url))).text();
       const whole = { contentLength: "16", body: content };
       expect({ first, readByCaller, second, afterClone, positionAfter: readAtPosition(fd, 1) }).toEqual({
         first: whole,
         readByCaller: "012",
         second: whole,
-        afterClone: whole,
+        afterClone: content,
         positionAfter: "3",
       });
     } finally {
@@ -1281,15 +1282,16 @@ describe.concurrent("Bun.file(fd) of a regular file from a fetch handler", () =>
     }
   });
 
-  // Up to "/error-handler" the server gets the file itself and reads it. The
-  // handlers after that make the server read a stream of the file, which
-  // always started at the offset: the two must agree.
+  // The server reads the file itself for `fileHandlers`, and a stream of the
+  // file for `streamHandlers`. The stream always started at the offset: the
+  // two must agree.
   test("a slice that starts at byte 0 is the same bytes whatever the handler does with it", async () => {
     using dir = tempDir("serve-fd-handler-shapes", { "file.txt": content });
     const path = join(String(dir), "file.txt");
     let fd = -1;
     const slice = () => Bun.file(fd).slice(0, 4);
-    const handlers: Record<string, () => Response | Promise<Response>> = {
+    type Handler = () => Response | Promise<Response>;
+    const fileHandlers: Record<string, Handler> = {
       "/blob": () => new Response(slice()),
       "/after-a-tick": async () => {
         await new Promise<void>(resolve => setImmediate(resolve));
@@ -1300,6 +1302,8 @@ describe.concurrent("Bun.file(fd) of a regular file from a fetch handler", () =>
       "/error-handler": () => {
         throw new Error("answered by error()");
       },
+    };
+    const streamHandlers: Record<string, Handler> = {
       "/after-clone": () => {
         const response = new Response(slice());
         response.clone();
@@ -1309,6 +1313,7 @@ describe.concurrent("Bun.file(fd) of a regular file from a fetch handler", () =>
       "/pipe-through": () => new Response(slice().stream().pipeThrough(new TransformStream())),
       "/html-rewriter": () => new HTMLRewriter().transform(new Response(slice())),
     };
+    const handlers = { ...fileHandlers, ...streamHandlers };
     await using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -1324,7 +1329,12 @@ describe.concurrent("Bun.file(fd) of a regular file from a fetch handler", () =>
     for (const pathname of pathnames) {
       fd = openAt(path, 3);
       try {
-        bodies[pathname] = (await wireResponse(server.port!, "GET", pathname)).body;
+        // A stream response can be chunked, so fetch() reads it. The other
+        // responses still declare the size of the file, which fetch() refuses.
+        bodies[pathname] =
+          pathname in streamHandlers
+            ? await (await fetch(new URL(pathname, server.url))).text()
+            : (await wireResponse(server.port!, "GET", pathname)).body;
       } finally {
         closeSync(fd);
       }
@@ -1366,6 +1376,8 @@ describe.concurrent("Bun.file(fd) of a regular file from a fetch handler", () =>
               }
             },
             close() {
+              // No effect when the first chunk already arrived.
+              firstChunk.reject(new Error("the connection closed before the first chunk"));
               closed.resolve(Buffer.concat(chunks));
             },
             error(_socket, error) {

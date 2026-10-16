@@ -1126,7 +1126,8 @@ impl PublishCommand {
         path_buf: &mut [u8],
         path_spill: &mut Vec<u8>,
     ) {
-        let target = normalize_buf_z_spill::<path::platform::Posix>(path_buf, path_spill, value);
+        let target =
+            normalize_buf_z_spill::<path::platform::PosixLoose>(path_buf, path_spill, value);
         if pack::is_package_root_or_outside(target.as_bytes()) {
             return;
         }
@@ -1169,7 +1170,7 @@ impl PublishCommand {
                             continue;
                         };
                         let key: Box<[u8]> = strings::without_prefix(
-                            normalize_buf_z_spill::<path::platform::Posix>(
+                            normalize_buf_z_spill::<path::platform::PosixLoose>(
                                 &mut *path_buf,
                                 &mut path_spill,
                                 key.string(bump)?,

@@ -75,6 +75,24 @@ describe("fs.watchFile", () => {
     expect(entries[0][1].size).toBe(5);
     expect(entries[0][0].mtimeMs).toBeGreaterThan(entries[0][1].mtimeMs);
   });
+  test.skipIf(isWindows)("a backslash is part of the file name", async () => {
+    using dir = tempDir("watchfile-backslash", { "a\\b": "abc", "a/b": "the decoy" });
+    const real = path.join(String(dir), "a\\b");
+    const decoy = path.join(String(dir), "a", "b");
+
+    const { promise, resolve } = Promise.withResolvers<fs.Stats>();
+    fs.watchFile(real, { interval: 50 }, curr => resolve(curr));
+    const interval = repeat(() => {
+      updateFile(decoy, "the decoy");
+      updateFile(real, "abc");
+    });
+    try {
+      expect((await promise).size).toBe(3);
+    } finally {
+      clearInterval(interval);
+      fs.unwatchFile(real);
+    }
+  });
   test("unicode file name", async () => {
     let entries: any = [];
     let { promise, resolve } = Promise.withResolvers<void>();

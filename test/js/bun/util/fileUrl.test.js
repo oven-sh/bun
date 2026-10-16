@@ -56,6 +56,12 @@ describe("fileURLToPath", () => {
     expect(url.href).toBe(`${pathToFileURL(process.cwd())}/foo.txt`);
   });
 
+  it.skipIf(isWindows)("a backslash is part of the file name", () => {
+    const url = pathToFileURL("a\\b/..\\c");
+    expect(url.href).toBe(`${pathToFileURL(process.cwd())}/a%5Cb/..%5Cc`);
+    expect(fileURLToPath(url)).toBe(`${process.cwd()}/a\\b/..\\c`);
+  });
+
   it("should roundtrip", () => {
     const url = pathToFileURL(import.meta.path);
     expect(fileURLToPath(url)).toBe(import.meta.path);

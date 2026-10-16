@@ -203,7 +203,10 @@ strings::to_utf16_alloc(...)             // encoding conversions
 
 Path helpers operate on `&[u8]` and are platform-parameterized via the
 `Platform` const-generic (`Posix`, `Windows`, `Loose`, `Nt`; `platform::Auto`
-picks the host). Never use `std::path` for runtime path logic.
+picks the host). Never use `std::path` for runtime path logic. On POSIX a `\` is
+part of a file name; a path that a manifest or an archive carries may have been
+written on Windows and takes `platform::AutoLoose` (or `PosixLoose`), which
+splits at `\` too.
 
 ```rust
 use bun_paths::{dirname, basename};

@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "path";
 
 test("coverage crash", () => {
@@ -58,6 +58,23 @@ export class Y {
 });
 
 // https://github.com/oven-sh/bun/issues/17502
+test.skipIf(isWindows)("a backslash in --coverage-dir is part of the directory name", async () => {
+  using dir = tempDir("cov-dir-backslash", {
+    "a.test.ts": `import { test } from "bun:test"; test("t", () => {});`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", "--coverage-dir=cv\\r", "./a.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(readdirSync(String(dir)).sort()).toEqual(["a.test.ts", "cv\\r"]);
+  expect(readdirSync(path.join(String(dir), "cv\\r"))).toEqual(["lcov.info"]);
+  expect(exitCode).toBe(0);
+});
+
 describe("--coverage-reporter without --coverage turns coverage on", () => {
   const files = {
     "math.ts": `export function add(a: number, b: number) {

@@ -804,8 +804,10 @@ impl TarballStream {
             self.out = None;
             return Ok(());
         }
-        let normalized =
-            resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..]);
+        let normalized = resolve_path::normalize_buf_t::<OSPathChar, platform::AutoLoose>(
+            rest,
+            &mut norm_buf[..],
+        );
         let norm_len = normalized.len();
         norm_buf[norm_len] = 0;
         // SAFETY: norm_buf[norm_len] == 0 written above.

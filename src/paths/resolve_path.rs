@@ -1122,6 +1122,8 @@ mod sealed {
 }
 pub trait PlatformT: Copy + sealed::Sealed + 'static {
     const P: Platform;
+    /// `normalize_*`, `join_abs*` and `relative*` split at `\` as well where `P` is `Posix`.
+    const LOOSE_SEPARATORS: bool = false;
 }
 macro_rules! platform_variant {
     ($name:ident => $variant:ident) => {
@@ -1145,6 +1147,22 @@ pub mod platform {
     pub type Auto = Posix;
     #[cfg(all(not(windows), not(unix)))]
     pub type Auto = Loose;
+
+    /// `Posix` for a path from a manifest or an archive, which may have been written on Windows.
+    #[derive(Copy, Clone)]
+    pub struct PosixLoose;
+    impl sealed::Sealed for PosixLoose {}
+    impl PlatformT for PosixLoose {
+        const P: Platform = Platform::Posix;
+        const LOOSE_SEPARATORS: bool = true;
+    }
+    /// `Auto` for such a path.
+    #[cfg(windows)]
+    pub type AutoLoose = Windows;
+    #[cfg(unix)]
+    pub type AutoLoose = PosixLoose;
+    #[cfg(all(not(windows), not(unix)))]
+    pub type AutoLoose = Loose;
 }
 
 impl Platform {
@@ -1383,10 +1401,16 @@ fn normalize_string_buf_t<
         Platform::Windows => {
             normalize_string_windows_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf)
         }
-        Platform::Posix => {
-            normalize_string_loose_buf_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf)
+        // A file name cannot hold a `\` on Windows, where `Posix` is given native paths to print with `/`.
+        Platform::Posix if cfg!(not(windows)) && !P::LOOSE_SEPARATORS => {
+            normalize_string_generic_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(
+                str,
+                buf,
+                T::from_u8(SEP_POSIX),
+                is_sep_posix_t::<T>,
+            )
         }
-        Platform::Loose => {
+        Platform::Posix | Platform::Loose => {
             normalize_string_loose_buf_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf)
         }
     }
@@ -2737,6 +2761,40 @@ mod tests {
         let mut spill = Vec::new();
         assert_eq!(norm(&mut buf[..1], &mut spill, b""), b".\0");
         assert_eq!(spill.len(), 2);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn posix_keeps_a_backslash_in_a_name_and_posix_loose_splits_at_it() {
+        let mut buf = [0u8; 64];
+        let mut join = |loose: bool, part: &[u8]| {
+            if loose {
+                join_abs_string_buf::<platform::PosixLoose>(b"/w", &mut buf, &[part]).to_vec()
+            } else {
+                join_abs_string_buf::<platform::Posix>(b"/w", &mut buf, &[part]).to_vec()
+            }
+        };
+        assert_eq!(join(false, b"a\\b"), b"/w/a\\b");
+        assert_eq!(join(true, b"a\\b"), b"/w/a/b");
+        assert_eq!(join(false, b"a\\..\\b"), b"/w/a\\..\\b");
+        assert_eq!(join(true, b"a\\..\\b"), b"/w/b");
+        // Only `/` makes a part absolute, so neither leaves `/w`.
+        assert_eq!(join(true, b"\\etc"), b"/w/etc");
+        assert_eq!(join(true, b"C:\\etc"), b"/w/C:/etc");
+
+        let mut buf = [0u8; 64];
+        assert_eq!(
+            normalize_buf::<platform::Posix>(b"a\\..\\b", &mut buf),
+            b"a\\..\\b"
+        );
+        assert_eq!(
+            normalize_buf::<platform::PosixLoose>(b"\\..\\..\\b", &mut buf),
+            b"b"
+        );
+        assert_eq!(
+            relative_platform::<platform::Posix, false>(b"/w/a\\b", b"/w/a\\c"),
+            b"../a\\c"
+        );
     }
 
     #[test]

@@ -353,11 +353,9 @@ impl PmPkgCommand {
                     pkg_dir = cwd;
                 }
                 let mut buf = bun_paths::path_buffer_pool::get();
-                let full_path = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                    pkg_dir,
-                    &mut buf,
-                    &[bin_path],
-                );
+                let full_path = path::resolve_path::join_abs_string_buf_z::<
+                    path::platform::AutoLoose,
+                >(pkg_dir, &mut buf, &[bin_path]);
 
                 if !bun_sys::exists_z(full_path) {
                     bun_core::warn!("No bin file found at {}", bstr::BStr::new(bin_path));

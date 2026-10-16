@@ -1323,7 +1323,10 @@ fn declare_folder_dependencies_relative_to_their_package(
 
             literal.clear();
             literal.extend_from_slice(b"file:");
-            let relative = bun_paths::resolve_path::relative(
+            let relative = bun_paths::resolve_path::relative_platform::<
+                bun_paths::platform::AutoLoose,
+                false,
+            >(
                 pkg_dir.slice(string_bytes!(lockfile)),
                 folder.slice(string_bytes!(lockfile)),
             );

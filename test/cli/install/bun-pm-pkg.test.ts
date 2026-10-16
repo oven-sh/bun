@@ -1032,6 +1032,23 @@ describe.concurrent("bun pm pkg", () => {
       expect(deep.code).toBe(0);
     });
 
+    it.skipIf(isWindows)("a backslash is part of a directory name", async () => {
+      using dir = tempDir("pm-pkg-backslash", {
+        "w\\d/package.json": JSON.stringify({ name: "real" }),
+        "w/d/package.json": JSON.stringify({ name: "decoy" }),
+      });
+
+      const [inside, withCwd] = await Promise.all([
+        runPmPkg(["get", "name"], join(dir, "w\\d"), false),
+        runPmPkg(["get", "name", "--cwd", "w\\d"], dir, false),
+      ]);
+
+      expect(inside.output.trim()).toBe('"real"');
+      expect(inside.code).toBe(0);
+      expect(withCwd.output.trim()).toBe('"real"');
+      expect(withCwd.code).toBe(0);
+    });
+
     it("should handle modifications from deeply nested directories", async () => {
       using dir = tempDir("pm-pkg-nested", {
         "package.json": JSON.stringify({ name: "my-project", version: "1.0.0", scripts: { test: "jest" } }, null, 2),

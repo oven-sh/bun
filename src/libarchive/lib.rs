@@ -1381,7 +1381,7 @@ impl Archiver {
                     }
                     let normalized = bun_paths::resolve_path::normalize_buf_t::<
                         u8,
-                        bun_paths::platform::Auto,
+                        bun_paths::platform::AutoLoose,
                     >(pathname, &mut normalized_buf[..]);
                     let normalized_len = normalized.len();
                     let pathname: &[u8] = &normalized_buf[..normalized_len];
@@ -1586,7 +1586,7 @@ impl Archiver {
 
                     let normalized = bun_paths::resolve_path::normalize_buf_t::<
                         OSPathChar,
-                        bun_paths::platform::Auto,
+                        bun_paths::platform::AutoLoose,
                     >(pathname, &mut normalized_buf[..]);
                     let normalized_len = normalized.len();
                     normalized_buf[normalized_len] = 0;

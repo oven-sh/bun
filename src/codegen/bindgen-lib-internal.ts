@@ -59,7 +59,7 @@ export function pascalCase(name: string): string {
 }
 
 const rustKeywords = new Set(
-  "as break const continue crate else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while async await dyn gen".split(
+  "as break const continue crate else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while async await dyn gen abstract become box do final macro override priv try typeof unsized virtual yield".split(
     " ",
   ),
 );
@@ -67,6 +67,13 @@ export function rustIdent(name: string): string {
   assert(!/^(self|Self|super|crate)$/.test(name), `${name} cannot name anything in Rust, even as r#${name}`);
   return rustKeywords.has(name) ? `r#${name}` : name;
 }
+
+/** C++ has no way to spell one as a name. */
+const cppKeywords = new Set(
+  "alignas alignof and and_eq asm auto bitand bitor bool break case catch char char8_t char16_t char32_t class compl concept const consteval constexpr constinit const_cast continue co_await co_return co_yield decltype default delete do double dynamic_cast else enum explicit export extern false float for friend goto if inline int long mutable namespace new noexcept not not_eq nullptr operator or or_eq private protected public register reinterpret_cast requires return short signed sizeof static static_assert static_cast struct switch template this thread_local throw true try typedef typeid typename union unsigned using virtual void volatile wchar_t while xor xor_eq".split(
+    " ",
+  ),
+);
 
 function assertDistinct(names: readonly string[], what: string): void {
   const repeated = names.find((name, i) => names.indexOf(name) !== i);
@@ -1090,8 +1097,10 @@ export abstract class NamedType extends Type {
   }
   protected path(scope: RustScope, name: string): string {
     assert(this.origin, `${this.constructor.name}: used but not exported from a .bind.ts file`);
-    if (this.origin.crate !== scope.crate)
-      return `${this.origin.crate}::generated_bindgen::${this.origin.rustModule}::${name}`;
+    assert(
+      this.origin.crate === scope.crate,
+      `${this.name} is declared in ${this.origin.crate} and used in ${scope.crate}: what is generated is private to its crate`,
+    );
     if (this.origin.rustModule !== scope.rustModule) return `super::${this.origin.rustModule}::${name}`;
     return name;
   }
@@ -1177,6 +1186,7 @@ export class Member {
       assert(/^[A-Za-z_$][\w$]*$/.test(name), `${name}: a member is named by an identifier`);
     this.fieldName = options.rustName ?? snakeCase(name);
     assert(/^[a-z_][a-z0-9_]*$/.test(this.fieldName), `${this.fieldName}: rustName is written in snake_case`);
+    assert(!cppKeywords.has(this.fieldName), `${this.fieldName} is a C++ keyword: name the field with rustName`);
     this.type = options.type;
   }
   get name(): string {
@@ -1328,6 +1338,7 @@ export class UnionType extends NamedType {
       assert(!(type instanceof WithValueType), `${name}: .withValue is only for an argument`);
       assert(/^[a-z][A-Za-z0-9]*$/.test(name), `${name}: an alternative is named in camelCase`);
       assert(name !== "tag", "tag: the generated struct has a member of that name");
+      assert(!cppKeywords.has(name), `${name} is a C++ keyword, and JavaScript never sees the name: pick another`);
       assert(
         !(type instanceof RangeType),
         `${name}: a range reports the name of its argument, which a union does not know`,

@@ -1,5 +1,6 @@
 import { bindgen as bindings } from "bun:internal-for-testing";
 import { describe as describeAlways, expect, it as itAlways } from "bun:test";
+import { rustIdent } from "../../src/codegen/bindgen-lib-internal.ts";
 import * as b from "../../src/codegen/bindgen-lib.ts";
 
 // bindgen_test.bind.ts is only in a build with assertions: a debug build, CI's ASAN lane.
@@ -84,6 +85,18 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.dictionary({ fooBar: b.bool, foo_bar: b.bool })).toThrow("two fields are both foo_bar");
   expect(() => b.union({ "a-b": b.bool })).toThrow("an alternative is named in camelCase");
   expect(() => b.enumeration(["self"])).toThrow("Self cannot name anything in Rust");
+  expect(["match", "final", "try", "name"].map(rustIdent)).toEqual(["r#match", "r#final", "r#try", "name"]);
+  expect(() => b.dictionary({ default: b.bool })).toThrow("default is a C++ keyword: name the field with rustName");
+  b.dictionary({ default: { type: b.bool, rustName: "default_value" } });
+  expect(() => b.union({ int: b.i32, text: b.string })).toThrow("int is a C++ keyword");
+  const elsewhere = Object.assign(b.dictionary({ flag: b.bool }), {
+    name: "Elsewhere",
+    origin: { stem: "a", namespace: "A", rustModule: "a", crate: "bun_jsc" },
+  });
+  expect(elsewhere.rustType({ crate: "bun_jsc", rustModule: "b" })).toBe("super::a::Elsewhere");
+  expect(() => elsewhere.rustType({ crate: "bun_runtime", rustModule: "b" })).toThrow(
+    "Elsewhere is declared in bun_jsc and used in bun_runtime",
+  );
   expect(() => b.fn({ args: { fooBar: b.bool, foo_bar: b.bool } })).toThrow("two arguments are both foo_bar");
   expect(() => b.fn({ length: 1.5 })).toThrow("1.5 is not a count");
   expect(() => b.overloads({ args: { a: b.bool }, length: 1 }, { args: { a: b.f64 }, length: 2 })).toThrow(

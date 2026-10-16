@@ -2,8 +2,9 @@
 
 use bun_core::strings;
 use bun_glob::BunGlobWalker;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, bun_string_jsc};
 use bun_paths::{platform::Auto, resolve_path};
+
+use crate::api::glob::ScanError;
 
 /// What an argument names.
 pub(crate) enum Pages {
@@ -12,7 +13,7 @@ pub(crate) enum Pages {
     /// The argument is a pattern.
     Matched {
         /// The pages that match it. Each path is absolute or relative to the working directory.
-        pages: bun_collections::StringArrayHashMap<()>,
+        pages: Vec<Box<[u8]>>,
         /// What ended the search early. `pages` then has those that were found before it.
         error: Option<bun_sys::Error>,
     },
@@ -29,13 +30,13 @@ pub(crate) fn pages_of(cwd: &[u8], text: &[u8]) -> Result<Pages, bun_core::Error
         Ok(walker) => walker,
         Err(error) => {
             return Ok(Pages::Matched {
-                pages: Default::default(),
+                pages: Vec::new(),
                 error: Some(error),
             });
         }
     };
     let error = walker.walk()?.err();
-    let pages = core::mem::take(&mut walker.matched_paths);
+    let (pages, _) = core::mem::take(&mut *walker.matched_paths).into_entries();
     Ok(Pages::Matched { pages, error })
 }
 
@@ -60,20 +61,16 @@ fn names_file(cwd: &[u8], text: &[u8]) -> bool {
     )
 }
 
-/// `pagesOf(arg, cwd)` of src/js/internal/html.ts: `undefined` for the path of a page, else the pages that match.
-#[bun_jsc::host_fn]
-pub(crate) fn js_pages_of(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let [arg, cwd] = callframe.arguments_as_array::<2>();
-    let (arg, cwd) = (arg.to_utf8(global)?, cwd.to_utf8(global)?);
-    match pages_of(&cwd, &arg).map_err(crate::Error::from)? {
-        Pages::Named => Ok(JSValue::UNDEFINED),
+/// `pagesOf` of html_pages.bind.ts, with the errors of `Bun.Glob.prototype.scanSync`. `None` is `undefined`.
+pub(crate) fn pages_of_from_js<'a>(
+    arg: &[u8],
+    cwd: &[u8],
+) -> Result<Option<Vec<Box<[u8]>>>, ScanError<'a>> {
+    match pages_of(cwd, arg).map_err(|error| ScanError::Runtime(error.into()))? {
+        Pages::Named => Ok(None),
         Pages::Matched {
             error: Some(error), ..
-        } => Err(global.throw_value(error.to_js(global))),
-        Pages::Matched { pages, error: None } => {
-            JSValue::create_array_from_iter(global, pages.keys().iter(), |page| {
-                bun_string_jsc::create_utf8_for_js(global, page)
-            })
-        }
+        } => Err(ScanError::Sys(error)),
+        Pages::Matched { pages, error: None } => Ok(Some(pages)),
     }
 }

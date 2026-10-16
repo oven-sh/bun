@@ -83,8 +83,7 @@ JSC_DECLARE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter);
 WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL);
 JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, JSC::JSObject* errorInstance);
 void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull sourceProvider, JSC::LineColumn& lineColumn, WTF::String& remappedSourceURL);
-// Maps a 1-based position in the code that runs for `sourceURL` back to the source it was transpiled
-// from. Leaves `lineColumn` and `remappedSourceURL` alone when that code has no source map.
+// Source-maps a 1-based position in the code that runs for `sourceURL`. Without a source map, nothing changes.
 void remapLineColumn(JSC::VM&, const WTF::String& sourceURL, JSC::LineColumn&, WTF::String& remappedSourceURL);
 } // namespace Bun
 

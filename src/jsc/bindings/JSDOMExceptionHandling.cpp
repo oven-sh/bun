@@ -130,8 +130,7 @@ static ScriptPosition positionOfFrame(VM& vm, JSGlobalObject* globalObject, cons
     return { sourceURL, lineColumn.line, lineColumn.column };
 }
 
-// The `sourceURL` own property: where an Error's source URL is once its frames were formatted,
-// and what addErrorInfo() leaves on a DOMException that native code made.
+// Where the source URL is on an Error whose `stack` was read, and on a DOMException that native code made.
 static String ownSourceURL(VM& vm, JSObject* object)
 {
     JSValue sourceURL = object->getDirect(vm, vm.propertyNames->sourceURL);
@@ -157,9 +156,7 @@ ScriptPosition scriptPositionOfThrownValue(JSGlobalObject& lexicalGlobalObject, 
         if (!error->line()) {
             if (!stackTrace)
                 return {};
-            // Reading `stack`, or a collection that finds one of these frames dead, replaces them
-            // with the position of the first one that has a position (formatStackTrace()). Report
-            // that frame or nothing, so that the answer is the same before and after.
+            // Not the first script frame: a `stack` read or a collection leaves only the first frame's position.
             for (const StackFrame& frame : *stackTrace) {
                 if (!frame.hasLineAndColumnInfo())
                     continue;
@@ -174,8 +171,7 @@ ScriptPosition scriptPositionOfThrownValue(JSGlobalObject& lexicalGlobalObject, 
             return {};
         if (!stackTrace)
             return { sourceURL, error->line(), error->column() };
-        // Its frames were never formatted, so the line is the parser's, in the code that ran: a
-        // SyntaxError that only JavaScriptCore's parser finds. The parser gives no column.
+        // A SyntaxError of JavaScriptCore's parser: the line is in the code that ran, and there is no column.
         LineColumn lineColumn { error->line(), 1 };
         Bun::remapLineColumn(vm, String { sourceURL }, lineColumn, sourceURL);
         return { sourceURL, lineColumn.line, 0 };

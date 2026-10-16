@@ -166,8 +166,7 @@ unsafe extern "C" {
     /// Loads `node:worker_threads` in this VM (it rebinds process stdio and
     /// registers parentPort). May leave an exception pending.
     safe fn Bun__Worker__loadNodeWorkerThreadsModule(global: &JSGlobalObject);
-    /// `error` is the event's `error`. `thrown` is what came up, which may be the
-    /// `JSC::Exception` cell that carries it: its stack says where.
+    /// `thrown` is what came up, maybe as the `JSC::Exception` cell: the event's position comes from it.
     safe fn WebWorker__dispatchError(
         global: &JSGlobalObject,
         proxy: *mut c_void,

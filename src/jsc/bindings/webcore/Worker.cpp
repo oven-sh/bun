@@ -197,12 +197,12 @@ extern "C" void WebWorker__parentContextWillDestroy(WorkerMessagingProxy* proxy)
 }
 
 // An uncaught error inside the worker: dispatch 'error' on the worker's own global scope, then report
-// it to the Worker object. `errorValue` is the event's `error`. `thrown` is what came up: the
-// JSC::Exception when the thrower still had it, whose stack says where it was thrown, else the value.
+// it to the Worker object.
 extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString message, JSC::EncodedJSValue errorValue, JSC::EncodedJSValue thrown)
 {
     String messageStr = message.transferToWTFString();
 
+    // `thrown` is the JSC::Exception when the thrower still had it: its stack says where it was thrown.
     JSC::JSValue thrownValue = JSC::JSValue::decode(thrown);
     auto* exception = dynamicDowncast<JSC::Exception>(thrownValue);
     if (exception)

@@ -423,8 +423,7 @@ static bool isGeneratedModuleURL(const String& sourceURL)
 
 bool isScriptFrame(const JSC::StackFrame& frame)
 {
-    // A host function and a wasm function have no code block. Every module built into Bun is
-    // compiled as a builtin function, whatever it is named ("ws").
+    // Every module built into Bun is compiled as a builtin function, whatever it is named ("ws").
     auto* codeBlock = frame.codeBlock();
     if (!codeBlock || codeBlock->unlinkedCodeBlock()->isBuiltinFunction())
         return false;

@@ -2056,6 +2056,11 @@ impl VirtualMachine {
         !self.bun_watcher.is_null()
     }
 
+    /// After the first `beforeExit`, `uncaught_exception` ends the process if no listener takes the error.
+    pub fn exits_on_uncaught_exception(&self) -> bool {
+        self.exit_on_uncaught_exception
+    }
+
     /// Thin setter so callers don't need `.with` plumbing on the thread-local.
     #[inline]
     pub fn set_is_main_thread_vm(value: bool) {
@@ -3391,6 +3396,26 @@ impl VirtualMachine {
     #[inline]
     pub fn set_main(&mut self, path: &[u8]) {
         self.main = bun_ptr::RawSlice::new(path);
+    }
+
+    /// Whether `key` names the module that `bun:main` imports.
+    pub fn is_entry_point(&mut self, key: &bun_core::String) -> bool {
+        let main = self.main;
+        if key.eql_utf8(MAIN_FILE_NAME) || key.eql_utf8(main.slice()) {
+            return true;
+        }
+        // Run as `node`, `main` is the path as typed: the import adds an extension and follows a symlink.
+        let mut resolved = ResolveFunctionResult::default();
+        self._resolve(
+            &mut resolved,
+            main.slice(),
+            MAIN_FILE_NAME,
+            true,
+            false,
+            bun_resolver::GlobalCache::disable,
+        )
+        .is_ok()
+            && key.eql_utf8(resolved.path)
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until

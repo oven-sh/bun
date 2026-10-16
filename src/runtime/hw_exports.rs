@@ -123,21 +123,19 @@ enum RunMainOwner {
     Caller = 0,
     /// `reload_entry_point`: the first load of the `Module.runMain` override it calls is its own.
     EntryAwaits = 1,
-    /// `reload_entry_point`: it loads the entry point again after the preload that asks for it.
+    /// `reload_entry_point`: `key` is the entry point, which it loads itself.
     EntryLoads = 2,
 }
 
 // HOST_EXPORT(Bun__VirtualMachine__runMainOwner, c)
-pub(crate) fn run_main_owner(vm: &VirtualMachine, key: &bun_core::String) -> u8 {
+pub(crate) fn run_main_owner(vm: &mut VirtualMachine, key: &bun_core::String) -> u8 {
     let owner = if vm.has_patched_run_main {
         if vm.pending_internal_promise().is_none() {
             RunMainOwner::EntryAwaits
         } else {
             RunMainOwner::Caller
         }
-    } else if vm.is_in_preload
-        && (key.eql_utf8(vm.main()) || key.eql_utf8(bun_jsc::virtual_machine::MAIN_FILE_NAME))
-    {
+    } else if vm.is_entry_point(key) {
         RunMainOwner::EntryLoads
     } else {
         RunMainOwner::Caller
@@ -152,8 +150,8 @@ pub(crate) fn on_run_main_rejected(
 ) -> bun_jsc::JsResult<JSValue> {
     let reason = callframe.argument(0);
     let vm = global.bun_vm().as_mut();
-    // Rethrown, it reaches the rejection tracker, which keeps a `--hot` or `--watch` process alive.
-    if vm.is_watcher_enabled() {
+    // Rethrown, it goes to the rejection tracker, as a reloaded entry point's does: a watcher has to stay.
+    if vm.is_watcher_enabled() && vm.exits_on_uncaught_exception() {
         return Err(global.throw_value(reason));
     }
     let _ = vm.uncaught_rejection(global, reason);

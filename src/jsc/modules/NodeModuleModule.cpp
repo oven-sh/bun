@@ -13,11 +13,6 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/JSMap.h>
-#include <JavaScriptCore/JSMapInlines.h>
-#include <JavaScriptCore/JSModuleLoader.h>
-#include <JavaScriptCore/CyclicModuleRecord.h>
-#include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
@@ -815,16 +810,6 @@ extern "C" RunMainOwner Bun__VirtualMachine__runMainOwner(void* bunVM, const Bun
 extern "C" bool Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);
 BUN_DECLARE_HOST_FUNCTION(Bun__onRunMainRejected);
 
-// Being fetched, running, or run: whoever started that load reports it.
-static bool isLoadedOrLoading(JSC::AbstractModuleRecord* record)
-{
-    if (!record)
-        return true;
-    if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record))
-        return cyclic->status() >= JSC::CyclicModuleRecord::Status::Evaluating;
-    return record->moduleEnvironmentMayBeNull();
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -836,24 +821,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
     auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, name), {}, nullptr, /* useImportMap */ true);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    void* bunVM = zigGlobalObject->bunVM();
+    void* bunVM = defaultGlobalObject(globalObject)->bunVM();
     BunString keyString = Bun::toString(key.string());
     auto owner = Bun__VirtualMachine__runMainOwner(bunVM, &keyString);
-
-    if (owner == RunMainOwner::Caller) {
-        if (auto* entry = globalObject->moduleLoader()->getRegisteredMayBeNull(key, JSC::ScriptFetchParameters::Type::JavaScript)) {
-            JSValue failure = entry->error(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!failure && isLoadedOrLoading(entry->record()))
-                return JSC::JSValue::encode(JSC::jsUndefined());
-        } else {
-            bool required = zigGlobalObject->requireMap()->has(globalObject, jsString(vm, key.string()));
-            RETURN_IF_EXCEPTION(scope, {});
-            if (required)
-                return JSC::JSValue::encode(JSC::jsUndefined());
-        }
-    }
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
@@ -863,7 +833,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
     if (owner == RunMainOwner::EntryAwaits && Bun__VirtualMachine__setOverrideModuleRunMainPromise(bunVM, promise))
         return JSC::JSValue::encode(JSC::jsUndefined());
 
-    // JSC marks this promise as handled, and nobody else looks at it.
+    // JSC marks this promise as handled. Node raises an uncaught exception: https://github.com/nodejs/node/blob/v26.12.0/lib/internal/modules/run_main.js#L111
     auto* onRejected = JSC::JSFunction::create(vm, globalObject, 1, String(), Bun__onRunMainRejected, ImplementationVisibility::Private);
     promise->performPromiseThenExported(vm, globalObject, jsUndefined(), onRejected, JSPromise::create(vm, globalObject->promiseStructure()));
 

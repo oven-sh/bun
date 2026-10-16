@@ -24,6 +24,7 @@ use core::cell::UnsafeCell;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_ast as Log;
+use bun_collections::smallvec::SmallVec;
 use bun_core::{EncodedSlice, String as BunString, Utf8Bytes};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::js_object::ObjectInitializer;
@@ -857,33 +858,19 @@ impl MatchedRoute {
         }
         impl<'a> ObjectInitializer for QueryObjectCreator<'a> {
             fn create(&mut self, obj: &mut JSObject, global: &JSGlobalObject) -> JsResult<()> {
-                // Stack scratch — 256 × 16-byte fat ptr × 2 ≈ 8 KiB, well within Bun's
-                // JS-thread stack budget. A `RefCell<[&'static [u8]; 256]>` TLS slot
-                // would be unsound: `iter.next()` writes QueryStringMap-lifetime
-                // slices into it, and once the map drops the TLS slot is left
-                // holding dangling `&'static [u8]` — invalid-value UB the next time
-                // `with_borrow_mut` produces a `&mut` over it. A stack array lets
-                // inference tie the element lifetime to `iter` and dies with this
-                // frame.
-                let mut values_buf: [&[u8]; 256] = [b""; 256];
-                let mut refs_buf: [EncodedSlice; 256] = [EncodedSlice::EMPTY; 256];
+                // Not a thread-local: it borrows from the map, and a thread-local would outlive it.
+                let mut values: SmallVec<[EncodedSlice; 256]> = SmallVec::new();
 
                 let mut iter = self.query.iter();
-                while let Some(entry) = iter.next(&mut values_buf) {
-                    let entry_name = entry.name;
-                    let mut str = EncodedSlice::from_bytes(entry_name);
-
-                    debug_assert!(!entry.values.is_empty());
-                    if entry.values.len() > 1 {
-                        let values = &mut refs_buf[0..entry.values.len()];
-                        for (i, value) in entry.values.iter().enumerate() {
-                            values[i] = EncodedSlice::from_bytes(value);
-                        }
-                        obj.put_record(global, &mut str, values)?;
-                    } else {
-                        refs_buf[0] = EncodedSlice::from_bytes(entry.values[0]);
-                        obj.put_record(global, &mut str, &mut refs_buf[0..1])?;
-                    }
+                loop {
+                    values.clear();
+                    let Some(name) =
+                        iter.next(|value| values.push(EncodedSlice::from_bytes(value)))
+                    else {
+                        break;
+                    };
+                    let mut name = EncodedSlice::from_bytes(name);
+                    obj.put_record(global, &mut name, &mut values)?;
                 }
                 Ok(())
             }

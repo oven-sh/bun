@@ -1889,6 +1889,161 @@ describe("css tests", () => {
     );
   });
 
+  describe("text-shadow", () => {
+    minify_test(".foo { text-shadow: 1px 1px 2px yellow }", ".foo{text-shadow:1px 1px 2px #ff0}");
+    minify_test(".foo { text-shadow: 1px 1px 2px 3px yellow }", ".foo{text-shadow:1px 1px 2px 3px #ff0}");
+    minify_test(".foo { text-shadow: 1px 1px 0 yellow }", ".foo{text-shadow:1px 1px #ff0}");
+    minify_test(".foo { text-shadow: 1px 1px yellow, 2px 3px red }", ".foo{text-shadow:1px 1px #ff0,2px 3px red}");
+    minify_test(".foo { text-shadow: -1px -2px }", ".foo{text-shadow:-1px -2px}");
+
+    // A length can be a math function. A constant result is folded.
+    minify_test(".foo { text-shadow: calc(1px + 2px) 0 0 red }", ".foo{text-shadow:3px 0 red}");
+    minify_test(".foo { text-shadow: round(14.8px, 5px) 0 0 red }", ".foo{text-shadow:15px 0 red}");
+    minify_test(".foo { text-shadow: 1px 1px calc(2px * 2) yellow }", ".foo{text-shadow:1px 1px 4px #ff0}");
+    minify_test(".foo { text-shadow: 1px 1px 2px max(1px, 3px) yellow }", ".foo{text-shadow:1px 1px 2px 3px #ff0}");
+    minify_test(
+      ".foo { text-shadow: 1px 1px yellow, calc(1px + 2px) 3px red }",
+      ".foo{text-shadow:1px 1px #ff0,3px 3px red}",
+    );
+    minify_test(".foo { text-shadow: calc(1px - 3px) calc(2px - 4px) red }", ".foo{text-shadow:-2px -2px red}");
+    minify_test(".foo { text-shadow: calc(1px + 1em) 0 red }", ".foo{text-shadow:calc(1px + 1em) 0 red}");
+    minify_test(".foo { text-shadow: round(1em, 5px) 0 red }", ".foo{text-shadow:round(1em,5px) 0 red}");
+
+    // The value is read the same way in every place a declaration can be.
+    minify_test(
+      "@keyframes x { from { text-shadow: calc(1px + 2px) 0 red } to { text-shadow: 0 0 calc(1px - 6px) red } }",
+      "@keyframes x{0%{text-shadow:3px 0 red}to{text-shadow:0 0 red}}",
+    );
+    minify_test(
+      ".a { .b { text-shadow: calc(1px + 2px) 0 red !important } }",
+      ".a{& .b{text-shadow:3px 0 red!important}}",
+    );
+
+    // The blur radius and the spread cannot be negative. The browser clamps a calculation
+    // after it resolves it, so a constant below zero is 0.
+    minify_test(".foo { text-shadow: 0 0 calc(1px - 6px) red }", ".foo{text-shadow:0 0 red}");
+    minify_test(".foo { text-shadow: 1px 2px calc(-3px) }", ".foo{text-shadow:1px 2px}");
+    minify_test(".foo { text-shadow: 0 0 calc(1px - 6px) 2px red }", ".foo{text-shadow:0 0 0 2px red}");
+    minify_test(".foo { text-shadow: 0 0 1px calc(1px - 6px) red }", ".foo{text-shadow:0 0 1px red}");
+    minify_test(".foo { text-shadow: 0 0 calc(-infinity * 1px) red }", ".foo{text-shadow:0 0 red}");
+    minify_test(".foo { text-shadow: 0 0 calc(NaN * 1px) red }", ".foo{text-shadow:0 0 red}");
+    minify_test(".foo { text-shadow: 0 0 calc(1px - 1em) red }", ".foo{text-shadow:0 0 calc(1px - 1em) red}");
+    minify_test(".foo { text-shadow: 0 0 max(-5px, -1em) red }", ".foo{text-shadow:0 0 max(-5px,-1em) red}");
+
+    // The declaration prints as written when a value is not a length for its slot: a negative
+    // blur or spread, math that resolves to a number, a one-argument min(), max() or hypot()
+    // of a sum or product.
+    for (const value of [
+      "0 0 -5px red",
+      "1px 2px 0 -4px red",
+      "calc(1px + 2px) 0 -5px red",
+      "calc(1px + 2px) 0 1px -5px red",
+      "calc(1 + 2) 0 red",
+      "0 sign(-2px) red",
+      "min(1em + 2px) 0 red",
+      "0 0 hypot(1em + 2px) red",
+      "max(2 * min(1em, 2px)) 0 red",
+    ]) {
+      cssTest(`.foo { text-shadow: ${value} }`, `.foo { text-shadow: ${value}; }`);
+    }
+
+    // The earlier declaration is the fallback for a target that does not support the math
+    // function of the later one.
+    prefix_test(
+      `.foo {
+        text-shadow: 15px 0 red;
+        text-shadow: round(1em, 5px) 0 red;
+      }
+    `,
+      `.foo {
+          text-shadow: 15px 0 red;
+          text-shadow: round(1em, 5px) 0 red;
+        }
+            `,
+      { chrome: Some(87 << 16), firefox: Some(78 << 16), safari: Some(14 << 16) },
+    );
+    prefix_test(
+      `.foo {
+        text-shadow: 15px 0 red;
+        text-shadow: round(1em, 5px) 0 red;
+      }
+    `,
+      `.foo {
+          text-shadow: round(1em, 5px) 0 red;
+        }
+            `,
+      { chrome: Some(125 << 16) },
+    );
+    prefix_test(
+      `.foo {
+        text-shadow: 0px 0px 22px red;
+        text-shadow: 0px 0px max(2cqw, 22px) red;
+      }
+    `,
+      `.foo {
+          text-shadow: 0 0 22px red;
+          text-shadow: 0 0 max(2cqw, 22px) red;
+        }
+            `,
+      { safari: Some(14 << 16) },
+    );
+    prefix_test(
+      `.foo {
+        text-shadow: 0px 0px 22px red;
+        text-shadow: 0px 0px max(2cqw, 22px) red;
+      }
+    `,
+      `.foo {
+          text-shadow: 0 0 max(2cqw, 22px) red;
+        }
+            `,
+      { safari: Some(16 << 16) },
+    );
+
+    // A color fallback of a shadow with math is a declaration in the same rule.
+    prefix_test(
+      ".foo { text-shadow: calc(6px * 2) 12px lab(40% 56.6 39) }",
+      `.foo {
+          text-shadow: 12px 12px #b32323;
+          text-shadow: 12px 12px lab(40% 56.6 39);
+        }
+            `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { text-shadow: calc(1px + 1em) 12px lab(40% 56.6 39) }",
+      `.foo {
+          text-shadow: calc(1px + 1em) 12px #b32323;
+          text-shadow: calc(1px + 1em) 12px color(display-p3 .643308 .192455 .167712);
+          text-shadow: calc(1px + 1em) 12px lab(40% 56.6 39);
+        }
+            `,
+      { chrome: Some(90 << 16), safari: Some(14 << 16) },
+    );
+    prefix_test(
+      ".foo { text-shadow: calc(1px + 1em) 12px lab(40% 56.6 39), 12px 12px yellow }",
+      `.foo {
+          text-shadow: calc(1px + 1em) 12px #b32323, 12px 12px #ff0;
+          text-shadow: calc(1px + 1em) 12px lab(40% 56.6 39), 12px 12px #ff0;
+        }
+            `,
+      { chrome: Some(4 << 16) },
+    );
+    prefix_test(
+      `.foo {
+        text-shadow: 0 0 22px red;
+        text-shadow: 0 0 calc(1px + 1em) lab(40% 56.6 39);
+      }
+    `,
+      `.foo {
+          text-shadow: 0 0 22px red;
+          text-shadow: 0 0 calc(1px + 1em) lab(40% 56.6 39);
+        }
+            `,
+      { safari: Some(14 << 16) },
+    );
+  });
+
   describe("margin", () => {
     cssTest(
       `

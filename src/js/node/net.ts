@@ -1097,23 +1097,24 @@ function toSNIError(err) {
 }
 
 // Applies one SNICallback resolution to the dispatch state. Node assigns
-// `sni_context = context.context || context`: both the SecureContext wrapper
-// and a raw native context are accepted, null/undefined falls through to the
-// default context, and anything else is an invalid SNI context that drops the
-// connection before the handshake completes.
+// `sni_context = context.context || context` for a truthy context: both the
+// SecureContext wrapper and a raw native context are accepted. A falsy value
+// and any value that is no object keep the default context. An object that is
+// no context is an invalid SNI context, which drops the connection before the
+// handshake completes (crypto_tls.cc, TLSWrap::CertCbDone).
 function consumeSNIResult(state, err, context) {
   if (err) {
     state.failed = toSNIError(err);
     return;
   }
-  if (context == null) return;
+  if (!context) return;
   const innerContext = typeof context === "object" ? context.context : undefined;
   if (innerContext) {
     state.selected = innerContext;
   } else if (state.server?.[kNativeSecureContextCtor] && context instanceof state.server[kNativeSecureContextCtor]) {
     state.selected = context;
-  } else {
-    state.failed = new Error("Invalid SNI context");
+  } else if (typeof context === "object" || typeof context === "function") {
+    state.failed = new TypeError("Invalid SNI context");
   }
 }
 

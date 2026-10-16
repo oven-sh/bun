@@ -587,6 +587,8 @@ void us_ssl_set_wrapper(struct ssl_st *ssl, void *wrapper);
 void *us_ssl_wrapper_from_verify(void *ctx);
 /* Switches `ssl` to the context that its server name selected. */
 void us_ssl_apply_selected_ctx(struct ssl_st *ssl, struct ssl_ctx_st *ctx);
+/* Makes the select-certificate step of `ssl` ask its wrapper (us_ssl_wrapper_select_cert). */
+void us_ssl_wrapper_on_server_name(struct ssl_st *ssl);
 /* Owner data for us_dispatch_new_session. `on_free(sink)` runs once, on SSL_free. */
 void us_socket_set_session_sink(us_socket_r s, void *sink, void (*on_free)(void *));
 void *us_socket_session_sink(us_socket_r s);

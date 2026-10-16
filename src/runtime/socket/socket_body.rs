@@ -4371,6 +4371,29 @@ pub(super) enum EventState {
     Close,
 }
 
+impl TLSSocket {
+    /// The server-name question of the stream engine. It is asked outside BoringSSL, so it takes the
+    /// handler scope like the other engine callbacks.
+    fn on_server_name(
+        this: bun_ptr::ThisPtr<Self>,
+        name: &core::ffi::CStr,
+    ) -> super::listener::ServerNameAnswer {
+        use super::listener::ServerNameAnswer;
+        if this.socket.get().is_detached() || !this.has_handlers() {
+            return ServerNameAnswer::Default;
+        }
+        let handlers = this.get_handlers();
+        if handlers.vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
+            return ServerNameAnswer::Default;
+        }
+        let _scope = ScopeExit {
+            socket: this,
+            scope: Some(handlers.enter()),
+        };
+        super::listener::ask_server_name(this, name)
+    }
+}
+
 impl DuplexUpgradeContext {
     #[inline(always)]
     // The `on_*` callbacks take `ThisPtr<Self>`, not `&mut self`: they are
@@ -4424,14 +4447,15 @@ impl DuplexUpgradeContext {
             })
     }
 
-    /// The stream engine paused the handshake on the ClientHello's server name: ask the socket's
+    /// The stream engine suspended the handshake on the ClientHello's server name: ask the socket's
     /// `serverName` handler, as the fd engine does. `Pending` is answered by `handle.resumeSNI(...)`.
     fn on_server_name(this: bun_ptr::ThisPtr<Self>, name: &core::ffi::CStr) {
         use super::listener::ServerNameAnswer;
-        let answer = match this.tls_this_ptr() {
-            Some(tls) => super::listener::ask_server_name(tls, name),
-            None => ServerNameAnswer::Default,
-        };
+        let answer = this
+            .tls_this_ptr()
+            .map_or(ServerNameAnswer::Default, |tls| {
+                TLSSocket::on_server_name(tls, name)
+            });
         match answer {
             ServerNameAnswer::Pending => {}
             ServerNameAnswer::Default => this.upgrade.resolve_server_name(Ok(None)),

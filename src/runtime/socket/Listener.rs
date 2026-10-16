@@ -2160,8 +2160,8 @@ fn dispatch_server_name(
 }
 
 /// Asks the `serverName` handler of a server-side socket. Both TLS engines
-/// call it: a `us_socket_t` from inside BoringSSL's early callback, the
-/// stream engine with its handshake paused.
+/// call it: a `us_socket_t` from inside BoringSSL's select-certificate
+/// callback, the stream engine with its handshake suspended there.
 pub(crate) fn ask_server_name(
     tls: bun_ptr::ThisPtr<TLSSocket>,
     name: &core::ffi::CStr,
@@ -2171,9 +2171,10 @@ pub(crate) fn ask_server_name(
     if !tls.has_handlers() {
         return ServerNameAnswer::Default;
     }
-    // No `Handlers::enter`/`exit` scope here: that protocol tracks the
-    // accepted-socket callback lifecycle, and running it from inside the
-    // handshake corrupts `active_connections` for every subsequent accept.
+    // No `Handlers::enter`/`exit` scope here: the fd engine calls this from
+    // inside BoringSSL, where that protocol corrupts `active_connections` for
+    // every subsequent accept. The stream engine takes its scope around the
+    // call (`TLSSocket::on_server_name`).
     let handlers = tls.get_handlers();
     let callback = handlers.on_server_name();
     if callback.is_empty() {

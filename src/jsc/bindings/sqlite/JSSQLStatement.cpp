@@ -948,9 +948,10 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
 
     } else if (value.isHeapBigInt()) [[unlikely]] {
         JSBigInt* bigInt = value.asHeapBigInt();
-        const auto min = JSBigInt::compare(bigInt, std::numeric_limits<int64_t>::min());
-        const auto max = JSBigInt::compare(bigInt, std::numeric_limits<int64_t>::max());
-        if ((min == JSBigInt::ComparisonResult::GreaterThan || min == JSBigInt::ComparisonResult::Equal) && (max == JSBigInt::ComparisonResult::LessThan || max == JSBigInt::ComparisonResult::Equal)) [[likely]] {
+        // The magnitude of an int64 fits in one digit: at most 2^63 when negative and 2^63 - 1 otherwise.
+        static_assert(sizeof(JSBigInt::Digit) == sizeof(uint64_t));
+        const uint64_t largestMagnitude = static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + (bigInt->sign() ? 1 : 0);
+        if (!bigInt->length() || (bigInt->length() == 1 && bigInt->digit(0) <= largestMagnitude)) [[likely]] {
             CHECK_BIND(sqlite3_bind_int64(stmt, i, JSBigInt::toBigInt64(value)));
         } else {
             auto bigIntString = bigInt->toString(lexicalGlobalObject, 10);

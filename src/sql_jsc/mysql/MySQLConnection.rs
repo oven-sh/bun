@@ -1269,6 +1269,8 @@ impl MySQLConnection {
             }
 
             packet_type => {
+                // Script that runs while a row is built can end the request, which drops its ref.
+                let _statement_guard = request.statement_ref();
                 let Some(statement) = request.get_statement() else {
                     debug!("Unexpected result set packet");
                     return Err(AnyMySQLError::UnexpectedPacket);

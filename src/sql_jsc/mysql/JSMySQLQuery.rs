@@ -408,6 +408,10 @@ impl JSMySQLQuery {
         self.query.get().get_statement()
     }
 
+    pub(crate) fn statement_ref(&self) -> Option<RefPtr<MySQLStatement>> {
+        self.query.get().statement_ref()
+    }
+
     #[inline]
     pub(crate) fn set_pending_value(&self, result: JSValue) {
         if let Some(value) = self.this_value.get().try_get() {

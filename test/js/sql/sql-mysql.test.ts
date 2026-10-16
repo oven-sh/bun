@@ -232,6 +232,42 @@ console.log(JSON.stringify(outcomes));`,
         },
       );
 
+      // In a child: an indexed accessor on Array.prototype affects every array in the process.
+      test.skipIf(image.image === "mysql_tls")(
+        "a setter on Array.prototype that closes the client while a row is added",
+        async () => {
+          await container.ready;
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `const sql = new Bun.SQL(process.env.SQL_URL, { max: 1 });
+await sql\`select 1\`;
+let closed = 0;
+Object.defineProperty(Array.prototype, 1, {
+  configurable: true,
+  set(value) {
+    if (value?.x == 2) {
+      closed++;
+      delete Array.prototype[1];
+      sql.close({ timeout: 0 });
+    }
+    Object.defineProperty(this, 1, { value, writable: true, enumerable: true, configurable: true });
+  },
+});
+const outcome = await sql.unsafe("select 1 as x union all select 2 union all select 3").simple().then(() => "resolved", error => error.code);
+console.log(JSON.stringify({ outcome, closed }));`,
+            ],
+            env: { ...bunEnv, SQL_URL: getOptions().url as string },
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(JSON.parse(stdout)).toEqual({ outcome: "ERR_MYSQL_CONNECTION_CLOSED", closed: 1 });
+          expect(exitCode).toBe(0);
+        },
+      );
+
       test.skipIf(isWindows || image.image === "mysql_tls")(
         "connects through the unix socket that `path`, `socket` or the URL names",
         async () => {

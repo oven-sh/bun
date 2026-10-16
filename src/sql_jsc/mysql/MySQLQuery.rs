@@ -350,6 +350,10 @@ impl MySQLQuery {
 
     #[inline]
     #[allow(clippy::mut_from_ref)] // goes through a raw intrusive pointer; see SAFETY note below
+    pub(crate) fn statement_ref(&self) -> Option<RefPtr<MySQLStatement>> {
+        self.statement.clone()
+    }
+
     pub(crate) fn get_statement(&self) -> Option<&mut MySQLStatement> {
         // SAFETY: kept alive by the ref we hold. Returning `&mut` permits
         // shared mutation through the intrusive pointer; the lifetime is

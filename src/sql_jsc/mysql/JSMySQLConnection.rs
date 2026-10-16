@@ -613,8 +613,8 @@ impl JSMySQLConnection {
         let result_mode = request.get_result_mode();
         let mut structure: JSValue = JSValue::UNDEFINED;
         // `structure()` borrows `*statement` mutably for as long as its result lives, and the
-        // columns are read below: hence the lifetime-erased `ParentRef`. `request` keeps the
-        // statement alive.
+        // columns are read below: hence the lifetime-erased `ParentRef`. The caller's ref keeps
+        // the statement alive.
         let cached_structure: Option<ParentRef<CachedStructure>> = match result_mode {
             ResultMode::Objects => {
                 // Build unconditionally (matches postgres) so toJS always has

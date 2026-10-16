@@ -52,6 +52,7 @@ const {
   STATUS_CODES,
   isTlsSymbol,
   hasServerResponseFinished,
+  validateResponseChunk,
   NodeHTTPBodyReadState,
   drainMicrotasks,
   setServerCustomOptions,
@@ -3486,6 +3487,15 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     callback = undefined;
   }
 
+  // Node's end() takes a falsy chunk for no chunk, and gives any other chunk of an unfinished response to write_(): https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1086-L1098
+  if (typeof chunk !== "string" && chunk !== undefined) {
+    if (!chunk) {
+      chunk = undefined;
+    } else if (!$isTypedArrayView(chunk) && !this.finished) {
+      chunk = validateResponseChunk(chunk, handle);
+    }
+  }
+
   // Node's write_() drops the chunk of a destroyed response, and end() goes on: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L951-L964
   if (chunk && this.destroyed && !this.finished) chunk = undefined;
 
@@ -3687,6 +3697,11 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     callback = undefined;
   }
 
+  // Node's write_() checks the type of the chunk before anything else: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L937-L942
+  if (typeof chunk !== "string" && chunk != null && (!handle || !$isTypedArrayView(chunk))) {
+    chunk = validateResponseChunk(chunk, handle);
+  }
+
   if (hasServerResponseFinished(this, chunk, callback, false)) {
     return false;
   }
@@ -3877,6 +3892,9 @@ ServerResponse.prototype.detachSocket = function (socket) {
 
   this.socket = null;
 };
+
+// Like Node.js, a response whose own statusCode was deleted answers 200.
+ServerResponse.prototype.statusCode = 200;
 
 ServerResponse.prototype._implicitHeader = function () {
   if (this.headersSent) return;
@@ -4134,12 +4152,28 @@ function updateHasBody(response, statusCode) {
   // status writeHead() picks.
 }
 
+// Node's writeHead() takes an integer from 100 to 999 as it is, and coerces or refuses every other status code: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L414-L419
+function canStartHeadWithoutWriteHead(response) {
+  const statusCode = response.statusCode;
+  if (typeof statusCode === "number" && (statusCode | 0) === statusCode && statusCode >= 100 && statusCode <= 999) {
+    return true;
+  }
+  // Node's end() stores no head for the chunk of a destroyed response. A queued response is checked by the call that starts its head, and not again by a later call or by the replay.
+  return (
+    response.destroyed || response[kReplayingPipelinedOps] || (response[kPipelinedQueuedState]?.headerBytes ?? 0) !== 0
+  );
+}
+
 let OriginalWriteHeadFn, OriginalImplicitHeadFn;
 
 function callWriteHeadIfObservable(self, headerState, fromEnd?) {
   if (
     headerState === NodeHTTPHeaderState.none &&
-    !(self.writeHead === OriginalWriteHeadFn && self._implicitHeader === OriginalImplicitHeadFn)
+    !(
+      self.writeHead === OriginalWriteHeadFn &&
+      self._implicitHeader === OriginalImplicitHeadFn &&
+      canStartHeadWithoutWriteHead(self)
+    )
   ) {
     // Node's end(chunk) assigns _contentLength before _implicitHeader reaches
     // _storeHeader, so this implicit call must not freeze the framing to chunked

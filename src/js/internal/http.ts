@@ -1,4 +1,6 @@
 const { isIPv4 } = require("internal/net/isIP");
+const { hideFromStack } = require("internal/shared");
+const { isAnyArrayBuffer, isDataView, isStringObject, isUint8Array } = require("node:util/types");
 
 const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, drainMicrotasks } = $cpp(
   "NodeHTTP.cpp",
@@ -30,6 +32,8 @@ const eofInProgress = Symbol("eofInProgress");
 const fakeSocketSymbol = Symbol("fakeSocket");
 const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
+// On the JS handle of internal/http1_server_fallback, which writes each chunk to a stream.
+const kHttp1FallbackHandle = Symbol("kHttp1FallbackHandle");
 const kOnReadParsed = Symbol("kOnReadParsed");
 const kRealListen = Symbol("kRealListen");
 const noBodySymbol = Symbol("noBody");
@@ -351,6 +355,21 @@ function hasServerResponseFinished(self, chunk, callback, fromEnd) {
   return false;
 }
 
+// Throws for a chunk of ServerResponse#write() or #end() as Node.js does, unless the handle of the response sends that kind of chunk: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L937-L942
+function validateResponseChunk(chunk, handle) {
+  if (!handle) {
+    if (isUint8Array(chunk)) return chunk;
+  } else if (handle[kHttp1FallbackHandle]) {
+    if (isDataView(chunk)) return chunk;
+  } else {
+    if (isAnyArrayBuffer(chunk) || isDataView(chunk)) return chunk;
+    // The native handle calls toString() of a String object after it wrote the head.
+    if (isStringObject(chunk)) return `${chunk}`;
+  }
+  throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "Uint8Array"], chunk);
+}
+hideFromStack(validateResponseChunk);
+
 function emitErrorNt(msg, err, callback) {
   if ($isCallable(callback)) {
     callback(err);
@@ -542,6 +561,7 @@ export {
   kCloseCallback,
   kHandle,
   kHandoffResponse,
+  kHttp1FallbackHandle,
   kInternalSocketData,
   kNeedDrain,
   kOnReadParsed,
@@ -565,4 +585,5 @@ export {
   setServerMaxHeadersCount,
   tlsSymbol,
   utcDate,
+  validateResponseChunk,
 };

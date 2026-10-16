@@ -29,8 +29,6 @@ pub(crate) struct Exec {
     pub(crate) started: bool,
     pub(crate) tasks_count: usize,
     pub(crate) tasks_done: usize,
-    pub(crate) output_waiting: usize,
-    pub(crate) output_done: usize,
     /// Index into `Builtin::args` where filepath args start (storing the
     /// index keeps the lifetime tied to the Cmd's argv without a
     /// self-reference).
@@ -72,8 +70,6 @@ impl Mkdir {
             started: false,
             tasks_count: 0,
             tasks_done: 0,
-            output_waiting: 0,
-            output_done: 0,
             args_start,
             err: None,
             output_queue: std::collections::VecDeque::new(),
@@ -93,9 +89,8 @@ impl Mkdir {
             State::Idle => panic!("Invalid state"),
             State::Exec(exec) => {
                 if exec.started {
-                    if exec.tasks_done >= exec.tasks_count
-                        && exec.output_done >= exec.output_waiting
-                    {
+                    // A queued chunk names this node, so a parked task keeps mkdir running.
+                    if exec.tasks_done >= exec.tasks_count && exec.output_queue.is_empty() {
                         let exit_code: ExitCode = if exec.err.is_some() { 1 } else { 0 };
                         exec.err = None;
                         NextAction::Done(exit_code)
@@ -189,9 +184,6 @@ impl OutputTaskVTable for Mkdir {
         child: *mut OutputTask<Self>,
         errbuf: &[u8],
     ) -> Option<Yield> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
             // OutputTask has no `WriterTag` of its own (it is not directly
             // dispatchable as an IOWriter child), so the enqueue is tagged
@@ -212,21 +204,12 @@ impl OutputTaskVTable for Mkdir {
         None
     }
 
-    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
-
     fn write_out(
         interp: &Interpreter,
         cmd: NodeId,
         child: *mut OutputTask<Self>,
         output: &mut OutputSrc,
     ) -> Option<Yield> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
             // See write_err — stash `child` so the chunk callback routes to
             // OutputTask::on_io_writer_chunk.
@@ -244,12 +227,6 @@ impl OutputTaskVTable for Mkdir {
         let buf = output.slice().to_vec();
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         None
-    }
-
-    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
     }
 
     fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {

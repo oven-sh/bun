@@ -131,6 +131,21 @@ fn get_argv0(
     let actual_argv0: ZBox = match path_to_use {
         None => ZBox::from_bytes(argv0_to_use),
         Some(path_to_use) => {
+            // The lookup stats `cwd/segment/bin`. A relative `cwd` option names
+            // the child's directory after its chdir, so resolve it against the
+            // parent's directory first, or the stat and the exec look at
+            // different files.
+            let mut abs_cwd_buf;
+            let cwd: &[u8] = if cwd.is_empty() || bun_paths::is_absolute(cwd) {
+                cwd
+            } else {
+                abs_cwd_buf = bun_paths::path_buffer_pool::get();
+                bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+                    bun_resolver::fs::FileSystem::get().top_level_dir,
+                    &mut abs_cwd_buf[..],
+                    &[cwd],
+                )
+            };
             let Some(resolved) =
                 bun_which::which_for_spawn(&mut path_buf, path_to_use, cwd, argv0_to_use)
             else {

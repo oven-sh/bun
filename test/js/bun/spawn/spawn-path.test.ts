@@ -98,8 +98,12 @@ describe.skipIf(isWindows)("spawn with an empty PATH", () => {
   function makeDir() {
     const dir = tempDir("spawn-empty-path", {
       "hello": "#!/bin/sh\necho HELLO_FROM_CWD\n",
+      "bin/hello": "#!/bin/sh\necho HELLO_FROM_BIN\n",
+      "sub/hello": "#!/bin/sh\necho HELLO_FROM_SUB\n",
     });
     chmodSync(path.join(String(dir), "hello"), 0o755);
+    chmodSync(path.join(String(dir), "bin", "hello"), 0o755);
+    chmodSync(path.join(String(dir), "sub", "hello"), 0o755);
     return dir;
   }
 
@@ -146,6 +150,36 @@ describe.skipIf(isWindows)("spawn with an empty PATH", () => {
     });
   });
 
+  test.concurrent("the first PATH segment wins, whether it is empty or a directory", () => {
+    using dir = makeDir();
+    const bin = path.join(String(dir), "bin");
+    expect(spawnSyncResult(["hello"], { PATH: bin + ":" }, String(dir)).stdout).toBe("HELLO_FROM_BIN");
+    expect(spawnSyncResult(["hello"], { PATH: ":" + bin }, String(dir)).stdout).toBe("HELLO_FROM_CWD");
+  });
+
+  test.concurrent("a relative cwd option is the directory the cwd segment names", async () => {
+    using dir = makeDir();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const r = (env, cwd) => {
+           try { return Bun.spawnSync({ cmd: ["hello"], env, cwd, stdout: "pipe" }).stdout.toString().trim(); }
+           catch (e) { return e.code; }
+         };
+         console.log(r({ PATH: "" }, "sub"), r({ PATH: ":/nonexistent" }, "./sub"), r({ PATH: "." }, "sub"), r({ PATH: "bin:" }, "sub"));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("HELLO_FROM_SUB HELLO_FROM_SUB HELLO_FROM_SUB HELLO_FROM_SUB\n");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("Bun.which keeps skipping an empty PATH segment", () => {
     using dir = makeDir();
     expect(Bun.which("hello", { PATH: "", cwd: String(dir) })).toBeNull();
@@ -162,8 +196,10 @@ describe.skipIf(isWindows)("spawn with an empty PATH", () => {
          const r = spawnSync("uname", []);
          console.log(r.error ? r.error.code : "ran");
          delete process.env.PATH;
-         const r2 = spawnSync("uname", [], { env: {} });
-         console.log(r2.error ? r2.error.code : "ran");`,
+         const r2 = spawnSync("uname", []);
+         console.log(r2.error ? r2.error.code : "ran");
+         const r3 = spawnSync("env", []);
+         console.log(r3.stdout.toString().split("\\n").some(l => l.startsWith("PATH=")) ? "PATH present" : "PATH absent");`,
       ],
       env: bunEnv,
       stdout: "pipe",
@@ -171,7 +207,7 @@ describe.skipIf(isWindows)("spawn with an empty PATH", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout).toBe("ENOENT\nran\n");
+    expect(stdout).toBe("ENOENT\nran\nPATH absent\n");
     expect(exitCode).toBe(0);
   });
 

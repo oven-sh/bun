@@ -525,12 +525,12 @@ describe("structuredClone with Blob and File", () => {
       });
     });
 
-    test("a File record naming an s3:// path is rejected at deserialize", () => {
-      // Bun never writes one (S3 stores are refused above); honoring a
-      // hand-built one would hand out an S3File signed with this process's
-      // environment credentials. Build it by overwriting the path of a real
-      // file-backed record with an s3:// URL of the same length, so the
-      // framing stays whatever the current build emits.
+    test("a File record naming an s3:// path deserializes to a local file, never an S3File", () => {
+      // A File record is a local path. A record that names `s3://...` must not
+      // hand out an S3File signed with this process's environment credentials.
+      // Build it by overwriting the path of a real file-backed record with an
+      // s3:// URL of the same length, so the framing stays whatever the
+      // current build emits.
       const s3Path = "s3://bucket/key";
       const placeholder = Buffer.alloc(s3Path.length, "p").toString();
       const good = Buffer.from(serialize(Bun.file(placeholder)));
@@ -538,19 +538,14 @@ describe("structuredClone with Blob and File", () => {
       expect(at).toBeGreaterThan(0);
       expect(Object.prototype.toString.call(deserialize(good))).toBe("[object Blob]");
 
-      const bad = Buffer.from(good);
-      bad.write(s3Path, at, "latin1");
+      const crafted = Buffer.from(good);
+      crafted.write(s3Path, at, "latin1");
 
-      const rejected = {
-        type: "TypeError",
-        name: "TypeError",
-        code: undefined,
-        message: "Unable to deserialize data.",
-      };
+      const tagOf = (blob: unknown) => Object.prototype.toString.call(blob);
       expect({
-        "bun:jsc": thrownBy(() => deserialize(bad)),
-        "node:v8": thrownBy(() => v8.deserialize(bad)),
-      }).toEqual({ "bun:jsc": rejected, "node:v8": rejected });
+        "bun:jsc": tagOf(deserialize(crafted)),
+        "node:v8": tagOf(v8.deserialize(crafted)),
+      }).toEqual({ "bun:jsc": "[object Blob]", "node:v8": "[object Blob]" });
     });
   });
 

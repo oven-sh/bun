@@ -3895,10 +3895,6 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     if strings::index_of_char(&path, 0).is_some() {
                         return Err(crate::Error::InvalidValue);
                     }
-                    // Crafted record: no serializer writes an `s3://` path.
-                    if path.starts_with(b"s3://") {
-                        return Err(crate::Error::InvalidValue);
-                    }
                     let mut dest = PathOrFileDescriptor::Path(PathLike::owned(path));
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut dest,

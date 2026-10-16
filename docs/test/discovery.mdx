@@ -73,6 +73,8 @@ describe("Math", () => {
 
 For this test, `bun test` matches the pattern against the string "Math operations should add correctly".
 
+The match ignores case, as in Jest: `-t math` also runs this test. To match case, wrap the pattern in `(?-i:...)`, for example `-t '(?-i:Math)'`.
+
 ### Changing the Root Directory
 
 By default, Bun looks for test files starting from the current working directory. Change this with the `root` option in `bunfig.toml`:

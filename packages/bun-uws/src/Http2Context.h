@@ -785,7 +785,7 @@ struct Http2Context {
         forEachConnection([](Http2Connection *conn) {
             if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
             conn->flush();
-            us_socket_close(conn->s, 0, nullptr);
+            us_socket_close_now(conn->s);
         });
     }
 
@@ -963,7 +963,7 @@ private:
         }
         if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
         conn->flush();
-        return us_socket_close(s, 0, nullptr);
+        return us_socket_close_now(s);
     }
 
     static us_socket_t *onEnd(us_socket_t *s) {

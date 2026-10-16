@@ -226,6 +226,7 @@ export class RawH2 {
   private buf = Buffer.alloc(0);
   private waiters: (() => void)[] = [];
   closed = false;
+  ended = false;
 
   static async connect(port: number, secure: boolean, opts: { sendPreface?: boolean; settings?: Buffer } = {}) {
     const c = new RawH2();
@@ -241,6 +242,10 @@ export class RawH2 {
       c.socket.once("error", onErr);
     });
     c.socket.on("data", (d: Buffer) => c.onData(d));
+    c.socket.on("end", () => {
+      c.ended = true;
+      c.wake();
+    });
     c.socket.on("close", () => {
       c.closed = true;
       c.wake();
@@ -291,6 +296,11 @@ export class RawH2 {
 
   async waitForClose() {
     while (!this.closed) await new Promise<void>(r => this.waiters.push(r));
+  }
+
+  /** The server's EOF (its close_notify over TLS, its FIN otherwise), or the close if that comes first. */
+  async waitForEnd() {
+    while (!this.ended && !this.closed) await new Promise<void>(r => this.waiters.push(r));
   }
 
   describe() {

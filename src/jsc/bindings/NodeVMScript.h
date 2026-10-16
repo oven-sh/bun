@@ -10,13 +10,13 @@ namespace Bun {
 
 class ScriptOptions : public BaseVMOptions {
 public:
-    WTF::Vector<uint8_t> cachedData;
     std::optional<int64_t> timeout = std::nullopt;
     bool produceCachedData = false;
 
     using BaseVMOptions::BaseVMOptions;
 
-    bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg, JSValue* importer);
+    // cachedData goes to the caller: these options live as long as the Script, and the blob is only read while it is constructed.
+    bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg, JSValue* importer, WTF::Vector<uint8_t>& cachedData);
 };
 
 class NodeVMScriptConstructor final : public JSC::InternalFunction {
@@ -73,7 +73,6 @@ public:
 
     const JSC::SourceCode& source() const { return m_source; }
     const ScriptOptions& options() const { return m_options; }
-    WTF::Vector<uint8_t>& cachedData() { return m_options.cachedData; }
     bool cachedDataProduced() const { return m_cachedDataProduced; }
     void cachedDataProduced(bool value) { m_cachedDataProduced = value; }
     TriState cachedDataRejected() const { return m_cachedDataRejected; }

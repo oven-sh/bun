@@ -24,7 +24,7 @@ static std::optional<Seconds> timeoutOf(const RunningScriptOptions& options)
     return options.timeout ? std::optional { Seconds::fromMilliseconds(*options.timeout) } : std::nullopt;
 }
 
-bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg, JSValue* importer)
+bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg, JSValue* importer, WTF::Vector<uint8_t>& cachedData)
 {
     if (importer) {
         *importer = jsUndefined();
@@ -66,7 +66,7 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
             any = true;
         RETURN_IF_EXCEPTION(scope, false);
 
-        if (validateCachedData(globalObject, vm, scope, options, this->cachedData))
+        if (validateCachedData(globalObject, vm, scope, options, cachedData))
             any = true;
         RETURN_IF_EXCEPTION(scope, false);
 
@@ -109,13 +109,14 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     JSValue optionsArg = args.at(1);
     ScriptOptions options(""_s);
     JSValue importer;
+    WTF::Vector<uint8_t> cachedData;
 
     if (optionsArg.isString()) {
         options.filename = optionsArg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         // `new Script(src, "name")` is a provided filename, "" included.
         options.filenameProvided = true;
-    } else if (!options.fromJS(globalObject, vm, scope, optionsArg, &importer)) {
+    } else if (!options.fromJS(globalObject, vm, scope, optionsArg, &importer, cachedData)) {
         RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
     }
     options.lineOffset = clampOffsetForSource(options.lineOffset, sourceString.length());
@@ -169,8 +170,6 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     }
     RETURN_IF_EXCEPTION(scope, {});
 
-    WTF::Vector<uint8_t>& cachedData = script->cachedData();
-
     if (!cachedData.isEmpty()) {
         JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? JSC::TaintedByWithScopeLexicallyScopedFeature : JSC::NoLexicallyScopedFeatures;
         JSC::SourceCodeKey key(script->source(), {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
@@ -178,6 +177,9 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         // Whether the blob decodes is Node's cachedDataRejected. Runs link their own block (unlinkedCodeBlockFor).
         JSC::UnlinkedProgramCodeBlock* unlinkedBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, WTF::move(cachedBytecode));
         script->cachedDataRejected(unlinkedBlock ? TriState::False : TriState::True);
+        // The decoded block is garbage already, and it owns the payload copy until the collector reaches it.
+        if (unlinkedBlock)
+            vm.heap.reportExtraMemoryAllocated(unlinkedBlock, cachedData.size());
     } else if (script->options().produceCachedData)
         script->cacheBytecode();
 

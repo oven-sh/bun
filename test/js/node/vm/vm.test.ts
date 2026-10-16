@@ -1005,27 +1005,103 @@ test("accepts valid bytecode", () => {
   expect(secondScript.runInThisContext()).toBe(2);
 });
 
-test.concurrent("accepts valid bytecode when the JIT is unavailable", async () => {
-  // JSC runs JIT-less when it cannot map its executable pool: systemd
-  // MemoryDenyWriteExecute=yes, or a low RLIMIT_AS. Constructing a Script with
-  // accepted cachedData used to compile the decoded block with the baseline JIT,
-  // which killed the process there.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const { Script } = require("node:vm");
-       const cachedData = new Script("40 + 2").createCachedData();
-       const script = new Script("40 + 2", { cachedData });
-       console.log(script.cachedDataRejected, script.runInThisContext());`,
-    ],
-    env: { ...bunEnv, BUN_JSC_useJIT: "0" },
-    stderr: "pipe",
+describe("a Script built from accepted cachedData", () => {
+  // JSC runs without a JIT when it cannot reserve executable memory: an address-space limit, or systemd
+  // MemoryDenyWriteExecute=yes. The constructor used to compile the decoded block with the baseline JIT,
+  // which killed such a process. Every way into the constructor is here.
+  const prelude = `const vm = require("node:vm"); const cachedData = new vm.Script("40 + 2").createCachedData();`;
+  const viaScript = (expression: string) => `const s = ${expression}; console.log(s.cachedDataRejected, s.runInThisContext());`;
+  test.concurrent.each([
+    ["new Script", viaScript(`new vm.Script("40 + 2", { cachedData })`), "false 42\n"],
+    ["createScript", viaScript(`vm.createScript("40 + 2", { cachedData })`), "false 42\n"],
+    ["a subclass", viaScript(`new (class extends vm.Script {})("40 + 2", { cachedData })`), "false 42\n"],
+    ["Reflect.construct", viaScript(`Reflect.construct(vm.Script, ["40 + 2", { cachedData }])`), "false 42\n"],
+    ["produceCachedData too", viaScript(`new vm.Script("40 + 2", { cachedData, produceCachedData: true })`), "false 42\n"],
+    ["runInThisContext", `console.log(vm.runInThisContext("40 + 2", { cachedData }));`, "42\n"],
+    ["runInContext", `console.log(vm.runInContext("40 + 2", vm.createContext({}), { cachedData }));`, "42\n"],
+    ["runInNewContext", `console.log(vm.runInNewContext("40 + 2", {}, { cachedData }));`, "42\n"],
+  ])("runs in a process without a JIT: %s", async (_, body, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + body],
+      env: { ...bunEnv, BUN_JSC_useJIT: "0" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(expected);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("false 42\n");
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+
+  // 8000 statements: about 300 KB of cachedData, and megabytes of machine code if it is ever compiled.
+  const bigProgram = `
+    const vm = require("node:vm");
+    const statement = "var a = 1;\\n";
+    const source = Buffer.alloc(statement.length * 8000, statement).toString() + "42";
+    const cachedData = new vm.Script(source).createCachedData();
+  `;
+
+  test.concurrent("keeps no compiled code, and its payload counts toward the next collection", async () => {
+    const fixture = `${bigProgram}
+      const { heapStats } = require("bun:jsc");
+      const live = (...names) => {
+        const counts = heapStats().objectTypeCounts;
+        return names.map(name => counts[name] ?? 0);
+      };
+
+      Bun.gc(true);
+      const before = live("ProgramExecutable", "ProgramCodeBlock");
+      const kept = [];
+      for (let i = 0; i < 10; i++) kept.push(new vm.Script(source, { cachedData }));
+      Bun.gc(true);
+      const after = live("ProgramExecutable", "ProgramCodeBlock");
+
+      // No collection is requested from here on.
+      const [scriptsBefore] = live("Script");
+      for (let i = 0; i < 32; i++) new vm.Script(source, { cachedData });
+      const [scriptsAfter] = live("Script");
+
+      console.log(JSON.stringify({
+        rejected: kept.filter(script => script.cachedDataRejected !== false).length,
+        pinnedByKept: after.map((count, i) => count - before[i]),
+        droppedStillLive: scriptsAfter - scriptsBefore,
+      }));
+    `;
+    // --smol: a collection is due after a few MB of allocation, and 32 payloads are about 10 MB.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", fixture],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { droppedStillLive, ...rest } = JSON.parse(stdout);
+    // A linked and compiled block pins one ProgramExecutable and one ProgramCodeBlock per kept Script.
+    expect(rest).toEqual({ rejected: 0, pinnedByKept: [0, 0] });
+    // Each dropped Script leaves a decoded block that owns a copy of the blob. While that copy is
+    // not reported, nothing in the loop asks for a collection, and all 32 stay.
+    expect(droppedStillLive).toBeLessThan(32);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("is not reported as rejected when executable memory runs out", async () => {
+    // The compile took megabytes of the JIT's pool per Script, and its failure was reported as a rejected blob.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `${bigProgram}
+        const kept = [];
+        for (let i = 0; i < 8; i++) kept.push(new vm.Script(source, { cachedData }));
+        console.log(JSON.stringify(kept.map(script => script.cachedDataRejected)));`,
+      ],
+      env: { ...bunEnv, BUN_JSC_jitMemoryReservationSize: String(16 * 1024 * 1024) },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(JSON.stringify(Array(8).fill(false)) + "\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });
 
 test("can't use bytecode from a different script", () => {

@@ -9466,12 +9466,19 @@ fn rm_with_retries(
 fn dt_entry_path(sub_path: &[u8], stack: &[DeleteTreeStackItem], name: Option<&[u8]>) -> Vec<u8> {
     let mut path = Vec::with_capacity(sub_path.len() + 64);
     path.extend_from_slice(sub_path);
-    for item in stack.iter().filter(|item| !item.name_is_borrowed) {
-        path.push(bun_paths::SEP);
-        path.extend_from_slice(&item.name);
-    }
-    if let Some(name) = name {
-        path.push(bun_paths::SEP);
+    let names = stack
+        .iter()
+        .filter(|item| !item.name_is_borrowed)
+        .map(|item| &item.name[..])
+        .chain(name);
+    for name in names {
+        // `sub_path` can end with a separator ("dir/").
+        if !path
+            .last()
+            .is_some_and(|&c| bun_paths::Platform::AUTO.is_separator(c))
+        {
+            path.push(bun_paths::SEP);
+        }
         path.extend_from_slice(name);
     }
     path

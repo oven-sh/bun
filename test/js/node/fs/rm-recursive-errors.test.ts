@@ -222,21 +222,26 @@ describe.skipIf(isWindows)("fs.rm recursive under EMFILE", () => {
     const result = await runWithFewDescriptors(
       String(dir),
       `
-      const root = makeTree("root");
+      const plain = makeTree("plain");
+      const slash = makeTree("slash");
       exhaustDescriptors();
-      try {
-        fs.rmSync(root, { recursive: true });
-        console.log(JSON.stringify({ ok: true }));
-      } catch (e) {
-        console.log(JSON.stringify({ code: e.code, syscall: e.syscall, path: e.path }));
-      }
+      const remove = target => {
+        try {
+          fs.rmSync(target, { recursive: true });
+          return { ok: true };
+        } catch (e) {
+          return { code: e.code, syscall: e.syscall, path: e.path };
+        }
+      };
+      console.log(JSON.stringify({ plain: remove(plain), trailingSeparator: remove(slash + path.sep) }));
       `,
     );
-    expect(result).toEqual({
+    const failedAt = (name: string) => ({
       code: "EMFILE",
       syscall: "rm",
-      path: path.join(String(dir), "root", "a", "b"),
+      path: path.join(String(dir), name, "a", "b"),
     });
+    expect(result).toEqual({ plain: failedAt("plain"), trailingSeparator: failedAt("slash") });
   });
 
   test.concurrent("without maxRetries the error is reported at once", async () => {

@@ -3446,6 +3446,11 @@ function internalConnectMultiple(context, canceled?) {
   const current = context.current++;
 
   if (current > 0) {
+    // An earlier connect() of this socket is in flight on the handle: a new handle would close this one under it.
+    if (self._handle?.readyState === 2) {
+      self.destroy(context.errors[context.errors.length - 1]);
+      return;
+    }
     self[kReinitializeHandle](newDetachedSocket(typeof self[bunTlsSymbol] === "function"));
   }
 
@@ -3511,11 +3516,6 @@ function internalConnectMultiple(context, canceled?) {
 
   if (err) {
     const ex = new ExceptionWithHostPort(err, "connect", address, port);
-    // An earlier connect() of this socket is in flight on the handle: the next attempt would close the handle under it.
-    if (self._handle?.readyState === 2) {
-      self.destroy(ex);
-      return;
-    }
     ArrayPrototypePush.$call(context.errors, ex);
 
     self.emit("connectionAttemptFailed", address, port, addressType, ex);

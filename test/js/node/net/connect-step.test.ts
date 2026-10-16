@@ -129,48 +129,64 @@ describe("the step from a lookup result to the connect call", () => {
 
   // Bun-only: Node.js dials the next address on a new handle there, and the result depends on that address and on the first connect.
   const bunOnly = process.versions.bun ? test : test.skip;
+  const blockList = new net.BlockList();
+  blockList.addAddress("127.0.0.2");
   const twice: Lookup = (_hostname, _options, callback) => {
     callback(null, "127.0.0.1", 4);
     callback(null, "127.0.0.1", 4);
   };
-  const list = ((_hostname, _options, callback) =>
-    process.nextTick(callback, null, [
-      { address: "127.0.0.1", family: 4 },
-      { address: "::1", family: 6 },
-    ])) as Lookup;
-  for (const [run, name, connect] of [
-    [test, "a second connect()", (s, port) => s.connect(port, "127.0.0.1").connect(port, "127.0.0.1")],
+  const listOf = (...addresses: { address: string; family: number }[]) =>
+    ((_hostname, _options, callback) => process.nextTick(callback, null, addresses)) as Lookup;
+  const thenList = (lookup: Lookup) => (s: net.Socket, port: number) =>
+    s.connect(port, "127.0.0.1").connect({ host: "example.invalid", port, autoSelectFamily: true, lookup });
+  const twoAttempts = ["attempt 127.0.0.1 4", "attempt 127.0.0.1 4", `error ${busy} connect`, "close true"];
+  for (const [run, name, connect, expected] of [
+    [test, "a second connect()", (s, port) => s.connect(port, "127.0.0.1").connect(port, "127.0.0.1"), twoAttempts],
     [
       test,
       "a second and a third connect()",
       (s, port) => s.connect(port, "127.0.0.1").connect(port, "127.0.0.1").connect(port, "127.0.0.1"),
+      twoAttempts,
     ],
     [
       test,
       "a lookup callback that runs twice",
       (s, port) => s.connect({ host: "example.invalid", port, autoSelectFamily: false, lookup: twice }),
+      twoAttempts,
     ],
     [
       bunOnly,
       "a second connect() to a list of addresses",
-      (s, port) =>
-        s.connect(port, "127.0.0.1").connect({ host: "example.invalid", port, autoSelectFamily: true, lookup: list }),
+      thenList(listOf({ address: "127.0.0.1", family: 4 }, { address: "::1", family: 6 })),
+      [
+        "attempt 127.0.0.1 4",
+        "attempt 127.0.0.1 4",
+        `attempt failed 127.0.0.1 4 ${busy}`,
+        `error ${busy} connect`,
+        "close true",
+      ],
     ],
-  ] as [typeof test, string, (socket: net.Socket, port: number) => void][]) {
+    [
+      bunOnly,
+      "a second connect() to a list whose first address the blockList refuses",
+      thenList(listOf({ address: "127.0.0.2", family: 4 }, { address: "127.0.0.1", family: 4 })),
+      [
+        "attempt 127.0.0.1 4",
+        "attempt failed 127.0.0.2 4 ERR_IP_BLOCKED",
+        "error ERR_IP_BLOCKED undefined",
+        "close true",
+      ],
+    ],
+  ] as [typeof test, string, (socket: net.Socket, port: number) => void, string[]][]) {
     run(`${name} fails while the first connect is in flight`, async () => {
       const server = await listening();
       try {
-        const socket = new net.Socket();
+        const socket = new net.Socket({ blockList });
         const closed = record(socket);
         connect(socket, server.port);
         const events = await closed;
         const connections = await server.connections();
-        assert.deepStrictEqual(events, [
-          "attempt 127.0.0.1 4",
-          "attempt 127.0.0.1 4",
-          `error ${busy} connect`,
-          "close true",
-        ]);
+        assert.deepStrictEqual({ events, destroyed: socket.destroyed }, { events: expected, destroyed: true });
         // The first attempt was in flight when the socket was destroyed.
         assert.ok(connections <= 1, `the server accepted ${connections} connections`);
       } finally {

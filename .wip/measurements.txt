@@ -1,0 +1,21 @@
+Measured Oct 15 2026, debug builds, linux-x64, ptrace syscall logger (sysl.c), whole-process syscall totals / path syscalls.
+main = a9c57bdd89 (worktree build), PR = a47917bca7.
+
+warm bunx (tree fresh, no install), parent process:
+  listed config files   main total/path   PR total/path
+  0                      556/66            556/66
+  1 (bunfig.toml)        556/66            557/67   (+1 newfstatat)
+  2 (+ .npmrc)           556/66            558/68   (+2)
+  3 (+ parent bunfig)    561/68            564/71   (+3)
+
+cold bunx, the spawned `bun add` child:
+  scenario                                   main total/path   PR total/path
+  no package.json anywhere                   717/77            726/83
+  7 levels below the root                    716/77            737/91
+  same + bunfig.toml,.npmrc,.env in root     715/77            751/92
+  member of a 20-package workspace           716/77            924/166
+  PR child: write opens in project = 0, config opens in the tree = 0 (main: 1)
+  parent on cold runs: +2 mmap (605->607), path syscalls equal
+
+histogram diff (flat cold case), child: openat +5, getdents64 +2, chdir +1, getcwd +1, mmap +2, futex +-2; parent: mmap +2.
+fail-before with the main debug binary: bunx block 33 fail / 11 pass of 44; bun-create block 4 fail of 4. PR build: 44 pass, 4 pass.

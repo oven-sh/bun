@@ -128,7 +128,8 @@ export function generate(options: Options = {}): { files: Record<string, string>
     files[`fn${bundles}.js`] = fnSource;
     files[`eval${bundles}.js`] = evalSource;
     files[`top${bundles}.js`] = topSource;
-    files[`entry${bundles}.mjs`] = `import "./fn${bundles}.js";\nimport "./eval${bundles}.js";\nimport "./top${bundles}.js";\n`;
+    files[`entry${bundles}.mjs`] =
+      `import "./fn${bundles}.js";\nimport "./eval${bundles}.js";\nimport "./top${bundles}.js";\n`;
     [fnSource, evalSource, topSource] = [prelude, prelude, prelude];
     bundles++;
   };
@@ -155,7 +156,9 @@ export function generate(options: Options = {}): { files: Record<string, string>
               const body = orders[order](
                 `${kind} ${x} = require("${pkg}");`,
                 rebind.code(x, out),
-                isTop ? `try { ${reads[read](x, out)} } catch (e) { ${out}.push("threw " + e.name); }` : reads[read](x, out),
+                isTop
+                  ? `try { ${reads[read](x, out)} } catch (e) { ${out}.push("threw " + e.name); }`
+                  : reads[read](x, out),
                 id,
               );
               if (isTop) {
@@ -221,13 +224,13 @@ export async function checkMatrix(bun: string, options: Options = {}) {
   if (typeof runs.unbundled !== "object") throw new Error("the unbundled run failed: " + runs.unbundled);
 
   const unexpected = (bundled: unknown, minified: boolean): Unexpected => {
-    if (typeof bundled !== "object" || bundled === null)
-      return { all: { unbundled: "ran", bundled, knownGap: false } };
+    if (typeof bundled !== "object" || bundled === null) return { all: { unbundled: "ran", bundled, knownGap: false } };
     const result: Unexpected = {};
     for (const cell of matrix.cells) {
       const [expected, actual] = [runs.unbundled[cell.name], bundled[cell.name]];
       const gap = knownGap(cell, minified);
-      if (Bun.deepEquals(actual, expected) === gap) result[cell.name] = { unbundled: expected, bundled: actual, knownGap: gap };
+      if (Bun.deepEquals(actual, expected) === gap)
+        result[cell.name] = { unbundled: expected, bundled: actual, knownGap: gap };
     }
     return result;
   };

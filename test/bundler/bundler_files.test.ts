@@ -898,6 +898,24 @@ describe("bundler files option", () => {
       });
     });
 
+    // An absolute key is normalized like the paths the resolver produces.
+    test.concurrent("absolute keys with dot segments match the paths they resolve to", async () => {
+      const result = await Bun.build({
+        entrypoints: ["/app/./src/../src/entry.js"],
+        files: {
+          "/app/src/./entry.js": `import { lib } from "../lib/index.js"; console.log("entry in memory", lib);`,
+          "/app/src/../lib//index.js": `export const lib = "lib in memory";`,
+        },
+        throw: false,
+      });
+      const output = result.success ? await result.outputs[0].text() : "";
+      expect({
+        success: result.success,
+        logs: result.logs.map(String),
+        found: ["entry in memory", "lib in memory"].filter(marker => output.includes(JSON.stringify(marker))),
+      }).toEqual({ success: true, logs: [], found: ["entry in memory", "lib in memory"] });
+    });
+
     // A key is a path, so an importer in another directory is not matched by
     // a key that merely spells the same text as its import specifier.
     test.concurrent("a key only matches the file it resolves to", async () => {

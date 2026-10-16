@@ -901,7 +901,7 @@ pub mod bv2_impl {
                     Ok(())
                 }
 
-                /// Canonical key: `/` separators; a non-absolute path is resolved against the cwd.
+                /// Canonical key: the path resolved against the cwd and normalized, with `/` separators.
                 fn canonical<'b>(path: &[u8], buf: &'b mut [u8]) -> Option<&'b [u8]> {
                     let mut scratch = bun_paths::path_buffer_pool::get();
                     let posix = scratch.get_mut(..path.len())?;
@@ -909,11 +909,6 @@ pub mod bv2_impl {
                     bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
                         posix,
                     );
-                    if bun_paths::is_absolute(posix) {
-                        let out = buf.get_mut(..posix.len())?;
-                        out.copy_from_slice(posix);
-                        return Some(out);
-                    }
                     let len = bun_paths::resolve_path::join_abs_string_buf_checked::<
                         bun_paths::platform::Auto,
                     >(

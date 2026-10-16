@@ -258,8 +258,7 @@ impl JSPromise {
         JSC__JSPromise__setHandled(self)
     }
 
-    /// What `await value` waits on, spec `PromiseResolve(%Promise%, value)`: the realm's own promise as is,
-    /// anything else with a `then` through a promise that adopts it. `None`: nothing to wait on.
+    /// Spec `PromiseResolve(%Promise%, value)`: what `await value` waits on. `None`: nothing to wait on.
     #[inline]
     pub fn awaitable(
         global: &JSGlobalObject,

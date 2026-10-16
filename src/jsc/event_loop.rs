@@ -1259,9 +1259,7 @@ impl EventLoop {
 
     /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
     /// `context`: as for [`run_callback`](Self::run_callback).
-    ///
-    /// Returns what `await` waits on for the value the callback returned (see [`JSPromise::awaitable`]). That
-    /// value is adopted before the drain, so a `then()` the adoption calls runs in this drain, as it does for `await`.
+    /// Returns what `await` waits on for the returned value: [`JSPromise::awaitable`] adopts it before the drain.
     pub fn run_callback_with_result_and_forcefully_drain_microtasks(
         &mut self,
         context: crate::ContextId,

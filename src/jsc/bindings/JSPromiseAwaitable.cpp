@@ -3,8 +3,7 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSPromisePrototype.h>
 
-// What `await value` waits on, spec PromiseResolve(%Promise%, value): the realm's own promise as is, anything else with a
-// `then` through a promise that adopts it. undefined: nothing to wait on.
+// Spec PromiseResolve(%Promise%, value): what `await value` waits on. undefined: nothing to wait on.
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSPromise__awaitable(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, bool adoptThenables)
 {
     auto& vm = JSC::getVM(globalObject);

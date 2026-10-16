@@ -1130,9 +1130,7 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        // `result` is what `await` waits on for the returned value, so a promise subclass or a thenable settles
-        // through its own `then()`. A `done` callback and a `describe` body do not call `then()` on an object
-        // that is not a promise.
+        // A `done` callback and a `describe` body do not call `then()` on a returned object that is not a promise.
         let thenables = if cfg_done_parameter || matches!(cfg_data, RefDataValue::Collection { .. }) {
             Thenables::Ignore
         } else {

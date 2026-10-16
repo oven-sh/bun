@@ -66,6 +66,59 @@ describe("a tag whose template has non-ASCII text", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The helper can't be imported with a statement there.
+  test.concurrent.each([
+    ["named .cjs", "tags.cjs", (source: string) => ({ "tags.cjs": source })],
+    [
+      "that assigns to module.exports",
+      "tags.js",
+      (source: string) => ({ "tags.js": source + "\nmodule.exports = {};" }),
+    ],
+    ["that starts with 'use strict'", "tags.js", (source: string) => ({ "tags.js": '"use strict";\n' + source })],
+    [
+      "in a package of type commonjs",
+      "tags.js",
+      (source: string) => ({ "tags.js": source, "package.json": `{ "type": "commonjs" }` }),
+    ],
+  ])("gets it in strings.raw in a CommonJS module %s", async (_, name, files) => {
+    using dir = tempDir("template-literal-tags", files(await Bun.file(fixture).text()));
+    const { stdout, stderr, exitCode } = await run(join(String(dir), name));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("gets it in strings.raw in a CommonJS module that another module loads", async () => {
+    using dir = tempDir("template-literal-tags", {
+      "tags.cjs": "module.exports = String.raw`é\\n`;",
+      "required.cjs": `console.log(JSON.stringify(require("./tags.cjs")));`,
+      "imported.mjs": `import raw from "./tags.cjs"; console.log(JSON.stringify(raw));`,
+    });
+    for (const entry of ["required.cjs", "imported.mjs"]) {
+      const { stdout, stderr, exitCode } = await run(join(String(dir), entry));
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toBe("é\\n");
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test.concurrent("leaves a CommonJS module as strict or as sloppy as it was", async () => {
+    const body = "module.exports = [String.raw`é`, (function () { return this === undefined; })()];";
+    using dir = tempDir("template-literal-tags", {
+      "strict.cjs": `"use strict";\n${body}\nconsole.log(JSON.stringify(module.exports));`,
+      "sloppy.cjs": `${body}\nconsole.log(JSON.stringify(module.exports));`,
+    });
+    for (const [entry, isStrict] of [
+      ["strict.cjs", true],
+      ["sloppy.cjs", false],
+    ] as const) {
+      const { stdout, stderr, exitCode } = await run(join(String(dir), entry));
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["é", isStrict]);
+      expect(exitCode).toBe(0);
+    }
+  });
+
   test.concurrent("gets it in strings.raw after bun build --target=bun, whose output is ASCII", async () => {
     using dir = tempDir("template-literal-tags", {});
     const build = await Bun.build({ entrypoints: [fixture], target: "bun", outdir: String(dir) });

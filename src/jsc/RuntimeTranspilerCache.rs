@@ -72,7 +72,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 40: Vitest globals leave out `jest`, `xit`, `xtest`, `xdescribe`. Files importing "vitest" get their own features hash.
 /// Version 41: Long hexadecimal, octal and binary literals are rounded to the nearest double.
 /// Version 42: A tag gets the non-ASCII text of its template unescaped in `strings.raw`. `aroundEach` and `aroundAll` are `bun test` globals.
-const EXPECTED_VERSION: u32 = 42;
+/// Version 43: A CommonJS module gets the runtime's helpers with `require()`. An `import` statement in its wrapper was a SyntaxError.
+const EXPECTED_VERSION: u32 = 43;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

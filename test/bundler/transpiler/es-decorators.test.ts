@@ -42,6 +42,31 @@ async function runIn(cwd: string, args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
+// The helpers can't be imported with a statement there.
+test.concurrent.each([
+  ["standard", "{}"],
+  ["legacy", `{ "compilerOptions": { "experimentalDecorators": true } }`],
+])("%s decorators in a CommonJS module", async (_, tsconfig) => {
+  using dir = tempDir("decorators-commonjs", {
+    "tsconfig.json": tsconfig,
+    "marked.cts": `
+      // A legacy method decorator gets (prototype, key, descriptor). The others get the class or the method first.
+      function mark(value: any, _: unknown, descriptor?: PropertyDescriptor) {
+        (descriptor ? descriptor.value : value).marked = true;
+      }
+      @mark class Marked {
+        @mark method() {}
+      }
+      module.exports = [(Marked as any).marked, (Marked.prototype.method as any).marked, typeof require];
+    `,
+    "entry.cjs": `console.log(JSON.stringify(require("./marked.cts")));`,
+  });
+  const { stdout, stderr, exitCode } = await runIn(String(dir), ["entry.cjs"]);
+  expect(filterStderr(stderr)).toBe("");
+  expect(JSON.parse(stdout)).toEqual([true, true, "function"]);
+  expect(exitCode).toBe(0);
+});
+
 describe("ES Decorators", () => {
   describe("class decorators", () => {
     test("basic class decorator", async () => {

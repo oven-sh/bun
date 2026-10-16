@@ -1756,13 +1756,12 @@ describe("stringify memory", () => {
 // never read; the bytes of the SharedArrayBuffer are copied first. The runtime
 // accepts a buffer here (the binding takes a Blob, Buffer or string); the
 // declared `string` type is narrower.
-test.each(["ArrayBuffer", "SharedArrayBuffer"] as const)(
-  "parse rejects a %s of 2**31 bytes or more instead of panicking",
-  kind => {
-    const size = 2 ** 31 + 2;
-    // The copy is memory that is written. A failure to allocate it is not a reason to skip: it is also what
-    // a copy that cannot be this long reports.
-    if (kind === "SharedArrayBuffer" && freemem() < 2 * size) return;
+for (const kind of ["ArrayBuffer", "SharedArrayBuffer"] as const) {
+  const size = 2 ** 31 + 2;
+  // The copy is memory that is written. A failure to allocate it is not a reason to skip: it is also what
+  // a copy that cannot be this long reports.
+  const isShortOfMemory = kind === "SharedArrayBuffer" && freemem() < 2 * size;
+  test.skipIf(isShortOfMemory)(`parse rejects a ${kind} of 2**31 bytes or more instead of panicking`, () => {
     let input: ArrayBuffer | SharedArrayBuffer;
     try {
       input = new globalThis[kind](size);
@@ -1782,5 +1781,5 @@ test.each(["ArrayBuffer", "SharedArrayBuffer"] as const)(
     expect(err?.message).toBe(
       'The value of "input.byteLength" is out of range. It must be <= 2147483647. Received 2147483650',
     );
-  },
-);
+  });
+}

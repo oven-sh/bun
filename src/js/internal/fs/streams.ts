@@ -90,6 +90,12 @@ function streamFileHandleClose(this: FileHandle, fd: FD, cb: (err?: any) => void
   this.close().then(() => cb(), cb);
 }
 
+// Node calls close() here (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/streams.js#L155), which waits for 'finish': a stream that finished or failed with autoClose off then keeps its ref, and the close of the handle never ends.
+function writeStreamOnFileHandleClose(this: FSStream) {
+  if (this.writableFinished || this.errored) this.destroy();
+  else this.close();
+}
+
 function getValidatedPath(p: any) {
   if (p instanceof URL) return Bun.fileURLToPath(p as URL);
   if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
@@ -415,7 +421,7 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
     }
     this[kFs] = customFs = fileHandleStreamFs(fd);
     fd[kRef]();
-    fd.on("close", this.close.bind(this));
+    fd.on("close", writeStreamOnFileHandleClose.bind(this));
     this.fd = fd = fd[kFd];
   } else {
     throw $ERR_INVALID_ARG_TYPE("options.fd", "number or FileHandle", fd);

@@ -45,7 +45,8 @@ setRegistrar((name, run) => {
 // here before it reaches the real constructor.
 const RequestWithBase = new Proxy(Request, {
   construct(target, [input, ...rest]) {
-    return new target(input instanceof target ? input : new URL(String(input), "http://example.com/").href, ...rest);
+    const first: any = input instanceof target ? input : new URL(String(input), "http://example.com/").href;
+    return new target(first, ...rest);
   },
 });
 

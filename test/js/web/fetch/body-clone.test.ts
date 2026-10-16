@@ -1036,10 +1036,10 @@ describe("new Request() throws when the input Request's body is disturbed or loc
         return new Response(JSON.stringify(await req.text()));
       },
     });
-    const used = new Request(server.url, { method: "POST", body: "once" });
+    const used = new Request(server.url.href, { method: "POST", body: "once" });
     await used.text();
     // Every bad argument to server.fetch() rejects the returned promise.
-    const promise = server.fetch(used);
+    const promise = server.fetch(used) as Promise<Response>;
     expect(promise).toBeInstanceOf(Promise);
     const error = await promise.then(
       () => null,
@@ -1049,7 +1049,7 @@ describe("new Request() throws when the input Request's body is disturbed or loc
     expect(error.message).toBe("Body is disturbed or locked");
     expect(error.code).toBe("ERR_BODY_ALREADY_USED");
 
-    const unread = new Request(server.url, { method: "POST", body: "twice" });
+    const unread = new Request(server.url.href, { method: "POST", body: "twice" });
     expect(await (await server.fetch(unread)).text()).toBe('"twice"');
   });
 });
@@ -1597,9 +1597,7 @@ test("Blob type from a consumed Response keeps the original content-type after c
 // the derived request owns the bytes. A disturbed or locked input throws.
 // `request.clone()` is the non-consuming tee; the constructor is not.
 describe("new Request(input) transfers the input body", () => {
-  const make = (body: BodyInit) =>
-    // @ts-expect-error duplex
-    new Request("http://example.com/", { method: "POST", body, duplex: "half" });
+  const make = (body: Bun.BodyInit) => new Request("http://example.com/", { method: "POST", body, duplex: "half" });
 
   describe.each([
     ["string", () => make("hello"), "hello"],
@@ -1725,7 +1723,6 @@ describe("new Request(input) transfers the input body", () => {
   // input Request. The transfer does not apply to it.
   test("new Request(url, requestAsInit) does not consume the init Request's body", async () => {
     const src = make("from-init");
-    // @ts-expect-error Bun accepts a Request as init
     const r = new Request("http://example.com/other", src);
     expect(src.bodyUsed).toBe(false);
     expect(await r.text()).toBe("from-init");
@@ -1734,7 +1731,6 @@ describe("new Request(input) transfers the input body", () => {
   test("new Request(inputReq, requestAsInit) does not consume the init Request's body", async () => {
     const input = make("from-input");
     const init = make("from-init");
-    // @ts-expect-error Bun accepts a Request as init
     const r = new Request(input, init);
     // init supplies the body (like init.body would), so neither is the spec
     // "inputBody" subject to step 45's transfer.
@@ -1749,7 +1745,6 @@ describe("new Request(input) transfers the input body", () => {
   // is copied and it is not consumed as the input.
   test("new Request(a, a) copies the body of `a` and does not consume it", async () => {
     const a = make("both");
-    // @ts-expect-error Bun accepts a Request as init
     const copy = new Request(a, a);
     expect(a.bodyUsed).toBe(false);
     expect(await Promise.all([a.text(), copy.text()])).toEqual(["both", "both"]);
@@ -1906,7 +1901,7 @@ describe("new Request(input) transfers the input body", () => {
           });
         },
       });
-      const input = new Request(server.url, { method: "POST", body: makeBody() });
+      const input = new Request(server.url.href, { method: "POST", body: makeBody() });
       const observed = input.body!;
       const copy = construct(input);
       expect({ observedLocked: observed.locked, inputUsed: input.bodyUsed }).toEqual({
@@ -1915,7 +1910,7 @@ describe("new Request(input) transfers the input body", () => {
       });
       expect(copy.headers.get("content-type")).toStartWith(type);
 
-      const seen = await (await fetch(copy)).json();
+      const seen = (await (await fetch(copy)).json()) as Record<string, any>;
       expect(seen).toEqual({
         type: expect.stringContaining(type),
         length: String(seen.bytes),
@@ -2011,7 +2006,6 @@ describe("new Request(input) transfers the input body", () => {
   ] as const)("%s new Request(input) of a `class extends Request` instance", (_, construct) => {
     test("transfers the body and returns a plain Request", async () => {
       class MyRequest extends Request {}
-      // @ts-expect-error duplex
       const input = new MyRequest("http://example.com/", { method: "POST", body: "hello", duplex: "half" });
       const copy = construct(input);
       expect({
@@ -2027,6 +2021,7 @@ describe("new Request(input) transfers the input body", () => {
   // constructor reads it through its getters, as on main and in Node.
   test("new Request(url, subclassAsInit) reads the init through its getters", () => {
     class Sub extends Request {
+      // @ts-expect-error the types declare `method` as a field
       get method() {
         return "PUT";
       }
@@ -2035,7 +2030,6 @@ describe("new Request(input) transfers the input body", () => {
       }
     }
     const init = new Sub("http://example.com/", { method: "POST", headers: { "x-from": "slot" }, body: "hello" });
-    // @ts-expect-error Bun accepts a Request as init
     const copy = new Request("http://example.com/other", init);
     expect({ method: copy.method, from: copy.headers.get("x-from") }).toEqual({ method: "PUT", from: "getter" });
   });
@@ -2056,8 +2050,10 @@ describe("new Request(input) transfers the input body", () => {
   ] as const)("two-arg new Request(input, init) when the input's `url` getter %s", (_, touch) => {
     test("throws the used-input TypeError", () => {
       class Sneaky extends Request {
+        // @ts-expect-error the types declare `url` as a field
         get url() {
           touch(this.body!);
+          // @ts-expect-error the types declare `url` as a field
           return super.url;
         }
       }
@@ -2069,7 +2065,6 @@ describe("new Request(input) transfers the input body", () => {
             c.close();
           },
         }),
-        // @ts-expect-error duplex
         duplex: "half",
       });
       expect(() => new Request(input, {})).toThrow(

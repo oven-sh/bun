@@ -19,11 +19,11 @@ use bun_core::strings;
 
 use bun_ast::LexerLog as _;
 
-use crate::lexer::T;
+use crate::lexer::{LexerSnapshot, T};
 use crate::p::P;
 use crate::parser::{
-    AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
-    FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
+    AwaitOrYield, ColonAfterParen, DeferredArrowArgErrors, DeferredErrors, ExprListLoc,
+    ExprOrLetStmt, FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
     ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
     StmtList, TypeParameterFlag,
 };
@@ -60,6 +60,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         expr: &mut Expr,
     ) -> Result<(), Error> {
         self.parse_expr_common(level, None, flags, expr)
+    }
+    /// `parse_expr` for what ends the expression parsed with `flags`: an arrow function body, the right side of an assignment.
+    #[inline]
+    pub(crate) fn parse_trailing_expr(
+        &mut self,
+        level: Level,
+        flags: EFlags,
+    ) -> Result<Expr, Error> {
+        if Self::IS_TYPESCRIPT_ENABLED && flags.is_after_question_and_before_colon() {
+            return self.parse_trailing_expr_before_colon(level);
+        }
+        self.parse_expr(level)
+    }
+    #[cold]
+    #[inline(never)]
+    fn parse_trailing_expr_before_colon(&mut self, level: Level) -> Result<Expr, Error> {
+        let mut expr = Expr::EMPTY;
+        self.parse_expr_common(
+            level,
+            None,
+            EFlags::AfterQuestionAndBeforeColonCarried,
+            &mut expr,
+        )?;
+        Ok(expr)
     }
     pub(crate) fn parse_expr_common(
         &mut self,
@@ -424,6 +448,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         level: Level,
         opts: ParenExprOpts,
     ) -> Result<Expr, Error> {
+        if Self::IS_TYPESCRIPT_ENABLED && opts.colon == ColonAfterParen::ReturnTypeOrConditional {
+            return self.parse_paren_expr_keeping_head(loc, level, opts);
+        }
+        self.parse_paren_expr_with_head(loc, level, opts, None)
+    }
+
+    /// Keeps where the parentheses start, to read them a second time as a parameter list.
+    #[cold]
+    #[inline(never)]
+    fn parse_paren_expr_keeping_head(
+        &mut self,
+        loc: bun_ast::Loc,
+        level: Level,
+        opts: ParenExprOpts,
+    ) -> Result<Expr, Error> {
+        let head = self.lexer.snapshot();
+        self.parse_paren_expr_with_head(loc, level, opts, Some(&head))
+    }
+
+    fn parse_paren_expr_with_head(
+        &mut self,
+        loc: bun_ast::Loc,
+        level: Level,
+        opts: ParenExprOpts,
+        head: Option<&LexerSnapshot<'a>>,
+    ) -> Result<Expr, Error> {
         let p = self;
         let mut items_list = BumpVec::<Expr>::new_in(p.arena);
         let mut errors = DeferredErrors::default();
@@ -501,7 +551,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Eat the comma token
             p.lexer.next()?;
         }
-        let items: &'a mut [Expr] = items_list.into_bump_slice_mut();
+        let items: &'a [Expr] = items_list.into_bump_slice();
 
         // The parenthetical construct must end with a close parenthesis
         p.lexer.expect(T::TCloseParen)?;
@@ -532,15 +582,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             // First, try converting the expressions to bindings
-            for i in 0..items.len() {
+            for mut item in items.iter().copied() {
                 let mut is_spread = false;
-                if let js_ast::expr::Data::ESpread(v) = &items[i].data {
+                if let js_ast::expr::Data::ESpread(spread) = &item.data {
                     is_spread = true;
-                    let inner = v.value;
-                    items[i] = inner;
+                    item = spread.value;
                 }
 
-                let mut item = items[i];
                 let tuple = p.convert_expr_to_binding_and_initializer(
                     &mut item,
                     &mut invalid_log,
@@ -571,21 +619,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // attempt to convert the expressions to bindings first before deciding
             // whether this is an arrow function, and only pick an arrow function if
             // there were no conversion errors.
+            let arrow_flags = opts.colon.arrow_flags();
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && invalid_log.is_empty() {
-                if opts.is_after_question_and_before_colon {
-                    // Only do this very expensive check if we must
-                    is_arrow_fn = p
-                        .is_type_script_arrow_return_type_after_question_and_before_colon(
-                            &arrow_data,
-                        )?;
-                    if is_arrow_fn {
-                        // We know this will succeed because we've already done it once above
-                        p.lexer.next()?;
-                        p.skip_typescript_return_type()?;
+                match opts.colon {
+                    ColonAfterParen::ReturnTypeOrConditional
+                    | ColonAfterParen::ReturnTypeOrAsyncCall => {
+                        // Only do this very expensive check if we must
+                        is_arrow_fn = p
+                            .is_type_script_arrow_return_type_after_question_and_before_colon(
+                                &arrow_data,
+                                arrow_flags,
+                                head,
+                            )?;
+                        if is_arrow_fn {
+                            // We know this will succeed because we've already done it once above
+                            p.lexer.next()?;
+                            p.skip_typescript_return_type()?;
+                        }
                     }
-                } else {
-                    // Otherwise, do the less expensive check
-                    is_arrow_fn = p.try_skip_type_script_arrow_return_type_with_backtracking()?;
+                    ColonAfterParen::Conditional => {}
+                    ColonAfterParen::ReturnType => {
+                        // Otherwise, do the less expensive check
+                        is_arrow_fn =
+                            p.try_skip_type_script_arrow_return_type_with_backtracking()?;
+                    }
                 }
             }
 
@@ -601,7 +658,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
-                let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data)?;
+                let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data, arrow_flags)?;
                 arrow.is_async = opts.is_async;
                 arrow.has_rest_arg = spread_range.len > 0;
                 p.pop_scope();
@@ -1615,6 +1672,74 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.next_token_matches(|p| p.lexer.token == T::TEqualsGreaterThan)
     }
 
+    /// How a ":" after the ")" is read, from the token after a "(" with no type parameters before it.
+    #[inline]
+    pub(crate) fn colon_after_open_paren(
+        &mut self,
+        flags: EFlags,
+        is_async: bool,
+    ) -> ColonAfterParen {
+        if Self::IS_TYPESCRIPT_ENABLED && flags.is_after_question_and_before_colon() {
+            self.colon_after_open_paren_in_conditional(flags, is_async)
+        } else {
+            ColonAfterParen::ReturnType
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn colon_after_open_paren_in_conditional(
+        &mut self,
+        flags: EFlags,
+        is_async: bool,
+    ) -> ColonAfterParen {
+        let old_lexer = self.lexer.snapshot();
+        self.lexer.is_log_disabled = true;
+        let is_arrow_fn = self.is_arrow_function_after_open_paren();
+        self.lexer.restore(&old_lexer);
+        match is_arrow_fn {
+            Ok(None) => ColonAfterParen::ReturnTypeOrConditional,
+            // Only a branch that starts with "async(" can be a call of "async" today.
+            Ok(Some(true)) if is_async && flags == EFlags::AfterQuestionAndBeforeColon => {
+                ColonAfterParen::ReturnTypeOrAsyncCall
+            }
+            Ok(Some(true)) => ColonAfterParen::ReturnType,
+            // The parse of the parentheses reports a lexer error.
+            Ok(Some(false)) | Err(_) => ColonAfterParen::Conditional,
+        }
+    }
+
+    /// TypeScript's `isParenthesizedArrowFunctionExpression` from the token after the "(". `None`: undecided.
+    fn is_arrow_function_after_open_paren(&mut self) -> Result<Option<bool>, Error> {
+        let p = self;
+        match p.lexer.token {
+            T::TCloseParen => {
+                p.lexer.next()?;
+                return Ok(Some(matches!(
+                    p.lexer.token,
+                    T::TEqualsGreaterThan | T::TColon | T::TOpenBrace
+                )));
+            }
+            T::TOpenBracket | T::TOpenBrace => return Ok(None),
+            T::TDotDotDot => return Ok(Some(true)),
+            T::TIdentifier | T::TThis => {}
+            _ => return Ok(Some(false)),
+        }
+        p.lexer.next()?;
+        Ok(match p.lexer.token {
+            T::TColon => Some(true),
+            T::TQuestion => {
+                p.lexer.next()?;
+                Some(matches!(
+                    p.lexer.token,
+                    T::TColon | T::TComma | T::TEquals | T::TCloseParen
+                ))
+            }
+            T::TComma | T::TEquals | T::TCloseParen => None,
+            _ => Some(false),
+        })
+    }
+
     /// This parses an expression. This assumes we've already parsed the "async"
     /// keyword and are currently looking at the following token.
     pub(crate) fn parse_async_prefix_expr(
@@ -1658,7 +1783,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             needs_async_loc: async_range.loc,
                             ..Default::default()
                         };
-                        let arrow_body = p.parse_arrow_body(args, &mut data)?;
+                        let arrow_body = p.parse_arrow_body(args, &mut data, flags)?;
                         p.pop_scope();
                         return Ok(p.new_expr(arrow_body, async_range.loc));
                     }
@@ -1696,7 +1821,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 ..Default::default()
                             };
                             // Pop the scope on the error path too.
-                            let mut arrow_body = match p.parse_arrow_body(args, &mut data) {
+                            let mut arrow_body = match p.parse_arrow_body(args, &mut data, flags) {
                                 Ok(body) => body,
                                 Err(e) => {
                                     p.pop_scope();
@@ -1714,14 +1839,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "async () => {}"
                 T::TOpenParen => {
                     p.lexer.next()?;
+                    let colon = p.colon_after_open_paren(flags, true);
                     return p.parse_paren_expr(
                         async_range.loc,
                         level,
                         ParenExprOpts {
                             is_async: true,
-                            is_after_question_and_before_colon: flags
-                                == EFlags::AfterQuestionAndBeforeColon,
-                            ..Default::default()
+                            force_arrow_fn: false,
+                            colon,
                         },
                     );
                 }
@@ -1745,7 +1870,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         is_async: true,
                                         force_arrow_fn: result
                                             == SkipTypeParameterResult::DefinitelyTypeParameters,
-                                        ..Default::default()
+                                        // With JSX this is an arrow function at first sight.
+                                        colon: if p.is_jsx_enabled() {
+                                            ColonAfterParen::ReturnType
+                                        } else {
+                                            ColonAfterParen::after_type_parameters(flags)
+                                        },
                                     },
                                 );
                             }

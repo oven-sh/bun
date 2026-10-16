@@ -589,7 +589,20 @@ pub enum EFlags {
     None,
     TsDecorator,
     /// Between the `?` and `:` of a conditional, where an arrow return type is ambiguous.
+    /// The expression starts a branch.
     AfterQuestionAndBeforeColon,
+    /// The same mark, carried into an arrow function body or the right side of an assignment.
+    AfterQuestionAndBeforeColonCarried,
+}
+
+impl EFlags {
+    #[inline]
+    pub fn is_after_question_and_before_colon(self) -> bool {
+        matches!(
+            self,
+            Self::AfterQuestionAndBeforeColon | Self::AfterQuestionAndBeforeColonCarried
+        )
+    }
 }
 
 // `is_missing` lives in the `init`/`allocate` impl block below.

@@ -1223,11 +1223,46 @@ impl<'arena> ScopeOrder<'arena> {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct ParenExprOpts {
     pub(crate) is_async: bool,
     pub(crate) force_arrow_fn: bool,
-    pub(crate) is_after_question_and_before_colon: bool,
+    pub(crate) colon: ColonAfterParen,
+}
+
+/// How `parse_paren_expr` reads a ":" after the ")" in TypeScript.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ColonAfterParen {
+    /// A return type if "=>" follows it. Outside a conditional, and after "()", "(...a", "(a:" or "(a?" in one.
+    ReturnType,
+    /// A return type if the parentheses are parameters and a second ":" follows the arrow function body.
+    ReturnTypeOrConditional,
+    /// The ":" of the conditional. TypeScript never takes "(a as T)", "(a!)" or "((a))" for parameters.
+    Conditional,
+    /// After "async()" where a branch starts: a return type if a second ":" follows the body, else a call.
+    ReturnTypeOrAsyncCall,
+}
+
+impl ColonAfterParen {
+    /// After "<T>(", which TypeScript never decides at first sight.
+    #[inline]
+    pub(crate) fn after_type_parameters(flags: js_ast::expr::EFlags) -> Self {
+        if flags.is_after_question_and_before_colon() {
+            Self::ReturnTypeOrConditional
+        } else {
+            Self::ReturnType
+        }
+    }
+
+    /// The flags of an arrow function that these parentheses start.
+    #[inline]
+    pub(crate) fn arrow_flags(self) -> js_ast::expr::EFlags {
+        if self == Self::ReturnTypeOrConditional {
+            js_ast::expr::EFlags::AfterQuestionAndBeforeColonCarried
+        } else {
+            js_ast::expr::EFlags::None
+        }
+    }
 }
 
 #[repr(u8)]

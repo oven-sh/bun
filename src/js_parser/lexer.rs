@@ -406,6 +406,14 @@ impl<'a> Lexer<'a> {
             .truncate(original.comments_to_preserve_before_len);
     }
 
+    /// Go back to `earlier` to read its tokens again. The comment buffers keep what they hold.
+    pub(crate) fn rewind(&mut self, earlier: &LexerSnapshot<'a>) {
+        let mut earlier = *earlier;
+        earlier.all_comments_len = self.all_comments.len();
+        earlier.comments_to_preserve_before_len = self.comments_to_preserve_before.len();
+        self.restore(&earlier);
+    }
+
     /// Look ahead at the next n codepoints without advancing the iterator.
     /// If fewer than n codepoints are available, then return the remainder of the string.
     #[inline]

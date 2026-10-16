@@ -1,13 +1,15 @@
 #![warn(unused_must_use)]
 use crate::Error;
-use crate::lexer::T;
+use crate::lexer::{LexerSnapshot, T};
 use crate::p::P;
 use crate::parser::{
-    FnOrArrowDataParse, ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag,
+    FnOrArrowDataParse, ParseBindingOptions, ParseStatementOptions, Ref, SkipTypeParameterResult,
+    TypeParameterFlag,
 };
 use crate::typescript;
 use crate::typescript::SkipTypeOptions;
 use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
+use bun_ast::expr::EFlags;
 use bun_ast::op::Level;
 use bun_ast::ts::Metadata;
 
@@ -1598,9 +1600,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// that its members stay untouched. The outcome is memoized by the offset
     /// of the ":" in `ts_conditional_arrow_attempts`, so the real parse does not
     /// repeat the attempts nested inside the body.
+    /// With `head`, a kept arrow function must also read as a parameter list from there, as in TypeScript.
+    #[cold]
     pub(crate) fn is_type_script_arrow_return_type_after_question_and_before_colon(
         &mut self,
         arrow_data: &FnOrArrowDataParse,
+        arrow_flags: EFlags,
+        head: Option<&LexerSnapshot<'a>>,
     ) -> Result<bool, Error> {
         self.mark_type_script_only();
         debug_assert!(self.lexer.start <= (u32::MAX >> 1) as usize);
@@ -1619,9 +1625,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let result: Result<(), Error> = (|| {
             self.lexer.expect(T::TColon)?;
             self.skip_typescript_return_type()?;
-            self.parse_arrow_body(&mut [], &mut data)?;
+            self.parse_arrow_body(&mut [], &mut data, arrow_flags)?;
             // The ":" that pairs with the "?"
             self.lexer.expect(T::TColon)?;
+            if let Some(head) = head {
+                self.lexer.rewind(head);
+                self.lexer.is_log_disabled = true;
+                self.skip_arrow_parameters()?;
+                debug_assert!(self.lexer.start as u32 == memo_key);
+            }
             Ok(())
         })();
 
@@ -1643,6 +1655,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .insert(insert_at, (memo_key << 1) | is_arrow_fn as u32);
         }
         Ok(is_arrow_fn)
+    }
+
+    /// Reads arrow function parameters up to the ")". An expression such as `b as T` or `(b)` is an error.
+    fn skip_arrow_parameters(&mut self) -> Result<(), Error> {
+        while self.lexer.token != T::TCloseParen {
+            if self.lexer.token == T::TDotDotDot {
+                self.lexer.next()?;
+            }
+            if !matches!(
+                self.lexer.token,
+                T::TIdentifier | T::TOpenBracket | T::TOpenBrace
+            ) {
+                return Err(Error::Backtrack);
+            }
+            self.parse_binding(ParseBindingOptions::default())?;
+            if self.lexer.token == T::TQuestion {
+                self.lexer.next()?;
+            }
+            if self.lexer.token == T::TColon {
+                self.lexer.next()?;
+                self.skip_type_script_type(Level::Lowest)?;
+            }
+            if self.lexer.token == T::TEquals {
+                self.lexer.next()?;
+                self.parse_expr(Level::Comma)?;
+            }
+            if self.lexer.token != T::TComma {
+                break;
+            }
+            self.lexer.next()?;
+        }
+        self.lexer.expect(T::TCloseParen)?;
+        Ok(())
     }
 
     // ─────────────────────── try_* wrappers ───────────────────────

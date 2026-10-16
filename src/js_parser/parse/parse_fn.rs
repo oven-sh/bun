@@ -521,6 +521,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         args: &'a mut [G::Arg],
         data: &mut FnOrArrowDataParse,
+        flags: js_ast::expr::EFlags,
     ) -> Result<E::Arrow, Error> {
         let p = self;
         let arrow_loc = p.lexer.loc();
@@ -576,7 +577,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
         p.fn_or_arrow_data_parse = data.clone();
-        let expr = match p.parse_expr(Level::Comma) {
+        let expr = match p.parse_trailing_expr(Level::Comma, flags) {
             Ok(e) => e,
             Err(err) => {
                 // The error path returns without restoring fn_or_arrow_data_parse;

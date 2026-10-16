@@ -4,8 +4,9 @@ use bun_collections::VecExt;
 use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{
-    AsyncPrefixExpression, AwaitOrYield, DeferredErrors, FnOrArrowDataParse, ParenExprOpts,
-    ParseClassOptions, PropertyOpts, SkipTypeParameterResult, TypeParameterFlag, prefill,
+    AsyncPrefixExpression, AwaitOrYield, ColonAfterParen, DeferredErrors, FnOrArrowDataParse,
+    ParenExprOpts, ParseClassOptions, PropertyOpts, SkipTypeParameterResult, TypeParameterFlag,
+    prefill,
 };
 use bun_ast::e::UnaryFlags;
 use bun_ast::expr::EFlags;
@@ -61,12 +62,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(value);
         }
 
+        let colon = p.colon_after_open_paren(flags, false);
         p.parse_paren_expr(
             loc,
             level,
             ParenExprOpts {
-                is_after_question_and_before_colon: flags == EFlags::AfterQuestionAndBeforeColon,
-                ..Default::default()
+                is_async: false,
+                force_arrow_fn: false,
+                colon,
             },
         )
     }
@@ -274,7 +277,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 needs_async_loc: loc,
                 ..Default::default()
             };
-            let arrow_result = p.parse_arrow_body(args, &mut fn_or_arrow_data);
+            let arrow_result = p.parse_arrow_body(args, &mut fn_or_arrow_data, flags);
             p.pop_scope();
             return Ok(p.new_expr(arrow_result?, loc));
         }
@@ -937,8 +940,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     loc,
                     level,
                     ParenExprOpts {
+                        is_async: false,
                         force_arrow_fn: true,
-                        ..Default::default()
+                        colon: ColonAfterParen::ReturnType,
                     },
                 );
             }
@@ -970,9 +974,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc,
                         level,
                         ParenExprOpts {
+                            is_async: false,
                             force_arrow_fn: result
                                 == SkipTypeParameterResult::DefinitelyTypeParameters,
-                            ..Default::default()
+                            colon: ColonAfterParen::after_type_parameters(flags),
                         },
                     );
                 }

@@ -387,7 +387,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Outcomes of `is_type_script_arrow_return_type_after_question_and_before_colon`,
     /// keyed by the byte offset of the `:` shifted left by one, with the low bit set
     /// when the attempt parsed an arrow function. The outcome depends only on the
-    /// source from that offset on, so the real parse that follows a discarded
+    /// source around that offset, so the real parse that follows a discarded
     /// attempt can reuse it. Without this memo every nested
     /// `a ? (b) : c => <body> : e` inside the body is parsed once by the attempt and
     /// once for real, which is exponential in the nesting depth. Kept sorted for
@@ -3809,7 +3809,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Enforce strictly increasing scope locations to catch parse/visit pass
             // mismatches. Skip once a parse error is logged: error recovery can push
             // two scopes at one loc and the visit pass won't run anyway.
-            if self.log().errors == 0 && !self.scopes_in_order.is_empty() {
+            // Skip in a speculative parse too: it can read tokens twice, and its scopes are discarded.
+            if self.log().errors == 0
+                && !self.lexer.is_log_disabled
+                && !self.scopes_in_order.is_empty()
+            {
                 let mut last_i = self.scopes_in_order.len() - 1;
                 while self.scopes_in_order[last_i].is_none() && last_i > 0 {
                     last_i -= 1;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { basename, join } from "path";
 import { TestRegistry } from "registry";
 
@@ -89,35 +89,40 @@ describe("auto-install without a usable cache directory", () => {
     ...Object.keys(causes).map(cause => [cause, "import"]),
     ...Object.keys(entryPoints)
       .filter(entryPoint => entryPoint !== "import")
-      .map(entryPoint => ["nothing names a cache directory", entryPoint]),
+      .map(entryPoint => ["the home directory cannot be made", entryPoint]),
   ];
 
-  test.each(cells)("%s: %s loads the package in the next run too", async (causeName, entryPointName) => {
-    const cause = causes[causeName];
-    const entryPoint = entryPoints[entryPointName];
-    using registry = new TestRegistry({ recordRequests: true }).start();
-    using dir = project(registry, cause, entryPoint.files);
+  for (const [causeName, entryPointName] of cells) {
+    // On Windows, a process that is started without USERPROFILE gets the one of its parent.
+    const unreachable = isWindows && causeName === "nothing names a cache directory";
 
-    const runs = [
-      await run(registry, dir.cwd, dir.env, entryPoint.args),
-      await run(registry, dir.cwd, dir.env, entryPoint.args),
-    ];
+    test.skipIf(unreachable)(`${causeName}: ${entryPointName} loads the package in the next run too`, async () => {
+      const cause = causes[causeName];
+      const entryPoint = entryPoints[entryPointName];
+      using registry = new TestRegistry({ recordRequests: true }).start();
+      using dir = project(registry, cause, entryPoint.files);
 
-    const loaded = { stdout: entryPoint.stdout, stderr: "", exitCode: 0 };
-    expect({ runs, cwd: readdirSync(dir.cwd).sort() }).toEqual({
-      runs: [
-        { ...loaded, requests: ["/no-deps", "/no-deps/-/no-deps-2.0.0.tgz"] },
-        { ...loaded, requests: cause.laterRequests },
-      ],
-      cwd: [".bun-cache", "bunfig.toml", ...Object.keys(entryPoint.files)],
+      const runs = [
+        await run(registry, dir.cwd, dir.env, entryPoint.args),
+        await run(registry, dir.cwd, dir.env, entryPoint.args),
+      ];
+
+      const loaded = { stdout: entryPoint.stdout, stderr: "", exitCode: 0 };
+      expect({ runs, cwd: readdirSync(dir.cwd).sort() }).toEqual({
+        runs: [
+          { ...loaded, requests: ["/no-deps", "/no-deps/-/no-deps-2.0.0.tgz"] },
+          { ...loaded, requests: cause.laterRequests },
+        ],
+        cwd: [".bun-cache", "bunfig.toml", ...Object.keys(entryPoint.files)],
+      });
     });
-  });
+  }
 
   // A failed resolve makes the resolver read the directory again. It then saw
   // the `node_modules` directory that the first import had made.
   test("a later import in the same process still installs", async () => {
     using registry = new TestRegistry({ recordRequests: true }).start();
-    using dir = project(registry, causes["nothing names a cache directory"], {
+    using dir = project(registry, causes["the home directory cannot be made"], {
       "index.js": `
         console.log((await import("no-deps")).default.version);
         try {
@@ -141,7 +146,7 @@ describe("auto-install without a usable cache directory", () => {
 
   test("a run with -i does not turn auto-install off for the next run", async () => {
     using registry = new TestRegistry({ recordRequests: true }).start();
-    using dir = project(registry, causes["nothing names a cache directory"], entryPoints["import"].files);
+    using dir = project(registry, causes["the home directory cannot be made"], entryPoints["import"].files);
 
     const runs = [
       await run(registry, dir.cwd, dir.env, ["-i", "index.js"]),
@@ -160,7 +165,7 @@ describe("auto-install without a usable cache directory", () => {
 
   test("a package that the registry does not have leaves no node_modules", async () => {
     using registry = new TestRegistry({ recordRequests: true }).start();
-    using dir = project(registry, causes["nothing names a cache directory"], {
+    using dir = project(registry, causes["the home directory cannot be made"], {
       "index.js": `import "not-in-the-registry";`,
     });
 

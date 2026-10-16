@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 // A relative operand was joined onto the cwd in a fixed 4096-byte buffer, so an
@@ -72,6 +72,133 @@ test("operands longer than the path buffers are reported, not a crash", async ()
     absoluteDotSlashes: isWindows
       ? { exitCode: 0, stderr: "", created: true }
       : { ...failed(`${dir}/${dotSlashes}as-written`), created: false },
+  });
+  expect(exitCode).toBe(0);
+});
+
+// The name of each "nope/<name>" operand that has a line in `text`.
+const reportedOperands = (text: string) => text.split("\n").flatMap(line => /nope[\\/](\d+)/.exec(line)?.[1] ?? []);
+
+// 15 brace groups: the shell expands them to 32,768 operands. Each operand
+// fails, because the "nope" directory does not exist.
+const failingOperands = "nope/" + Buffer.alloc(15 * 5, "{0,1}").toString();
+// A debug build needs 10 to 20 seconds for 32,768 thread-pool tasks, and a bare `bun test` allows 5.
+const wrapTimeout = isDebug ? 90_000 : undefined;
+
+// mkdir counted the writes it had started and the writes that had finished in
+// two 16-bit counters, and reported done when they were equal. 32,768 failing
+// operands wrapped the first counter to zero, so mkdir reported done with most
+// of its error lines still parked. Its state node was freed and the next
+// command took the slot: the later commands lost their output, or the process
+// aborted with "expected Node::Cmd at Node#N, got Free". Runs in a child
+// process so that the shell's own stdout and stderr are pipes the test can
+// read, and so that an abort is a failed assertion.
+test.concurrent(
+  "32,768 failing operands are all reported and the commands after mkdir keep their output",
+  async () => {
+    using dir = tempDir("mkdir-output-root", {});
+    const fixture = /* ts */ `
+      import { $ } from "bun";
+      const result = await $\`mkdir ${failingOperands} || echo AFTER-1; echo AFTER-2 | cat; echo AFTER-3\`.nothrow();
+      console.log("EXIT:" + result.exitCode);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const reported = reportedOperands(stderr);
+    expect({
+      lines: reported.length,
+      operands: new Set(reported).size,
+      stdout: stdout.split("\n").filter(Boolean),
+    }).toEqual({
+      lines: 32768,
+      operands: 32768,
+      stdout: ["AFTER-1", "AFTER-2", "AFTER-3", "EXIT:0"],
+    });
+    expect(exitCode).toBe(0);
+  },
+  wrapTimeout,
+);
+
+// A pipeline stage has its own writer, which is freed with the stage. There the
+// same wrap discarded the error lines with no panic: short output at exit 0.
+test.concurrent(
+  "32,768 failing operands are all reported when mkdir feeds a pipeline",
+  async () => {
+    using dir = tempDir("mkdir-output-pipeline", {});
+    const fixture = /* ts */ `
+      import { $ } from "bun";
+      const result = await $\`mkdir ${failingOperands} 2>&1 | \${process.execPath} -e \${"process.stdin.pipe(process.stdout)"}\`.quiet().nothrow();
+      const summary = JSON.stringify({ exitCode: result.exitCode, stderr: result.stderr.toString() });
+      // One write, so that the summary line cannot land inside the captured output.
+      console.log(result.stdout.toString() + "RESULT:" + summary);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const reported = reportedOperands(stdout);
+    expect({
+      stderr,
+      lines: reported.length,
+      operands: new Set(reported).size,
+      result: stdout.split("\n").filter(line => line.startsWith("RESULT:")),
+    }).toEqual({
+      stderr: "",
+      lines: 32768,
+      operands: 32768,
+      result: ['RESULT:{"exitCode":0,"stderr":""}'],
+    });
+    expect(exitCode).toBe(0);
+  },
+  wrapTimeout,
+);
+
+// mkdir -v parks a task on stdout for a directory it made and on stderr for one
+// it could not make. Not concurrent: beside the two tests above, a debug build
+// runs it close to the default timeout.
+test("mkdir -v writes every parked line when it feeds a pipeline", async () => {
+  using dir = tempDir("mkdir-output-verbose", {});
+  const fixture = /* ts */ `
+    import { $ } from "bun";
+    // The parent directory of each "nope" operand does not exist.
+    const names = Array.from({ length: 128 }, (_, i) => ["nope/" + i, "made" + i]).flat();
+    const result = await $\`mkdir -v \${names} 2>&1 | \${process.execPath} -e \${"process.stdin.pipe(process.stdout)"}\`.quiet().nothrow();
+    const summary = JSON.stringify({ exitCode: result.exitCode, stderr: result.stderr.toString() });
+    // One write, so that the summary line cannot land inside the captured output.
+    console.log(result.stdout.toString() + "RESULT:" + summary);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const all = Array.from({ length: 128 }, (_, i) => String(i)).sort();
+  expect({
+    stderr,
+    failed: reportedOperands(stdout).sort(),
+    made: stdout
+      .split("\n")
+      .flatMap(line => /made(\d+)$/.exec(line)?.[1] ?? [])
+      .sort(),
+    result: stdout.split("\n").filter(line => line.startsWith("RESULT:")),
+  }).toEqual({
+    stderr: "",
+    failed: all,
+    made: all,
+    result: ['RESULT:{"exitCode":0,"stderr":""}'],
   });
   expect(exitCode).toBe(0);
 });

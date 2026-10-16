@@ -1,3 +1,4 @@
+import { setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { tls } from "harness";
 import crypto from "node:crypto";
@@ -12,7 +13,10 @@ const FRAME = CHUNK.byteLength + 14;
 // the client has to start queueing. Far above what any platform takes on loopback.
 const MAX_TO_SATURATE = 1024;
 // Frames sent on top of a saturated socket. Every one of them must be counted.
-const EXTRA = 64;
+const EXTRA = 16;
+// SO_SNDBUF for every socket that sends toward the origin. By default the kernel takes about 4 MiB from each of them
+// before the client has to queue.
+const SEND_BUFFER = 64 * 1024;
 const CLOSE_1000 = Buffer.from([0x88, 0x02, 0x03, 0xe8]);
 
 // A raw origin that completes the WebSocket upgrade and then reads only when
@@ -83,6 +87,7 @@ async function pipingConnectProxy(secure: boolean): Promise<{ port: number; clos
         return;
       }
       const upstream = net.connect(Number(match[2]), match[1], () => {
+        setSocketOptions(upstream, 1, SEND_BUFFER);
         client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
         client.pipe(upstream);
         upstream.pipe(client);
@@ -101,11 +106,16 @@ async function pipingConnectProxy(secure: boolean): Promise<{ port: number; clos
 }
 
 function open(ws: WebSocket): Promise<void> {
-  return new Promise(resolve => (ws.onopen = () => resolve()));
+  return new Promise(resolve => {
+    ws.onopen = () => {
+      setSocketOptions(ws, 1, SEND_BUFFER);
+      resolve();
+    };
+  });
 }
 
 // Sends 64 KiB frames to a peer that is not reading. The kernel absorbs the
-// first few MiB, so bufferedAmount stays 0 until the socket is saturated. From
+// first few, so bufferedAmount stays 0 until the socket is saturated. From
 // then on nothing drains until the event loop turns, so every further frame
 // must add exactly its framed size. Returns the number of frames sent.
 function sendUntilCounted(ws: { send(data: Uint8Array): void; readonly bufferedAmount: number }): number {
@@ -311,6 +321,7 @@ describe("WebSocket.bufferedAmount", () => {
     try {
       const ws = new WS(`ws://127.0.0.1:${originPort}`);
       await new Promise(resolve => ws.once("open", resolve));
+      setSocketOptions(ws, 1, SEND_BUFFER);
       const peer = await origin.upgraded;
       const sent = sendUntilCounted(ws);
       peer.resume();

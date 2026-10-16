@@ -795,6 +795,11 @@ unsigned WebSocket::bufferedAmount() const
     return saturateAdd(m_bufferedAmount, live);
 }
 
+us_socket_t* WebSocket::usSocket() const
+{
+    return callClient<Bun__WebSocketClient__usSocket, Bun__WebSocketClientTLS__usSocket>();
+}
+
 String WebSocket::protocol() const
 {
     return m_subprotocol;

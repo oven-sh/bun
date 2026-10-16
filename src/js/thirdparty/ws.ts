@@ -396,9 +396,9 @@ interface WebSocketDuplex extends Duplex {
 // node:http is almost the entire cost of require("ws"); load it on first use.
 let http: HttpModule | undefined;
 let kHeaderSource: symbol | undefined;
+let kClosedWithUnsentData: symbol | undefined;
 let kHasQueuedReads: symbol | undefined;
 let kRememberPeer: symbol | undefined;
-let kUnsentLength: symbol | undefined;
 function lazyHttp(): HttpModule {
   return (http ??= require("node:http"));
 }
@@ -1566,7 +1566,8 @@ function settleCallbacks(websocket: WebSocket, failed: boolean): void {
 function wroteEverything(websocket: WebSocket): boolean {
   if (websocket[kTransport] !== NATIVE_SERVER) return false;
 
-  return websocket._socket![(kUnsentLength ??= require("internal/http").kUnsentLength as symbol)] === 0;
+  kClosedWithUnsentData ??= require("internal/http").kClosedWithUnsentData as symbol;
+  return websocket._socket![kClosedWithUnsentData] === false;
 }
 
 function runCallbacks(callbacks: SendCallback[], start: number, err: Error | null): void {
@@ -2035,6 +2036,11 @@ class ClientSocket {
 
   constructor(native: NativeClient) {
     this[kNative] = native;
+  }
+
+  // For setSocketOptions() of bun:internal-for-testing.
+  get [kInternalSocketData](): NativeClient {
+    return this[kNative];
   }
 
   get remoteAddress(): string | undefined {
@@ -2994,7 +3000,7 @@ function initAsClient(
       wrapped === proxyTls ? proxy : ({ __proto__: proxy, tls: wrapped } as unknown as ProxyOptions);
     // For connectError(). The caller may change or reuse its `proxy` object before the connection fails. A redirect
     // comes here again with the same `proxy`.
-    if (websocket[kProxyUrl] === undefined) {
+    if (websocket._redirects === 0) {
       const url = ($isObject(proxy) && getIgnoringObjectPrototype(proxy as ProxyOptions, "url")) || proxy;
       if (typeof url === "string" || url instanceof URL) websocket[kProxyUrl] = String(url);
     }

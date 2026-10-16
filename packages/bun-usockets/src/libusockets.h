@@ -712,6 +712,8 @@ int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;
  * the kernel (the connection's spill). 0 for
  * plain-TCP sockets and for TLS sockets with nothing spilled. */
 unsigned int us_socket_ssl_spill_pending(us_socket_r s) nonnull_fn_decl;
+/* Whether some of that ciphertext was thrown away before the kernel took it, which happens when the connection ends. */
+int us_socket_ssl_spill_dropped(us_socket_r s) nonnull_fn_decl;
 
 struct us_socket_t *us_socket_close(us_socket_r s, int code, void *reason) __attribute__((nonnull(1)));
 /* Closes before it returns. A TLS socket first sends what the kernel takes now: its unsent ciphertext, then close_notify. */
@@ -734,6 +736,8 @@ struct us_socket_group_t *us_listen_socket_group(struct us_listen_socket_t *ls) 
 struct us_listen_socket_t *us_socket_group_head_listen_socket(us_socket_group_r group) nonnull_fn_decl;
 struct us_listen_socket_t *us_listen_socket_next(struct us_listen_socket_t *ls) nonnull_fn_decl;
 LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) nonnull_fn_decl;
+/* SO_RCVBUF / SO_SNDBUF, like us_udp_socket_buffer_size. */
+int us_socket_buffer_size(us_socket_r s, int is_recv, int size, int *out) nonnull_fn_decl;
 
 /* Bun extras */
 struct us_socket_t *us_socket_pair(us_socket_group_r group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) nonnull_fn_decl;

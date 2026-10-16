@@ -589,16 +589,30 @@ export const linearFifoOrderedRemoveProbe = $newRustFunction(
 ) as (scenario: number) => number[];
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
 
-interface setSocketOptionsFn {
-  (socket: Bun.Socket, sendBuffer: 1, size: number): void;
-  (socket: Bun.Socket, recvBuffer: 2, size: number): void;
-}
-
-export const setSocketOptions: setSocketOptionsFn = $newRustFunction(
+const setNativeSocketOptions: (socket: unknown, option: 1 | 2, size: number) => void = $newRustFunction(
   "runtime/socket/socket.rs",
   "jsSetSocketOptions",
   3,
 );
+
+/**
+ * `setsockopt()` with `SO_SNDBUF` (`option` 1) or `SO_RCVBUF` (`option` 2) on the connection behind `socket`.
+ *
+ * To get backpressure without sending megabytes, shrink the send buffer of the side that sends. On loopback the kernel
+ * grows the sender's buffer to its maximum (4 MiB on Linux) at once, so shrinking the receiver's buffer changes little.
+ *
+ * @param socket A `Bun.Socket`, a `ServerWebSocket`, a `WebSocket`, a `node:net` socket, the socket of a `node:http`
+ * server's request, or a WebSocket of the `ws` package (built-in or from npm). It has to be connected.
+ */
+export function setSocketOptions(socket: any, option: 1 | 2, size: number): void {
+  // `ws`: the stream the WebSocket runs on, or what the built-in has in its place on a native client.
+  socket = socket._socket ?? socket;
+  setNativeSocketOptions(
+    socket[require("internal/http").kHandle] ?? socket._handle ?? socket[Symbol.for("::bunternal::")] ?? socket,
+    option,
+    size,
+  );
+}
 
 /**
  * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure

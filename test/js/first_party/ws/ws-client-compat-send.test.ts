@@ -16,8 +16,9 @@ import {
   invalidData,
   MiB,
   nextEvent,
-  OP,
   openClient,
+  overflowSize,
+  type RawSocket,
   repeatA,
   resizable,
   response101,
@@ -26,6 +27,7 @@ import {
   shared,
   show,
   showFrame,
+  shrinkBuffers,
   tooLong,
   tryCall,
 } from "./ws-raw-peer";
@@ -82,9 +84,14 @@ async function callOnClosedSocket(ws: Client["ws"], act: (ws: any, callback: Cal
 const showFrameHeader = (frame: Frame) =>
   showFrame(new Frame(frame.fin, frame.rsv, frame.opcode, frame.hasWrongMask, Buffer.alloc(0), undefined));
 
+/** For `createPeer()`, when the client that calls `shrinkBuffers({ sender })` runs in a child process. */
+const withSmallReceiveBuffer = (conn: RawSocket) => (shrinkBuffers({ receiver: conn.socket }), response101(conn));
+
+const largeSize = isWindows ? MiB : MiB / 4;
+
 /**
- * Sends 1 MiB messages to a peer that has stopped reading until the client has to buffer some, then two small ones
- * that queue behind them. Each callback pushes `<index> null` or `<index> Error` to `results`.
+ * Sends `largeSize` messages to a peer that has stopped reading until the client has to buffer some, then two small
+ * ones that queue behind them. Each callback pushes `<index> null` or `<index> Error` to `results`.
  */
 async function fillSendBuffer({ ws, conn }: Client) {
   const results: string[] = [];
@@ -98,8 +105,9 @@ async function fillSendBuffer({ ws, conn }: Client) {
     });
   };
   conn.socket.pause();
+  shrinkBuffers({ sender: ws, receiver: conn.socket });
   do {
-    for (let i = 0; i < 4; i++) send(Buffer.alloc(MiB, sent));
+    for (let i = 0; i < 4; i++) send(Buffer.alloc(largeSize, sent));
     // Waiting for a message from the peer lets the client's event loop run and write as much as the kernel accepts.
     conn.text("turn");
     await nextEvent(ws, "message");
@@ -659,11 +667,10 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
     await using client = await openClient(implementation, { perMessageDeflate: false });
     const { ws, conn } = client;
     conn.socket.pause();
-    let sent = 1;
-    // Send far more than the limit. The kernel already took part of it, and its buffers grow while the Pings arrive.
-    ws.send(Buffer.alloc(33 * MiB));
-    for (; ws.bufferedAmount <= 32 * MiB && sent < 16; sent++) ws.send(Buffer.alloc(MiB));
-    expect(ws.bufferedAmount).toBeGreaterThan(32 * MiB);
+    shrinkBuffers({ sender: ws, receiver: conn.socket });
+    // The kernel takes well under 1 MiB of this.
+    ws.send(Buffer.alloc(17 * MiB));
+    expect(ws.bufferedAmount).toBeGreaterThan(16 * MiB);
 
     const pings = 100;
     const { promise: allPingsReceived, resolve } = Promise.withResolvers<void>();
@@ -673,9 +680,7 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
     await allPingsReceived;
 
     conn.socket.resume();
-    const opcodes: (number | undefined)[] = [];
-    while (opcodes.length < sent) opcodes.push((await conn.nextFrame())?.opcode);
-    expect(opcodes).toEqual(opcodes.map(() => OP.binary));
+    expect(await conn.next()).toBe(`binary ${17 * MiB} bytes`);
     // The buffer has drained. The round trip's own Pong proves auto-pong is back on.
     expect(await conn.roundTrip()).toEqual([]);
   });
@@ -702,11 +707,11 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
       await settled();
       expect(ws.bufferedAmount).toBe(0);
       expect(await conn.roundTrip()).toEqual([
-        ...Array.from({ length: sent - 2 }, () => `binary ${MiB} bytes`),
+        ...Array.from({ length: sent - 2 }, () => `binary ${largeSize} bytes`),
         'text "x"',
         'text "y"',
       ]);
-      expect(conn.frames[sent - 3].payload.equals(Buffer.alloc(MiB, sent - 3))).toBe(true);
+      expect(conn.frames[sent - 3].payload.equals(Buffer.alloc(largeSize, sent - 3))).toBe(true);
       expect(results).toEqual(Array.from({ length: sent }, (_, index) => `${index} null`));
     });
 
@@ -761,7 +766,7 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
     test.concurrent.skipIf(!builtin || isWindows).each(["terminate()", "a peer reset"])(
       "a buffered send's callback that throws after %s doesn't skip 'close'",
       async how => {
-        await using peer = await createPeer();
+        await using peer = await createPeer({ respond: withSmallReceiveBuffer });
         const child = runScript(
           { specifier },
           `
@@ -769,7 +774,8 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
           ws.on("close", code => console.log("close", code));
           ws.on("open", () => {
             // More than the kernel will buffer, so this write can't complete.
-            ws.send(Buffer.alloc(${32 * MiB}), error => {
+            shrinkBuffers({ sender: ws });
+            ws.send(Buffer.alloc(${overflowSize}), error => {
               console.log("callback", error instanceof Error);
               throw new Error("thrown by the callback");
             });
@@ -793,16 +799,21 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
     );
 
     // Sends four messages in one tick. The first is more than the kernel will buffer, so every callback has to wait.
-    const sendFour = (thrower: number, options: string, then = "") => `
-      const ws = new WebSocket(process.env.PEER_URL, { perMessageDeflate: false, ${options} });
+    const sendFour = (thrower: number, { stream = false, then = "", inFirstCallback = "" } = {}) => `
+      const ws = new WebSocket(process.env.PEER_URL, { perMessageDeflate: false, family: ${stream ? 4 : 0} });
       ws.on("close", code => console.log("close", code));
       ws.on("open", () => {
-        [${32 * MiB}, 1, 1, 1].forEach((size, i) =>
+        shrinkBuffers({ sender: ws });
+        [${overflowSize}, 1, 1, 1].forEach((size, i) =>
           ws.send(Buffer.alloc(size), error => {
             console.log("callback", i, error instanceof Error ? "Error" : error);
+            if (i === 0) {
+              ${inFirstCallback}
+            }
             if (i === ${thrower}) throw new Error("thrown by the callback");
           }),
         );
+        if (${!isWindows} && ws.bufferedAmount === 0) console.log("nothing was buffered");
         ${then}
       });
     `;
@@ -812,8 +823,8 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
     test.concurrent.each(builtin ? [0, 1, 3] : [3])(
       "when the queue drains and callback %i of 4 throws, every callback still runs once",
       async thrower => {
-        await using peer = await createPeer();
-        const child = runScript({ specifier }, sendFour(thrower, ""), { PEER_URL: peer.url });
+        await using peer = await createPeer({ respond: withSmallReceiveBuffer });
+        const child = runScript({ specifier }, sendFour(thrower), { PEER_URL: peer.url });
         const conn = await peer.connection();
         await conn.nextFrames(4);
         conn.close(1000);
@@ -832,11 +843,38 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
     test.concurrent.skipIf(!builtin || isWindows).each([1, 3])(
       "on the stream transport, when callback %i of 4 throws after terminate(), every callback still runs once",
       async thrower => {
-        await using peer = await createPeer({ respond: conn => (conn.socket.pause(), response101(conn)) });
-        const script = sendFour(thrower, "family: 4", "ws.terminate();");
+        await using peer = await createPeer({ respond: conn => (conn.socket.pause(), withSmallReceiveBuffer(conn)) });
+        const script = sendFour(thrower, { stream: true, then: "ws.terminate();" });
         const { lines, exitCode } = await runScript({ specifier }, script, { PEER_URL: peer.url });
         expect(lines.filter(line => !line.startsWith("uncaught"))).toEqual([
           ...[0, 1, 2, 3].map(i => `callback ${i} Error`),
+          "close 1006",
+        ]);
+        expect(exitCode).toBe(0);
+      },
+      scriptTimeout,
+    );
+
+    // node:stream drops the callbacks behind the one that throws, on Node too. The built-in fails them at 'close', and
+    // has to tell them apart from the callback of a send() that was made later and has already run.
+    // Skipped on Windows because Winsock accepts everything on loopback, so nothing is ever buffered.
+    test.concurrent.skipIf(!builtin || isWindows)(
+      "on the stream transport, a send() from a callback doesn't mix up the callbacks that a throw left behind",
+      async () => {
+        await using peer = await createPeer({ respond: withSmallReceiveBuffer });
+        const sendLate = `ws.send("late", error => {
+          console.log("late", error);
+          ws.terminate();
+        });`;
+        const script = sendFour(1, { stream: true, inFirstCallback: sendLate });
+        const { lines, exitCode } = await runScript({ specifier }, script, { PEER_URL: peer.url });
+        expect(lines).toEqual([
+          "callback 0 null",
+          "callback 1 null",
+          'uncaught Error "thrown by the callback"',
+          "late null",
+          "callback 2 Error",
+          "callback 3 Error",
           "close 1006",
         ]);
         expect(exitCode).toBe(0);

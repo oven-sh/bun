@@ -365,9 +365,14 @@ function stripTls13CipherNames(ciphers: string): { cipherList: string; tls13Only
 function unsealPfxForNative(tls) {
   // `tls` can be the caller's own object, so a `pfx` that comes from a polluted Object.prototype doesn't count.
   if (tls.pfx == null || tls.pfx === (Object.prototype as { pfx?: unknown }).pfx) return tls;
-  const { key, cert, _pfxExtraCACerts: pfxCAs } = processPfxOptions(tls);
-  // Inherits from `tls`, because a copy only has its own enumerable properties. The native parser also reads inherited
-  // and non-enumerable ones, and losing a `ca` or `checkServerIdentity` would loosen the verification.
+  // processPfxOptions() copies its argument, and a copy of `tls` would only have its own enumerable properties. The
+  // native parser also reads inherited and non-enumerable ones, and losing a `ca` or `checkServerIdentity` would loosen
+  // the verification. So pass what it needs by name, and let the result inherit the rest from `tls`.
+  const {
+    key,
+    cert,
+    _pfxExtraCACerts: pfxCAs,
+  } = processPfxOptions({ pfx: tls.pfx, passphrase: tls.passphrase, key: tls.key, cert: tls.cert });
   const { ca } = tls;
   const unsealed = { __proto__: tls, key, cert, ca, pfx: undefined };
   if (!pfxCAs) return unsealed;

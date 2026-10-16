@@ -199,6 +199,10 @@ describe("ws package through HTTP CONNECT proxy", () => {
         })(),
     ],
     ["an object that inherits `url` and has its own `tls`", url => Object.assign(Object.create({ url }), { tls: {} })],
+    [
+      "a Proxy whose traps answer for `url`",
+      url => new Proxy({}, { has: (_, key) => key === "url", get: (_, key) => (key === "url" ? url : undefined) }),
+    ],
   ])("`proxy` can be %s", async (_, create) => {
     using recorded = await startRecordingProxy();
     const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
@@ -208,6 +212,14 @@ describe("ws package through HTTP CONNECT proxy", () => {
       events: echoed("hello"),
       requests: [connectRequest(wsPort)],
     });
+  });
+
+  test.each([
+    ["no `url`", { __proto__: null, headers: { "X-Unused": "1" } }],
+    ['`url: ""`', { __proto__: null, url: "" }],
+  ])("a null-prototype `proxy` with %s connects directly", async (_, proxy) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, { proxy } as ClientOptions);
+    expect(await wsEchoSession(ws, "hello")).toEqual(echoed("hello"));
   });
 
   test.concurrent(
@@ -531,6 +543,34 @@ describe("ws package through HTTPS proxy (TLS proxy)", () => {
       clientCertificates: ["agent1"],
       checkServerIdentity: failed({ error: "pinned", code: "PINNED" }),
       serverName: failed({ error: expect.any(String), code: "ERR_TLS_CERT_ALTNAME_INVALID" }),
+    });
+  });
+
+  test("`proxy.tls` accepts a `pfx` and `passphrase` that it inherits or that a spread can't see", async () => {
+    const read = (name: string) => readFileSync(path.join(import.meta.dirname, "../../node/test/fixtures/keys", name));
+    using recorded = await startRecordingProxy({
+      tls: true,
+      tlsOptions: { requestCert: true, rejectUnauthorized: false, ca: read("ca1-cert.pem") },
+    });
+    const connect = (tls: object) =>
+      wsEchoSession(
+        new WebSocket(`ws://127.0.0.1:${wsPort}`, {
+          proxy: { url: `https://127.0.0.1:${recorded.port}`, tls },
+        } as ClientOptions),
+        "hello",
+      );
+    const ca = tlsCerts.cert;
+    const pfx = read("agent1.pfx");
+    expect({
+      inherited: await connect(Object.assign(Object.create({ pfx, passphrase: "sample" }), { ca })),
+      nonEnumerable: await connect(
+        Object.defineProperties({ ca }, { pfx: { value: pfx }, passphrase: { value: "sample" } }),
+      ),
+      clientCertificates: recorded.clientCertificates,
+    }).toEqual({
+      inherited: echoed("hello"),
+      nonEnumerable: echoed("hello"),
+      clientCertificates: ["agent1", "agent1"],
     });
   });
 

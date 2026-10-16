@@ -3,6 +3,7 @@
 // Over TLS it must not wait for the peer's close_notify: a peer that does not
 // read never answers.
 import type { ServerWebSocket, WebSocketHandler } from "bun";
+import { setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tls } from "harness";
 import { RawClient } from "../../web/websocket/raw-peer";
@@ -74,6 +75,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: forced close with a peer t
     await using server = listen({
       message(ws) {
         // The client is paused, so the kernel buffers fill and send() reports backpressure (-1).
+        setSocketOptions(ws, 1, chunk.length);
         let status = 1;
         for (let i = 0; i < 1024 && status > 0; i++) status = ws.send(chunk);
         events.push(`last send(): ${status}`);

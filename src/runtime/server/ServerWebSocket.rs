@@ -365,6 +365,11 @@ impl ServerWebSocket {
         self.flags.get().websocket()
     }
 
+    /// `None` once closed.
+    pub(crate) fn us_socket(&self) -> Option<*mut bun_uws::us_socket_t> {
+        (!self.is_closed()).then(|| self.websocket().us_socket())
+    }
+
     /// R-2 helper: read-modify-write the packed `Cell<Flags>` through `&self`.
     /// `Flags` is a `Copy` `u64` so the load/store pair is the same codegen as
     /// the old `&mut self` field write.

@@ -1,3 +1,4 @@
+import { setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { isLinux, isMacOS, tls } from "harness";
 import { readdirSync } from "node:fs";
@@ -7,10 +8,13 @@ import { WebSocket as WsWebSocket } from "ws";
 import { closePayload, createPeer, encodeFrame, OP, response101 } from "./raw-peer";
 
 const CHUNK = new Uint8Array(64 * 1024);
+// SO_SNDBUF for every socket that sends toward the paused client.
+const SEND_BUFFER = 64 * 1024;
 // Must exceed what the kernel buffers for one loopback connection while the client
-// isn't reading: 2.5 MiB on Linux, 192 KiB on Windows, at most 2 x 8 MiB on macOS
+// isn't reading. With SEND_BUFFER that is under 1 MiB on Linux, through a proxy too. It wasn't
+// measured elsewhere, where the default is 192 KiB on Windows and at most 2 x 8 MiB on macOS
 // (kern.ipc.maxsockbuf). sendAll() fails the test if this is ever too small.
-const TOTAL = 512; // 32 MiB
+const TOTAL = isLinux ? 64 : 512; // 4 MiB or 32 MiB
 const TOTAL_BYTES = TOTAL * CHUNK.byteLength;
 
 type Signals = {
@@ -80,6 +84,7 @@ async function pipingConnectProxy(secure: boolean): Promise<{ port: number; clos
         return;
       }
       const upstream = net.connect(Number(match[2]), match[1], () => {
+        setSocketOptions(client, 1, SEND_BUFFER);
         client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
         client.pipe(upstream);
         upstream.pipe(client);
@@ -137,6 +142,7 @@ async function expectPauseHolds({
   done: Promise<void>;
 }) {
   const stream = await signals.stream.promise;
+  setSocketOptions(stream, 1, SEND_BUFFER);
   const serverDone = sendAll(stream);
 
   expect(ws.isPaused).toBe(true);
@@ -600,6 +606,7 @@ describe("WebSocket.close() while paused", () => {
         });
         const leaked = await leakedFds(peer.url, {}, async ws => {
           await open(ws);
+          setSocketOptions(ws, 1, SEND_BUFFER);
           const closed = closeEvent(ws);
           // Fill the socket until the client has to buffer, then buffer more than the
           // kernel can accept when close() retries the write.
@@ -608,7 +615,7 @@ describe("WebSocket.close() while paused", () => {
             expect(sent).toBeLessThan(1024);
             ws.send(CHUNK);
           }
-          for (let extra = 0; extra < 64; extra++, sent++) ws.send(CHUNK);
+          for (let extra = 0; extra < (isLinux ? 16 : 64); extra++, sent++) ws.send(CHUNK);
           if (order === "pause(), then close()") {
             expect(ws.pause()).toBe(true);
             ws.close(1000);

@@ -1,5 +1,6 @@
 // Tests createWebSocketStream() against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
+import { isWindows } from "harness";
 import { Duplex, pipeline, Readable } from "node:stream";
 import {
   closedPort,
@@ -7,14 +8,16 @@ import {
   createPeer,
   createServer,
   implementations,
-  MiB,
   nextEvent,
   openClient,
   openServer,
+  overflowSize,
+  response101,
   runScript,
   scriptTimeout,
   show,
   showError,
+  shrinkBuffers,
 } from "./ws-raw-peer";
 
 /** Records 'end', 'finish', 'close' and `error <error>` as lines. Doesn't switch the stream to flowing mode. */
@@ -203,14 +206,18 @@ describe.each(implementations)("createWebSocketStream ($name)", ({ ws: implement
     test.concurrent.skipIf(!builtin)(
       "finishes even if the callback of an earlier ws.send() throws",
       async () => {
-        await using peer = await createPeer();
+        await using peer = await createPeer({
+          respond: conn => (shrinkBuffers({ receiver: conn.socket }), response101(conn)),
+        });
         const script = `
           const ws = new WebSocket(process.env.PEER_URL, { perMessageDeflate: false });
           ws.on("open", () => {
             // More than the kernel will buffer.
-            ws.send(Buffer.alloc(${32 * MiB}), () => {
+            shrinkBuffers({ sender: ws });
+            ws.send(Buffer.alloc(${overflowSize}), () => {
               throw new Error("thrown by the callback");
             });
+            if (${!isWindows} && ws.bufferedAmount === 0) console.log("nothing was buffered");
             const duplex = createWebSocketStream(ws);
             for (const name of ["finish", "end", "close"]) duplex.on(name, () => console.log(name));
             duplex.resume();
@@ -219,7 +226,7 @@ describe.each(implementations)("createWebSocketStream ($name)", ({ ws: implement
         `;
         const child = runScript({ specifier }, script, { PEER_URL: peer.url });
         const conn = await peer.connection();
-        expect(await conn.nextFrames(2)).toEqual([`binary ${32 * MiB} bytes`, 'binary "last"']);
+        expect(await conn.nextFrames(2)).toEqual([`binary ${overflowSize} bytes`, 'binary "last"']);
         conn.close();
         conn.end();
         expect((await child).lines).toEqual(['uncaught Error "thrown by the callback"', "finish", "end", "close"]);

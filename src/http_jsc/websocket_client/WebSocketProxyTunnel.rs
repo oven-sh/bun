@@ -564,6 +564,14 @@ impl WebSocketProxyTunnel {
         }
     }
 
+    pub(crate) fn us_socket(&self) -> Option<*mut bun_uws_sys::us_socket_t> {
+        match self.socket.get() {
+            SocketUnion::Tcp(s) => s.socket.get(),
+            SocketUnion::Ssl(s) => s.socket.get(),
+            SocketUnion::None => None,
+        }
+    }
+
     /// Check if the tunnel has backpressure
     pub(crate) fn has_backpressure(&self) -> bool {
         self.write_buffer.get().is_not_empty()

@@ -2,8 +2,9 @@
 // handling, per https://websockets.spec.whatwg.org/#dom-websocket-close and RFC 6455
 // section 7. The basic received-close-code matrix is in websocket.test.js
 // ("WebSocket CloseEvent reports the received close code").
+import { setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { once } from "node:events";
 import { type AddressInfo, connect, createServer } from "node:net";
 import { startRawWssServer } from "./proxy-test-utils";
@@ -516,13 +517,16 @@ describe.concurrent("WebSocket closing handshake", () => {
 
   describe("when the server stopped reading", () => {
     const CHUNK = Buffer.alloc(64 * 1024, "x").toString();
+    // Winsock may take any write whole, whatever SO_SNDBUF says.
+    const CHUNKS = isWindows ? 256 : 16;
 
     // Opens a client and sends more than the kernel's socket buffer can hold, so some of it stays buffered.
     async function flood(url: string) {
       const ws = new WebSocket(url);
       const observed = observe(ws);
       await opened(ws);
-      for (let i = 0; i < 256; i++) ws.send(CHUNK);
+      setSocketOptions(ws, 1, 64 * 1024);
+      for (let i = 0; i < CHUNKS; i++) ws.send(CHUNK);
       expect(ws.bufferedAmount).toBeGreaterThan(0);
       return { ws, ...observed };
     }
@@ -543,7 +547,7 @@ describe.concurrent("WebSocket closing handshake", () => {
       peer.socket.resume();
       expect(await closed).toEqual([{ code: 1000, reason: "bye", wasClean: true }]);
       await peer.closed;
-      expect(seen(peer)).toEqual([...Array(256).fill("text 65536 bytes"), 'close 1000 "bye"', "end", "close"]);
+      expect(seen(peer)).toEqual([...Array(CHUNKS).fill("text 65536 bytes"), 'close 1000 "bye"', "end", "close"]);
     });
 
     it("terminate() after the server's Close frame reports the received code", async () => {

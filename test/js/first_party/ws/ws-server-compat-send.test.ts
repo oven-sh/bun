@@ -32,6 +32,7 @@ import {
   shared,
   show,
   showFrame,
+  shrinkBuffers,
   tooLong,
   tryCall,
   upgradeRequest,
@@ -523,10 +524,10 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
       let sent = 0;
       const send = (size: number) => (ws.send(Buffer.alloc(size, sent)), sent++, size);
       client.socket.pause();
-      // Go well past the limit. The kernel already accepted part of this, and its buffers grow while the pings arrive.
-      const sizes = [send(33 * MiB)];
-      while (ws.bufferedAmount <= 32 * MiB && sent < 16) sizes.push(send(MiB));
-      expect(ws.bufferedAmount).toBeGreaterThan(32 * MiB);
+      shrinkBuffers({ sender: ws, receiver: client.socket });
+      // The kernel takes well under 1 MiB of this.
+      const sizes = [send(17 * MiB)];
+      expect(ws.bufferedAmount).toBeGreaterThan(16 * MiB);
 
       const pings = 100;
       const { promise: allPingsReceived, resolve } = Promise.withResolvers<void>();
@@ -548,7 +549,8 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
       await using server = await openServer(implementation);
       const { ws, client } = server;
       client.socket.pause();
-      for (let sent = 0; ws.bufferedAmount === 0 && sent < 32; sent++) ws.send(Buffer.alloc(8 * MiB));
+      shrinkBuffers({ sender: ws, receiver: client.socket });
+      ws.send(Buffer.alloc(MiB));
       expect(ws.bufferedAmount).toBeGreaterThan(0);
       const storage = new AsyncLocalStorage<string>();
       const store = new Promise(resolve => storage.run("the sender's", () => ws.send("z", () => resolve(storage.getStore())))); // prettier-ignore
@@ -584,7 +586,8 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
           ws.send(data, () => order.push(call) === calls && resolve());
         };
         // Send until the kernel stops accepting the whole write.
-        while (ws.bufferedAmount === 0 && calls < 32) send(Buffer.alloc(8 * MiB));
+        shrinkBuffers({ sender: ws });
+        while (ws.bufferedAmount === 0 && calls < 32) send(Buffer.alloc(MiB));
         expect(ws.bufferedAmount).toBeGreaterThan(0);
         const oneByte = Buffer.alloc(1);
         // Give the reader process time to drain the socket, without returning to our event loop.
@@ -612,10 +615,10 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
         sizes.push(size);
       };
       client.socket.pause();
+      shrinkBuffers({ sender: ws, receiver: client.socket });
       expect(ws.bufferedAmount).toBe(0);
+      // The kernel takes well under 1 MiB of this.
       send(17 * MiB);
-      // The kernel already accepted part of it.
-      while (ws.bufferedAmount <= 16 * MiB && sizes.length < 32) send(MiB);
       expect(ws.bufferedAmount).toBeGreaterThan(16 * MiB);
       for (let i = 0; i < 4; i++) send(MiB);
 
@@ -665,8 +668,9 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
         const { ws, client, events } = server;
         const recorder = createRecorder();
         client.socket.pause();
+        shrinkBuffers({ sender: ws, receiver: client.socket });
         // More than the kernel will buffer, so this write can't complete.
-        ws.send(Buffer.alloc(12 * MiB), recorder.callback("large"));
+        ws.send(Buffer.alloc(MiB), recorder.callback("large"));
         ws.send("x", recorder.callback("small"));
         ws.ping(recorder.callback("ping"));
         expect(ws.bufferedAmount).toBeGreaterThan(0);
@@ -703,8 +707,9 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
           const { ws, client } = server;
           const recorder = createRecorder();
           client.socket.pause();
+          shrinkBuffers({ sender: ws, receiver: client.socket });
           // More than the kernel will buffer, so this write can't complete yet.
-          ws.send(Buffer.alloc(12 * MiB), error => {
+          ws.send(Buffer.alloc(MiB), error => {
             recorder.callback("large")(error);
             inCallback(ws);
           });
@@ -728,7 +733,7 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
         await using server = await openWithBacklog();
         const { client, recorder, events } = server;
         client.socket.resume();
-        expect(await client.remainingFrames()).toEqual([`binary ${12 * MiB} bytes`, 'text "x"', "close 1000"]);
+        expect(await client.remainingFrames()).toEqual([`binary ${MiB} bytes`, 'text "x"', "close 1000"]);
         await server.closed;
         expect(recorder.lines).toEqual(["large null", "small null", "close 1000 Buffer()"]);
         expect(events).toEqual(['message Buffer("turn") text rs=1', "close 1000 Buffer() rs=3"]);
@@ -767,7 +772,7 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
         await using server = await openWithBacklog({}, act);
         const { client, recorder } = server;
         client.socket.resume();
-        expect(await client.remainingFrames()).toEqual([`binary ${12 * MiB} bytes`, 'text "x"', "close 1000"]);
+        expect(await client.remainingFrames()).toEqual([`binary ${MiB} bytes`, 'text "x"', "close 1000"]);
         // Once both ends have closed, nothing is left that could emit another event.
         await Promise.all([server.closed, client.closed]);
         expect(recorder.lines).toEqual(["large null", "small null", "close 1000 Buffer()"]);
@@ -794,7 +799,8 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
                   server.close();
                 });
                 ws.on("message", () => socket.resume());
-                ws.send(Buffer.alloc(${12 * MiB}), error => {
+                shrinkBuffers({ sender: ws, receiver: socket });
+                ws.send(Buffer.alloc(${MiB}), error => {
                   console.log("large", error);
                   throw new Error("thrown by the callback");
                 });
@@ -844,7 +850,8 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
             wss.on("connection", ws => {
               ws.on("close", code => console.log("close", code, "clients", wss.clients.size));
               // More than the kernel will buffer, so this write can't complete.
-              ws.send(Buffer.alloc(${12 * MiB}), error => {
+              shrinkBuffers({ sender: ws, receiver: socket });
+              ws.send(Buffer.alloc(${MiB}), error => {
                 console.log("callback", error instanceof Error);
                 throw new Error("thrown by the callback");
               });
@@ -865,7 +872,7 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
     test.concurrent.each(builtin ? [0, 1, 3] : [0, 3])(
       "when the queue drains and callback %i of 4 throws, every callback still runs once",
       async thrower => {
-        const sizes = [12 * MiB, 1, 1, 1];
+        const sizes = [MiB, 1, 1, 1];
         const frames = sizes.reduce((sum, size) => sum + size + (size < 126 ? 2 : 10), 0);
         const { lines, exitCode } = await runScript(
           { specifier },
@@ -885,12 +892,14 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
                 console.log("close", code);
                 wss.close();
               });
+              shrinkBuffers({ sender: ws, receiver: socket });
               ${JSON.stringify(sizes)}.forEach((size, i) =>
                 ws.send(Buffer.alloc(size), error => {
                   console.log("callback", i, error);
                   if (i === ${thrower}) throw new Error("thrown by the callback");
                 }),
               );
+              if (ws.bufferedAmount === 0) console.log("nothing was buffered");
             });
           });
         `,

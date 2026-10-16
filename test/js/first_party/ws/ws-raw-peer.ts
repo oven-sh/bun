@@ -6,7 +6,8 @@
 // Every describe block runs once per entry in `implementations`: Bun's built-in `ws` and the npm package from
 // test/node_modules. The npm run proves each expectation matches npm ws. Expectations were recorded on Node.js 26 with
 // ws 8.18.3.
-import { bunEnv, bunExe } from "harness";
+import { setSocketOptions } from "bun:internal-for-testing";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { once } from "node:events";
 import type { ClientRequest, IncomingMessage } from "node:http";
 import https from "node:https";
@@ -130,6 +131,19 @@ export function nextEvent(emitter: NodeJS.EventEmitter, name: string): Promise<a
 }
 
 export const MiB = 1024 * 1024;
+
+/**
+ * Caps the kernel's send buffer of `sender` and receive buffer of `receiver`, each a WebSocket or a socket that is
+ * already connected. By default the kernel takes about 4 MiB from a sender whose peer isn't reading before the sender
+ * sees backpressure. With both caps it takes at most 262 KB on Linux. Call it before the first send.
+ */
+export function shrinkBuffers({ sender, receiver }: { sender?: object; receiver?: object }) {
+  if (sender) setSocketOptions(sender, 1, 64 * 1024);
+  if (receiver) setSocketOptions(receiver, 2, 64 * 1024);
+}
+
+/** The size of a message that can't be written in one go after `shrinkBuffers()`. Winsock may take any write whole. */
+export const overflowSize = isWindows ? 32 * MiB : MiB;
 export const repeatA = (count: number) => Buffer.alloc(count, "a").toString();
 
 // Lines logged by `recordEvents()`.
@@ -419,10 +433,10 @@ export const scriptTimeout = 90_000;
 
 /**
  * Runs `script` in a child process, for things that can't be tested in-process: uncaught exceptions, the exit code,
- * whatever keeps the event loop alive. The script has `WebSocket`, `WebSocketServer`, `createWebSocketStream`, `show`
- * and `showError` in scope. An uncaught exception prints `uncaught <error>` and the process keeps running, as with any
- * 'uncaughtException' listener. `env` is merged into the child's environment. Use with `test.concurrent` and
- * `scriptTimeout`.
+ * whatever keeps the event loop alive. The script has `WebSocket`, `WebSocketServer`, `createWebSocketStream`, `show`,
+ * `showError` and `shrinkBuffers` in scope. An uncaught exception prints `uncaught <error>` and the process keeps
+ * running, as with any 'uncaughtException' listener. `env` is merged into the child's environment. Use with
+ * `test.concurrent` and `scriptTimeout`.
  */
 export async function runScript(
   implementation: { specifier: string },
@@ -434,6 +448,8 @@ export async function runScript(
     ${showBytes}
     ${show}
     ${showError}
+    const setSocketOptions = (...args) => require("bun:internal-for-testing").setSocketOptions(...args);
+    ${shrinkBuffers}
     process.on("uncaughtException", error => console.log("uncaught " + showError(error)));
   `;
   await using child = Bun.spawn({

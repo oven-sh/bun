@@ -1775,6 +1775,15 @@ describe("client TLS options", () => {
       expect(await dial(server.url, { ca: [ca1], pfx: [{ buf: pfxWithServerCa, passphrase: "sample" }] })).toBe(identified); // prettier-ignore
     });
 
+    it("adds the CA to a `ca` that the `tls` option inherits from a frozen object", async () => {
+      using server = await serve();
+      const tls = Object.assign(Object.create(Object.freeze({ ca: ca1 })), {
+        pfx: pfxWithServerCa,
+        passphrase: "sample",
+      });
+      expect(await dial(server.url, { tls })).toBe(identified);
+    });
+
     // Differs from npm ws: Node also adds the CA to the default store. The native `ca` can only replace that store.
     it("doesn't add the CA to the default store", async () => {
       using server = await serve();
@@ -1922,6 +1931,34 @@ describe("client TLS options", () => {
         serverName: await connect({ serverName: "agent1" }, { ca: ca1 }),
         checkServerIdentity: await connect({ checkServerIdentity: refuse }, { ca: ca1, serverName: "agent1" }),
       }).toEqual({ ca: identified, serverName: identified, checkServerIdentity: "refused" });
+    });
+
+    it("an own `pfx` in the `tls` option keeps options that a spread can't see", async () => {
+      using server = await serve(agent1);
+      const checkServerIdentity = () => new Error("not the pinned certificate");
+      const visible = { ca: ca1, serverName: "agent1", pfx, passphrase: "sample" };
+      expect({
+        control: await dial(server.url, { tls: visible }),
+        nonEnumerable: await dial(server.url, {
+          tls: Object.defineProperty({ ...visible }, "checkServerIdentity", { value: checkServerIdentity }),
+        }),
+        proxyTraps: await dial(server.url, {
+          tls: new Proxy(visible, {
+            has: (target, key) => key === "checkServerIdentity" || key in target,
+            get: (target, key) => (key === "checkServerIdentity" ? checkServerIdentity : Reflect.get(target, key)),
+          }),
+        }),
+      }).toEqual({ control: identified, nonEnumerable: "refused", proxyTraps: "refused" });
+    });
+
+    it("accepts a `pfx` and `passphrase` that the `tls` option inherits or that a spread can't see", async () => {
+      using server = await serve();
+      expect({
+        inherited: await dial(server.url, { tls: Object.assign(Object.create({ pfx, passphrase: "sample" }), { ca }) }),
+        nonEnumerable: await dial(server.url, {
+          tls: Object.defineProperties({ ca }, { pfx: { value: pfx }, passphrase: { value: "sample" } }),
+        }),
+      }).toEqual({ inherited: identified, nonEnumerable: identified });
     });
 
     it("ignores a pfx set on Object.prototype", async () => {

@@ -1403,6 +1403,14 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
+    /// In tunnel mode this is the socket to the proxy. `None` on the stream transport.
+    pub(crate) fn us_socket(&self) -> Option<*mut bun_uws_sys::us_socket_t> {
+        match self.tunnel() {
+            Some(tunnel) => tunnel.us_socket(),
+            None => self.tcp.get().socket.get(),
+        }
+    }
+
     pub(crate) fn pause(&self) -> bool {
         if let Some(tunnel) = self.tunnel() {
             return tunnel.pause_stream();
@@ -1894,6 +1902,12 @@ pub fn bun__websocketclient__remote_address(
 ) -> bool {
     write_remote_address(this.remote_address(), address, port, is_ipv6)
 }
+// HOST_EXPORT(Bun__WebSocketClient__usSocket, c)
+pub fn bun__websocketclient__us_socket(
+    this: &crate::websocket_client::WebSocketClient,
+) -> *mut bun_uws_sys::us_socket_t {
+    this.us_socket().unwrap_or(core::ptr::null_mut())
+}
 // HOST_EXPORT(Bun__WebSocketClient__close, c)
 pub fn bun__websocketclient__close(
     this: ThisPtr<crate::websocket_client::WebSocketClient>,
@@ -2030,6 +2044,12 @@ pub fn bun__websocketclienttls__remote_address(
     is_ipv6: &mut bool,
 ) -> bool {
     write_remote_address(this.remote_address(), address, port, is_ipv6)
+}
+// HOST_EXPORT(Bun__WebSocketClientTLS__usSocket, c)
+pub fn bun__websocketclienttls__us_socket(
+    this: &crate::websocket_client::WebSocketClientTLS,
+) -> *mut bun_uws_sys::us_socket_t {
+    this.us_socket().unwrap_or(core::ptr::null_mut())
 }
 // HOST_EXPORT(Bun__WebSocketClientTLS__close, c)
 pub fn bun__websocketclienttls__close(

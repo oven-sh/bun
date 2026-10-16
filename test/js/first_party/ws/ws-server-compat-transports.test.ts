@@ -553,6 +553,39 @@ describe.each(implementations)("ws server transports ($name)", ({ ws: implementa
         triggerClient.destroy();
       }
     });
+
+    // The same moment, with the client's FIN. The native transport would never learn about it.
+    test("a FIN that was read from the connection but hasn't reached `socket` yet", async () => {
+      const server = http.createServer();
+      const wss = new WebSocketServer({ noServer: true });
+      const upgrade = Promise.withResolvers<[http.IncomingMessage, Duplex, Buffer]>();
+      server.on("upgrade", (...args) => upgrade.resolve(args));
+      await using listening = await serve(server);
+      const client = listening.connect();
+      const [req, socket, head] = await upgrade.promise;
+      const socketClosed = once(socket, "close");
+
+      const events: string[] = [];
+      const accepted = Promise.withResolvers<void>();
+      using trigger = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open: () => accepted.resolve(),
+          data: () => wss.handleUpgrade(req, socket, head, ws => void recordEvents(ws, events)),
+        },
+      });
+      const triggerClient = net.connect(trigger.port, "127.0.0.1");
+      try {
+        await accepted.promise;
+        client.end();
+        triggerClient.write("now");
+        await Promise.all([socketClosed, client.closed]);
+        expect({ events, clients: wss.clients.size }).toEqual({ events: ["close 1006 Buffer() rs=3"], clients: 0 });
+      } finally {
+        triggerClient.destroy();
+      }
+    });
   });
 
   describe("http.Server#close()", () => {

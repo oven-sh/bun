@@ -41,6 +41,12 @@ impl AnyWebSocket {
         }
     }
 
+    /// A `uWS::WebSocket` is its `us_socket_t`.
+    #[inline]
+    pub fn us_socket(self) -> *mut crate::us_socket_t {
+        self.raw().cast()
+    }
+
     /// Raw user-data pointer cast to `*mut T` (NULL if unset).
     ///
     /// Noalias re-entrancy: the `WebSocketHandler` dispatch

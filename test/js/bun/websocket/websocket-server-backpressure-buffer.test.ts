@@ -1,3 +1,4 @@
+import { setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { tls as cert, isWindows } from "harness";
 import crypto from "node:crypto";
@@ -7,6 +8,9 @@ import { closePayload, encodeFrame, OP } from "../../web/websocket/raw-peer";
 
 // Drives the uws BackPressure buffer through its append / erase / resize paths
 // and verifies the bytes that reach the client exactly match what was sent.
+
+// SO_SNDBUF for the server's sockets. By default the kernel takes about 4 MiB before anything lands in BackPressure.
+const SEND_BUFFER = 64 * 1024;
 
 function patternBuffer(len: number, seed: number): Buffer {
   const b = Buffer.allocUnsafe(len);
@@ -63,7 +67,7 @@ describe("BackPressure buffer", () => {
   // drain exercises erase() as a head-cursor bump. Skipped on Windows: Winsock
   // loopback accepts the full payload so BackPressure is never reached there.
   it.skipIf(isWindows)("delivers a large direct send byte-for-byte while draining", async () => {
-    const SIZE = 8 * 1024 * 1024;
+    const SIZE = 1024 * 1024;
     const payload = patternBuffer(SIZE, 0xabcd);
     const expectedHash = crypto.createHash("sha1").update(payload).digest("hex");
 
@@ -101,6 +105,7 @@ describe("BackPressure buffer", () => {
     const ws = await opened.promise;
     // Send only after the client has paused its read side so the kernel send
     // buffer is the only sink; a non-empty remainder lands in BackPressure.
+    setSocketOptions(ws, 1, SEND_BUFFER);
     ws.sendBinary(payload);
     bufferedAfterSend = ws.getBufferedAmount();
     expect(bufferedAfterSend).toBeGreaterThan(0);
@@ -149,7 +154,8 @@ describe("BackPressure buffer", () => {
   // append() compact into the drained head gap instead of reallocating.
   it("delivers many corked frames while appending into a partly-drained buffer", async () => {
     const FRAME = 4096;
-    const COUNT = 2048; // 8MB: exceeds Linux tcp_wmem max (4MB) so the window fills
+    // Exceeds WINDOW plus what the kernel takes, so the window fills. Winsock may take any write whole.
+    const COUNT = isWindows ? 2048 : 512;
     const WINDOW = 1 * 1024 * 1024;
     const headerLen = 4; // server frame, 16-bit extended length, no mask
 
@@ -185,7 +191,10 @@ describe("BackPressure buffer", () => {
       websocket: {
         backpressureLimit: WINDOW * 4,
         idleTimeout: 0,
-        open: fill,
+        open(ws) {
+          setSocketOptions(ws, 1, SEND_BUFFER);
+          fill(ws);
+        },
         drain: fill,
         message() {},
         close() {
@@ -281,6 +290,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
   // accepted. Every frame reported as sent (> 0) or buffered (-1) must reach
   // the client.
   function fillPastLimit(ws: ServerWebSocket): number {
+    setSocketOptions(ws, 1, SEND_BUFFER);
     const payload = Buffer.alloc(FRAME);
     let accepted = 0;
     while (ws.sendBinary(payload) !== 0) {

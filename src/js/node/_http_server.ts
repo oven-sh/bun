@@ -45,9 +45,9 @@ const {
   NodeHTTPHeaderState,
   kPendingCallbacks,
   kRememberPeer,
-  kUnsentLength,
   kRequest,
   kCloseCallback,
+  kClosedWithUnsentData,
   NodeHTTPResponseFlags,
   callCloseCallback,
   emitCloseNT,
@@ -1664,7 +1664,7 @@ function getNodeHTTPServerSocket() {
     [kBoundOnAbort] = null;
     [kKeepAliveIdleStart] = undefined;
     [kBytesWritten] = 0;
-    [kUnsentLength] = undefined;
+    [kClosedWithUnsentData] = undefined;
     [kHandle];
     [kUpgradeIncoming]: import("node:http").IncomingMessage | undefined = undefined;
     [kOnReadParsed] = undefined;
@@ -1842,7 +1842,7 @@ function getNodeHTTPServerSocket() {
       this[kHandle] = null;
       if (closedHandle) {
         this[kBytesWritten] = handleBytesWritten(closedHandle);
-        this[kUnsentLength] = closedHandle.unsentBytesAtClose;
+        this[kClosedWithUnsentData] = closedHandle.closedWithUnsentData;
         // Peer FIN: 'end' before 'close', like Node's net.Socket. read(0) emits it when nothing reads the socket.
         if (closedHandle.peerEnded) {
           this.push(null);

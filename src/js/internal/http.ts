@@ -49,9 +49,9 @@ const kRememberPeer = Symbol("kRememberPeer");
 // Getter of a server socket: whether the native side has read bytes or the end of a tunnel's stream that it will push
 // into the socket in a task.
 const kHasQueuedReads = Symbol("kHasQueuedReads");
-// Property of a server socket: how many bytes the native side still had to write when the connection closed. undefined
-// before that.
-const kUnsentLength = Symbol("kUnsentLength");
+// Property of a server socket: whether the connection closed before the kernel had taken everything that was written.
+// undefined until it has closed.
+const kClosedWithUnsentData = Symbol("kClosedWithUnsentData");
 const kCloseCallback = Symbol("closeCallback");
 
 // node:_http_server registers its pipelined-response machinery here at module
@@ -550,6 +550,7 @@ export {
   isTlsSymbol,
   kAbortController,
   kCloseCallback,
+  kClosedWithUnsentData,
   kHandle,
   kHandoffResponse,
   kHasQueuedReads,
@@ -564,7 +565,6 @@ export {
   kRealListen,
   kRememberPeer,
   kRequest,
-  kUnsentLength,
   kWaitForProxyTunnel,
   noBodySymbol,
   onDataIncomingMessage,

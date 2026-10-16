@@ -225,6 +225,8 @@ public:
     const URL& url() const;
     State readyState() const;
     unsigned bufferedAmount() const;
+    // Through a proxy, the socket to the proxy. Null unless connected, and on the stream transport.
+    us_socket_t* usSocket() const;
 
     String protocol() const;
     String extensions() const;

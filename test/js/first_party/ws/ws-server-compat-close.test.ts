@@ -25,6 +25,7 @@ import {
   show,
   showError,
   showFrame,
+  shrinkBuffers,
   tryCall,
   validCloseCalls,
 } from "./ws-raw-peer";
@@ -417,10 +418,11 @@ describe.each(implementations)("ws server close ($name)", ({ ws: implementation,
 
   // Winsock buffers any amount of loopback data, so the process never sees backpressure.
   describe.skipIf(isWindows)("under backpressure", () => {
-    const size = 256 * 1024;
+    const size = 64 * 1024;
 
     // Sends until the kernel buffer is full, then twice more. The client runs on this thread, so it can't read yet.
     function fill(ws: WsSocket) {
+      shrinkBuffers({ sender: ws });
       const results: Promise<string>[] = [];
       const send = () => results.push(sendResult(ws, Buffer.alloc(size, results.length)));
       while (ws.bufferedAmount === 0 && results.length < 256) send();

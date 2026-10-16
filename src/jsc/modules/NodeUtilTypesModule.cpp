@@ -302,8 +302,7 @@ static bool withCycleGuard(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumen
 
 // JS `actual[key]` guarded by `ObjectPrototypePropertyIsEnumerable`: the
 // property must be an own enumerable of `actual`, but the value read is an
-// ordinary get. node takes a data property's value from its descriptor, which
-// only a Proxy can tell from a get.
+// ordinary get, exactly like the JS implementation.
 static bool ownEnumerableThenCompare(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSC::JSObject* actualObject, JSC::JSObject* expectedObject, JSC::PropertyName propertyName)
 {
     JSC::PropertySlot ownSlot(actualObject, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
@@ -318,9 +317,7 @@ static bool ownEnumerableThenCompare(JSC::JSGlobalObject* globalObject, JSC::Mar
     return compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
 }
 
-// Stands in for node's hasUnequalTag (`a[Symbol.toStringTag] !== b[Symbol.toStringTag]`) with the
-// class string of Object.prototype.toString. A tag that is not a string, or that equals the built-in
-// class name, compares equal here; node rejects it.
+// Compares the class strings of Object.prototype.toString. node compares the raw tags, so it also rejects a tag that is not a string or that spells the built-in class name.
 static NEVER_INLINE bool sameTypeTag(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     JSC::JSString* actualTag = JSC::objectPrototypeToString(globalObject, actual);
@@ -379,8 +376,7 @@ static bool nonIndexObjectSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedA
     return subsetOfKeys(globalObject, gcBuffer, cycles, scope, actualObject, expectedObject, names);
 }
 
-// node's getOwnNonIndexProperties(array, ONLY_ENUMERABLE). A Proxy has no keys of its own: its
-// ownKeys trap lists them and each non-index key is asked for its descriptor.
+// node's getOwnNonIndexProperties(array, ONLY_ENUMERABLE). A Proxy lists its keys with ownKeys and is asked for the descriptor of each non-index key.
 static void ownEnumerableNonIndexKeys(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* array, JSC::PropertyNameArrayBuilder& names)
 {
     if (array->type() != JSC::ProxyObjectType) [[likely]] {
@@ -417,9 +413,7 @@ static NEVER_INLINE bool ownsIndex(JSC::JSGlobalObject* globalObject, JSC::JSObj
     return array->hasOwnProperty(globalObject, JSC::Identifier::from(globalObject->vm(), index));
 }
 
-// node's element read and hole test (`array[index] === undefined && !hasOwn(array, index)`): an
-// ordinary read, then an own-property test only when it reads undefined. Empty = a hole, or an
-// exception.
+// node's hole test (`array[index] === undefined && !hasOwn(array, index)`). Returns empty for a hole, and for an exception.
 static ALWAYS_INLINE JSValue elementOrHole(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* array, uint64_t index)
 {
     if (index <= MAX_ARRAY_INDEX) [[likely]] {
@@ -437,8 +431,7 @@ static ALWAYS_INLINE JSValue elementOrHole(JSC::JSGlobalObject* globalObject, JS
     return element;
 }
 
-// Appends the slots of [start, usedLength) that `isPresent` accepts and returns how many it accepts
-// before `start`. Counts them first, so the list grows once and the fill stops at the last one.
+// Appends the slots of [start, usedLength) that `isPresent` accepts, counted first so the list grows once, and returns how many it accepts before `start`.
 template<typename IsPresent>
 static ALWAYS_INLINE uint32_t appendPresentSlots(unsigned usedLength, uint32_t start, WTF::Vector<uint32_t, 16>& indexes, const IsPresent& isPresent)
 {
@@ -459,9 +452,7 @@ static ALWAYS_INLINE uint32_t appendPresentSlots(unsigned usedLength, uint32_t s
     return before;
 }
 
-// The index keys of Object.keys(array) without an Identifier per index: appends the own enumerable
-// indexes at or after `start`, ascending, and returns how many come before `start`. Mirrors the
-// walk of JSObject::getOwnIndexedPropertyNames.
+// The walk of JSObject::getOwnIndexedPropertyNames without an Identifier per index: appends the own enumerable indexes from `start` on, ascending, and returns how many come before `start`.
 static uint32_t appendOwnEnumerableIndexes(JSC::JSArray* array, uint32_t start, WTF::Vector<uint32_t, 16>& indexes)
 {
     switch (array->indexingType()) {
@@ -513,9 +504,7 @@ static uint32_t appendOwnEnumerableIndexes(JSC::JSArray* array, uint32_t start, 
     }
 }
 
-// Object.keys(array), listed once at the first hole as node lists it: own enumerable index keys
-// ascending, then named string keys. A real array gives its index keys from its storage, so no
-// Identifier is made per index. A Proxy lists every key through its traps.
+// Object.keys(array), listed once at the first hole as node lists it. A real array gives its index keys from its storage, a Proxy through its traps.
 class ArrayKeys {
     WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(ArrayKeys);
@@ -523,9 +512,7 @@ class ArrayKeys {
 public:
     ArrayKeys() = default;
 
-    // `start` is the position of the first hole. No walk reads a key before it, so a real array
-    // counts those and keeps the rest. `listedNames` are the array's named keys when the caller
-    // has them (strings, then symbols).
+    // No walk reads a key before `start`, the first hole, so a real array only counts those. `listedNames` are its named keys when the caller has them (strings, then symbols).
     void list(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* array, uint64_t start, const JSC::PropertyNameArrayBuilder* listedNames)
     {
         m_array = array;
@@ -579,10 +566,7 @@ private:
     std::optional<JSC::PropertyNameArrayBuilder> m_ownNames;
 };
 
-// node's partialSparseArrayEquiv: from the first hole on either side, the rest of expected's keys
-// match in order inside the rest of actual's. The starts are array positions, so they can be
-// past the key counts.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L923-L943
+// node's partialSparseArrayEquiv (lib/internal/util/comparisons.js#L923-L943 at v26.3.0). The starts are array positions, so they can be past the key counts.
 static NEVER_INLINE bool sparseArraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSC::JSObject* actual, uint64_t actualStart, JSC::JSObject* expected, uint64_t expectedStart, const JSC::PropertyNameArrayBuilder* expectedNames)
 {
     ArrayKeys actualKeys;
@@ -625,8 +609,7 @@ struct ArrayPair {
     const JSC::PropertyNameArrayBuilder* expectedNames { nullptr };
 };
 
-// node's array arm behind the cycle check: expected's named keys, then expected's elements as a
-// subsequence of actual's, in order with gaps.
+// node's array arm behind the cycle check: expected's named keys, then expected's elements as a subsequence of actual's.
 static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, const ArrayPair& pair)
 {
     JSC::JSObject* actualObject = actual.getObject();
@@ -638,9 +621,7 @@ static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgum
             return false;
     }
 
-    // node's partialArrayEquiv, until the first hole on either side. node reads both lengths again
-    // at every step. They are read once here, so a comparison that changes a length can differ.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L945-L965
+    // node's partialArrayEquiv (comparisons.js#L945-L965 at v26.3.0) until the first hole, except that node reads both lengths again at every step.
     uint64_t actualPos = 0;
     for (uint64_t i = 0; i < pair.expectedLength; i++) {
         JSValue expectedElement = elementOrHole(globalObject, scope, expectedObject, i);
@@ -670,11 +651,7 @@ static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgum
     return true;
 }
 
-// node's array arm ahead of the cycle check: the length gate, expected's named keys, and the exit
-// for an expected with no element and no named key. node also takes that exit when `expected.size`
-// is 0, which is not ported.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L294-L308
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L510-L515
+// node's array arm ahead of the cycle check (comparisons.js#L294-L308 and #L510-L515 at v26.3.0): the length gate, expected's named keys, and the exit for an empty expected. Its exit for `expected.size === 0` is not ported.
 static bool arrayArm(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     JSC::JSObject* expectedObject = expected.getObject();

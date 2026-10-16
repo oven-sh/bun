@@ -196,6 +196,8 @@ struct nq_hset {
     unsigned max_pairs;
     unsigned max_bytes;
     unsigned n_pairs;
+    /* A pseudo-header of the block holds CR or LF. In the padding after n_pairs. */
+    unsigned char malformed;
     size_t total_bytes;
 };
 
@@ -245,16 +247,42 @@ static inline unsigned char nq_has_byte_below_0e(const char *p, size_t n) {
 static inline int nq_has_byte(const char *p, size_t n, int c) {
     return n && memchr(p, c, n);
 }
+/* Non-zero when the field holds CR or LF (RFC 9114 10.3) and must not be
+ * appended. nghttp3 leaves such a regular field out before Node counts it, and
+ * fails the message for a pseudo-header. A non-zero return from the hook closes
+ * the whole connection, so a pseudo-header marks the block and
+ * claim_header_sets (stream.rs) fails the one stream. */
+__attribute__((noinline, cold))
+static int nq_hsi_reject_cr_lf(struct nq_hset *h, const char *name,
+                               size_t name_len, const char *val,
+                               size_t val_len) {
+    if (!nq_has_byte(name, name_len, '\r') && !nq_has_byte(name, name_len, '\n')
+            && !nq_has_byte(val, val_len, '\r')
+            && !nq_has_byte(val, val_len, '\n'))
+        return 0;
+    if (name_len && name[0] == ':')
+        h->malformed = 1;
+    return 1;
+}
+/* Dropped per Node's DefaultApplication semantics. nghttp3 checks a field
+ * before Node counts it, so a pseudo-header past a limit still marks the block. */
+__attribute__((noinline, cold))
+static int nq_hsi_past_limit(struct nq_hset *h, struct lsxpack_header *hdr) {
+    const char *name = lsxpack_header_get_name(hdr);
+    if (hdr->name_len && name[0] == ':')
+        (void) nq_hsi_reject_cr_lf(h, name, hdr->name_len,
+                                   lsxpack_header_get_value(hdr), hdr->val_len);
+    return 0;
+}
 static int nq_hsi_process_header(void *hset, struct lsxpack_header *hdr) {
     struct nq_hset *h = hset;
     if (!hdr)
         return 0;
-    /* Dropped per Node's DefaultApplication semantics. */
     if (h->max_pairs && h->n_pairs >= h->max_pairs)
-        return 0;
+        return nq_hsi_past_limit(h, hdr);
     if (h->max_bytes
             && h->total_bytes + hdr->name_len + hdr->val_len > h->max_bytes)
-        return 0;
+        return nq_hsi_past_limit(h, hdr);
     const char *name = lsxpack_header_get_name(hdr);
     const char *val = lsxpack_header_get_value(hdr);
     if (nq_has_byte_below_0e(name, hdr->name_len)
@@ -263,14 +291,7 @@ static int nq_hsi_process_header(void *hset, struct lsxpack_header *hdr) {
         if (nq_has_byte(name, hdr->name_len, 0)
                 || nq_has_byte(val, hdr->val_len, 0))
             return -1;
-        /* RFC 9114 10.3: CR or LF. nghttp3 leaves such a field out before Node
-         * counts it. A pseudo-header is not left out: nghttp3 fails the message
-         * there, and a non-zero return here closes the whole connection. */
-        if ((!hdr->name_len || name[0] != ':')
-                && (nq_has_byte(name, hdr->name_len, '\r')
-                    || nq_has_byte(name, hdr->name_len, '\n')
-                    || nq_has_byte(val, hdr->val_len, '\r')
-                    || nq_has_byte(val, hdr->val_len, '\n')))
+        if (nq_hsi_reject_cr_lf(h, name, hdr->name_len, val, hdr->val_len))
             return 0;
     }
     h->n_pairs++;
@@ -311,10 +332,12 @@ static const struct lsquic_hset_if nq_hset_if = {
     .hsi_flags = 0,
 };
 
-const char *us_nq_hset_pairs(void *hset, size_t *len) {
+/* Non-zero when the block is malformed and must not be delivered. */
+int us_nq_hset_pairs(void *hset, const char **pairs, size_t *len) {
     struct nq_hset *h = hset;
+    *pairs = h ? h->pairs : NULL;
     *len = h ? h->pairs_len : 0;
-    return h ? h->pairs : NULL;
+    return h && h->malformed;
 }
 void us_nq_hset_free(void *hset) { nq_hsi_discard_header_set(hset); }
 

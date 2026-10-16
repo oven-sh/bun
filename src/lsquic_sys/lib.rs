@@ -208,7 +208,8 @@ unsafe extern "C" {
     pub fn us_nq_spec_iov(s: *const lsquic_out_spec, n: *mut usize) -> *const iovec;
     pub fn us_nq_spec_stride() -> usize;
     pub fn us_nq_stream_reset(s: *mut lsquic_stream, code: u64);
-    pub fn us_nq_hset_pairs(hset: *mut c_void, len: *mut usize) -> *const c_char;
+    pub fn us_nq_hset_pairs(hset: *mut c_void, pairs: *mut *const c_char, len: *mut usize)
+    -> c_int;
     pub fn us_nq_hset_free(hset: *mut c_void);
     pub fn us_nq_stream_send_headers(
         s: *mut lsquic_stream,
@@ -653,20 +654,34 @@ impl Stream {
 
 pub struct HeaderSet(*mut c_void);
 
+/// A pseudo-header of the block held CR or LF (RFC 9114 §4.1.2), so no field of it is delivered.
+#[derive(Debug)]
+pub struct MalformedHeaderSet;
+
 impl HeaderSet {
     /// h3 permits bytes that are not valid UTF-8, so the JS boundary picks the
     /// encoding (latin1, as node does for HTTP headers).
-    pub fn pairs(&self) -> Vec<Vec<u8>> {
+    pub fn pairs(&self) -> Result<Vec<Vec<u8>>, MalformedHeaderSet> {
+        let mut p: *const c_char = core::ptr::null();
         let mut len: usize = 0;
         // SAFETY: `self.0` is a live `nq_hset` until `Drop`.
-        let p = unsafe { us_nq_hset_pairs(self.0, core::ptr::from_mut(&mut len)) };
+        let malformed = unsafe {
+            us_nq_hset_pairs(
+                self.0,
+                core::ptr::from_mut(&mut p),
+                core::ptr::from_mut(&mut len),
+            )
+        };
+        if malformed != 0 {
+            return Err(MalformedHeaderSet);
+        }
         if p.is_null() || len == 0 {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         // SAFETY: the shim guarantees `p[..len]` is valid until free.
         let bytes = unsafe { core::slice::from_raw_parts(p.cast::<u8>(), len) };
         let bytes = bytes.strip_suffix(&[0u8][..]).unwrap_or(bytes);
-        strings::split(bytes, b"\0").map(<[u8]>::to_vec).collect()
+        Ok(strings::split(bytes, b"\0").map(<[u8]>::to_vec).collect())
     }
 }
 

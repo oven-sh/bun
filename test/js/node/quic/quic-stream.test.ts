@@ -4,6 +4,7 @@
 import { quicSendRawHeaders } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { createPrivateKey } from "node:crypto";
+import { subscribe, unsubscribe } from "node:diagnostics_channel";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { connect, listen, type QuicEndpoint, type SessionOptions } from "node:quic";
@@ -302,6 +303,9 @@ describe("received HTTP/3 fields that hold CR or LF", () => {
     };
     await serverSession.closed.catch(() => {});
   };
+  // The tests wait for `stream.closed` and `client.close()`, not for a callback.
+  // `closed` settles after the last header callback of the stream on that side
+  // and rejects when the stream failed. `close()` rejects when the connection failed.
 
   test.each([
     ["CR LF", "a\r\nb: c"],
@@ -309,32 +313,40 @@ describe("received HTTP/3 fields that hold CR or LF", () => {
     ["CR", "a\rb"],
   ])("a field value with %s is left out of every kind of block and the rest is delivered", async (_, bad) => {
     const seen: Record<string, unknown> = {};
-    const requestTrailers = Promise.withResolvers<Record<string, string>>();
-    const responseTrailers = Promise.withResolvers<Record<string, string>>();
-    await using server = await listen(quietSession, {
-      ...serverOptions,
-      onheaders(this: any, headers: Record<string, any>) {
-        seen.request = { ...headers };
-        this.sendInformationalHeaders({ ":status": "103", "x-bad": bad, "x-ok": "info" });
-        this.sendHeaders({ ":status": "200", "x-bad": bad, "x-ok": "response" });
-        this.writer.writeSync(encoder.encode("body"));
-        this.writer.endSync();
+    let serverStream: any;
+    await using server = await listen(
+      async (serverSession: any) => {
+        serverSession.onstream = (stream: any) => {
+          serverStream = stream;
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
       },
-      ontrailers(this: any, trailers: Record<string, any>) {
-        requestTrailers.resolve({ ...trailers });
+      {
+        ...serverOptions,
+        onheaders(this: any, headers: Record<string, any>) {
+          seen.request = { ...headers };
+          this.sendInformationalHeaders({ ":status": "103", "x-bad": bad, "x-ok": "info" });
+          this.sendHeaders({ ":status": "200", "x-bad": bad, "x-ok": "response" });
+          this.writer.writeSync(encoder.encode("body"));
+          this.writer.endSync();
+        },
+        ontrailers(this: any, trailers: Record<string, any>) {
+          seen.requestTrailers = { ...trailers };
+        },
+        onwanttrailers(this: any) {
+          // The only field of this block is the one that is left out.
+          this.sendTrailers({ "x-bad": bad });
+        },
       },
-      onwanttrailers(this: any) {
-        // The only field of this block is the one that is left out.
-        this.sendTrailers({ "x-bad": bad });
-      },
-    });
+    );
     const client = await connect(server.address!, clientOptions);
     await client.opened;
 
     const stream: any = await client.createBidirectionalStream({
       oninfo: (headers: Record<string, any>) => (seen.info = { ...headers }),
       onheaders: (headers: Record<string, any>) => (seen.response = { ...headers }),
-      ontrailers: (trailers: Record<string, any>) => responseTrailers.resolve({ ...trailers }),
+      ontrailers: (trailers: Record<string, any>) => (seen.responseTrailers = { ...trailers }),
     });
     stream.closed.catch(() => {});
     stream.sendHeaders({ ...request, "x-bad": bad, "x-ok": "request" });
@@ -345,9 +357,9 @@ describe("received HTTP/3 fields that hold CR or LF", () => {
     }
     seen.body = body;
     seen.responseGetter = { ...stream.headers };
-    seen.requestTrailers = await requestTrailers.promise;
-    seen.responseTrailers = await responseTrailers.promise;
-    client.close();
+    await stream.closed;
+    await serverStream.closed;
+    await client.close();
 
     expect(seen).toEqual({
       request: { ...request, "x-ok": "request" },
@@ -383,14 +395,13 @@ describe("received HTTP/3 fields that hold CR or LF", () => {
       "/plain": { "x-plain": "v" },
     };
     for (const [path, fields] of Object.entries(rows)) {
-      const answered = Promise.withResolvers<void>();
-      const stream = await client.createBidirectionalStream({ onheaders: () => answered.resolve() });
+      const stream = await client.createBidirectionalStream();
       stream.closed.catch(() => {});
       const block = { ...request, ":path": path, ...fields, "x-ok": "kept" };
       quicSendRawHeaders(stream, Object.entries(block).flat(), 1, 1);
-      await answered.promise;
+      await stream.closed;
     }
-    client.close();
+    await client.close();
 
     const rest = { ":method": "POST", ":scheme": "https", ":authority": "localhost", "x-ok": "kept" };
     expect(seen).toEqual({
@@ -402,39 +413,221 @@ describe("received HTTP/3 fields that hold CR or LF", () => {
     });
   });
 
-  // Without its `:path` a request is a different request. What nghttp3 does
-  // for a pseudo-header is fail the message, which this hook cannot do yet.
-  test("a pseudo-header is not left out", async () => {
-    const seen = Promise.withResolvers<string[]>();
+  // RFC 9114 4.1.2: a pseudo-header that holds CR or LF makes the message
+  // malformed. The stream fails with H3_MESSAGE_ERROR and the session goes on.
+  // Node v26.3.0 closes the whole connection there.
+  const messageError = { code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 0x10en };
+  const outcome = (closed: Promise<unknown>) =>
+    closed.then(
+      () => "fulfilled",
+      (err: any) => ({ code: err.code, errorCode: err.errorCode }),
+    );
+  // A server that answers 200 and records the `:path` of each request it is given.
+  async function recordingServer(options: Record<string, any> = {}) {
+    const paths: string[] = [];
+    const streams: any[] = [];
+    const server = await listen(
+      async (serverSession: any) => {
+        serverSession.onstream = (stream: any) => {
+          streams.push(stream);
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        ...serverOptions,
+        onheaders(this: any, headers: Record<string, any>) {
+          paths.push(headers[":path"]);
+          this.sendHeaders({ ":status": "200" }, { terminal: true });
+        },
+        ...options,
+      } as SessionOptions,
+    );
+    return { server, paths, streams };
+  }
+  // The status of a well-formed request. It rejects when the stream or the session failed.
+  async function statusOf(client: any, path: string) {
+    let status: string | undefined;
+    const stream = await client.createBidirectionalStream({
+      headers: { ...request, ":path": path },
+      onheaders: (headers: Record<string, any>) => (status = headers[":status"]),
+    });
+    await stream.closed;
+    return status;
+  }
+
+  test("a request pseudo-header with CR or LF fails that stream and no other", async () => {
+    const { server, paths, streams } = await recordingServer();
+    await using _server = server;
+    const client = await connect(server.address!, clientOptions);
+    await client.opened;
+
+    const rows: Record<string, Record<string, string>> = {
+      ":path value with CR LF": { ":path": "/a\r\nb" },
+      ":path value with LF": { ":path": "/a\nb" },
+      ":path value with CR": { ":path": "/a\rb" },
+      ":method value with LF": { ":method": "PO\nST" },
+      ":scheme value with CR": { ":scheme": "ht\rtps" },
+      ":authority value with CR LF": { ":authority": "a\r\nb" },
+      "name with CR": { ":pa\rth": "/" },
+      "name with LF": { ":pa\nth": "/" },
+      // No CR or LF: the malformed request that failed its stream before this rule.
+      ":status in a request": { ":status": "200" },
+    };
+    const seen: Record<string, unknown> = { before: await statusOf(client, "/before") };
+    for (const [row, bad] of Object.entries(rows)) {
+      const stream = await client.createBidirectionalStream();
+      quicSendRawHeaders(stream, Object.entries({ ...request, ...bad, "x-ok": "kept" }).flat(), 1, 1);
+      seen[row] = { client: await outcome(stream.closed), server: await outcome(streams.at(-1).closed) };
+    }
+    seen.after = await statusOf(client, "/after");
+    await client.close();
+
+    const failed = { client: messageError, server: messageError };
+    expect({ seen, paths }).toEqual({
+      seen: { before: "200", ...Object.fromEntries(Object.keys(rows).map(row => [row, failed])), after: "200" },
+      paths: ["/before", "/after"],
+    });
+  });
+
+  // The server reads this request in the engine pass that completes the handshake.
+  test("a request with such a pseudo-header that is sent before the handshake completes fails that stream", async () => {
+    const { server, paths } = await recordingServer();
+    await using _server = server;
+    const client = await connect(server.address!, clientOptions);
+
+    const stream = await client.createBidirectionalStream({ headers: { ...request, ":path": "/a\r\nb" } });
+    const closed = await outcome(stream.closed);
+    const after = await statusOf(client, "/after");
+    await client.close();
+
+    expect({ closed, after, paths }).toEqual({ closed: messageError, after: "200", paths: ["/after"] });
+  });
+
+  test("a stream of a server that has no onheaders fails too", async () => {
+    const { server, streams } = await recordingServer({ onheaders: undefined });
+    await using _server = server;
+    const client = await connect(server.address!, clientOptions);
+    await client.opened;
+
+    const stream = await client.createBidirectionalStream({ headers: { ...request, ":path": "/a\r\nb" } });
+    const closed = { client: await outcome(stream.closed), server: await outcome(streams[0].closed) };
+    await client.close();
+
+    expect(closed).toEqual({ client: messageError, server: messageError });
+  });
+
+  // nghttp3 checks a field before Node counts it, so a limit does not hide it.
+  test.each([
+    ["maxHeaderPairs", { maxHeaderPairs: 1 }],
+    ["maxHeaderLength", { maxHeaderLength: 8 }],
+  ])("a pseudo-header with CR or LF that is past %s fails the stream", async (_, application) => {
+    const { server, paths } = await recordingServer({ application });
+    await using _server = server;
+    const client = await connect(server.address!, clientOptions);
+    await client.opened;
+
+    const stream = await client.createBidirectionalStream({ headers: { ...request, ":path": "/a\r\nb" } });
+    const closed = await outcome(stream.closed);
+    await client.close();
+
+    expect({ closed, paths }).toEqual({ closed: messageError, paths: [] });
+  });
+
+  test("request trailers with such a pseudo-header fail the stream", async () => {
+    const trailers: unknown[] = [];
+    const published: unknown[] = [];
+    const publish = (message: any) => published.push({ ...message.trailers });
+    subscribe("quic.stream.trailers", publish);
+    using _subscription = { [Symbol.dispose]: () => void unsubscribe("quic.stream.trailers", publish) };
+    const { server, paths, streams } = await recordingServer({
+      ontrailers: (block: Record<string, any>) => trailers.push({ ...block }),
+    });
+    await using _server = server;
+    const client = await connect(server.address!, clientOptions);
+    await client.opened;
+
+    const stream = await client.createBidirectionalStream();
+    stream.sendHeaders({ ...request, ":path": "/trailers" });
+    // sendTrailers() refuses a pseudo-header. Kind 2 is a trailers block.
+    quicSendRawHeaders(stream, ["x-ok", "kept", ":path", "/a\r\nb"], 2, 0);
+    // How the client's side ends depends on what the server had sent by then.
+    await outcome(stream.closed);
+    const closed = await outcome(streams[0].closed);
+    const after = await statusOf(client, "/after");
+    await client.close();
+
+    // The request block is read first, so onheaders runs for it.
+    expect({ closed, trailers, published, paths, after }).toEqual({
+      closed: messageError,
+      trailers: [],
+      published: [],
+      paths: ["/trailers", "/after"],
+      after: "200",
+    });
+  });
+
+  // The client side of the same rule: the block that fails is part of a response.
+  test("a response pseudo-header with CR or LF fails that stream and no other", async () => {
     await using server = await listen(quietSession, {
       ...serverOptions,
       onheaders(this: any, headers: Record<string, any>) {
-        seen.resolve(Object.keys(headers));
-        this.sendHeaders({ ":status": "200" }, { terminal: true });
+        switch (headers[":path"]) {
+          case "/final":
+            this.sendHeaders({ ":status": "2\r0" }, { terminal: true });
+            break;
+          case "/interim":
+            this.sendInformationalHeaders({ ":status": "1\r3" });
+            this.sendHeaders({ ":status": "200" }, { terminal: true });
+            break;
+          case "/trailers":
+            this.sendHeaders({ ":status": "200" });
+            this.writer.endSync();
+            break;
+          default:
+            this.sendHeaders({ ":status": "200" }, { terminal: true });
+        }
+      },
+      onwanttrailers(this: any) {
+        // sendTrailers() refuses a pseudo-header. Kind 2 is a trailers block.
+        quicSendRawHeaders(this, [":path", "/a\r\nb"], 2, 0);
       },
     });
     const client = await connect(server.address!, clientOptions);
     await client.opened;
 
-    const stream = await client.createBidirectionalStream({
-      headers: { ...request, ":path": "/a\r\nb", "x-bad": "a\r\nb", "x-ok": "kept" },
-    });
-    stream.closed.catch(() => {});
-    const names = await seen.promise;
-    client.close();
+    const seen: Record<string, unknown> = {};
+    for (const path of ["/final", "/interim", "/trailers"]) {
+      const calls: string[] = [];
+      const stream = await client.createBidirectionalStream({
+        headers: { ...request, ":path": path },
+        oninfo: () => calls.push("info"),
+        onheaders: () => calls.push("headers"),
+        ontrailers: () => calls.push("trailers"),
+      });
+      seen[path] = { closed: await outcome(stream.closed), calls };
+    }
+    seen.after = await statusOf(client, "/after");
+    await client.close();
 
-    expect(names).toEqual([":method", ":path", ":scheme", ":authority", "x-ok"]);
+    expect(seen).toEqual({
+      "/final": { closed: messageError, calls: [] },
+      "/interim": { closed: messageError, calls: [] },
+      // The response block is read before its trailers.
+      "/trailers": { closed: messageError, calls: ["headers"] },
+      after: "200",
+    });
   });
 
   // nghttp3 checks a field before Node counts it against maxHeaderPairs.
   test("a field that is left out does not count against maxHeaderPairs", async () => {
-    const seen = Promise.withResolvers<Record<string, string>>();
+    let received: Record<string, string> | undefined;
     await using server = await listen(quietSession, {
       ...serverOptions,
       // Room for the four pseudo-headers and one more field.
       application: { maxHeaderPairs: 5 },
       onheaders(this: any, headers: Record<string, any>) {
-        seen.resolve({ ...headers });
+        received = { ...headers };
         this.sendHeaders({ ":status": "200" }, { terminal: true });
       },
     } as SessionOptions);
@@ -445,10 +638,10 @@ describe("received HTTP/3 fields that hold CR or LF", () => {
       headers: { ...request, "x-bad": "a\r\nb", "x-ok": "kept" },
     });
     stream.closed.catch(() => {});
-    const headers = await seen.promise;
-    client.close();
+    await stream.closed;
+    await client.close();
 
-    expect(headers).toEqual({ ...request, "x-ok": "kept" });
+    expect(received).toEqual({ ...request, "x-ok": "kept" });
   });
 });
 

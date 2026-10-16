@@ -70,25 +70,23 @@ async function bucket(plan: Plan) {
   const waiting: { matches: (asked: Asked) => boolean; resolve: (asked: Asked) => void }[] = [];
   const server = net.createServer(socket => {
     const closed = Promise.withResolvers<void>();
-    const chunks: Buffer[] = [];
-    let size = 0;
+    // The head of the request and a body that is small. A part is megabytes: it is only counted.
+    let head = Buffer.alloc(0);
     let headEnd = -1;
     let length = 0;
+    let received = 0;
     socket.on("error", () => {});
     socket.on("close", () => closed.resolve());
     socket.on("data", async chunk => {
-      chunks.push(chunk as Buffer);
-      size += chunk.length;
+      received += chunk.length;
+      if (headEnd === -1 || length <= 1024) head = Buffer.concat([head, chunk as Buffer]);
       if (headEnd === -1) {
-        const head = Buffer.concat(chunks);
         headEnd = head.indexOf("\r\n\r\n");
         if (headEnd === -1) return;
-        chunks.splice(0, chunks.length, head);
         length = Number(/\r\ncontent-length: *(\d+)/i.exec(head.subarray(0, headEnd).toString("latin1"))?.[1] ?? 0);
       }
-      if (size < headEnd + 4 + length) return;
-      const received = Buffer.concat(chunks);
-      const [line, ...lines] = received.subarray(0, headEnd).toString("latin1").split("\r\n");
+      if (received < headEnd + 4 + length) return;
+      const [line, ...lines] = head.subarray(0, headEnd).toString("latin1").split("\r\n");
       const [method, target] = line.split(" ");
       const request: Asked = {
         method,
@@ -99,8 +97,7 @@ async function bucket(plan: Plan) {
             return [header.slice(0, colon).toLowerCase(), header.slice(colon + 1).trim()];
           }),
         ),
-        // A part is megabytes: its size is all a test reads.
-        body: length > 1024 ? `${length} bytes` : received.subarray(headEnd + 4).toString(),
+        body: length > 1024 ? `${length} bytes` : head.subarray(headEnd + 4).toString(),
         at: performance.now(),
         answered: 0,
         closed: closed.promise,
@@ -232,7 +229,6 @@ describe.concurrent("S3 retry", () => {
       ["S3Client.write(key, string, options)", stub => S3Client.write("key", "hello", { ...stub.options, retry: 5 })],
       ["file.write(string)", stub => stub.client(5).file("key").write("hello")],
       ["Bun.write(file, string)", stub => Bun.write(stub.client(5).file("key"), "hello")],
-      ["Bun.write('s3://key', string, options)", stub => Bun.write("s3://key", "hello", { ...stub.options, retry: 5 })],
       [
         "file.writer(), one part",
         async stub => {

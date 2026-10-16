@@ -1254,8 +1254,7 @@ mod draft {
         }
     }
 
-    /// JavaScriptCore calls this when it cannot set up its Structure heap. `reserved` is 0 when the
-    /// OS refused every size. Exits with an error, or returns when no limit explains the failure.
+    /// JavaScriptCore could not set up its Structure heap: exit with an error, or return to crash.
     #[unsafe(no_mangle)]
     #[cold]
     pub extern "C" fn Bun__structureHeapReservationFailed(

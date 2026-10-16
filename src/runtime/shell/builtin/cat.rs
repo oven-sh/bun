@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use crate::shell::ExitCode;
-use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinInput, BuiltinState, IoKind, Kind};
+use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     FlagParser, Interpreter, NodeId, ParseFlagResult, parse_flags, shell_openat, unsupported_flag,
 };
+use crate::shell::io::{CmdIn, CmdOut};
 use crate::shell::io_reader::{ChildPtr as ReaderChildPtr, IOReader, ReaderTag};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -103,12 +104,10 @@ impl Cat {
         buf: &[u8],
         exit_code: ExitCode,
     ) -> Yield {
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+        if let Some(safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
             Self::state_mut(interp, cmd).state = CatState::WaitingWriteErr;
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stderr
-                .enqueue(child, buf, safeguard);
+            return interp.as_cmd(cmd).io.stderr.enqueue(child, buf, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
         Builtin::done(interp, cmd, exit_code)
@@ -136,7 +135,7 @@ impl Cat {
             Branch::Stdin => {
                 // Stdin doesn't need IO (captured/ignored): read it all
                 // synchronously and write straight to stdout.
-                let stdin_needs_io = Builtin::of(interp, cmd).stdin.needs_io();
+                let stdin_needs_io = interp.as_cmd(cmd).io.stdin.needs_io();
                 if !stdin_needs_io {
                     if let CatState::ExecStdin { in_done, .. } =
                         &mut Self::state_mut(interp, cmd).state
@@ -146,11 +145,9 @@ impl Cat {
                     // Copy stdin bytes so the &mut on `stdout`/`write_no_io`
                     // doesn't overlap a borrow of `stdin`.
                     let buf = Builtin::read_stdin_no_io(interp, cmd).to_vec();
-                    if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+                    if let Some(safeguard) = interp.as_cmd(cmd).io.stdout.needs_io() {
                         let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                        return Builtin::of_mut(interp, cmd)
-                            .stdout
-                            .enqueue(child, &buf, safeguard);
+                        return interp.as_cmd(cmd).io.stdout.enqueue(child, &buf, safeguard);
                     }
                     let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                     return Builtin::done(interp, cmd, 0);
@@ -159,8 +156,8 @@ impl Cat {
                 // out of `stdin` so we hold no borrow of `interp` across
                 // `start()` (which may re-enter via the raw interp backref).
                 let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
-                let reader = match &Builtin::of(interp, cmd).stdin {
-                    BuiltinInput::Fd(r) => Arc::clone(r),
+                let reader = match &interp.as_cmd(cmd).io.stdin {
+                    CmdIn::Fd(r) => Arc::clone(r),
                     _ => unreachable!("needs_io() returned true"),
                 };
                 reader.set_interp(interp_ptr);
@@ -260,7 +257,7 @@ impl Cat {
                     *st_errno = errno;
                     let was_done = core::mem::replace(in_done, true);
                     if !was_done {
-                        if let BuiltinInput::Fd(r) = &Builtin::of(interp, cmd).stdin {
+                        if let CmdIn::Fd(r) = &interp.as_cmd(cmd).io.stdin {
                             r.remove_reader(rchild);
                         }
                     }
@@ -320,14 +317,16 @@ impl Cat {
         remove: &mut bool,
     ) -> Yield {
         *remove = false;
-        let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();
+        let stdout_needs_io = interp.as_cmd(cmd).io.stdout.needs_io();
         match &mut Self::state_mut(interp, cmd).state {
             CatState::ExecStdin { chunks_queued, .. }
             | CatState::ExecFilepathArgs { chunks_queued, .. } => {
                 if let Some(safeguard) = stdout_needs_io {
                     *chunks_queued += 1;
                     let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                    return Builtin::of_mut(interp, cmd)
+                    return interp
+                        .as_cmd(cmd)
+                        .io
                         .stdout
                         .enqueue(child, chunk, safeguard);
                 }
@@ -344,7 +343,7 @@ impl Cat {
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         let errno: ExitCode = err.map(|e| e.get_errno() as ExitCode).unwrap_or(0);
-        let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
+        let stdout_needs_io = interp.as_cmd(cmd).io.stdout.needs_io().is_some();
         let mut cancel = false;
         let step = match &mut Self::state_mut(interp, cmd).state {
             CatState::ExecStdin {
@@ -396,7 +395,7 @@ impl Cat {
         };
         if cancel {
             let wchild = ChildPtr::new(cmd, WriterTag::Builtin);
-            if let BuiltinIO::Fd(fd) = &Builtin::of(interp, cmd).stdout {
+            if let CmdOut::Fd(fd) = &interp.as_cmd(cmd).io.stdout {
                 fd.writer.cancel_chunks(wchild);
             }
         }

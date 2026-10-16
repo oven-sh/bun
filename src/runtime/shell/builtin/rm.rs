@@ -206,7 +206,7 @@ impl Rm {
                                         // re-borrowing `interp` mutably.
                                         let resolved_owned = resolved.to_vec();
                                         if let Some(safeguard) =
-                                            Builtin::of(interp, cmd).stderr.needs_io()
+                                            interp.as_cmd(cmd).io.stderr.needs_io()
                                         {
                                             Self::state_mut(interp, cmd).state =
                                                 RmState::ParseOpts {
@@ -214,17 +214,15 @@ impl Rm {
                                                     wait_write_err: true,
                                                 };
                                             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                                            return Builtin::of_mut(interp, cmd)
-                                                .stderr
-                                                .enqueue_fmt(
-                                                    child,
-                                                    Some(Kind::Rm),
-                                                    format_args!(
-                                                        "\"{}\" may not be removed\n",
-                                                        bstr::BStr::new(&resolved_owned)
-                                                    ),
-                                                    safeguard,
-                                                );
+                                            return interp.as_cmd(cmd).io.stderr.enqueue_fmt(
+                                                child,
+                                                Some(Kind::Rm),
+                                                format_args!(
+                                                    "\"{}\" may not be removed\n",
+                                                    bstr::BStr::new(&resolved_owned)
+                                                ),
+                                                safeguard,
+                                            );
                                         }
                                         let buf = Builtin::fmt_error_arena(
                                             interp,
@@ -265,13 +263,13 @@ impl Rm {
                             );
                         }
                         RmParseFlag::IllegalOptionWithFlag => {
-                            if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+                            if let Some(safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
                                 Self::state_mut(interp, cmd).state = RmState::ParseOpts {
                                     idx,
                                     wait_write_err: true,
                                 };
                                 let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                                return Builtin::of_mut(interp, cmd).stderr.enqueue_fmt(
+                                return interp.as_cmd(cmd).io.stderr.enqueue_fmt(
                                     child,
                                     Some(Kind::Rm),
                                     format_args!(
@@ -336,15 +334,13 @@ impl Rm {
     }
 
     fn write_err_literal(interp: &Interpreter, cmd: NodeId, idx: u32, buf: &[u8]) -> Yield {
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+        if let Some(safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
             Self::state_mut(interp, cmd).state = RmState::ParseOpts {
                 idx,
                 wait_write_err: true,
             };
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stderr
-                .enqueue(child, buf, safeguard);
+            return interp.as_cmd(cmd).io.stderr.enqueue(child, buf, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
         Builtin::done(interp, cmd, 1)
@@ -414,12 +410,14 @@ impl Rm {
         };
 
         if let Some(s) = errstr {
-            if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+            if let Some(safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
                 if let RmState::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                     exec.output_count.fetch_add(1, Ordering::SeqCst);
                 }
                 let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                Builtin::of_mut(interp, cmd)
+                interp
+                    .as_cmd(cmd)
+                    .io
                     .stderr
                     .enqueue(child, &s, safeguard)
                     .run(interp);
@@ -473,11 +471,9 @@ impl Rm {
             }
         });
 
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+        if let Some(safeguard) = interp.as_cmd(cmd).io.stdout.needs_io() {
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stdout
-                .enqueue(child, &buf, safeguard);
+            return interp.as_cmd(cmd).io.stdout.enqueue(child, &buf, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         let done = match &mut Self::state_mut(interp, cmd).state {

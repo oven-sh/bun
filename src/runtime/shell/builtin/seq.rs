@@ -156,7 +156,7 @@ impl Seq {
     }
 
     fn do_(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
+        let needs_io = interp.as_cmd(cmd).io.stdout.needs_io().is_some();
         // Render entirely into a local Vec, then either enqueue it or
         // write_no_io it; we buffer once for simplicity.
         let (start, end, incr, sep, term) = {
@@ -188,11 +188,9 @@ impl Seq {
 
         Self::state_mut(interp, cmd).state = State::Done;
         if needs_io {
-            let safeguard = Builtin::of(interp, cmd).stdout.needs_io().unwrap();
+            let safeguard = interp.as_cmd(cmd).io.stdout.needs_io().unwrap();
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stdout
-                .enqueue(child, &out, safeguard);
+            return interp.as_cmd(cmd).io.stdout.enqueue(child, &out, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &out);
         Builtin::done(interp, cmd, 0)

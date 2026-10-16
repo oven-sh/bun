@@ -61,12 +61,10 @@ impl Mv {
         buf: &[u8],
         exit_code: ExitCode,
     ) -> Yield {
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+        if let Some(safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
             Self::state_mut(interp, cmd).state = MvState::WaitingWriteErr { exit_code };
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stderr
-                .enqueue(child, buf, safeguard);
+            return interp.as_cmd(cmd).io.stderr.enqueue(child, buf, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
         Builtin::done(interp, cmd, exit_code)

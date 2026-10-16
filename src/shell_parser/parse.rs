@@ -439,16 +439,11 @@ pub mod ast {
             const STDOUT        = 1 << 1;
             const STDERR        = 1 << 2;
             const APPEND        = 1 << 3;
-            /// 1>&2 === stdout=true and duplicate_out=true
-            /// 2>&1 === stderr=true and duplicate_out=true
+            /// Set with the stream that both streams become:
+            /// 2>&1 === stdout=true and duplicate_out=true
+            /// 1>&2 === stderr=true and duplicate_out=true
             const DUPLICATE_OUT = 1 << 4;
         }
-    }
-
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    pub enum IoKind {
-        Stdout,
-        Stderr,
     }
 
     impl RedirectFlags {
@@ -475,25 +470,6 @@ pub mod ast {
 
         // bitflags already generates `is_empty()`; expose under this
         // spelling too for callers that use it.
-
-        pub fn redirects_elsewhere(self, io_kind: IoKind) -> bool {
-            match io_kind {
-                IoKind::Stdout => {
-                    if self.duplicate_out() {
-                        !self.stdout()
-                    } else {
-                        self.stdout()
-                    }
-                }
-                IoKind::Stderr => {
-                    if self.duplicate_out() {
-                        !self.stderr()
-                    } else {
-                        self.stderr()
-                    }
-                }
-            }
-        }
 
         pub fn to_flags(self) -> i32 {
             // `bun_shell_parser` is sys-tier-free so it cannot depend on

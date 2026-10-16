@@ -51,7 +51,6 @@ use crate::shell::yield_::Yield;
 use crate::shell::{ShellErr, ast};
 
 bun_core::declare_scope!(SHELL, visible);
-bun_core::declare_scope!(CowFd, hidden);
 
 /// `log!("...")` — scoped debug logger for the shell interpreter. Expands to
 /// nothing in release; the `SHELL` static is referenced by absolute path so
@@ -1159,6 +1158,17 @@ impl Interpreter {
         Some(crate::jsc::JSGlobalObject::opaque_ref(g))
     }
 
+    /// The `${...}` object number `idx` of the script, and the global it
+    /// lives in. `None` when the script has no such object: its text can
+    /// spell any number.
+    pub(crate) fn js_object(
+        &self,
+        idx: u32,
+    ) -> Option<(&crate::jsc::JSGlobalObject, crate::jsc::JSValue)> {
+        let value = *self.jsobjs.get(idx as usize)?;
+        Some((self.global_this_ref()?, value))
+    }
+
     /// `mini` prints and exits(1); `js` raises a JS exception. Dispatch on
     /// `global_this` (set only on the JS event-loop path by
     /// `create_shell_interpreter`).
@@ -2197,43 +2207,6 @@ pub(crate) struct ShellArgs {
 /// `bun_event_loop` and re-exported through `bun_jsc`; shell re-exports it
 /// here so `IOReader`/`IOWriter`/builtin tasks keep their existing import path.
 pub(crate) use bun_event_loop::EventLoopHandle;
-
-// ────────────────────────────────────────────────────────────────────────────
-// CowFd
-// ────────────────────────────────────────────────────────────────────────────
-
-/// Copy-on-write file descriptor: avoids multiple non-blocking writers on the
-/// same fd (which breaks epoll/kqueue).
-pub(crate) struct CowFd {
-    __fd: Fd,
-    refcount: u32,
-}
-
-impl CowFd {
-    pub(crate) fn init(fd: Fd) -> *mut CowFd {
-        let new = bun_core::heap::into_raw(Box::new(CowFd {
-            __fd: fd,
-            refcount: 1,
-        }));
-        bun_core::scoped_log!(CowFd, "init {:x} fd={}", new as usize, fd);
-        new
-    }
-
-    /// # Safety
-    /// `this` must point to a live `CowFd` (refcount ≥ 1). If this drops the
-    /// refcount to 0, `this` is freed and must not be used again.
-    pub(crate) fn deref(this: *mut CowFd) {
-        // SAFETY: caller upholds the precondition above (`this` is a live `CowFd`).
-        unsafe {
-            (*this).refcount -= 1;
-            if (*this).refcount == 0 {
-                // Close the fd before freeing; `closefd` tolerates EBADF.
-                closefd((*this).__fd);
-                drop(bun_core::heap::take(this));
-            }
-        }
-    }
-}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Convenience re-exports for state modules

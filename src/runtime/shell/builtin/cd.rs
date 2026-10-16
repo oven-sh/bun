@@ -102,9 +102,9 @@ impl Cd {
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
         Self::state_mut(interp, cmd).state = State::WaitingIo;
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+        if let Some(safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd).stderr.enqueue_fmt(
+            return interp.as_cmd(cmd).io.stderr.enqueue_fmt(
                 child,
                 Some(Kind::Cd),
                 args,

@@ -2140,21 +2140,33 @@ describe("deno_task", () => {
           });
         });
 
-        // An external command used to abort the process on this target.
-        test("a JS object that a redirect cannot use", async () => {
+        // An external command used to abort the process on a ReadableStream.
+        test("a JS object that a redirect cannot write to", async () => {
           await using proc = Bun.spawn({
             cmd: [
               bunExe(),
               "-e",
               `
               import { $ } from "bun";
-              const settle = p => p.then(r => "resolved " + r.exitCode, e => "rejected " + e.message);
-              const out = [];
+              const settle = async run => {
+                try {
+                  return "resolved " + (await run()).exitCode;
+                } catch (e) {
+                  return "rejected " + e.message;
+                }
+              };
+              const targets = {
+                stream: () => new ReadableStream(),
+                blob: () => new Blob(["x"]),
+                response: () => new Response(new Blob(["x"])),
+              };
+              const out = {};
               for (const name of ["echo", process.execPath, "nosuch_cmd_zz"]) {
-                out.push(await settle($\`\${name} --version > \${new ReadableStream()}\`.quiet()));
-                out.push(await settle($\`\${name} --version > \${new Blob(["x"])}\`.quiet()));
+                for (const [kind, target] of Object.entries(targets)) {
+                  (out[kind] ??= []).push(await settle(() => $\`\${name} --version > \${target()}\`.quiet()));
+                }
               }
-              console.log(JSON.stringify(out, null, 2));
+              console.log(JSON.stringify(out));
               `,
             ],
             env: bunEnv,
@@ -2162,16 +2174,15 @@ describe("deno_task", () => {
             stderr: "pipe",
           });
           const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          const stream = "rejected Unknown JS value used in shell: [object ReadableStream]";
+          const builtin = "rejected Cannot redirect stdout/stderr to an immutable blob. Expected a file";
+          const external = "rejected Blobs are immutable, and cannot be used for stdout/stderr";
+          const rejected = expect.stringMatching(/^rejected /);
           expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-            result: [
-              stream,
-              "rejected Cannot redirect stdout/stderr to an immutable blob. Expected a file",
-              stream,
-              "rejected Blobs are immutable, and cannot be used for stdout/stderr",
-              stream,
-              "rejected Blobs are immutable, and cannot be used for stdout/stderr",
-            ],
+            result: {
+              stream: [rejected, rejected, rejected],
+              blob: [builtin, external, external],
+              response: [builtin, external, external],
+            },
             stderr: "",
             exitCode: 0,
           });
@@ -2254,6 +2265,44 @@ describe("deno_task", () => {
           closeSync(fd);
         }
       });
+
+      test("external &> Bun.file(fd) gets both streams", async () => {
+        using dir = tempDir("shell-redirect-fd", {});
+        const path = join(String(dir), "out.txt");
+        const fd = openSync(path, "w");
+        try {
+          const { stdout, stderr, exitCode } = await $`${BUN} -e ${both} &> ${Bun.file(fd)}`.quiet();
+          expect({
+            stdout: stdout.toString(),
+            stderr: stderr.toString(),
+            file: readFileSync(path, "utf8"),
+            exitCode,
+          }).toEqual({ stdout: "", stderr: "", file: "out\nerr\n", exitCode: 0 });
+        } finally {
+          closeSync(fd);
+        }
+      });
+
+      // A Response of a file is that file, like `> path`.
+      test.each([
+        ["external", (response: Response) => $`${BUN} -e ${"console.log('hi')"} > ${response}`],
+        ["builtin", (response: Response) => $`echo hi > ${response}`],
+      ] as const)("%s > Response(Bun.file(path))", async (_name, run) => {
+        using dir = tempDir("shell-redirect-response", { "out.txt": "0123456789\n" });
+        const path = join(String(dir), "out.txt");
+        const { stdout, stderr, exitCode } = await run(new Response(Bun.file(path))).quiet();
+        expect({
+          stdout: stdout.toString(),
+          stderr: stderr.toString(),
+          file: readFileSync(path, "utf8"),
+          exitCode,
+        }).toEqual({ stdout: "", stderr: "", file: "hi\n", exitCode: 0 });
+      });
+
+      TestBuilder.command`bun --version > $EMPTY_ZZ`
+        .exitCode(1)
+        .stderr("bun: ambiguous redirect: at `bun`\n")
+        .runAsTest("an ambiguous redirect names the command as typed");
     });
   });
 

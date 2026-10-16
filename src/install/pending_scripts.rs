@@ -1,11 +1,4 @@
-//! The packages that an install placed and whose lifecycle scripts have not finished.
-//!
-//! The list is in memory for the install itself: a script that fails discards what is on it. It is
-//! also in `node_modules/.bun-pending-scripts` for the next install, because an install that dies
-//! discards nothing. A record is `+<path>` before the package is placed and `-<path>` after its
-//! last script, where `<path>` is the package's directory from the project's root. The install that
-//! writes holds `flock` on the file, so the next install can tell a dead writer from one whose
-//! scripts still run. It discards what a dead writer left and places it again.
+//! `node_modules/.bun-pending-scripts`: the placed packages whose lifecycle scripts have not finished.
 
 use bun_core::{ZBox, ZStr, strings};
 use bun_sys::{self as sys, Fd, File};
@@ -19,69 +12,88 @@ struct Unfinished {
     /// The hoisted tree whose `node_modules` has `folder`, or the isolated store entry.
     id: u32,
     folder: Box<[u8]>,
-    /// Its path in the file. Empty when this install does not write the file.
+    /// Its path in the file. Empty when this install has not looked at the file.
     key: Box<[u8]>,
 }
 
 #[derive(Default)]
 pub(crate) struct PendingScripts {
     unfinished: Vec<Unfinished>,
-    /// Open and locked by this install.
+    /// Open, and locked while this install lives: the next one can tell a dead writer from this one.
     file: Option<File>,
-    /// False under `--ignore-scripts` and `bun patch`, and while another install holds the lock.
+    /// False under `--ignore-scripts`, while another install holds the lock, and after a failed write.
     writes: bool,
-    /// What a dead install left.
+    /// What a dead install left: the paths with a `+` line and no later `-` line.
     stale: Vec<Box<[u8]>>,
-    /// The file of a dead install lost bytes: it may have listed any placement.
-    all_stale: bool,
 }
 
 enum Opened {
-    Locked(File),
+    /// With the size of the file.
+    Locked(File, usize),
     Missing,
     /// Another install holds the lock, or the file cannot be opened or locked.
     Busy,
 }
 
 impl PendingScripts {
-    /// Once per linker pass, before the first package. `writes == false` leaves the file as it is.
-    /// `may_exist == false`: this pass made `node_modules`, so there is no file to look for.
+    /// Once per linker pass. `may_exist == false`: this pass made `node_modules`, so no file is there.
     pub(crate) fn load(&mut self, writes: bool, may_exist: bool) {
         // An earlier pass of this process has its own tree ids. What it left is in the file.
         self.unfinished.clear();
         self.file = None;
         self.stale.clear();
-        self.all_stale = false;
         self.writes = writes;
         // Not an `open`: its error for a file that is not there copies the path.
         if writes && may_exist && sys::exists_z(PATH) {
-            self.load_found();
+            self.open(false);
         }
     }
 
+    /// Takes the lock, and reads what a dead install left.
     #[cold]
-    fn load_found(&mut self) {
-        match lock(sys::openat(Fd::cwd(), PATH, open_flags(false), 0), false) {
-            Opened::Missing => {}
-            Opened::Busy => self.writes = false,
-            Opened::Locked(file) => {
-                // By offset: on Windows `read_to_end` reads at the cursor, which `O::APPEND` moved.
-                let mut bytes = vec![0u8; file.get_end_pos().unwrap_or(0).min(MAX_BYTES)];
-                let len = file.pread_all(&mut bytes, 0).unwrap_or(0);
-                (self.stale, self.all_stale) = parse(&bytes[..len]);
+    fn open(&mut self, create: bool) {
+        let opened = sys::openat(Fd::cwd(), PATH, open_flags(create), 0o644);
+        let (file, size) = match lock(opened, create) {
+            Opened::Locked(file, size) => (file, size),
+            Opened::Missing => return,
+            Opened::Busy => {
+                self.writes = false;
+                return;
+            }
+        };
+        // By offset: on Windows `read_to_end` reads at the cursor, which `O::APPEND` moved.
+        let mut bytes = vec![0u8; size.min(MAX_BYTES)];
+        let read = file.pread_all(&mut bytes, 0).and_then(|len| {
+            let (stale, whole) = parse(&bytes[..len]);
+            // A dead install did not end its last line: what that line names was not placed yet.
+            if whole < size {
+                truncate(&file, whole)?;
+            }
+            Ok(stale)
+        });
+        match read {
+            Ok(stale) => {
+                self.stale = stale;
                 self.file = Some(file);
             }
+            // A file that cannot be read says nothing: it stays, like one that is locked.
+            Err(_) => self.writes = false,
         }
     }
 
     /// A dead install left records. The linker compares them with the placements of this pass.
     #[inline]
     pub(crate) fn has_stale(&self) -> bool {
-        self.all_stale || !self.stale.is_empty()
+        !self.stale.is_empty()
     }
 
     pub(crate) fn is_stale(&self, key: &[u8]) -> bool {
-        self.all_stale || self.stale.iter().any(|stale| **stale == *key)
+        self.stale.iter().any(|stale| **stale == *key)
+    }
+
+    /// A stale package is in place behind the link at `key`.
+    pub(crate) fn has_stale_behind(&self, key: &[u8]) -> bool {
+        (self.stale.iter()).any(|stale| is_behind(stale, key) && is_in_place(stale))
     }
 
     /// The package at a stale `key` stays as it is: its scripts are not to run any more.
@@ -97,36 +109,27 @@ impl PendingScripts {
         if self.position(id, folder).is_some() {
             return;
         }
-        let key = if self.writes {
-            self.write_begin(key())
+        let mut key = if self.writes || !self.stale.is_empty() {
+            key()
         } else {
-            Box::default()
+            Vec::new()
         };
-        self.unfinished.push(Unfinished {
-            id,
-            folder: Box::from(folder),
-            key,
-        });
-    }
-
-    fn write_begin(&mut self, key: Vec<u8>) -> Box<[u8]> {
         if !is_record(&key) {
-            return Box::default();
+            key.clear();
+        } else if self.writes && self.file.is_none() {
+            self.open(true);
+            self.writes = self.file.is_some();
         }
-        if self.file.is_none() {
-            match lock(sys::openat(Fd::cwd(), PATH, open_flags(true), 0o644), true) {
-                Opened::Locked(file) => self.file = Some(file),
-                Opened::Missing | Opened::Busy => {
-                    self.writes = false;
-                    return Box::default();
-                }
-            }
-        }
+        // It is placed again now: no more what the dead install left.
         if let Some(index) = self.stale.iter().position(|stale| **stale == *key) {
             self.stale.swap_remove(index);
         }
         self.append(b'+', &key);
-        key.into_boxed_slice()
+        self.unfinished.push(Unfinished {
+            id,
+            folder: Box::from(folder),
+            key: key.into_boxed_slice(),
+        });
     }
 
     /// The package has no script left to run. Nothing happens for one that is not listed.
@@ -137,42 +140,61 @@ impl PendingScripts {
         }
     }
 
-    /// A script failed: `remove` takes each listed package out of `node_modules`.
+    /// A script failed: `remove` takes each listed package out of `node_modules`. Ends the pass.
     pub(crate) fn discard(&mut self, mut remove: impl FnMut(u32, &[u8])) {
-        for unfinished in core::mem::take(&mut self.unfinished) {
-            remove(unfinished.id, &unfinished.folder);
-            self.append(b'-', &unfinished.key);
+        let stale = core::mem::take(&mut self.stale);
+        let in_place: Vec<_> = stale.iter().filter(|key| is_in_place(key)).collect();
+        let mut unfinished = core::mem::take(&mut self.unfinished);
+        // A nested tree has the higher id, and is behind the link of a workspace in its parent.
+        unfinished.sort_by_key(|unfinished| core::cmp::Reverse(unfinished.id));
+        for unfinished in unfinished {
+            // A link stays, and stays listed, while it leads to a stale package.
+            if !(in_place.iter()).any(|stale| is_behind(stale, &unfinished.key)) {
+                remove(unfinished.id, &unfinished.folder);
+                self.append(b'-', &unfinished.key);
+            }
         }
+        self.close(!in_place.is_empty());
     }
 
-    /// After the last script of a pass. Deletes the file unless something is still listed.
-    /// `restricted`: the pass did not come to every placement of the project.
-    pub(crate) fn finish(&mut self, restricted: bool) {
-        let Some(file) = self.file.take() else {
-            return;
-        };
-        // A stale package the pass did not come to stays listed while it is in place.
-        let unvisited = self.stale.drain(..).any(|key| {
-            sys::directory_exists_at(Fd::cwd(), &ZBox::from_bytes(&key)).unwrap_or(false)
-        });
-        let listed = (self.unfinished.iter()).any(|unfinished| !unfinished.key.is_empty());
-        if !listed && !unvisited && !(restricted && self.all_stale) {
+    /// After the last script of a pass: deletes the file unless something is still listed.
+    pub(crate) fn finish(&mut self) {
+        // A stale package that the pass did not come to stays listed while it is in place.
+        let unvisited = self.stale.drain(..).any(|key| is_in_place(&key));
+        self.close(unvisited);
+    }
+
+    fn close(&mut self, unvisited: bool) {
+        if self.file.is_some() && self.unfinished.is_empty() && !unvisited {
             // Before the lock goes, so that no other install can hold the file this removes.
             let _ = sys::unlinkat(Fd::cwd(), PATH);
         }
-        self.all_stale = false;
-        drop(file);
+        self.file = None;
     }
 
     /// `bun patch <pkg>` put a copy to edit at `dir`: the next install is not to replace it.
     #[cold]
     pub(crate) fn forget_directory(&mut self, dir: &ZStr) {
-        self.load(true, true);
-        if let (false, Ok(edited)) = (self.stale.is_empty(), sys::stat(dir)) {
+        let (writes, may_exist) = (true, true);
+        self.load(writes, may_exist);
+        if let (false, Ok(root)) = (self.stale.is_empty(), sys::stat(bun_core::zstr!("."))) {
+            // A stale package goes with all that is in it: `dir`, and each directory above it.
+            let mut taken = Vec::new();
+            let mut above = Some(dir.as_bytes());
+            while let Some(path) = above {
+                match sys::stat(&ZBox::from_bytes(path)) {
+                    Ok(st) if (st.st_dev, st.st_ino) != (root.st_dev, root.st_ino) => {
+                        taken.push((st.st_dev, st.st_ino));
+                    }
+                    _ => break,
+                }
+                above = bun_paths::dirname(path).filter(|parent| parent.len() < path.len());
+            }
+            // `lstat`: of a workspace only the link goes, not the directory that it names.
             let same: Vec<Box<[u8]>> = (self.stale.iter())
                 .filter(|key| {
-                    sys::fstatat(Fd::cwd(), &ZBox::from_bytes(key))
-                        .is_ok_and(|st| st.st_ino == edited.st_ino && st.st_dev == edited.st_dev)
+                    sys::lstat(&ZBox::from_bytes(key))
+                        .is_ok_and(|st| taken.contains(&(st.st_dev, st.st_ino)))
                 })
                 .cloned()
                 .collect();
@@ -180,27 +202,53 @@ impl PendingScripts {
                 self.forget_stale(&key);
             }
         }
-        self.finish(true);
+        self.finish();
     }
 
     fn position(&self, id: u32, folder: &[u8]) -> Option<usize> {
         (self.unfinished.iter()).position(|listed| listed.id == id && *listed.folder == *folder)
     }
 
-    fn append(&self, kind: u8, key: &[u8]) {
+    /// A line `+<path>` before a package is placed, `-<path>` after its last script.
+    fn append(&mut self, kind: u8, key: &[u8]) {
         let Some(file) = &self.file else {
             return;
         };
-        if key.is_empty() {
+        if key.is_empty() || !self.writes {
             return;
         }
-        let mut record = Vec::with_capacity(key.len() + 2);
-        record.push(kind);
-        record.extend_from_slice(key);
-        record.push(b'\n');
-        // One `write` to a file opened for append: a record is whole or absent.
-        let _ = file.write_all(&record);
+        let mut line = Vec::with_capacity(key.len() + 2);
+        line.push(kind);
+        line.extend_from_slice(key);
+        line.push(b'\n');
+        // One `write` to a file opened for append: a line is whole or absent.
+        if let Err(err) = file.write_all(&line) {
+            bun_core::warn!(
+                "failed to record pending lifecycle scripts in <b>{}<r>: {}",
+                bstr::BStr::new(PATH.as_bytes()),
+                err,
+            );
+            self.writes = false;
+        }
     }
+}
+
+/// An error is not "gone": a record stays while nothing says that its package is gone.
+fn is_in_place(key: &[u8]) -> bool {
+    sys::directory_exists_at(Fd::cwd(), &ZBox::from_bytes(key)).unwrap_or(true)
+}
+
+fn is_behind(path: &[u8], link: &[u8]) -> bool {
+    !link.is_empty()
+        && path.len() > link.len()
+        && path.starts_with(link)
+        && matches!(path[link.len()], b'/' | b'\\')
+}
+
+/// On Windows a write is at the cursor, which `O::APPEND` moved to the end once.
+fn truncate(file: &File, len: usize) -> sys::Maybe<()> {
+    sys::ftruncate(file.handle, len as i64)?;
+    file.seek_to(len as u64)
 }
 
 fn open_flags(create: bool) -> i32 {
@@ -216,10 +264,9 @@ fn is_record(key: &[u8]) -> bool {
         && !strings::split_any(key, b"/\\").any(|part| part == b"..")
 }
 
-/// The paths with a `+` record and no later `-` record, and whether bytes are lost: the file is
-/// empty, or a kill cut its last line. Then nothing says which placements it listed.
+/// The paths with a `+` line and no later `-` line, and where the whole lines end.
 #[cold]
-fn parse(bytes: &[u8]) -> (Vec<Box<[u8]>>, bool) {
+fn parse(bytes: &[u8]) -> (Vec<Box<[u8]>>, usize) {
     let mut pending: Vec<Box<[u8]>> = Vec::new();
     let mut rest = bytes;
     while let Some(end) = strings::index_of_char_usize(rest, b'\n') {
@@ -237,11 +284,10 @@ fn parse(bytes: &[u8]) -> (Vec<Box<[u8]>>, bool) {
             _ => {}
         }
     }
-    (pending, bytes.is_empty() || !rest.is_empty())
+    (pending, bytes.len() - rest.len())
 }
 
-/// `opened` is a first open of the file. It is opened again once: its last owner can delete it
-/// between an open and the lock.
+/// Opens the file again once: its last owner can delete it between an open and the lock.
 #[cold]
 fn lock(mut opened: sys::Maybe<Fd>, create: bool) -> Opened {
     for again in [true, false] {
@@ -261,16 +307,12 @@ fn lock(mut opened: sys::Maybe<Fd>, create: bool) -> Opened {
             && locked.st_ino == named.st_ino
             && locked.st_dev == named.st_dev
         {
-            return Opened::Locked(file);
+            return Opened::Locked(file, locked.st_size as usize);
         }
         if !again {
             break;
         }
         opened = sys::openat(Fd::cwd(), PATH, open_flags(create), 0o644);
     }
-    if create {
-        Opened::Busy
-    } else {
-        Opened::Missing
-    }
+    Opened::Busy
 }

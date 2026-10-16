@@ -303,11 +303,8 @@ pub(crate) fn install_hoisted_packages(
     };
 
     // A `node_modules` that is new, or was moved aside, has no record of an earlier install.
-    let lists_pending_scripts = this.lists_pending_scripts();
-    (this.pending_scripts.get_mut()).load(
-        lists_pending_scripts,
-        !new_node_modules && old_modules.is_none(),
-    );
+    let runs_scripts = this.options.do_.run_scripts();
+    (this.pending_scripts.get_mut()).load(runs_scripts, !new_node_modules && old_modules.is_none());
 
     let mut skip_delete = new_node_modules;
     let mut skip_verify_installed_version_number = new_node_modules;
@@ -460,7 +457,7 @@ pub(crate) fn install_hoisted_packages(
         let top_level_len =
             strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len() + 1;
 
-        if this.pending_scripts.get_mut().has_stale() {
+        if this.retries_pending_scripts() {
             installer.discard_left_pending();
         }
 
@@ -589,11 +586,7 @@ pub(crate) fn install_hoisted_packages(
             }
         }
 
-        this.pending_scripts.get_mut().finish(
-            !workspace_filters.is_empty()
-                || !install_root_dependencies
-                || packages_to_install.is_some(),
-        );
+        this.pending_scripts.get_mut().finish();
     }
 
     Ok(summary)

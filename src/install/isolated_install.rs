@@ -1949,8 +1949,8 @@ pub(crate) fn install_isolated_packages(
         break 'is_new_bun_modules true;
     };
     // A `node_modules/.bun` that is new has no record of an earlier install beside it.
-    let lists_pending_scripts = manager.lists_pending_scripts();
-    (manager.pending_scripts.get_mut()).load(lists_pending_scripts, !is_new_bun_modules);
+    let runs_scripts = manager.options.do_.run_scripts();
+    (manager.pending_scripts.get_mut()).load(runs_scripts, !is_new_bun_modules);
 
     // Remove the fallback a previous install with hoisting on left behind.
     // `delete_tree` succeeds on a missing tree, so any error here is real.
@@ -2108,7 +2108,7 @@ pub(crate) fn install_isolated_packages(
             }
         }
 
-        if installer.manager().pending_scripts.borrow().has_stale() {
+        if installer.manager().retries_pending_scripts() {
             installer.discard_left_pending();
         }
 
@@ -2444,11 +2444,7 @@ pub(crate) fn install_isolated_packages(
         installer.relink_bins_of_members_with_scripts();
         installer.unlink_left_out_entries();
         installer.record_update_request_trust();
-        (installer.manager().pending_scripts.borrow_mut()).finish(
-            !workspace_filters.is_empty()
-                || !install_root_dependencies
-                || packages_to_install.is_some(),
-        );
+        installer.manager().pending_scripts.borrow_mut().finish();
 
         if installer.manager().options.log_level.show_progress() {
             progress.root.end();

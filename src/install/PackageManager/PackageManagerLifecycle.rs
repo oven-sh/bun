@@ -295,10 +295,9 @@ impl PackageManager {
         }
     }
 
-    /// Whether a linker pass writes `PendingScripts` to its file, and acts on what is in it.
-    /// `bun patch <pkg>` is not to fail on a script of the package it prepares.
-    pub(crate) fn lists_pending_scripts(&self) -> bool {
-        self.options.do_.run_scripts()
+    /// A dead install left records. `bun patch <pkg>` leaves them: it is not to fail on a script.
+    pub(crate) fn retries_pending_scripts(&self) -> bool {
+        self.pending_scripts.borrow().has_stale()
             && !matches!(
                 self.options.patch_features,
                 crate::package_manager_real::options::PatchFeatures::Patch

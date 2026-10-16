@@ -600,8 +600,7 @@ impl<'a> Installer<'a> {
         path.slice().to_vec()
     }
 
-    /// Main thread, before the task that places an entry's package in this project's store starts.
-    /// Lists what a failed script discards: a trusted entry.
+    /// Main thread, before the task of an entry starts: lists what a failed script discards.
     pub(crate) fn list_pending_scripts(&mut self, entry_id: StoreEntryId) {
         let is_trusted = self.is_trusted(entry_id);
         self.tasks[entry_id.get() as usize].trusted = Some(is_trusted);
@@ -611,8 +610,7 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Main thread, before the walk, for the records of an install that died. An entry of this pass
-    /// that it listed goes, and the walk places it again. One that is not trusted any more stays.
+    /// Before the walk: what a dead install listed goes if it is still trusted, and is placed again.
     #[cold]
     pub(crate) fn discard_left_pending(&self) {
         let pending = &self.manager().pending_scripts;

@@ -1132,25 +1132,28 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     folder_name,
                 );
             });
-        } else if let Some((entry_id, installer)) = self.ctx.as_ref().and_then(InstallCtx::isolated)
-        {
-            installer.discard_entries_with_unfinished_scripts(entry_id);
+        } else {
+            if let Some((entry_id, installer)) = self.ctx.as_ref().and_then(InstallCtx::isolated) {
+                installer.discard_entries_with_unfinished_scripts(entry_id);
+            }
+            // What is not in place any more needs no record.
+            manager.pending_scripts.borrow_mut().finish();
         }
-        // What is not in place any more needs no record.
-        manager.pending_scripts.borrow_mut().finish(true);
     }
 
     /// Frees `self`.
     fn discard_failed_optional_package(&mut self) {
-        self.forget_unfinished_scripts();
         self.decrement_pending_script_tasks();
         let deleted = match self.ctx.take() {
             Some(InstallCtx::Hoisted { tree_id, .. }) => {
+                let manager = self.manager();
                 crate::package_installer::remove_placed_package(
-                    &self.manager().lockfile,
+                    &manager.lockfile,
                     tree_id,
                     &self.package_name,
                 );
+                // After the removal: an install that dies in between leaves it listed.
+                (manager.pending_scripts.borrow_mut()).done(tree_id, &self.package_name);
                 true
             }
             Some(ctx) => ctx

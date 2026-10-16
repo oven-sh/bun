@@ -602,32 +602,31 @@ impl<'a> PackageInstaller<'a> {
             || (self.lockfile()).has_trusted_dependency(alias, pkg_name, resolution)
     }
 
-    /// A package of the current tree has no script to run.
+    /// A package of the current tree has no script to run, also if a dead install listed it.
     fn forget_pending_scripts(&self, folder_name: &[u8]) {
-        (self.manager().pending_scripts.borrow_mut()).done(self.current_tree_id, folder_name);
+        let (lockfile, tree_id) = (self.lockfile(), self.current_tree_id);
+        let mut pending = self.manager().pending_scripts.borrow_mut();
+        pending.done(tree_id, folder_name);
+        if pending.has_stale() {
+            pending.forget_stale(&pending_scripts_key(lockfile, tree_id, folder_name));
+        }
     }
 
-    /// Before the walk, for the records of an install that died. A placement of this pass that it
-    /// listed goes, and the walk places it again. One whose scripts are not to run any more stays.
+    /// Before the walk: what a dead install listed goes if its scripts still run, and is placed again.
     #[cold]
     pub(crate) fn discard_left_pending(&self) {
         let lockfile = self.lockfile();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let dependencies = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
+        let hoisted = lockfile.buffers.hoisted_dependencies.as_slice();
+        let scripts = lockfile.packages.items_scripts();
         let pending = &self.manager().pending_scripts;
-        let mut trees = lockfile::tree::Iterator::<
-            { lockfile::tree::IteratorPathStyle::NodeModules },
-        >::from_slices(
-            lockfile.buffers.trees.as_slice(),
-            lockfile.buffers.hoisted_dependencies.as_slice(),
-            dependencies,
-            string_buf,
-        );
-        while let Some(node_modules) = trees.next(None) {
-            for &dependency_id in node_modules.dependencies {
+        // A nested tree first: it is behind the link of a workspace in its parent.
+        for tree in lockfile.buffers.trees.iter().rev() {
+            for &dependency_id in tree.dependencies.get(hoisted) {
                 let alias = dependencies[dependency_id as usize].name.slice(string_buf);
-                let key = pending_scripts_key(lockfile, node_modules.tree_id, alias);
+                let key = pending_scripts_key(lockfile, tree.id, alias);
                 if !pending.borrow().is_stale(&key) {
                     continue;
                 }
@@ -635,18 +634,20 @@ impl<'a> PackageInstaller<'a> {
                 let Some(resolution) = self.resolutions.get(package_id as usize) else {
                     continue;
                 };
-                if resolution.tag != resolution::Tag::Root
-                    && (resolution.tag == resolution::Tag::Workspace
-                        || self.is_trusted(
-                            package_id,
-                            alias,
-                            self.names[package_id as usize].slice(string_buf),
-                            resolution,
-                        ))
-                {
-                    remove_placed_package(lockfile, node_modules.tree_id, alias);
-                } else {
+                let is_workspace = resolution.tag == resolution::Tag::Workspace;
+                let scripts = &scripts[package_id as usize];
+                let runs_scripts = (is_workspace && (scripts.has_any() || !scripts.filled))
+                    || self.is_trusted(
+                        package_id,
+                        alias,
+                        self.names[package_id as usize].slice(string_buf),
+                        resolution,
+                    );
+                if resolution.tag == resolution::Tag::Root || !runs_scripts {
                     pending.borrow_mut().forget_stale(&key);
+                } else if !(is_workspace && pending.borrow().has_stale_behind(&key)) {
+                    // A link stays while it leads to a stale package that this pass does not come to.
+                    remove_placed_package(lockfile, tree.id, alias);
                 }
             }
         }
@@ -1384,6 +1385,8 @@ impl<'a> PackageInstaller<'a> {
         let resolutions = self.resolutions;
         // A tree that is complete now lets the ones below it go on.
         let is_pending_package_install = false;
+        // `can_defer_link` leaves a trusted package to the walk.
+        let (is_trusted, is_trusted_through_update_request) = (false, false);
 
         let mut events = events.into_iter().peekable();
         for (index, job) in batch.jobs.into_iter().enumerate() {
@@ -1401,8 +1404,8 @@ impl<'a> PackageInstaller<'a> {
                 is_pending_package_install,
                 job.tree_dir,
                 job.result.into_inner().expect("linked").report(),
-                false,
-                false,
+                is_trusted,
+                is_trusted_through_update_request,
             );
             while let Some((_, event)) = events.next_if(|(after, _)| *after == index + 1) {
                 let (DeferredEvent::Count(tree_id) | DeferredEvent::Install { tree_id, .. }) =
@@ -2128,9 +2131,11 @@ impl<'a> PackageInstaller<'a> {
                         pkg_name.slice(string_buf!()),
                         resolution,
                     ));
-            if resolution.tag != resolution::Tag::Root
-                && (resolution.tag == resolution::Tag::Workspace || is_trusted)
-            {
+            // A workspace whose scripts are not read yet is listed when they are: most have none.
+            let runs_scripts = is_trusted
+                || (resolution.tag == resolution::Tag::Workspace
+                    && self.lockfile().packages.items_scripts()[package_id as usize].has_any());
+            if resolution.tag != resolution::Tag::Root && runs_scripts {
                 // Before it is placed: an install that dies from here on leaves the record.
                 let (lockfile, tree_id) = (self.lockfile(), self.current_tree_id);
                 let folder = alias.slice(string_buf!());
@@ -2680,9 +2685,12 @@ impl<'a> PackageInstaller<'a> {
         let optional = !self
             .manager()
             .is_package_required(dependency_id, package_id);
-        // Listed already unless it was in place: then its scripts run for a name that is trusted now.
         let (lockfile, tree_id) = (self.lockfile(), self.current_tree_id);
         (self.manager().pending_scripts.borrow_mut()).begin(tree_id, folder_name, || {
+            // A package that was in place gets no line: the lockfile has it run again, in place.
+            if resolution.tag != resolution::Tag::Workspace {
+                return Vec::new();
+            }
             pending_scripts_key(lockfile, tree_id, folder_name)
         });
         self.pending_lifecycle_scripts.push(PendingLifecycleScript {

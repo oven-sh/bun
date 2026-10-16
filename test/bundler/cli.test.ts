@@ -480,6 +480,32 @@ describe.concurrent("--sourcemap never writes next to the entry point", () => {
     expect(tree(String(dir))).toEqual(fixture);
     expect(exitCode).toBe(0);
   });
+
+  // An executable never goes to stdout, and its map is always a separate file.
+  test.each([
+    { cwd: "work", args: ["../src/entry.js"], exe: "work/entry" },
+    { cwd: "", args: ["src/entry.js", "--outfile=dist/entry"], exe: "dist/entry" },
+  ])(
+    "bare --sourcemap with --compile writes $exe and its .map",
+    async ({ cwd, args, exe }) => {
+      using dir = tempDir("build-sourcemap-compile", fixture);
+      const { stderr, exitCode } = await build(join(String(dir), cwd), ...args, "--compile", "--sourcemap");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+
+      // Not tree(): it would read the whole executable into a string.
+      const written = fs
+        .readdirSync(String(dir), { recursive: true, encoding: "utf8" })
+        .map(rel => rel.replaceAll("\\", "/"))
+        .filter(rel => !(rel in fixture) && fs.statSync(join(String(dir), rel)).isFile())
+        .sort();
+      expect(written).toEqual([`${exe}${isWindows ? ".exe" : ""}`, `${exe}.map`]);
+      const map = JSON.parse(fs.readFileSync(join(String(dir), `${exe}.map`), "utf8"));
+      expect(map.sources.map((source: string) => path.basename(source)).sort()).toEqual(["dep.js", "entry.js"]);
+    },
+    // The executable is a copy of the bun binary, which is over 1 GB in a debug build.
+    60_000,
+  );
 });
 
 test("some log cases", async () => {

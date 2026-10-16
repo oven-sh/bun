@@ -5,14 +5,24 @@
  * the peer's SETTINGS_MAX_CONCURRENT_STREAMS. A request that is destroyed while it waits leaves the
  * queue at once: the session releases it, and a closed session stops waiting for it.
  *
- * Where a test pins an outcome that node v26.3.0 does not have, a comment says so.
+ * Works with both:
+ *   bun bd test test/js/node/http2/node-http2-pending-requests.test.ts
+ *   node --test test/js/node/http2/node-http2-pending-requests.test.ts
+ *
+ * node v26.3.0 has no such queue behind the stream limit: it gives the request its id at once and
+ * nghttp2 holds the HEADERS frame. Where that gives another outcome, the test has the outcome of
+ * each runtime, or it does not run under node and its skip reason says what node does.
  */
-import { describe, expect, test } from "bun:test";
-import { gcTick } from "harness";
+import assert from "node:assert";
+import { spawn } from "node:child_process";
 import dc from "node:diagnostics_channel";
 import { once, type EventEmitter } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
+import path from "node:path";
+import { describe, test } from "node:test";
+
+const isBun = typeof Bun !== "undefined";
 
 const PREFACE_LENGTH = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".length;
 const FrameType = { HEADERS: 1, RST_STREAM: 3, SETTINGS: 4, PING: 6, GOAWAY: 7 };
@@ -134,356 +144,20 @@ type MakeRequest = (options?: http2.ClientSessionRequestOptions, method?: string
 /** What the "http2.client.stream.created" diagnostics channel publishes. */
 type CreatedMessage = { stream: http2.ClientHttp2Stream; headers: http2.OutgoingHttpHeaders };
 
-/** Makes requests that have to wait, and records the error of each one. */
+/**
+ * Makes requests that have to wait, and records the error of each one. Under node a request
+ * behind the stream limit is not `pending`, so that premise is checked under Bun only. The tests
+ * on a raw peer also look at the frames that reached it.
+ */
 function waitingRequests(session: http2.ClientHttp2Session) {
   const errors: string[] = [];
   const request: MakeRequest = (options, method = "GET") => {
     const req = session.request({ ":path": "/", ":method": method }, options);
     req.on("error", (err: NodeJS.ErrnoException) => errors.push(err.code ?? err.message));
-    expect(req.pending).toBe(true);
+    if (isBun) assert.strictEqual(req.pending, true);
     return req;
   };
   return { errors, request };
-}
-
-describe.concurrent("a closed session does not wait for a request that was destroyed while it waited", () => {
-  // Each case runs on a session whose peer allows no stream, so every request waits. The case
-  // gives its requests up and closes the session. Nothing is in flight then, so the session is
-  // destroyed at the next immediate, as in node.
-  const cases: [string, string[], (session: http2.ClientHttp2Session, request: MakeRequest) => void][] = [
-    [
-      "destroy(), then close()",
-      [],
-      (session, request) => {
-        request().destroy();
-        session.close();
-      },
-    ],
-    [
-      "destroy(err), then close()",
-      ["given up"],
-      (session, request) => {
-        request().destroy(new Error("given up"));
-        session.close();
-      },
-    ],
-    [
-      "close(), then destroy()",
-      [],
-      (session, request) => {
-        const req = request();
-        session.close();
-        req.destroy();
-      },
-    ],
-    [
-      "the request's AbortSignal, then close()",
-      ["ABORT_ERR"],
-      (session, request) => {
-        const controller = new AbortController();
-        request({ signal: controller.signal });
-        controller.abort();
-        session.close();
-      },
-    ],
-    [
-      "a 'created' diagnostics subscriber that destroys the request, then close()",
-      [],
-      (session, request) => {
-        const destroyCreated = (message: unknown) => {
-          const { stream } = message as CreatedMessage;
-          if (stream.session === session) stream.destroy();
-        };
-        dc.subscribe("http2.client.stream.created", destroyCreated);
-        try {
-          expect(request().destroyed).toBe(true);
-        } finally {
-          dc.unsubscribe("http2.client.stream.created", destroyCreated);
-        }
-        session.close();
-      },
-    ],
-    [
-      // node takes the request out of its session after the 'aborted' emit, so there the throw
-      // keeps the request and the session never ends.
-      "destroy() with an 'aborted' listener that throws, then close()",
-      ["thrown by the 'aborted' listener"],
-      (session, request) => {
-        const req = request(undefined, "POST");
-        req.on("aborted", () => {
-          throw new Error("thrown by the 'aborted' listener");
-        });
-        req.destroy();
-        session.close();
-      },
-    ],
-    [
-      // No listener is left to see the request's 'close': only _destroy can tell the session.
-      "removeAllListeners() and destroy(), then close()",
-      [],
-      (session, request) => {
-        const req = request();
-        req.removeAllListeners();
-        req.destroy();
-        session.close();
-      },
-    ],
-    [
-      "close(), then destroy() of three requests, the oldest first",
-      [],
-      (session, request) => {
-        const requests = [request(), request(), request()];
-        session.close();
-        for (const req of requests) req.destroy();
-      },
-    ],
-    [
-      "close(), then destroy() of three requests, the middle one first",
-      [],
-      (session, request) => {
-        const [oldest, middle, newest] = [request(), request(), request()];
-        session.close();
-        middle.destroy();
-        newest.destroy();
-        oldest.destroy();
-      },
-    ],
-  ];
-
-  test.each(cases)("%s", async (_, errors, giveUpAndClose) => {
-    using peer = await rawPeer({ streams: 0 });
-    const session = await connectTo(peer.url);
-    try {
-      const closed = once(session, "close");
-      const waiting = waitingRequests(session);
-      giveUpAndClose(session, waiting.request);
-      await immediate();
-      expect(session.destroyed).toBe(true);
-      await closed;
-      expect(waiting.errors).toEqual(errors);
-      // A request that never got a stream id never reaches the wire, not even as a RST_STREAM.
-      await peer.disconnected;
-      expect(peer.streamFrames).toEqual([]);
-    } finally {
-      session.destroy();
-    }
-  });
-
-  test("destroy(), then ping() and close()", async () => {
-    using peer = await rawPeer({ streams: 0 });
-    const session = await connectTo(peer.url);
-    try {
-      const closed = once(session, "close");
-      const waiting = waitingRequests(session);
-      waiting.request().destroy();
-      // The session ends at the ping's ACK, or when the grace for that ACK is over.
-      session.ping(() => {});
-      session.close();
-      await closed;
-      expect(waiting.errors).toEqual([]);
-    } finally {
-      session.destroy();
-    }
-  });
-
-  // node keeps a request that waits when the peer's GOAWAY comes, so its session stays. Bun rejects
-  // the request, and the closed session then has nothing left to wait for.
-  test("close() with a request that still waits, then the peer's GOAWAY", async () => {
-    using peer = await rawPeer({ streams: 0 });
-    const session = await connectTo(peer.url);
-    try {
-      const closed = once(session, "close");
-      const waiting = waitingRequests(session);
-      waiting.request();
-      session.close();
-      peer.goaway();
-      await closed;
-      expect(waiting.errors).toEqual(["ERR_HTTP2_GOAWAY_SESSION"]);
-    } finally {
-      session.destroy();
-    }
-  });
-
-  test("a request that was only close()d keeps its place, and its session waits for it", async () => {
-    using peer = await rawPeer({ streams: 0 });
-    const session = await connectTo(peer.url);
-    try {
-      const closed = once(session, "close");
-      const waiting = waitingRequests(session);
-      const req = waiting.request();
-      req.close();
-      session.close();
-      // Had close() found nothing in flight, the session would be destroyed by now.
-      await immediate();
-      expect({ request: req.destroyed, session: session.destroyed }).toEqual({ request: false, session: false });
-      req.destroy();
-      await closed;
-      expect(waiting.errors).toEqual([]);
-    } finally {
-      session.destroy();
-    }
-  });
-
-  // node destroys this session too, but it emits no 'close' while the socket still connects.
-  test("before the socket connects: destroy(), then close()", async () => {
-    using connecting = sessionThatNeverConnects();
-    const { session } = connecting;
-    const closed = once(session, "close");
-    const waiting = waitingRequests(session);
-    waiting.request().destroy();
-    session.close();
-    await closed;
-    expect(session.destroyed).toBe(true);
-    expect(waiting.errors).toEqual([]);
-  });
-
-  // The flush takes a request off the queue before it knows that the request gets a stream. When
-  // the request fails there, the closed session has nothing left to wait for. (node parks these
-  // requests in nghttp2 and fails neither.)
-  test.each<[string, (session: http2.ClientHttp2Session) => http2.ClientHttp2Stream, string]>([
-    [
-      "a header that the native side rejects",
-      session => session.request({ ":path": "/", "x-undefined": undefined }),
-      "ERR_HTTP2_INVALID_HEADER_VALUE",
-    ],
-    [
-      "no stream id left",
-      session => {
-        const req = session.request({ ":path": "/" });
-        (session as http2.ClientHttp2Session & { setNextStreamID(id: number): void }).setNextStreamID(2 ** 32 - 1);
-        return req;
-      },
-      "ERR_HTTP2_OUT_OF_STREAMS",
-    ],
-  ])("close(), then the last waiting request fails when a slot is free: %s", async (_, makeRequest, code) => {
-    using peer = await rawPeer({ streams: 0 });
-    const session = await connectTo(peer.url);
-    try {
-      const closed = once(session, "close");
-      const req = makeRequest(session);
-      expect(req.pending).toBe(true);
-      const failed = eventOf<NodeJS.ErrnoException>(req, "error");
-      session.close();
-      peer.allowStreams(100);
-      expect((await failed).code).toBe(code);
-      await closed;
-    } finally {
-      session.destroy();
-    }
-  });
-});
-
-describe.concurrent("a closed session is destroyed when nothing is in flight, and not before", () => {
-  test("close() on an idle session with nothing unACKed destroys it at the next immediate", async () => {
-    using peer = await rawPeer({});
-    const session = await connectTo(peer.url);
-    try {
-      session.close();
-      await immediate();
-      expect(session.destroyed).toBe(true);
-    } finally {
-      session.destroy();
-    }
-  });
-
-  test("destroy() of the only waiting request leaves an open session alone", async () => {
-    using peer = await rawPeer({ streams: 0 });
-    const session = await connectTo(peer.url);
-    try {
-      waitingRequests(session).request().destroy();
-      await immediate();
-      expect({ closed: session.closed, destroyed: session.destroyed }).toEqual({ closed: false, destroyed: false });
-      // Nothing waits any more: once the peer allows a stream, a new request is sent at once.
-      const allowed = eventOf(session, "remoteSettings");
-      peer.allowStreams(1);
-      await allowed;
-      const next = session.request({ ":path": "/" });
-      next.on("error", () => {});
-      expect(next.pending).toBe(false);
-    } finally {
-      session.destroy();
-    }
-  });
-});
-
-describe.concurrent("every waiting request is ended once", () => {
-  // Three requests wait. While the session ends them, the 'aborted' listener of the oldest one
-  // destroys the one behind it.
-  const ends: [string, (session: http2.ClientHttp2Session, peer: { goaway(): void }) => void, string][] = [
-    ["session.destroy()", session => session.destroy(), "ERR_HTTP2_STREAM_CANCEL"],
-    ["session.destroy(err)", session => session.destroy(new Error("session destroyed")), "ERR_HTTP2_STREAM_CANCEL"],
-    ["the peer's GOAWAY", (_, peer) => peer.goaway(), "ERR_HTTP2_GOAWAY_SESSION"],
-  ];
-
-  test.each(ends)("by %s", async (_, end, code) => {
-    using peer = await rawPeer({ streams: 0 });
-    const session = await connectTo(peer.url);
-    session.on("error", () => {});
-    try {
-      const events: Record<string, string[]> = { oldest: [], middle: [], newest: [] };
-      const [oldest, middle] = Object.keys(events).map(name => {
-        const req = session.request({ ":path": "/", ":method": "POST" });
-        req.on("error", (err: NodeJS.ErrnoException) => events[name].push(String(err.code)));
-        req.on("close", () => events[name].push("close"));
-        return req;
-      });
-      oldest.on("aborted", () => middle.destroy());
-      const closed = eventOf(session, "close");
-      end(session, peer);
-      await closed;
-      expect(events).toEqual({ oldest: [code, "close"], middle: ["close"], newest: [code, "close"] });
-    } finally {
-      session.destroy();
-    }
-  });
-});
-
-// A request that nothing references can still outlive some collections: a heap snapshot shows such
-// requests under the JITWorkList root, which holds the values that an optimizing compilation in
-// flight refers to. So these tests give many requests up and require that most of them are gone.
-// Without the release, every one of them survives.
-const GIVEN_UP = 64;
-const MOST_ARE_GONE = GIVEN_UP / 2;
-
-/**
- * Collects until most of `refs` are gone, or until the count of survivors stops moving. Resolves
- * to that count.
- */
-async function survivors(refs: WeakRef<object>[]): Promise<number> {
-  const live = () => refs.filter(ref => ref.deref() !== undefined).length;
-  let last = live();
-  for (let pass = 0, stuck = 0; pass < 50 && last >= MOST_ARE_GONE && stuck < 10; pass++) {
-    // A WeakRef keeps its target for the rest of the job that read it, so every pass collects
-    // from a new job.
-    await immediate();
-    await gcTick();
-    const now = live();
-    stuck = now === last ? stuck + 1 : 0;
-    last = now;
-  }
-  return last;
-}
-
-type GiveUp = (req: http2.ClientHttp2Stream, controller: AbortController) => void;
-
-/**
- * Makes GIVEN_UP requests that wait, then gives each one up, the oldest or the newest first. No
- * reference to a request survives this function: only the WeakRefs it returns can still reach
- * one. `closed` settles when every request has emitted 'close'.
- */
-function giveUpWaitingRequests(session: http2.ClientHttp2Session, giveUp: GiveUp, first: "oldest" | "newest") {
-  const requests = Array.from({ length: GIVEN_UP }, () => {
-    const controller = new AbortController();
-    const req = session.request({ ":path": "/given-up" }, { signal: controller.signal });
-    req.on("error", () => {});
-    return { req, controller };
-  });
-  expect(requests.every(({ req }) => req.pending)).toBe(true);
-  const refs = requests.map(({ req }) => new WeakRef<object>(req));
-  const closed = Promise.all(requests.map(({ req }) => eventOf(req, "close")));
-  if (first === "newest") requests.reverse();
-  for (const { req, controller } of requests) giveUp(req, controller);
-  return { refs, closed };
 }
 
 /** An HTTP/2 server that allows one stream at a time and does not answer "/hold" until `release()`. */
@@ -537,71 +211,453 @@ function statusOf(req: http2.ClientHttp2Stream): Promise<number> {
   return promise;
 }
 
-describe("a request that was given up while it waited is released", () => {
-  // The given-up requests wait behind a keeper, which stays. So a request leaves the queue from
-  // every place but the front.
-  const routes: [string, GiveUp, "oldest" | "newest"][] = [
-    ["destroy(), the oldest first", req => req.destroy(), "oldest"],
-    ["destroy(err), the newest first", req => req.destroy(new Error("given up")), "newest"],
-    ["its AbortSignal, the oldest first", (_, controller) => controller.abort(), "oldest"],
+describe("a closed session does not wait for a request that was destroyed while it waited", () => {
+  // Each case runs on a session whose peer allows no stream, so every request waits. The case
+  // gives its requests up and closes the session. Nothing is in flight then, so the session is
+  // destroyed at the next immediate, as in node.
+  type GiveUpAndClose = (session: http2.ClientHttp2Session, request: MakeRequest) => void;
+  const cases: { name: string; errors: string[]; giveUpAndClose: GiveUpAndClose; node?: string }[] = [
+    {
+      name: "destroy(), then close()",
+      errors: [],
+      giveUpAndClose(session, request) {
+        request().destroy();
+        session.close();
+      },
+    },
+    {
+      name: "destroy(err), then close()",
+      errors: ["given up"],
+      giveUpAndClose(session, request) {
+        request().destroy(new Error("given up"));
+        session.close();
+      },
+    },
+    {
+      name: "close(), then destroy()",
+      errors: [],
+      giveUpAndClose(session, request) {
+        const req = request();
+        session.close();
+        req.destroy();
+      },
+    },
+    {
+      name: "the request's AbortSignal, then close()",
+      errors: ["ABORT_ERR"],
+      giveUpAndClose(session, request) {
+        const controller = new AbortController();
+        request({ signal: controller.signal });
+        controller.abort();
+        session.close();
+      },
+    },
+    {
+      name: "a 'created' diagnostics subscriber that destroys the request, then close()",
+      errors: [],
+      giveUpAndClose(session, request) {
+        const destroyCreated = (message: unknown) => {
+          const { stream } = message as CreatedMessage;
+          if (stream.session === session) stream.destroy();
+        };
+        dc.subscribe("http2.client.stream.created", destroyCreated);
+        try {
+          assert.strictEqual(request().destroyed, true);
+        } finally {
+          dc.unsubscribe("http2.client.stream.created", destroyCreated);
+        }
+        session.close();
+      },
+    },
+    {
+      name: "destroy() with an 'aborted' listener that throws, then close()",
+      errors: ["thrown by the 'aborted' listener"],
+      // node takes a request out of its session after the 'aborted' emit. Bun does that before the
+      // emit for a request that has no stream id, and after it for every other request, as node.
+      node: "the throw keeps the request in its session, and the session never ends",
+      giveUpAndClose(session, request) {
+        const req = request(undefined, "POST");
+        req.on("aborted", () => {
+          throw new Error("thrown by the 'aborted' listener");
+        });
+        req.destroy();
+        session.close();
+      },
+    },
+    {
+      // No listener is left to see the request's 'close': only _destroy can tell the session.
+      name: "removeAllListeners() and destroy(), then close()",
+      errors: [],
+      giveUpAndClose(session, request) {
+        const req = request();
+        req.removeAllListeners();
+        req.destroy();
+        session.close();
+      },
+    },
+    {
+      name: "close(), then destroy() of three requests, the oldest first",
+      errors: [],
+      giveUpAndClose(session, request) {
+        const requests = [request(), request(), request()];
+        session.close();
+        for (const req of requests) req.destroy();
+      },
+    },
+    {
+      name: "close(), then destroy() of three requests, the middle one first",
+      errors: [],
+      giveUpAndClose(session, request) {
+        const [oldest, middle, newest] = [request(), request(), request()];
+        session.close();
+        middle.destroy();
+        newest.destroy();
+        oldest.destroy();
+      },
+    },
   ];
 
-  test.each(routes)("by %s, while the peer's stream slot is still taken", async (_, giveUp, first) => {
-    using server = await serverWithOneStreamSlot();
-    const { session, holder } = await connectAndHoldTheSlot(server);
+  for (const { name, errors, giveUpAndClose, node } of cases) {
+    test(name, { skip: !isBun && node }, async () => {
+      using peer = await rawPeer({ streams: 0 });
+      const session = await connectTo(peer.url);
+      try {
+        const closed = once(session, "close");
+        const waiting = waitingRequests(session);
+        giveUpAndClose(session, waiting.request);
+        await immediate();
+        assert.strictEqual(session.destroyed, true);
+        await closed;
+        assert.deepStrictEqual(waiting.errors, errors);
+        // A request that was given up while it waited never reaches the wire, not even as a
+        // RST_STREAM.
+        await peer.disconnected;
+        assert.deepStrictEqual(peer.streamFrames, []);
+      } finally {
+        session.destroy();
+      }
+    });
+  }
+
+  test("destroy(), then ping() and close()", async () => {
+    using peer = await rawPeer({ streams: 0 });
+    const session = await connectTo(peer.url);
     try {
-      const keeper = session.request({ ":path": "/keeper" });
-      expect(keeper.pending).toBe(true);
-      const status = statusOf(keeper);
-      const keeperClosed = eventOf(keeper, "close");
-      const { refs, closed } = giveUpWaitingRequests(session, giveUp, first);
+      const closed = once(session, "close");
+      const waiting = waitingRequests(session);
+      waiting.request().destroy();
+      // The session ends at the ping's ACK, or when the grace for that ACK is over.
+      session.ping(() => {});
+      session.close();
       await closed;
-      const alive = await survivors(refs);
-      // The premise: the slot was taken all along.
-      expect(holder.closed).toBe(false);
-      expect(alive).toBeLessThan(MOST_ARE_GONE);
-      // The queue still works: the keeper is answered once the slot is free. Nothing waits then,
-      // so the next request is sent at once.
-      await server.release();
-      expect(await status).toBe(200);
-      await keeperClosed;
-      const next = session.request({ ":path": "/next" });
-      expect(next.pending).toBe(false);
-      expect(await statusOf(next)).toBe(200);
-      expect(server.paths).toEqual(["/hold", "/keeper", "/next"]);
+      assert.deepStrictEqual(waiting.errors, []);
     } finally {
       session.destroy();
     }
   });
 
-  // node keeps these requests until the connect.
-  test("by destroy(), before the socket connects", async () => {
-    using connecting = sessionThatNeverConnects();
-    const { refs, closed } = giveUpWaitingRequests(connecting.session, req => req.destroy(), "newest");
-    await closed;
-    expect(await survivors(refs)).toBeLessThan(MOST_ARE_GONE);
-    expect(connecting.session.connecting).toBe(true);
+  // Bun rejects the request at the GOAWAY, and the closed session then has nothing left to wait
+  // for.
+  test(
+    "close() with a request that still waits, then the peer's GOAWAY",
+    { skip: !isBun && "nghttp2 keeps the request, and the session stays" },
+    async () => {
+      using peer = await rawPeer({ streams: 0 });
+      const session = await connectTo(peer.url);
+      try {
+        const closed = once(session, "close");
+        const waiting = waitingRequests(session);
+        waiting.request();
+        session.close();
+        peer.goaway();
+        await closed;
+        assert.deepStrictEqual(waiting.errors, ["ERR_HTTP2_GOAWAY_SESSION"]);
+      } finally {
+        session.destroy();
+      }
+    },
+  );
+
+  test("a request that was only close()d keeps its place, and its session waits for it", async () => {
+    using peer = await rawPeer({ streams: 0 });
+    const session = await connectTo(peer.url);
+    try {
+      const closed = once(session, "close");
+      const waiting = waitingRequests(session);
+      const req = waiting.request();
+      req.close();
+      session.close();
+      // Had close() found nothing in flight, the session would be destroyed by now.
+      await immediate();
+      assert.deepStrictEqual(
+        { request: req.destroyed, session: session.destroyed },
+        { request: false, session: false },
+      );
+      req.destroy();
+      await closed;
+      assert.deepStrictEqual(waiting.errors, []);
+    } finally {
+      session.destroy();
+    }
   });
 
-  // The JIT can hold the queue's record of a request for a while. The test does the same on
-  // purpose, with the record of the oldest request.
-  test("a record that outlives its request keeps no other request alive", async () => {
+  // node destroys this session at the next immediate, and emits no 'close' while the socket still
+  // connects. Bun waits for the ACK of its SETTINGS first, for at most 250 ms.
+  test("before the socket connects: destroy(), then close()", async () => {
     using connecting = sessionThatNeverConnects();
-    const { record, refs, closed } = (() => {
-      const { request } = waitingRequests(connecting.session);
-      const requests = Array.from({ length: GIVEN_UP }, () => request());
-      const oldest: any = requests[0];
-      const kPendingRequest = Object.getOwnPropertySymbols(oldest).find(key => key.description === "pendingRequest")!;
-      const record: { req: http2.ClientHttp2Stream } = oldest[kPendingRequest];
-      const refs = requests.slice(1).map(req => new WeakRef<object>(req));
-      const closed = Promise.all(requests.map(req => eventOf(req, "close")));
-      for (const req of requests) req.destroy();
-      return { record, refs, closed };
-    })();
-    await closed;
-    expect(await survivors(refs)).toBeLessThan(MOST_ARE_GONE);
-    expect(record.req.destroyed).toBe(true);
+    const { session } = connecting;
+    const closed = once(session, "close");
+    const waiting = waitingRequests(session);
+    waiting.request().destroy();
+    session.close();
+    if (isBun) await closed;
+    else await immediate();
+    assert.strictEqual(session.destroyed, true);
+    assert.deepStrictEqual(waiting.errors, []);
   });
+
+  // The flush takes a request off the queue before it knows that the request gets a stream. When
+  // the request fails there, the closed session has nothing left to wait for.
+  const failsAtTheFlush: [string, (session: http2.ClientHttp2Session) => http2.ClientHttp2Stream, string][] = [
+    [
+      "a header that the native side rejects",
+      session => session.request({ ":path": "/", "x-undefined": undefined }),
+      "ERR_HTTP2_INVALID_HEADER_VALUE",
+    ],
+    [
+      "no stream id left",
+      session => {
+        const req = session.request({ ":path": "/" });
+        (session as http2.ClientHttp2Session & { setNextStreamID(id: number): void }).setNextStreamID(2 ** 32 - 1);
+        return req;
+      },
+      "ERR_HTTP2_OUT_OF_STREAMS",
+    ],
+  ];
+  for (const [name, makeRequest, code] of failsAtTheFlush) {
+    test(
+      `close(), then the last waiting request fails when a slot is free: ${name}`,
+      { skip: !isBun && "the request has its stream id and its header block from the start, so it does not fail" },
+      async () => {
+        using peer = await rawPeer({ streams: 0 });
+        const session = await connectTo(peer.url);
+        try {
+          const closed = once(session, "close");
+          const req = makeRequest(session);
+          assert.strictEqual(req.pending, true);
+          const failed = eventOf<NodeJS.ErrnoException>(req, "error");
+          session.close();
+          peer.allowStreams(100);
+          assert.strictEqual((await failed).code, code);
+          await closed;
+        } finally {
+          session.destroy();
+        }
+      },
+    );
+  }
+});
+
+describe("a closed session is destroyed when nothing is in flight, and not before", () => {
+  test("close() on an idle session with nothing unACKed destroys it at the next immediate", async () => {
+    using peer = await rawPeer({});
+    const session = await connectTo(peer.url);
+    try {
+      session.close();
+      await immediate();
+      assert.strictEqual(session.destroyed, true);
+    } finally {
+      session.destroy();
+    }
+  });
+
+  // The ACK of a PING can be the last thing that a closed session waits for. The callback gets
+  // the round-trip time, or a cancel error when the grace for the ACK is over first.
+  test("close() with a PING in flight: the session is destroyed when the PING's callback has run", async () => {
+    using peer = await rawPeer({});
+    const session = await connectTo(peer.url);
+    try {
+      const pinged = new Promise(resolve => session.ping(resolve));
+      session.close();
+      await pinged;
+      await immediate();
+      assert.strictEqual(session.destroyed, true);
+    } finally {
+      session.destroy();
+    }
+  });
+
+  test("destroy() of the only waiting request leaves an open session alone", async () => {
+    using peer = await rawPeer({ streams: 0 });
+    const session = await connectTo(peer.url);
+    try {
+      waitingRequests(session).request().destroy();
+      await immediate();
+      assert.deepStrictEqual(
+        { closed: session.closed, destroyed: session.destroyed },
+        { closed: false, destroyed: false },
+      );
+      // Nothing waits any more: once the peer allows a stream, a new request is sent at once.
+      const allowed = eventOf(session, "remoteSettings");
+      peer.allowStreams(1);
+      await allowed;
+      const next = session.request({ ":path": "/" });
+      next.on("error", () => {});
+      assert.strictEqual(next.pending, false);
+    } finally {
+      session.destroy();
+    }
+  });
+
+  // A node or Bun server answers the client's GOAWAY with its own. Bun rejects the request that
+  // waits at that GOAWAY, while the first request is still open. nghttp2 refuses it when the
+  // first stream is over.
+  test("close() while a request waits behind an open one, on a server that answers the GOAWAY", async () => {
+    using server = await serverWithOneStreamSlot();
+    const { session, holder } = await connectAndHoldTheSlot(server);
+    try {
+      const closed = once(session, "close");
+      const held = statusOf(holder);
+      const waiting = session.request({ ":path": "/waiting" });
+      const failed = eventOf<NodeJS.ErrnoException>(waiting, "error");
+      const waitingClosed = eventOf(waiting, "close");
+      session.close();
+      if (isBun) {
+        await waitingClosed;
+        assert.strictEqual(holder.closed, false);
+      }
+      await server.release();
+      assert.deepStrictEqual(
+        { held: await held, error: (await failed).code, rstCode: waiting.rstCode, paths: server.paths },
+        {
+          held: 200,
+          error: isBun ? "ERR_HTTP2_GOAWAY_SESSION" : "ERR_HTTP2_STREAM_ERROR",
+          rstCode: http2.constants.NGHTTP2_REFUSED_STREAM,
+          paths: ["/hold"],
+        },
+      );
+      await closed;
+    } finally {
+      session.destroy();
+    }
+  });
+});
+
+describe("every waiting request is ended once", () => {
+  // Three requests wait. While the session ends them, the 'aborted' listener of the oldest one
+  // destroys the one behind it. Under node the three have their stream ids, so session.destroy()
+  // ends them as open streams: with no error, or with the error of the session.
+  type End = (session: http2.ClientHttp2Session, peer: { goaway(): void }) => void;
+  type Events = { oldest: string[]; middle: string[]; newest: string[] };
+  const ends: { name: string; end: End; bun: Events; node: Events | string }[] = [
+    {
+      name: "session.destroy()",
+      end: session => session.destroy(),
+      bun: {
+        oldest: ["ERR_HTTP2_STREAM_CANCEL", "close"],
+        middle: ["close"],
+        newest: ["ERR_HTTP2_STREAM_CANCEL", "close"],
+      },
+      node: { oldest: ["close"], middle: ["close"], newest: ["close"] },
+    },
+    {
+      name: "session.destroy(err)",
+      end: session => session.destroy(new Error("session destroyed")),
+      bun: {
+        oldest: ["ERR_HTTP2_STREAM_CANCEL", "close"],
+        middle: ["close"],
+        newest: ["ERR_HTTP2_STREAM_CANCEL", "close"],
+      },
+      node: {
+        oldest: ["session destroyed", "close"],
+        middle: ["ERR_HTTP2_STREAM_ERROR", "close"],
+        newest: ["session destroyed", "close"],
+      },
+    },
+    {
+      name: "the peer's GOAWAY",
+      end: (_, peer) => peer.goaway(),
+      bun: {
+        oldest: ["ERR_HTTP2_GOAWAY_SESSION", "close"],
+        middle: ["close"],
+        newest: ["ERR_HTTP2_GOAWAY_SESSION", "close"],
+      },
+      node: "nghttp2 keeps the requests, and the session stays",
+    },
+  ];
+
+  for (const { name, end, bun, node } of ends) {
+    test(`by ${name}`, { skip: !isBun && typeof node === "string" && node }, async () => {
+      using peer = await rawPeer({ streams: 0 });
+      const session = await connectTo(peer.url);
+      session.on("error", () => {});
+      try {
+        const events: Events = { oldest: [], middle: [], newest: [] };
+        const [oldest, middle] = (["oldest", "middle", "newest"] as const).map(name => {
+          const req = session.request({ ":path": "/", ":method": "POST" });
+          req.on("error", (err: NodeJS.ErrnoException) => events[name].push(err.code ?? err.message));
+          req.on("close", () => events[name].push("close"));
+          return req;
+        });
+        oldest.on("aborted", () => middle.destroy());
+        const closed = eventOf(session, "close");
+        end(session, peer);
+        await closed;
+        assert.deepStrictEqual(events, isBun ? bun : node);
+      } finally {
+        session.destroy();
+      }
+    });
+  }
+});
+
+// Each scenario runs in a process of its own, without the concurrent JIT: an optimizing compilation
+// in flight keeps the values that it refers to alive, and these can be requests. node starts the
+// processes together. Bun's node:test runs one test at a time.
+describe("a request that was given up while it waited is released", { concurrency: true }, () => {
+  const fixture = path.join(import.meta.dirname, "node-http2-pending-requests-fixture.ts");
+  async function run(scenario: string) {
+    const child = spawn(process.execPath, [...(isBun ? [] : ["--expose-gc"]), fixture, scenario], {
+      env: { ...process.env, BUN_JSC_useConcurrentJIT: "0" },
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    let stdout = "";
+    child.stdout.setEncoding("utf8").on("data", chunk => (stdout += chunk));
+    const [exitCode] = await once(child, "close");
+    return { stdout: stdout.trim(), exitCode };
+  }
+  const printed = (result: object) => ({ stdout: JSON.stringify(result), exitCode: 0 });
+
+  // The requests wait behind a keeper, which stays. So a request leaves the queue from every
+  // place but the front.
+  for (const scenario of [
+    "destroy, oldest first",
+    "destroy with an error, newest first",
+    "AbortSignal, oldest first",
+  ]) {
+    test(`while the peer's stream slot is still taken: ${scenario}`, async () => {
+      assert.deepStrictEqual(await run(scenario), printed({ alive: 0, givenUp: 16, slotTaken: true }));
+    });
+  }
+
+  // node keeps these requests until the connect.
+  test("before the socket connects", async () => {
+    assert.deepStrictEqual(
+      await run("before the connect"),
+      printed({ alive: isBun ? 0 : 16, givenUp: 16, connecting: true }),
+    );
+  });
+
+  test(
+    "a record that outlives its request keeps no other request alive",
+    { skip: !isBun && "the scenario reads the record that Bun's queue has for a request" },
+    async () => {
+      assert.deepStrictEqual(
+        await run("a record is held"),
+        printed({ alive: 0, givenUp: 15, heldRequestDestroyed: true }),
+      );
+    },
+  );
 });
 
 describe("the order of the queue", () => {
@@ -611,12 +667,12 @@ describe("the order of the queue", () => {
     try {
       const [a, b, c] = ["/a", "/b", "/c"].map(path => session.request({ ":path": path }));
       b.on("error", () => {});
-      expect([a.pending, b.pending, c.pending]).toEqual([true, true, true]);
+      if (isBun) assert.deepStrictEqual([a.pending, b.pending, c.pending], [true, true, true]);
       const answered = Promise.all([statusOf(a), statusOf(c)]);
       b.destroy();
       await server.release();
-      expect(await answered).toEqual([200, 200]);
-      expect(server.paths).toEqual(["/hold", "/a", "/c"]);
+      assert.deepStrictEqual(await answered, [200, 200]);
+      assert.deepStrictEqual(server.paths, ["/hold", "/a", "/c"]);
     } finally {
       session.destroy();
     }
@@ -640,11 +696,11 @@ describe("the order of the queue", () => {
       } finally {
         dc.unsubscribe("http2.client.stream.created", requestNested);
       }
-      expect([outer.pending, nested.pending]).toEqual([true, true]);
+      if (isBun) assert.deepStrictEqual([outer.pending, nested.pending], [true, true]);
       const answered = Promise.all([statusOf(outer), statusOf(nested)]);
       await server.release();
-      expect(await answered).toEqual([200, 200]);
-      expect(server.paths).toEqual(["/hold", "/outer", "/nested"]);
+      assert.deepStrictEqual(await answered, [200, 200]);
+      assert.deepStrictEqual(server.paths, ["/hold", "/outer", "/nested"]);
     } finally {
       session.destroy();
     }
@@ -665,8 +721,29 @@ describe("the order of the queue", () => {
     }
     const failed = eventOf<NodeJS.ErrnoException>(req, "error");
     const closed = eventOf(req, "close");
-    expect((await failed).code).toBe("ERR_HTTP2_STREAM_CANCEL");
+    assert.strictEqual((await failed).code, "ERR_HTTP2_STREAM_CANCEL");
     await closed;
-    expect(req.destroyed).toBe(true);
+    assert.strictEqual(req.destroyed, true);
   });
 });
+
+if (isBun) {
+  const node = Bun.which("node");
+  // Alpine's node segfaults at a random point of an http2 test file (see
+  // node-http2-client-close.test.ts), and the CI runner fails a file for any new core dump. The
+  // glibc, macOS and Windows lanes keep the cross-check.
+  const isMusl =
+    process.platform === "linux" &&
+    !(process.report.getReport() as { header: { glibcVersionRuntime?: string } }).header.glibcVersionRuntime;
+  describe("Node.js compatibility", () => {
+    test("tests should run on node.js", { skip: !node || isMusl }, async () => {
+      await using proc = Bun.spawn({
+        cmd: [node as string, "--test", import.meta.filename],
+        stdout: "inherit",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+      assert.strictEqual(await proc.exited, 0);
+    });
+  });
+}

@@ -108,6 +108,12 @@ function argumentsObject(...values: unknown[]) {
   )(...values);
 }
 
+function formData(name: string, value: string) {
+  const form = new FormData();
+  form.append(name, value);
+  return form;
+}
+
 const cases: Case[] = [
   // Loose mode compares primitives with ==, strict mode with Object.is.
   { name: "0 and -0", a: () => 0, b: () => -0, strict: false, loose: true, looseBug: "reports not equal" },
@@ -945,6 +951,35 @@ const cases: Case[] = [
     strict: true,
     loose: true,
   },
+
+  // Web objects that keep their state off the JS object (Node.js v26.3.0). Node sees no own
+  // property on a FormData, so any two are equal. It sees a Blob's size and type as own symbol
+  // properties, which only strict mode compares. assert.deepEqual is Bun.deepEquals here, and
+  // that compares the contents.
+  {
+    name: "two FormData with the same entries",
+    a: () => formData("a", "1"),
+    b: () => formData("a", "1"),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "two FormData with different entries",
+    a: () => formData("a", "1"),
+    b: () => formData("a", "2"),
+    strict: true,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "two Blobs of different sizes",
+    a: () => new Blob(["abc"]),
+    b: () => new Blob(["xyz-and-longer"]),
+    strict: false,
+    loose: true,
+    strictBug: "reports equal",
+    looseBug: "reports not equal",
+  },
 ];
 
 function caught(fn: () => void): (Error & { code?: string }) | null {
@@ -1061,6 +1096,35 @@ describe("util.isDeepStrictEqual", () => {
 
     test("does not leak into assert.deepStrictEqual", () => {
       expect(() => assert.deepStrictEqual(new Foo(42), new Bar(42))).toThrow();
+    });
+  });
+});
+
+// Node.js has no Bun.Cookie or Bun.CookieMap, so there is no Node.js answer to keep. Every
+// entry point compares them by their contents.
+describe("Bun.Cookie and Bun.CookieMap", () => {
+  const { Assert } = assert as unknown as { Assert: new () => typeof assert };
+  const pairs: [string, Thunk, Thunk, boolean][] = [
+    ["two equal cookies", () => new Bun.Cookie("a", "1"), () => new Bun.Cookie("a", "1"), true],
+    ["two cookies with different values", () => new Bun.Cookie("a", "1"), () => new Bun.Cookie("a", "2"), false],
+    ["two equal cookie maps", () => new Bun.CookieMap("a=1; b=2"), () => new Bun.CookieMap("b=2; a=1"), true],
+    ["two cookie maps with different values", () => new Bun.CookieMap("a=1"), () => new Bun.CookieMap("a=2"), false],
+  ];
+
+  test.each(pairs)("%s", (_, a, b, equal) => {
+    const passes = (fn: (actual: unknown, expected: unknown) => void) => caught(() => fn(a(), b())) === null;
+    expect({
+      deepStrictEqual: passes(assert.deepStrictEqual),
+      notDeepStrictEqual: passes(assert.notDeepStrictEqual),
+      deepEqual: passes(assert.deepEqual),
+      "new Assert().deepEqual": passes(new Assert().deepEqual),
+      isDeepStrictEqual: util.isDeepStrictEqual(a(), b()),
+    }).toEqual({
+      deepStrictEqual: equal,
+      notDeepStrictEqual: !equal,
+      deepEqual: equal,
+      "new Assert().deepEqual": equal,
+      isDeepStrictEqual: equal,
     });
   });
 });

@@ -390,6 +390,17 @@ pub(crate) unsafe extern "C" fn Bun__Blob__sharedView(
     view.as_ptr()
 }
 
+/// C-ABI trampoline for [`Blob::contents_differ`], for deep equality
+/// (`specialObjectsDequalSlow`, `DOMFormData::entriesEqual`).
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Blob__contentsDiffer(
+    a: &Blob,
+    b: &Blob,
+    as_form_data_entry: bool,
+) -> bool {
+    a.contents_differ(b, as_form_data_entry)
+}
+
 impl BlobExt for Blob {
     fn get_form_data_encoding(&self) -> Option<Box<bun_core::form_data::AsyncFormData>> {
         let content_type_slice = self.get_content_type()?;

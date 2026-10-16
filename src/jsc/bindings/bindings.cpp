@@ -170,6 +170,8 @@
 
 #include "DOMFormData.h"
 #include "JSDOMFormData.h"
+#include "JSCookie.h"
+#include "JSCookieMap.h"
 #include "ZigGeneratedClasses.h"
 #include "JavaScriptCore/JSMapInlines.h"
 
@@ -1828,9 +1830,6 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 goto compareAsNormalValue;
             }
 
-            // TODO: FormData.
-            // It's complicated because it involves Blob.
-
             {
                 auto urlSearchParams1 = dynamicDowncast<JSURLSearchParams>(c1);
                 auto urlSearchParams2 = dynamicDowncast<JSURLSearchParams>(c2);
@@ -1903,6 +1902,39 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                         }
                     }
                 }
+            }
+
+            // FormData, Blob, Cookie and CookieMap keep their state in native memory, so the
+            // own-property walk calls any two of a kind equal. Each owner type compares its own
+            // state. node compares a FormData or a Blob as a plain object, so the node modes
+            // keep the walk for those two.
+            const JSC::ClassInfo* classInfo = c1->classInfo();
+            bool isCookieOrCookieMap = c1Type == JSAsJSONType && (classInfo == JSCookie::info() || classInfo == JSCookieMap::info());
+            bool isFormDataOrBlob = c1Type == JSDOMWrapperType && (classInfo == JSDOMFormData::info() || classInfo == JSBlob::info());
+            if ((isCookieOrCookieMap || (isFormDataOrBlob && !mode.checkPrototypes)) && classInfo == c2->classInfo()) {
+                if (classInfo == JSBlob::info()) {
+                    void* blob1 = uncheckedDowncast<JSBlob>(c1)->wrapped();
+                    void* blob2 = uncheckedDowncast<JSBlob>(c2)->wrapped();
+                    // A detached wrapper has no blob to compare.
+                    if (blob1 && blob2 && Bun__Blob__contentsDiffer(blob1, blob2, false))
+                        return false;
+                    // No difference is not an answer: a blob on disk is not read.
+                    goto compareAsNormalValue;
+                }
+
+                bool contentsEqual;
+                if (classInfo == JSDOMFormData::info())
+                    contentsEqual = uncheckedDowncast<JSDOMFormData>(c1)->wrapped().entriesEqual(uncheckedDowncast<JSDOMFormData>(c2)->wrapped());
+                else if (classInfo == JSCookie::info())
+                    contentsEqual = uncheckedDowncast<JSCookie>(c1)->wrapped().fieldsEqual(uncheckedDowncast<JSCookie>(c2)->wrapped());
+                else
+                    contentsEqual = uncheckedDowncast<JSCookieMap>(c1)->wrapped().entriesEqual(uncheckedDowncast<JSCookieMap>(c2)->wrapped());
+                if (!contentsEqual)
+                    return false;
+                // One structure and no own properties: the walk has nothing left to compare and
+                // answers true. An expando or a subclass still takes it.
+                if (c1->structureID() == c2->structureID() && !hasExtraOwnProperties(c1->structure()))
+                    return true;
             }
         }
 

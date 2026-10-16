@@ -120,8 +120,8 @@ pub struct DirInfo {
     pub enclosing_package_json: Option<&'static PackageJSON>,
 
     /// The nearest package.json in this directory or above it, with or without
-    /// a "name". The bundler takes the module type of a `.js`-like file in this
-    /// directory from its "type" (`finalize_result`), as esbuild does. The
+    /// a "name". The bundler (`finalize_result`) and the runtime take the module
+    /// type of a `.js`-like file in this directory from its "type". The
     /// lookup does not stop at a "node_modules" directory, so a package with no
     /// package.json of its own gets the one above it. `enclosing_package_json`
     /// skips a nameless package.json.

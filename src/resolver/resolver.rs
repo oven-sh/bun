@@ -6916,6 +6916,13 @@ pub fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()
 }
 
+/// The module type a path declares at runtime: the extension, else the "type"
+/// of `package_json` ([`DirInfo::package_json_for_module_type`](crate::DirInfo::package_json_for_module_type)).
+pub fn module_type_for_file(ext: &[u8], package_json: Option<&PackageJSON>) -> options::ModuleType {
+    module_type_from_ext(ext)
+        .unwrap_or_else(|| package_json.map_or(options::ModuleType::Unknown, |pkg| pkg.module_type))
+}
+
 /// TypeScript matches `./foo.js` with `./foo.ts` (microsoft/TypeScript#4595). This
 /// is esbuild's `rewrittenFileExtensions` table plus Bun's `.js` → `.mts`
 /// (oven-sh/bun#12580). `inside_node_modules` gates only `.mjs` and `.cjs`:

@@ -706,7 +706,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
       );
       return false; // Indicate backpressure
     } else {
-      cb(null);
+      if (cb !== streamNoop) process.nextTick(cb, null);
       return true; // No backpressure
     }
   } else {

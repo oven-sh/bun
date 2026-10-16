@@ -1,0 +1,17 @@
+Linux before 6.14 (064737920bdb "arm64: Filter out SVE hwcaps when FEAT_SVE isn't
+implemented", also in 6.13.3, 6.12.14 and 6.6.79) sets HWCAP2_SVE2 from
+ID_AA64ZFR0_EL1 alone, so it can be set while HWCAP_SVE is clear: in a VM on an
+Apple M4, which has SME and no SVE, for one. Highway took HWCAP2_SVE2 alone as
+SVE2 and then read the vector length with `cntb`, which is SIGILL there.
+
+--- a/hwy/targets.cc
++++ b/hwy/targets.cc
+@@ -535,7 +535,7 @@
+ 
+   constexpr CapBits kGroupSVE2 = HWCAP2_SVE2 | HWCAP2_SVEAES;
+   const CapBits hw2 = getauxval(AT_HWCAP2);
+-  if ((hw2 & kGroupSVE2) == kGroupSVE2) {
++  if ((hw2 & kGroupSVE2) == kGroupSVE2 && (bits & HWY_SVE)) {
+     bits |= HWY_SVE2;
+   }
+ 

@@ -44,6 +44,8 @@ pub struct ContextData {
 
     pub preloads: Vec<Box<[u8]>>,
     pub has_loaded_global_config: bool,
+    /// The path of the first bunfig.toml or .npmrc that exists but could not be read.
+    pub unreadable_config: Option<Box<[u8]>>,
 }
 
 impl Default for ContextData {
@@ -84,6 +86,7 @@ impl Default for ContextData {
             no_exit_on_error: false,
             preloads: Vec::new(),
             has_loaded_global_config: false,
+            unreadable_config: None,
         }
     }
 }
@@ -195,6 +198,8 @@ pub struct BundlerOptions {
     pub asset_naming: Box<[u8]>,
     pub server_components: bool,
     pub react_fast_refresh: bool,
+    /// `--check`: type check the entry points and what they import, and do not bundle if there are errors.
+    pub check: bool,
     pub react_compiler: bool,
     pub code_splitting: bool,
     pub split_require: bool,
@@ -260,6 +265,7 @@ impl Default for BundlerOptions {
             asset_naming: Box::from(&b"./[name]-[hash].[ext]"[..]),
             server_components: false,
             react_fast_refresh: false,
+            check: false,
             react_compiler: false,
             code_splitting: false,
             split_require: true,
@@ -556,6 +562,8 @@ pub struct DebuggerEnable {
 
 pub struct RuntimeOptions {
     pub smol: bool,
+    /// `--check`: type check what is about to be run, and do not run it if there are errors.
+    pub check: bool,
     pub debugger: Debugger,
     pub if_present: bool,
     pub redis_preconnect: bool,
@@ -627,6 +635,7 @@ impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
             smol: false,
+            check: false,
             debugger: Debugger::Unspecified,
             if_present: false,
             redis_preconnect: false,

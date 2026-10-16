@@ -110,7 +110,7 @@ pub(crate) struct File {
 
 impl Snapshots {
     fn can_write(&self) -> bool {
-        self.update_snapshots || !crate::cli::ci_info::is_ci()
+        self.update_snapshots || !bun_core::ci_info::is_ci()
     }
 
     /// Reset per-run snapshot counters to 0. Keys stay owned by the map until

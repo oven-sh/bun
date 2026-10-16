@@ -138,6 +138,18 @@ export interface Config {
    * acquire atomic load per syscall, zero when compiled out.
    */
   socketFaultInjection: boolean;
+  /**
+   * Default true. Off builds a Bun where `--disallow-code-generation-from-strings=strict` is
+   * always on: the level is a compile-time constant in Rust and C++, so no flag, environment
+   * variable or API of the built binary lowers it. (Not named after the runtime flag:
+   * build.ts would then take that flag for its own.)
+   */
+  codeGenerationFromStrings: boolean;
+  /**
+   * Default true. Off builds a Bun with no `WebAssembly` global: the engine's `useWasm` option is
+   * false whatever `BUN_JSC_useWasm` says.
+   */
+  webAssembly: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
   unifiedSources: boolean;
   /**
@@ -353,6 +365,8 @@ export interface PartialConfig {
   valgrind?: boolean;
   fuzzilli?: boolean;
   socketFaultInjection?: boolean;
+  codeGenerationFromStrings?: boolean;
+  webAssembly?: boolean;
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
@@ -976,11 +990,15 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const ltoDefault = release && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
+  // Fuzzilli: coverage does not link with ThinLTO ("undefined symbol:
+  // __sancov_gen_.1"). The copies of an inline function that ThinLTO does not
+  // keep become available_externally, their module-private guards included,
+  // and inlining one leaves a reference to guards that nothing defines.
   // Android, FreeBSD: not enabled (never built that way; untested).
   // Windows arm64: off — oven-sh/WebKit ships no bun-webkit-windows-arm64-lto
   // (LLVM's CodeView emitter aborts on ARM64 NEON tuple registers when JSC
   // goes through LTO), so forcing it off also keeps the fetch from 404ing.
-  if ((asan && lto) || abi === "android" || freebsd || (windows && arm64)) {
+  if ((asan && lto) || fuzzilli || abi === "android" || freebsd || (windows && arm64)) {
     lto = false;
   }
 
@@ -1287,6 +1305,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     valgrind,
     fuzzilli,
     socketFaultInjection,
+    codeGenerationFromStrings: partial.codeGenerationFromStrings ?? true,
+    webAssembly: partial.webAssembly ?? true,
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
@@ -1659,6 +1679,8 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.socketFaultInjection !== cfg.asan) {
     features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
   }
+  if (!cfg.codeGenerationFromStrings) features.push("code-generation-from-strings:off");
+  if (!cfg.webAssembly) features.push("webassembly:off");
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);

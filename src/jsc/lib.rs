@@ -405,7 +405,7 @@ pub mod btjs;
 #[path = "CppTask.rs"]
 pub mod cpp_task;
 #[path = "fmt_jsc.rs"]
-pub mod fmt_jsc;
+pub(crate) mod fmt_jsc;
 #[path = "HTTPServerAgent.rs"]
 pub mod http_server_agent;
 #[path = "JSSecrets.rs"]
@@ -458,8 +458,9 @@ pub mod zig_stack_trace;
 pub mod async_module;
 #[path = "bindgen.rs"]
 pub mod bindgen;
+#[cfg(debug_assertions)]
 #[path = "bindgen_test.rs"]
-pub mod bindgen_test;
+pub(crate) mod bindgen_test;
 #[path = "BunCPUProfiler.rs"]
 pub mod bun_cpu_profiler;
 #[path = "BunHeapProfiler.rs"]
@@ -510,6 +511,14 @@ pub fn initialize(options: InitializeOptions) {
             options.short_lived_globals,
         )
     };
+}
+
+/// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
+/// first VM, which freezes JSC's options.
+pub fn expect_vm_per_thread() {
+    let env = bun_sys::environ();
+    // SAFETY: `env` borrows the libc `environ` global for the duration of the call.
+    unsafe { JSC__useOptionsForVMPerThread(env.as_ptr(), env.len()) };
 }
 
 /// Whether this process was launched as `bun -e <code>` / `bun --eval <code>` /
@@ -1368,7 +1377,9 @@ pub trait LogJsc {
 /// either a `BuildMessage` or `ResolveMessage` JS cell, dispatching on metadata.
 fn msg_to_js(msg: &bun_ast::Msg, global: &JSGlobalObject) -> JsResult<JSValue> {
     match msg.metadata {
-        bun_ast::Metadata::Build => BuildMessage::create(global, msg.clone()),
+        bun_ast::Metadata::Build | bun_ast::Metadata::TypeScript { .. } => {
+            BuildMessage::create(global, msg.clone())
+        }
         bun_ast::Metadata::Resolve(_) => ResolveMessage::create(global, msg, b""),
     }
 }
@@ -1561,15 +1572,13 @@ unsafe extern "C" {
         one_shot_startup: bool,
         short_lived_globals: bool,
     );
+    fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
 }
 
 // Hand-stubbed in `generated.rs` until `src/codegen/generate-classes.ts`
-// grows a `.rs` backend (same arrangement as `r#gen` below).
+// grows a `.rs` backend.
 #[path = "generated.rs"]
 pub mod generated;
 
-/// `bun.gen` — bindgen dispatch shims.
-/// Hand-written per-module until `src/codegen/bindgen.ts` grows a `.rs` backend.
-/// (`gen` is a reserved keyword in edition 2024; use `r#gen` at call sites.)
-#[path = "bindings/GeneratedBindings.rs"]
-pub mod r#gen;
+#[path = "generated_bindgen.rs"]
+pub(crate) mod generated_bindgen;

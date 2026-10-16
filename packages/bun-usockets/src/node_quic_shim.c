@@ -233,6 +233,18 @@ static struct lsxpack_header *nq_hsi_prepare_decode(void *hset,
     lsxpack_header_prepare_decode(&h->xhdr, h->decode_buf, 0, h->decode_cap);
     return &h->xhdr;
 }
+/* Non-zero when p[0..n) holds a byte below 0x0e, as NUL, LF and CR are. The
+ * loop has no exit and a byte result, so the compiler vectorizes it 16 wide. */
+static inline unsigned char nq_has_byte_below_0e(const char *p, size_t n) {
+    const unsigned char *s = (const unsigned char *) p;
+    unsigned char low = 0;
+    for (size_t i = 0; i < n; i++)
+        low |= s[i] < 0x0e;
+    return low;
+}
+static inline int nq_has_byte(const char *p, size_t n, int c) {
+    return n && memchr(p, c, n);
+}
 static int nq_hsi_process_header(void *hset, struct lsxpack_header *hdr) {
     struct nq_hset *h = hset;
     if (!hdr)
@@ -243,14 +255,26 @@ static int nq_hsi_process_header(void *hset, struct lsxpack_header *hdr) {
     if (h->max_bytes
             && h->total_bytes + hdr->name_len + hdr->val_len > h->max_bytes)
         return 0;
-    h->n_pairs++;
-    h->total_bytes += (size_t) hdr->name_len + hdr->val_len;
     const char *name = lsxpack_header_get_name(hdr);
     const char *val = lsxpack_header_get_value(hdr);
-    /* RFC 9114 4.1.2 makes such a field invalid. */
-    if ((hdr->name_len && memchr(name, 0, hdr->name_len))
-            || (hdr->val_len && memchr(val, 0, hdr->val_len)))
-        return -1;
+    if (nq_has_byte_below_0e(name, hdr->name_len)
+            || nq_has_byte_below_0e(val, hdr->val_len)) {
+        /* RFC 9114 4.1.2 makes such a field invalid. */
+        if (nq_has_byte(name, hdr->name_len, 0)
+                || nq_has_byte(val, hdr->val_len, 0))
+            return -1;
+        /* RFC 9114 10.3: CR or LF. nghttp3 leaves such a field out before Node
+         * counts it. A pseudo-header is not left out: nghttp3 fails the message
+         * there, and a non-zero return here closes the whole connection. */
+        if ((!hdr->name_len || name[0] != ':')
+                && (nq_has_byte(name, hdr->name_len, '\r')
+                    || nq_has_byte(name, hdr->name_len, '\n')
+                    || nq_has_byte(val, hdr->val_len, '\r')
+                    || nq_has_byte(val, hdr->val_len, '\n')))
+            return 0;
+    }
+    h->n_pairs++;
+    h->total_bytes += (size_t) hdr->name_len + hdr->val_len;
     size_t need = h->pairs_len + (size_t) hdr->name_len + 1
                 + (size_t) hdr->val_len + 1;
     if (need > h->pairs_cap) {

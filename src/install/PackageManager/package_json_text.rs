@@ -22,7 +22,7 @@ pub fn print(old: &[u8], root: Expr, indentation: Indentation) -> js_printer::Re
     match text.document(&root) {
         Ok(()) => {
             debug_assert!(
-                is_written(&text.out.list, &root),
+                is_written(&text.out.list, &root, text.stack),
                 "package.json text does not say what its tree says"
             );
             Ok(text.out.list)
@@ -80,10 +80,8 @@ struct Member {
     starts_line: bool,
     ends_line: bool,
     /// `Text::containers` index of its value, if that is an object or an array.
-    container: usize,
+    container: Option<usize>,
 }
-
-const NO_CONTAINER: usize = usize::MAX;
 
 impl Member {
     fn old_value(&self) -> OldValue {
@@ -100,7 +98,7 @@ impl Member {
 struct OldValue {
     at: usize,
     end: usize,
-    container: usize,
+    container: Option<usize>,
 }
 
 /// An object or an array of the old text. Its members are `Text::members[first..first + len]`.
@@ -307,7 +305,7 @@ impl<'a> Text<'a> {
         let old = OldValue {
             at: start,
             end: container.close + 1,
-            container: index,
+            container: Some(index),
         };
         self.put(&text[..start]);
         self.value(root, old)?;
@@ -328,6 +326,12 @@ impl<'a> Text<'a> {
 
     fn member(&self, container: &Container, index: usize) -> Member {
         self.members[container.first + index]
+    }
+
+    /// The entries of `value` and the container that `old` is, if both are an object or both an array.
+    fn container_of<'e>(&self, value: &'e Expr, old: OldValue) -> Option<(Entries<'e>, Container)> {
+        let entries = Entries::of(value, self.text[old.at])?;
+        Some((entries, self.containers[old.container?]))
     }
 
     /// The blanks that the line of `at` starts with.
@@ -385,10 +389,10 @@ impl<'a> Text<'a> {
             };
             let (value_end, container) = if matches!(text[value], b'{' | b'[') {
                 let container = self.read(value)?;
-                (self.containers[container].close + 1, container)
+                (self.containers[container].close + 1, Some(container))
             } else {
                 let value_end = scan::value_end(text, value).ok_or(Stop::NotTheText)?;
-                (value_end, NO_CONTAINER)
+                (value_end, None)
             };
             let after = scan::next_token(text, value_end).ok_or(Stop::NotTheText)?;
             let comma = (text[after] == b',').then_some(after);
@@ -701,7 +705,7 @@ impl<'a> Text<'a> {
             return Err(Stop::Printer(js_printer::Error::StackOverflow));
         }
         let text = self.text;
-        let Some(entries) = Entries::of(value, text[old.at]) else {
+        let Some((entries, container)) = self.container_of(value, old) else {
             if self.is_token(&text[old.at..old.end], value) {
                 self.put(&text[old.at..old.end]);
             } else {
@@ -709,14 +713,13 @@ impl<'a> Text<'a> {
             }
             return Ok(());
         };
-        let container = self.containers[old.container];
         if self.has_same_members(&container, entries) {
             // What is as it is written is copied in one piece, up to the next value that is not.
             let mut copied = container.open;
             for index in 0..container.len {
                 let member = self.member(&container, index);
                 let value = entries.value(index)?;
-                if member.container == NO_CONTAINER
+                if member.container.is_none()
                     && self.is_token(&text[member.value..member.value_end], value)
                 {
                     continue;
@@ -878,14 +881,13 @@ impl<'a> Text<'a> {
             return Err(Stop::Printer(js_printer::Error::StackOverflow));
         }
         let text = self.text;
-        let Some(entries) = Entries::of(value, text[old.at]) else {
+        let Some((entries, container)) = self.container_of(value, old) else {
             if self.is_token(&text[old.at..old.end], value) {
                 self.put(&text[old.at..old.end]);
                 return Ok(());
             }
             return self.print(value, indent);
         };
-        let container = self.containers[old.container];
         let (pairs, _) = self.pair(&container, entries)?;
         self.lay_out(&container, entries, &pairs, indent)
     }
@@ -984,14 +986,24 @@ enum Blank {
 }
 
 /// Whether `text` is a document that says what `root` says: same members, same order, same values.
-fn is_written(text: &[u8], root: &Expr) -> bool {
+fn is_written(text: &[u8], root: &Expr, stack: StackCheck) -> bool {
     let mut scratch = Vec::new();
     scan::next_token(text, 0)
-        .is_some_and(|start| value_is_written(text, start, root, &mut scratch).is_some())
+        .is_some_and(|start| value_is_written(text, start, root, &mut scratch, stack).is_some())
 }
 
 /// The end of the value that starts at `at`, if it is `value`.
-fn value_is_written(text: &[u8], at: usize, value: &Expr, scratch: &mut Vec<u8>) -> Option<usize> {
+fn value_is_written(
+    text: &[u8],
+    at: usize,
+    value: &Expr,
+    scratch: &mut Vec<u8>,
+    stack: StackCheck,
+) -> Option<usize> {
+    if !stack.is_safe_to_recurse() {
+        // Too deep to look into: taken as written.
+        return scan::value_end(text, at);
+    }
     let Some(entries) = Entries::of(value, *text.get(at)?) else {
         let end = scan::value_end(text, at)?;
         let token = &text[at..end];
@@ -1031,7 +1043,7 @@ fn value_is_written(text: &[u8], at: usize, value: &Expr, scratch: &mut Vec<u8>)
             }
             at = scan::next_token(text, colon + 1)?;
         }
-        let end = value_is_written(text, at, entries.value(index).ok()?, scratch)?;
+        let end = value_is_written(text, at, entries.value(index).ok()?, scratch, stack)?;
         at = scan::next_token(text, end)?;
         if text[at] == b',' {
             at = scan::next_token(text, at + 1)?;

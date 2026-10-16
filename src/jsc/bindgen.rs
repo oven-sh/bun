@@ -133,9 +133,7 @@ impl<'a> JsHeap<'a> {
     pub fn error_with_code(&self, code: ErrorCode, args: core::fmt::Arguments<'_>) -> Error<'a> {
         Error::unthrown(code.fmt(self.global_object(), args))
     }
-}
 
-impl<'a> JsHeap<'a> {
     /// As [`error`](Self::error), with a `code` that is not one of [`ErrorCode`]'s. It is ASCII.
     #[cold]
     pub fn error_with_custom_code(&self, code: &[u8], args: core::fmt::Arguments<'_>) -> Error<'a> {

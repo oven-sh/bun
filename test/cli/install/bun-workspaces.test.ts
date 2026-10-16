@@ -507,6 +507,33 @@ test.concurrent("extglob and brace sequence workspace patterns", async () => {
   expect(Object.keys(lockfile.workspaces).sort()).toEqual(["", ...good].sort());
 });
 
+test.concurrent("a brace alternative can name a dot directory of workspaces", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        workspaces: ["{.internal,.git,packages}/*"],
+        dependencies: { tooling: "workspace:*", app: "workspace:*" },
+      }),
+    ),
+    write(
+      join(packageDir, ".internal", "tooling", "package.json"),
+      JSON.stringify({ name: "tooling", version: "1.0.0" }),
+    ),
+    write(join(packageDir, "packages", "app", "package.json"), JSON.stringify({ name: "app", version: "1.0.0" })),
+    // `.git` is never a workspace folder, even when an alternative names it.
+    write(join(packageDir, ".git", "hooks", "package.json"), JSON.stringify({ name: "hooks", version: "1.0.0" })),
+  ]);
+
+  const { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+
+  expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["app", "tooling"]);
+});
+
 test("dependency on same name as workspace and dist-tag", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;

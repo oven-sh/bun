@@ -104,7 +104,6 @@ export var __toCommonJS = from => {
 var __moduleCache;
 
 // When you do know the module is CJS. A module whose evaluation threw is evaluated again on the next load.
-// No `catch`: a rethrow becomes the reported throw site. The handler is its own arrow so the cached call stays small.
 export var __commonJS = (cb, mod) => () => (
   mod ||
     (() => {

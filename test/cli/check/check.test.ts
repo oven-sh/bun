@@ -2035,6 +2035,39 @@ export const a: number[] = [file, one, two];
       );
     });
 
+    // `declarationMap` ends the declaration file with `//# sourceMappingURL=` and the name of its map, which tsc
+    // writes through `encodeURI`. A line break written as it is ends the comment, and the rest of the name is a
+    // declaration of the file. A Windows file name cannot contain one.
+    test.skipIf(isWindows)(
+      "a line break in a file name stays in the `sourceMappingURL` comment of the declaration file",
+      async () => {
+        const compilerOptions = JSON.parse(tsconfig).compilerOptions;
+        // `.d.ts.map` follows it: `typeof x.d.ts.map`.
+        const name = "x\ndeclare const injected: typeof x";
+        using dir = project({
+          "tsconfig.json": JSON.stringify({ compilerOptions, files: ["b.ts"], references: [{ path: "./a" }] }),
+          "a/tsconfig.json": JSON.stringify({
+            compilerOptions: {
+              ...compilerOptions,
+              noEmit: false,
+              composite: true,
+              declarationMap: true,
+              outDir: "dist",
+              rootDir: "src",
+            },
+            include: ["src"],
+          }),
+          [`a/src/${name}.ts`]: `export const x = 1;\n`,
+          // Every export of the declaration file.
+          "b.ts": `import * as a from ${JSON.stringify(`./a/src/${name}`)};\nexport const names: never = null! as keyof typeof a;\n`,
+        });
+        const { stdout } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(
+          `"b.ts(2,14): error TS2322: Type '"x"' is not assignable to type 'never'."`,
+        );
+      },
+    );
+
     test("a project sees the declaration files of the projects before it, whether it references them or not", async () => {
       const compilerOptions = {
         ...options,

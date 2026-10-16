@@ -286,3 +286,43 @@ test.skipIf(isDebug || isASAN)(
     expect(exitCode).toBe(0);
   },
 );
+
+// The runtime transpiler moves a single-use `let`/`const` into the statement
+// after it.
+describe.concurrent("a single-use declaration moved into the next statement", () => {
+  const shortCircuit = /* js */ `
+    let calls = 0;
+    const fn = () => ++calls;
+    function andInArray() { let x = fn(); let k = 0; return [k && x]; }
+    function orInArray() { let x = fn(); let k = 1; return [k || x]; }
+    function nullishInArray() { let x = fn(); let k = 1; return [k ?? x]; }
+    function and() { let x = fn(); let k = 0; return k && x; }
+    function or() { let x = fn(); let k = 1; return k || x; }
+    function nullish() { let x = fn(); let k = 1; return k ?? x; }
+    const values = [andInArray(), orInArray(), nullishInArray(), and(), or(), nullish()];
+    console.log(JSON.stringify({ values, calls }));
+  `;
+  async function run(source: string, how: "mjs" | "cjs" | "-e", flags: string[] = []) {
+    using dir = tempDir("transpiler-single-use", how === "-e" ? {} : { [`fixture.${how}`]: source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, ...(how === "-e" ? ["-e", source] : [`fixture.${how}`])],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim() && JSON.parse(stdout), stderr, exitCode };
+  }
+
+  test.each(["mjs", "cjs", "-e"] as const)(
+    "a call still runs when a literal moves in front of && || ?? (%s)",
+    async how => {
+      expect(await run(shortCircuit, how)).toEqual({
+        stdout: { values: [[0], [1], [1], 0, 1, 1], calls: 6 },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+});

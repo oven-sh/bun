@@ -2954,6 +2954,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return Substitution::Failure(expr);
                     }
 
+                    // The right side does not always run. esbuild has no such check.
+                    if !replacement_can_be_removed
+                        && matches!(
+                            e.op,
+                            js_ast::op::Code::BinLogicalAnd
+                                | js_ast::op::Code::BinLogicalOr
+                                | js_ast::op::Code::BinNullishCoalescing
+                        )
+                    {
+                        return Substitution::Failure(expr);
+                    }
+
                     // If we get here then it should be safe to attempt to substitute the
                     // replacement past the left operand into the right operand.
                     if let Some(done) = self.substitute_single_use_symbol_in_child(

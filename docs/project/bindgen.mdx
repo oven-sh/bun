@@ -122,6 +122,8 @@ function calls it with `heap.global()`, which is `unsafe`: nothing the global ob
 to may run JavaScript, and the compiler cannot see that. Read what is called all the way down
 before writing the `SAFETY` comment. `ToString` of an object, a property that is looked up or
 set and not defined, and a call to a constructor found on the global object all run JavaScript.
+Throwing tells the debugger, which can run code, so after a throw the body returns without
+reading what it borrowed.
 
 ```rust
 // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are strings, and its properties are
@@ -219,7 +221,7 @@ As results, `b.string.utf8` is anything that is `AsRef<[u8]>` and `b.array(T)` a
 is `IntoIterator`. The body of a `b.fn` or of a namespace's function whose bytes do not outlive
 it returns the string itself, from `heap.create_utf8_string(bytes)`. `b.u64.asBigInt` is a
 result only: a `u64` that is always returned as a BigInt. `b.bufferSource` as a result is what
-`heap.create_uninitialized_uint8_array(length)`, `heap.create_uint8_array_from_vec(vec)` or
+`heap.create_uninitialized_uint8_array(length)`, `heap.create_uint8_array_from_box(bytes)` or
 `heap.create_buffer_from_box(bytes)` made. The last two take over the allocation.
 
 ### Numbers
@@ -354,7 +356,7 @@ Many functions take "a string or a buffer" and want its bytes. `b.stringOrBuffer
 or a `String` object, as UTF-8, or the bytes of a typed array, `DataView`, `ArrayBuffer` or
 `SharedArrayBuffer`. The body gets `&'a [u8]`, and nothing changes the bytes during the call.
 
-- `.orBlob`: the bytes of a `Blob` too. One that is a file throws.
+- `.orBlob`: the bytes of a `Blob` too. One whose bytes are not in memory, a file here or in S3, throws.
 - `.loose`: anything else is `ToString`. Without it, anything else throws.
 
 ```ts

@@ -229,10 +229,6 @@ pub(crate) fn bytes_of(data: &[u8]) -> Vec<u8> {
     data.to_vec()
 }
 
-pub(crate) use bytes_of as bytes_of_loose;
-pub(crate) use bytes_of as bytes_of_loose_or_blob;
-pub(crate) use bytes_of as bytes_of_or_blob;
-
 pub(crate) fn bytes_of_then(data: &[u8], _: f64) -> Vec<u8> {
     data.to_vec()
 }
@@ -241,7 +237,7 @@ pub(crate) fn bytes_of_are_same_memory(data: &[u8], again: &[u8]) -> bool {
     core::ptr::eq(data, again)
 }
 
-pub(crate) fn as_big_int(_: &JsHeap<'_>, value: u64) -> u64 {
+pub(crate) fn as_big_int(value: u64) -> u64 {
     value
 }
 

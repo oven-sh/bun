@@ -1843,32 +1843,6 @@ extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
     let _ = vm.uncaught_exception(global_object, err, false);
 }
 
-/// Shared argument prefix for `Bun.{gzip,gunzip,deflate,inflate}Sync` and
-/// `Bun.zstd{Compress,Decompress}`: returns `(arguments[0] ?? undefined, arguments[1] if object)`. Throws if
-/// `arguments[1]` is present but neither an object nor `undefined`.
-#[inline]
-pub(crate) fn parse_compress_args(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<(JSValue, Option<JSValue>)> {
-    let arguments = callframe.arguments();
-    let buffer_value: JSValue = if arguments.len() > 0 {
-        arguments[0]
-    } else {
-        JSValue::UNDEFINED
-    };
-    let options_val: Option<JSValue> = if arguments.len() > 1 && arguments[1].is_object() {
-        Some(arguments[1])
-    } else if arguments.len() > 1 && !arguments[1].is_undefined() {
-        return Err(
-            global.throw_invalid_arguments(format_args!("Expected options to be an object"))
-        );
-    } else {
-        None
-    };
-    Ok((buffer_value, options_val))
-}
-
 fn invalid_arguments<'a>(heap: &JsHeap<'a>, args: core::fmt::Arguments<'_>) -> bindgen::Error<'a> {
     heap.error_with_code(jsc::ErrorCode::INVALID_ARG_TYPE, args)
 }
@@ -1878,7 +1852,7 @@ pub(crate) mod JSZlib {
     use super::*;
     use bun_libdeflate_sys::libdeflate as bun_libdeflate;
 
-    type Bytes<'a> = bindgen::Result<'a, JsLocal<'a, BufferSource>>;
+    type Output<'a> = bindgen::Result<'a, JsLocal<'a, BufferSource>>;
 
     /// Local shim: libdeflate's `Status` has no `Into<&str>` upstream.
     #[inline]
@@ -1936,7 +1910,7 @@ pub(crate) mod JSZlib {
         heap: &JsHeap<'a>,
         data: &[u8],
         options: ZlibCompressionOptions<'a>,
-    ) -> Bytes<'a> {
+    ) -> Output<'a> {
         gzip_or_deflate_sync(heap, data, options, true)
     }
 
@@ -1945,7 +1919,7 @@ pub(crate) mod JSZlib {
         heap: &JsHeap<'a>,
         data: &[u8],
         options: ZlibDecompressionOptions<'a>,
-    ) -> Bytes<'a> {
+    ) -> Output<'a> {
         gunzip_or_inflate_sync(heap, data, &options, false)
     }
 
@@ -1953,7 +1927,7 @@ pub(crate) mod JSZlib {
         heap: &JsHeap<'a>,
         data: &[u8],
         options: ZlibCompressionOptions<'a>,
-    ) -> Bytes<'a> {
+    ) -> Output<'a> {
         gzip_or_deflate_sync(heap, data, options, false)
     }
 
@@ -1962,7 +1936,7 @@ pub(crate) mod JSZlib {
         heap: &JsHeap<'a>,
         data: &[u8],
         options: ZlibDecompressionOptions<'a>,
-    ) -> Bytes<'a> {
+    ) -> Output<'a> {
         gunzip_or_inflate_sync(heap, data, &options, true)
     }
 
@@ -1971,7 +1945,7 @@ pub(crate) mod JSZlib {
         compressed: &[u8],
         options: &ZlibDecompressionOptions<'a>,
         is_gzip: bool,
-    ) -> Bytes<'a> {
+    ) -> Output<'a> {
         let library = Library::from_option(heap, options.library)?;
 
         let mut list: Vec<u8> = Vec::new();
@@ -2002,7 +1976,6 @@ pub(crate) mod JSZlib {
 
         match library {
             Library::Zlib => {
-                let defaults = zlib::Options::default();
                 let mut reader = zlib::ZlibReaderArrayList::init_with_options(
                     compressed,
                     &mut list,
@@ -2010,8 +1983,7 @@ pub(crate) mod JSZlib {
                         window_bits: options
                             .window_bits
                             .map_or(if is_gzip { 31 } else { -15 }, |bits| bits as i32),
-                        level: options.level.map_or(defaults.level, |level| level as i32),
-                        ..defaults
+                        ..Default::default()
                     },
                 )
                 .map_err(|err| init_error(heap, err))?;
@@ -2020,8 +1992,7 @@ pub(crate) mod JSZlib {
                     return Err(read_error(heap, err, reader.error_message()));
                 }
                 drop(reader);
-                list.shrink_to_fit();
-                heap.create_uint8_array_from_vec(list)
+                heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
             Library::Libdeflate => {
                 let Some(mut decompressor) = bun_libdeflate::OwnedDecompressor::new() else {
@@ -2051,7 +2022,7 @@ pub(crate) mod JSZlib {
                         )));
                     }
                 }
-                heap.create_uint8_array_from_vec(list)
+                heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
         }
     }
@@ -2061,7 +2032,7 @@ pub(crate) mod JSZlib {
         data: &[u8],
         options: ZlibCompressionOptions<'a>,
         is_gzip: bool,
-    ) -> Bytes<'a> {
+    ) -> Output<'a> {
         let level = options.level.map_or(6, |level| level as i32);
 
         match Library::from_option(heap, options.library)? {
@@ -2085,8 +2056,7 @@ pub(crate) mod JSZlib {
                     return Err(read_error(heap, err, reader.error_message()));
                 }
                 drop(reader);
-                list.shrink_to_fit();
-                heap.create_uint8_array_from_vec(list)
+                heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
             Library::Libdeflate => {
                 if !(bun_libdeflate::MIN_COMPRESSION_LEVEL..=bun_libdeflate::MAX_COMPRESSION_LEVEL)
@@ -2120,7 +2090,7 @@ pub(crate) mod JSZlib {
                         libdeflate_status_str(result.status),
                     )));
                 }
-                heap.create_uint8_array_from_vec(list)
+                heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
         }
     }
@@ -2154,6 +2124,31 @@ pub(crate) mod JSZstd {
         }
 
         Ok(DEFAULT_LEVEL)
+    }
+
+    /// `(arguments[0] ?? undefined, arguments[1] if object)`. Throws if `arguments[1]` is present but neither an object
+    /// nor `undefined`.
+    #[inline]
+    fn parse_compress_args(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<(JSValue, Option<JSValue>)> {
+        let arguments = callframe.arguments();
+        let buffer_value: JSValue = if arguments.len() > 0 {
+            arguments[0]
+        } else {
+            JSValue::UNDEFINED
+        };
+        let options_val: Option<JSValue> = if arguments.len() > 1 && arguments[1].is_object() {
+            Some(arguments[1])
+        } else if arguments.len() > 1 && !arguments[1].is_undefined() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Expected options to be an object"))
+            );
+        } else {
+            None
+        };
+        Ok((buffer_value, options_val))
     }
 
     #[inline]

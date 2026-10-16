@@ -28,14 +28,12 @@ export const password = b.namespace({
     returns: b.any,
     capability: "js",
     throws: true,
-    length: 2,
   },
   hashSync: {
     args: { password: b.stringOrBuffer, algorithm: PasswordHashAlgorithm },
     returns: b.string.utf8,
     capability: "heap",
     throws: true,
-    length: 2,
   },
   verify: {
     args: { password: copied, hash: copied, algorithm: b.string.utf8.nullable },

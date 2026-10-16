@@ -37,6 +37,7 @@ pub struct JsScope<'a> {
 }
 
 impl<'a> JsHeap<'a> {
+    /// For this module, which passes it to nothing that runs JavaScript except on behalf of a [`JsScope`].
     #[inline(always)]
     fn global_object(&self) -> &JSGlobalObject {
         // SAFETY: a `JsHeap` only exists at the address of a live global (see `JsScope::with`).
@@ -46,7 +47,8 @@ impl<'a> JsHeap<'a> {
     /// For what takes the global object only to allocate or to throw.
     ///
     /// # Safety
-    /// Nothing it is passed to runs JavaScript.
+    /// Nothing it is passed to runs JavaScript. Throwing tells the debugger, which can, so after a throw the body
+    /// returns without reading what it borrowed.
     #[inline(always)]
     pub unsafe fn global(&self) -> &JSGlobalObject {
         self.global_object()
@@ -79,26 +81,12 @@ impl<'a> JsHeap<'a> {
     }
 
     /// A `Uint8Array` that takes over the allocation of `bytes`.
-    pub fn create_uint8_array_from_vec(
+    #[inline]
+    pub fn create_uint8_array_from_box(
         &self,
-        bytes: Vec<u8>,
+        bytes: Box<[u8]>,
     ) -> Result<'a, JsLocal<'a, BufferSource>> {
-        let is_allocated = bytes.capacity() != 0;
-        let bytes: &'static mut [u8] = bytes.leak();
-        let allocation = bytes.as_mut_ptr().cast::<c_void>();
-        // SAFETY: the allocation was just leaked, and `mi_free_ctx` frees it once, when the array is collected. A `Vec`
-        // that never allocated has a dangling pointer, which nothing reads or frees.
-        JsLocal::from_js_result(unsafe {
-            ArrayBuffer::from_bytes(bytes, crate::JSType::Uint8Array).to_js_with_context(
-                self.global_object(),
-                if is_allocated {
-                    allocation
-                } else {
-                    core::ptr::null_mut()
-                },
-                is_allocated.then_some(bun_alloc::c_thunks::mi_free_ctx),
-            )
-        })
+        JsLocal::from_js_result(crate::JSUint8Array::from_bytes(self.global_object(), bytes))
     }
 
     /// A `Buffer` that takes over the allocation of `bytes`.

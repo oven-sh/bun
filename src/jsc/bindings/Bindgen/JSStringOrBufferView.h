@@ -22,7 +22,11 @@ public:
     }
 
     // The argument is a BufferSource or a Blob, for `read`.
-    void initializeAsBuffer() { m_isBuffer = true; }
+    void initializeAsBuffer()
+    {
+        ASSERT(!m_isBuffer);
+        m_isBuffer = true;
+    }
 
     // Converting a later argument can run JavaScript, so this comes after all of them. Copying can throw.
     ALWAYS_INLINE void read(JSC::JSGlobalObject& globalObject, JSC::JSValue argument)
@@ -45,7 +49,7 @@ private:
     bool m_isBuffer { false };
 };
 
-// False for anything else. Throws for a Blob whose bytes are in a file.
+// False for anything else. Throws for a Blob whose bytes are not in memory: a file.
 bool isInMemoryBlob(JSC::JSGlobalObject&, JSC::JSValue);
 
 }

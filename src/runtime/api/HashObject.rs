@@ -1,6 +1,6 @@
 use bun_jsc::bindgen::JsLocal;
 
-/// `seed` is always passed as u64 from JS; each hasher truncates it to its native seed width.
+/// Each hasher truncates it to its native seed width.
 fn seed_of(seed: JsLocal<'_>) -> u64 {
     let seed = seed.to_js();
     if seed.is_number() || seed.is_big_int() {

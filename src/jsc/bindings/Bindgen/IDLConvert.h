@@ -127,18 +127,15 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictUTF8String> : Bun::B
 template<> struct WebCore::Converter<Bun::Bindgen::IDLLooseUTF8String> : Bun::Bindgen::Detail::UTF8StringConverter<Bun::Bindgen::IDLLooseUTF8String> {};
 
 namespace Bun::Bindgen::Detail {
-template<typename IDL, bool isLoose, AllowBlob allowBlob>
+template<typename IDL, AllowBlob allowBlob>
 struct StringOrBufferConverter : DefaultContextConverter<IDL> {
     template<IDLConversionContext Ctx>
     ALWAYS_INLINE static void convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, JSStringOrBufferView& result)
     {
         if (value.isString())
             return result.initialize(globalObject, JSC::asString(value));
-        if (value.isCell()) {
-            JSC::JSType type = value.asCell()->type();
-            if (JSC::isTypedArrayTypeIncludingDataView(type) || type == JSC::ArrayBufferType)
-                return result.initializeAsBuffer();
-        }
+        if (value.inherits<JSC::JSArrayBufferView>() || value.inherits<JSC::JSArrayBuffer>())
+            return result.initializeAsBuffer();
         convertIntoSlow(globalObject, value, ctx, result);
     }
 
@@ -154,7 +151,7 @@ private:
             if (isBlob)
                 return result.initializeAsBuffer();
         }
-        if constexpr (!isLoose) {
+        if constexpr (std::same_as<IDL, IDLStrictStringOrBuffer<allowBlob>>) {
             if (!value.inherits<JSC::StringObject>()) {
                 if constexpr (allowBlob == AllowBlob::Yes)
                     ctx.throwTypeMustBe(globalObject, scope, "a string, ArrayBuffer, ArrayBufferView or Blob"_s);
@@ -172,10 +169,10 @@ private:
 
 template<Bun::Bindgen::AllowBlob allowBlob>
 struct WebCore::Converter<Bun::Bindgen::IDLStrictStringOrBuffer<allowBlob>>
-    : Bun::Bindgen::Detail::StringOrBufferConverter<Bun::Bindgen::IDLStrictStringOrBuffer<allowBlob>, false, allowBlob> {};
+    : Bun::Bindgen::Detail::StringOrBufferConverter<Bun::Bindgen::IDLStrictStringOrBuffer<allowBlob>, allowBlob> {};
 template<Bun::Bindgen::AllowBlob allowBlob>
 struct WebCore::Converter<Bun::Bindgen::IDLLooseStringOrBuffer<allowBlob>>
-    : Bun::Bindgen::Detail::StringOrBufferConverter<Bun::Bindgen::IDLLooseStringOrBuffer<allowBlob>, true, allowBlob> {};
+    : Bun::Bindgen::Detail::StringOrBufferConverter<Bun::Bindgen::IDLLooseStringOrBuffer<allowBlob>, allowBlob> {};
 
 template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictStringOrStringObject> : Bun::DefaultTryConverter<Bun::Bindgen::IDLStrictStringOrStringObject> {
     template<Bun::IDLConversionContext Ctx>

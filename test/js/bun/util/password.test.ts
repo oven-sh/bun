@@ -75,9 +75,9 @@ describe("hash", () => {
         // @ts-expect-error
         expect(() => hash()).toThrow();
         // @ts-expect-error
-        expect(() => hash(undefined)).toThrow();
+        expect(() => hash(undefined)).toThrow(/password (must|to) be a string/);
         // @ts-expect-error
-        expect(() => hash(undefined, "bcrypt")).toThrow();
+        expect(() => hash(undefined, "bcrypt")).toThrow(/password (must|to) be a string/);
       });
 
       test("invalid algorithm throws", () => {

@@ -51,6 +51,13 @@ describe("input types", () => {
     expect(TOML.parse(sab)).toEqual(expected);
   });
 
+  test("a Blob whose bytes are not in memory is refused, and does not parse as nothing", () => {
+    const s3 = new Bun.S3Client({ accessKeyId: "id", secretAccessKey: "secret", bucket: "bucket" });
+    for (const file of [Bun.file(import.meta.path), s3.file("key")]) {
+      expect(() => TOML.parse(file)).toThrow("File blob cannot be used here");
+    }
+  });
+
   test("Blob parses synchronously", () => {
     expect(TOML.parse(new Blob([doc]))).toEqual(expected);
   });

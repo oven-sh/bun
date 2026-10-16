@@ -86,10 +86,12 @@ export const sumBeforeAndAfterCallback = b.fn({
   throws: true,
 });
 
-export const bytesOf = b.fn({ args: { data: b.stringOrBuffer }, returns: b.array(b.u8) });
-export const bytesOfOrBlob = b.fn({ args: { data: b.stringOrBuffer.orBlob }, returns: b.array(b.u8) });
-export const bytesOfLoose = b.fn({ args: { data: b.stringOrBuffer.loose }, returns: b.array(b.u8) });
-export const bytesOfLooseOrBlob = b.fn({ args: { data: b.stringOrBuffer.orBlob.loose }, returns: b.array(b.u8) });
+const bytesOfA = (data: typeof b.stringOrBuffer) =>
+  b.fn({ args: { data }, returns: b.array(b.u8), rustPath: "crate::bindgen_test::bytes_of" });
+export const bytesOf = bytesOfA(b.stringOrBuffer);
+export const bytesOfOrBlob = bytesOfA(b.stringOrBuffer.orBlob);
+export const bytesOfLoose = bytesOfA(b.stringOrBuffer.loose);
+export const bytesOfLooseOrBlob = bytesOfA(b.stringOrBuffer.orBlob.loose);
 /** `after` is converted after `data`, and can run JavaScript. */
 export const bytesOfThen = b.fn({
   args: { data: b.stringOrBuffer.orBlob, after: b.f64.loose },
@@ -100,7 +102,7 @@ export const bytesOfAreSameMemory = b.fn({
   args: { data: b.stringOrBuffer.orBlob, again: b.stringOrBuffer.orBlob },
   returns: b.bool,
 });
-export const asBigInt = b.fn({ args: { value: b.u64.allowBigInt }, returns: b.u64.asBigInt, capability: "heap" });
+export const asBigInt = b.fn({ args: { value: b.u64.allowBigInt }, returns: b.u64.asBigInt });
 
 /** The original value if the converted text is not empty. */
 export const withValueEcho = b.fn({

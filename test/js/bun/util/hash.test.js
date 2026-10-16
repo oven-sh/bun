@@ -285,8 +285,10 @@ describe("what Bun.hash and its algorithms take", () => {
   });
 
   it("a Blob that is a file is refused, and does not hash as nothing", () => {
+    const s3 = new Bun.S3Client({ accessKeyId: "id", secretAccessKey: "secret", bucket: "bucket" });
     for (const hash of functions) {
       expect(() => hash(Bun.file(import.meta.path))).toThrow("File blob cannot be used here");
+      expect(() => hash(s3.file("key"))).toThrow("File blob cannot be used here");
     }
   });
 

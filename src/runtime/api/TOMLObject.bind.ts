@@ -4,7 +4,7 @@ export default b.module({ rustPath: "crate::api::toml_object" });
 
 export const TOML = b.namespace({
   parse: {
-    /** `undefined` and `null` are refused, not converted. */
+    /** The body refuses `undefined` and `null`. */
     args: { input: b.stringOrBuffer.orBlob.loose.withValue },
     returns: b.any,
     capability: "heap",

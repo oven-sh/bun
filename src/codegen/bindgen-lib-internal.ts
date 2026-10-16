@@ -240,10 +240,9 @@ export abstract class Type {
   cppConvert(value: string, ctx: string, name: string): string {
     return `Bun::convertIDL<${this.idlType}>(*globalObject, ${value}, ${ctx})`;
   }
-  /** C++ lines that read into `target`, which was converted from `value`, what `borrowsHeap` is about, after every argument is converted. */
-  cppReadLast(target: string, value: string, ctx: string, name: string, isLast: boolean): string[] {
-    // Nothing ran since it was converted.
-    if (!this.borrowsHeap || isLast) return [];
+  /** C++ lines for once every argument is converted. They read again into `target`, converted from `value`, what converting a later argument could have changed. */
+  cppReadLast(target: string, value: string, ctx: string, name: string, isLastArgument: boolean): string[] {
+    if (!this.borrowsHeap || isLastArgument) return [];
     return [`${target} = ${this.cppConvert(value, ctx, name)};`, `scope.assertNoException();`];
   }
   /** Large, or holds something large: built where it ends up, not returned and moved there. */
@@ -674,7 +673,7 @@ export class Utf8Type extends Type {
   }
 }
 
-const bufferSourceKinds: readonly ValueKind[] = ["arrayBuffer", "arrayBufferView"];
+const bufferSourceKinds: ValueKinds = ["arrayBuffer", "arrayBufferView"];
 const sharedBuffers = "shared buffers";
 
 /** The bytes of a typed array, `DataView` or `ArrayBuffer`, as `&[u8]`. */
@@ -726,30 +725,25 @@ export class PossiblySharedBytesType extends BytesType {
  */
 export class StringOrBufferType extends Type {
   readonly isLoose: boolean;
-  readonly takesBlob: boolean;
-  constructor(isLoose = false, takesBlob = false) {
+  readonly allowBlob: boolean;
+  constructor(isLoose = false, allowBlob = false) {
     super();
     this.isLoose = isLoose;
-    this.takesBlob = takesBlob;
+    this.allowBlob = allowBlob;
   }
   /** `ToString` of anything else. */
   get loose(): StringOrBufferType {
-    return new StringOrBufferType(true, this.takesBlob);
+    return new StringOrBufferType(true, this.allowBlob);
   }
-  /** Also the bytes of a `Blob`. One whose bytes are in a file throws. */
+  /** Also the bytes of a `Blob`. One whose bytes are not in memory, a file, throws. */
   get orBlob(): StringOrBufferType {
     return new StringOrBufferType(this.isLoose, true);
   }
   get idlType(): string {
-    return `Bun::Bindgen::IDL${this.isLoose ? "Loose" : "Strict"}StringOrBuffer<Bun::Bindgen::AllowBlob::${this.takesBlob ? "Yes" : "No"}>`;
+    return `Bun::Bindgen::IDL${this.isLoose ? "Loose" : "Strict"}StringOrBuffer<Bun::Bindgen::AllowBlob::${this.allowBlob ? "Yes" : "No"}>`;
   }
   get tsType(): string {
-    return `string | ArrayBuffer | SharedArrayBuffer | ArrayBufferView${this.takesBlob ? " | Blob" : ""}`;
-  }
-  get valueKinds(): ValueKinds {
-    if (this.isLoose) return "any";
-    const kinds: ValueKind[] = ["string", "stringObject", ...bufferSourceKinds];
-    return this.takesBlob ? [...kinds, { cpp: "WebCore::JSBlob" }] : kinds;
+    return `string | ArrayBuffer | SharedArrayBuffer | ArrayBufferView${this.allowBlob ? " | Blob" : ""}`;
   }
   get borrowsFrame(): boolean {
     return true;
@@ -867,8 +861,8 @@ export class WithValueType extends Type {
   cppConvert(value: string, ctx: string, name: string): string {
     return this.inner.cppConvert(value, ctx, name);
   }
-  cppReadLast(...args: Parameters<Type["cppReadLast"]>): string[] {
-    return this.inner.cppReadLast(...args);
+  cppReadLast(target: string, value: string, ctx: string, name: string, isLastArgument: boolean): string[] {
+    return this.inner.cppReadLast(target, value, ctx, name, isLastArgument);
   }
   layout(): Layout {
     return structLayout([this.inner.layout(), { size: 8, align: 8 }]);
@@ -1598,12 +1592,12 @@ export class Signature {
       `length: ${this.length} is not a count`,
     );
     for (const { name, type } of this.args) {
-      assert(!(type instanceof BigIntResultType), `${name}: .asBigInt is a result; an argument is b.u64.allowBigInt`);
+      assert(!isMadeOf(type, BigIntResultType), `${name}: .asBigInt is a result; an argument is b.u64.allowBigInt`);
       assert(
         !type.borrowsHeap || this.capability !== "js",
-        type instanceof PossiblySharedBytesType
+        isMadeOf(type, PossiblySharedBytesType)
           ? `${name}: JavaScript can detach a buffer; .allowShared is for a function that cannot run it`
-          : type.dependencies.concat(type).some(type => type instanceof StringOrBufferType)
+          : isMadeOf(type, StringOrBufferType)
             ? `${name}: JavaScript can detach a buffer; b.stringOrBuffer is for a function that cannot run it`
             : `${name}: JavaScript can detach a buffer; take b.bufferSource without .bytes and use with_bytes`,
       );
@@ -1618,6 +1612,11 @@ export class Signature {
   get requiredCount(): number {
     return this.args.findLastIndex(arg => !arg.type.isOptional) + 1;
   }
+}
+
+/** `type` is a `kind`, or something it is made of is. */
+function isMadeOf(type: Type, kind: new (...args: never[]) => Type): boolean {
+  return type.dependencies.some(dependency => isMadeOf(dependency, kind)) || type instanceof kind;
 }
 
 /** Call a signature, or look at the kind of one more argument. */
@@ -1902,7 +1901,7 @@ export interface NamespaceOptions {
   call?: string;
 }
 
-/** A plain object whose properties are native functions, as WebIDL's `namespace`. */
+/** A plain object whose properties are native functions, as WebIDL's `namespace`. With `call`, a function that has them. */
 export class NamespaceDefinition {
   readonly functions: readonly FunctionDefinition[];
   readonly call: FunctionDefinition | undefined;

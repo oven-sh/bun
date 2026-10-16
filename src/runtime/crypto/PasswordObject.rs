@@ -79,9 +79,7 @@ impl AlgorithmValue {
                 "string",
             ));
         };
-        let invalid = |message: &str| {
-            heap.error_with_code(ErrorCode::INVALID_ARG_TYPE, format_args!("{message}"))
-        };
+        let invalid = |message| invalid_arguments(heap, message);
 
         let algorithm = Algorithm::from_label(heap, "hash", label)?;
         if let Algorithm::Bcrypt = algorithm {
@@ -126,6 +124,10 @@ impl AlgorithmValue {
             Algorithm::Bcrypt => unreachable!(),
         })
     }
+}
+
+fn invalid_arguments<'a>(heap: &JsHeap<'a>, message: &str) -> bindgen::Error<'a> {
+    heap.error_with_code(ErrorCode::INVALID_ARG_TYPE, format_args!("{message}"))
 }
 
 fn invalid_argument_type<'a>(
@@ -192,12 +194,6 @@ impl Argon2Params {
             m: self.memory_cost,
             p: 1,
         }
-    }
-}
-
-impl Default for Argon2Params {
-    fn default() -> Self {
-        Self::DEFAULT
     }
 }
 
@@ -354,10 +350,8 @@ impl PasswordObject {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// JSPasswordObject
+// Bun.password
 // ───────────────────────────────────────────────────────────────────────────
-
-pub(crate) struct JSPasswordObject;
 
 struct PascalToUpperUnderscoreCaseFormatter<'a> {
     input: &'a [u8],
@@ -532,27 +526,23 @@ impl<Op: PasswordOp> bun_jsc::JobContext for PasswordJob<Op> {
 
 // ─── hash / verify entry points ───────────────────────────────────────────
 
-impl JSPasswordObject {
-    /// Boxes a `PasswordJob<Op>`, refs the loop, and schedules it.
-    fn run<Op: PasswordOp>(cx: &bun_jsc::JsThread<'_>, password: Box<[u8]>, op: Op) -> JSValue {
-        debug_assert!(!password.is_empty()); // caller must check
+/// Boxes a `PasswordJob<Op>`, refs the loop, and schedules it.
+fn schedule<Op: PasswordOp>(cx: &bun_jsc::JsThread<'_>, password: Box<[u8]>, op: Op) -> JSValue {
+    debug_assert!(!password.is_empty()); // caller must check
 
-        let promise = JSPromiseStrong::init(cx.global());
-        let promise_value = promise.value();
-        bun_jsc::Job::<PasswordJob<Op>>::schedule(
-            cx,
-            PasswordJob {
-                op,
-                password,
-                value: None,
-            },
-            promise,
-        );
-        promise_value
-    }
+    let promise = JSPromiseStrong::init(cx.global());
+    let promise_value = promise.value();
+    bun_jsc::Job::<PasswordJob<Op>>::schedule(
+        cx,
+        PasswordJob {
+            op,
+            password,
+            value: None,
+        },
+        promise,
+    );
+    promise_value
 }
-
-// ─── Bun.password ─────────────────────────────────────────────────────────
 
 const EMPTY_PASSWORD: &str = "password must not be empty";
 
@@ -587,13 +577,10 @@ pub(crate) fn hash<'a>(
 
     let password = copy_of(cx, "hash", "password", password)?;
     if password.is_empty() {
-        return Err(cx.heap.error_with_code(
-            ErrorCode::INVALID_ARG_TYPE,
-            format_args!("{EMPTY_PASSWORD}"),
-        ));
+        return Err(invalid_arguments(&cx.heap, EMPTY_PASSWORD));
     }
 
-    Ok(JSPasswordObject::run(
+    Ok(schedule(
         &cx.js_thread(),
         password.into_boxed_slice(),
         HashOp { algorithm },
@@ -607,10 +594,7 @@ pub(crate) fn hash_sync<'a>(
 ) -> bindgen::Result<'a, Box<[u8]>> {
     let algorithm = AlgorithmValue::from_argument(heap, algorithm)?;
     if password.is_empty() {
-        return Err(heap.error_with_code(
-            ErrorCode::INVALID_ARG_TYPE,
-            format_args!("{EMPTY_PASSWORD}"),
-        ));
+        return Err(invalid_arguments(heap, EMPTY_PASSWORD));
     }
     PasswordObject::hash(password, algorithm)
         .map_err(|err| password_error(heap, &err, HashOp::ERR_VERB))
@@ -642,7 +626,7 @@ pub(crate) fn verify<'a>(
         ));
     }
 
-    Ok(JSPasswordObject::run(
+    Ok(schedule(
         &cx.js_thread(),
         password.into_boxed_slice(),
         VerifyOp {

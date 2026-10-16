@@ -1,4 +1,4 @@
-//! `Bun.JSONC` — `parse()` host function.
+//! `Bun.JSONC` — `parse()`.
 
 use bun_js_parser_jsc::ExprJsc;
 use bun_jsc::bindgen::{JsScope, WithValue};

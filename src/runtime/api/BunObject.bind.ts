@@ -37,7 +37,7 @@ export const ZlibCompressionOptions = b.dictionary(
   { allowArray: true },
 );
 
-/** `memLevel` and `strategy` are converted and not used. */
+/** `level`, `memLevel` and `strategy` are converted and not used. */
 export const ZlibDecompressionOptions = b.dictionary(
   {
     windowBits: b.f64.loose.allowBigInt.optional,

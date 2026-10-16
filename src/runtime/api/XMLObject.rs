@@ -1,4 +1,4 @@
-//! `Bun.XML` — `parse()` and `stringify()` host functions.
+//! `Bun.XML` — `parse()` and `stringify()`.
 //!
 //! `parse` builds one of two shapes from `bun_parsers::xml` (see bun.d.ts
 //! for the user-facing description): the compact object (default) —
@@ -55,7 +55,7 @@ pub(crate) fn parse<'a>(
         BlobOrStringOrBuffer::from_js(global, input)?
     };
     let text;
-    let mut is_utf16 = false;
+    let mut utf16 = None;
     let (bytes, encoding): (&[u8], _) = match &blob_or_buffer {
         Some(bytes) => (bytes.slice(), xml::InputEncoding::Bytes),
         None => {
@@ -63,8 +63,9 @@ pub(crate) fn parse<'a>(
             if text.is_8bit() {
                 (text.latin1(), xml::InputEncoding::Latin1)
             } else {
-                is_utf16 = true;
-                (bytemuck::cast_slice(text.utf16()), xml::InputEncoding::Text)
+                let units = text.utf16();
+                utf16 = Some(units);
+                (bytemuck::cast_slice(units), xml::InputEncoding::Text)
             }
         }
     };
@@ -72,11 +73,9 @@ pub(crate) fn parse<'a>(
     super::with_text_format_source(global, bytes, b"input.xml", |arena, log, source| {
         bun_core::analytics::Features::xml_parse_inc();
         let options = xml::Options { compact, encoding };
-        let mut result = if is_utf16 {
-            let units: &[u16] = bytemuck::cast_slice(&source.contents);
-            XML::parse_utf16(source, units, log, arena, options)
-        } else {
-            XML::parse(source, log, arena, options)
+        let mut result = match utf16 {
+            Some(units) => XML::parse_utf16(source, units, log, arena, options),
+            None => XML::parse(source, log, arena, options),
         };
         let utf8;
         let utf8_source;

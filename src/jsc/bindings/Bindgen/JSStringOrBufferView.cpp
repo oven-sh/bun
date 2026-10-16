@@ -5,7 +5,7 @@
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
 
-// False for a Blob whose bytes are in a file.
+// False for a Blob whose bytes are not in memory.
 extern "C" bool Blob__getInMemoryBytes(void* blob, const uint8_t** data, size_t* length);
 
 namespace Bun::Bindgen {
@@ -49,6 +49,7 @@ void JSStringOrBufferView::readBuffer(JSGlobalObject& globalObject, JSValue argu
         }
         m_buffer = m_copy.span();
     }
+    // A Rust slice has no null data.
     if (!m_buffer.data())
         m_buffer = byteCast<uint8_t>(WTF::nonNullEmptyUTF8Span());
 }

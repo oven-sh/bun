@@ -106,12 +106,12 @@ enum class AllowBlob : bool {
 };
 
 // What IDLStrictUTF8String takes, as UTF-8, or the bytes of a BufferSource, shared or not.
-template<AllowBlob = AllowBlob::No>
+template<AllowBlob>
 struct IDLStrictStringOrBuffer : WebCore::IDLType<JSStringOrBufferView> {
     using SequenceStorageType = void;
 };
 // `ToString` of anything else.
-template<AllowBlob allowBlob = AllowBlob::No>
+template<AllowBlob allowBlob>
 struct IDLLooseStringOrBuffer : IDLStrictStringOrBuffer<allowBlob> {};
 
 // The bytes of a BufferSource that is not shared. Valid while the argument is alive and no JavaScript runs.

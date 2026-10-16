@@ -99,9 +99,11 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.bufferSource.bytes.allowShared.optional).toThrow(
     ".allowShared is for an argument that is always there",
   );
-  expect(() => b.fn({ args: { bytes: b.bufferSource.bytes.allowShared }, capability: "js" })).toThrow(
-    "bytes: JavaScript can detach a buffer; .allowShared is for a function that cannot run it",
-  );
+  for (const bytes of [b.bufferSource.bytes.allowShared, b.bufferSource.bytes.allowShared.withValue]) {
+    expect(() => b.fn({ args: { bytes }, capability: "js" })).toThrow(
+      "bytes: JavaScript can detach a buffer; .allowShared is for a function that cannot run it",
+    );
+  }
   for (const bytes of [b.bufferSource.bytes, b.stringOrBuffer, b.stringOrBuffer.orBlob.loose]) {
     const onlyAnArgument =
       "the bytes of a buffer are only for an argument: they are read after everything else is converted";
@@ -121,9 +123,15 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(b.stringOrBuffer.orBlob.loose.idlType).toBe(b.stringOrBuffer.loose.orBlob.idlType);
   expect(() => b.u32.asBigInt).toThrow(".asBigInt follows b.u64");
   expect(() => b.u64.allowBigInt.asBigInt).toThrow(".asBigInt follows b.u64");
-  expect(() => b.fn({ args: { value: b.u64.asBigInt } })).toThrow(
-    "value: .asBigInt is a result; an argument is b.u64.allowBigInt",
-  );
+  for (const value of [
+    b.u64.asBigInt,
+    b.u64.asBigInt.optional,
+    b.u64.asBigInt.withValue,
+    b.array(b.u64.asBigInt),
+    b.dictionary({ member: b.array(b.u64.asBigInt.nullable) }),
+  ]) {
+    expect(() => b.fn({ args: { value } })).toThrow("value: .asBigInt is a result; an argument is b.u64.allowBigInt");
+  }
   expect(() => b.namespace({ f: {} }, { call: "g" })).toThrow("call: g is not one of its functions");
   for (const element of [b.any, b.bufferSource, b.dictionary({ value: b.any }), b.class({ rustPath: "T" })]) {
     expect(() => b.array(element)).toThrow("an array is a Vec, where the GC does not see JS values");
@@ -1016,21 +1024,23 @@ describe("a string or a buffer, as bytes", () => {
     { toString: () => "x" },
   ];
 
+  const everyForm = [bindgen.bytesOf, bindgen.bytesOfOrBlob, bindgen.bytesOfLoose, bindgen.bytesOfLooseOrBlob];
+
   it("takes a string or a String object as UTF-8", () => {
     class Derived extends String {
       toString() {
         return "derived";
       }
     }
-    for (const f of [bindgen.bytesOf, bindgen.bytesOfOrBlob, bindgen.bytesOfLoose, bindgen.bytesOfLooseOrBlob]) {
+    for (const f of everyForm) {
       for (const text of [
         "",
         "abc",
         "h\xe9llo",
         "\u65e5\u672c",
         "\u{1f600}",
-        "a".repeat(300),
-        "\xe9".repeat(300),
+        Buffer.alloc(300, "a").toString(),
+        Buffer.alloc(300, 0xe9).toString("latin1"),
         "a\0b",
       ]) {
         expect(f(text)).toEqual(utf8(text));
@@ -1043,7 +1053,7 @@ describe("a string or a buffer, as bytes", () => {
   });
 
   it("takes the bytes that a buffer or a view shows, shared or not", () => {
-    for (const f of [bindgen.bytesOf, bindgen.bytesOfOrBlob, bindgen.bytesOfLoose, bindgen.bytesOfLooseOrBlob]) {
+    for (const f of everyForm) {
       for (const ArrayBufferClass of [ArrayBuffer, SharedArrayBuffer]) {
         for (const buffer of buffers(eight, ArrayBufferClass)) expect(f(buffer)).toEqual(eight);
         for (const buffer of buffers([], ArrayBufferClass)) expect(f(buffer)).toEqual([]);
@@ -1070,19 +1080,22 @@ describe("a string or a buffer, as bytes", () => {
   });
 
   it(".orBlob takes the bytes of a Blob, but not of one that is a file", () => {
+    const s3 = new Bun.S3Client({ accessKeyId: "id", secretAccessKey: "secret", bucket: "bucket" });
     for (const f of [bindgen.bytesOfOrBlob, bindgen.bytesOfLooseOrBlob]) {
       expect(f(new Blob([new Uint8Array(eight)]))).toEqual(eight);
       expect(f(new Blob(["ab", "c"]))).toEqual(utf8("abc"));
       expect(f(new Blob([new Uint8Array(eight)]).slice(2, 5))).toEqual(eight.slice(2, 5));
       expect(f(new Blob([]))).toEqual([]);
       expect(f(new File(["abc"], "name.txt"))).toEqual(utf8("abc"));
-      expect(() => f(Bun.file(import.meta.path))).toThrow(
-        expect.objectContaining({
-          name: "TypeError",
-          code: "ERR_INVALID_ARG_TYPE",
-          message: "File blob cannot be used here",
-        }),
-      );
+      for (const file of [Bun.file(import.meta.path), s3.file("key")]) {
+        expect(() => f(file)).toThrow(
+          expect.objectContaining({
+            name: "TypeError",
+            code: "ERR_INVALID_ARG_TYPE",
+            message: "File blob cannot be used here",
+          }),
+        );
+      }
     }
     expect(bindgen.bytesOfLoose(new Blob(["abc"]))).toEqual(utf8("[object Blob]"));
   });

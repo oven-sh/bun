@@ -87,7 +87,10 @@ export const fn = (signature: SignatureOptions) => new FunctionDefinition([signa
 /** One JS function, several signatures, told apart by the kinds of their arguments. */
 export const overloads = (...signatures: SignatureOptions[]) => new FunctionDefinition(signatures);
 
-/** `export const semver = b.namespace({ satisfies: { args, returns }, .. })`: an object that holds those functions. */
+/**
+ * `export const semver = b.namespace({ satisfies: { args, returns }, .. })`: an object that holds those functions.
+ * `b.namespace({ wyhash: { .. }, .. }, { call: "wyhash" })`: a function that holds them, and does what that one does.
+ */
 export const namespace = (functions: Record<string, SignatureOptions>, options?: NamespaceOptions) =>
   new NamespaceDefinition(functions, options);
 

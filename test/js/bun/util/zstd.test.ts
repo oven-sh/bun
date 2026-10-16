@@ -635,14 +635,25 @@ describe("sync compression argument handling", () => {
 
   it("a numeric option is converted to a number, and then treated as that number is", () => {
     const input = "hello hello hello";
-    for (const compress of [gzipSync, deflateSync, zstdCompressSync] as ((
-      data: string,
-      options: any,
-    ) => Uint8Array)[]) {
+    const beyond32Bits = [2 ** 32 + 1, "4294967297", { valueOf: () => 2 ** 32 + 1 }, "Infinity"];
+    for (const [compress, outOfRange] of [
+      [gzipSync, "Zlib error: Invalid argument"],
+      [deflateSync, "Zlib error: Invalid argument"],
+      [zstdCompressSync, "Compression level must be between 1 and 22"],
+    ] as [(data: string, options: any) => Uint8Array, string][]) {
       const expected = compress(input, { level: 1 });
       for (const level of ["1", 1n, [1], { valueOf: () => 1 }]) expect(compress(input, { level })).toEqual(expected);
-      for (const level of [2 ** 32 + 1, "4294967297", { valueOf: () => 2 ** 32 + 1 }, "Infinity"]) {
-        expect(() => compress(input, { level })).toThrow();
+      for (const level of beyond32Bits) expect(() => compress(input, { level })).toThrow(outOfRange);
+    }
+    for (const [decompress, compressed, bits] of [
+      [gunzipSync, gzipSync(input), 31],
+      [inflateSync, deflateSync(input), -15],
+    ] as [(data: Uint8Array, options: any) => Uint8Array, Uint8Array, number][]) {
+      for (const windowBits of [bits, String(bits), BigInt(bits), { valueOf: () => bits }]) {
+        expect(new TextDecoder().decode(decompress(compressed, { windowBits }))).toBe(input);
+      }
+      for (const windowBits of beyond32Bits) {
+        expect(() => decompress(compressed, { windowBits })).toThrow("Zlib error: Invalid argument");
       }
     }
   });

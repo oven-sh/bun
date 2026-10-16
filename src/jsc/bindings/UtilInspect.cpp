@@ -118,10 +118,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetOwnNonIndexProperties, (JSGlobalObject * g
     RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), keys)));
 }
 
-// Whether String(object) throws before it runs any code of the object: ToPrimitive finds no
-// Symbol.toPrimitive, toString or valueOf to call. The valueOf of Object.prototype returns the
-// object, so it counts as none. Where an accessor or a Proxy on the prototype chain decides,
-// the answer is false: String(object) then runs that code, as it did before.
+// Whether String(object) throws before it runs code of the object: it has no Symbol.toPrimitive, toString or valueOf to call.
 extern "C" bool Bun__hasNoStringConversion(JSC::EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -132,6 +129,7 @@ extern "C" bool Bun__hasNoStringConversion(JSC::EncodedJSValue encodedValue, JSC
     enum class Method : uint8_t {
         None,
         Callable,
+        // An accessor or a Proxy decides: String(object) runs it.
         Unknown,
     };
     JSValue function;
@@ -153,6 +151,7 @@ extern "C" bool Bun__hasNoStringConversion(JSC::EncodedJSValue encodedValue, JSC
     if (method(vm.propertyNames->toString) != Method::None || method(vm.propertyNames->toPrimitiveSymbol) != Method::None)
         return false;
     Method valueOf = method(vm.propertyNames->valueOf);
+    // Object.prototype.valueOf returns the object, which converts nothing.
     return valueOf == Method::None || (valueOf == Method::Callable && function.asCell() == holder->realm()->objectProtoValueOfFunction());
 }
 

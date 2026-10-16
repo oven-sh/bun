@@ -2419,8 +2419,7 @@ pub mod formatter {
                         const MIN_BEFORE_E_NOTATION: f64 = 0.000001;
                         match token {
                             PercentTag::S => {
-                                // `String(value)` of a string, number, boolean, null or
-                                // undefined runs no code and cannot throw.
+                                // ToString cannot throw for these.
                                 if !next_value.is_cell() || next_value.js_type().is_string() {
                                     self.print_as::<ENABLE_ANSI_COLORS>(
                                         Tag::String,
@@ -3211,8 +3210,7 @@ pub mod formatter {
             max_depth: u32,
             colors: bool,
         ) -> JSValue;
-        /// `UtilInspect.cpp`. Whether `String(object)` throws before it runs any code of
-        /// `object`, which is an object and not a Proxy.
+        /// Whether `String(object)` throws before it runs code of the object (`UtilInspect.cpp`).
         safe fn Bun__hasNoStringConversion(object: JSValue, global: &JSGlobalObject) -> bool;
     }
 
@@ -3535,12 +3533,7 @@ pub mod formatter {
             self.write_with_formatting::<C>(writer_, slice, self.global_this)
         }
 
-        /// `%s` of a Symbol, a BigInt or an object. The string printer converts with ToString,
-        /// which throws for a Symbol, so a Symbol prints here. `String(value)` throws for a
-        /// revoked Proxy and for an object that nothing converts: those print as the formatter
-        /// prints them, on one line and one level deep. Any other value goes to the string
-        /// printer. So does an object that nothing converts when its printer reads `length`
-        /// or `size` through the object (arguments, a Map, an iterator).
+        /// `%s` of a Symbol or an object: `String(value)`, or the inspected value when that throws.
         #[cold]
         #[inline(never)]
         fn print_string_substitution<const C: bool>(
@@ -3551,33 +3544,38 @@ pub mod formatter {
             use jsc::JSType as T;
             let global = self.global_this;
             let js_type = value.js_type();
+            // The string printer converts with ToString, which throws for a Symbol.
             if js_type == T::Symbol {
                 return self.print_as::<false>(Tag::Symbol, writer_, value, js_type);
             }
-            if js_type == T::ProxyObject {
-                let handler = value.get_proxy_internal_field(jsc::ProxyField::Handler);
-                if !handler.is_cell() {
-                    return self.print_as::<false>(Tag::RevokedProxy, writer_, value, js_type);
-                }
-            } else if matches!(
+            let is_revoked_proxy = js_type == T::ProxyObject
+                && !value
+                    .get_proxy_internal_field(jsc::ProxyField::Handler)
+                    .is_cell();
+            if is_revoked_proxy {
+                return self.print_as::<false>(Tag::RevokedProxy, writer_, value, js_type);
+            }
+            // Other kinds (arguments, a Map) print through `length` or `size` of the object.
+            let is_inspected = matches!(
                 js_type,
                 T::FinalObject | T::Object | T::Array | T::DerivedArray | T::ModuleNamespaceObject
-            ) && Bun__hasNoStringConversion(value, global)
-            {
-                let prev_quote_strings = self.quote_strings;
-                let prev_single_line = self.single_line;
-                let prev_max_depth = self.max_depth;
-                let prev_indent = self.indent;
-                let _restore_quote_strings = defer_restore!(self.quote_strings, prev_quote_strings);
-                let _restore_single_line = defer_restore!(self.single_line, prev_single_line);
-                let _restore_max_depth = defer_restore!(self.max_depth, prev_max_depth);
-                let _restore_indent = defer_restore!(self.indent, prev_indent);
-                self.quote_strings = true;
-                self.single_line = true;
-                self.max_depth = self.depth;
-                return self.format::<false>(Tag::get(value, global)?, writer_, value, global);
+            ) && Bun__hasNoStringConversion(value, global);
+            if !is_inspected {
+                return self.print_as::<C>(Tag::String, writer_, value, js_type);
             }
-            self.print_as::<C>(Tag::String, writer_, value, js_type)
+
+            let prev_quote_strings = self.quote_strings;
+            let prev_single_line = self.single_line;
+            let prev_max_depth = self.max_depth;
+            let prev_indent = self.indent;
+            let _restore_quote_strings = defer_restore!(self.quote_strings, prev_quote_strings);
+            let _restore_single_line = defer_restore!(self.single_line, prev_single_line);
+            let _restore_max_depth = defer_restore!(self.max_depth, prev_max_depth);
+            let _restore_indent = defer_restore!(self.indent, prev_indent);
+            self.quote_strings = true;
+            self.single_line = true;
+            self.max_depth = self.depth;
+            self.format::<false>(Tag::get(value, global)?, writer_, value, global)
         }
 
         #[inline(never)]

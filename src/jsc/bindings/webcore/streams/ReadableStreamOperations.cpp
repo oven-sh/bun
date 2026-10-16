@@ -1030,12 +1030,45 @@ JSPromise* textDecodeCancelAlgorithm(JSGlobalObject* globalObject, JSReadableStr
     return result;
 }
 
-void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue chunk)
+// Errors the text stream at once. A microtask cancels and releases the source, after the call that delivered the chunk returns.
+static void textDecodeFail(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSCell* sourceReader, JSValue error)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!readableStreamDefaultControllerCanCloseOrEnqueue(controller))
+    readableStreamDefaultControllerError(globalObject, controller, error);
+    RETURN_IF_EXCEPTION(scope, void());
+    auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(sourceReader);
+    if (!reader || !reader->m_stream)
         return;
+    // Nothing waits for the cancel, as in pipeThrough(): its outcome goes to a handled promise.
+    auto* result = JSPromise::create(vm, globalObject->promiseStructure());
+    markPromiseAsHandled(vm, result);
+    auto* context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), reader, result);
+    queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onTextDecodeCancelDeferred(), error, context);
+}
+
+// The [reaction-convention] body of onTextDecodeCancelDeferred(reason, {source reader, result promise}).
+static void textDecodeCancelDeferred(JSGlobalObject* globalObject, JSValue reason, InternalFieldTuple* context)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* reader = uncheckedDowncast<JSReadableStreamDefaultReader>(context->getInternalField(0));
+    JSValue cancelResult = jsUndefined();
+    if (reader->m_stream) {
+        cancelResult = readableStreamReaderGenericCancel(globalObject, reader, reason);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (reader->m_stream) {
+            readableStreamDefaultReaderRelease(globalObject, reader);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    }
+    RELEASE_AND_RETURN(scope, resolvePromise(globalObject, uncheckedDowncast<JSPromise>(context->getInternalField(1)), cancelResult));
+}
+
+static void textDecodeChunk(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue chunk)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // WebIDL "get a copy of the bytes held by the buffer source": a detached
     // buffer is still a BufferSource whose bytes are the empty sequence.
     std::span<const uint8_t> bytes;
@@ -1046,24 +1079,7 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
         if (buffer->impl() && !buffer->impl()->isDetached())
             bytes = buffer->impl()->span();
     } else {
-        auto* error = createTypeError(globalObject, "Body.textStream() received a chunk that is not a BufferSource"_s);
-        RETURN_IF_EXCEPTION(scope, void());
-        // Error the output first so any second pending TextDecode read request's
-        // closeSteps (fired by cancelling the source) no-ops on canCloseOrEnqueue.
-        // Grab the reader before erroring: ClearAlgorithms nulls algorithmContext.
-        auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
-        readableStreamDefaultControllerError(globalObject, controller, error);
-        RETURN_IF_EXCEPTION(scope, void());
-        if (reader) {
-            auto* cancelResult = readableStreamReaderGenericCancel(globalObject, reader, error);
-            RETURN_IF_EXCEPTION(scope, void());
-            if (cancelResult)
-                markPromiseAsHandled(vm, cancelResult);
-            if (reader->m_stream) {
-                readableStreamDefaultReaderRelease(globalObject, reader);
-                RETURN_IF_EXCEPTION(scope, void());
-            }
-        }
+        throwTypeError(globalObject, scope, "Body.textStream() received a chunk that is not a BufferSource"_s);
         return;
     }
     auto* decoded = streamingUTF8Decode(globalObject, bytes, controller->m_algorithms.textDecodeState, /* flush */ false);
@@ -1077,13 +1093,10 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
     RETURN_IF_EXCEPTION(scope, void());
 }
 
-void textDecodeReadRequestCloseSteps(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller)
+static void textDecodeClose(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSCell* sourceReader)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!readableStreamDefaultControllerCanCloseOrEnqueue(controller))
-        return;
-    auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
     auto* decoded = streamingUTF8Decode(globalObject, {}, controller->m_algorithms.textDecodeState, /* flush */ true);
     RETURN_IF_EXCEPTION(scope, void());
     if (decoded && decoded->length()) {
@@ -1095,10 +1108,29 @@ void textDecodeReadRequestCloseSteps(JSGlobalObject* globalObject, JSReadableStr
     // The flush enqueue above can tail-call callPullIfNeeded and re-enter
     // closeSteps (source is already Closed), whose inner call releases the
     // reader; guard against a second release on an already-released reader.
+    auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(sourceReader);
     if (reader && reader->m_stream) {
         readableStreamDefaultReaderRelease(globalObject, reader);
         RETURN_IF_EXCEPTION(scope, void());
     }
+}
+
+// A boundary, like the close steps: the frames above belong to whoever feeds the source, and a throw must not reach them.
+void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue chunk)
+{
+    if (!readableStreamDefaultControllerCanCloseOrEnqueue(controller))
+        return;
+    // ClearAlgorithms drops the reader when the text stream errors or closes, so it is read before the steps run.
+    JSCell* sourceReader = controller->m_algorithms.algorithmContext.get();
+    atStreamsBoundary(globalObject, [&] { textDecodeChunk(globalObject, controller, chunk); }, [&](JSValue error) { textDecodeFail(globalObject, controller, sourceReader, error); });
+}
+
+void textDecodeReadRequestCloseSteps(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller)
+{
+    if (!readableStreamDefaultControllerCanCloseOrEnqueue(controller))
+        return;
+    JSCell* sourceReader = controller->m_algorithms.algorithmContext.get();
+    atStreamsBoundary(globalObject, [&] { textDecodeClose(globalObject, controller, sourceReader); }, [&](JSValue error) { textDecodeFail(globalObject, controller, sourceReader, error); });
 }
 
 // ReadableStreamDefaultTee's shared pullAlgorithm.
@@ -1570,6 +1602,12 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onByteTeeReadIntoChunkMicrotask, (J
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onByteTeeReaderClosedRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return Streams::byteTeeReaderClosedRejected(globalObject, callFrame->argument(0), uncheckedDowncast<InternalFieldTuple>(callFrame->argument(1)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTextDecodeCancelDeferred, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto* context = uncheckedDowncast<InternalFieldTuple>(callFrame->argument(1));
+    return Streams::enterStreams(globalObject, [&] { Streams::textDecodeCancelDeferred(globalObject, callFrame->argument(0), context); }, [&](JSValue error) { Streams::rejectPromise(globalObject, uncheckedDowncast<JSPromise>(context->getInternalField(1)), error); });
 }
 
 } // namespace WebCore

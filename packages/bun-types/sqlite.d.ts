@@ -195,7 +195,30 @@ declare module "bun:sqlite" {
      * - `CREATE TEMPORARY TABLE`
      *
      * @param sql The SQL query to run
-     * @param bindings Optional bindings for the query
+     * @param bindings Values for the positional parameters, as separate arguments
+     * @returns A `Changes` object with `changes` and `lastInsertRowid` properties
+     *
+     * @example
+     * ```ts
+     * db.run("CREATE TABLE foo (bar TEXT, baz INTEGER)");
+     * db.run("INSERT INTO foo VALUES (?, ?)", "a", 1);
+     * // => { changes: 1, lastInsertRowid: 1 }
+     * ```
+     */
+    run<ParamsType extends SQLQueryBindings | readonly SQLQueryBindings[]>(
+      sql: string,
+      ...bindings: Array<string | bigint | NodeJS.TypedArray | ArrayBufferLike | number | boolean | null>
+    ): Changes;
+    // Both overloads declare ParamsType, and only the last one uses it. With the same type parameters
+    // on both, `db.run<T>(sql)` compiles and a callback typed as `Database["run"]` gets its parameter
+    // types. The order matters too: TypeScript 7 reports only the error of the last overload. With the
+    // overload for one bindings value last, a wrong value in a bindings array is one error, at that value.
+    /**
+     * Execute a SQL query **without returning any results**, with all the bindings in one argument.
+     * An array binds its values by position, and an object binds its values by name.
+     *
+     * @param sql The SQL query to run
+     * @param bindings An array of positional values, an object of named parameters, or a single value
      * @returns A `Changes` object with `changes` and `lastInsertRowid` properties
      *
      * @example
@@ -203,16 +226,27 @@ declare module "bun:sqlite" {
      * db.run("CREATE TABLE foo (bar TEXT)");
      * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
      * // => { changes: 1, lastInsertRowid: 1 }
+     * db.run("INSERT INTO foo VALUES ($bar)", { $bar: "qux" });
+     * // => { changes: 1, lastInsertRowid: 2 }
      * ```
      */
-    run<ParamsType extends SQLQueryBindings[]>(sql: string, ...bindings: ParamsType[]): Changes;
+    run<ParamsType extends SQLQueryBindings | readonly SQLQueryBindings[]>(sql: string, bindings: ParamsType): Changes;
 
     /**
      * This is an alias of {@link Database.run}
      *
      * @deprecated Prefer {@link Database.run}
      */
-    exec<ParamsType extends SQLQueryBindings[]>(sql: string, ...bindings: ParamsType[]): Changes;
+    exec<ParamsType extends SQLQueryBindings | readonly SQLQueryBindings[]>(
+      sql: string,
+      ...bindings: Array<string | bigint | NodeJS.TypedArray | ArrayBufferLike | number | boolean | null>
+    ): Changes;
+    /**
+     * This is an alias of {@link Database.run}
+     *
+     * @deprecated Prefer {@link Database.run}
+     */
+    exec<ParamsType extends SQLQueryBindings | readonly SQLQueryBindings[]>(sql: string, bindings: ParamsType): Changes;
 
     /**
      * Compile a SQL query and return a {@link Statement} object. This is the

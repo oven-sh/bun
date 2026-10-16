@@ -777,8 +777,7 @@ function primaryCanBind(port, host, socketPath, fd) {
   return typeof port === "number" && port === (port | 0) && port >= 0 && port <= 65535;
 }
 
-// The worker binds its own socket and reports it, so cluster.on("listening") fires. Workers on one
-// fixed port still share it through SO_REUSEPORT.
+// The worker binds its own socket (SO_REUSEPORT) and reports it, so cluster.on("listening") fires.
 function listenOnOwnSocketInWorker(server, tls, port, host, socketPath, fd) {
   notifyPrimaryWhenListening(server, port, host, socketPath);
   listenOnOwnSocket(server, tls, port, host, socketPath, true, fd);

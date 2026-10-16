@@ -331,7 +331,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         let mut parser = css::Parser::new(
             &mut parser_input,
             None,
-            css::css_parser::ParserOpts::default(),
+            css::css_parser::ParserOpts::MUST_FOLD,
             None,
         );
         break 'brk CssColor::parse(&mut parser);

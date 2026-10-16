@@ -773,16 +773,32 @@ describe("conversions between color spaces", () => {
 // rgb(), hsl() and hwb() cannot hold an origin outside the sRGB gamut. Browsers compute the
 // unclamped color and clip it when painting (w3c/csswg-drafts#8444): the display-p3 green
 // below paints as #00ff00, the lab() one as #ff96ff. These used to be resolved by gamut
-// mapping the origin, to #00f942 and #ffffff, so now they are not resolved at all.
+// mapping the origin, to #00f942 and #ffffff. A style sheet now keeps them as written.
+// `Bun.color()` must give a value: rgb() reads the origin with no gamut mapping and clips the
+// result, which is the painted color. hsl() and hwb() still map the origin, as before.
 describe("relative colors with an origin outside the sRGB gamut", () => {
+  test.each(["hsl(from color(display-p3 0 1 0) h s l)", "hwb(from oklch(100% 0.399 336.3) h w b)"])(
+    "%s has a value",
+    input => {
+      expect(color(input, "css")).not.toBeNull();
+    },
+  );
+
   test.each([
-    "rgb(from lab(100% 104.3 -50.9) r g b)",
-    "hsl(from color(display-p3 0 1 0) h s l)",
-    "hwb(from oklch(100% 0.399 336.3) h w b)",
-    "rgb(from light-dark(red, color(display-p3 0 1 0)) r g b)",
-    "color-mix(in srgb, rgb(from lab(100% 104.3 -50.9) r g b), red)",
-  ])("%s is not resolved", input => {
-    expect([color(input, "css"), color(input, "hex")]).toEqual([null, null]);
+    ["rgb(from color(display-p3 0 1 0) r g b)", "#0f0"],
+    ["rgb(from lab(100% 104.3 -50.9) r g b)", "#ff96ff"],
+    ["rgb(from light-dark(red, color(display-p3 0 1 0)) r g b)", "light-dark(red, #0f0)"],
+    // An arm of light-dark() is painted as it is.
+    ["light-dark(red, rgb(from color(display-p3 0 1 0) r g b))", "light-dark(red, #0f0)"],
+  ])("%s is the painted color %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  // An inner rgb() is not the color that is painted. A browser hands it to the outer function unclamped.
+  // It is gamut mapped as before, which keeps its lightness. The clamp of its channels gives the gray #888 here.
+  test("an inner rgb() is not clamped", () => {
+    const gray = color("oklch(from rgb(from color(rec2020 1 0 0) r g b) l 0 h)", "[rgb]");
+    expect(gray![0]).toBeWithin(0x96, 0x9f);
   });
 
   test.each([
@@ -824,6 +840,30 @@ describe("relative colors with an origin outside the sRGB gamut", () => {
         }
       }
     });
+  });
+});
+
+// https://drafts.csswg.org/css-color-5/#relative-colors
+// A relative rgb(), hsl() or hwb() color is not clamped, and a style sheet keeps it as written.
+// `Bun.color()` must give a value. It clips a channel of rgb(), which is what a browser paints.
+// It clamps a channel of hsl() and hwb(), as before. That is not always the painted color.
+describe("relative color with a channel outside its range", () => {
+  test.each(["hsl(from #336699 h 185% l)", "hwb(from #336699 h 150% b)"])("%s has a value", input => {
+    expect(color(input, "css")).not.toBeNull();
+  });
+
+  test.each([
+    ["rgb(from #336699 300 g b)", "#f69"],
+    ["rgb(from #336699 r -10 b)", "#309"],
+    ["rgb(from #336699 r g 120%)", "#36f"],
+    ["rgb(from #336699 255 0 b)", "#f09"],
+    ["hsl(from #336699 h 100% l)", "#06c"],
+    ["rgb(from #336699 r g b / 2)", "#369"],
+    ["rgb(300 0 0)", "red"],
+    // A lightness below 0 paints black, clamped or not.
+    ["hsl(from #336699 h s -10%)", "#000"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
   });
 });
 

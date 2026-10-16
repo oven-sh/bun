@@ -977,7 +977,7 @@ impl ColorFallbackKind {
 
 /// Trait every colorspace implements. The
 /// first three struct fields plus `alpha` are exposed by index.
-pub trait Colorspace: Copy + Sized + FromAnyColorspace {
+pub trait Colorspace: Copy + Sized + FromAnyColorspace + 'static {
     const CHANNEL_NAMES: (&'static [u8], &'static [u8], &'static [u8]);
     const CHANNEL_TYPES: (ChannelType, ChannelType, ChannelType);
 
@@ -1203,23 +1203,29 @@ pub(crate) fn parse_rgb_components(
             }
         }
     } else {
-        fn get_component(value: NumberOrPercentage) -> f32 {
+        fn get_component(
+            input: &css::Parser,
+            parser: &ComponentParser,
+            value: NumberOrPercentage,
+        ) -> CssResult<f32> {
             match value {
                 NumberOrPercentage::Number { value: v } => {
-                    if v.is_nan() {
-                        v
-                    } else {
-                        v.round().clamp(0.0, 255.0) / 255.0
-                    }
+                    parser.clamp_unit(input, v / 255.0)?;
+                    Ok(v.round().clamp(0.0, 255.0) / 255.0)
                 }
-                NumberOrPercentage::Percentage { unit_value } => unit_value.clamp(0.0, 1.0),
+                NumberOrPercentage::Percentage { unit_value } => {
+                    parser.clamp_unit(input, unit_value)
+                }
             }
         }
 
-        let r = get_component(red);
-        let g = get_component(parser.parse_number_or_percentage(input)?);
-        let b = get_component(parser.parse_number_or_percentage(input)?);
-        (r, g, b)
+        let green = parser.parse_number_or_percentage(input)?;
+        let blue = parser.parse_number_or_percentage(input)?;
+        (
+            get_component(input, parser, red)?,
+            get_component(input, parser, green)?,
+            get_component(input, parser, blue)?,
+        )
     };
 
     if is_legacy_syntax && (g.is_nan() || b.is_nan()) {
@@ -1395,13 +1401,15 @@ pub(crate) fn parse_hsl_hwb_components<T>(
         && !h.is_nan()
         && input.try_parse(|i| i.expect_comma()).is_ok();
 
-    let a = parser.parse_percentage(input)?.clamp(0.0, 1.0);
+    let a = parser.parse_percentage(input)?;
+    let a = parser.clamp_unit(input, a)?;
 
     if is_legacy_syntax {
         input.expect_comma()?;
     }
 
-    let b = parser.parse_percentage(input)?.clamp(0.0, 1.0);
+    let b = parser.parse_percentage(input)?;
+    let b = parser.clamp_unit(input, b)?;
 
     if is_legacy_syntax && (a.is_nan() || b.is_nan()) {
         return Err(input.new_custom_error(css::ParserError::invalid_value));
@@ -1909,7 +1917,7 @@ impl ComponentParser {
             .try_parse(|i| i.expect_ident_matching(b"from"))
             .is_ok()
         {
-            let from = CssColor::parse(input)?;
+            let from = parse_inner_color(input)?;
             return self.parse_from::<T, C, F>(from, input, func);
         }
 
@@ -1935,8 +1943,14 @@ impl ComponentParser {
             return Ok(C::light_dark_owned(light, dark));
         }
 
+        let must_fold = input.flags.must_fold();
+        // For an rgb() that is painted as it is, the clamp of its channels is the paint only when the origin is read with no gamut mapping.
+        let unmapped = must_fold
+            && !input.flags.inner_color()
+            && core::any::TypeId::of::<T>() == core::any::TypeId::of::<SRGB>();
         // rgb(), hsl() and hwb() hold sRGB. A browser keeps an origin outside sRGB unclamped (w3c/csswg-drafts#8444), so the color is left for it.
         if T::BOUNDED
+            && !must_fold
             && !matches!(from, CssColor::Rgba(_))
             && !SRGB::try_from_css_color(&from)
                 .is_some_and(|srgb| srgb.resolve_missing().is_nearly_in_gamut())
@@ -1945,6 +1959,7 @@ impl ComponentParser {
         }
 
         let new_from = match T::try_from_css_color(&from) {
+            Some(v) if unmapped => v.resolve_missing(),
             Some(v) => v.resolve(),
             None => return Err(input.new_custom_error(css::ParserError::invalid_value)),
         };
@@ -1952,6 +1967,18 @@ impl ComponentParser {
         self.from = Some(RelativeComponentParser::new(&new_from));
 
         func(input, self)
+    }
+
+    /// Clamps a channel to its range. A relative color is not clamped: out of range it stays unresolved, unless the caller must fold.
+    fn clamp_unit(&self, input: &css::Parser, value: f32) -> CssResult<f32> {
+        const TOLERANCE: f32 = 1e-4;
+        if self.from.is_some()
+            && !input.flags.must_fold()
+            && (value < -TOLERANCE || value > 1.0 + TOLERANCE)
+        {
+            return Err(input.new_custom_error(css::ParserError::invalid_value));
+        }
+        Ok(value.clamp(0.0, 1.0))
     }
 
     fn parse_number_or_percentage(&self, input: &mut css::Parser) -> CssResult<NumberOrPercentage> {
@@ -2303,7 +2330,7 @@ pub(crate) fn parse_predefined(
     let res = input.parse_nested_block(|i| {
         // https://www.w3.org/TR/css-color-4/#color-function
         let from: Option<CssColor> = if i.try_parse(|i| i.expect_ident_matching(b"from")).is_ok() {
-            Some(CssColor::parse(i)?)
+            Some(parse_inner_color(i)?)
         } else {
             None
         };
@@ -2406,6 +2433,15 @@ pub(crate) enum ColorSpaceName {
     Oklch,
 }
 
+/// Parses a color that another color function takes in, see `ParserOpts::INNER_COLOR`.
+fn parse_inner_color(input: &mut css::Parser) -> CssResult<CssColor> {
+    let flags = input.flags;
+    input.flags.insert(css::ParserOpts::INNER_COLOR);
+    let color = CssColor::parse(input);
+    input.flags = flags;
+    color
+}
+
 pub(crate) fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
     input.expect_ident_matching(b"in")?;
     let method = ColorSpaceName::parse(input)?;
@@ -2427,7 +2463,7 @@ pub(crate) fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
     input.expect_comma()?;
 
     let first_percent_ = input.try_parse(|i| i.expect_percentage());
-    let first_color = CssColor::parse(input)?;
+    let first_color = parse_inner_color(input)?;
     let first_percent: Option<f32> = match first_percent_ {
         Ok(v) => Some(v),
         Err(_) => input.try_parse(|i| i.expect_percentage()).ok(),
@@ -2435,7 +2471,7 @@ pub(crate) fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
     input.expect_comma()?;
 
     let second_percent_ = input.try_parse(|i| i.expect_percentage());
-    let second_color = CssColor::parse(input)?;
+    let second_color = parse_inner_color(input)?;
     let second_percent: Option<f32> = match second_percent_ {
         Ok(v) => Some(v),
         Err(_) => input.try_parse(|i| i.expect_percentage()).ok(),

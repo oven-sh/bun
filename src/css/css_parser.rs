@@ -2999,6 +2999,10 @@ bitflags::bitflags! {
         const CSS_MODULES = 0b1;
         /// Makes `TokenList::parse` keep `url()` as a raw token instead of creating an import record.
         const RAW_URL_TOKENS = 0b10;
+        /// Turns off each rule that leaves a relative color for the browser. `Bun.color()` has no form for an unresolved value.
+        const MUST_FOLD = 0b100;
+        /// Set inside the origin of a relative color and the operands of `color-mix()`: a color that is not painted as it is.
+        const INNER_COLOR = 0b1000;
     }
 }
 impl ParserOpts {
@@ -3010,6 +3014,16 @@ impl ParserOpts {
     #[inline]
     pub(crate) fn raw_url_tokens(self) -> bool {
         self.contains(Self::RAW_URL_TOKENS)
+    }
+
+    #[inline]
+    pub(crate) fn must_fold(self) -> bool {
+        self.contains(Self::MUST_FOLD)
+    }
+
+    #[inline]
+    pub(crate) fn inner_color(self) -> bool {
+        self.contains(Self::INNER_COLOR)
     }
 }
 

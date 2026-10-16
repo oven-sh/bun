@@ -7652,6 +7652,51 @@ describe("css tests", () => {
     minify_test(".foo { color: rgb(from rgb(from #0008 r g b) r g b) }", ".foo{color:#0008}");
   });
 
+  describe("relative color with a channel outside its range", () => {
+    // https://drafts.csswg.org/css-color-5/#relative-colors
+    // A relative rgb(), hsl() or hwb() color is not clamped: a browser computes `color(srgb 1.18 .4 .6)` for the first row.
+    // A hex cannot hold that color, so the color stays as written.
+    const cases: [string, string][] = [
+      ["color: rgb(from #336699 300 g b)", "color:rgb(from #369 300 g b)"],
+      ["color: rgb(from #336699 r -10 b)", "color:rgb(from #369 r -10 b)"],
+      ["color: rgb(from #336699 r g 120%)", "color:rgb(from #369 r g 120%)"],
+      ["color: rgb(from #336699 calc(r * 6) g b)", "color:rgb(from #369 calc(r*6)g b)"],
+      ["color: hsl(from #336699 h 185% l)", "color:hsl(from #369 h 185% l)"],
+      ["color: hsl(from #336699 h s 120%)", "color:hsl(from #369 h s 120%)"],
+      ["color: hsl(from #336699 h -10% l)", "color:hsl(from #369 h -10% l)"],
+      ["color: hwb(from #336699 h 150% b)", "color:hwb(from #369 h 150% b)"],
+      ["color: hwb(from #336699 h w -10%)", "color:hwb(from #369 h w -10%)"],
+      ["color: rgb(from #336699 300 g b / var(--a))", "color:rgb(from #369 300 g b/var(--a))"],
+      ["color: hsl(from #336699 h 185% l / var(--a))", "color:hsl(from #369 h 185% l/var(--a))"],
+      ["--c: rgb(from #336699 300 g b)", "--c:rgb(from #369 300 g b)"],
+      // The ends of the range are in it.
+      ["color: rgb(from #336699 255 0 b)", "color:#f09"],
+      ["color: rgb(from #336699 100% 0% b)", "color:#f09"],
+      ["color: hsl(from #336699 h 100% l)", "color:#06c"],
+      ["color: hsl(from #336699 h 0% 100%)", "color:#fff"],
+      ["color: hwb(from #336699 h 100% 0%)", "color:#fff"],
+      // The alpha is clamped in a browser too.
+      ["color: rgb(from #336699 r g b / 2)", "color:#369"],
+      ["color: rgb(from #336699 r g b / -1)", "color:#3690"],
+      // A color that is not relative is clamped as before.
+      ["color: rgb(300 0 0)", "color:red"],
+      ["color: rgb(120% 0% 0%)", "color:red"],
+      ["color: rgb(300 0 0 / var(--a))", "color:rgb(255 0 0/var(--a))"],
+    ];
+    for (const [input, expected] of cases) {
+      minify_test(`.a { ${input} }`, `.a{${expected}}`);
+    }
+
+    // A browser with no relative colors drops the declaration, so the one before it stays.
+    minify_test(".a { color: red; color: rgb(from #336699 300 g b) }", ".a{color:red;color:rgb(from #369 300 g b)}");
+    minify_test(
+      ".a { text-shadow: 0 0 4px red; text-shadow: 0 0 4px rgb(from #336699 300 g b) }",
+      ".a{text-shadow:0 0 4px red;text-shadow:0 0 4px rgb(from #369 300 g b)}",
+    );
+    // Another value that is kept as tokens replaces the declaration before it, as before.
+    minify_test(".a { color: red; color: var(--c) }", ".a{color:var(--c)}");
+  });
+
   describe("color-scheme", () => {
     minify_test(".foo { color-scheme: normal; }", ".foo{color-scheme:normal}");
     minify_test(".foo { color-scheme: light; }", ".foo{color-scheme:light}");

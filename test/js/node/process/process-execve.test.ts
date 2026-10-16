@@ -361,7 +361,7 @@ describe.concurrent("process.execve", () => {
   });
 
   test.skipIf(!isWindows)("throws ERR_FEATURE_UNAVAILABLE_ON_PLATFORM on Windows", () => {
-    expect(() => process.execve(process.execPath, [process.execPath], {})).toThrow(
+    expect(() => process.execve!(process.execPath, [process.execPath], {})).toThrow(
       expect.objectContaining({
         code: "ERR_FEATURE_UNAVAILABLE_ON_PLATFORM",
         name: "TypeError",

@@ -729,8 +729,8 @@ impl<'a> Installer<'a> {
         is_store_copy
     }
 
-    /// Deletes the `installed_marker` file first, because a delete can be cut short. `Err`: an
-    /// entry stays, and everything else is gone.
+    /// Deletes the `installed_marker` file first, because a delete can be cut short. `Err`: a file
+    /// that the next install's skip check reads is still there.
     fn delete_local_store_package_in_place(&self, entry_id: StoreEntryId) -> sys::Maybe<()> {
         let mut path = AutoAbsPath::init_top_level_dir();
         self.append_store_path(&mut path, entry_id);
@@ -2510,7 +2510,7 @@ impl<'a> Installer<'a> {
     }
 
     /// Frees the final path, and the staging path of a dead install's rest. `Ok(true)`: the final
-    /// path stays and is empty, so link in place. `Err`: a file of the old copy stays in it.
+    /// path stays, so link in place. `Err`: the old copy still passes the next install's skip check.
     fn clear_local_store_package(
         &self,
         entry_id: StoreEntryId,

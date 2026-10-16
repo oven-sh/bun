@@ -1121,7 +1121,7 @@ new file mode 100644
     });
 
     test.skipIf(isWindows || (isRoot && !setpriv))(
-      "a relink that cannot remove the old files fails and leaves no marker",
+      "a file that cannot be deleted stays beside the new copy",
       async () => {
         await using project = await setup("patch-relink-locked");
         const { dir, env } = project;
@@ -1134,25 +1134,21 @@ new file mode 100644
         await chmod(locked, 0o555);
         await chmod(parent, 0o555);
         await Bun.write(join(dir, "patches", "is-odd@3.0.1.patch"), generationPatch("B"));
-        let result;
         try {
-          result = await install(dir, env);
+          expect(await install(dir, env)).toMatchObject({ stderr: "", exitCode: 0 });
         } finally {
           await chmod(parent, 0o755);
           await chmod(locked, 0o755);
         }
-        expect(result.stderr).toContain("EACCES");
-        expect(result.exitCode).toBe(1);
-        // Nothing that `bun install` takes as proof of an installed package is left.
-        const entries = await readdir(join(dir, packagePath));
-        expect(entries.filter(name => name.startsWith(".bun-tag-") || name === "package.json")).toEqual([]);
-
-        expect(await install(dir, env)).toMatchObject({ stderr: "", exitCode: 0 });
         expect(await installedState(dir)).toEqual({
           markers: 1,
-          files: ["index.js", "package.json"],
+          files: ["index.js", "locked", "package.json"],
           generation: "B",
         });
+
+        await Bun.write(join(dir, "patches", "is-odd@3.0.1.patch"), generationPatch("A"));
+        expect(await install(dir, env)).toMatchObject({ stderr: "", exitCode: 0 });
+        expect(await installedState(dir)).toEqual(generationA);
       },
     );
 
@@ -1177,10 +1173,20 @@ new file mode 100644
       async () => {
         await using project = await setup("patch-relink-mount");
         const { dir, env } = project;
+        const parent = join(dir, packagePath, "..");
 
         await Bun.write(join(dir, packagePath, "source.js"), "");
         await Bun.write(join(dir, "patches", "is-odd@3.0.1.patch"), generationPatch("B"));
-        expect(await install(dir, env, mounted(packagePath))).toMatchObject({ stderr: "", exitCode: 0 });
+        // The parent is read-only as well: the kernel reports that before it reports the mount.
+        await chmod(parent, 0o555);
+        try {
+          expect(await install(dir, env, [...mounted(packagePath), ...unprivileged])).toMatchObject({
+            stderr: "",
+            exitCode: 0,
+          });
+        } finally {
+          await chmod(parent, 0o755);
+        }
         expect(await installedState(dir)).toEqual({
           markers: 1,
           files: ["extra.js", "index.js", "package.json", "source.js"],
@@ -1192,6 +1198,19 @@ new file mode 100644
         expect(await installedState(dir)).toEqual({ ...generationA, files: [...generationA.files, "source.js"] });
       },
     );
+
+    // What an earlier bun left: the markers of two patches in one folder.
+    test("a copy with the marker of another patch beside the right one is installed again", async () => {
+      await using project = await setup("patch-relink-two-markers");
+      const { dir, env } = project;
+
+      await Bun.write(join(dir, packagePath, ".bun-tag-0123456789abcdef"), "");
+      const { stdout, stderr, exitCode } = await install(dir, env);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+      expect(await installedState(dir)).toEqual(generationA);
+    });
   },
 );
 

@@ -457,11 +457,7 @@ pub(crate) struct NextBundle {
     pub(crate) requests: deferred_request::List,
 }
 
-// Note: this is the **canonical** `DevServer` struct. `dev_server/mod.rs`
-// re-exports it (`pub use crate::bake::dev_server::DevServer`) so the
-// `container_of` submodules (`incremental_graph`, `assets`, …) and the
-// 4.8 kL of method bodies in this file all name the same type. The
-// `Transpiler<'static>` / `BundleV2<'static>` lifetime is the DevServer-self
+// The `Transpiler<'static>` / `BundleV2<'static>` lifetime is the DevServer-self
 // lifetime stand-in: those borrows point at fields stored inline in the
 // `Box<DevServer>` allocation, which is never moved post-`init()`.
 pub(crate) struct DevServer {

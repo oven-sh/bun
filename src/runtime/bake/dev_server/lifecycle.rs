@@ -175,7 +175,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // `Framework.initTranspiler(..., &dev.X_transpiler, ...)`.
     //
     // SAFETY: `init_transpiler` writes the slot via `MaybeUninit::write` (see
-    // `bake_body.rs`), so the previous (uninitialized) bytes are never dropped.
+    // `config/transpiler.rs`), so the previous (uninitialized) bytes are never dropped.
     // `log` was written above; reborrowing it is sound because no `&mut DevServer` exists.
     // Note: `Transpiler<'static>` erases the arena lifetime — `options.arena`
     // is the `UserOptions.arena` which is moved into / outlives the `DevServer`

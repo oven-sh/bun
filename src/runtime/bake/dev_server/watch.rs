@@ -3,7 +3,7 @@
 //! `Watcher::init::<DevServer>` dispatches through the generic
 //! `WatcherContext` vtable, so the trait methods here are the *only* path the
 //! watcher thread reaches — they forward to the inherent
-//! `DevServer::{on_file_update, on_watch_error}` bodies in `../DevServer.rs`.
+//! `DevServer::{on_file_update, on_watch_error}` bodies below.
 
 use super::DevServer;
 use super::*;

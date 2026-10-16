@@ -21,6 +21,8 @@ import { loadProtoFile } from "./common";
 
 import assert from "assert";
 import { afterAll as after, beforeAll as before, describe, it } from "bun:test";
+import http2 from "node:http2";
+import type { AddressInfo } from "node:net";
 
 const protoFile = path.join(__dirname, "fixtures", "echo_service.proto");
 const EchoService = loadProtoFile(protoFile).EchoService as grpc.ServiceClientConstructor;
@@ -362,5 +364,53 @@ describe("Retries", () => {
         done();
       });
     });
+  });
+});
+
+// Not from grpc-node. grpc-js retries a call transparently when the status of the refused stream
+// has rstCode, and only its 'close' handler makes that status. Since Node.js 26.10 the write in
+// flight gets the error of the stream before 'close', so the write error ends the call first.
+describe("A stream that the server refuses while a message waits for the flow-control window", () => {
+  it("ends the call with the write error and makes no second attempt, as Node.js 26.10 does", async () => {
+    let streams = 0;
+    const server = http2.createServer();
+    server.on("sessionError", () => {});
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      if (++streams === 1) {
+        // The message is larger than the window, so its write is in flight when the first part arrives.
+        stream.once("data", () => stream.close(http2.constants.NGHTTP2_REFUSED_STREAM));
+        return;
+      }
+      stream.resume();
+      stream.on("end", () => {
+        stream.respond({ ":status": 200, "content-type": "application/grpc" }, { waitForTrailers: true });
+        stream.on("wantTrailers", () => stream.sendTrailers({ "grpc-status": "0" }));
+        // One message: not compressed, 4 bytes long.
+        stream.end(Buffer.concat([Buffer.from([0, 0, 0, 0, 4]), Buffer.from("pong")]));
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await new Promise(resolve => server.once("listening", resolve));
+    const { port } = server.address() as AddressInfo;
+    const client = new grpc.Client(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
+    try {
+      const identity = (value: Buffer) => value;
+      const { promise, resolve } = Promise.withResolvers<{ code: grpc.status; details: string }>();
+      client.makeUnaryRequest("/test.Echo/Echo", identity, identity, Buffer.alloc(200 * 1024, 97), (error, reply) =>
+        resolve({ code: error ? error.code : grpc.status.OK, details: error ? error.details : String(reply) }),
+      );
+      assert.deepStrictEqual(
+        { ...(await promise), streams },
+        {
+          code: grpc.status.UNAVAILABLE,
+          details: "Write error: Stream closed with error code NGHTTP2_REFUSED_STREAM",
+          streams: 1,
+        },
+      );
+    } finally {
+      client.close();
+      server.close();
+    }
   });
 });

@@ -929,6 +929,190 @@ describe("SETTINGS ack ordering (RFC 9113 §6.5.3)", () => {
   });
 });
 
+const END_STREAM = 0x1;
+const END_HEADERS = 0x4;
+const TRAILER_TOO_LARGE = { "x-big": Buffer.alloc(64 * 1024 + 1, "x").toString() };
+
+/** `{ type, flags, length }` of every frame the raw peer received on `streamId`, in wire order. */
+function streamFrames(frames: Frame[], streamId: number) {
+  return frames.filter(f => f.streamId === streamId).map(({ type, flags, length }) => ({ type, flags, length }));
+}
+
+describe("outbound request body framing (RFC 9113 §6.1, §8.1)", () => {
+  // node (nghttp2) only ever writes a zero-length DATA frame to carry END_STREAM. One without it
+  // says nothing and is counted against the receiver's invalid-frame allowance (node's
+  // maxSessionInvalidFrames; Bun's own engine does the same), so neither an empty write nor an
+  // end() whose END_STREAM is deferred to the trailers may put one on the wire.
+  async function connectClient() {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    return { raw, client };
+  }
+
+  async function ackPreface(raw: RawH2Server, streamId: number) {
+    await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === streamId);
+    raw.sendFrame(FrameType.SETTINGS, 0, 0); // server SETTINGS
+    raw.sendFrame(FrameType.SETTINGS, 0x1, 0); // ACK the client's
+  }
+
+  test("end() with trailers pending sends no DATA frame: END_STREAM rides on the trailer HEADERS", async () => {
+    const { raw, client } = await connectClient();
+    try {
+      const req = client.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
+      req.on("error", () => {});
+      req.on("wantTrailers", () => req.sendTrailers({ "x-trailer": "1" }));
+      await ackPreface(raw, 1);
+      req.end();
+      await raw.waitFor(f => f.streamId === 1 && (f.flags & END_STREAM) !== 0);
+      expect(streamFrames(raw.frames, 1)).toEqual([
+        { type: FrameType.HEADERS, flags: END_HEADERS, length: expect.any(Number) },
+        { type: FrameType.HEADERS, flags: END_HEADERS | END_STREAM, length: expect.any(Number) },
+      ]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("end() with trailers pending but no wantTrailers listener terminates with a single empty DATA END_STREAM", async () => {
+    const { raw, client } = await connectClient();
+    try {
+      const req = client.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
+      req.on("error", () => {});
+      await ackPreface(raw, 1);
+      req.end();
+      await raw.waitFor(f => f.streamId === 1 && (f.flags & END_STREAM) !== 0);
+      expect(streamFrames(raw.frames, 1)).toEqual([
+        { type: FrameType.HEADERS, flags: END_HEADERS, length: expect.any(Number) },
+        { type: FrameType.DATA, flags: END_STREAM, length: 0 },
+      ]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("empty writes put nothing on the wire", async () => {
+    const { raw, client } = await connectClient();
+    try {
+      const req = client.request({ ":method": "POST", ":path": "/" });
+      req.on("error", () => {});
+      await ackPreface(raw, 1);
+      await new Promise<void>(resolve => req.write("", () => resolve()));
+      await new Promise<void>(resolve => req.write(Buffer.alloc(0), () => resolve()));
+      await new Promise<void>(resolve => req.write("payload", () => resolve()));
+      await new Promise<void>(resolve => req.write("", () => resolve()));
+      req.end();
+      await raw.waitFor(f => f.streamId === 1 && (f.flags & END_STREAM) !== 0);
+      expect(streamFrames(raw.frames, 1)).toEqual([
+        { type: FrameType.HEADERS, flags: END_HEADERS, length: expect.any(Number) },
+        { type: FrameType.DATA, flags: 0, length: "payload".length },
+        { type: FrameType.DATA, flags: END_STREAM, length: 0 },
+      ]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("an end() with trailers pending that queues behind flow-control-blocked data is not written when it drains", async () => {
+    const { raw, client } = await connectClient();
+    try {
+      // Stream 1 fills both 65535-byte initial send windows; its last byte stays queued, so
+      // every later frame on the session goes through the outbound queue instead of being
+      // written directly.
+      const blocked = client.request({ ":method": "POST", ":path": "/blocked" });
+      blocked.on("error", () => {});
+      await ackPreface(raw, 1);
+      blocked.write(Buffer.alloc(65535 + 1, "a"));
+      const dataBytes = () =>
+        raw.frames.reduce((n, f) => (f.streamId === 1 && f.type === FrameType.DATA ? n + f.length : n), 0);
+      await raw.waitFor(f => f.streamId === 1 && f.type === FrameType.DATA && dataBytes() >= 65535, 10_000);
+      expect(dataBytes()).toBe(65535);
+
+      const req = client.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
+      req.on("error", () => {});
+      req.on("wantTrailers", () => req.sendTrailers({ "x-trailer": "1" }));
+      req.end();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 3);
+      // Reopen the connection window (stream 1 stays blocked on its own window) so the queue
+      // drains: stream 3's queued end entry must surface as the trailer HEADERS alone.
+      const increment = Buffer.alloc(4);
+      increment.writeUInt32BE(65535, 0);
+      raw.sendFrame(FrameType.WINDOW_UPDATE, 0, 0, increment);
+      await raw.waitFor(f => f.streamId === 3 && (f.flags & END_STREAM) !== 0);
+      expect(streamFrames(raw.frames, 3)).toEqual([
+        { type: FrameType.HEADERS, flags: END_HEADERS, length: expect.any(Number) },
+        { type: FrameType.HEADERS, flags: END_HEADERS | END_STREAM, length: expect.any(Number) },
+      ]);
+      expect(dataBytes()).toBe(65535);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("a client stream whose trailers cannot be encoded gets frameError(type, code, id) and HEADERS then RST_STREAM on the wire", async () => {
+    const { raw, client } = await connectClient();
+    try {
+      // A first request takes stream 1 so the id reported below is not the default one.
+      const other = client.request({ ":path": "/other" });
+      other.on("error", () => {});
+      const req = client.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
+      req.on("error", () => {});
+      req.on("wantTrailers", () => req.sendTrailers(TRAILER_TOO_LARGE));
+      const frameError = new Promise<unknown[]>(resolve => req.on("frameError", (...args) => resolve(args)));
+      await ackPreface(raw, 3);
+      req.end();
+      expect(await frameError).toEqual([FrameType.HEADERS, ErrorCode.FRAME_SIZE_ERROR, 3]);
+      const rst = await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 3);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.FRAME_SIZE_ERROR);
+      expect(streamFrames(raw.frames, 3)).toEqual([
+        { type: FrameType.HEADERS, flags: END_HEADERS, length: expect.any(Number) },
+        { type: FrameType.RST_STREAM, flags: 0, length: 4 },
+      ]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("a server stream whose trailers cannot be encoded gets frameError(type, code, id)", async () => {
+    const frameError = Promise.withResolvers<unknown[]>();
+    const server = http2.createServer();
+    server.on("session", (session: any) => session.on("error", () => {}));
+    server.on("stream", (stream: any, headers: any) => {
+      stream.on("error", () => {});
+      if (headers[":path"] === "/other") {
+        stream.respond({ ":status": 200 }, { endStream: true });
+        return;
+      }
+      stream.on("frameError", (...args: unknown[]) => frameError.resolve(args));
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      stream.on("wantTrailers", () => stream.sendTrailers(TRAILER_TOO_LARGE));
+      stream.end();
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    client.on("error", () => {});
+    try {
+      // Stream 1 is taken by a plain request so the failing stream is id 3.
+      const other = client.request({ ":path": "/other" });
+      other.on("error", () => {});
+      other.resume();
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.resume();
+      expect(await frameError.promise).toEqual([FrameType.HEADERS, ErrorCode.FRAME_SIZE_ERROR, 3]);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+});
+
 function requestHeaderBlock(method: "GET" | "POST", extra: Buffer = Buffer.alloc(0)): Buffer {
   return Buffer.concat([
     Buffer.from([method === "POST" ? 0x83 : 0x82, 0x86, 0x84, 0x01]),

@@ -3282,6 +3282,22 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
     expect(result).toEqual(fromPrivateRegistry);
   });
 
+  cell.each([
+    ["bunfig.toml", (r: Registries) => `[install.scopes]\n"@corp" = "http://${r.DEFAULT}/"\n`, bunfigScope],
+    [".npmrc", (r: Registries) => `@corp:registry=http://${r.DEFAULT}/\n`, scopeAndToken],
+  ])("a %s nearer to the importing file overrides the one of the start directory", async (name, above, nearer) => {
+    const result = await autoInstall({
+      args: ["src/x.mjs"],
+      files: r => ({
+        [`app/${name}`]: above(r),
+        "app/package.json": packageJson,
+        [`app/src/${name}`]: nearer(r),
+        "app/src/x.mjs": importIt,
+      }),
+    });
+    expect(result).toEqual(fromPrivateRegistry);
+  });
+
   cell("a relative cache directory in the bunfig.toml of the project root starts there", async () => {
     const result = await autoInstall({
       args: ["x.mjs"],

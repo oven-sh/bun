@@ -2949,7 +2949,7 @@ pub fn init(
             cli,
             ctx.install.as_deref(),
             None,
-            None,
+            [None, None],
             subcommand,
         )?;
 
@@ -3160,15 +3160,20 @@ fn init_with_runtime_once(
     // used for that, because `process.chdir()` changes it.
     let start_dir = bun_paths::fs::FileSystem::instance().initial_top_level_dir();
     let start_dir_trimmed = without_trailing_slash_windows_path(start_dir);
+    // A folder nearer to the importing file overrides the ones above it, as for .npmrc. So the
+    // folders below the start directory are kept apart: they override `bun_install`.
     let mut root_bunfig: Option<Box<Api::BunInstall>> = None;
-    for &dir in settings_dirs
-        .iter()
-        .filter(|&&dir| dir != start_dir_trimmed)
-    {
+    let mut nearer_bunfig: Option<Box<Api::BunInstall>> = None;
+    let mut merged = &mut root_bunfig;
+    for &dir in &settings_dirs {
+        if dir == start_dir_trimmed {
+            merged = &mut nearer_bunfig;
+            continue;
+        }
         match ::bun_bunfig::arguments::load_install_section(dir) {
-            Ok(Some(nearer)) => match root_bunfig.as_deref_mut() {
+            Ok(Some(nearer)) => match merged.as_deref_mut() {
                 Some(above) => overlay_bunfig_install(above, *nearer),
-                None => root_bunfig = Some(nearer),
+                None => *merged = Some(nearer),
             },
             Ok(None) => {}
             Err(path) => unreadable = Some(path),
@@ -3178,10 +3183,14 @@ fn init_with_runtime_once(
     // file, but when in doubt the scanner counts.
     let has_scanner = ::bun_bunfig::arguments::has_security_scanner(start_dir, project_dir);
     // A scanner only sees what `bun install` is about to install, so auto-install is refused.
-    if [bun_install, root_bunfig.as_deref()]
-        .into_iter()
-        .flatten()
-        .any(|config| config.security_scanner.is_some())
+    if [
+        bun_install,
+        root_bunfig.as_deref(),
+        nearer_bunfig.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|config| config.security_scanner.is_some())
         || has_scanner.unwrap_or_else(|path| {
             unreadable = Some(path);
             false
@@ -3259,7 +3268,7 @@ fn init_with_runtime_once(
         cli,
         bun_install,
         Some(&npmrc),
-        root_bunfig.as_deref(),
+        [root_bunfig.as_deref(), nearer_bunfig.as_deref()],
         Subcommand::Install,
     )?;
 

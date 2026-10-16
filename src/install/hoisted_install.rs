@@ -440,6 +440,7 @@ pub(crate) fn install_hoisted_packages(
                             install_count: 0,
                             replaced: Vec::new(),
                             inside_replaced_folder: false,
+                            outlived_root: false,
                         });
                     }
                     break 'trees trees.into_boxed_slice();
@@ -486,6 +487,7 @@ pub(crate) fn install_hoisted_packages(
             let mut remaining: &[DependencyID] = node_modules.dependencies;
             installer.current_tree_id = node_modules.tree_id;
             installer.set_inside_replaced_folder(node_modules.tree_id);
+            installer.set_outlived_root(node_modules.tree_id, node_modules.relative_path);
 
             // cache line is 64 bytes on ARM64 and x64
             // PackageIDs are 4 bytes

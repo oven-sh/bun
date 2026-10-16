@@ -5198,3 +5198,47 @@ describe("the git and github dependencies that bun.lock has already resolved", (
     });
   });
 });
+
+// The project's `node_modules` can be gone while a workspace still has its own.
+test("a package in the older node_modules of a workspace is replaced, not added to", async () => {
+  using dir = tempDir("workspace-older-node-modules", {
+    "package.json": JSON.stringify({
+      name: "root",
+      workspaces: ["packages/*"],
+      dependencies: { dep: "file:./dep-1.0.0.tgz" },
+    }),
+    "packages/app/package.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      dependencies: { dep: "file:../../dep-2.0.0.tgz" },
+    }),
+  });
+  const cwd = String(dir);
+  for (const version of ["1.0.0", "2.0.0"]) {
+    await Bun.Archive.write(
+      join(cwd, `dep-${version}.tgz`),
+      { "package/package.json": JSON.stringify({ name: "dep", version }), "package/index.js": "" },
+      { compress: "gzip" },
+    );
+  }
+  const install = async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd,
+      env: { ...baseEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  };
+  const installed = join(cwd, "packages", "app", "node_modules", "dep");
+
+  await install();
+  await write(join(installed, "of-an-older-version.js"), "");
+  await rm(join(cwd, "node_modules"), { recursive: true });
+  await install();
+
+  expect(await readdirSorted(installed)).toEqual([".bun-tag", "index.js", "package.json"]);
+});

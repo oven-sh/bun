@@ -433,6 +433,8 @@ pub struct TreeContext {
     pub(crate) replaced: Vec<DependencyID>,
     /// Inside an ancestor's `replaced` folder: what is on disk here goes away, so never skip.
     pub(crate) inside_replaced_folder: bool,
+    /// See `PackageInstaller::set_outlived_root`.
+    pub(crate) outlived_root: bool,
 }
 
 type TreeContextId = lockfile::tree::Id;
@@ -1447,6 +1449,24 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
+    /// When this install creates the project's `node_modules`, `skip_delete` is on: there is nothing
+    /// to delete before a package is linked. The `node_modules` of a workspace can still exist, with
+    /// older packages in it, and there the delete is not skipped. That is decided here, once for each
+    /// tree and before any of its packages is linked, because afterwards the folder always exists.
+    /// `path` is the tree's `node_modules`, relative to the working directory.
+    pub(crate) fn set_outlived_root(&mut self, tree_id: lockfile::tree::Id, path: &ZStr) {
+        let lockfile = self.lockfile();
+        let parent = lockfile.buffers.trees.as_slice()[tree_id as usize].parent;
+        if !self.skip_delete || parent == lockfile::tree::INVALID_ID {
+            return;
+        }
+        self.trees[tree_id as usize].outlived_root = if lockfile.is_importer_tree_id(tree_id) {
+            bun_sys::directory_exists_at(Fd::cwd(), path).unwrap_or(true)
+        } else {
+            self.trees[parent as usize].outlived_root
+        };
+    }
+
     /// Trees are visited in id order, so the parent's `replaced` is complete.
     pub(crate) fn set_inside_replaced_folder(&mut self, tree_id: lockfile::tree::Id) {
         let lockfile = self.lockfile();
@@ -2123,10 +2143,12 @@ impl<'a> PackageInstaller<'a> {
                 }
             };
             let destination_dir = Dir::borrow(&destination_fd);
+            let skip_delete =
+                self.skip_delete && !self.trees[self.node_modules.tree_id as usize].outlived_root;
 
             let install_result: package_install::InstallResult = match resolution.tag {
                 resolution::Tag::Symlink | resolution::Tag::Workspace => {
-                    installer.install_from_link(self.skip_delete, destination_dir)
+                    installer.install_from_link(skip_delete, destination_dir)
                 }
                 _ => 'result: {
                     let staging = self
@@ -2150,7 +2172,7 @@ impl<'a> PackageInstaller<'a> {
                         {
                             break 'result installer.install(
                                 staging,
-                                self.skip_delete,
+                                skip_delete,
                                 destination_dir,
                                 installer.get_install_method(),
                                 resolution.tag,
@@ -2187,7 +2209,7 @@ impl<'a> PackageInstaller<'a> {
                         installer.cache_dir = owned_cache_dir.fd();
 
                         let result = if resolution.tag == resolution::Tag::Root {
-                            installer.install_from_link(self.skip_delete, destination_dir)
+                            installer.install_from_link(skip_delete, destination_dir)
                         } else if installer.cache_dir_subpath.as_bytes() != b"." {
                             // What a package ships inside itself is linked where it is.
                             let mut shipped_buf = bun_paths::path_buffer_pool::get();
@@ -2210,7 +2232,7 @@ impl<'a> PackageInstaller<'a> {
                         } else {
                             installer.install(
                                 staging,
-                                self.skip_delete,
+                                skip_delete,
                                 destination_dir,
                                 installer.get_install_method(),
                                 resolution.tag,
@@ -2253,7 +2275,7 @@ impl<'a> PackageInstaller<'a> {
                                 alias.slice(string_buf!()),
                             ),
                             copy,
-                            skip_delete: self.skip_delete,
+                            skip_delete,
                             random: bun_core::fast_random(),
                             resolution_tag: resolution.tag,
                             result: Default::default(),
@@ -2266,7 +2288,7 @@ impl<'a> PackageInstaller<'a> {
                     };
                     break 'result installer.install(
                         staging,
-                        self.skip_delete,
+                        skip_delete,
                         destination_dir,
                         method,
                         resolution.tag,

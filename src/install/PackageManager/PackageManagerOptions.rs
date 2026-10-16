@@ -690,12 +690,12 @@ impl Options {
         bun_install_ref: Option<&Api::BunInstall>,
         // Runtime auto-install's `.npmrc`: only the registries and their credentials are read.
         runtime_npmrc: Option<&Api::BunInstall>,
-        // Runtime auto-install only: the bunfig.toml at the project's root, when that is not the
-        // file `bun_install_ref` was read from.
-        runtime_root_bunfig: Option<&Api::BunInstall>,
+        // Runtime auto-install only: the bunfig.toml files of the project's other folders. The first
+        // has the ones that `bun_install_ref` overrides, the second the ones that override it.
+        runtime_bunfigs: [Option<&Api::BunInstall>; 2],
         subcommand: Subcommand,
     ) -> crate::Result<()> {
-        let bunfigs = [runtime_root_bunfig, bun_install_ref];
+        let bunfigs = [runtime_bunfigs[0], bun_install_ref, runtime_bunfigs[1]];
         if let Some(manifest_cache) = env.get(b"BUN_MANIFEST_CACHE") {
             self.enable.set(
                 Enable::MANIFEST_CACHE,

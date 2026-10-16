@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
-import { connect, createServer, TLSSocket } from "node:tls";
+import { connect, createSecureContext, createServer, TLSSocket } from "node:tls";
 import { decodeErrorAlert, startMalformedServerHelloServer } from "./tls-handshake-alert-utils";
 
 it.if(isWindows)("should work with named pipes and tls", async () => {
@@ -285,6 +285,59 @@ it.if(isWindows)("setSecureContext() rotates the certificate of a server listeni
   } finally {
     server.close();
   }
+});
+
+// A named pipe has no fd for the TLS engine to adopt.
+describe.if(isWindows)("an SNICallback over a named pipe", () => {
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
+  const agent1 = { key: fixture("agent1-key.pem"), cert: fixture("agent1-cert.pem") };
+  const agent3 = { key: fixture("agent3-key.pem"), cert: fixture("agent3-cert.pem") };
+  type SNICb = (err: Error | null, ctx?: unknown) => void;
+  type SNICallback = (name: string, cb: SNICb) => void;
+  // Each returns the server to listen on the pipe.
+  const servers: Record<string, (SNICallback: SNICallback) => net.Server> = {
+    "a tls.Server that listens on the pipe": SNICallback =>
+      createServer({ ...agent1, SNICallback }).on("tlsClientError", () => {}),
+    "new TLSSocket(pipeSocket, { isServer: true })": SNICallback =>
+      net.createServer(accepted => {
+        accepted.on("error", () => {});
+        new TLSSocket(accepted, { isServer: true, ...agent1, SNICallback }).on("error", () => {});
+      }),
+  };
+  const answers: Record<string, (cb: SNICb) => void> = {
+    "at once": cb => cb(null, createSecureContext(agent3)),
+    "later": cb => void setImmediate(cb, null, createSecureContext(agent3)),
+    "with an error": cb => cb(new Error("boom")),
+  };
+
+  describe.each(Object.keys(servers))("of %s", kind => {
+    it.each(Object.keys(answers))("that answers %s", async answer => {
+      const pipe = `\\\\.\\pipe\\test\\${randomUUID()}`;
+      const asked: string[] = [];
+      const server = servers[kind]((name, cb) => {
+        asked.push(name);
+        answers[answer](cb);
+      });
+      let client: TLSSocket | undefined;
+      try {
+        server.listen(pipe);
+        await once(server, "listening");
+        client = connect({ path: pipe, servername: "sni.test", rejectUnauthorized: false });
+        const outcome = await new Promise<string>(resolve => {
+          client!.on("secureConnect", () => resolve(client!.getPeerCertificate().subject.CN as string));
+          client!.on("error", () => resolve("no handshake"));
+          client!.on("close", () => resolve("no handshake"));
+        });
+        expect({ asked, outcome }).toEqual({
+          asked: ["sni.test"],
+          outcome: answer === "with an error" ? "no handshake" : "agent3",
+        });
+      } finally {
+        client?.destroy();
+        server.close();
+      }
+    });
+  });
 });
 
 it.if(isWindows)("should be able to upgrade a named pipe connection to TLS", async () => {

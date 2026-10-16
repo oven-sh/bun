@@ -1784,7 +1784,7 @@ describe.concurrent("gzip trailer", () => {
   // published as an empty package.
   test("a body that is not an archive fails the install (streaming)", async () => {
     expect(await install("streaming", Buffer.alloc(4096, "this is not a gzip stream\n"))).toEqual({
-      error: expect.stringContaining('error: Fail extracting tarball for "stream-pkg": the archive holds no files'),
+      error: expect.stringContaining('error: Fail extracting tarball for "stream-pkg": archive is empty'),
       streamed: false,
       installed: false,
       cached: 0,

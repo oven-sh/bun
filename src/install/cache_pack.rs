@@ -462,7 +462,7 @@ fn pack_entry(
             &rel_buf[..len]
         };
         if rel.len() > MAX_PACK_PATH_LEN || !is_safe_relative_path(rel) {
-            return Err(refuse("cache entry has a path that cannot be packed", rel));
+            return Err(refuse("cache entry path cannot be packed", rel));
         }
         match entry.kind {
             sys::EntryKind::Directory => w.header(KIND_DIRECTORY, rel, 0o755, 0)?,
@@ -477,7 +477,7 @@ fn pack_entry(
                 let size = u64::try_from(stat.st_size).unwrap_or(0);
                 w.header(KIND_FILE, rel, stat.st_mode as u32 & 0o777, size)?;
                 if !w.copy_from(&file, size)? {
-                    return Err(refuse("file changed while it was being packed", rel));
+                    return Err(refuse("file changed while packing", rel));
                 }
                 summary.files += 1;
                 summary.bytes += size;
@@ -491,7 +491,7 @@ fn pack_entry(
                         || !bun_libarchive::is_symlink_target_safe(rel, target, &mut join_buf)
                     {
                         return Err(refuse(
-                            "cache entry has a symlink that may lead out of it",
+                            "cache entry has symlink that may point outside it",
                             rel,
                         ));
                     }
@@ -530,7 +530,7 @@ pub fn pack(pm: &mut PackageManager, destination: &[u8]) -> Result<PackSummary, 
         for entry in &entries {
             if entry_tag(entry.name.as_bytes()).is_none() {
                 return Err(Error::Entry {
-                    reason: "cache entry has a name that cannot be packed",
+                    reason: "cache entry name cannot be packed",
                     path: entry.name.as_bytes().into(),
                 });
             }
@@ -604,7 +604,7 @@ impl Reader {
         if self.start == self.end {
             let n = sys::pread(self.file.handle(), &mut self.buf, self.pos as i64)?;
             if n == 0 {
-                return Err(self.refuse("the pack is cut short", b""));
+                return Err(self.refuse("truncated pack file", b""));
             }
             self.start = 0;
             self.end = n;
@@ -671,7 +671,7 @@ impl Reader {
         self.read_exact(&mut size)?;
         let size = u64::from_le_bytes(size);
         if size > self.len.saturating_sub(self.pos) {
-            return Err(self.refuse("the pack is cut short", &path[..path_len]));
+            return Err(self.refuse("truncated pack file", &path[..path_len]));
         }
         Ok(Header {
             kind,
@@ -746,7 +746,7 @@ fn unpack_package(
         let header = r.header(&mut path)?;
         let rel = ZStr::from_slice_with_nul(&path);
         if r.pos > end || header.size > end - r.pos {
-            return Err(r.refuse("record runs past the end of its package", rel.as_bytes()));
+            return Err(r.refuse("record runs past end of package", rel.as_bytes()));
         }
         if header.kind == KIND_CHECKSUM {
             let computed = r.hasher.final_();
@@ -920,14 +920,14 @@ pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary
             _ if header.mode != 0 => return Err(r.refuse("malformed record", name.as_bytes())),
             KIND_PACKAGE => {}
             KIND_END if name.is_empty() && r.pos == r.len => break,
-            KIND_END => return Err(r.refuse("bytes after the end of the pack", b"")),
+            KIND_END => return Err(r.refuse("trailing bytes after pack", b"")),
             _ => return Err(r.refuse("record outside of a package", name.as_bytes())),
         }
         let Some(tag) = entry_tag(name.as_bytes()) else {
-            return Err(r.refuse("not the name of a cache entry", name.as_bytes()));
+            return Err(r.refuse("invalid cache entry name", name.as_bytes()));
         };
         if name.as_bytes() <= previous.as_slice() {
-            return Err(r.refuse("packages are not in order", name.as_bytes()));
+            return Err(r.refuse("packages out of order", name.as_bytes()));
         }
         previous.clear();
         previous.extend_from_slice(name.as_bytes());
@@ -1035,7 +1035,7 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
             }
             if summary.missing > 0 {
                 bun_core::pretty_errorln!(
-                    "<r><yellow>warn<r>: left out {} package{} the cache does not have (run <b>bun install<r> first)",
+                    "<r><yellow>warn<r>: skipping {} package{} not in cache (run <b>bun install<r> first)",
                     summary.missing,
                     plural(summary.missing.into()),
                 );
@@ -1057,7 +1057,7 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
             }
             if summary.incomplete > 0 {
                 bun_core::pretty_errorln!(
-                    "<r><yellow>warn<r>: left {} incomplete cache entr{} as found; <b>bun install<r> downloads {} again",
+                    "<r><yellow>warn<r>: ignoring {} incomplete cache entr{}, <b>bun install<r> will re-download {}",
                     summary.incomplete,
                     if summary.incomplete == 1 { "y" } else { "ies" },
                     if summary.incomplete == 1 { "it" } else { "them" },

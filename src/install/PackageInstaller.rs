@@ -848,7 +848,7 @@ impl<'a> PackageInstaller<'a> {
                 manager.log_mut(),
                 None,
                 bun_ast::Loc::EMPTY,
-                "Failed to link into <b>{}<r>: {}",
+                "failed to link into <b>{}<r>: {}",
                 bun_core::fmt::EscapeControlChars(bstr::BStr::new(err.path.as_ref())),
                 bstr::BStr::new(err.name()),
             );
@@ -1029,7 +1029,7 @@ impl<'a> PackageInstaller<'a> {
                         self.summary.fail += 1;
                         if manager.options.log_level != Options::LogLevel::Silent {
                             bun_core::pretty_errorln!(
-                                "<r><red>error<r>: Failed to link <b>{}<r>: {}",
+                                "<r><red>error<r>: failed to link <b>{}<r>: {}",
                                 bstr::BStr::new(alias),
                                 err.name(),
                             );
@@ -1039,7 +1039,7 @@ impl<'a> PackageInstaller<'a> {
                             manager.log_mut(),
                             None,
                             bun_ast::Loc::EMPTY,
-                            "Failed to link <b>{}<r>: {}",
+                            "failed to link <b>{}<r>: {}",
                             bstr::BStr::new(alias),
                             err.name(),
                         );

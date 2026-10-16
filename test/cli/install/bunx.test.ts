@@ -1779,7 +1779,7 @@ describe.skipIf(isWindows)("cache directory", () => {
     const root = join(box.tmp, `.bunx-${uid}`);
 
     const first = await box.run(["tool"], { env });
-    expect(first.stderr).toContain("warn: bunx is installing into the shared temp directory");
+    expect(first.stderr).toContain("warn: no usable private cache directory, installing into shared temp directory");
     expect(first).toMatchObject({ stdout: ran, exitCode: 0 });
     expect(statSync(root).mode & 0o777).toBe(0o700);
     expect(readdirSync(root).sort()).toEqual(["tool@latest", "tool@latest.lock"]);
@@ -1802,7 +1802,7 @@ describe.skipIf(isWindows)("cache directory", () => {
     chmodSync(box.home, 0o555);
 
     const first = await box.run(["tool"], unprivileged);
-    expect(first.stderr).toContain("warn: bunx is installing into the shared temp directory");
+    expect(first.stderr).toContain("warn: no usable private cache directory, installing into shared temp directory");
     expect(first).toMatchObject({ stdout: ran, exitCode: 0 });
     expect(bunxEntries(box.tmp)).toContain(`.bunx-${unprivileged.uid ?? uid}`);
 
@@ -1844,7 +1844,7 @@ describe.skipIf(isWindows)("cache directory", () => {
 
     const result = await box.run(["tool"], { env: { ...box.env, HOME: undefined, USERPROFILE: undefined } });
     expect(result.stderr).toContain(
-      "error: bunx could not create a cache directory that only the current user can access. Set BUN_INSTALL_CACHE_DIR to a directory you own.",
+      "error: failed to create private cache directory. Set BUN_INSTALL_CACHE_DIR to a directory you own.",
     );
     expect(result).toMatchObject({ stdout: "", exitCode: 1, requests: [] });
     expect(readdirSync(join(box.tmp, `.bunx-${uid}`))).toEqual([]);
@@ -2252,9 +2252,7 @@ require("child_process").execFileSync(process.env.BUN_EXE, ["install"], { cwd: p
       const env = { ...box.env, npm_config_registry: await unreachable() };
       expect(await box.run(["tool"], { env })).toMatchObject({
         stdout: ran,
-        stderr: expect.stringContaining(
-          "warn: Could not reach the registry. Using the installation of tool that bunx has.",
-        ),
+        stderr: expect.stringContaining("warn: registry unreachable, using cached tool"),
         exitCode: 0,
       });
       expect(markers()).toEqual([true, true]);
@@ -2298,9 +2296,7 @@ require("child_process").execFileSync(process.env.BUN_EXE, ["install"], { cwd: p
       });
     });
 
-    const usesItsTree = expect.stringContaining(
-      "warn: Could not reach the registry. Using the installation of tool that bunx has.",
-    );
+    const usesItsTree = expect.stringContaining("warn: registry unreachable, using cached tool");
 
     // These say nothing about the package. There is a tree to run, so bunx does not wait for a second attempt.
     it.concurrent.each([500, 502, 503, 504, 429, 408])(

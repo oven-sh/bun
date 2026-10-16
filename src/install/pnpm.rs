@@ -544,7 +544,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let Some((path, config_key)) = found else {
                 if !silent {
                     bun_core::warn!(
-                        "skipped patch \"{}\" from pnpm-lock.yaml: not in patchedDependencies of package.json or pnpm-workspace.yaml",
+                        "skipping patch \"{}\" from pnpm-lock.yaml: not in patchedDependencies of package.json or pnpm-workspace.yaml",
                         for_terminal(BStr::new(key_str))
                     );
                 }
@@ -771,7 +771,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             ) else {
                 bail!(
                     log,
-                    "pnpm-lock.yaml dependency '{}' of importer '{}' has a link path that is too long",
+                    "pnpm-lock.yaml dependency '{}' of importer '{}': link path too long",
                     escape_control_chars(dep.name.slice(string_bytes!(lockfile))),
                     escape_control_chars(workspace_path)
                 );
@@ -917,7 +917,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             else {
                 bail!(
                     log,
-                    "pnpm-lock.yaml package '{}' has a directory path that is too long",
+                    "pnpm-lock.yaml package '{}': directory path too long",
                     escape_control_chars(name_str)
                 );
             };
@@ -979,7 +979,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                 for_terminal(BStr::new(url))
                             ),
                             None => bun_core::warn!(
-                                "skipped pnpm registry \"{}\" from pnpm-lock.yaml: not in namedRegistries of pnpm-workspace.yaml (resolving its packages from the configured registry)",
+                                "skipping pnpm registry \"{}\" from pnpm-lock.yaml: not in namedRegistries of pnpm-workspace.yaml (resolving its packages from the configured registry)",
                                 escape_control_chars(registry_name)
                             ),
                         }
@@ -1540,6 +1540,7 @@ fn parse_append_importer_dependencies(
 ) -> Result<(), MigratePnpmLockfileError> {
     let manifest_peers = declared_peers(manifest, false)?;
     let silent = manager.options.log_level.is_silent();
+    let verbose = manager.options.log_level.is_verbose();
 
     let off = lockfile.buffers.dependencies.len();
 
@@ -1573,7 +1574,7 @@ fn parse_append_importer_dependencies(
             if version_str.starts_with(b"runtime:") {
                 if !silent {
                     bun_core::warn!(
-                        "skipped \"{}@{}\" from pnpm-lock.yaml: runtime dependencies are not supported",
+                        "skipping \"{}@{}\" from pnpm-lock.yaml: runtime dependencies are not supported",
                         escape_control_chars(name_str),
                         escape_control_chars(version_str)
                     );
@@ -1624,9 +1625,9 @@ fn parse_append_importer_dependencies(
 
     for (peer_name, decl) in manifest_peers.iter() {
         let peer_name: &[u8] = peer_name;
-        if !decl.optional && !importer_versions.contains(peer_name) && !silent {
+        if !decl.optional && !importer_versions.contains(peer_name) && verbose {
             bun_core::warn!(
-                "skipped peer \"{}\" of {}: not recorded in pnpm-lock.yaml (bun install will resolve it)",
+                "skipping peer \"{}\" of {}: not in pnpm-lock.yaml, resolving it",
                 escape_control_chars(peer_name),
                 ImporterName(importer_path)
             );
@@ -1637,7 +1638,7 @@ fn parse_append_importer_dependencies(
         }
     }
 
-    if exclude_links_from_lockfile && !silent {
+    if exclude_links_from_lockfile && verbose {
         for (group_name, _) in DEPENDENCY_GROUPS {
             for (key, value) in props(&manifest.get(group_name).unwrap_or_default()) {
                 if let (Some(name_str), Some(spec)) = (as_str(key), as_str(value))
@@ -1645,7 +1646,7 @@ fn parse_append_importer_dependencies(
                     && !importer_versions.contains(name_str)
                 {
                     bun_core::warn!(
-                        "skipped \"{}\" from {}: excluded from pnpm-lock.yaml by excludeLinksFromLockfile",
+                        "skipping \"{}\" from {}: excluded from pnpm-lock.yaml by excludeLinksFromLockfile",
                         escape_control_chars(name_str),
                         ImporterName(importer_path)
                     );
@@ -1850,7 +1851,7 @@ fn update_package_json_after_migration(
                 let strings = string_entries(contents, &map, field == "catalogs", &mut skipped);
                 if skipped > 0 && !silent {
                     bun_core::warn!(
-                        "\"{}\" in pnpm-workspace.yaml has entries that are not strings ({}); they were not copied to package.json",
+                        "skipping non-string entries of \"{}\" in pnpm-workspace.yaml ({})",
                         field,
                         skipped,
                     );

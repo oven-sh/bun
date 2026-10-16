@@ -2624,27 +2624,6 @@ void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0)
     arg0->deref();
 }
 
-WebCore::FetchHeaders* WebCore__FetchHeaders__createValueNotJS(JSC::JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const EncodedSlice* arg3, uint32_t count)
-{
-    auto throwScope = DECLARE_THROW_SCOPE(arg0->vm());
-    Vector<KeyValuePair<String, String>> pairs;
-    pairs.reserveCapacity(count);
-    EncodedSlice buf = *arg3;
-    for (uint32_t i = 0; i < count; i++) {
-        WTF::String name = Zig::toStringCopy(buf, arg1[i]);
-        WTF::String value = Zig::toStringCopy(buf, arg2[i]);
-        pairs.unsafeAppendWithoutCapacityCheck(KeyValuePair<String, String>(name, value));
-    }
-
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
-    WebCore::propagateException(*arg0, throwScope, headers->fill(WebCore::FetchHeaders::Init(WTF::move(pairs))));
-    if (throwScope.exception()) {
-        headers->deref();
-        return nullptr;
-    }
-    return headers;
-}
-
 void WebCore__FetchHeaders__get_(WebCore::FetchHeaders* headers, const EncodedSlice* arg1, EncodedSlice* arg2, JSC::JSGlobalObject* global)
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());

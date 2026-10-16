@@ -1617,7 +1617,7 @@ fn move_entries_aside(
             && log_level != LogLevel::Silent
         {
             bun_core::warn!(
-                "{}: failed to remove {}, which another linker installed",
+                "{}: failed to remove {} (installed by another linker)",
                 BStr::new(err.name()),
                 BStr::new(from.slice()),
             );

@@ -749,7 +749,7 @@ impl RunCommand {
                         _ => {
                             bun_core::run_once! {{
                                 bun_core::warn!(
-                                    "could not create the <b>node<r> alias for bun in {}. Scripts that run <b>node<r> will not find it.",
+                                    "failed to create <b>node<r> alias in {}, scripts that run <b>node<r> will not find it",
                                     bun_core::fmt::fmt_os_path(
                                         &target_path_buffer[prefix.len()..dir_slice_len],
                                         Default::default(),

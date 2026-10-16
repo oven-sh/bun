@@ -67,15 +67,15 @@ test("print size", () => {
 });
 
 test("Response.redirect with invalid arguments should not crash", () => {
-  // This should not crash - issue #18414
+  // issue #18414
   // Passing a number as URL and string as init should handle gracefully
-  expect(() => Response.redirect(400, "a")).not.toThrow();
+  expect(() => (Response as any).redirect(400, "a")).not.toThrow();
 
-  // Test various invalid argument combinations - should not crash
-  expect(() => Response.redirect(42, "test")).not.toThrow();
-  expect(() => Response.redirect(true, "string")).not.toThrow();
-  expect(() => Response.redirect(null, "init")).not.toThrow();
-  expect(() => Response.redirect(undefined, "value")).not.toThrow();
+  // Test various invalid argument combinations
+  expect(() => (Response as any).redirect(42, "test")).not.toThrow();
+  expect(() => (Response as any).redirect(true, "string")).not.toThrow();
+  expect(() => (Response as any).redirect(null, "init")).not.toThrow();
+  expect(() => (Response as any).redirect(undefined, "value")).not.toThrow();
 });
 
 test("Response.redirect status code validation", () => {

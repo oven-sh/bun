@@ -70,12 +70,8 @@ pub enum Error {
     MissingShell,
     #[error("NotFound")]
     NotFound,
-    #[error("InvalidRoot")]
-    InvalidRoot,
     #[error("EmptyKey")]
     EmptyKey,
-    #[error("ExpectedObject")]
-    ExpectedObject,
     #[error("FormatFailed")]
     FormatFailed,
     #[error("SelfExePathFailed")]
@@ -116,8 +112,6 @@ pub enum Error {
     CouldntReadCurrentDirectory,
     #[error("FailedToGetTempPath")]
     FailedToGetTempPath,
-    #[error("UnexpectedCreatingStdin")]
-    UnexpectedCreatingStdin,
     #[error("UnableToEncode")]
     UnableToEncode,
     #[error("InvalidHeaderName")]
@@ -379,9 +373,7 @@ impl Error {
             Self::UnrecognizedCommand => "UnrecognizedCommand",
             Self::MissingShell => "MissingShell",
             Self::NotFound => "NotFound",
-            Self::InvalidRoot => "InvalidRoot",
             Self::EmptyKey => "EmptyKey",
-            Self::ExpectedObject => "ExpectedObject",
             Self::FormatFailed => "FormatFailed",
             Self::SelfExePathFailed => "SelfExePathFailed",
             Self::SpawnFailed => "SpawnFailed",
@@ -404,7 +396,6 @@ impl Error {
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::CouldntReadCurrentDirectory => "CouldntReadCurrentDirectory",
             Self::FailedToGetTempPath => "FailedToGetTempPath",
-            Self::UnexpectedCreatingStdin => "UnexpectedCreatingStdin",
             Self::UnableToEncode => "UnableToEncode",
             Self::InvalidHeaderName => "InvalidHeaderName",
             Self::FormatError => "FormatError",

@@ -74,7 +74,7 @@ function createServerResponse(incomingMessage: IncomingMessage) {
     if (headers) {
       Object.entries(headers).forEach(([key, value]) => {
         if (value !== undefined) {
-          res.setHeader(key, value);
+          res.setHeader(key, value as string);
         }
       });
     }

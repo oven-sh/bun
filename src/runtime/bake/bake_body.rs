@@ -257,7 +257,7 @@ impl SplitBundlerOptions {
         let plugin: NonNull<Plugin> = match self.plugin {
             Some(p) => p,
             None => {
-                let p = Plugin::create(global, bun_jsc::BunPluginTarget::Bun);
+                let p = Plugin::create(global, crate::api::js_bundler::BunPluginTarget::Bun);
                 let p = NonNull::new(p)
                     .expect("JSBundlerPlugin__create returns a non-null protected JSCell");
                 self.plugin = Some(p);

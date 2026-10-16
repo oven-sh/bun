@@ -35,7 +35,9 @@ test("buffer.resolveObjectURL empty blob", async () => {
 });
 
 test("buffer.resolveObjectURL args", async () => {
+  // @ts-expect-error
   expect(resolveObjectURL()).toBeUndefined();
+  // @ts-expect-error
   expect(resolveObjectURL(1)).toBeUndefined();
   expect(resolveObjectURL("foo")).toBeUndefined();
   const blob = new Blob(["hello"]);

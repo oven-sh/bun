@@ -343,6 +343,77 @@ describe("bun", () => {
       expect(stderr).toContain("Could not get current working directory");
       expect(exitCode).toBe(1);
     });
+
+    // IS_BUN_AUTO_UPDATE is what `bun upgrade` sets: the file is installed although stdout is a pipe.
+    async function installCompletions(args: string[], env: Record<string, string | undefined>) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "completions", ...args],
+        env: {
+          ...bunEnv,
+          BUN_INSTALL: undefined,
+          XDG_CONFIG_HOME: undefined,
+          XDG_DATA_HOME: undefined,
+          fpath: undefined,
+          IS_BUN_AUTO_UPDATE: "true",
+          ...env,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("");
+      return { stderr, exitCode };
+    }
+
+    // A fresh fish setup has `fish/` and no `fish/completions/`. The search then ended at /etc/fish/completions.
+    test.concurrent.each([
+      ["$HOME/.config", { ".config": { fish: {} } }, [".config", "fish", "completions"], "HOME"],
+      ["$XDG_CONFIG_HOME", { fish: {} }, ["fish", "completions"], "XDG_CONFIG_HOME"],
+    ])("fish: makes the completions directory of the fish config in %s", async (_, files, path, variable) => {
+      using dir = tempDir("completions-fish", files);
+      using empty = tempDir("completions-fish-home", {});
+      const completions = join(String(dir), ...path);
+
+      const { stderr, exitCode } = await installCompletions([], {
+        SHELL: "/usr/bin/fish",
+        HOME: String(empty),
+        [variable]: String(dir),
+      });
+      expect(stderr).toContain(`Installed completions to ${completions}/bun.fish`);
+      expect(fs.readFileSync(join(completions, "bun.fish"), "utf8")).toContain("bun");
+      expect(exitCode).toBe(0);
+    });
+
+    describe("zsh", () => {
+      const zsh = (home: string) =>
+        installCompletions([join(home, ".bun")], { HOME: home, ZDOTDIR: home, SHELL: "/bin/zsh" });
+
+      test.concurrent.each([
+        '[ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"',
+        '[ -s "${HOME}/.bun/_bun" ] && source "${HOME}/.bun/_bun"',
+        '[ -s "~/.bun/_bun" ] && source "~/.bun/_bun"',
+        '# bun completions\r\n[ -s "$BUN_INSTALL/_bun" ] && source "$BUN_INSTALL/_bun"\r',
+      ])("leaves a .zshrc alone that already has %j", async snippet => {
+        const zshrc = `export PATH="/usr/local/bin:$PATH"\n\n${snippet}\n`;
+        using dir = tempDir("completions-zshrc", { ".bun/.keep": "", ".zshrc": zshrc });
+
+        const { exitCode } = await zsh(String(dir));
+        expect(fs.readFileSync(join(String(dir), ".zshrc"), "utf8")).toBe(zshrc);
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("adds its line to a .zshrc once", async () => {
+        const zshrc = 'export PATH="/usr/local/bin:$PATH"\n';
+        using dir = tempDir("completions-zshrc-fresh", { ".bun/.keep": "", ".zshrc": zshrc });
+        const path = join(fs.realpathSync(String(dir)), ".bun", "_bun");
+        const added = `${zshrc}\n# bun completions\n[ -s "${path}" ] && source "${path}"\n`;
+
+        expect((await zsh(String(dir))).exitCode).toBe(0);
+        expect(fs.readFileSync(join(String(dir), ".zshrc"), "utf8")).toBe(added);
+        expect((await zsh(String(dir))).exitCode).toBe(0);
+        expect(fs.readFileSync(join(String(dir), ".zshrc"), "utf8")).toBe(added);
+      });
+    });
   });
   describe("--help preserves <placeholder> text", () => {
     const env = { ...bunEnv, NO_COLOR: "1" };
@@ -354,7 +425,7 @@ describe("bun", () => {
       ["link", "bun link [flags] [<packages>]"],
       ["patch", "bun patch [flags or options] <package>@<version>"],
       ["patch-commit", "bun patch-commit [flags or options] <directory>"],
-      ["info", "bun info [flags] <package>[@<version>]"],
+      ["info", "bun info [flags] <package>[@<version>] [<property>...]"],
     ];
     test.concurrent.each(usage)("bun %s --help usage line", async (cmd, expected) => {
       await using proc = Bun.spawn({ cmd: [bunExe(), cmd, "--help"], env, stderr: "pipe" });
@@ -418,7 +489,7 @@ describe("bun", () => {
         "bun pm --help",
         ["pm"],
         [
-          /^ {2}bun pm ls +list the dependency tree according to the current lockfile$/m,
+          /^ {2}bun pm ls +list the tree of installed dependencies$/m,
           /^ {2}bun pm licenses +list installed packages grouped by license$/m,
         ],
       ],
@@ -428,6 +499,16 @@ describe("bun", () => {
         [
           /^ {2}Add a dependency to a specific workspace in a monorepo\n {2}bun add zod --filter api$/m,
           /^ {2}Add to the workspace catalog instead of pinning a version\n {2}bun add --catalog react\n {2}bun add --catalog=testing vitest$/m,
+        ],
+      ],
+      // The bare form only installs the symlink; package.json is written with --save (see the --save
+      // flag row), so the examples must say which form does what.
+      [
+        "bun link --help",
+        ["link"],
+        [
+          /^ {2}Link a previously-registered linkable package into the current project's node_modules\.\n {2}bun link <package>$/m,
+          /^ {2}Also add it to the current project's package\.json as a link: dependency\.\n {2}bun link --save <package>$/m,
         ],
       ],
       [
@@ -474,10 +555,10 @@ describe("bun", () => {
 // subcommand. It must step past the value of `--cwd` / `--env-file` so that
 // value isn't misread as the subcommand name.
 describe.concurrent("global flag before subcommand", () => {
-  async function run(cwd: string, argv: string[]) {
+  async function run(cwd: string, argv: string[], env: Record<string, string | undefined> = bunEnv) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...argv],
-      env: bunEnv,
+      env,
       cwd,
       stdout: "pipe",
       stderr: "pipe",
@@ -860,6 +941,69 @@ describe.concurrent("global flag before subcommand", () => {
         const { stdout, exitCode } = await run(String(dir), [...pre, word]);
         expect(stdout).toContain(`${word}-from-pkga`);
         expect(exitCode).toBe(0);
+      });
+    }
+  }
+
+  // A project that has a script named like the command. The value of a flag
+  // in front of the command made bun run that script: no test ran, nothing
+  // was installed, and the exit code was the script's.
+  const commands = ["test", "build", "install", "ci", "audit"] as const;
+  const sameNameScripts = {
+    "package.json": JSON.stringify({
+      name: "p",
+      version: "1.0.0",
+      scripts: Object.fromEntries(commands.map(name => [name, `echo the package.json script ${name} ran`])),
+      dependencies: { dep: "file:./dep" },
+    }),
+    "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    "app.ts": `console.log("ran")`,
+    "pre.ts": "",
+    ".env": "A=1\n",
+    "pass.test.ts": `import {test,expect} from "bun:test"; test("t", () => expect(1).toBe(1));`,
+  };
+  for (const pre of [
+    ["--cwd", "."],
+    ["--env-file", ".env"],
+    ["--preload", "./pre.ts"],
+  ]) {
+    for (const command of commands) {
+      test(`bun ${pre.join(" ")} ${command} runs the command when package.json has a "${command}" script`, async () => {
+        using dir = tempDir("which-same-name-script", sameNameScripts);
+        const cwd = String(dir);
+        let audits = 0;
+        await using registry = Bun.serve({
+          port: 0,
+          fetch(req) {
+            if (req.method === "POST") audits++;
+            return Response.json({});
+          },
+        });
+        const env = { ...bunEnv, BUN_CONFIG_REGISTRY: registry.url.href };
+
+        if (command === "ci" || command === "audit") {
+          // Both read bun.lock. `ci` then has to create node_modules itself.
+          expect((await run(cwd, ["install"], env)).exitCode).toBe(0);
+          fs.rmSync(join(cwd, "node_modules"), { recursive: true });
+          audits = 0;
+        }
+
+        const args = { test: ["pass.test.ts"], build: ["./app.ts", "--outdir", "out"], install: [], ci: [], audit: [] };
+        const { stdout, stderr, exitCode } = await run(cwd, [...pre, command, ...args[command]], env);
+
+        const didItsWork = {
+          test: () => stderr.includes("1 pass"),
+          build: () => fs.existsSync(join(cwd, "out", "app.js")),
+          install: () => fs.existsSync(join(cwd, "node_modules", "dep", "package.json")),
+          ci: () => fs.existsSync(join(cwd, "node_modules", "dep", "package.json")),
+          audit: () => audits > 0,
+        }[command]();
+        // `bun install` and `bun ci` also run the "install" lifecycle script, so only the work tells them apart.
+        expect({ didItsWork, exitCode, output: didItsWork ? "" : stdout + stderr }).toEqual({
+          didItsWork: true,
+          exitCode: 0,
+          output: "",
+        });
       });
     }
   }

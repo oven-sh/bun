@@ -26,6 +26,8 @@ pub struct Store {
     /// Accessed from multiple threads
     pub(crate) entries: entry::List,
     pub(crate) nodes: node::List,
+    /// `node_modules/.bun/node_modules` names other than that of the entry's `node_id`.
+    pub(crate) hidden_hoist_keys: Vec<entry::DependenciesItem>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -99,7 +101,7 @@ impl Drop for Store {
         use entry::EntryColumns as _;
         for slot in self.entries.items_scripts() {
             if let Some(list) = slot.take() {
-                // SAFETY: the installer returned only after every task finished, so nothing else references the list boxed in Installer's RunPreinstall step.
+                // SAFETY: `Installer::drop` waited for every task on the pool, so nothing else references the list boxed in Installer's RunPreinstall step.
                 unsafe { bun_core::heap::destroy(list) };
             }
         }
@@ -109,6 +111,15 @@ impl Drop for Store {
 }
 
 impl Store {
+    /// The dependency that created the entry and the package it resolves to.
+    pub(crate) fn ids(&self, id: entry::Id) -> Ids {
+        let node_id = self.entries.items_node_id()[id.get() as usize].get() as usize;
+        Ids {
+            dep_id: self.nodes.items_dep_id()[node_id],
+            pkg_id: self.nodes.items_pkg_id()[node_id],
+        }
+    }
+
     /// Called from multiple threads. `parent_dedupe` should not be shared between threads.
     pub(crate) fn is_cycle(
         &self,
@@ -270,8 +281,7 @@ pub mod entry {
     pub(crate) type Dependencies = OrderedArraySet<DependenciesItem>;
 
     pub struct Entry {
-        // Used to get dependency name for destination path and peers
-        // for store path
+        // The first node deduped into this entry. Its dep_id is one dependent's dependency.
         pub node_id: super::node::Id,
         // parent_id: Id,
         pub dependencies: Dependencies,
@@ -284,6 +294,10 @@ pub mod entry {
         // if true this entry gets symlinked to `node_modules/.bun/node_modules`
         pub hoisted: bool,
 
+        /// Exists only inside the packages declaring it: no store directory, task or hoist slot.
+        pub nested_folder: bool,
+
+        /// Of a `file:` / URL tarball also the pinned integrity; without peers its first 8 bytes.
         pub peer_hash: PeerHash,
 
         /// Content hash of (package + sorted resolved dependency global-store keys),
@@ -314,6 +328,7 @@ pub mod entry {
             parents: Vec<Id>,
             step: core::sync::atomic::AtomicU32,
             hoisted: bool,
+            nested_folder: bool,
             peer_hash: PeerHash,
             entry_hash: u64,
             scripts: core::cell::Cell<Option<*mut package::scripts::List>>,
@@ -445,13 +460,8 @@ pub mod entry {
 
     impl<'a> fmt::Display for StorePathFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            use super::node::NodeColumns as _;
-            let store = self.store;
-            let entries = store.entries.slice();
-
-            let peer_hash = entries.items_peer_hash()[self.entry_id.get() as usize];
-            let node_id = entries.items_node_id()[self.entry_id.get() as usize];
-            let pkg_id = store.nodes.items_pkg_id()[node_id.get() as usize];
+            let peer_hash = self.store.entries.items_peer_hash()[self.entry_id.get() as usize];
+            let pkg_id = self.store.ids(self.entry_id).pkg_id;
 
             let pkgs = self.lockfile.packages.slice();
             write!(
@@ -510,44 +520,11 @@ pub mod entry {
         }
     }
 
-    pub(crate) fn debug_gather_all_parents(entry_id: Id, store: &Store) -> Vec<Id> {
-        let mut i: usize = 0;
-        let mut len: usize;
-
-        let entry_parents = store.entries.items_parents();
-
-        let mut parents: ArrayHashMap<Id, ()> = ArrayHashMap::default();
-
-        for &parent_id in entry_parents[entry_id.get() as usize].as_slice() {
-            if parent_id == Id::INVALID {
-                continue;
-            }
-            let _ = parents.put(parent_id, ()); // OOM-only Result
-        }
-
-        len = parents.len();
-        while i < len {
-            // Capture key before mutating `parents`.
-            let key = parents.keys()[i];
-            for &parent_id in entry_parents[key.get() as usize].as_slice() {
-                if parent_id == Id::INVALID {
-                    continue;
-                }
-                let _ = parents.put(parent_id, ()); // OOM-only Result
-                len = parents.len();
-            }
-            i += 1;
-        }
-
-        parents.keys().to_vec()
-    }
-
     #[derive(Copy, Clone)]
     pub struct DependenciesItem {
         pub(crate) entry_id: Id,
 
-        // TODO: this can be removed, and instead dep_id can be retrieved through:
-        // entry_id -> node_id -> node_dep_ids
+        // The dependent's own dependency on `entry_id`: it has the name this dependent uses.
         pub(crate) dep_id: DependencyID,
     }
 

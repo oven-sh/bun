@@ -1,19 +1,5 @@
-// session.altsvc() and stream.pushStream() check their arguments and then call the native
-// session object. Script can also call that object itself: every HTTP/2 session has a getter
-// named Symbol.for("::bunhttp2native::") that returns it.
-//
-// The native altsvc() cast the length of the origin to 16 bits. An origin longer than 65535
-// bytes ended the process with "panic: int cast: TryFromIntError(PosOverflow)". A shorter one
-// went out as a frame larger than 16384 bytes, the smallest SETTINGS_MAX_FRAME_SIZE. The
-// public session.altsvc() sent such a frame too, for an origin that goes out as UTF-8: it
-// counts code units, and the frame holds bytes.
-//
-// The native pushPromise() converted its two ids with no test. For a value that is not a number,
-// a build with assertions stopped at "ASSERTION FAILED: value.isHeapBigInt() || value.isNumber()"
-// and a release build wrote a PUSH_PROMISE frame with id 0. NaN, a negative number and 0 wrote
-// that frame in every build.
-//
-// The fixture runs in a subprocess because those failures kill the process.
+// Script can call the native object of an HTTP/2 session through the getter named
+// Symbol.for("::bunhttp2native::"). The fixture runs in a subprocess because a failure there ends the process.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 

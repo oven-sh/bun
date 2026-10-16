@@ -809,7 +809,7 @@ _bun_lint_completion() {
         '--config[Use this config file instead of looking for one]:config:_files' \
         '-c[Use this config file instead of looking for one]:config:_files' \
         '--no-config-lookup[Do not look for a config file]' \
-        '--rule[Set a rule\: --rule '"'"'eqeqeq\: \[error, smart\]'"'"']:rule' \
+        '--rule[Set a rule, or turn off a plugin\: --rule '"'"'eqeqeq\: \[error, smart\]'"'"', --rule '"'"'unicorn/*\: off'"'"']:rule' \
         '--rules[List the built-in rules]' \
         '--explain[Print the documentation of a rule]:explain' \
         '--init[Add a \[lint\] section to bunfig.toml]' \
@@ -863,7 +863,7 @@ _bun_lint_completion() {
         '--parser-options[Set parser options\: --parser-options projectService\:true]:parser-options' \
         '--parser[Parse files with this package]:parser' \
         '--plugin[Load these plugins]:plugin' \
-        '--native-plugin-rules[Use the built-in rules for these plugins only\: import,react-hooks (default\: all)]:native-plugin-rules' \
+        '--native-plugin-rules[Of the ESLint plugins a config loads, run only these natively\: import,react-hooks (default\: all)]:native-plugin-rules' \
         '--no-native-plugin-rules[Run plugin rules from the installed packages, in JavaScript]' \
         '--report-unused-disable-directives-severity[Report unused eslint-disable comments as off, warn or error]:report-unused-disable-directives-severity' \
         '--report-unused-inline-configs[Report config comments that change nothing]:report-unused-inline-configs' \

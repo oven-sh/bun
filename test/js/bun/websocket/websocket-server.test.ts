@@ -2,9 +2,11 @@ import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun"
 import { serve, spawn } from "bun";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, forceGuardMalloc, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, forceGuardMalloc, isWindows, tempDir, tls } from "harness";
+import { once } from "node:events";
 import net, { isIP } from "node:net";
 import path from "node:path";
+import { connect as tlsConnect } from "node:tls";
 
 const strings = [
   {
@@ -2451,6 +2453,284 @@ describe.concurrent("server.upgrade() after an await on a connection the HTTP la
       requestLine: "GET / HTTP/1.1",
       headers: [...handshake, "Connection: close"],
       sync: true,
+    });
+  });
+});
+
+// A request gets one response, and the 101 of server.upgrade() is one. Once
+// the server has started to write a Response for the request, the handshake is
+// over: server.upgrade() returns false and that Response goes on. More orders
+// of the same call than websocket-server-upgrade-reentrant.test.ts runs: they
+// must not put the 101's headers into the response on the wire, and they must
+// not give the socket to a ServerWebSocket (its close() never ran, and a later
+// ws.send() wrote to a freed socket or to another client's connection).
+describe.concurrent("server.upgrade() on a request whose response has begun", () => {
+  type Respond = (req: Request, server: Server<undefined>) => Response | Promise<Response>;
+
+  // Serves `respond` to one WebSocket handshake from a raw socket and collects
+  // what the server writes back.
+  async function start(respond: Respond, options: { secure?: boolean; route?: boolean } = {}) {
+    const events: string[] = [];
+    const request = Promise.withResolvers<Request>();
+    const handler: Respond = (req, server) => {
+      request.resolve(req);
+      return respond(req, server);
+    };
+    const server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: options.secure ? tls : undefined,
+      websocket: {
+        open: () => void events.push("open"),
+        message() {},
+        close: () => void events.push("close"),
+      },
+      ...(options.route ? { routes: { "/ws": handler } } : { fetch: handler }),
+    });
+    const address = { port: server.port!, host: "127.0.0.1" };
+    const socket = options.secure ? tlsConnect({ ...address, rejectUnauthorized: false }) : net.connect(address);
+
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let onData = () => {};
+    const gone = Promise.withResolvers<never>();
+    // Only observed through the race in `until` below.
+    gone.promise.catch(() => {});
+    socket.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+      size += chunk.length;
+      onData();
+    });
+    socket.on("error", error => gone.reject(error));
+    socket.on("close", () => gone.reject(new Error("the server closed the socket")));
+    await once(socket, options.secure ? "secureConnect" : "connect");
+    socket.write(
+      "GET /ws HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+        "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+    );
+
+    const bytes = () => Buffer.concat(chunks);
+    // Rejects if the server closes the socket before the condition holds.
+    const until = (condition: () => boolean) =>
+      Promise.race([
+        gone.promise,
+        new Promise<void>(resolve => {
+          onData = () => {
+            if (condition()) resolve();
+          };
+          onData();
+        }),
+      ]);
+    return {
+      server,
+      socket,
+      request: request.promise,
+      bytes,
+      size: () => size,
+      until,
+      received: (text: string) => until(() => bytes().includes(text)),
+      // What the client holds, and whether the server made a WebSocket.
+      outcome: () => ({ ...parseResponse(bytes()), events, pendingWebSockets: server.pendingWebSockets }),
+      [Symbol.dispose]() {
+        socket.destroy();
+        server.stop(true);
+      },
+    };
+  }
+
+  // One HTTP/1.1 response, as far as it has arrived.
+  function parseResponse(wire: Buffer) {
+    const text = wire.toString("latin1");
+    const headEnd = text.indexOf("\r\n\r\n");
+    if (headEnd === -1) return { status: "", handshakeHeaders: [], body: "", complete: false, rest: text };
+    const [status, ...headerLines] = text.slice(0, headEnd).split("\r\n");
+    const headers = new Map(
+      headerLines.map(line => {
+        const colon = line.indexOf(":");
+        return [line.slice(0, colon).toLowerCase(), line.slice(colon + 1).trim()];
+      }),
+    );
+    let rest = text.slice(headEnd + 4);
+    let body = "";
+    let complete = false;
+    if (headers.has("content-length")) {
+      const length = Number(headers.get("content-length"));
+      complete = rest.length >= length;
+      body = rest.slice(0, length);
+      rest = rest.slice(length);
+    } else {
+      while (!complete) {
+        const lineEnd = rest.indexOf("\r\n");
+        if (lineEnd === -1) break;
+        const chunkSize = parseInt(rest.slice(0, lineEnd), 16);
+        if (!(rest.length >= lineEnd + 2 + chunkSize + 2)) break;
+        body += rest.slice(lineEnd + 2, lineEnd + 2 + chunkSize);
+        rest = rest.slice(lineEnd + 2 + chunkSize + 2);
+        complete = chunkSize === 0;
+      }
+    }
+    // The headers of a 101 must not reach a response that is not one.
+    const handshakeHeaders = [...headers.keys()].filter(
+      name => name === "upgrade" || name.startsWith("sec-websocket-"),
+    );
+    return { status, handshakeHeaders, body, complete, rest };
+  }
+
+  // The whole 200 response and nothing else, and no WebSocket on the server.
+  const intact = (body: string, complete = true) => ({
+    status: "HTTP/1.1 200 OK",
+    handshakeHeaders: [],
+    body,
+    complete,
+    rest: "",
+    events: [],
+    pendingWebSockets: 0,
+  });
+
+  function defaultStream() {
+    let controller!: ReadableStreamDefaultController;
+    return {
+      stream: new ReadableStream({
+        start(c) {
+          controller = c;
+          c.enqueue("first chunk");
+        },
+      }),
+      finish() {
+        controller.enqueue("second chunk");
+        controller.close();
+      },
+    };
+  }
+
+  function directStream() {
+    const resume = Promise.withResolvers<void>();
+    return {
+      stream: new ReadableStream({
+        type: "direct",
+        async pull(controller) {
+          controller.write("first chunk");
+          await controller.flush();
+          await resume.promise;
+          controller.write("second chunk");
+          await controller.end();
+        },
+      }),
+      finish: () => resume.resolve(),
+    };
+  }
+
+  it.each([
+    ["a direct ReadableStream body", { body: directStream }],
+    ["a ReadableStream body over TLS", { secure: true }],
+    ["a ReadableStream body from a route", { route: true }],
+    ["a ReadableStream body, with headers for the 101", { upgradeOptions: { headers: { "X-Custom": "1" } } }],
+  ] as [
+    string,
+    {
+      body?: typeof defaultStream;
+      upgradeOptions?: { headers: Record<string, string> };
+      secure?: boolean;
+      route?: boolean;
+    },
+  ][])("%s", async (_, { body = defaultStream, upgradeOptions, ...options }) => {
+    const { stream, finish } = body();
+    using started = await start(() => new Response(stream), options);
+    await started.received("first chunk");
+
+    expect(started.server.upgrade(await started.request, upgradeOptions)).toBe(false);
+
+    finish();
+    await started.until(() => started.outcome().complete);
+    expect(started.outcome()).toEqual(intact("first chunksecond chunk"));
+  });
+
+  it("a stream that has sent only its head", async () => {
+    let controller!: ReadableStreamDefaultController;
+    using started = await start(() => new Response(new ReadableStream({ start: c => void (controller = c) })));
+    await started.received("HTTP/1.1 200 OK\r\n");
+
+    expect(started.server.upgrade(await started.request)).toBe(false);
+
+    controller.enqueue("the body");
+    controller.close();
+    await started.until(() => started.outcome().complete);
+    expect(started.outcome()).toEqual(intact("the body"));
+  });
+
+  it("inside the pull() of a direct ReadableStream body", async () => {
+    const upgraded = Promise.withResolvers<boolean>();
+    using started = await start(
+      (req, server) =>
+        new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              upgraded.resolve(server.upgrade(req));
+              controller.write("the body");
+              await controller.end();
+            },
+          }),
+        ),
+    );
+
+    expect(await upgraded.promise).toBe(false);
+
+    await started.until(() => started.outcome().complete);
+    expect(started.outcome()).toEqual(intact("the body"));
+  });
+
+  // Nobody misbehaves here. Whoever is first answers: the wait page, or the
+  // handler that upgrades after a slow check.
+  it("a request timeout wrapper answered with a stream before the handler upgrades", async () => {
+    const slowCheck = Promise.withResolvers<void>();
+    const upgraded = Promise.withResolvers<boolean>();
+    const cancelled = Promise.withResolvers<void>();
+    using started = await start((req, server) => {
+      const handler = slowCheck.promise.then(() => {
+        upgraded.resolve(server.upgrade(req));
+        return new Response("no", { status: 400 });
+      });
+      const waitPage = new Response(
+        new ReadableStream({
+          start: controller => controller.enqueue("please wait\n"),
+          cancel: () => cancelled.resolve(),
+        }),
+      );
+      return Promise.race([handler, waitPage]);
+    });
+    await started.received("please wait\n");
+
+    slowCheck.resolve();
+    expect(await upgraded.promise).toBe(false);
+
+    // The response is still the HTTP layer's: it hears the client leave.
+    started.socket.destroy();
+    await cancelled.promise;
+    expect(started.outcome()).toEqual(intact("please wait\n", false));
+  });
+
+  it("a Blob body that waits for the client to read", async () => {
+    // More than the socket buffers hold, so part of it is still unsent.
+    const body = Buffer.alloc(32 * 1024 * 1024, "a");
+    using started = await start(() => new Response(body));
+    await started.received("\r\n\r\n");
+    started.socket.pause();
+    const headLength = started.bytes().indexOf("\r\n\r\n") + 4;
+
+    expect(started.server.upgrade(await started.request)).toBe(false);
+
+    started.socket.resume();
+    await started.until(() => started.size() >= headLength + body.length);
+    const wire = started.bytes();
+    expect({
+      status: wire.subarray(0, wire.indexOf("\r\n")).toString(),
+      bodyIsIntact: wire.subarray(headLength).equals(body),
+      pendingWebSockets: started.server.pendingWebSockets,
+    }).toEqual({
+      status: "HTTP/1.1 200 OK",
+      bodyIsIntact: true,
+      pendingWebSockets: 0,
     });
   });
 });

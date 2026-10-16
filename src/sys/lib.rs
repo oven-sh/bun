@@ -165,6 +165,26 @@ pub mod dir_iterator {
         pub kind: EntryKind,
         /// The inode number the directory records for the entry; 0 on Windows.
         pub ino: u64,
+        #[cfg(windows)]
+        has_directory_attribute: bool,
+    }
+
+    impl IteratorResult {
+        /// Whether a `SymLink` stands for a directory, where the listing says
+        /// so: a link on Windows is made as one or the other, whatever is at
+        /// its target, and `NtQueryAttributesFile` answers with the same bit.
+        /// `None`: the link has to be followed.
+        #[inline]
+        pub fn link_is_directory(&self) -> Option<bool> {
+            #[cfg(windows)]
+            {
+                Some(self.has_directory_attribute)
+            }
+            #[cfg(not(windows))]
+            {
+                None
+            }
+        }
     }
 
     /// Length-known, NUL-terminated entry name in OS-native encoding.
@@ -724,8 +744,8 @@ pub mod dir_iterator {
                     continue;
                 }
 
+                let isdir = (file_attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0;
                 let kind = {
-                    let isdir = (file_attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0;
                     let islink = (file_attrs & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0;
                     // On Windows, symlinks can be directories too. We
                     // prioritize the "sym_link" kind over the "directory"
@@ -744,6 +764,7 @@ pub mod dir_iterator {
                     name: Name::from_slice(dir_info_name),
                     kind,
                     ino: 0,
+                    has_directory_attribute: isdir,
                 }));
             }
         }

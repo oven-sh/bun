@@ -136,6 +136,7 @@ using namespace JSC;
     macro(normalize) \
     macro(onClose) \
     macro(onDrain) \
+    macro(onEndCallbacks) \
     macro(originalColumn) \
     macro(originalLine) \
     macro(overridableRequire) \

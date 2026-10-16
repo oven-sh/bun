@@ -538,7 +538,9 @@ describe.skipIf(isWindows).concurrent("ws+unix:// inspector under --watch", () =
         try {
           return (await fetch("http://localhost/json/version", { unix: join(String(dir), socket) })).status;
         } catch (error) {
-          if ((error as { code?: string }).code !== "FailedToOpenSocket") throw error;
+          // Not bound yet, or bound and not listening yet.
+          const code = (error as { code?: string }).code;
+          if (code !== "ENOENT" && code !== "ECONNREFUSED") throw error;
         }
         await Promise.race([Bun.sleep(10), exited]);
       }

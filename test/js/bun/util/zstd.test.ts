@@ -679,9 +679,14 @@ describe("sync compression argument handling", () => {
     }
   });
 
-  it("zstdDecompressSync takes no options", () => {
+  it("zstdDecompress and zstdDecompressSync take no options", async () => {
     const compressed = zstdCompressSync("hello");
-    for (const ignored of [undefined, null, 5, "x", {}]) {
+    for (const ignored of [undefined, null, 5, "x", {}, { level: 99 }]) {
+      expect(
+        (
+          await (zstdDecompress as (data: Uint8Array, ignored: unknown) => Promise<Buffer>)(compressed, ignored)
+        ).toString(),
+      ).toBe("hello");
       expect(
         (zstdDecompressSync as (data: Uint8Array, ignored: unknown) => Buffer)(compressed, ignored).toString(),
       ).toBe("hello");

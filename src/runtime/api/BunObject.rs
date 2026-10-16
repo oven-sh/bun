@@ -2289,9 +2289,7 @@ pub(crate) mod JSZstd {
     pub(crate) fn decompress<'a>(
         cx: &mut JsScope<'a>,
         data: JsLocal<'a>,
-        options: ZstdCompressionOptions,
     ) -> bindgen::Result<'a, JSValue> {
-        level_of(&cx.heap, options)?;
         schedule(cx, data, false, 0)
     }
 }

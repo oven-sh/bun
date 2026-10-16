@@ -157,17 +157,16 @@ export const which = b.fn({
 
 export const ZstdCompressionOptions = b.dictionary({ level: b.f64.loose.allowBigInt.optional }, { allowArray: true });
 
-/** The job pins `data`, for another thread to read. `zstdDecompress` checks `level` and does not use it. */
-const zstdJob = (rustName: string) =>
-  b.fn({
-    args: { data: b.any, options: ZstdCompressionOptions.default({}) },
-    returns: b.any,
-    capability: "js",
-    throws: true,
-    rustPath: `crate::api::bun_object::JSZstd::${rustName}`,
-  });
+/** The job pins it, for another thread to read. */
+const pinned = b.any;
 
-export const zstdCompress = zstdJob("compress");
+export const zstdCompress = b.fn({
+  args: { data: pinned, options: ZstdCompressionOptions.default({}) },
+  returns: b.any,
+  capability: "js",
+  throws: true,
+  rustPath: "crate::api::bun_object::JSZstd::compress",
+});
 
 export const zstdCompressSync = b.fn({
   args: { data: b.stringOrBuffer, options: ZstdCompressionOptions.default({}) },
@@ -177,7 +176,13 @@ export const zstdCompressSync = b.fn({
   rustPath: "crate::api::bun_object::JSZstd::compress_sync",
 });
 
-export const zstdDecompress = zstdJob("decompress");
+export const zstdDecompress = b.fn({
+  args: { data: pinned },
+  returns: b.any,
+  capability: "js",
+  throws: true,
+  rustPath: "crate::api::bun_object::JSZstd::decompress",
+});
 
 export const zstdDecompressSync = b.fn({
   args: { data: b.stringOrBuffer },

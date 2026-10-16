@@ -100,6 +100,10 @@ static JSValue scriptFetchParametersToImportAttributes(JSGlobalObject* globalObj
         // Unreachable with BUN_JSC_ADDITIONS (`type: "text"` parses as HostDefined); kept so the switch stays exhaustive.
         obj->putDirect(vm, vm.propertyNames->type, jsNontrivialString(vm, "text"_s));
         break;
+    case JSC::ScriptFetchParameters::Type::CSS:
+        // Unreachable for the same reason.
+        obj->putDirect(vm, vm.propertyNames->type, jsNontrivialString(vm, "css"_s));
+        break;
     case JSC::ScriptFetchParameters::Type::HostDefined:
         obj->putDirect(vm, vm.propertyNames->type, jsString(vm, params->hostDefinedImportType()));
         break;
@@ -541,6 +545,9 @@ static void writeArrowHeaderStack(VM& vm, ErrorInstance* errorInstance, const St
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope)
 {
     if (auto* errorInstance = dynamicDowncast<ErrorInstance>(exception->value())) {
+        // No stack is captured for a throw that a `catch` clause further up is certain to handle. The error's own is
+        // taken then, and that one is gone once the `stack` property is materialized.
+        auto& e_stack = exception->stackForReporting(vm);
         errorInstance->materializeErrorInfoIfNeeded(vm, vm.propertyNames->stack);
         RETURN_IF_EXCEPTION(throwScope, {});
         JSValue stack_jsval = errorInstance->get(globalObject, vm.propertyNames->stack);
@@ -551,7 +558,6 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
         String stack = stack_jsval.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
 
-        auto& e_stack = exception->stack();
         size_t stack_size = e_stack.size();
         if (stack_size == 0) {
             return false;

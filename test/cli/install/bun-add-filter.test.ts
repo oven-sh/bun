@@ -1044,17 +1044,19 @@ test.concurrent("add/remove --filter updates bun.lock for a workspace outside th
   const root = join(String(dir), "root");
   const x = () => file(join(String(dir), "x", "package.json")).json();
   const lockedX = async () => (await lockfileJson(root)).workspaces["../x"];
-  // Hoisted: on Windows the isolated linker fails to link the dependencies of a workspace outside the root (ENOENT).
-  async function runOk(args: string[]) {
+  async function runOk(args: string[], note = "") {
     const { stderr, exitCode } = await run(args, String(dir), { cwd: root, linker: "hoisted" });
-    expect(stderr).toBe("Saved lockfile\n");
+    expect(stderr).toBe(note + "Saved lockfile\n");
     expect(exitCode).toBe(0);
   }
 
   await runOk(["install"]);
   expect(await lockedX()).toStrictEqual({ name: "x", version: "1.0.0" });
 
-  await runOk(["add", "--filter", "x", "y@workspace:*"]);
+  await runOk(
+    ["add", "--filter", "x", "y@workspace:*"],
+    'note: skipped the dependencies and scripts of 1 workspace outside the project: "../x"\n',
+  );
   expect(await x()).toStrictEqual({ name: "x", version: "1.0.0", dependencies: { y: "workspace:*" } });
   expect(await lockedX()).toStrictEqual({ name: "x", version: "1.0.0", dependencies: { y: "workspace:*" } });
 
@@ -1963,8 +1965,8 @@ test.concurrent("a local path replaces the entry a target already declares for t
   expect(frozen.exitCode).toBe(0);
 });
 
-// The install hoists without the moved packages: no-deps@1.0.1 takes the place of the no-deps@2.0.0 that one-fixed-dep
-// needs. What is left of them in node_modules would run against the wrong version.
+// hoisted: the no-deps@2.0.0 that one-fixed-dep needs stays at the root, as after `bun install --omit` over a full
+// install. An install that skips both leaves that place empty: one-dep keeps its no-deps@1.0.1 below itself.
 test.concurrent.each(
   (["hoisted", "isolated"] as const).flatMap(linker =>
     [
@@ -2013,7 +2015,10 @@ test.concurrent.each(
     await rm(join(dir, "node_modules"), { recursive: true, force: true });
     const fresh = await run(["install", omit], dir, { linker });
     expect(fresh.stderr).not.toContain("error:");
-    expect(after).toStrictEqual(await topLevel());
+    const { packages, bins } = await topLevel();
+    // `add` takes out the folders of the packages it names. What they depend on is in a place that the run leaves out,
+    // and no install removes that: `bun prune` does.
+    expect(after).toStrictEqual({ packages: linker === "hoisted" ? [...packages, "no-deps"].sort() : packages, bins });
     expect(after.packages).not.toContain("one-fixed-dep");
     expect(fresh.exitCode).toBe(0);
   },

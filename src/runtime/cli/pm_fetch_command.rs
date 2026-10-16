@@ -15,6 +15,8 @@ pub(crate) fn exec(
 ) -> crate::Result<()> {
     // Off under `--silent` and `--no-summary`; `fetch` clears the flag it reads.
     let print_summary = pm.options.should_print_command_name();
+    // Read before calling `fetch`, which sets `dry_run` for its own use.
+    let dry_run = pm.options.dry_run;
 
     if print_summary {
         bun_core::prettyln!(
@@ -47,7 +49,8 @@ pub(crate) fn exec(
 
     if summary.fetched > 0 {
         bun_core::pretty!(
-            "<green>Fetched {} package{}<r> into cache ",
+            "<green>{} {} package{}<r> into cache ",
+            if dry_run { "Would fetch" } else { "Fetched" },
             summary.fetched,
             if summary.fetched == 1 { "" } else { "s" },
         );

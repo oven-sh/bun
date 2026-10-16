@@ -2533,7 +2533,7 @@ private:
         if (is8Bit) {
             if ((end - ptr) < static_cast<int>(length))
                 return false;
-            str = String { std::span { ptr, length } };
+            str = String { std::span { byteCast<Latin1Character>(ptr), length } };
             ptr += length;
             return true;
         }

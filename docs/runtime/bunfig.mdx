@@ -436,7 +436,23 @@ Set a rule to `"off"`, `"warn"`, or `"error"`. To pass options, use an array. Ev
 "no-restricted-imports" = ["error", { paths = ["lodash"] }]
 ```
 
+Use `*` as the rule name to turn off every rule of a plugin. In the same table, a setting for a single rule overrides the wildcard, in either order.
+
+```toml title="bunfig.toml" icon="settings"
+[lint.rules]
+"jsx-a11y/*" = "off"
+"unicorn/*" = "off"
+"unicorn/no-null" = "warn"
+```
+
+- A wildcard can only be `"off"`. To turn rules on, name them or use [`lint.categories`](#lint-categories).
+- [`lint.overrides`](#lint-overrides) and flags apply after `[lint.rules]`. A wildcard there also turns off a rule that `[lint.rules]` sets by name.
+- `"react/*"` leaves `react/jsx-uses-react` on. That rule reports nothing. It keeps `no-unused-vars` quiet about `React`.
+- A wildcard works with Bun's own lint config. If the working directory has an ESLint or oxlint config, `bun lint` rejects the wildcard. Files under a config file in a nested directory follow that file, and the wildcard doesn't apply to them.
+
 Some ESLint rules have a typescript-eslint version, such as `no-unused-vars` and `@typescript-eslint/no-unused-vars`. Setting either name sets both. The ESLint rule runs on JavaScript files and the typescript-eslint rule on TypeScript files, so a problem is never reported twice. If you set both names, each one applies to its own kind of file.
+
+A wildcard is about one plugin, so it turns such a rule off in one language. `"@typescript-eslint/*" = "off"` turns `no-unused-vars` off in TypeScript files and leaves it on in JavaScript files. `"eslint/*" = "off"` does the opposite.
 
 A few typescript-eslint versions need type information, such as `@typescript-eslint/require-await`. Setting that name type checks your TypeScript files, like any other [type-aware rule](/lint#type-aware-rules). Setting only `require-await` doesn't start a type check. It uses the typescript-eslint version if the run has types anyway, and the ESLint rule otherwise.
 
@@ -473,6 +489,19 @@ perf = "warn"
 | `restriction` | Language features and patterns you want to ban |
 | `nursery`     | New rules that are still changing              |
 | `all`         | Every category at once                         |
+
+A category sets the rules of every built-in plugin. The plugins for a framework or a test runner are the exception. A category sets their rules only if `package.json` lists the package in `dependencies`, `devDependencies`, or `peerDependencies`.
+
+| Package  | Plugins                                          |
+| -------- | ------------------------------------------------ |
+| `react`  | `react`, `react-hooks`, `react-perf`, `jsx-a11y` |
+| `next`   | `@next/next`                                     |
+| `jest`   | `jest`                                           |
+| `vitest` | `vitest`                                         |
+
+For each file, Bun reads the closest `package.json` that lists dependencies. Monorepos often list the test runner only in the root `package.json`. If the closest `package.json` lists neither `jest` nor `vitest`, Bun also looks in the ones above it, up to the root of the Git repository.
+
+`[lint.rules]` doesn't depend on `package.json`. To turn off a plugin that a category turns on, set `"unicorn/*" = "off"`. To use a plugin without its package, set `"jsx-a11y/*" = "warn"`.
 
 ### `lint.overrides`
 

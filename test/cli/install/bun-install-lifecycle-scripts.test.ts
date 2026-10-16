@@ -2538,16 +2538,14 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("bun add --trust (%s)
 });
 
 describe.concurrent.each(["hoisted", "isolated"] as const)("a git dependency of another package (%s)", linker => {
-  test.each([
-    ["pm", "trust", "addon"],
-    ["pm", "trust", "--all"],
-    ["add", "--trust", "host"],
-  ])("is not run by bun %s %s %s", async (...args) => {
-    using repo = tempDir("lifecycle-git-addon", {
+  /** A repository with the package `addon`, whose postinstall script adds a line to $SCRIPT_RUNS. */
+  function addonRepo(fields: object = {}) {
+    const repo = tempDir("lifecycle-git-addon", {
       "package.json": JSON.stringify({
         name: "addon",
         version: "1.0.0",
         scripts: { postinstall: `echo addon >> "$SCRIPT_RUNS"` },
+        ...fields,
       }),
     });
     for (const git of [
@@ -2558,6 +2556,32 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("a git dependency of 
       const config = ["commit.gpgsign=false", "user.name=Test", "user.email=test@example.com"].flatMap(c => ["-c", c]);
       expect(Bun.spawnSync({ cmd: ["git", ...config, ...git], cwd: String(repo), env: baseEnv }).exitCode).toBe(0);
     }
+    return repo;
+  }
+
+  test("what it depends on is run and recorded by bun add --trust host", async () => {
+    using repo = addonRepo({ dependencies: { leaf: "1.0.0" } });
+    using ctx = await setupScriptPackages(linker, {
+      host: { dependencies: { addon: `git+${pathToFileURL(String(repo)).href}` } },
+      leaf: { scripts: { postinstall: `echo leaf >> "$SCRIPT_RUNS"` } },
+    });
+    ctx.env.SCRIPT_RUNS = join(ctx.packageDir, "runs.txt");
+    await writeFile(ctx.packageJson, JSON.stringify({ name: "foo" }));
+
+    const { exitCode } = await ctx.bun("add", "--trust", "host");
+    expect({
+      ran: readFileSync(ctx.env.SCRIPT_RUNS, "utf8").trim(),
+      trustedDependencies: (await file(ctx.packageJson).json()).trustedDependencies,
+      exitCode,
+    }).toEqual({ ran: "leaf", trustedDependencies: ["leaf"], exitCode: 0 });
+  });
+
+  test.each([
+    ["pm", "trust", "addon"],
+    ["pm", "trust", "--all"],
+    ["add", "--trust", "host"],
+  ])("is not run by bun %s %s %s", async (...args) => {
+    using repo = addonRepo();
     using ctx = await setupScriptPackages(linker, {
       host: { dependencies: { addon: `git+${pathToFileURL(String(repo)).href}` } },
     });

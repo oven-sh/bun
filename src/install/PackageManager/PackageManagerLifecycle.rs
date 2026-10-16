@@ -552,21 +552,27 @@ fn add_package_to_set(
     if handle_oom(set.get_or_put(package_id)).found_existing {
         return;
     }
+    let mut visited = vec![false; lockfile.packages.len()];
+    visited[package_id as usize] = true;
     let mut stack: Vec<PackageID> = vec![package_id];
     while let Some(current) = stack.pop() {
         let rows = lockfile.packages.items_dependencies()[current as usize];
         for dep_id in rows.begin()..rows.end() {
             let dep_package_id = lockfile.buffers.resolutions[dep_id as usize];
-            // `--trust` saves these packages by name in `trustedDependencies`. Skip a package that
-            // a name cannot trust, so that this install runs the same scripts as later installs.
-            if dep_package_id != invalid_package_id
-                && lockfile.can_trust_by_name(
-                    lockfile.str(&lockfile.buffers.dependencies[dep_id as usize].name),
-                    &lockfile.packages.items_resolution()[dep_package_id as usize],
-                )
-                && !handle_oom(set.get_or_put(dep_package_id)).found_existing
-            {
+            if dep_package_id == invalid_package_id {
+                continue;
+            }
+            if !core::mem::replace(&mut visited[dep_package_id as usize], true) {
                 stack.push(dep_package_id);
+            }
+            // `--trust` saves these packages by name in `trustedDependencies`. A package that a
+            // name cannot trust is left out, so that this install runs the same scripts as later
+            // installs. What it depends on is still visited.
+            if lockfile.can_trust_by_name(
+                lockfile.str(&lockfile.buffers.dependencies[dep_id as usize].name),
+                &lockfile.packages.items_resolution()[dep_package_id as usize],
+            ) {
+                let _ = handle_oom(set.get_or_put(dep_package_id));
             }
         }
     }

@@ -2,14 +2,7 @@
 // Also hosts the option validation and SystemError construction shared with
 // internal/fs/cp (async) and the fs.cpSync/fs.cp/fs.promises.cp dispatchers,
 // ported from node lib/internal/fs/utils.js and lib/internal/errors.js.
-const {
-  validateObject,
-  validateBoolean,
-  validateFunction,
-  validateInteger,
-  validateInt32,
-  validateUint32,
-} = require("internal/validators");
+const { validateObject, validateBoolean, validateFunction, validateInteger } = require("internal/validators");
 const {
   chmodSync,
   copyFileSync,
@@ -114,15 +107,6 @@ function getValidMode(mode) {
   }
   validateInteger(mode, "mode", 0, kMaxCopyMode);
   return mode;
-}
-
-/** Node 16 to 24's options for `rmdir(path, { recursive: true })`: the `rm` defaults, and `force` is never honored. */
-function validateRmdirRecursiveOptions(options) {
-  options = { recursive: false, retryDelay: 100, maxRetries: 0, ...options, force: false };
-  validateBoolean(options.recursive, "options.recursive");
-  validateInt32(options.retryDelay, "options.retryDelay", 0);
-  validateUint32(options.maxRetries, "options.maxRetries");
-  return options;
 }
 
 const kValidatedCpOptions = Symbol("kValidatedCpOptions");
@@ -555,7 +539,6 @@ function copyLink(resolvedSrc, dest) {
 export default {
   cpSyncFn,
   validateCpOptions,
-  validateRmdirRecursiveOptions,
   tryNativeFastPathSync,
   errno: { EEXIST, EISDIR, EINVAL, ENOTDIR },
   fsCpDirToNonDirError,

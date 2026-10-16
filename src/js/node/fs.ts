@@ -113,13 +113,16 @@ var access = function access(path, mode, callback?) {
     }
     callback = ensureCallback(callback);
 
-    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep the Node 16 to 24 behavior.
+    // Node 25 removed `recursive` (DEP0147), but packages still pass it. Node 24's rmdir: https://github.com/nodejs/node/blob/v24.0.0/lib/fs.js#L1124-L1159
     if (options?.recursive) {
-      path = require("internal/validators").getValidatedFsPath(path);
-      options = require("internal/fs/cp-sync").validateRmdirRecursiveOptions(options);
+      const { validateBoolean, validateInt32, validateUint32 } = require("internal/validators");
+      const rmOptions = { recursive: false, retryDelay: 100, maxRetries: 0, ...options, force: false };
+      validateBoolean(rmOptions.recursive, "options.recursive");
+      validateInt32(rmOptions.retryDelay, "options.retryDelay", 0);
+      validateUint32(rmOptions.maxRetries, "options.maxRetries");
       fs.lstatCb((err, stats) => {
         if (err) callback(err);
-        else if (stats.isDirectory()) settleCallback(require("node:fs/promises").rm(path, options), callback);
+        else if (stats.isDirectory()) settleCallbackWithNull(require("node:fs/promises").rm(path, rmOptions), callback);
         else fs.rmdirCb(callback, path);
       }, path);
     } else fs.rmdirCb(callback, path, options);
@@ -583,12 +586,15 @@ var access = function access(path, mode, callback?) {
     return fs.rmSync(path, options);
   },
   rmdirSync = function rmdirSync(path, options) {
-    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep the Node 16 to 24 behavior.
+    // Node 25 removed `recursive` (DEP0147), but packages still pass it. Node 24's rmdirSync: https://github.com/nodejs/node/blob/v24.0.0/lib/fs.js#L1171-L1185
     if (options?.recursive) {
-      path = require("internal/validators").getValidatedFsPath(path);
-      options = require("internal/fs/cp-sync").validateRmdirRecursiveOptions(options);
+      const { validateBoolean, validateInt32, validateUint32 } = require("internal/validators");
+      const rmOptions = { recursive: false, retryDelay: 100, maxRetries: 0, ...options, force: false };
+      validateBoolean(rmOptions.recursive, "options.recursive");
+      validateInt32(rmOptions.retryDelay, "options.retryDelay", 0);
+      validateUint32(rmOptions.maxRetries, "options.maxRetries");
       if (!fs.lstatSync(path).isDirectory()) return fs.rmdirSync(path);
-      return rmSync(path, options);
+      return rmSync(path, rmOptions);
     }
     return fs.rmdirSync(path, options);
   },

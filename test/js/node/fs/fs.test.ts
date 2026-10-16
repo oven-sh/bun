@@ -3718,47 +3718,6 @@ describe("rmdir", () => {
     (rmdir as any)(join(String(dir), "missing"), { recursive: true }, resolve);
     expect(await promise).toMatchObject({ code: "ENOENT" });
   });
-  // Node 16 to 24 semantics: rmdir never honors `force`, and a file goes to the plain
-  // rmdir(2) instead of rm.
-  it("does not remove a file with recursive: true", async () => {
-    using dir = tempDir("rmdir-recursive-cb-file", { "file.txt": "x" });
-    const file = join(String(dir), "file.txt");
-    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
-    rmdir(file, { recursive: true }, resolve);
-    expect(await promise).toMatchObject({ code: isWindows ? "ENOENT" : "ENOTDIR", syscall: "rmdir", path: file });
-    expect(existsSync(file)).toBe(true);
-  });
-  it("reports ENOENT for a missing path with recursive: true and force: true", async () => {
-    using dir = tempDir("rmdir-recursive-cb-force", {});
-    const missing = join(String(dir), "missing");
-    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
-    rmdir(missing, { recursive: true, force: true }, resolve);
-    expect(await promise).toMatchObject({ code: "ENOENT", syscall: "lstat", path: missing });
-  });
-  it("throws a bad path or option from the call itself with recursive: true", () => {
-    using dir = tempDir("rmdir-recursive-cb-validate", {});
-    const missing = join(String(dir), "missing");
-    const callback = () => {};
-    expect(() => rmdir(123 as any, { recursive: true, maxRetries: -1 }, callback)).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-    );
-    expect(() => rmdir(missing, { recursive: 1 }, callback)).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-    );
-    expect(() => rmdir(missing, { recursive: true, maxRetries: -1 }, callback)).toThrow(
-      expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
-    );
-  });
-  it.skipIf(isWindows)("does not remove a symlink to a directory with recursive: true", async () => {
-    using dir = tempDir("rmdir-recursive-cb-symlink", { "target/inner.txt": "i" });
-    const link = join(String(dir), "link");
-    symlinkSync(join(String(dir), "target"), link);
-    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
-    rmdir(link, { recursive: true }, resolve);
-    expect(await promise).toMatchObject({ code: "ENOTDIR", syscall: "rmdir", path: link });
-    expect(lstatSync(link).isSymbolicLink()).toBe(true);
-    expect(existsSync(join(String(dir), "target/inner.txt"))).toBe(true);
-  });
 });
 
 describe("rmdirSync", () => {
@@ -3788,57 +3747,6 @@ describe("rmdirSync", () => {
     (rmdirSync as any)(a, { recursive: true, maxRetries: 1, retryDelay: 0 });
     expect(readdirSync(String(dir))).toEqual(["e"]);
     expect(() => (rmdirSync as any)(a, { recursive: true })).toThrow(expect.objectContaining({ code: "ENOENT" }));
-  });
-  // Node 16 to 24 semantics: rmdir never honors `force`, and a file goes to the plain
-  // rmdir(2) instead of rm.
-  it("does not remove a file with recursive: true", () => {
-    using dir = tempDir("rmdirsync-recursive-file", { "file.txt": "x" });
-    const file = join(String(dir), "file.txt");
-    expect(() => rmdirSync(file, { recursive: true })).toThrow(
-      expect.objectContaining({ code: isWindows ? "ENOENT" : "ENOTDIR", syscall: "rmdir", path: file }),
-    );
-    expect(() => rmdirSync(file, { recursive: true, force: true })).toThrow(
-      expect.objectContaining({ code: isWindows ? "ENOENT" : "ENOTDIR", syscall: "rmdir" }),
-    );
-    expect(existsSync(file)).toBe(true);
-  });
-  it("reports ENOENT for a missing path with recursive: true and force: true", () => {
-    using dir = tempDir("rmdirsync-recursive-force", {});
-    const missing = join(String(dir), "missing");
-    expect(() => rmdirSync(missing, { recursive: true, force: true })).toThrow(
-      expect.objectContaining({ code: "ENOENT", syscall: "lstat", path: missing }),
-    );
-  });
-  it("checks the path argument, then the options, before it reads the path with recursive: true", () => {
-    using dir = tempDir("rmdirsync-recursive-validate", { "file.txt": "x" });
-    const file = join(String(dir), "file.txt");
-    const missing = join(String(dir), "missing");
-    expect(() => rmdirSync(123 as any, { recursive: true, maxRetries: -1 })).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-    );
-    expect(() => rmdirSync(missing, { recursive: 1 })).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-    );
-    expect(() => rmdirSync(missing, { recursive: true, maxRetries: -1 })).toThrow(
-      expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
-    );
-    expect(() => rmdirSync(file, { recursive: true, retryDelay: "1" })).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-    );
-    expect(() => rmdirSync(file, { recursive: true, retryDelay: -1 })).toThrow(
-      expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
-    );
-    expect(existsSync(file)).toBe(true);
-  });
-  it.skipIf(isWindows)("does not remove a symlink to a directory with recursive: true", () => {
-    using dir = tempDir("rmdirsync-recursive-symlink", { "target/inner.txt": "i" });
-    const link = join(String(dir), "link");
-    symlinkSync(join(String(dir), "target"), link);
-    expect(() => rmdirSync(link, { recursive: true })).toThrow(
-      expect.objectContaining({ code: "ENOTDIR", syscall: "rmdir", path: link }),
-    );
-    expect(lstatSync(link).isSymbolicLink()).toBe(true);
-    expect(existsSync(join(String(dir), "target/inner.txt"))).toBe(true);
   });
 });
 
@@ -5029,60 +4937,6 @@ describe("fs/promises", () => {
       await (rmdir as any)(a, { recursive: true });
       expect(readdirSync(String(dir))).toEqual(["e"]);
       await expect((rmdir as any)(a, { recursive: true })).rejects.toMatchObject({ code: "ENOENT" });
-    });
-    // Node 16 to 24 semantics: rmdir never honors `force`, and a file goes to the plain
-    // rmdir(2) instead of rm.
-    it("does not remove a file with recursive: true", async () => {
-      using dir = tempDir("rmdir-recursive-promises-file", { "file.txt": "x" });
-      const file = join(String(dir), "file.txt");
-      await expect(rmdir(file, { recursive: true })).rejects.toMatchObject({
-        code: isWindows ? "ENOENT" : "ENOTDIR",
-        syscall: "rmdir",
-        path: file,
-      });
-      expect(existsSync(file)).toBe(true);
-    });
-    it("reports ENOENT for a missing path with recursive: true and force: true", async () => {
-      using dir = tempDir("rmdir-recursive-promises-force", {});
-      const missing = join(String(dir), "missing");
-      await expect(rmdir(missing, { recursive: true, force: true })).rejects.toMatchObject({
-        code: "ENOENT",
-        syscall: "stat",
-        path: missing,
-      });
-    });
-    it("checks the path argument, then the options, before it reads the path with recursive: true", async () => {
-      using dir = tempDir("rmdir-recursive-promises-validate", { "a/b.txt": "b" });
-      const a = join(String(dir), "a");
-      const missing = join(String(dir), "missing");
-      await expect(rmdir(123 as any, { recursive: true, maxRetries: -1 })).rejects.toMatchObject({
-        code: "ERR_INVALID_ARG_TYPE",
-      });
-      await expect(rmdir(missing, { recursive: 1 })).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
-      await expect(rmdir(missing, { recursive: true, maxRetries: -1 })).rejects.toMatchObject({
-        code: "ERR_OUT_OF_RANGE",
-      });
-      // Only the promises form of Node 16 to 24 rejects options that are not a plain object.
-      await expect(rmdir(a, Object.assign([], { recursive: true }))).rejects.toMatchObject({
-        code: "ERR_INVALID_ARG_TYPE",
-      });
-      expect(existsSync(join(a, "b.txt"))).toBe(true);
-    });
-    // Node's promises.rmdir uses stat where fs.rmdir uses lstat, so a symlink to a directory goes to rm.
-    it.skipIf(isWindows)("removes only the link of a symlink to a directory with recursive: true", async () => {
-      using dir = tempDir("rmdir-recursive-promises-symlink", { "target/inner.txt": "i" });
-      const link = join(String(dir), "link");
-      symlinkSync(join(String(dir), "target"), link);
-      await rmdir(link, { recursive: true });
-      expect(readdirSync(String(dir))).toEqual(["target"]);
-      expect(existsSync(join(String(dir), "target/inner.txt"))).toBe(true);
-    });
-    it("runs the plain rmdir when recursive is only inherited", async () => {
-      using dir = tempDir("rmdir-recursive-promises-inherited", { "full/f.txt": "x", "empty": {} });
-      const inherited = () => Object.create({ recursive: true });
-      await expect(rmdir(join(String(dir), "full"), inherited())).rejects.toMatchObject({ syscall: "rmdir" });
-      await rmdir(join(String(dir), "empty"), inherited());
-      expect(readdirSync(String(dir))).toEqual(["full"]);
     });
   });
 

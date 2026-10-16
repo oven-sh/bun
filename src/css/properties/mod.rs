@@ -284,9 +284,7 @@ mod generic_registrations {
         ui::ColorScheme,
     );
 
-    // `PropertyId` as a declaration *value* (`SmallList<PropertyId, 1>` for
-    // `transition-property`) is a `<custom-ident>`, so the generic parse goes
-    // through `parse_custom_ident`, not the name parser `PropertyId::parse`.
+    // As a value (`transition-property`), a `PropertyId` is a `<custom-ident>`, not a name.
     impl crate::generics::Parse for properties_generated::PropertyId {
         #[inline]
         fn parse(input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self> {

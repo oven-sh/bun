@@ -252,9 +252,7 @@ impl FontStretch {
         }
     }
 
-    /// The keyword with the same computed value, if there is one. The `font`
-    /// shorthand only accepts these keywords (`<font-stretch-css3>`), never a
-    /// percentage.
+    /// The keyword of equal value: the `font` shorthand accepts no percentage.
     pub(crate) fn keyword(self) -> Option<FontStretchKeyword> {
         match self {
             FontStretch::Keyword(kw) => Some(kw),
@@ -385,10 +383,7 @@ impl FontFamily {
 
         let final_value: *const [u8] = match string {
             Some(s) => std::ptr::from_ref::<[u8]>(s.into_bump_slice()),
-            // A css-wide keyword or `default` is a <family-name> only when more
-            // identifiers follow it (`inherit foo`). On its own it is that keyword,
-            // which only a whole `Property::Unparsed` declaration can carry.
-            // https://drafts.csswg.org/css-fonts-4/#family-name-syntax
+            // https://drafts.csswg.org/css-fonts-4/#family-name-syntax: not a lone css-wide keyword.
             None if is_reserved_custom_ident(value) => {
                 return Err(location.new_unexpected_token_error(crate::Token::Ident(value)));
             }
@@ -1073,9 +1068,7 @@ impl FontHandler {
                 push_prop!(FontVariantCaps, FONT_VARIANT_CAPS, caps);
             }
 
-            // Likewise it only accepts the font-stretch keywords. A percentage that
-            // matches none of them follows the shorthand (which resets font-stretch)
-            // as its own declaration.
+            // `font` resets font-stretch, so a percentage with no keyword goes after it.
             if stretch_keyword.is_none() {
                 push_prop!(FontStretch, FONT_STRETCH, stretch);
             }

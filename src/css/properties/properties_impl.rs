@@ -33,13 +33,7 @@ impl Property {
 }
 
 impl PropertyId {
-    /// Parses a `<custom-ident>` that names a property inside a declaration
-    /// *value* (`transition-property`, the `transition` shorthand). Unlike
-    /// [`PropertyId::parse`], which reads a declaration name, this rejects the
-    /// css-wide keywords and `default`: `transition-property: inherit` is the
-    /// keyword applied to `transition-property`, not a property called
-    /// "inherit", and stays a `Property::Unparsed` declaration that no handler
-    /// folds into a shorthand.
+    /// A property name in a value (`transition-property`): a `<custom-ident>`, so no css-wide keyword.
     pub(crate) fn parse_custom_ident(input: &mut css::Parser) -> css::Result<PropertyId> {
         let location = input.current_source_location();
         let name = input.expect_ident_cloned()?;

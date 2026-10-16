@@ -7781,8 +7781,7 @@ describe("css tests", () => {
       { firefox: Some(120 << 16) },
     );
 
-    // A value with a <custom-ident> is kept as written. It still selects a scheme,
-    // so it defines the variables that a lowered light-dark() reads.
+    // A value with a <custom-ident> prints as written and still defines the light-dark() variables.
     prefix_test(
       ".foo { color-scheme: light foo; }",
       `.foo {
@@ -7849,8 +7848,7 @@ describe("css tests", () => {
         `,
       { firefox: Some(120 << 16) },
     );
-    // No scheme to select, or not a valid value (a browser drops the declaration):
-    // the value defines no variables.
+    // No scheme to select, or a value that browsers reject: no variables.
     for (const value of [
       "foo bar",
       "only foo",

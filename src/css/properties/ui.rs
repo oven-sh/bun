@@ -24,9 +24,7 @@ bitflags::bitflags! {
 }
 
 impl ColorScheme {
-    /// Reads `normal | [ light | dark | <custom-ident> ]+ && only?` from the
-    /// identifiers of a value. Returns the flags and whether one identifier is a
-    /// `<custom-ident>`, or `None` when the identifiers are not a valid value.
+    /// `normal | [ light | dark | <custom-ident> ]+ && only?`. The `bool` says a `<custom-ident>` is present.
     fn from_idents<'a>(idents: impl Iterator<Item = &'a [u8]>) -> Option<(ColorScheme, bool)> {
         let mut res = ColorScheme::empty();
         let mut has_custom_ident = false;
@@ -67,9 +65,7 @@ impl ColorScheme {
         (count != 0).then_some((res, has_custom_ident))
     }
 
-    // Only a value made of the four keywords is typed. A `<custom-ident>` or a
-    // css-wide keyword fails here, so `Property::parse` keeps the declaration as
-    // `Property::Unparsed` and it prints as written (parcel-bundler/lightningcss#1152).
+    // A value with a `<custom-ident>` stays `Property::Unparsed`: parcel-bundler/lightningcss#1152
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<ColorScheme> {
         let idents =
             core::iter::from_fn(|| input.try_parse(|input| input.expect_ident_cloned()).ok());
@@ -79,8 +75,7 @@ impl ColorScheme {
         }
     }
 
-    /// The flags of a value that `parse` left unparsed because it has a
-    /// `<custom-ident>` (`light foo`).
+    /// The flags of a value that `parse` left unparsed for its `<custom-ident>` (`light foo`).
     fn from_unparsed(value: &TokenList) -> Option<ColorScheme> {
         let mut is_ident_list = true;
         let idents = value.v.iter().filter_map(|token| match token {

@@ -363,14 +363,13 @@ impl Route {
         self.server.get().expect("server set").on_request_complete();
     }
 
-    /// Production keeps the reason to itself, see `resume_pending_responses`.
-    fn set_build_error(&self, server: AnyServer, log: Log) {
-        if server.config().is_development() {
-            // `Log::print` takes the process-global writer as a `*mut io::Writer` through `IntoLogWrite`.
-            let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
-            let _ = log.print(writer);
-            bun_output::flush();
-        }
+    /// Reports the failure on stderr in every mode. Only the HTTP response
+    /// hides the reason in production, see `resume_pending_responses`.
+    fn set_build_error(&self, log: Log) {
+        // `Log::print` takes the process-global writer as a `*mut io::Writer` through `IntoLogWrite`.
+        let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
+        let _ = log.print(writer);
+        bun_output::flush();
         self.state.set(State::Err(log));
     }
 
@@ -517,7 +516,7 @@ impl Route {
                 }
                 let mut log = Log::init();
                 completion_task.log.clone_to_with_recycled(&mut log, true);
-                self.set_build_error(server, log);
+                self.set_build_error(log);
             }
             BundleV2Result::Value(bundle) => 'bundle: {
                 if bun_core::Environment::ENABLE_LOGS {
@@ -552,7 +551,7 @@ impl Route {
                     output_file.output_kind == bundler_options::OutputKind::EntryPoint
                         && output_file.loader == Loader::Html
                 }) else {
-                    self.set_build_error(server, self.bundle.no_html_page_log());
+                    self.set_build_error(self.bundle.no_html_page_log());
                     break 'bundle;
                 };
 

@@ -1014,7 +1014,7 @@ describe("html route whose file a plugin resolves to a different file", () => {
       stdout: JSON.stringify({ devServer: [failurePage, failurePage], ...builtWithout[target] }),
       exitCode: 0,
     });
-    // Printed by the dev server (and by the development build when it fails too). Production says nothing.
+    // Printed by the dev server, and by the build in the other two modes.
     expect(stderr).toMatch(
       /error: Bundling "[^"]*index\.html" did not produce an html page for it\. A plugin may have resolved it to another file or loaded it as something other than html\./,
     );
@@ -1119,6 +1119,32 @@ test.concurrent("dev server started after process.chdir() reports bundle failure
   const { stdout, stderr, exitCode } = await runServeFixture(dir);
   expect(stderr).toContain(`Could not resolve: "./does-not-exist"`);
   expect(stdout, stderr).toBe(JSON.stringify({ status: 500 }));
+  expect(exitCode).toBe(0);
+});
+
+// A production build used to record the failure and answer 500 without a
+// word on stderr. The operator had no way to learn why the route failed.
+test.concurrent("production html route reports a bundle failure on stderr", async () => {
+  using dir = tempDir("bun-serve-html-production-build-error", {
+    "index.html": `<!DOCTYPE html><html><head></head><body><script type="module" src="./missing.js"></script></body></html>`,
+    "serve.ts": /*ts*/ `
+      import html from "./index.html";
+      const server = Bun.serve({ port: 0, development: false, routes: { "/": html } });
+      const statuses = [];
+      for (let i = 0; i < 3; i++) {
+        const res = await fetch(server.url);
+        statuses.push({ status: res.status, bodyLength: (await res.text()).length });
+      }
+      console.log(JSON.stringify(statuses));
+      server.stop(true);
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  // The route never builds again in production, so the reason is printed once.
+  expect(stderr.split(`Could not resolve: "./missing.js"`)).toHaveLength(2);
+  // The response still hides the reason from the client.
+  const statuses = JSON.parse(stdout);
+  expect(statuses[0]).toEqual({ status: 500, bodyLength: 0 });
   expect(exitCode).toBe(0);
 });
 

@@ -347,16 +347,26 @@ interface IntegerInfo {
 
 export class IntegerType extends PrimitiveType {
   readonly info: IntegerInfo;
-  /** Only the strict conversion is given no `idlType`. */
-  constructor(info: IntegerInfo, idlType?: string) {
+  readonly #conversion: "Strict" | "Loose" | `${string}::${string}`;
+  readonly #allowBigInt: boolean;
+  /** `conversion` is one of the two that can take a BigInt, or the IDL type of another. */
+  constructor(
+    info: IntegerInfo,
+    conversion: "Strict" | "Loose" | `${string}::${string}` = "Strict",
+    allowBigInt = false,
+  ) {
     super(
-      idlType ?? `Bun::Bindgen::IDLStrictInteger<${info.cpp}>`,
-      "number",
+      conversion === "Strict" || conversion === "Loose"
+        ? `Bun::Bindgen::IDL${conversion}Integer<${info.cpp}${allowBigInt ? ", Bun::Bindgen::AllowBigInt::Yes" : ""}>`
+        : conversion,
+      allowBigInt ? "number | bigint" : "number",
       info.rust,
       info.size,
-      idlType ? "any" : ["number", "bigint"],
+      conversion !== "Strict" ? "any" : allowBigInt ? ["number", "bigint"] : ["number"],
     );
     this.info = info;
+    this.#conversion = conversion;
+    this.#allowBigInt = allowBigInt;
   }
   protected get cppName(): string {
     return this.info.cpp;
@@ -370,21 +380,35 @@ export class IntegerType extends PrimitiveType {
     assert(typeof value !== "number" || (value >= min && value <= max), `${value} is not in [${min}, ${max}]`);
     return super.toCpp(value);
   }
-  /** `ToNumeric` first, then as strict as the default. */
+  /** Also a BigInt that is in range, for an argument whose type is `number | bigint`. */
+  get allowBigInt(): IntegerType {
+    assert(
+      this.#conversion === "Strict" || this.#conversion === "Loose",
+      ".allowBigInt is for the strict and the .loose conversion; the others are ToNumber, which refuses a BigInt",
+    );
+    return new IntegerType(this.info, this.#conversion, true);
+  }
+  /** `ToNumber` first, or `ToNumeric` with `.allowBigInt`, then as strict as the default. */
   get loose(): IntegerType {
-    return new IntegerType(this.info, `Bun::Bindgen::IDLLooseInteger<${this.info.cpp}>`);
+    return new IntegerType(this.info, "Loose", this.#allowBigInt);
   }
   /** WebIDL conversion: `ToNumber`, then wrap modulo the width. */
   get wrap(): IntegerType {
+    this.#refusesBigInt(".wrap");
     return new IntegerType(this.info, `WebCore::${this.info.webidl}`);
   }
   /** WebIDL `[EnforceRange]` over `[min, max]`. */
   enforceRange(min = Number(this.info.min), max = Number(this.info.max)): RangeType {
+    this.#refusesBigInt(".enforceRange()");
     return new RangeType(this.info, min, max, "enforceRange");
   }
   /** Node's `validateInteger` / `validateInt32` / `validateUint32`: `ERR_INVALID_ARG_TYPE`, `ERR_OUT_OF_RANGE`. */
   validateInteger(min = Number(this.info.min), max = Number(this.info.max)): RangeType {
+    this.#refusesBigInt(".validateInteger()");
     return new RangeType(this.info, min, max, "validateInteger");
+  }
+  #refusesBigInt(modifier: string): void {
+    assert(!this.#allowBigInt, `${modifier} refuses a BigInt, which .allowBigInt asked for`);
   }
 }
 
@@ -433,12 +457,19 @@ export const integers = {
 };
 
 export class DoubleType extends PrimitiveType {
-  constructor(idlType = "Bun::Bindgen::IDLStrictDouble", valueKinds: ValueKinds = ["number"]) {
-    super(idlType, "number", "f64", 8, valueKinds);
+  constructor(idlType = "Bun::Bindgen::IDLStrictDouble", tsType = "number", valueKinds: ValueKinds = ["number"]) {
+    super(idlType, tsType, "f64", 8, valueKinds);
   }
   /** `ToNumber`: WebIDL's `unrestricted double`. */
-  get loose(): DoubleType {
-    return new DoubleType("WebCore::IDLUnrestrictedDouble", "any");
+  get loose(): LooseDoubleType {
+    return new LooseDoubleType("WebCore::IDLUnrestrictedDouble", "number", "any");
+  }
+}
+
+export class LooseDoubleType extends DoubleType {
+  /** `ToNumeric`: a BigInt too, as the double nearest to it, for an argument whose type is `number | bigint`. */
+  get allowBigInt(): DoubleType {
+    return new DoubleType("Bun::Bindgen::IDLLooseDoubleOrBigInt", "number | bigint", "any");
   }
 }
 

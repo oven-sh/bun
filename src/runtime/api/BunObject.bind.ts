@@ -48,8 +48,8 @@ export const MMapOptions = b.dictionary(
   {
     shared: b.bool.loose.default(true),
     sync: b.bool.loose.default(false),
-    size: b.f64.loose.optional,
-    offset: b.f64.loose.default(0),
+    size: b.f64.loose.allowBigInt.optional,
+    offset: b.f64.loose.allowBigInt.default(0),
   },
   { allowArray: true },
 );

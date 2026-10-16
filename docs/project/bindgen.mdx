@@ -157,7 +157,7 @@ an error when the schema is loaded.
 ## Types
 
 Conversions are strict unless the schema says otherwise: `b.i32` takes a number
-or BigInt that is an integer in range, and nothing else. A failed strict or
+that is an integer in range, and nothing else. A failed strict or
 `.validateInteger` conversion, or a `.loose` one of an integer, throws
 `ERR_INVALID_ARG_TYPE` or `ERR_OUT_OF_RANGE` naming the argument or the dictionary
 member; `.wrap`, `.enforceRange` and the other `.loose` conversions throw what WebIDL does. An argument that was not passed is `undefined` and is converted like
@@ -166,8 +166,8 @@ any other: nothing looks at how many there are.
 | Schema                                           | Rust, as an argument             | Takes                                                         |
 | ------------------------------------------------ | -------------------------------- | ------------------------------------------------------------- |
 | `b.bool`                                         | `bool`                           | a boolean; `.loose` is `ToBoolean`                            |
-| `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | a number or BigInt that is an integer in range; see below     |
-| `b.f64`                                          | `f64`                            | a number; `.loose` is `ToNumber`                              |
+| `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | a number that is an integer in range; see below               |
+| `b.f64`                                          | `f64`                            | a number; `.loose` is `ToNumber`; see below                   |
 | `b.string`                                       | `bun_core::String`               | a string; `.loose` is `ToString`                              |
 | `b.string.utf8`                                  | `&'a [u8]`                       | the same, and a `String` object                               |
 | `b.string.utf8.owned`                            | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
@@ -201,9 +201,14 @@ As results, `b.string.utf8` is anything that is `AsRef<[u8]>` and `b.array(T)` a
 is `IntoIterator`. The body of a `b.fn` or of a namespace's function whose bytes do not outlive
 it returns the string itself, from `heap.create_utf8_string(bytes)`.
 
-### Integers
+### Numbers
 
-- `.loose`: `ToNumeric` first, then as strict as the default.
+A BigInt is refused unless the schema says `.allowBigInt`, which is for an argument whose
+type is `number | bigint`. `b.f64.loose.allowBigInt` is `ToNumeric`, and a BigInt becomes the
+double nearest to it. On an integer:
+
+- `.allowBigInt`: a BigInt in the same range too. It is how a `b.u64` above 2<sup>53</sup> gets in. It goes with the strict conversion and with `.loose`; the others refuse a BigInt.
+- `.loose`: `ToNumber` first, or `ToNumeric` with `.allowBigInt`, then as strict as the default.
 - `.wrap`: the WebIDL conversion, `ToNumber` then wrap modulo the width.
 - `.enforceRange(min, max)`: WebIDL `[EnforceRange]`.
 - `.validateInteger(min, max)`: Node's `validateInteger`, with its exact errors. Use it when implementing Node.js APIs.

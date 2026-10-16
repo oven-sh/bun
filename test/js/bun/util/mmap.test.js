@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gcTick, isWindows, tempDir, tmpdirSync } from "harness";
-import { truncateSync, writeFileSync } from "node:fs";
+import { statSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "path";
 
 // TODO: We do not support mmap() on Windows. Maybe we can add it later.
@@ -230,6 +230,26 @@ console.log(JSON.stringify(out));`,
     expect(() => Bun.mmap(1, 1)).toThrow("path must be a string");
   });
 
+  it("mmap takes offset and size as a BigInt too", () => {
+    const text = options => Buffer.from(Bun.mmap(path, options)).toString();
+    const whole = text();
+    expect(text({ size: 2n })).toBe(whole.slice(0, 2));
+    expect(text({ size: Object(2n) })).toBe(whole.slice(0, 2));
+    expect(text({ size: { valueOf: () => 2n } })).toBe(whole.slice(0, 2));
+    expect(text({ offset: 1n })).toBe(whole.slice(1));
+    expect(text({ offset: 1n, size: 2n })).toBe(whole.slice(1, 3));
+    expect(text({ offset: 0n, size: statSync(path, { bigint: true }).size })).toBe(whole);
+    // More than the file holds is all of it: nothing wraps.
+    for (const size of [2n ** 32n + 2n, 2n ** 63n, 2n ** 64n + 2n, 10n ** 400n]) expect(text({ size })).toBe(whole);
+    for (const offset of [2n ** 32n + 1n, 2n ** 64n + 1n]) expect(() => Bun.mmap(path, { offset })).toThrow("EINVAL");
+    expect(() => Bun.mmap(path, { size: 0n })).toThrow("EINVAL");
+    for (const member of ["size", "offset"]) {
+      for (const value of [-1n, -(2n ** 64n) + 1n]) {
+        expect(() => Bun.mmap(path, { [member]: value })).toThrow(`${member} must be a non-negative integer`);
+      }
+    }
+  });
+
   it("mmap converts offset and size to numbers and drops the fraction", () => {
     const text = options => Buffer.from(Bun.mmap(path, options)).toString();
     const whole = text();
@@ -251,9 +271,6 @@ console.log(JSON.stringify(out));`,
     expect(() => Bun.mmap(path, { offset: Infinity })).toThrow("EINVAL");
     expect(() => Bun.mmap(path, { offset: -Infinity })).toThrow("offset must be a non-negative integer");
     for (const member of ["size", "offset"]) {
-      expect(() => Bun.mmap(path, { [member]: 1n })).toThrow(
-        expect.objectContaining({ name: "TypeError", message: "Conversion from 'BigInt' to 'number' is not allowed." }),
-      );
       expect(() => Bun.mmap(path, { [member]: Symbol() })).toThrow(
         expect.objectContaining({ name: "TypeError", message: "Cannot convert a symbol to a number" }),
       );

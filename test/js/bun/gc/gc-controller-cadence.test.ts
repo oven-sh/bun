@@ -599,3 +599,66 @@ test.skipIf(!isLinux || isASAN)(
     expect(exitCode).toBe(0);
   },
 );
+
+// The marking helper threads used to join every collection from its start. For a collection of a small heap that is
+// most of the pause: each helper wakes, contends for the marking lock with the collector's thread for the few hundred KB
+// there are to mark, and is seen off again. On a 12-core machine an eden collection of a 4 MB heap paused for 3 ms
+// with the 8 helpers and 0.75 ms with none (oven-sh/bun#44797). Now the helpers join once the collection has marked
+// 1 MB, or when the mutator resumes with marking left.
+// BUN_JSC_logGC prints what each visitor marked after every constraint pass: C is the collector's own visitor, P1..Pn
+// the helpers'. A fixed number of markers makes the count the same on every machine. A debug build takes over 10 s to
+// allocate the 60 MB.
+describe.skipIf(isDebug)("marking helper threads", () => {
+  async function collectionsOf(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_JSC_numberOfGCMarkers: "4", BUN_GC_TIMER_DISABLE: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const log = stdout + stderr;
+    expect(stdout, log).toContain("done");
+    expect(exitCode, log).toBe(0);
+    // One collection runs from its START line to its END]. The last visitor line of it has its totals.
+    return [...log.matchAll(/START [A-Z] \d+kb => (\w+)Collection[\s\S]*?END\]/g)].map(([block, scope]) => {
+      const lines = [...block.matchAll(/v=(\d+)kb \(C:(\d+) M:\d+((?: P\d+:\d+)+)\)/g)];
+      const [, markedKB, collectorKB, helpers] = lines[lines.length - 1];
+      const helpersKB = [...helpers.matchAll(/:(\d+)/g)].reduce((sum, [, kb]) => sum + Number(kb), 0);
+      return { scope, markedKB: Number(markedKB), collectorKB: Number(collectorKB), helpersKB };
+    });
+  }
+
+  // A ring of 1024 small objects replaced 200k times over: about 60 MB of short-lived objects, so about 7 eden
+  // collections at the 8 MB budget, each with under 1 MB to mark (the ring is written, so it is remembered). Every one
+  // is marked by the collector's thread alone. The first one is left out: what ran before the loop can leave it more.
+  test("stay out of a collection that marks little", async () => {
+    const collections = await collectionsOf(`
+      const ring = new Array(1024).fill(null);
+      for (let i = 0; i < 200000; i++) {
+        const key = "key" + i;
+        ring[i & 1023] = { v: key, i, a: new Array(24).fill(i) };
+      }
+      console.log("done", ring.length);
+    `);
+    const edens = collections.filter(c => c.scope === "Eden").slice(1);
+    expect(edens.length, JSON.stringify(collections)).toBeGreaterThanOrEqual(3);
+    for (const eden of edens) expect(eden.markedKB, JSON.stringify(eden)).toBeLessThan(1024);
+    expect(
+      edens.map(c => c.helpersKB),
+      JSON.stringify(collections),
+    ).toEqual(edens.map(() => 0));
+  }, 20_000);
+
+  // 40 MB of live objects: a full collection has far more than 1 MB to mark, and the helpers take part in it.
+  test("join a collection that has enough to mark", async () => {
+    const collections = await collectionsOf(`
+      globalThis.keep = Array.from({ length: 400000 }, (_, i) => ({ i, s: "s" + i }));
+      Bun.gc(true);
+      console.log("done", keep.length);
+    `);
+    const fulls = collections.filter(c => c.scope === "Full" && c.markedKB > 1024);
+    expect(fulls.length, JSON.stringify(collections)).toBeGreaterThanOrEqual(1);
+    for (const full of fulls) expect(full.helpersKB, JSON.stringify(full)).toBeGreaterThan(0);
+  }, 20_000);
+});

@@ -267,7 +267,11 @@ test(
       cmd: [bunExe(), "-e", script],
       env: {
         ...bunEnv,
+        // The parallel marker threads have to visit the cells, from the start of every
+        // collection: `bun -e` marks on one thread, and a heap this small does not show
+        // the helpers enough work for them to join on their own.
         BUN_JSC_numberOfGCMarkers: "8",
+        BUN_JSC_minimumBytesMarkedForParallelMarking: "0",
         // Route bmalloc/libpas to the system allocator so ASAN can see a UAF
         // on JSVMClientData instead of it being masked by the pool. Not set
         // on Windows: bmalloc's SystemHeap is unimplemented there and would

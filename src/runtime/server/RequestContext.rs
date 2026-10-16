@@ -4267,9 +4267,7 @@ where
                     let _ =
                         Body::Value::resolve(&mut old, body, &global_this.js_thread(context), None); // TODO: properly propagate exception upwards
                 }
-                // The body is complete: only the JS `Request` owns the slot now, so
-                // `end_request_streaming` cannot error a `Locked` value that
-                // `request.body` makes over it. May free the slot: `body` is dead.
+                // A complete body is the `Request`'s alone. May free the slot: `body` is dead.
                 this.request_body_take_unref();
                 return;
             }

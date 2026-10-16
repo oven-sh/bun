@@ -7,6 +7,7 @@ import {
   bunRun,
   isASAN,
   isDebug,
+  isLinux,
   isWindows,
   tempDir,
   tempDirWithFiles,
@@ -949,34 +950,32 @@ describe("Bun.build", () => {
   // time. The runtime listed that directory, at generation 0, when it resolved
   // the script. The first build of a process ran at generation 0 too when it was
   // queued before the bundle thread first looked at its queue, and it then
-  // reused the runtime's listing. That was about half of all processes on many
-  // cores and nearly all on one or two, so this starts more than one process.
-  // They run one after another: side by side they lost that race less often.
+  // reused the runtime's listing. That happened in some runs only, but in every
+  // run on one CPU, so the process is pinned to one CPU where `taskset` works.
   test("the first build of a process sees a file written after the runtime listed the directory", async () => {
-    const processes = isDebug || isASAN ? 2 : 5;
-    for (let i = 0; i < processes; i++) {
-      using dir = tempDir("first-build-sees-new-file", {
-        "package.json": `{}`,
-        "entry.js": `import value from "./added.js";\nconsole.log(value);\n`,
-        "driver.ts": `
-          import { writeFileSync } from "node:fs";
-          writeFileSync("added.js", 'export default "new";\\n');
-          const build = await Bun.build({ entrypoints: ["./entry.js"], throw: false });
-          console.log(build.success ? "built" : build.logs[0].message);
-        `,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "driver.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("built\n");
-      expect(exitCode).toBe(0);
-    }
+    using dir = tempDir("first-build-sees-new-file", {
+      "package.json": `{}`,
+      "entry.js": `import value from "./added.js";\nconsole.log(value);\n`,
+      "driver.ts": `
+        import { writeFileSync } from "node:fs";
+        writeFileSync("added.js", 'export default "new";\\n');
+        const build = await Bun.build({ entrypoints: ["./entry.js"], throw: false });
+        console.log(build.success ? "built" : build.logs[0].message);
+      `,
+    });
+    const taskset = isLinux ? Bun.which("taskset") : null;
+    const pin = taskset && Bun.spawnSync({ cmd: [taskset, "1", "true"] }).exitCode === 0 ? [taskset, "1"] : [];
+    await using proc = Bun.spawn({
+      cmd: [...pin, bunExe(), "driver.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("built\n");
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("loader map with an empty-string key is ignored without leaving uninitialized slots", async () => {

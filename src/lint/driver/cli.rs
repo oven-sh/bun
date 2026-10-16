@@ -94,7 +94,7 @@ const TYPES: &[Param] = &[
     clap::param!("--type-aware                    Also run the rules that need types"),
     clap::param!("--no-type-aware                 Skip the rules that need types"),
     clap::param!(
-        "--tsconfig <path>               Use this tsconfig.json for the rules that need types"
+        "--tsconfig <path>               Use this tsconfig.json instead of the nearest one"
     ),
     clap::param!("--type-check                    With <b>--type-aware<r>, report type errors too"),
     clap::param!(

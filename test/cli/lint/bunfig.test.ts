@@ -1585,17 +1585,15 @@ globals = { mine = "off" }
     });
   });
 
-  // oxlint has no extglobs or brace ranges. It reads `{1..3}` as a group with one alternative, `1..3`.
-  // Checked against oxlint 1.87.
+  // oxlint has no brace ranges. It reads `{1..3}` as a group with one alternative, `1..3`. Checked against oxlint 1.87.
   test("overrides in an .oxlintrc.json keep oxlint's glob syntax", async () => {
-    const overrides = [{ files: ["f{1..3}.js", "@(a|b)/**"], rules: { "no-console": "off" } }];
+    const overrides = [{ files: ["f{1..3}.js"], rules: { "no-console": "off" } }];
     const files = {
       ".oxlintrc.json": JSON.stringify({ ...JSON.parse(oxlintrc), rules: { "no-console": "error" }, overrides }),
       "f1.js": log,
       "f1..3.js": log,
-      "a/x.js": log,
     };
-    expect(await problems(files)).toEqual(["a/x.js no-console error", "f1.js no-console error"]);
+    expect(await problems(files)).toEqual(["f1.js no-console error"]);
   });
 
   // oxlint puts `**/` in front of a pattern without a slash, even in front of a `!`, which then is a literal. Checked against

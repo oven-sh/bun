@@ -973,6 +973,10 @@ impl Run<'_> {
         let is_native = (of_cwd.as_ref()).is_some_and(|it| it.flavor == Flavor::BuiltIn);
         let store = bun_lint_graph::Store::new(&environment.cwd);
         let store = if is_native { store.by_file() } else { store };
+        let store = match &options.tsconfig {
+            Some(path) => store.with_tsconfig(path),
+            None => store,
+        };
         let modules = bun_lint_graph::Graph::new(&store);
         modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
             let of_the_run = (&linter, environment, &js_plugins);
@@ -1221,9 +1225,10 @@ impl Run<'_> {
                 ]
                 .concat(),
             };
-            let or_the_flag: &[u8] = match options.tsconfig {
-                Some(_) => b".",
-                None => b" or pass --tsconfig.",
+            // With an oxlint config the flag does not choose the project.
+            let or_the_flag: &[u8] = match options.tsconfig.is_some() || is_oxlint {
+                true => b".",
+                false => b" or pass --tsconfig.",
             };
             self.warn(
                 &[

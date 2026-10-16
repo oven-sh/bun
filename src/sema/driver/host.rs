@@ -1399,6 +1399,11 @@ impl Host for Asking<'_> {
     }
 }
 
+/// How many consecutive indices a thread of a parallel region takes at a time: adjacent paths are in the same directory.
+fn run_of(count: usize) -> usize {
+    if count > 1024 { 16 } else { 1 }
+}
+
 impl Host for Disk {
     fn extended_config(&self, path: &[u8]) -> Option<Kept> {
         self.extended_configs.lock().get(path).cloned()
@@ -1592,19 +1597,18 @@ impl Host for Disk {
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
         self.io_pool.as_deref()
     }
-    fn on_this_thread(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
-        crate::for_each_on_this_thread(&self.caches, count, work);
+    fn with_helpers(&self, helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
+        crate::for_each_with_helpers(&self.caches, helpers, count, run_of(count), work);
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         if self.is_of_a_thread_of_the_pool {
-            return crate::for_each_on_this_thread(&self.caches, count, work);
+            return self.with_helpers(0, count, work);
         }
-        // In runs: adjacent paths are in the same directory.
         crate::for_each_parallel_in_turns(
             &self.caches,
             self.threads,
             count,
-            if count > 1024 { 16 } else { 1 },
+            run_of(count),
             self.turns.get(),
             work,
         );

@@ -56,7 +56,7 @@ fn check_and_lint(
     already_read: AlreadyRead,
     is_first_pass: bool,
 ) -> Vec<Option<Linted>> {
-    // `--tsconfig` of oxlint is the project of the files that it includes, not of all files as `-p` is.
+    // tsgolint chooses the project of each file itself: oxlint does not tell it about `--tsconfig`.
     let (like_oxlint, others): (Vec<usize>, Vec<usize>) =
         (0..indices.len()).partition(|&at| files[indices[at]].config.language.is_oxlint);
     if like_oxlint.is_empty() {
@@ -440,7 +440,8 @@ fn check_and_lint_in(
         cwd: &environment.cwd,
         project: match project {
             Project::This(config) => Some(config),
-            Project::Nearest | Project::Including => context.options.tsconfig.as_deref(),
+            Project::Nearest => context.options.tsconfig.as_deref(),
+            Project::Including => None,
         },
         listed_projects: (listed.as_ref()).map(|it| it as &dyn bun_sema_driver::ListedProjects),
         build: false,

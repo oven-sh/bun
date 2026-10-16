@@ -2387,17 +2387,29 @@ describe.concurrent("an .oxlintrc.json", () => {
     ]);
   });
 
-  test("`files` of `overrides` have no `?(a|b)`", async () => {
+  // oxlint 1.87 takes the parentheses literally, so there these patterns match none of the files. `@oxlint/migrate` copies them
+  // from an ESLint config as they are.
+  test("`files` and `excludeFiles` of `overrides` have `?(a|b)`, like ESLint", async () => {
     const { problems } = await lint({
       ".oxlintrc.json": JSON.stringify({
         ...noVar,
         categories: { correctness: "off" },
-        overrides: [{ files: ["**/*.?([cm])js", "**/*.[jt]s?(x)"], rules: { "no-var": "off" } }],
+        overrides: [
+          { files: ["**/*.?([cm])js"], rules: { "no-var": "off" } },
+          { files: ["**/*.[jt]s?(x)"], excludeFiles: ["**/*.@(test|spec).*"], rules: { eqeqeq: "error" } },
+        ],
       }),
       "a.js": code,
       "b.mjs": code,
+      "src/c.tsx": code,
+      "src/c.test.tsx": code,
     });
-    expect(problems).toEqual(["a.js:1:1 no-var", "b.mjs:1:1 no-var"]);
+    expect(problems).toEqual([
+      "a.js:2:7 eqeqeq",
+      "src/c.test.tsx:1:1 no-var",
+      "src/c.tsx:1:1 no-var",
+      "src/c.tsx:2:7 eqeqeq",
+    ]);
   });
 
   test.each([
@@ -6845,6 +6857,21 @@ describe.concurrent("info/exclude of a repository, where the configuration is no
         linted(files, ["--ignore-path", "../.git/info/exclude", "."], "sub"),
       ]),
     ).toEqual([left, ["sub/a.js"]]);
+  });
+
+  // oxlint compares a file that is named with the patterns as it is spelled. These patterns start where Git has them start.
+  test("--ignore-path names it, with a configuration of oxlint: its patterns start at the root for files that are named too", async () => {
+    const files = { ...tree(""), ".oxlintrc.json": JSON.stringify(noVar), ".git/info/exclude": excludes };
+    const fromSub = names.map(name => (name.startsWith("sub/") ? name.slice(4) : `../${name}`));
+    expect(
+      await Promise.all([
+        linted(files, ["--ignore-path", ".git/info/exclude", "."], "."),
+        linted(files, ["--ignore-path", ".git/info/exclude", ...names], "."),
+        linted(files, ["--ignore-path", "../.git/info/exclude", ".."], "sub"),
+        linted(files, ["--ignore-path", "../.git/info/exclude", ...fromSub], "sub"),
+      ]),
+      // About a file that is named, oxlint does not ask the patterns for the directories that it is in.
+    ).toEqual([left, ["gen/b.js", ...left], left, ["gen/b.js", ...left]]);
   });
 });
 

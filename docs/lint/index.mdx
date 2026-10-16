@@ -224,6 +224,8 @@ warn: Loaded 10,114 files in 1.4s to lint vite.config.ts
   To speed this up, add "include" to it or pass --tsconfig.
 ```
 
+With an oxlint config, `--tsconfig` does what it does in oxlint. It sets the `tsconfig.json` that the `import` rules resolve imports with, for its `paths`. It doesn't change which `tsconfig.json` a file is type checked with, so the warning only suggests `"include"`.
+
 ## Git hooks
 
 `--staged` lints only the files you're about to commit, so you don't need `lint-staged`.

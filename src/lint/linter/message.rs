@@ -604,7 +604,7 @@ impl LintMessage {
 
     /// For where there's no ESLint to agree with, whose own formats print what the rule gave: it starts at
     /// [`LintMessage::place`] in every format, and has no end before that.
-    pub fn stay_in_file(&mut self) {
+    pub(crate) fn stay_in_file(&mut self) {
         let signed = |(line, column): (u32, u32)| (line as i32, column as i32);
         let place = self.place();
         (self.line, self.column) = place;

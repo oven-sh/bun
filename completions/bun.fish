@@ -221,11 +221,13 @@ complete -c bun -n "__fish_use_subcommand" -a "audit" -d "Check installed packag
 complete -c bun -n "__fish_use_subcommand" -a "check" -d "Type check a TypeScript project" -f
 complete -c bun -n "__fish_seen_subcommand_from check" -s "p" -l "project" -r -F -d "Path to a tsconfig.json or its directory"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "pretty" -d "Show source code around each error"
+complete -c bun -n "__fish_seen_subcommand_from check" -s "b" -l "build" -d "Check the projects in references too, like tsc -b"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "no-pretty" -d "One line per error"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "all" -d "Show every error"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "threads" -r -d "Number of threads"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "timing" -d "Print load and check times"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "cwd" -r -d "Set the working directory"
+complete -c bun -n "__fish_seen_subcommand_from check" -l "no-script" -d "Run the type checker even if the project has a check script"
 complete -c bun -n "__fish_use_subcommand" -a "lint" -d "Lint JavaScript and TypeScript" -f
 complete -c bun -n "__fish_seen_subcommand_from lint" -s "c" -l "config" -r -F -d "Use this config file instead of looking for one"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-config-lookup" -d "Do not look for a config file"
@@ -265,7 +267,7 @@ complete -c bun -n "__fish_seen_subcommand_from lint" -l "fix-suggestions" -d "A
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "fix-dangerously" -d "Apply every fix and suggestion, even those that can change behavior"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "type-aware" -d "Also run the rules that need types"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-type-aware" -d "Skip the rules that need types"
-complete -c bun -n "__fish_seen_subcommand_from lint" -l "tsconfig" -r -F -d "Use this tsconfig.json for the rules that need types"
+complete -c bun -n "__fish_seen_subcommand_from lint" -l "tsconfig" -r -F -d "Use this tsconfig.json instead of the nearest one"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "type-check" -d "With --type-aware, report type errors too"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "infer-globals" -d "Also treat what the project's types declare as globals"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-infer-globals" -d "Do not take globals from the project's types"

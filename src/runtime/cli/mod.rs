@@ -1900,15 +1900,11 @@ To create a project with the official Next.js scaffolding tool, run
         use crate::cli::script_or_command::{Runs, runs};
         if runs(command.as_bytes()) == Runs::Script {
             pretty!(
-                "\n<blue>note<r><d>:<r> package.json has a \"{}\" script, so <b>bun {}<r> runs that script\n  Change the script to <b>\"bun {}\"<r> to use the built-in command",
+                "\n<blue>note<r><d>:<r> package.json has a \"{}\" script, so <b>bun {}<r> runs that script\n  Change the script to <b>\"bun {}\"<r> to use the built-in command, or pass <b>--no-script<r>\n",
                 command,
                 command,
                 command,
             );
-            match command {
-                "lint" | "fmt" => pretty!(", or pass <b>--no-script<r>\n"),
-                _ => pretty!("\n"),
-            }
         }
     }
 

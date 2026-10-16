@@ -2,7 +2,7 @@
 //! Bun prints its own errors, `agent`, the same in tags and without colors, and `github`, the
 //! workflow commands that GitHub Actions turns into annotations.
 
-use super::{Meta, linked};
+use super::{Meta, linked, shown_at};
 use crate::paths;
 use crate::results::{Counts, FileResult};
 use bstr::BStr;
@@ -414,7 +414,7 @@ fn write_pretty_problem<'r>(
         });
         push_lossy(&mut text, &linked(&rule, message, meta));
     }
-    let (line, column) = message.place();
+    let (line, column) = shown_at(message, meta.is_oxlint);
     let shown = match line {
         line @ 1.. => lines(result, (line.saturating_sub(2).max(1), line), meta, place),
         0 => Vec::new(),
@@ -558,7 +558,7 @@ fn write_pretty_problems(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta)
                     "      {:>4}  <cyan>{}<r><d>:{}<r>\n",
                     count,
                     BStr::new(&path),
-                    first.message.place().0
+                    shown_at(first.message, meta.is_oxlint).0
                 );
             }
             if files.len() > MAX_FILES {
@@ -633,7 +633,7 @@ fn write_agent_problem<'r>(
     } else {
         "warning"
     };
-    let (line, column) = message.place();
+    let (line, column) = shown_at(message, meta.is_oxlint);
     let _ = write!(
         out,
         "<{tag} file=\"{}\" line=\"{line}\" column=\"{column}\"",
@@ -696,7 +696,7 @@ fn write_agent_problem<'r>(
         for (i, other) in group[1..].iter().take(MAX_LOCATIONS).enumerate() {
             let path = display_path(&other.result.path, meta.cwd);
             let space = if i > 0 { " " } else { "" };
-            let (line, column) = other.message.place();
+            let (line, column) = shown_at(other.message, meta.is_oxlint);
             let _ = write!(out, "{space}{}:{line}:{column}", BStr::new(&path));
         }
         if group.len() - 1 > MAX_LOCATIONS {
@@ -757,7 +757,7 @@ pub(super) fn write_github(out: &mut Vec<u8>, results: &[FileResult], meta: &Met
             path
         };
         let signed = |(line, column): (u32, u32)| (line as i32, column as i32);
-        let (line, column) = signed(message.place());
+        let (line, column) = signed(shown_at(message, meta.is_oxlint));
         let start = (line.max(1), column.max(1));
         let end = message.end.map(signed).filter(|end| *end >= start);
         let (end_line, end_column) = end.unwrap_or(start);

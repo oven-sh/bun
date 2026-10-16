@@ -3104,6 +3104,169 @@ error: line-0  demo/at
       timeout,
     );
 
+    describe("and the comments that disable rules", () => {
+      const found = "demo/line-0";
+      // The text. Then what ESLint 10.12.0 has, what oxlint 1.87.0 has, and what there is without a config, where a report is
+      // compared with the comments at the place where it is shown.
+      const texts: Record<string, [string, string[], string[], string[]]> = {
+        "none": ["export {};\n", [`${found} 0:1`], [`${found} 1:1`], [`${found} 1:1`]],
+        "block": [
+          "/* eslint-disable */\nexport {};\n",
+          [`${found} 0:1`, "unused 1:1"],
+          [`${found} 1:1`, "unused 1:1"],
+          [],
+        ],
+        "block-rule": [
+          "/* eslint-disable demo/line-0 */\nexport {};\n",
+          [`${found} 0:1`, "unused 1:1"],
+          [`${found} 1:1`, "unused 1:1"],
+          [],
+        ],
+        "oxlint-block": ["/* oxlint-disable */\nexport {};\n", [`${found} 0:1`], [`${found} 1:1`, "unused 1:1"], []],
+        "enabled-again": [
+          "/* eslint-disable */ /* eslint-enable */\nexport {};\n",
+          [`${found} 0:1`, "unused 1:1"],
+          [`${found} 1:1`, "unused 1:22"],
+          [],
+        ],
+        "line": [
+          "export {}; // eslint-disable-line\n",
+          [`${found} 0:1`, "unused 1:12"],
+          [`${found} 1:1`, "unused 1:12"],
+          [],
+        ],
+        "line-rule": [
+          "export {}; // eslint-disable-line demo/line-0\n",
+          [`${found} 0:1`, "unused 1:12"],
+          [`${found} 1:1`, "unused 1:12"],
+          [],
+        ],
+        "next-line": [
+          "// eslint-disable-next-line\nexport {};\n",
+          [`${found} 0:1`, "unused 1:1"],
+          [`${found} 1:1`, "unused 1:1"],
+          [`${found} 1:1`, "unused 1:1"],
+        ],
+        "indented": [
+          "  /* eslint-disable */\nexport {};\n",
+          [`${found} 0:1`, "unused 1:3"],
+          [`${found} 1:1`, "unused 1:3"],
+          [`${found} 1:1`, "unused 1:3"],
+        ],
+        "second-line": [
+          "export {};\n/* eslint-disable */\n",
+          [`${found} 0:1`, "unused 2:1"],
+          [`${found} 1:1`, "unused 2:1"],
+          [`${found} 1:1`, "unused 2:1"],
+        ],
+      };
+      const names = Object.keys(texts);
+      const args = ["--report-unused-disable-directives", "-f", "json", ...names.map(name => `${name}.js`)];
+      const files = {
+        "plugin.mjs": `const loc = { line: 0, column: 0 };
+          const create = context => ({ "Program:exit": () => context.report({ message: "whole file", loc }) });
+          export default { meta: { name: "demo" }, rules: { "line-0": { create } } };`,
+        ...Object.fromEntries(names.map(name => [`${name}.js`, texts[name][0]])),
+      };
+      const expected = (at: 1 | 2 | 3) => Object.fromEntries(names.map(name => [name, texts[name][at]]));
+      const said = (raw: string) =>
+        Object.fromEntries(
+          JSON.parse(raw).map((result: any) => [
+            nameOf(result.filePath),
+            result.messages.map((it: any) => `${it.ruleId ?? "unused"} ${it.line}:${it.column}`),
+          ]),
+        );
+
+      test(
+        "with an ESLint config no comment disables a report at line 0, as in ESLint",
+        async () => {
+          const config = `import demo from "./plugin.mjs";
+            export default [{ files: ["*.js"], plugins: { demo }, rules: { "demo/line-0": "error" } }];`;
+          const { raw, exitCode } = await lint({ ...files, "eslint.config.mjs": config }, args);
+          expect(said(raw)).toEqual(expected(1));
+          expect(exitCode).toBe(1);
+        },
+        timeout,
+      );
+
+      test(
+        "with an oxlint config no comment disables it either, as in oxlint",
+        async () => {
+          const config = oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "demo/line-0": "error" } });
+          const { raw, exitCode } = await lint({ ...files, ".oxlintrc.json": config }, args);
+          const all: Record<string, string[]> = {};
+          for (const it of JSON.parse(raw).diagnostics) {
+            const { line, column } = it.labels[0].span;
+            (all[nameOf(it.filename)] ??= []).push(`${it.code ? found : "unused"} ${line}:${column}`);
+          }
+          expect(all).toEqual(expected(2));
+          expect(exitCode).toBe(1);
+        },
+        timeout,
+      );
+
+      test(
+        "without a config, a comment at the start of the file disables it, and counts as used",
+        async () => {
+          const config = `[lint]\nplugins = ["./plugin.mjs"]\n[lint.rules]\n"demo/line-0" = "error"\n`;
+          const { raw, exitCode } = await lint({ ...files, "bunfig.toml": config }, args);
+          expect(said(raw)).toEqual(expected(3));
+          expect(exitCode).toBe(1);
+        },
+        timeout,
+      );
+
+      describe("of the built-in rules that report about the whole file", () => {
+        const files = {
+          "tsconfig.json": JSON.stringify({ compilerOptions: { strictNullChecks: false } }),
+          "reported.ts": "export const a = 1;\n",
+          "disabled.ts": "/* eslint-disable */\nexport const a = 1;\n",
+          "reported.spec.js": "export const a = 1;\n",
+          "disabled.spec.js": "/* eslint-disable vitest/consistent-test-filename */\nexport const a = 1;\n",
+        };
+        const rules = ["@typescript-eslint/no-unnecessary-condition", "vitest/consistent-test-filename"];
+        const args = ["--report-unused-disable-directives", "-f", "json"];
+
+        test("without a config, a comment at the start of the file disables them", async () => {
+          const config = `[lint.rules]\n${rules.map(rule => `"${rule}" = "error"\n`).join("")}`;
+          const { raw, exitCode } = await lint({ ...files, "bunfig.toml": config }, [...args, "."]);
+          expect(
+            JSON.parse(raw).map((result: any) => [
+              result.filePath.replace(/^.*[\\/]/, ""),
+              ...result.messages.map((it: any) => `${it.ruleId ?? "unused"} ${it.line}:${it.column}`),
+            ]),
+          ).toEqual([
+            ["disabled.spec.js"],
+            ["disabled.ts"],
+            ["reported.spec.js", `${rules[1]} 1:1`],
+            ["reported.ts", `${rules[0]} 1:1`],
+          ]);
+          expect(exitCode).toBe(1);
+        });
+
+        test("with an oxlint config they have no place and no comment disables them, as in oxlint", async () => {
+          const config = oxlintrc({ plugins: ["vitest"], rules: { [rules[1]]: "error" } });
+          const project = { ...files, ".oxlintrc.json": config };
+          const [json, agent] = await Promise.all([
+            lint(project, [...args, "reported.spec.js", "disabled.spec.js"]),
+            lint(project, ["-f", "agent", "reported.spec.js"]),
+          ]);
+          // As oxlint 1.87.0.
+          expect(
+            JSON.parse(json.raw)
+              .diagnostics.map((it: any) => [it.filename, it.code ?? "unused", it.labels.length])
+              .sort(),
+          ).toEqual([
+            ["disabled.spec.js", "unused", 1],
+            ["disabled.spec.js", "vitest(consistent-test-filename)", 0],
+            ["reported.spec.js", "vitest(consistent-test-filename)", 0],
+          ]);
+          expect(agent.stdout).toStartWith("reported.spec.js: error vitest(consistent-test-filename): ");
+          expect(json.exitCode).toBe(1);
+        });
+      });
+    });
+
     // ESLint has none of these formats.
     test.each([
       ["an ESLint config", eslint],

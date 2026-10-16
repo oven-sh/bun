@@ -199,7 +199,7 @@ impl Scope {
 
 /// An element of oxc's `GlobSet`.
 pub(crate) fn glob_of_oxc(pattern: &[u8]) -> bun_glob::Pattern {
-    bun_glob::Pattern::of_oxc_glob_set(pattern)
+    bun_glob::Pattern::of_oxfmt(pattern)
 }
 
 /// Parses a pattern from Prettier's `overrides` or command line.

@@ -1,7 +1,7 @@
 //! What the formats of oxlint print a problem from: `Info` of `oxc_diagnostics`.
 
-use super::Meta;
 use super::oxlint::{Offsets, code, is_error};
+use super::{Meta, shown_at};
 use crate::paths;
 use crate::results::FileResult;
 use bun_core::strings;
@@ -39,6 +39,8 @@ pub(super) struct Source<'r> {
     offsets: Offsets<'r>,
     /// Where each line starts, where only `\n`, `\r\n` and `\r` end a line. `None`: where those of `offsets` do.
     lines: Option<LineStarts>,
+    /// [`Meta::is_oxlint`]
+    is_oxlint: bool,
 }
 
 impl<'r> Source<'r> {
@@ -76,6 +78,7 @@ impl<'r> Source<'r> {
             text,
             offsets,
             lines,
+            is_oxlint: meta.is_oxlint,
         }
     }
 
@@ -111,7 +114,7 @@ impl<'r> Source<'r> {
 
     /// Where the problem starts and where it ends, in bytes from the start of the file. `None`: it has no place.
     pub(super) fn span(&self, message: &LintMessage) -> Option<(usize, usize)> {
-        let start = message.place();
+        let start = shown_at(message, self.is_oxlint);
         if start.0 == 0 {
             return None;
         }

@@ -516,9 +516,6 @@ public:
     V(private, ThenablesArray, m_thenables)                                                                  \
     V(private, NativeModuleDefaultsArray, m_nativeModuleDefaults)                                            \
                                                                                                              \
-    /* Error.prepareStackTrace */                                                                            \
-    V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
-                                                                                                             \
     /* When a napi module initializes on dlopen, we need to know what the value is */                        \
     V(public, NapiModuleAndExports, m_pendingNapiModuleAndExports)                                           \
                                                                                                              \
@@ -538,11 +535,7 @@ public:
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_moduleGraphFrameStructure)                           \
                                                                                                              \
-    /* The original, unmodified Error.prepareStackTrace. */                                                  \
-    /* */                                                                                                    \
-    /* We set a default value for this to mimic Node.js behavior It is a */                                  \
-    /* separate from the user-facing value so that we can tell if the user */                                \
-    /* really set it or if it's just the default value. */                                                   \
+    /* The default Error.prepareStackTrace, as Node.js has one. Native code formats its stacks. */           \
     V(public, LazyPropertyOfGlobalObject<JSC::JSFunction>, m_errorConstructorPrepareStackTraceInternalValue) \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_nodeErrorCache)                                       \

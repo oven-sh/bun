@@ -6995,13 +6995,12 @@ it("sync fs calls read a Buffer path captured at call time when an option getter
   expect(exitCode).toBe(0);
 });
 
-it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds the system path limit", async () => {
+it.if(isPosix)("realpath reports ENAMETOOLONG when cwd plus the path exceeds the system path limit", async () => {
   using dir = tempDir("fs-realpath-too-long", {});
 
-  // The relative path argument is within the per-argument limit, but joining
-  // it onto the (non-root) cwd overflows the internal fixed-size path buffer.
-  // Both realpath variants must surface this as a clean ENAMETOOLONG error
-  // instead of aborting the process.
+  // Each relative path is within the per-argument limit and only its absolute
+  // form is too long. `longPath` does not exist. `deep` does, so the native
+  // variants open it and find out when they ask for the path of the descriptor.
   const script = `
     const fs = require("node:fs");
     const longPath = "a".repeat(4090);
@@ -7013,6 +7012,24 @@ it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds
         console.log(err.code);
       }
     }
+
+    const levels = ${isLinux ? 12 : 3};
+    const nested = n => Array(n).fill(Buffer.alloc(200, "d").toString()).join("/");
+    const deep = nested(levels);
+    fs.mkdirSync(deep, { recursive: true });
+    process.chdir(deep);
+    fs.mkdirSync(deep, { recursive: true });
+    (async () => {
+      for (const impl of [fs.realpathSync, fs.realpathSync.native, fs.promises.realpath]) {
+        try {
+          await impl(deep);
+          console.log("resolved");
+        } catch (err) {
+          console.log(err.code, err.syscall);
+        }
+      }
+      for (let n = levels; n > 0; n--) fs.rmdirSync(nested(n));
+    })();
   `;
 
   await using proc = Bun.spawn({
@@ -7025,7 +7042,13 @@ it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  expect(stdout.trim().split("\n")).toEqual(["ENAMETOOLONG", "ENAMETOOLONG"]);
+  expect(stdout.trim().split("\n")).toEqual([
+    "ENAMETOOLONG",
+    "ENAMETOOLONG",
+    "ENAMETOOLONG lstat",
+    "ENAMETOOLONG realpath",
+    "ENAMETOOLONG realpath",
+  ]);
   expect(exitCode).toBe(0);
 });
 

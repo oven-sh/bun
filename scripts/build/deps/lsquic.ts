@@ -134,6 +134,17 @@ export const lsquic: Dependency = {
     // H3_CLOSED_CRITICAL_STREAM and closes the connection, which kills the
     // requests the graceful stop was draining. Reject only request streams.
     "patches/lsquic/goaway-accept-uni-streams.patch",
+    // lsquic_stream_force_reset_ext() queued RESET_STREAM on any stream it was
+    // given, a finished one included: the frame record then pointed at a
+    // stream the same tick freed. lsquic_stream_send_reset() is the entry
+    // node:quic calls. It refuses the streams that cannot take a reset.
+    // Applies on top of node-quic-accessors.
+    "patches/lsquic/node-quic-reset-entry.patch",
+    // lsquic_stream_send_stop_sending() queued STOP_SENDING without making
+    // the connection tickable, so on a stream whose write side was done the
+    // frame waited for an unrelated alarm (up to a whole idle timeout).
+    // Applies on top of node-quic-reset-entry.
+    "patches/lsquic/stop-sending-tickable.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

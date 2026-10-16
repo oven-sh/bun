@@ -1,0 +1,64 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -2284,6 +2284,16 @@
+ void
+ lsquic_stream_force_reset_ext (lsquic_stream_t *, uint64_t error_code);
+ 
++/**
++ * The reset an application asks for.  @ref lsquic_stream_force_reset_ext is
++ * its worker and does not look at the state of the stream.  This entry does
++ * nothing when a RESET_STREAM cannot be sent: the stream is receive-only,
++ * lsquic has finished it, or the peer acknowledged everything up to and
++ * including the FIN.
++ */
++void
++lsquic_stream_send_reset (lsquic_stream_t *, uint64_t error_code);
++
+ /**
+  * Queue STOP_SENDING(error_code) for this stream and shut its read side.
+  */
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -4520,6 +4520,42 @@
+ }
+ 
+ 
++/* bun: see lsquic.h. */
++void
++lsquic_stream_send_reset (struct lsquic_stream *stream, uint64_t error_code)
++{
++    /* bun: a receive-only stream has no sending part.  The peer answers a
++     * RESET_STREAM for one with STREAM_STATE_ERROR ([RFC 9000] Section 19.4). */
++    if (stream_is_incoming_unidir(stream))
++        return;
++    /* bun: a finished stream is on the service queue, and the next
++     * service_streams() frees it.  stream_reset() would put it back on the
++     * sending queue, and the RESET_STREAM frame record would outlive it. */
++    if (stream->stream_flags & STREAM_FINISHED)
++        return;
++    /* bun: "Data Recvd".  The peer acknowledged the FIN and every frame, so
++     * nothing is left to reset, and [RFC 9000] Section 3.3 does not allow a
++     * RESET_STREAM from there.  ngtcp2 returns early as well
++     * (conn_shutdown_stream_write, ngtcp2_strm_is_all_tx_data_fin_acked).
++     * Frames elided after the peer's STOP_SENDING also leave n_unacked at
++     * zero, but nobody acknowledged them: Section 3.5 wants the reset then. */
++    if ((stream->stream_flags & (STREAM_FIN_SENT|STREAM_SS_RECVD))
++                                                        == STREAM_FIN_SENT
++            && 0 == stream->n_unacked && 0 == stream->sm_n_buffered)
++    {
++        /* Like the worker, end the read side the peer has finished.  That
++         * finishes the stream: service it in the pass this call schedules. */
++        if (stream->stream_flags & (STREAM_FIN_RECVD|STREAM_RST_RECVD))
++        {
++            stream_shutdown_read(stream);
++            maybe_conn_to_tickable(stream);
++        }
++        return;
++    }
++    lsquic_stream_force_reset_ext(stream, error_code);
++}
++
++
+ LSQUIC_TEST_WEAK
+ void
+ lsquic_stream_acked (struct lsquic_stream *stream,

@@ -1,0 +1,14 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -4487,6 +4487,11 @@
+      * handle_early_read_shutdown) and marks U_READ_DONE. */
+     stream_shutdown_read(stream);
+     maybe_schedule_call_on_close(stream);
++    /* bun: nothing else makes the connection tickable for this call.
++     * lsquic_stream_wantwrite() refuses a stream whose write side is done,
++     * so the queued STOP_SENDING, or the on_close of a stream this call
++     * finished, waited for an unrelated alarm. */
++    maybe_conn_to_tickable_if_writeable(stream, 1);
+ }
+ 
+ 

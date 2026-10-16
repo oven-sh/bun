@@ -4354,25 +4354,48 @@ pub mod bv2_impl {
 
             let import_records = self.graph.ast.items_import_records();
 
+            // Check for either node or bun builtins
+            // We don't use the list from .bun because that includes third-party packages in some cases.
+            let is_builtin = |specifier: &[u8]| {
+                bun_resolve_builtins::HardcodedModule::Alias::has(
+                    specifier,
+                    Target::Node,
+                    Default::default(),
+                ) || specifier.starts_with(b"bun:")
+                    || specifier == b"bun"
+            };
+
+            let sources = self.graph.input_files.items_source();
+
             for source_index in reachable_files {
                 let records: &[ImportRecord] =
                     import_records[source_index.get() as usize].as_slice();
+                // A package may import itself by name, which is not a dependency to install. The
+                // resolver already read this directory while bundling, so this is a cache hit.
+                let own_name: &[u8] = self
+                    .transpiler
+                    .resolver
+                    .read_dir_info_ignore_error(
+                        sources[source_index.get() as usize].path.source_dir(),
+                    )
+                    .and_then(|dir| dir.enclosing_package_json)
+                    .map_or(&b""[..], |package_json| &*package_json.name);
                 for record in records {
                     if !record.source_index.is_valid()
                         && record.tag == bun_ast::ImportRecordTag::None
                     {
-                        let path = &record.path.text;
-                        // External dependency
-                        if !path.is_empty()
-                        // Check for either node or bun builtins
-                        // We don't use the list from .bun because that includes third-party packages in some cases.
-                        && !bun_resolve_builtins::HardcodedModule::Alias::has(path, Target::Node, Default::default())
-                        && !path.starts_with(b"bun:")
-                        && path != b"bun"
+                        let path: &[u8] = record.path.text;
+                        // Record the package name only: `lodash/debounce` is part of `lodash`.
+                        if let Some(name) = bun_resolver::package_json::Package::parse_name(path)
+                            && name != own_name
+                            && !is_builtin(path)
+                            && !is_builtin(name)
+                            // An npm scope is never empty, so `@/x` can only be a tsconfig `paths`
+                            // alias that matched nothing.
+                            && !name.starts_with(b"@/")
+                            && strings::is_npm_package_name_ignore_length(name)
                         {
-                            if strings::is_npm_package_name_ignore_length(path) {
-                                external_deps.insert(path)?;
-                            }
+                            external_deps.insert(name)?;
                         }
                     }
                 }

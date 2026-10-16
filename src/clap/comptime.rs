@@ -643,6 +643,15 @@ impl<Id> ComptimeClap<Id> {
         &self.multi_options[param.id]
     }
 
+    pub(crate) fn has(&self, name: &[u8]) -> bool {
+        let param = self.table.find(name);
+        match param.takes_value {
+            Values::None => self.flags[param.id],
+            Values::One | Values::OneOptional => self.single_options[param.id].is_some(),
+            Values::Many => !self.multi_options[param.id].is_empty(),
+        }
+    }
+
     pub(crate) fn positionals(&self) -> &[&'static [u8]] {
         &self.pos
     }

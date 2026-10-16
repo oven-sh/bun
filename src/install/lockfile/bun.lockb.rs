@@ -601,7 +601,7 @@ pub(crate) fn load(
                     bun_ast::Loc::EMPTY,
                     format_args!(
                         "Invalid git dependency tag \"{}\" in bun.lockb",
-                        bstr::BStr::new(resolved)
+                        bun_core::fmt::escape_control_chars(resolved)
                     ),
                 );
                 return Err(crate::Error::InvalidLockfile);

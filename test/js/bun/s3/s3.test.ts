@@ -1799,7 +1799,8 @@ describe("a slice of an in-memory Blob as the data of a write", () => {
       registry.register(parent, undefined);
       return parent.slice(12, 26);
     })();
-    while (!parentIsCollected) await gcTick();
+    // The collection of the parent is likely, not certain. The write must send the slice in both cases.
+    for (let i = 0; i < 50 && !parentIsCollected; i++) await gcTick();
 
     const key = randomUUIDv7();
     expect(written(key, await client.write(key, slice))).toEqual({

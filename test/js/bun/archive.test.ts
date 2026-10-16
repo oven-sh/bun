@@ -1975,6 +1975,10 @@ describe("Bun.Archive", () => {
       const outPath = join(String(dir), "out.tar");
       await Bun.Archive.write(outPath, blob);
       expect(await Bun.file(outPath).bytes()).toEqual(tar);
+
+      const writtenPath = join(String(dir), "written.tar");
+      expect(await Bun.write(writtenPath, archive)).toBe(tar.length);
+      expect(await Bun.file(writtenPath).bytes()).toEqual(tar);
     });
 
     test("an empty slice", async () => {

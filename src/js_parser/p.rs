@@ -8937,6 +8937,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 // ═══════════════════════════════════════════════════════════════════════════
 // P::to_ast — final assembly P→Ast.
 // ═══════════════════════════════════════════════════════════════════════════
+
+/// Keeps the Parts that still have statements, in order. `first_emptied` is the first one without any.
+fn remove_emptied_parts(parts: &mut ListManaged<'_, js_ast::Part>, first_emptied: usize) {
+    let mut end = first_emptied;
+    let mut idx = first_emptied + 1;
+    while idx < parts.len() {
+        if parts[idx].stmts.is_empty() {
+            idx += 1;
+            continue;
+        }
+        let run = idx;
+        while idx < parts.len() && !parts[idx].stmts.is_empty() {
+            idx += 1;
+        }
+        let emptied = run - end;
+        if emptied * 4 <= idx - run {
+            // One block move for the run. It also moves the emptied Parts, so the run must be much longer.
+            parts[end..idx].rotate_left(emptied);
+        } else {
+            for (to, from) in (end..).zip(run..idx) {
+                // `slice::swap` must allow equal indices, so it moves a Part three times through memcpy.
+                let (kept, rest) = parts.split_at_mut(from);
+                core::mem::swap(&mut kept[to], &mut rest[0]);
+            }
+        }
+        end += idx - run;
+    }
+    parts.truncate(end);
+}
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn to_ast(
         &mut self,
@@ -8955,11 +8984,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // }
 
         let bundling = self.options.bundle;
-        let mut parts_end: usize = usize::from(bundling);
+        // leave the first part in there for namespace export when bundling
+        let begin: usize = usize::from(bundling);
 
         // A module that was visited as one Part has done this at the end of its visit.
         if TYPESCRIPT && self.has_ts_import_equals {
-            self.remove_unused_ts_import_equals(&mut parts[parts_end..], |part| &mut part.stmts);
+            self.remove_unused_ts_import_equals(&mut parts[begin..], |part| &mut part.stmts);
         }
 
         // When bundling with HMR, we need every module to be just a
@@ -9019,9 +9049,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Handle import paths after the whole file has been visited because we need
             // symbol usage counts to be able to remove unused type-only imports in
             // TypeScript code.
-            let begin = parts_end;
             // Potentially remove some statements, then filter out parts to remove any
             // with no statements
+            let mut first_emptied = None;
             for idx in begin..parts.len() {
                 self.import_records_for_current_part.clear();
                 self.declared_symbols.clear_retaining_capacity();
@@ -9035,6 +9065,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 )?;
                 part.stmts = bun_ast::StoreSlice::new_mut(result.stmts);
                 if part.stmts.is_empty() {
+                    first_emptied.get_or_insert(idx);
                     continue;
                 }
 
@@ -9062,17 +9093,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     part.import_record_indices
                         .append_slice(self.import_records_for_current_part.as_slice());
                 }
-
-                if idx != parts_end {
-                    // `slice::swap` must allow equal indices, so it moves a Part three times through memcpy.
-                    let (kept, rest) = parts.split_at_mut(idx);
-                    core::mem::swap(&mut kept[parts_end], &mut rest[0]);
-                }
-                parts_end += 1;
             }
-
-            // leave the first part in there for namespace export when bundling
-            parts.truncate(parts_end);
+            if let Some(first_emptied) = first_emptied {
+                remove_emptied_parts(parts, first_emptied);
+            }
 
             // Do a second pass for exported items now that imported items are filled out.
             // This isn't done for HMR because it already deletes all `.s_export_clause`s

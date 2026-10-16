@@ -273,6 +273,40 @@ it.skipIf(!isPosix)("a backpressured string write() resolves to its encoded byte
   expect(received).toBe(size);
 });
 
+// An empty chunk is behind the chunks queued before it like any other; a number
+// would tell the caller that nothing is waiting.
+it.skipIf(!isPosix).each([
+  ["string", ""],
+  ["Uint8Array", new Uint8Array(0)],
+])("an empty %s write() behind a backpressured write() returns that write's promise", async (_, empty) => {
+  const [readFd, writeFd] = createSocketPair();
+  const sink = Bun.file(writeFd).writer();
+  const size = 4 * 1024 * 1024;
+
+  expect(sink.write(empty)).toBe(0);
+  const first = sink.write(Buffer.alloc(size, 0x61));
+  const second = sink.write(empty);
+
+  let received = 0;
+  const reader = (async () => {
+    for await (const part of Bun.file(readFd).stream()) received += part.byteLength;
+  })();
+
+  try {
+    expect(first).toBeInstanceOf(Promise);
+    expect(second).toBe(first);
+    expect(await second).toBe(size);
+    expect(sink.write(empty)).toBe(0);
+  } finally {
+    await Promise.resolve(sink.end()).catch(() => {});
+    fs.closeSync(writeFd);
+    await reader;
+    fs.closeSync(readFd);
+  }
+
+  expect(received).toBe(size);
+});
+
 // end() called after a backpressured write() with the reader already gone:
 // end_from_js's own flush() sees EPIPE synchronously. Throwing it would leave
 // the write()'s outstanding promise orphaned (never settled here; in the spawn
@@ -1229,6 +1263,39 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
         stderr: "parked\n" + JSON.stringify({ settled: `resolved ${total}`, code: 0 }) + "\n",
         exitCode: 0,
       });
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
+  // The flush at the end of the tick takes the tail of the short write and resumes the pump from
+  // inside the flush, with the parked write's promise not settled yet. The empty chunk is what
+  // the pump writes then, and nothing would resume a pump that parked on it.
+  it.skipIf(!isPosix).each([
+    ["string", ""],
+    ["ArrayBuffer", new ArrayBuffer(0)],
+  ])("an empty %s chunk behind a short write does not park the pump again", async (_, empty) => {
+    using dir = tempDir("filesink-piped-empty", {});
+    const path = join(String(dir), "piped.fifo");
+    mkfifo(path, 0o666);
+    const fd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    try {
+      // A little more than a pipe holds, so the tail fits once the pipe is empty.
+      const short = Buffer.alloc(64 * 1024 + 1000, 97);
+      const source = new ReadableStream({
+        start(c) {
+          c.enqueue(short);
+          c.enqueue(empty);
+          c.enqueue("end");
+          c.close();
+        },
+      });
+      const written = Bun.write(Bun.file(path), new Response(source));
+      const head = fs.readSync(fd, Buffer.alloc(short.length));
+      expect(head).toBeLessThan(short.length);
+      const [tail, total] = await Promise.all([drain(fd), written]);
+      expect(head + tail.length).toBe(short.length + 3);
+      expect(total).toBe(short.length + 3);
     } finally {
       fs.closeSync(fd);
     }

@@ -4686,6 +4686,8 @@ impl VirtualMachine {
             // the old global so the new global can re-register them post-reload.
             (hooks.cron_clear_all_reload)(self);
         }
+        // Every resolution runs again, so the names the watcher awaits start over.
+        crate::hot_reloader::HotReloaderCtx::bun_watcher_mut(self).forget_awaited_names();
         // `JSGlobalObject::reload` drains microtasks + collects async + clears
         // the JSC module loader registry.
         self.global().reload().expect("Failed to reload");

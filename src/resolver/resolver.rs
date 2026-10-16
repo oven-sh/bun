@@ -499,6 +499,10 @@ pub struct Resolver<'a> {
     pub elapsed: u64, // tracing
 
     pub watcher: Option<AnyResolveWatcher>,
+    /// Set while a resolution that missed runs once more for `AnyResolveWatcher::await_names`.
+    reports_names: bool,
+    /// Directories where a reported name was there by the time the watcher looked.
+    reported_names_appeared_in: Vec<&'static [u8]>,
 
     pub caches: CacheSet,
     pub generation: Generation,
@@ -638,6 +642,8 @@ impl<'a> Resolver<'a> {
             debug_logs: None,
             elapsed: 0,
             watcher: from.watcher,
+            reports_names: false,
+            reported_names_appeared_in: Vec::new(),
             caches: CacheSet::init(),
             generation: from.generation,
             package_manager: from.package_manager,
@@ -960,6 +966,8 @@ impl<'a> Resolver<'a> {
             debug_logs: None,
             elapsed: 0,
             watcher: None,
+            reports_names: false,
+            reported_names_appeared_in: Vec::new(),
             generation: 0,
             package_manager: None,
             on_wake_package_manager: Default::default(),
@@ -1443,6 +1451,19 @@ impl<'a> Resolver<'a> {
             }
         }
 
+        if FeatureFlags::WATCH_DIRECTORIES
+            && matches!(tmp, ResultUnion::NotFound)
+            && !self.reports_names
+            && self.watcher.is_some_and(|watcher| watcher.awaits_names())
+        {
+            tmp = self.resolve_reporting_names(
+                source_dir_normalized,
+                import_path,
+                kind,
+                global_cache,
+            );
+        }
+
         let ret = match tmp {
             ResultUnion::Success(mut result) => {
                 if result.path_pair.primary.namespace() != b"node"
@@ -1500,6 +1521,81 @@ impl<'a> Resolver<'a> {
         // (tracing `elapsed` accumulation handled by `_elapsed_guard` above on all paths)
         self.extension_order = original_order;
         ret
+    }
+
+    /// The resolution missed. Its probes run once more and give the watcher the names they did not find.
+    #[cold]
+    fn resolve_reporting_names(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &'static [u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
+    ) -> ResultUnion {
+        debuglog!(
+            "resolve({}) missed: its probes report the names they do not find",
+            bstr::BStr::new(import_path)
+        );
+        self.reports_names = true;
+        let reported = self.resolve_without_symlinks(source_dir, import_path, kind, global_cache);
+        self.reports_names = false;
+        let appeared_in = core::mem::take(&mut self.reported_names_appeared_in);
+        if appeared_in.is_empty() || !matches!(reported, ResultUnion::NotFound) {
+            return reported;
+        }
+        // Not during the walk: it holds listings of these directories.
+        for dir in appeared_in {
+            self.bust_dir_cache(strings::without_trailing_slash_windows_path(dir));
+        }
+        self.resolve_without_symlinks(source_dir, import_path, kind, global_cache)
+    }
+
+    /// A probe looked for `name` and found `kind`. Only a name that is not there, or a link to nothing, is awaited: a directory made again with that name cannot satisfy the import.
+    fn note_tried(
+        tried: &mut Vec<Box<[u8]>>,
+        name: &[u8],
+        kind: Option<Fs::file_system::EntryKind>,
+    ) {
+        if matches!(kind, None | Some(Fs::file_system::EntryKind::Dangling)) {
+            tried.push(name.into());
+        }
+    }
+
+    fn kind_of_entry(
+        &self,
+        entry: Option<Fs::EntryLookup<'static>>,
+    ) -> Option<Fs::file_system::EntryKind> {
+        // SAFETY: rfs points at the process-global RealFS; `kind()` is serialized on the per-entry mutex.
+        entry.map(|entry| unsafe { entry.entry().kind(self.rfs_ptr(), self.store_fd) })
+    }
+
+    fn note_tried_in(
+        &self,
+        tried: &mut Vec<Box<[u8]>>,
+        dir_entry: bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption>,
+        name: &[u8],
+    ) {
+        let kind = self.kind_of_entry(dir_entry.get().lookup(name).0);
+        Self::note_tried(tried, name, kind);
+    }
+
+    /// Gives the watcher the names a probe did not find in `dir`.
+    #[cold]
+    fn await_tried_names(&mut self, dir: &'static [u8], dir_fd: FD, tried: &[Box<[u8]>]) {
+        let Some(watcher) = self.watcher else {
+            return;
+        };
+        let names: Vec<&[u8]> = tried.iter().map(|name| &**name).collect();
+        let appeared = watcher.await_names(dir, dir_fd, &names);
+        debuglog!(
+            "await {} names in {} (one is there by now: {})",
+            names.len(),
+            bstr::BStr::new(dir),
+            appeared
+        );
+        if appeared {
+            self.reported_names_appeared_in.push(dir);
+        }
     }
 
     pub fn resolve(
@@ -1848,7 +1944,7 @@ impl<'a> Resolver<'a> {
             let mut normalizer = ResolvePath::PosixToWinNormalizer::default();
             let mut entry = MatchResult::default();
             if self
-                .load_reporting_miss(
+                .load_as_file_or_directory(
                     normalizer.resolve(source_dir, import_path),
                     kind,
                     &mut entry,
@@ -2197,7 +2293,7 @@ impl<'a> Resolver<'a> {
 
         let mut res = MatchResult::default();
         let ret = if self
-            .load_reporting_miss(abs_path, kind, &mut res)
+            .load_as_file_or_directory(abs_path, kind, &mut res)
             .is_success()
         {
             ResultUnion::Success(Result {
@@ -2212,53 +2308,6 @@ impl<'a> Resolver<'a> {
         };
         self.extension_order = prev_extension_order;
         ret
-    }
-
-    /// `load_as_file_or_directory` for a relative or absolute import. The watcher hears of a miss and can ask for one more look.
-    fn load_reporting_miss(
-        &mut self,
-        path: &[u8],
-        kind: ast::ImportKind,
-        out: &mut MatchResult,
-    ) -> MatchStatus {
-        let status = self.load_as_file_or_directory(path, kind, out);
-        if status.is_success() || !self.report_unresolved(path) {
-            return status;
-        }
-        *out = MatchResult::default();
-        self.load_as_file_or_directory(path, kind, out)
-    }
-
-    /// Tells the watcher which names `load_as_file` tried. True when one of them is in the directory by now.
-    fn report_unresolved(&mut self, abs_path: &[u8]) -> bool {
-        if !FeatureFlags::WATCH_DIRECTORIES {
-            return false;
-        }
-        let path = strings::without_trailing_slash(abs_path);
-        let (Some(watcher), Some(dir)) = (self.watcher, bun_paths::dirname(path)) else {
-            return false;
-        };
-        let dir = strings::without_trailing_slash_windows_path(dir);
-        let base = bun_paths::basename(path);
-        let replaced_extensions = match strings::last_index_of_char(base, b'.') {
-            Some(dot) => rewritten_file_extensions(&base[dot..], || {
-                strings::path_contains_node_modules_folder(abs_path)
-            }),
-            None => &[],
-        };
-        let appeared = watcher.unresolved(&bun_watcher::UnresolvedLookup {
-            dir,
-            base,
-            extensions: [
-                self.opts.ext_order_slice(self.extension_order),
-                &self.opts.extra_cjs_extensions,
-            ],
-            replaced_extensions,
-        });
-        if appeared {
-            self.bust_dir_cache(dir);
-        }
-        appeared
     }
 
     pub(crate) fn check_package_path(
@@ -3911,6 +3960,7 @@ impl<'a> Resolver<'a> {
     /// Each probe goes through [`DirInfo::get_entry`] so the map walk happens
     /// under `entries_mutex`; `dirname_fd` was captured under the caller's
     /// critical section.
+    #[inline(always)]
     fn probe_target_extensions(
         &mut self,
         resolved_dir_info: DirInfoRef,
@@ -3921,7 +3971,34 @@ impl<'a> Resolver<'a> {
         is_wildcard: bool,
         out: &mut MatchResult,
     ) -> bool {
+        self.probe_target_extensions_probing::<false>(
+            resolved_dir_info,
+            dirname_fd,
+            package_json,
+            base,
+            extension_order,
+            is_wildcard,
+            out,
+        )
+    }
+
+    /// `REPORT`: see `load_as_file_probing`.
+    fn probe_target_extensions_probing<const REPORT: bool>(
+        &mut self,
+        resolved_dir_info: DirInfoRef,
+        dirname_fd: FD,
+        package_json: &PackageJSON,
+        base: &[u8],
+        extension_order: options::ExtOrder,
+        is_wildcard: bool,
+        out: &mut MatchResult,
+    ) -> bool {
         let rfs = self.rfs_ptr();
+        let mut tried: Vec<Box<[u8]>> = Vec::new();
+        if REPORT {
+            let kind = self.kind_of_entry(resolved_dir_info.get_entry(self.generation, base));
+            Self::note_tried(&mut tried, base, kind);
+        }
 
         if is_wildcard && bun_paths::extension(base).is_empty() {
             let buf = bufs!(load_as_file);
@@ -3930,6 +4007,11 @@ impl<'a> Resolver<'a> {
                 let ext: &[u8] = ext;
                 let file_name = &mut buf[0..base.len() + ext.len()];
                 file_name[base.len()..].copy_from_slice(ext);
+                if REPORT {
+                    let entry = resolved_dir_info.get_entry(self.generation, &file_name[..]);
+                    let kind = self.kind_of_entry(entry);
+                    Self::note_tried(&mut tried, &file_name[..], kind);
+                }
                 if let Some(ext_query) =
                     resolved_dir_info.get_entry(self.generation, &file_name[..])
                 {
@@ -3971,6 +4053,11 @@ impl<'a> Resolver<'a> {
                 for &replacement in ts_exts.iter() {
                     let file_name = &mut buf[0..segment.len() + replacement.len()];
                     file_name[segment.len()..].copy_from_slice(replacement);
+                    if REPORT {
+                        let entry = resolved_dir_info.get_entry(self.generation, &file_name[..]);
+                        let kind = self.kind_of_entry(entry);
+                        Self::note_tried(&mut tried, &file_name[..], kind);
+                    }
                     if let Some(ts_query) =
                         resolved_dir_info.get_entry(self.generation, &file_name[..])
                     {
@@ -4000,6 +4087,21 @@ impl<'a> Resolver<'a> {
             }
         }
 
+        if REPORT {
+            if !tried.is_empty() {
+                self.await_tried_names(resolved_dir_info.abs_path, dirname_fd, &tried);
+            }
+        } else if self.reports_names {
+            return self.probe_target_extensions_probing::<true>(
+                resolved_dir_info,
+                dirname_fd,
+                package_json,
+                base,
+                extension_order,
+                is_wildcard,
+                out,
+            );
+        }
         false
     }
 
@@ -5358,12 +5460,24 @@ impl<'a> Resolver<'a> {
 
     // NOTE: `dir_info` is a `DirInfoRef` (matching spec `*DirInfo`) so
     // `load_index_with_extension` may re-borrow without aliasing the caller's `&mut`.
+    #[inline(always)]
     pub(crate) fn load_as_index(
         &mut self,
         dir_info: DirInfoRef,
         extension_order: options::ExtOrder,
         out: &mut MatchResult,
     ) -> MatchStatus {
+        self.load_as_index_probing::<false>(dir_info, extension_order, out)
+    }
+
+    /// `REPORT`: see `load_as_file_probing`.
+    fn load_as_index_probing<const REPORT: bool>(
+        &mut self,
+        dir_info: DirInfoRef,
+        extension_order: options::ExtOrder,
+        out: &mut MatchResult,
+    ) -> MatchStatus {
+        let mut tried: Vec<Box<[u8]>> = Vec::new();
         // Try the "index" file with extensions
         // NOTE: index by `0..len` so each iteration takes a fresh short
         // borrow of `self.opts` that ends before `&mut self` is taken by
@@ -5380,6 +5494,11 @@ impl<'a> Resolver<'a> {
             {
                 return MatchStatus::Success;
             }
+            if REPORT {
+                let name = [b"index", &*ext].concat();
+                let kind = self.kind_of_entry(dir_info.get_entry(self.generation, &name));
+                Self::note_tried(&mut tried, &name, kind);
+            }
         }
         // NOTE: index by `0..len` so each iteration takes a fresh short
         // borrow of `self.opts` that ends before `&mut self` is taken by
@@ -5395,8 +5514,20 @@ impl<'a> Resolver<'a> {
             {
                 return MatchStatus::Success;
             }
+            if REPORT {
+                let name = [b"index", &*ext].concat();
+                let kind = self.kind_of_entry(dir_info.get_entry(self.generation, &name));
+                Self::note_tried(&mut tried, &name, kind);
+            }
         }
 
+        if REPORT {
+            if !tried.is_empty() {
+                self.await_tried_names(dir_info.abs_path, dir_info.get_file_descriptor(), &tried);
+            }
+        } else if self.reports_names {
+            return self.load_as_index_probing::<true>(dir_info, extension_order, out);
+        }
         MatchStatus::NotFound
     }
 
@@ -5844,7 +5975,17 @@ impl<'a> Resolver<'a> {
         dec_ret!(MatchStatus::NotFound);
     }
 
+    #[inline(always)]
     pub(crate) fn load_as_file(
+        &mut self,
+        path: &[u8],
+        extension_order: options::ExtOrder,
+    ) -> Option<LoadResult> {
+        self.load_as_file_probing::<false>(path, extension_order)
+    }
+
+    /// `REPORT` collects the names it does not find and gives them to the watcher. It runs from the miss exit of the plain walk, while `reports_names` is set.
+    fn load_as_file_probing<const REPORT: bool>(
         &mut self,
         path: &[u8],
         extension_order: options::ExtOrder,
@@ -5910,6 +6051,7 @@ impl<'a> Resolver<'a> {
         }
 
         let base = bun_paths::basename(path);
+        let mut tried: Vec<Box<[u8]>> = Vec::new();
 
         // Try the plain path without any extensions
         if let Some(debug) = self.debug_logs.as_mut() {
@@ -5955,6 +6097,9 @@ impl<'a> Resolver<'a> {
                 }));
             }
         }
+        if REPORT {
+            self.note_tried_in(&mut tried, dir_entry, base);
+        }
 
         // Try the path with extensions
         bufs!(load_as_file)[..path.len()].copy_from_slice(path);
@@ -5970,6 +6115,9 @@ impl<'a> Resolver<'a> {
             if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
                 dec_ret!(Some(result));
             }
+            if REPORT {
+                self.note_tried_in(&mut tried, dir_entry, &[base, &ext].concat());
+            }
         }
 
         // NOTE: index by `0..len` so each iteration takes a fresh short
@@ -5982,6 +6130,9 @@ impl<'a> Resolver<'a> {
             let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
             if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
                 dec_ret!(Some(result));
+            }
+            if REPORT {
+                self.note_tried_in(&mut tried, dir_entry, &[base, &ext].concat());
             }
         }
 
@@ -6052,6 +6203,9 @@ impl<'a> Resolver<'a> {
                             }));
                         }
                     }
+                    if REPORT {
+                        self.note_tried_in(&mut tried, dir_entry, &buffer[..]);
+                    }
                     if let Some(debug) = self.debug_logs.as_mut() {
                         debug.add_note_fmt(format_args!(
                             "Failed to rewrite \"{}\" ",
@@ -6075,6 +6229,11 @@ impl<'a> Resolver<'a> {
             if let Some(watcher) = self.watcher.as_ref() {
                 if let Some((dir, fd)) = dir_entry.get().dir_and_fd() {
                     watcher.watch(dir, fd);
+                    if REPORT {
+                        self.await_tried_names(dir, fd, &tried);
+                    } else if self.reports_names {
+                        dec_ret!(self.load_as_file_probing::<true>(path, extension_order));
+                    }
                 }
             }
         }

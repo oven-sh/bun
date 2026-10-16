@@ -32,7 +32,7 @@ To type check before every restart, add [`--check`](/runtime/check#watch-mode). 
 bun --watch --check index.tsx
 ```
 
-In `--watch` mode, Bun keeps track of all imported files and watches them for changes. When a file changes, Bun restarts the process with the same CLI arguments and environment variables as the initial run. If Bun crashes, `--watch` attempts to restart the process.
+In `--watch` mode, Bun keeps track of all imported files and watches them for changes. When a file changes, Bun restarts the process with the same CLI arguments and environment variables as the initial run. If Bun crashes, `--watch` attempts to restart the process. If an import does not resolve, Bun restarts the process when a file with a name it looked for appears in a watched directory.
 
 <Note>
 
@@ -105,7 +105,7 @@ Use `bun --hot` to enable hot reloading when executing code with Bun. Unlike `--
 bun --hot server.ts
 ```
 
-Starting from the entrypoint (`server.ts` in this example), Bun builds a registry of all imported source files (excluding those in `node_modules`) and watches them for changes. When a file changes, Bun performs a "soft reload". Bun re-evaluates all files, but global state (notably, the `globalThis` object) persists.
+Starting from the entrypoint (`server.ts` in this example), Bun builds a registry of all imported source files (excluding those in `node_modules`) and watches them for changes. When a file changes, Bun performs a "soft reload". Bun re-evaluates all files, but global state (notably, the `globalThis` object) persists. If an import does not resolve, Bun reloads when a file with a name it looked for appears in a watched directory.
 
 ```ts title="server.ts" icon="/icons/typescript.svg"
 // make TypeScript happy

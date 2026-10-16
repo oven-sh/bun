@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isBroken, isLinux, isWindows, LineReader, tempDir } from "harness";
+import { bunEnv, bunExe, forEachLine, isBroken, isWindows, LineReader, tempDir } from "harness";
 import { symlinkSync } from "node:fs";
 import { unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -87,8 +87,60 @@ describe("--watch recovers from a missing import", () => {
     await proc.exited;
   });
 
-  // An inotify event names the entry it created. A listing cannot tell that a name was replaced.
-  test.skipIf(!isLinux).concurrent("bun --watch reruns when a dangling link is replaced by the file", async () => {
+  // The other ways a specifier reaches a file. Each row: the files that are there, the specifier, the file that appears.
+  const siblings: Record<string, { files: Record<string, string>; specifier: string; created: string }> = {
+    "a tsconfig path": {
+      files: {
+        "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/*"] } } }),
+        "lib/other.ts": "",
+      },
+      specifier: "@lib/a",
+      created: "lib/a.ts",
+    },
+    "a package.json imports entry": {
+      files: { "package.json": JSON.stringify({ name: "app", imports: { "#dep": "./dep.js" } }) },
+      specifier: "#dep",
+      created: "dep.js",
+    },
+    "a directory with no index": {
+      files: { "dir/other.js": "" },
+      specifier: "./dir",
+      created: "dir/index.js",
+    },
+  };
+  const forms: Record<string, (specifier: string) => string> = {
+    import: specifier => `import { a } from ${JSON.stringify(specifier)}; console.log("RUN", a);`,
+    require: specifier => `const { a } = require(${JSON.stringify(specifier)}); console.log("RUN", a);`,
+  };
+  // todo on Windows CI: the same shape as the rows above.
+  test
+    .todoIf(isBroken && isWindows)
+    .concurrent.each(Object.keys(siblings).flatMap(sibling => Object.keys(forms).map(form => [sibling, form])))(
+    "bun --watch reruns when the target of %s appears (%s)",
+    async (sibling, form) => {
+      const { files, specifier, created } = siblings[sibling];
+      await using dir = tempDir("watch-missing-sibling", { ...files, "entry.js": forms[form](specifier) });
+      await using proc = spawn({
+        cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const stdout = new LineReader(proc.stdout);
+      const stderr = new LineReader(proc.stderr);
+
+      await stderr.until(line => line.startsWith("error: "));
+
+      await writeFile(join(String(dir), created), "export const a = 10;");
+      expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN 10");
+
+      proc.kill("SIGKILL");
+      await proc.exited;
+    },
+  );
+
+  // A link to nothing counts as a name that is not there. Not on Windows: a link needs a privilege there.
+  test.skipIf(isWindows).concurrent("bun --watch reruns when a dangling link is replaced by the file", async () => {
     await using dir = tempDir("watch-dangling-import", {
       "entry.js": `import { a } from "./a.js"; console.log("RUN", a);`,
     });

@@ -4,7 +4,7 @@ use core::fmt;
 use std::borrow::Cow;
 
 use bun_collections::MultiArrayList;
-use bun_core::{ThreadLock, ZBox, ZStr, feature_flags, output as Output, strings, zstr};
+use bun_core::{ThreadLock, ZStr, feature_flags, output as Output, strings, zstr};
 use bun_sys::{self as sys, Fd};
 use bun_threading::Mutex;
 
@@ -72,17 +72,9 @@ pub struct AnyResolveWatcher {
     // closure-style invariant upheld by this struct), and the body discharges
     // its own type-recovery `unsafe` internally.
     pub(crate) callback: fn(*mut (), dir_path: &[u8], dir_fd: Fd),
-    pub(crate) on_unresolved: fn(*mut (), lookup: &UnresolvedLookup<'_>) -> bool,
-}
-
-/// A relative or absolute import that resolved to nothing, with the names the resolver tried in `dir`.
-pub struct UnresolvedLookup<'a> {
-    pub dir: &'a [u8],
-    pub base: &'a [u8],
-    /// Each was tried appended to `base`.
-    pub extensions: [&'a [Box<[u8]>]; 2],
-    /// Each was tried in place of the extension of `base`.
-    pub replaced_extensions: &'a [&'a [u8]],
+    /// `Some` when the owner of the watcher reloads for a name that appears later.
+    pub(crate) await_names:
+        Option<fn(*mut (), dir_path: &[u8], dir_fd: Fd, names: &[&[u8]]) -> bool>,
 }
 
 impl AnyResolveWatcher {
@@ -91,94 +83,17 @@ impl AnyResolveWatcher {
         (self.callback)(self.context, dir_path, dir_fd)
     }
 
-    /// True when a name in `lookup` is in the directory by now: the resolver must look once more.
     #[inline]
-    pub fn unresolved(self, lookup: &UnresolvedLookup<'_>) -> bool {
-        (self.on_unresolved)(self.context, lookup)
+    pub fn awaits_names(self) -> bool {
+        self.await_names.is_some()
     }
-}
 
-const MAX_UNRESOLVED_IMPORTS: usize = 256;
-
-/// An import the resolver could not find: its directory and the entry names that would satisfy it.
-struct UnresolvedImport {
-    dir_hash: HashType,
-    candidates: Vec<Box<[u8]>>,
-    /// Candidates that were in the directory when the import failed.
-    present: Vec<PresentCandidate>,
-}
-
-struct PresentCandidate {
-    name: Box<[u8]>,
-    is_directory: bool,
-}
-
-impl UnresolvedImport {
-    fn candidates_of(lookup: &UnresolvedLookup<'_>) -> Vec<Box<[u8]>> {
-        let base = lookup.base;
-        let mut names: Vec<Box<[u8]>> = vec![base.into()];
-        for ext in lookup.extensions.iter().flat_map(|exts| exts.iter()) {
-            names.push([base, &**ext].concat().into_boxed_slice());
+    /// `names` were probed in `dir_path` and are not there. True when one of them is there by now.
+    pub fn await_names(self, dir_path: &[u8], dir_fd: Fd, names: &[&[u8]]) -> bool {
+        match self.await_names {
+            Some(await_names) => await_names(self.context, dir_path, dir_fd, names),
+            None => false,
         }
-        if let Some(dot) = strings::last_index_of_char(base, b'.') {
-            for ext in lookup.replaced_extensions {
-                names.push([&base[..dot], *ext].concat().into_boxed_slice());
-            }
-        }
-        names
-    }
-
-    /// ASCII case is ignored, as in the resolver's directory lookup.
-    fn is_candidate(candidates: &[Box<[u8]>], name: &[u8]) -> bool {
-        candidates
-            .iter()
-            .any(|candidate| strings::eql_case_insensitive_ascii(candidate, name, true))
-    }
-
-    fn was_present(&self, name: &[u8]) -> Option<&PresentCandidate> {
-        self.present
-            .iter()
-            .find(|present| strings::eql_case_insensitive_ascii(&present.name, name, true))
-    }
-
-    /// A listing cannot tell a created entry from one that was there, so a name that was there does not count.
-    fn is_new_in_listing(&self, listed_name: &[u8]) -> bool {
-        Self::is_candidate(&self.candidates, listed_name) && self.was_present(listed_name).is_none()
-    }
-
-    /// A file that was there can be deleted and created again. A directory created again holds nothing, and a program can do that on every run.
-    fn is_satisfied_by_created(&self, name: &[u8]) -> bool {
-        Self::is_candidate(&self.candidates, name)
-            && !self
-                .was_present(name)
-                .is_some_and(|present| present.is_directory)
-    }
-}
-
-type DirEntry = sys::dir_iterator::IteratorResult;
-
-fn for_each_dir_entry(dir_path: &[u8], mut f: impl FnMut(&sys::Dir, &DirEntry) -> bool) -> bool {
-    let Ok(dir) = sys::Dir::open(strings::without_trailing_slash(dir_path)) else {
-        return false;
-    };
-    let mut iter = sys::iterate_dir(dir.fd());
-    while let Ok(Some(entry)) = iter.next() {
-        if f(&dir, &entry) {
-            return true;
-        }
-    }
-    false
-}
-
-/// A link counts as what it points at, as in the resolver. NFS and FUSE do not fill d_type, so `Unknown` needs the same stat.
-fn is_directory(dir: &sys::Dir, entry: &DirEntry) -> bool {
-    match entry.kind {
-        sys::EntryKind::Directory => true,
-        sys::EntryKind::SymLink | sys::EntryKind::Unknown => {
-            let name = ZBox::from_bytes(entry.name.slice_u8());
-            sys::directory_exists_at(dir, &name).unwrap_or(false)
-        }
-        _ => false,
     }
 }
 
@@ -226,11 +141,6 @@ pub struct Watcher {
     pub(crate) evict_list: [WatchItemIndex; MAX_EVICTION_COUNT],
     pub(crate) evict_list_i: WatchItemIndex,
 
-    /// Imports the resolver could not find. Guarded by `mutex`.
-    unresolved_imports: Vec<UnresolvedImport>,
-    /// Set by the hot reloader, the only consumer of `unresolved_imports`.
-    track_unresolved_imports: bool,
-
     /// Scratch snapshot of `watchlist.eventlist_index` used by
     /// `watch_loop_cycle`; owned by the watcher thread.
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -239,6 +149,8 @@ pub struct Watcher {
     pub(crate) ctx: *mut (),
     pub(crate) on_file_update: fn(*mut (), &mut [WatchEvent], &[ChangedFilePath], &WatchList),
     pub(crate) on_error: fn(*mut (), sys::Error),
+    pub(crate) on_await_names: Option<fn(*mut (), &[u8], &[&[u8]]) -> bool>,
+    pub(crate) on_forget_awaited_names: fn(*mut ()),
 
     pub thread_lock: ThreadLock,
 }
@@ -256,6 +168,15 @@ pub trait WatcherContext {
     fn on_watch_error(&mut self, err: sys::Error) {
         self.on_error(err);
     }
+
+    /// True for a context that reloads when a name the resolver did not find appears.
+    const AWAITS_NAMES: bool = false;
+    /// The resolver probed `names` in `dir` and they are not there. True when one of them was not awaited yet. Called with `Watcher::mutex` held.
+    fn await_names(&mut self, _dir: &[u8], _names: &[&[u8]]) -> bool {
+        false
+    }
+    /// Called with `Watcher::mutex` held.
+    fn forget_awaited_names(&mut self) {}
 }
 
 impl Watcher {
@@ -293,6 +214,18 @@ impl Watcher {
             // is scoped to this call.
             unsafe { (*ctx_opaque.cast::<T>()).on_watch_error(err) }
         }
+        fn await_names_wrapped<T: WatcherContext>(
+            ctx_opaque: *mut (),
+            dir: &[u8],
+            names: &[&[u8]],
+        ) -> bool {
+            // SAFETY: see `on_error_wrapped`.
+            unsafe { (*ctx_opaque.cast::<T>()).await_names(dir, names) }
+        }
+        fn forget_awaited_names_wrapped<T: WatcherContext>(ctx_opaque: *mut ()) {
+            // SAFETY: see `on_error_wrapped`.
+            unsafe { (*ctx_opaque.cast::<T>()).forget_awaited_names() }
+        }
 
         let this = Box::new(Watcher {
             watchlist: WatchList::default(),
@@ -301,6 +234,8 @@ impl Watcher {
             ctx: ctx.cast::<()>(),
             on_file_update: on_file_update_wrapped::<T>,
             on_error: on_error_wrapped::<T>,
+            on_await_names: T::AWAITS_NAMES.then_some(await_names_wrapped::<T>),
+            on_forget_awaited_names: forget_awaited_names_wrapped::<T>,
             platform: Platform::new(top_level_dir)?,
             watch_events: vec![WatchEvent::default(); MAX_COUNT].into_boxed_slice(),
             changed_filepaths: [const { None }; MAX_COUNT],
@@ -310,8 +245,6 @@ impl Watcher {
             close_descriptors: bun_core::AtomicCell::new(false),
             evict_list: [0; MAX_EVICTION_COUNT],
             evict_list_i: 0,
-            unresolved_imports: Vec::new(),
-            track_unresolved_imports: false,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index_scratch: Vec::new(),
             thread_lock: ThreadLock::init_unlocked(),
@@ -1055,14 +988,16 @@ impl Watcher {
             // `&mut Watcher` is scoped to this call.
             unsafe { (*ctx.cast::<Watcher>()).on_maybe_watch_directory(dir_path, dir_fd) }
         }
-        fn wrap_unresolved(ctx: *mut (), lookup: &UnresolvedLookup<'_>) -> bool {
+        fn wrap_await_names(ctx: *mut (), dir_path: &[u8], dir_fd: Fd, names: &[&[u8]]) -> bool {
             // SAFETY: see `wrap`.
-            unsafe { (*ctx.cast::<Watcher>()).on_unresolved_import(lookup) }
+            unsafe { (*ctx.cast::<Watcher>()).await_names(dir_path, dir_fd, names) }
         }
         AnyResolveWatcher {
             context: std::ptr::from_mut::<Self>(self).cast::<()>(),
             callback: wrap,
-            on_unresolved: wrap_unresolved,
+            await_names: self
+                .on_await_names
+                .map(|_| wrap_await_names as fn(*mut (), &[u8], Fd, &[&[u8]]) -> bool),
         }
     }
 
@@ -1081,86 +1016,41 @@ impl Watcher {
         }
     }
 
-    pub fn enable_unresolved_import_tracking(&mut self) {
-        self.track_unresolved_imports = true;
-    }
-
-    /// Called once the whole resolution missed, not on every `load_as_file` miss.
-    pub(crate) fn on_unresolved_import(&mut self, lookup: &UnresolvedLookup<'_>) -> bool {
-        if !self.track_unresolved_imports
-            || lookup.base.is_empty()
-            || !self.is_watchable_directory(lookup.dir)
-        {
+    /// True when one of `names` is in `dir_path` by now: the resolver must look once more.
+    pub(crate) fn await_names(&mut self, dir_path: &[u8], dir_fd: Fd, names: &[&[u8]]) -> bool {
+        let Some(on_await_names) = self.on_await_names else {
+            return false;
+        };
+        if names.is_empty() || !self.is_watchable_directory(dir_path) {
             return false;
         }
-        let dir_hash = Self::unresolved_dir_hash(lookup.dir);
-        let candidates = UnresolvedImport::candidates_of(lookup);
-        // Held from the listing to the push: the event for an entry the listing did not see waits, then finds the record.
-        let _guard = self.mutex.lock_guard();
-        // A program can probe any number of names that do not exist. The first records are the ones a reload made.
-        if self.unresolved_imports.len() >= MAX_UNRESOLVED_IMPORTS
-            || self
-                .unresolved_imports
-                .iter()
-                .any(|u| u.dir_hash == dir_hash && u.candidates == candidates)
-        {
+        let _ = self.add_directory::<false>(dir_fd, dir_path, Self::get_hash(dir_path));
+        let any_new = {
+            let _guard = self.mutex.lock_guard();
+            on_await_names(self.ctx, dir_path, names)
+        };
+        if !any_new {
             return false;
         }
-        let mut present: Vec<PresentCandidate> = Vec::new();
-        for_each_dir_entry(lookup.dir, |dir, entry| {
-            let name = entry.name.slice_u8();
-            if UnresolvedImport::is_candidate(&candidates, name) {
-                present.push(PresentCandidate {
-                    name: name.into(),
-                    is_directory: is_directory(dir, entry),
-                });
+        // Checked after the watch and the names are in place: an entry created before either has no event that finds them.
+        let mut path = bun_paths::path_buffer_pool::get();
+        let dir = strings::without_trailing_slash(dir_path);
+        names.iter().any(|name| {
+            let len = dir.len() + 1 + name.len();
+            if len > path.len() {
+                return false;
             }
-            false
-        });
-        let appeared = !present.is_empty();
-        self.unresolved_imports.push(UnresolvedImport {
-            dir_hash,
-            candidates,
-            present,
-        });
-        appeared
-    }
-
-    /// Callers spell the same directory with and without a trailing slash.
-    #[inline]
-    fn unresolved_dir_hash(dir_path: &[u8]) -> HashType {
-        Self::get_hash(strings::without_trailing_slash(dir_path))
-    }
-
-    /// `name` is the new entry of a create event. `None` lists the directory (kqueue and Windows give no name). Caller holds `mutex`.
-    pub fn unresolved_import_matches(&self, dir_path: &[u8], name: Option<&[u8]>) -> bool {
-        debug_assert!(self.mutex.is_held_by_current_thread());
-        if self.unresolved_imports.is_empty() {
-            return false;
-        }
-        let dir_hash = Self::unresolved_dir_hash(dir_path);
-        let mut records = self
-            .unresolved_imports
-            .iter()
-            .filter(|u| u.dir_hash == dir_hash)
-            .peekable();
-        if records.peek().is_none() {
-            return false;
-        }
-        if let Some(name) = name {
-            return records.any(|u| u.is_satisfied_by_created(name));
-        }
-        let records: Vec<&UnresolvedImport> = records.collect();
-        for_each_dir_entry(dir_path, |_, entry| {
-            let listed_name = entry.name.slice_u8();
-            records.iter().any(|u| u.is_new_in_listing(listed_name))
+            path[..dir.len()].copy_from_slice(dir);
+            path[dir.len()] = bun_paths::SEP;
+            path[dir.len() + 1..len].copy_from_slice(name);
+            sys::exists(&path[..len])
         })
     }
 
-    /// A reload re-runs every resolution, so the record of failed ones starts over.
-    pub fn clear_unresolved_imports(&mut self) {
+    /// A reload runs every resolution again, so the names it awaits start over.
+    pub fn forget_awaited_names(&mut self) {
         let _guard = self.mutex.lock_guard();
-        self.unresolved_imports.clear();
+        (self.on_forget_awaited_names)(self.ctx);
     }
 }
 

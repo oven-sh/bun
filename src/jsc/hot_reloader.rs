@@ -1,12 +1,10 @@
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-#[cfg(not(windows))]
 use bun_collections::StringHashMap;
 use bun_collections::StringSet;
 use bun_core::Output;
 use bun_core::ZStr;
-#[cfg(not(windows))]
 use bun_paths::SEP;
 use bun_paths::strings;
 #[cfg(not(windows))]
@@ -361,6 +359,10 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
 
     pub(crate) main: MainFile,
 
+    /// Names the resolver probed and did not find, ASCII-lowercased, by directory with no trailing separator. Guarded by `Watcher::mutex`.
+    pub(crate) awaited_names: StringHashMap<StringSet>,
+    pub(crate) awaited_names_count: usize,
+
     #[cfg(not(windows))]
     pub(crate) tombstones: StringHashMap<*mut Fs::EntriesOption>,
 
@@ -369,6 +371,11 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
 
     _event_loop: PhantomData<*mut EventLoopType>,
 }
+
+/// An entry name is 255 UTF-16 units at most on Windows, 255 bytes elsewhere.
+const MAX_ENTRY_NAME_BYTES: usize = 255 * 3;
+/// A program can probe any number of names that do not exist.
+const MAX_AWAITED_NAMES: usize = 4096;
 
 pub struct MainFile {
     /// Includes a trailing "/"
@@ -556,10 +563,7 @@ where
         while self.pending_count().swap(0, Ordering::Relaxed) > 0 {
             let ctx = self.ctx_ptr();
             // SAFETY: ctx outlives reloader (BACKREF).
-            unsafe {
-                (*ctx).bun_watcher_mut().clear_unresolved_imports();
-                (*ctx).reload();
-            }
+            unsafe { (*ctx).reload() };
         }
     }
 
@@ -716,6 +720,8 @@ where
             verbose: unsafe { (*this).log_level_at_least_info() },
             pending_count: AtomicU32::new(0),
             main: MainFile::init(entry_path.unwrap_or(b"")),
+            awaited_names: StringHashMap::default(),
+            awaited_names_count: 0,
             #[cfg(not(windows))]
             tombstones: StringHashMap::default(),
             // SAFETY: see above.
@@ -737,8 +743,6 @@ where
 
         // SAFETY: see above.
         let watcher_ptr = unsafe { (*this).install_bun_watcher(watcher, RELOAD_IMMEDIATELY) };
-        // SAFETY: `watcher_ptr` was just installed into the ctx and is live.
-        unsafe { (*watcher_ptr).enable_unresolved_import_tracking() };
 
         // SAFETY: single-threaded init; watcher thread not yet started.
         CLEAR_SCREEN.store(
@@ -767,6 +771,45 @@ where
     #[cfg(not(windows))]
     fn get_tombstone(&mut self, key: &[u8]) -> Option<*mut Fs::EntriesOption> {
         self.tombstones.get(key).copied()
+    }
+
+    /// `name` is an entry that a directory event names. Caller holds `Watcher::mutex`.
+    #[cfg(not(windows))]
+    fn awaits_name(&self, dir: &[u8], name: &[u8]) -> bool {
+        if self.awaited_names_count == 0 {
+            return false;
+        }
+        let Some(awaited) = self
+            .awaited_names
+            .get(strings::paths::without_trailing_slash_windows_path(dir))
+        else {
+            return false;
+        };
+        let mut lowercase = [0u8; MAX_ENTRY_NAME_BYTES];
+        name.len() <= lowercase.len()
+            && awaited.contains(strings::copy_lowercase_if_needed(name, &mut lowercase))
+    }
+
+    /// kqueue and Windows do not name the entry that changed, so each awaited name is looked for. Caller holds `Watcher::mutex`.
+    fn awaited_name_exists(&self, dir: &[u8]) -> bool {
+        if self.awaited_names_count == 0 {
+            return false;
+        }
+        let dir = strings::paths::without_trailing_slash_windows_path(dir);
+        let Some(awaited) = self.awaited_names.get(dir) else {
+            return false;
+        };
+        let mut path = bun_paths::path_buffer_pool::get();
+        awaited.keys().iter().any(|name| {
+            let len = dir.len() + 1 + name.len();
+            if len > path.len() {
+                return false;
+            }
+            path[..dir.len()].copy_from_slice(dir);
+            path[dir.len()] = SEP;
+            path[dir.len() + 1..len].copy_from_slice(name);
+            bun_sys::exists(&path[..len])
+        })
     }
 
     pub(crate) fn on_error(_: &mut Self, err: &bun_sys::Error) {
@@ -933,9 +976,7 @@ where
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
                         if event.op.intersects(WatchOp::CREATE | WatchOp::MOVE_TO)
-                            // SAFETY: the Watcher outlives this call (it owns the
-                            // Reloader that calls us); the borrow is scoped to this call.
-                            && unsafe { (*ctx).unresolved_import_matches(file_path, None) }
+                            && self.awaited_name_exists(file_path)
                         {
                             current_task.append(current_hash);
                         }
@@ -1060,26 +1101,16 @@ where
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
 
-                        // A missing import is only visible as an event on its directory.
-                        let satisfies_unresolved_import = if IS_KQUEUE {
-                            event.op.contains(WatchOp::WRITE)
-                                // SAFETY: the Watcher outlives this call (it owns the
-                                // Reloader that calls us); the borrow is scoped to this call.
-                                && unsafe { (*ctx).unresolved_import_matches(file_path, None) }
+                        // An import that did not resolve is not in the watchlist: only its directory tells that it appeared.
+                        let awaited_name_appeared = if IS_KQUEUE {
+                            event.op.contains(WatchOp::WRITE) && self.awaited_name_exists(file_path)
                         } else {
-                            event.op.intersects(WatchOp::CREATE | WatchOp::MOVE_TO)
-                                && affected_inotify.iter().any(|name| match name {
-                                    // SAFETY: see the kqueue arm above.
-                                    Some(z) => unsafe {
-                                        (*ctx).unresolved_import_matches(
-                                            file_path,
-                                            Some(z.as_bytes()),
-                                        )
-                                    },
-                                    None => false,
-                                })
+                            affected_inotify.iter().any(|name| match name {
+                                Some(name) => self.awaits_name(file_path, name.as_bytes()),
+                                None => false,
+                            })
                         };
-                        if satisfies_unresolved_import {
+                        if awaited_name_appeared {
                             current_task.append(current_hash);
                         }
 
@@ -1317,6 +1348,33 @@ where
 
     fn on_error(&mut self, err: bun_sys::Error) {
         Self::on_error(self, &err);
+    }
+
+    const AWAITS_NAMES: bool = true;
+
+    fn await_names(&mut self, dir: &[u8], names: &[&[u8]]) -> bool {
+        let dir = strings::paths::without_trailing_slash_windows_path(dir);
+        let Ok(awaited) = self.awaited_names.get_or_put_value(dir, StringSet::new()) else {
+            return false;
+        };
+        let mut lowercase = [0u8; MAX_ENTRY_NAME_BYTES];
+        let mut any_new = false;
+        for name in names {
+            if name.len() > lowercase.len() || self.awaited_names_count >= MAX_AWAITED_NAMES {
+                continue;
+            }
+            let name = strings::copy_lowercase_if_needed(name, &mut lowercase);
+            if !awaited.contains(name) && awaited.insert(name).is_ok() {
+                self.awaited_names_count += 1;
+                any_new = true;
+            }
+        }
+        any_new
+    }
+
+    fn forget_awaited_names(&mut self) {
+        self.awaited_names = StringHashMap::default();
+        self.awaited_names_count = 0;
     }
 }
 

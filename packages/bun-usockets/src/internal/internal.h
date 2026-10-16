@@ -72,9 +72,12 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
  * accept() gets its retry on this tick and does not wait for its deadline. */
 static inline void us_internal_accept_backoff_on_close(struct us_loop_t *loop) {
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
-    if (UNLIKELY(loop->data.accept_backoff_sweep_ns >= 0)) {
+    /* Not UNLIKELY(): this header is also compiled as C++, and the macro above casts to _Bool. */
+    if (__builtin_expect(loop->data.accept_backoff_sweep_ns >= 0, 0)) {
         loop->data.sweep_next_tick_ns = 0;
     }
+#else
+    (void) loop;
 #endif
 }
 

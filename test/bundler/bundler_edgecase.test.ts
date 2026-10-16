@@ -965,6 +965,7 @@ describe("bundler", () => {
         expect(urls).not.toBeEmpty();
         for (const url of urls) {
           expect(url).toStartWith(prefix);
+          expect(url.slice(prefix.length)).not.toStartWith("/");
           api.assertFileExists(join("/out", url.slice(prefix.length)));
         }
       };

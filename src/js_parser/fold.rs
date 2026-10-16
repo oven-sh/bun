@@ -208,6 +208,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // module linking just to rewrite these EDot expressions.
                     if p.options.bundle {
                         if p.import_items_for_namespace.contains_key(&id.ref_) {
+                            let waiting_alias = p.require_alias_of(id.ref_);
+                            // Something rebinds the local already: this is a property of the variable.
+                            if let Some(alias) = &waiting_alias
+                                && !p.require_alias_holds(alias)
+                            {
+                                break 'sw;
+                            }
                             // Note: split into lookup → (maybe new_symbol) → re-borrow for borrowck.
                             let existing = p
                                 .import_items_for_namespace
@@ -272,6 +279,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // under it.
                             if dynamic_record.is_some() {
                                 p.note_tracked_namespace_use(id.ref_);
+                            } else if let Some(alias) = waiting_alias {
+                                // The local stays counted: `settle_require_aliases` takes back one use for each of these.
+                                p.record_usage_impl(alias.namespace, false);
                             } else {
                                 p.ignore_usage(id.ref_);
                             }

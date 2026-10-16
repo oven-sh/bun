@@ -571,9 +571,11 @@ describe("aborting mid-body fails every reader of res.body with signal.reason", 
             .on("close", () => resolve("closed")),
         );
         if (timing === "while it waits for more") {
-          // The 40 bytes arrived, and one turn later the next pull is parked.
           await once(readable, "data");
-          await new Promise(resolve => setImmediate(resolve));
+          // The 40 bytes are out and the server sends no more: the next read stays pending on the source.
+          const pending = () => (readable as any)._readableState.reading;
+          for (let turns = 0; turns < 100 && !pending(); turns++) await new Promise(resolve => setImmediate(resolve));
+          expect(pending()).toBe(true);
         }
         controller.abort(reason);
         if (timing === "before it reads") readable.resume();

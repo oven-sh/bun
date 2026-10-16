@@ -750,9 +750,10 @@ describe.concurrent("Readable.fromWeb over a native stream ends the web stream",
     abort.abort();
     node.on("data", chunk => (received += chunk.length));
     // addAbortSignal() does not stop the Blob source: it delivers every byte, then reports its end.
-    const turn = () => new Promise(resolve => setImmediate(resolve));
-    for (let turns = 0; turns < 100 && received < payload.length && !ended; turns++) await turn();
-    for (let turns = 0; turns < 3; turns++) await turn();
+    // An 'end' would come through process.nextTick, so it is out before the turn that sees the last byte.
+    for (let turns = 0; turns < 100 && received < payload.length && !ended; turns++) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
     expect({ ended, aborts, received, destroyed: node.destroyed }).toEqual({
       ended: false,
       aborts: 1,

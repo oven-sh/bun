@@ -103,44 +103,37 @@ pub(crate) fn is_android_kernel() -> bool {
     })
 }
 
-#[inline]
-pub(crate) fn openat2_beneath(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
+fn openat2(
+    dir: Fd,
+    path: &ZStr,
+    flags: i32,
+    mode: Mode,
+    resolve: rustix::fs::ResolveFlags,
+) -> Result<Fd, i32> {
     if is_android_kernel() {
         return Err(libc::ENOSYS);
     }
     let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
     let mode = rustix::fs::Mode::from_raw_mode(mode);
     let dir = dir.as_borrowed_fd();
-    retry(|| {
-        rustix::fs::openat2(
-            dir,
-            path.as_cstr(),
-            oflags,
-            mode,
-            rustix::fs::ResolveFlags::BENEATH,
-        )
-    })
-    .map(own_fd)
+    retry(|| rustix::fs::openat2(dir, path.as_cstr(), oflags, mode, resolve)).map(own_fd)
+}
+
+#[inline]
+pub(crate) fn openat2_beneath(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
+    openat2(dir, path, flags, mode, rustix::fs::ResolveFlags::BENEATH)
 }
 
 #[inline]
 pub(crate) fn openat2_in_root(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
-    if is_android_kernel() {
-        return Err(libc::ENOSYS);
-    }
-    let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
-    let mode = rustix::fs::Mode::from_raw_mode(mode);
-    let dir = dir.as_borrowed_fd();
-    retry(|| {
-        rustix::fs::openat2(
-            dir,
-            path.as_cstr(),
-            oflags,
-            mode,
-            rustix::fs::ResolveFlags::IN_ROOT | rustix::fs::ResolveFlags::NO_MAGICLINKS,
-        )
-    })
-    .map(own_fd)
+    let resolve = rustix::fs::ResolveFlags::IN_ROOT | rustix::fs::ResolveFlags::NO_MAGICLINKS;
+    openat2(dir, path, flags, mode, resolve)
+}
+
+/// `EXDEV` where a file system is mounted on a component of `path`, a bind mount included.
+#[inline]
+pub(crate) fn openat2_no_xdev(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
+    openat2(dir, path, flags, mode, rustix::fs::ResolveFlags::NO_XDEV)
 }
 
 #[inline]

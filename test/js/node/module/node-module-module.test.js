@@ -26,6 +26,15 @@ describe.concurrent("node-module-module", () => {
     expect(isBuiltin("test")).toBe(false); // "test" does not alias to "node:test"
   });
 
+  test("_stat() says what is at a path", () => {
+    expect(Module._stat(import.meta.path)).toBe(0);
+    expect(Module._stat(import.meta.dir)).toBe(1);
+    expect(Module._stat(path.join(import.meta.dir, "does-not-exist"))).toBe(-1);
+    // The path is converted to a string, an argument that was not passed included.
+    expect(Module._stat()).toBe(-1);
+    expect(Module._stat(undefined)).toBe(-1);
+  });
+
   test("module.globalPaths exists", () => {
     expect(Array.isArray(require("module").globalPaths)).toBe(true);
   });

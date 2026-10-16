@@ -6445,15 +6445,6 @@ extern "C" EncodedJSValue JSFunction__createFromZig(
         nullptr));
 }
 
-extern "C" EncodedJSValue JSArray__constructArray(
-    JSC::JSGlobalObject* global,
-    const JSValue* values,
-    size_t values_len)
-{
-    return JSValue::encode(
-        JSC::constructArray(global, (ArrayAllocationProfile*)nullptr, values, values_len));
-}
-
 extern "C" EncodedJSValue JSArray__constructEmptyArray(
     JSC::JSGlobalObject* global,
     size_t len)

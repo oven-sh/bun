@@ -283,11 +283,6 @@ impl<'a> PropertyHandlerContext<'a> {
             return;
         }
 
-        let id = property.property_id();
-        if !self.copied.contains(&id) {
-            self.copied.push(id);
-        }
-
         let found = 'brk: {
             for supp in self.supports.iter_mut() {
                 if condition.eql(&supp.condition) {
@@ -336,6 +331,7 @@ impl<'a> PropertyHandlerContext<'a> {
         let fallbacks = unparsed.value.get_fallbacks(bump, &self.targets);
         // `SmallList`
         // has no `IntoIterator`, so spill to a Vec to preserve P3-before-LAB order.
+        let mut staged = false;
         for condition_and_fallback in fallbacks.to_owned_slice().into_vec() {
             self.add_conditional_property(
                 condition_and_fallback.0,
@@ -345,6 +341,13 @@ impl<'a> PropertyHandlerContext<'a> {
                     value: condition_and_fallback.1,
                 }),
             );
+            staged = true;
+        }
+        if staged
+            && self.context == DeclarationContext::StyleRule
+            && !self.copied.contains(&unparsed.property_id)
+        {
+            self.copied.push(unparsed.property_id);
         }
     }
 

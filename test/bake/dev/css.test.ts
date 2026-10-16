@@ -3,6 +3,36 @@ import { expect } from "bun:test";
 import assert from "node:assert";
 import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
 
+devTest("css module imported by its names, and a name added", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["a.ts"],
+    }),
+    "a.ts": `
+      import styles, { big } from "./a.module.css";
+      import * as all from "./a.module.css";
+      const name = (c: string) => c.replace(/_[\\w-]+/g, "");
+      console.log([Object.keys(styles).join(","), name(big), name(all.default.mark)].join(" "));
+      (globalThis as any).mark = styles.mark;
+      import.meta.hot.accept();
+    `,
+    "a.module.css": `
+      .mark { color: red; }
+      .big { composes: mark; font-size: 2em; }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("mark,big mark big mark");
+    // The class the stylesheet has is the one the module gives.
+    const selector = await c.js<string>`document.styleSheets[0].cssRules[0].selectorText`;
+    expect(selector).toMatch(/^\.mark_/);
+    expect(selector).toBe("." + (await c.js<string>`globalThis.mark`));
+    await dev.patch("a.module.css", { find: ".big", replace: ".extra { color: blue; }\n.big" });
+    await c.expectMessage("mark,extra,big mark big mark");
+  },
+});
+
 devTest("css file with syntax error does not kill old styles", {
   files: {
     "styles.css": `

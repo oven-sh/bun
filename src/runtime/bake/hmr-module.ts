@@ -295,7 +295,9 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     if (!mod) {
       mod = new HMRModule(id, true);
       registry.set(id, mod);
-    } else if (mod.esm) {
+    } else {
+      // Loaded again (or once ESM): new exports, and the ESM view of the old ones
+      // dropped, or importers would be handed what the module exported before.
       mod.esm = false;
       mod.cjs = {
         id,
@@ -395,7 +397,9 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     if (!mod) {
       mod = new HMRModule(id, true);
       registry.set(id, mod);
-    } else if (mod.esm) {
+    } else {
+      // Loaded again (or once ESM): new exports, and the ESM view of the old ones
+      // dropped, or importers would be handed what the module exported before.
       mod.esm = false;
       mod.cjs = {
         id,
@@ -576,6 +580,8 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   };
   const toReload = new Set<HMRModule>();
   const toAccept: ToAccept[] = [];
+  // Each accept callback once per update for each module it accepts, however many changed modules reach it.
+  const accepting = new Map<HotAccept, Set<Id>>();
   let failures: Set<Id> | null = null;
   const toDispose: HMRModule[] = [];
 
@@ -598,6 +604,14 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     const visited = new Set<HMRModule>();
     const queue: HMRModule[] = [existing];
     visited.add(existing);
+    // The importers each module was reached from, back towards `existing` (every
+    // one, for a module reached by several paths): the modules between the changed
+    // one and an accepting importer are loaded again too, or that importer would be
+    // handed a module still importing the old one.
+    const reachedFrom = new Map<HMRModule, Set<HMRModule>>();
+    // The modules an importer accepts, reached from `existing`: their paths back are
+    // known once the whole graph above it has been walked.
+    const accepted = new Set<HMRModule>();
     while (true) {
       const mod = queue.shift();
       if (!mod) break;
@@ -631,16 +645,38 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       }
 
       for (const importer of mod.importers) {
-        const cb = importer.depAccepts?.[key];
+        // An importer accepts the module it imports (`mod`), which is the changed
+        // one only when that is a direct dependency.
+        const cb = importer.depAccepts?.[mod.id];
         if (cb) {
-          toAccept.push({ cb, key });
+          const keys = accepting.get(cb) ?? new Set<Id>();
+          accepting.set(cb, keys);
+          if (!keys.has(mod.id)) {
+            keys.add(mod.id);
+            toAccept.push({ cb, key: mod.id });
+          }
+          accepted.add(mod);
         } else if (hadSelfAccept) {
+          let from = reachedFrom.get(importer);
+          if (!from) reachedFrom.set(importer, (from = new Set()));
+          from.add(mod);
           if (visited.has(importer)) continue;
           visited.add(importer);
           queue.push(importer);
         }
       }
     }
+
+    // Every module on a path from the changed one to an accepted one, from the
+    // changed module outward, so each is loaded again after what it imports.
+    const seen = new Set<HMRModule>([existing]);
+    const reload = (m: HMRModule) => {
+      if (seen.has(m)) return;
+      seen.add(m);
+      for (const before of reachedFrom.get(m) ?? []) reload(before);
+      toReload.add(m);
+    };
+    for (const m of accepted) reload(m);
   }
 
   // If roots were hit, print a nice message before reloading.
@@ -711,13 +747,18 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
   }
 
-  // Reload all modules
+  // Reload all modules. Each is marked stale before any loads: one loaded first (an importer sent along with what it
+  // imports) would otherwise be handed the old version of a module further on in the list.
   const promises: Promise<HMRModule>[] = [];
+  const selfAccepts = new Map<HMRModule, HotAcceptFunction | null>();
   for (const mod of toReload) {
     mod.state = State.Stale;
-    const selfAccept = mod.selfAccept;
+    selfAccepts.set(mod, mod.selfAccept);
     mod.selfAccept = null;
     mod.depAccepts = null;
+  }
+  for (const mod of toReload) {
+    const selfAccept = selfAccepts.get(mod);
 
     const modOrPromise = loadModuleAsync(mod.id, false, null);
     if (modOrPromise === mod) {

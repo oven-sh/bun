@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug } from "harness";
 import path from "node:path";
 
 // bun_jsc::Strong handles now live in StrongRootBlock cells (rooted by a
@@ -120,7 +120,7 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
 
   test("AbortSignal.any([timeout, controller.signal]).abort releases the timeout", async () => {
     const src = `
-      const N = 1200;
+      const N = 10000;
       async function round() {
         for (let i = 0; i < N; i++) {
           const c = new AbortController();
@@ -142,17 +142,12 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
       await round();
       const after = process.memoryUsage().rss;
       const live = require("bun:jsc").heapStats().objectTypeCounts.AbortSignal || 0;
-      console.log(JSON.stringify({ deltaMB: (after - before) / (1024 * 1024), live }));
+      if (live >= 50) throw new Error(live + " AbortSignal wrappers are still alive");
+      console.log(JSON.stringify({ deltaMiB: (after - before) / (1024 * 1024) }));
       process.exit(0);
     `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const { deltaMB, live } = JSON.parse(stdout);
-    expect(live).toBeLessThan(50);
-    const limit = isASAN || isDebug ? 8 : 4;
-    expect(deltaMB).toBeLessThan(limit);
-    expect(exitCode).toBe(0);
+    // The wrappers are collected either way; a timeout that is not released retains 20+ MiB of native memory here.
+    await expectRssDeltaBelow(["-e", src], { release: 10, debug: 14 });
   }, 15_000);
 
   for (const { name, body } of [

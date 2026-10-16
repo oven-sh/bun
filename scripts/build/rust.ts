@@ -417,7 +417,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     rustflags.push("--cfg=socket_fault_injection");
   }
   // `bun_disallow_code_generation_from_strings`: `bun_core::code_generation_from_strings()` is the
-  // constant `Disallowed` (BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS=1 on the C++ side, which then
+  // constant `Strict` (BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS=1 on the C++ side, which then
   // does not import the Rust symbol).
   rustflags.push("--check-cfg=cfg(bun_disallow_code_generation_from_strings)");
   if (!cfg.codeGenerationFromStrings) {

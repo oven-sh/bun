@@ -2,6 +2,7 @@
 #pragma once
 
 #include "root.h"
+#include "GeneratedBindings+Counts.h"
 
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
@@ -55,6 +56,7 @@ public:
     IsoSubspace* m_subspaceForErrorCodeCache { nullptr };
     IsoSubspace* m_subspaceForBunInspectorConnection { nullptr };
     IsoSubspace* m_subspaceForJSNextTickQueue { nullptr };
+    IsoSubspace* m_subspaceForJSModuleGraph { nullptr };
     IsoSubspace* m_subspaceForJSSocketHandlers { nullptr };
     IsoSubspace* m_subspaceForTTYWrapObject { nullptr };
     IsoSubspace* m_subspaceForNapiHandleScopeImpl { nullptr };
@@ -75,6 +77,7 @@ public:
     IsoSubspace* m_subspaceForWasmStreamingCompiler { nullptr };
     IsoSubspace* m_subspaceForJSWebView { nullptr };
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
+    IsoSubspace* m_subspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClasses] {};
     /*-- BUN --*/
 
     IsoSubspace* m_subspaceForFetchHeaders { nullptr };
@@ -103,8 +106,8 @@ public:
     IsoSubspace* m_subspaceForCrossRealmTransformState { nullptr };
     IsoSubspace* m_subspaceForStreamFromIterableContext { nullptr };
     IsoSubspace* m_subspaceForDirectStreamController { nullptr };
+    IsoSubspace* m_subspaceForDirectStreamSource { nullptr };
     IsoSubspace* m_subspaceForNativeStreamSourceAdapter { nullptr };
-    IsoSubspace* m_subspaceForDirectSinkCloseState { nullptr };
     IsoSubspace* m_subspaceForAsyncIteratorSourceOperation { nullptr };
     IsoSubspace* m_subspaceForReadStreamIntoSinkOperation { nullptr };
     IsoSubspace* m_subspaceForBunStandaloneTextSink { nullptr };

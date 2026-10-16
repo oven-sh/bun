@@ -339,7 +339,7 @@ function mysqlServerUpToAuthOk(onPostAuth: (socket: net.Socket, payload: Buffer)
     let buffered = Buffer.alloc(0);
     let authed = false;
     socket.write(mysqlHandshakeV10());
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (!authed) {
           authed = true;

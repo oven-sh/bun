@@ -70,9 +70,11 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
   // A resolved id may carry a `?query` suffix (part of the module cache key);
   // match the native-addon extension against the path portion only.
-  if (id.indexOf("?") === -1) {
+  const queryIndex = id.indexOf("?");
+  if (queryIndex === -1) {
     if (id.endsWith(".node")) return $internalRequire(id, this, requireMap, id.length);
-  } else if (id.endsWith(".node") || id.indexOf(".node?") !== -1) {
+  } else if (id.indexOf(".node", queryIndex - 5) !== -1) {
+    // The path ends at this "?" or after it, so its ".node" starts 5 before this "?" or after that.
     const pathLength = $newCppFunction("NodeModuleModule.cpp", "jsFunctionModuleKeyPathLength", 1)(id);
     if (id.endsWith(".node", pathLength)) return $internalRequire(id, this, requireMap, pathLength);
   }

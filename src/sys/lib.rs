@@ -4131,18 +4131,6 @@ mod windows_impl {
         let to_w = bun_paths::string_paths::to_nt_path(&mut wt, to.as_bytes());
         super::windows::rename_at_w(from_dir, from_w, to_dir, to_w, true)
     }
-    pub(crate) fn renameat2(
-        from_dir: Fd,
-        from: &ZStr,
-        to_dir: Fd,
-        to: &ZStr,
-        mode: RenameMode,
-    ) -> Maybe<()> {
-        // `renameat2` collapses to `renameat` on windows; the
-        // `noreplace`/`exchange` modes are not honored by NTFS rename.
-        let _ = mode;
-        renameat(from_dir, from, to_dir, to)
-    }
     pub fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
         // Convert to NT path and call `DeleteFileBun`;
         // `remove_dir = flags & AT_REMOVEDIR != 0`.

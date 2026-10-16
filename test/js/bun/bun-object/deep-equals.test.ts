@@ -164,8 +164,9 @@ describe("pairs of one internal type that are unequal in both argument orders", 
     ["Bun.deepEquals", (a, b) => deepEquals(a, b)],
     ["Bun.deepEquals strict", (a, b) => deepEquals(a, b, true)],
     ["Bun.deepEquals strict, skipPrototype", (a, b) => deepEquals(a, b, true, true)],
-    ["expect().toEqual", (a, b) => passes(() => expect(a).toEqual(b))],
-    ["expect().toStrictEqual", (a, b) => passes(() => expect(a).toStrictEqual(b))],
+    // The negated matcher passes for an unequal pair, so it prints no diff of the two values.
+    ["expect().toEqual", (a, b) => !passes(() => expect(a).not.toEqual(b))],
+    ["expect().toStrictEqual", (a, b) => !passes(() => expect(a).not.toStrictEqual(b))],
     ["util.isDeepStrictEqual", (a, b) => util.isDeepStrictEqual(a, b)],
     ["util.isDeepStrictEqual, skipPrototype", (a, b) => util.isDeepStrictEqual(a, b, true as any)],
   ];

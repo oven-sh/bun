@@ -1010,13 +1010,18 @@ describe("a Script built from accepted cachedData", () => {
   // MemoryDenyWriteExecute=yes. The constructor used to compile the decoded block with the baseline JIT,
   // which killed such a process. Every way into the constructor is here.
   const prelude = `const vm = require("node:vm"); const cachedData = new vm.Script("40 + 2").createCachedData();`;
-  const viaScript = (expression: string) => `const s = ${expression}; console.log(s.cachedDataRejected, s.runInThisContext());`;
+  const viaScript = (expression: string) =>
+    `const s = ${expression}; console.log(s.cachedDataRejected, s.runInThisContext());`;
   test.concurrent.each([
     ["new Script", viaScript(`new vm.Script("40 + 2", { cachedData })`), "false 42\n"],
     ["createScript", viaScript(`vm.createScript("40 + 2", { cachedData })`), "false 42\n"],
     ["a subclass", viaScript(`new (class extends vm.Script {})("40 + 2", { cachedData })`), "false 42\n"],
     ["Reflect.construct", viaScript(`Reflect.construct(vm.Script, ["40 + 2", { cachedData }])`), "false 42\n"],
-    ["produceCachedData too", viaScript(`new vm.Script("40 + 2", { cachedData, produceCachedData: true })`), "false 42\n"],
+    [
+      "produceCachedData too",
+      viaScript(`new vm.Script("40 + 2", { cachedData, produceCachedData: true })`),
+      "false 42\n",
+    ],
     ["runInThisContext", `console.log(vm.runInThisContext("40 + 2", { cachedData }));`, "42\n"],
     ["runInContext", `console.log(vm.runInContext("40 + 2", vm.createContext({}), { cachedData }));`, "42\n"],
     ["runInNewContext", `console.log(vm.runInNewContext("40 + 2", {}, { cachedData }));`, "42\n"],

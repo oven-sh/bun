@@ -98,11 +98,16 @@ test.concurrent("Bun.serve({ app }) frees the bundler plugin when the config is 
       const app = { framework: { fileSystemRouterTypes: [fsr], plugins: [] }, root: 123 };
       const count = () => heapStats().protectedObjectTypeCounts.BundlerPlugin ?? 0;
       const before = count();
+      const errors = new Set();
       for (let i = 0; i < 10; i++) {
         try {
           Bun.serve({ port: 0, development: true, app, fetch: () => new Response() }).stop(true);
-        } catch {}
+          errors.add("no error");
+        } catch (e) {
+          errors.add(e.code);
+        }
       }
+      console.log("errors: " + [...errors].join(", "));
       console.log("leaked plugins: " + (count() - before));
     `,
   });
@@ -116,7 +121,7 @@ test.concurrent("Bun.serve({ app }) frees the bundler plugin when the config is 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout).toBe("leaked plugins: 0\n");
+  expect(stdout).toBe("errors: ERR_INVALID_ARG_TYPE\nleaked plugins: 0\n");
   expect(exitCode).toBe(0);
 });
 

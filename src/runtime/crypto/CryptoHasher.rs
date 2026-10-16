@@ -366,8 +366,7 @@ impl CryptoHasher {
 
         let bytes = in_memory_bytes(global, input)?;
 
-        let Some(len) = evp.hash(boring_engine(global), bytes, &mut output_digest_buf)
-        else {
+        let Some(len) = evp.hash(boring_engine(global), bytes, &mut output_digest_buf) else {
             let err = boring_ssl::ERR_get_error();
             let instance = create_crypto_error(global, err);
             boring_ssl::ERR_clear_error();

@@ -141,7 +141,9 @@ pub(crate) fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) ->
             // A file-backed blob still parses as an empty body.
             Err(NotInMemory::File) => b"",
             Err(not_in_memory @ NotInMemory::S3) => {
-                return Err(not_in_memory.throw(global, format_args!("FormData.from() cannot read")));
+                return Err(
+                    not_in_memory.throw(global, format_args!("FormData.from() cannot read"))
+                );
             }
         };
     } else {

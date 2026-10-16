@@ -162,7 +162,9 @@ impl BlobOrStringOrBuffer {
                         .throw_invalid_arguments(format_args!("File blob cannot be used here")));
                 }
                 Some(not_in_memory @ NotInMemory::S3) => {
-                    return Err(not_in_memory.throw(global, format_args!("This function cannot read")));
+                    return Err(
+                        not_in_memory.throw(global, format_args!("This function cannot read"))
+                    );
                 }
             }
         }

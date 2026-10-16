@@ -26,11 +26,11 @@ use bun_jsc::js_property_iterator::JSPropertyIteratorOptions;
 use bun_jsc::virtual_machine::{
     InitOptions as VirtualMachineInitOptions, MacroModeGuard, VirtualMachine, runtime_hooks,
 };
+use bun_jsc::webcore_types::NotInMemory;
 use bun_jsc::{
     self as jsc, ConsoleObject, JSArrayIterator, JSGlobalObject, JSPropertyIterator, JSValue,
     JsError, ModuleLoader, WebCore,
 };
-use bun_jsc::webcore_types::NotInMemory;
 use bun_jsc::{BuildMessage, ResolveMessage};
 
 const NAMESPACE_WITH_COLON: &[u8] = b"macro:";

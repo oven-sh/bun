@@ -13,7 +13,11 @@ declare namespace HTMLRewriterTypes {
   }
 
   interface Text {
-    /** The text content */
+    /**
+     * The text content, decoded as UTF-8. Bytes that are not valid UTF-8 read
+     * as U+FFFD. A chunk that is not replaced or removed keeps its original
+     * bytes in the output.
+     */
     readonly text: string;
     /** Whether this chunk is the last piece of text in a text node */
     readonly lastInTextNode: boolean;

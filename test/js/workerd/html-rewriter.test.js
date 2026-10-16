@@ -3483,18 +3483,52 @@ describe("text that is not valid UTF-8", () => {
   });
 
   it("text longer than one chunk keeps its bytes", async () => {
-    const long = doc("<p>", Buffer.alloc(1500, "a"), "\xE9 ", Buffer.alloc(1500, "b"), "\xE9</p>");
-    for (const observer of ["a handler that only reads", "an async handler that only reads"]) {
-      for (const body of [long, chunked(long, 1000), chunked(long, 7)]) {
-        let chunks = 0;
-        const rewriter = new HTMLRewriter().on("p", {
+    const documents = [
+      doc("<p>", Buffer.alloc(1500, "a"), "\xE9 ", Buffer.alloc(1500, "b"), "\xE9</p>"),
+      // The text is decoded 1024 bytes at a time. Here U+20AC (e2 82 ac) does
+      // not fit at the end of the first 1024, next to bytes that are not UTF-8.
+      doc("<p>\xE9", Buffer.alloc(1019, "a"), "\xE2\x82\xAC\xE9 ", Buffer.alloc(1500, "b"), "\xE9</p>"),
+    ];
+    for (const long of documents) {
+      for (const observer of ["a handler that only reads", "an async handler that only reads"]) {
+        for (const body of [long, chunked(long, 1000), chunked(long, 7)]) {
+          let chunks = 0;
+          const rewriter = new HTMLRewriter().on("p", {
+            text(t) {
+              chunks++;
+              return observers[observer](t);
+            },
+          });
+          expect(await rewrite(rewriter, body)).toBe(hex(long));
+          expect(chunks).toBeGreaterThan(2);
+        }
+      }
+    }
+  });
+
+  it("a handler that only reads does not change what other handlers write", async () => {
+    // The tags and the comment go, and the bytes around them make a U+20AC
+    // (e2 82 ac) that the text handler did not get.
+    const others = () =>
+      new HTMLRewriter()
+        .on("b", { element: el => void el.removeAndKeepContent() })
+        .on("p", { comments: comment => void comment.remove() });
+    for (const bytes of [doc("<p>\xE2<b>\x82</b>\xAC</p>"), doc("<p>\xE2<!--c-->\x82\xAC</p>")]) {
+      const withoutTextHandler = await rewrite(others(), bytes);
+      expect(withoutTextHandler).toBe(hex(doc("<p>\xE2\x82\xAC</p>")));
+      for (const [observer, observe] of Object.entries(observers)) {
+        let seen = "";
+        const rewriter = others().onDocument({
           text(t) {
-            chunks++;
-            return observers[observer](t);
+            seen += t.text;
+            return observe(t);
           },
         });
-        expect(await rewrite(rewriter, body)).toBe(hex(long));
-        expect(chunks).toBeGreaterThan(2);
+        expect({ observer, out: await rewrite(rewriter, bytes), seen }).toEqual({
+          observer,
+          out: withoutTextHandler,
+          seen: "\uFFFD\uFFFD\uFFFD",
+        });
       }
     }
   });

@@ -2,7 +2,7 @@
 
 use core::marker::PhantomData;
 
-use crate::args::ArgIter;
+use crate::args::{ArgIter, SliceIterator};
 use crate::streaming::{self, StreamingClap};
 use crate::{Names, Param, ParseOptions, Values};
 
@@ -659,4 +659,73 @@ impl<Id> ComptimeClap<Id> {
     pub(crate) fn remaining(&self) -> &[&'static [u8]] {
         &self.passthrough_positionals
     }
+}
+
+/// One flag, as [`typed_flags`] reports it.
+#[derive(Debug, PartialEq, Eq)]
+pub enum TypedFlag<'a> {
+    /// The param at `index` of the table declares it.
+    Declared {
+        index: usize,
+        value: Option<&'a [u8]>,
+    },
+    /// No param declares it: `--flag` or `--flag=value`, with its dashes. A parse skips it.
+    Undeclared(&'a [u8]),
+}
+
+/// Each flag of `argv` in order, up to where `parse_with_table` stops. None of the first `skip`.
+#[cold]
+#[inline(never)]
+pub(crate) fn typed_flags<'a>(
+    table: &'static ConvertedTable,
+    argv: &'a [&'a [u8]],
+    skip: usize,
+    stop_after_positional_at: usize,
+    short_aliases: &'static [(&'static [u8], &'static [u8])],
+    sink: &mut dyn FnMut(TypedFlag<'a>),
+) -> crate::Result<()> {
+    // Not an `OsIterator`: the parser compiled for that one is what every start runs.
+    let mut iter = SliceIterator { remain: argv };
+    let mut stream = StreamingClap::<usize, SliceIterator<'a>> {
+        params: table.converted,
+        iter: &mut iter,
+        diagnostic: None,
+        state: streaming::State::Normal,
+        positional: None,
+        short_aliases,
+        // So that `next` yields a flag that no param declares, as a positional.
+        unknown_long_flags_are_positional: true,
+        unknown_long_flags_are_errors: false,
+    };
+
+    let mut positionals: usize = 0;
+    while let Some(arg) = stream.next()? {
+        let typed = argv.len() - stream.iter.remain.len() > skip;
+        if is_named(arg.param) {
+            if typed {
+                let index = (core::ptr::from_ref(arg.param).addr()
+                    - table.converted.as_ptr().addr())
+                    / size_of::<Param<usize>>();
+                sink(TypedFlag::Declared {
+                    index,
+                    value: arg.value,
+                });
+            }
+            continue;
+        }
+        let Some(value) = arg.value else { continue };
+        // Only after a `--` does a real positional start with dashes.
+        if value.starts_with(b"--") && !matches!(stream.state, streaming::State::RestArePositional)
+        {
+            if typed {
+                sink(TypedFlag::Undeclared(value));
+            }
+            continue;
+        }
+        positionals += 1;
+        if stop_after_positional_at > 0 && positionals >= stop_after_positional_at {
+            break;
+        }
+    }
+    Ok(())
 }

@@ -718,6 +718,136 @@ fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
     }
 }
 
+/// `parse` stops after this many positionals: what follows a script or file name is not a flag.
+#[inline(always)]
+fn stop_after_positional_at(cmd: CommandTag) -> usize {
+    match cmd {
+        CommandTag::RunCommand => 2,
+        CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,
+        _ => 0,
+    }
+}
+
+/// Only the paths standing in for `node` get node's aliases.
+#[inline(always)]
+fn short_aliases(cmd: CommandTag) -> &'static [(&'static [u8], &'static [u8])] {
+    match cmd {
+        CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
+        _ => &[],
+    }
+}
+
+// ─── `bun run --parallel` / `--sequential`: the flags a file is started with ──
+
+/// The runner changed the directory before it starts a file.
+const RUNNER_KEEPS_FROM_FILES: &[&[u8]] = &[b"cwd"];
+/// The runner loaded the environment a file gets, so a file loads no `.env` of its own.
+const RUNNER_LOADED_ENV_FOR_FILES: &[&[u8]] = &[b"env-file", b"no-env-file"];
+/// One process acts on these: a watcher, a debugger endpoint, code to evaluate, a cron job.
+const ONE_PROCESS_ONLY: &[&[u8]] = &[
+    b"watch",
+    b"hot",
+    b"inspect",
+    b"inspect-wait",
+    b"inspect-brk",
+    b"eval",
+    b"print",
+    b"cron-title",
+    b"cron-period",
+];
+
+const fn declares_long(params: &[ParamType], long: &[u8]) -> bool {
+    let mut i = 0;
+    while i < params.len() {
+        if let Some(name) = params[i].names.long {
+            if strings::const_bytes_eq(name, long) {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+const _: () = {
+    let lists = [
+        RUNNER_KEEPS_FROM_FILES,
+        RUNNER_LOADED_ENV_FOR_FILES,
+        ONE_PROCESS_ONLY,
+    ];
+    let mut list = 0;
+    while list < lists.len() {
+        let mut i = 0;
+        while i < lists[list].len() {
+            assert!(
+                declares_long(BASE_RUNTIME_TRANSPILER_PARAMS, lists[list][i]),
+                "a flag that `bun run --parallel` does not hand to a file is not declared"
+            );
+            i += 1;
+        }
+        list += 1;
+    }
+};
+
+/// The typed flags that `bun run --parallel` / `--sequential` starts each file with, one word each.
+#[cold]
+#[inline(never)]
+pub(crate) fn typed_file_flags(cmd: CommandTag) -> crate::Result<Vec<Box<[u8]>>> {
+    // Each table starts with the runner's own flags. A flag after them goes to a file by default.
+    let (table, params, runner_flags) = match cmd {
+        CommandTag::AutoCommand => (AUTO_TABLE, AUTO_PARAMS, AUTO_ONLY_PARAMS.len()),
+        _ => (RUN_TABLE, RUN_PARAMS, RUN_ONLY_PARAMS.len()),
+    };
+    let mut words: Vec<Box<[u8]>> = Vec::new();
+    let mut no_env_file = false;
+    clap::typed_flags_with_table(
+        table,
+        stop_after_positional_at(cmd),
+        short_aliases(cmd),
+        &mut |flag| match flag {
+            clap::TypedFlag::Declared { index, value } => {
+                if index < runner_flags {
+                    return;
+                }
+                let names = &params[index].names;
+                let mut word: Vec<u8> = Vec::new();
+                if let Some(long) = names.long {
+                    if RUNNER_KEEPS_FROM_FILES.contains(&long) || ONE_PROCESS_ONLY.contains(&long) {
+                        return;
+                    }
+                    if RUNNER_LOADED_ENV_FOR_FILES.contains(&long) {
+                        if !core::mem::replace(&mut no_env_file, true) {
+                            words.push(Box::from(b"--no-env-file".as_slice()));
+                        }
+                        return;
+                    }
+                    word.extend_from_slice(b"--");
+                    word.extend_from_slice(long);
+                } else if let Some(short) = names.short {
+                    word.extend_from_slice(&[b'-', short]);
+                }
+                if let Some(value) = value {
+                    word.push(b'=');
+                    word.extend_from_slice(value);
+                }
+                words.push(word.into_boxed_slice());
+            }
+            clap::TypedFlag::Undeclared(word) => {
+                // `bun run` does not declare `--version`, but the `bun <file>` it starts does.
+                let name = &word[2..];
+                let name = &name[..strings::index_of_char_usize(name, b'=').unwrap_or(name.len())];
+                if !AUTO_PARAMS
+                    .iter()
+                    .any(|param| param.names.matches_long(name))
+                {
+                    words.push(Box::from(word));
+                }
+            }
+        },
+    )?;
+    Ok(words)
+}
+
 // ─── exported FFI globals (written by parse(), read from C++) ────────────────
 // `AtomicBool` has the same size/alignment/bit-validity as `bool`, so the
 // `#[no_mangle]` symbol layout is unchanged for the C++ side that reads these
@@ -832,16 +962,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         table,
         clap::ParseOptions {
             diagnostic: Some(&mut diag),
-            stop_after_positional_at: match cmd {
-                CommandTag::RunCommand => 2,
-                CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,
-                _ => 0,
-            },
-            // Only the paths standing in for `node` get node's aliases.
-            short_aliases: match cmd {
-                CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
-                _ => &[],
-            },
+            stop_after_positional_at: stop_after_positional_at(cmd),
+            short_aliases: short_aliases(cmd),
             ..Default::default()
         },
     ) {

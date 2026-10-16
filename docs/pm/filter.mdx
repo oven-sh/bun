@@ -165,6 +165,17 @@ Bun prefixes each line of output with the package and script name (`pkg-a:build 
 
 Use `--if-present` with `--workspaces` to skip packages that don't have the requested script instead of erroring.
 
+#### Files and runtime flags
+
+Without `--filter` or `--workspaces`, a name that is not a `package.json` script runs as a command. If the name starts with `.` or `/`, or ends in an extension Bun can run, Bun runs it as a file. Runtime flags in front of the names apply to each file, as they do for `bun run <flags> <file>`. Scripts and other commands do not get them.
+
+```bash terminal icon="terminal"
+# Both files run with --smol and load ./otel.ts first
+bun run --parallel --smol --preload ./otel.ts ./server.ts ./worker.ts
+```
+
+With `--env-file` or `--no-env-file`, Bun loads the environment once and passes it on. The files do not load `.env` files of their own.
+
 ### Dependency Order
 
 Bun respects package dependency order when running scripts. Say you have a package `foo` that depends on another package `bar` in your workspace, and both have a `build` script. When you run `bun --filter '*' build`, `foo` only starts once `bar` is done.

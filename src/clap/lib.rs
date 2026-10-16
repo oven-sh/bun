@@ -6,7 +6,7 @@ pub mod comptime;
 pub mod error;
 pub mod streaming;
 
-pub use comptime::{ComptimeClap, ConvertedTable};
+pub use comptime::{ComptimeClap, ConvertedTable, TypedFlag};
 pub use error::{Error, Result};
 
 // Proc-macro backend — do not call these directly; use `parse_param!` / `param!` /
@@ -502,6 +502,27 @@ pub fn parse_with_table<Id: 'static>(
     Ok(Args { clap })
 }
 
+/// Each typed flag in order, up to where [`parse_with_table`] stops. None from `BUN_OPTIONS`.
+#[cold]
+#[inline(never)]
+pub fn typed_flags_with_table(
+    table: &'static ConvertedTable,
+    stop_after_positional_at: usize,
+    short_aliases: &'static [(&'static [u8], &'static [u8])],
+    sink: &mut dyn FnMut(TypedFlag<'static>),
+) -> crate::Result<()> {
+    // argv[0], then the `BUN_OPTIONS` tokens, then what was typed.
+    let argv = args::os_argv();
+    comptime::typed_flags(
+        table,
+        argv.get(1..).unwrap_or_default(),
+        bun_core::bun_options_argc(),
+        stop_after_positional_at,
+        short_aliases,
+        sink,
+    )
+}
+
 /// Parses the command line arguments passed into the program based on an
 /// array of `Param`s.
 ///
@@ -879,5 +900,120 @@ mod tests {
         assert_eq!(CT_TABLE.converted[CT_HELP_IDX].id, 0);
         assert_eq!(CT_TABLE.converted[CT_CONFIG_IDX].id, 0);
         assert_eq!(CT_TABLE.converted[CT_CONFIG_IDX].takes_value, Values::One);
+    }
+
+    const WALK_PARAMS: &[Param<Help>] = &[
+        parse_param!("-s, --smol            Flag"),
+        parse_param!("-d, --define <STR>... Many"),
+        parse_param!("-c, --config <PATH>?  Optional"),
+        parse_param!("--title <STR>         One"),
+        parse_param!("<POS>..."),
+    ];
+    static WALK_TABLE: &ConvertedTable = comptime_table!(WALK_PARAMS, cold);
+    const SMOL: usize = 0;
+    const DEFINE: usize = 1;
+    const CONFIG: usize = 2;
+    const TITLE: usize = 3;
+
+    fn typed_flags(
+        argv: &'static [&'static [u8]],
+        stop_after_positional_at: usize,
+        skip: usize,
+    ) -> Vec<TypedFlag<'static>> {
+        let mut seen = Vec::new();
+        comptime::typed_flags(
+            WALK_TABLE,
+            argv,
+            skip,
+            stop_after_positional_at,
+            &[],
+            &mut |flag| seen.push(flag),
+        )
+        .unwrap();
+        seen
+    }
+
+    fn declared(index: usize, value: Option<&'static [u8]>) -> TypedFlag<'static> {
+        TypedFlag::Declared { index, value }
+    }
+
+    #[test]
+    fn typed_flags_reports_each_flag_in_order_until_the_parse_stops() {
+        assert_eq!(
+            typed_flags(
+                &[
+                    b"--define",
+                    b"A:1",
+                    b"-sd",
+                    b"B:2",
+                    b"--config",
+                    b"run",
+                    b"--config=x.toml",
+                    b"--title=t",
+                    b"-dC:3",
+                    b"a.ts",
+                    b"--smol",
+                    b"b.ts",
+                ],
+                2,
+                0,
+            ),
+            [
+                declared(DEFINE, Some(b"A:1")),
+                declared(SMOL, None),
+                declared(DEFINE, Some(b"B:2")),
+                declared(CONFIG, None),
+                declared(CONFIG, Some(b"x.toml")),
+                declared(TITLE, Some(b"t")),
+                declared(DEFINE, Some(b"C:3")),
+            ]
+        );
+    }
+
+    #[test]
+    fn typed_flags_reports_an_undeclared_flag_and_does_not_count_it_as_a_positional() {
+        assert_eq!(
+            typed_flags(
+                &[b"--unknown", b"--other=1", b"--smol", b"a.ts", b"--title=t"],
+                1,
+                0,
+            ),
+            [
+                TypedFlag::Undeclared(b"--unknown"),
+                TypedFlag::Undeclared(b"--other=1"),
+                declared(SMOL, None),
+            ]
+        );
+    }
+
+    #[test]
+    fn typed_flags_takes_what_follows_a_separator_as_a_positional() {
+        assert_eq!(
+            typed_flags(&[b"--smol", b"--", b"--unknown a.ts", b"--title=t"], 1, 0),
+            [declared(SMOL, None)]
+        );
+        assert_eq!(
+            typed_flags(&[b"--", b"--unknown", b"--title=t", b"--smol"], 0, 0),
+            []
+        );
+    }
+
+    #[test]
+    fn typed_flags_leaves_out_the_args_to_skip() {
+        assert_eq!(
+            typed_flags(
+                &[
+                    b"--smol",
+                    b"--define",
+                    b"A:1",
+                    b"--unknown",
+                    b"--title=t",
+                    b"a.ts"
+                ],
+                1,
+                4,
+            ),
+            [declared(TITLE, Some(b"t"))]
+        );
     }
 }

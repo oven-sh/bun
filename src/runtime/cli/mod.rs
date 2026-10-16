@@ -1271,7 +1271,7 @@ pub(crate) mod command {
 
         if ctx.parallel || ctx.sequential {
             // Result<Infallible, _>: if this returns at all, it's Err.
-            let Err(err) = super::multi_run::run(ctx);
+            let Err(err) = super::multi_run::run(ctx, tag);
             pretty_errorln!("<r><red>error<r>: {}", err.name());
             Global::exit(1);
         }

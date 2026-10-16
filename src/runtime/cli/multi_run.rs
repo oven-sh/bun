@@ -710,6 +710,32 @@ struct GroupInfo {
     count: usize,
 }
 
+/// The typed runtime flags, quoted for the shell: a file's line has them after the executable.
+struct FileFlags {
+    tag: Command::Tag,
+    shell_words: Option<Box<[u8]>>,
+}
+
+impl FileFlags {
+    /// Reads the command line the first time a file needs the flags.
+    fn shell_words(&mut self) -> Result<&[u8], Error> {
+        if self.shell_words.is_none() {
+            let mut shell_words: Vec<u8> = Vec::new();
+            for word in crate::cli::arguments::typed_file_flags(self.tag)? {
+                if crate::shell::needs_escape_utf8_ascii_latin1(&word) {
+                    crate::shell::escape_8bit::<true, false>(&word, &mut shell_words)
+                        .unwrap_or_oom();
+                } else {
+                    shell_words.extend_from_slice(&word);
+                }
+                shell_words.push(b' ');
+            }
+            self.shell_words = Some(shell_words.into_boxed_slice());
+        }
+        Ok(self.shell_words.as_deref().unwrap_or_default())
+    }
+}
+
 /// Add configs for a single script name (with pre/post handling).
 /// When `label_prefix` is non-null, labels become "{prefix}:{name}" (for workspace runs).
 ///
@@ -725,6 +751,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
     cwd: &[u8],
     path: &[u8],
     label_prefix: Option<&[u8]>,
+    file_flags: &mut FileFlags,
 ) -> Result<(), Error> {
     let group_start = configs.len();
 
@@ -812,12 +839,14 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 || has_runnable_extension(raw_name));
         let command_z: Box<[u8]> = if is_file {
             let bun_path: &[u8] = bun::self_exe_path().map(|z| z.as_bytes()).unwrap_or(b"bun");
+            let flags = file_flags.shell_words()?;
             // Quote the bun path so that backslashes on Windows are not
             // interpreted as escape characters by `bun exec` (Bun's shell).
-            let mut v = Vec::with_capacity(bun_path.len() + raw_name.len() + 4);
+            let mut v = Vec::with_capacity(bun_path.len() + flags.len() + raw_name.len() + 4);
             v.push(b'"');
             v.extend_from_slice(bun_path);
             v.extend_from_slice(b"\" ");
+            v.extend_from_slice(flags);
             v.extend_from_slice(raw_name);
             v.push(0);
             v.into_boxed_slice()
@@ -846,7 +875,10 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
 
 // Returns either an error or diverges:
 // `Result<Infallible, Error>` so callers can `?` it; all Ok paths call Global::exit.
-pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, Error> {
+pub(crate) fn run(
+    ctx: &mut Command::ContextData,
+    tag: Command::Tag,
+) -> Result<core::convert::Infallible, Error> {
     // Validate flags
     if ctx.parallel && ctx.sequential {
         bun_core::pretty_errorln!(
@@ -929,6 +961,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     // Each script name can produce up to 3 handles (pre, main, post)
     let mut configs: Vec<ScriptConfig> = Vec::new();
     let mut group_infos: Vec<GroupInfo> = Vec::new();
+    let mut file_flags = FileFlags {
+        tag,
+        shell_words: None,
+    };
 
     if !ctx.filters.is_empty() || ctx.workspaces {
         // Workspace-aware mode: iterate over matching workspace packages
@@ -1003,6 +1039,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                             &pkg.dirpath,
                             &pkg.path,
                             Some(&pkg.name),
+                            &mut file_flags,
                         )?;
                     }
                 } else {
@@ -1015,6 +1052,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                             &pkg.dirpath,
                             &pkg.path,
                             Some(&pkg.name),
+                            &mut file_flags,
                         )?;
                     } else if ctx.workspaces && !ctx.if_present {
                         bun_core::pretty_errorln!(
@@ -1085,6 +1123,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                             cwd,
                             &path_env,
                             None,
+                            &mut file_flags,
                         )?;
                     }
                 } else {
@@ -1103,6 +1142,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                     cwd,
                     &path_env,
                     None,
+                    &mut file_flags,
                 )?;
             }
         }

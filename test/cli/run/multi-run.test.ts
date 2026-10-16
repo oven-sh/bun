@@ -155,6 +155,239 @@ describe.concurrent("parallel: file scripts", () => {
   });
 });
 
+// ─── RUNTIME FLAGS IN FRONT OF FILES ──────────────────────────────────────────
+
+// Prints what a file can see of the runtime flags it was started with, as one line of JSON.
+const FLAG_PROBE = `
+let codegen = "ran", addon = "tried";
+try { new Function("return 1")(); } catch { codegen = "refused"; }
+try { process.dlopen({ exports: {} }, "/nonexistent/addon.node"); } catch (e) { if (e.code === "ERR_DLOPEN_DISABLED") addon = "refused"; }
+console.log(JSON.stringify({
+  execArgv: process.execArgv,
+  argv: process.argv.slice(2),
+  define: typeof MY_DEFINE === "undefined" ? null : MY_DEFINE,
+  title: process.title,
+  gc: typeof gc,
+  preloaded: globalThis.preloaded ?? null,
+  codegen,
+  addon,
+  dotenv: process.env.FROM_DOTENV ?? null,
+  envFile: process.env.FROM_ENV_FILE ?? null,
+  cwd: process.cwd().split(/[\\\\/]/).pop(),
+}));
+`;
+
+/** The object FLAG_PROBE printed under `label`. */
+function probed(stdout: string, label: string) {
+  const line = stdout.match(new RegExp(`^${escapeRe(label)}\\s+\\| (\\{.*\\})$`, "m"));
+  expect(line, `no probe line for ${label} in:\n${stdout}`).not.toBeNull();
+  return JSON.parse(line![1]);
+}
+
+describe.concurrent("runtime flags in front of files", () => {
+  const flags = [
+    ["--define", "MY_DEFINE:42"],
+    ["--title=from-the-flag"],
+    ["--expose-gc"],
+    ["-r", "./preload.js"],
+    ["--no-addons"],
+    ["--disallow-code-generation-from-strings=strict"],
+    ["-i"],
+  ].flat();
+  const applied = {
+    define: 42,
+    title: "from-the-flag",
+    gc: "function",
+    preloaded: true,
+    codegen: "refused",
+    addon: "refused",
+  };
+  // A file gets each flag as one word, under its long name.
+  const execArgv = [
+    "--define=MY_DEFINE:42",
+    "--title=from-the-flag",
+    "--expose-gc",
+    "--preload=./preload.js",
+    "--no-addons",
+    "--disallow-code-generation-from-strings=strict",
+    "-i",
+  ];
+  const files = { "a.js": FLAG_PROBE, "b.js": FLAG_PROBE, "preload.js": "globalThis.preloaded = true;" };
+
+  test("the control: bun run <flags> <file> applies the flags", async () => {
+    using dir = tempDir("mr-flags-control", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...flags, "./a.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toMatchObject(applied);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["bun run --parallel <flags> a b", ["run", "--parallel", ...flags, "./a.js", "./b.js"], ["./a.js", "./b.js"]],
+    ["bun --parallel <flags> a b", ["--parallel", ...flags, "./a.js", "./b.js"], ["./a.js", "./b.js"]],
+    ["bun run <flags> --sequential <command> b", ["run", ...flags, "--sequential", "echo first", "./b.js"], ["./b.js"]],
+  ])("%s: each file gets the flags", async (_, args, labels) => {
+    using dir = tempDir("mr-flags", files);
+    const r = await runMulti(args, String(dir));
+    for (const label of labels) {
+      expect(probed(r.stdout, label)).toMatchObject({ ...applied, execArgv, argv: [] });
+    }
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("without a flag a file starts as before", async () => {
+    using dir = tempDir("mr-flags-none", files);
+    const r = await runMulti(["run", "--parallel", "./a.js"], String(dir));
+    expect(probed(r.stdout, "./a.js")).toMatchObject({
+      execArgv: [],
+      argv: [],
+      define: null,
+      gc: "undefined",
+      preloaded: null,
+      codegen: "ran",
+      addon: "tried",
+    });
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("a value reaches the file as typed, and only a file gets the flags", async () => {
+    const value = 'two words $HOME `echo x` "q" \\ end';
+    const define = `MY_DEFINE:${JSON.stringify(value)}`;
+    using dir = tempDir("mr-flags-value", {
+      "probe.js": FLAG_PROBE,
+      "package.json": JSON.stringify({ scripts: { script: `${bunExe()} probe.js` } }),
+    });
+    // `bun run` does not declare --version, `bun <file>` does: a file must not get it.
+    const r = await runMulti(
+      [
+        "run",
+        "--parallel",
+        "--define",
+        define,
+        "--not-a-bun-flag=1",
+        "--version",
+        "./probe.js one two",
+        "script",
+        "echo raw-command",
+      ],
+      String(dir),
+      { BUN_OPTIONS: "--smol" },
+    );
+    // The file reads --smol from BUN_OPTIONS itself, so it is there once.
+    expect(probed(r.stdout, "./probe.js one two")).toMatchObject({
+      execArgv: ["--smol", `--define=${define}`, "--not-a-bun-flag=1"],
+      argv: ["one", "two"],
+      define: value,
+    });
+    expect(probed(r.stdout, "script")).toMatchObject({ execArgv: ["--smol"], argv: [], define: null });
+    expectPrefixed(r.stdout, "echo raw-command", "raw-command");
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("with --env-file or --no-env-file a file loads no .env of its own", async () => {
+    using dir = tempDir("mr-flags-env", {
+      "probe.js": FLAG_PROBE,
+      ".env": "FROM_DOTENV=1\n",
+      "custom.env": "FROM_ENV_FILE=1\n",
+    });
+    const [none, envFile, noEnvFile] = await Promise.all([
+      runMulti(["run", "--parallel", "./probe.js"], String(dir)),
+      runMulti(["run", "--parallel", "--env-file", "custom.env", "./probe.js"], String(dir)),
+      runMulti(["run", "--parallel", "--no-env-file", "./probe.js"], String(dir)),
+    ]);
+    expect({
+      none: probed(none.stdout, "./probe.js"),
+      envFile: probed(envFile.stdout, "./probe.js"),
+      noEnvFile: probed(noEnvFile.stdout, "./probe.js"),
+    }).toMatchObject({
+      none: { execArgv: [], dotenv: "1", envFile: null },
+      envFile: { execArgv: ["--no-env-file"], dotenv: null, envFile: "1" },
+      noEnvFile: { execArgv: ["--no-env-file"], dotenv: null, envFile: null },
+    });
+    expect([none.exitCode, envFile.exitCode, noEnvFile.exitCode]).toEqual([0, 0, 0]);
+  });
+
+  test("--install and --no-install reach the file", async () => {
+    // Counts what a file asks the registry for when it imports a package that is not installed.
+    async function askedWith(flag: string, files: Record<string, string>) {
+      let asked = 0;
+      await using registry = Bun.serve({
+        port: 0,
+        fetch: () => {
+          asked++;
+          return new Response("{}", { status: 404 });
+        },
+      });
+      using dir = tempDir("mr-flags-install", {
+        "imports.js": `try { await import("a-package-that-is-not-installed"); } catch {} console.log("imported");`,
+        ...files,
+      });
+      const r = await runMulti(["run", "--parallel", flag, "./imports.js"], String(dir), {
+        BUN_CONFIG_REGISTRY: registry.url.href,
+        BUN_INSTALL_CACHE_DIR: path.join(String(dir), ".cache"),
+      });
+      expectPrefixed(r.stdout, "./imports.js", "imported");
+      expect(r.exitCode).toBe(0);
+      return asked;
+    }
+    // Without a flag a file installs only where there is no node_modules directory.
+    const [forced, disabled] = await Promise.all([
+      askedWith("--install=force", { "node_modules/.keep": "" }),
+      askedWith("--no-install", {}),
+    ]);
+    expect(forced).toBeGreaterThan(0);
+    expect(disabled).toBe(0);
+  });
+
+  test("--cwd stays with the runner, a relative --preload and --if-present go to the file", async () => {
+    using dir = tempDir("mr-flags-cwd", {
+      "preload.js": "globalThis.preloaded = 'in the root';",
+      "sub/preload.js": "globalThis.preloaded = 'in sub';",
+      "sub/probe.js": FLAG_PROBE,
+    });
+    const r = await runMulti(
+      ["run", "--cwd", "sub", "--preload", "./preload.js", "--if-present", "--parallel", "./missing.js", "./probe.js"],
+      String(dir),
+    );
+    expect(probed(r.stdout, "./probe.js")).toMatchObject({
+      execArgv: ["--preload=./preload.js", "--if-present"],
+      preloaded: "in sub",
+      cwd: "sub",
+    });
+    expectDone(r.stderr, "./missing.js");
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("flags that one process acts on stay with the runner", async () => {
+    using dir = tempDir("mr-flags-one-process", files);
+    const oneProcessOnly = [
+      ["--watch", "--hot"],
+      ["--inspect", "--inspect-wait", "--inspect-brk"],
+      ["-e", "1", "-p", "1"],
+      ["--cron-title=t", "--cron-period=* * * * *"],
+    ].flat();
+    const r = await runMulti(["run", "--parallel", "--smol", ...oneProcessOnly, "--expose-gc", "./a.js"], String(dir));
+    expect(probed(r.stdout, "./a.js")).toMatchObject({ execArgv: ["--smol", "--expose-gc"], gc: "function" });
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("a script-only run does not read the flags", async () => {
+    using dir = tempDir("mr-flags-scripts", {
+      "package.json": JSON.stringify({ scripts: { script: "echo script-ran" } }),
+    });
+    const r = await runMulti(["run", "--parallel", "--hot", "script"], String(dir));
+    expectPrefixed(r.stdout, "script", "script-ran");
+    expect(r.exitCode).toBe(0);
+  });
+});
+
 // ─── PARALLEL: ERROR HANDLING ─────────────────────────────────────────────────
 
 describe.concurrent("parallel: error handling", () => {

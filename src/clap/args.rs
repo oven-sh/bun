@@ -91,7 +91,7 @@ impl ArgIter<'static> for OsIterator {
 /// `[&ZStr]` view in place: zero alloc, zero lazy-init shim, zero extra
 /// `.text`.
 #[inline]
-fn os_argv() -> &'static [&'static [u8]] {
+pub(crate) fn os_argv() -> &'static [&'static [u8]] {
     let z: &'static [&'static bun_core::ZStr] = bun_core::argv().as_slice();
     // SAFETY: `#[repr(transparent)] struct ZStr([u8])` (bun_core/util.rs) ⇒
     // `&ZStr` and `&[u8]` have identical (ptr, len) layout, hence so do

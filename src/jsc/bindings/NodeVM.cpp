@@ -857,6 +857,21 @@ bool isUseMainContextDefaultLoaderConstant(JSGlobalObject* globalObject, JSValue
 
 using namespace NodeVM;
 
+// V8's --expose-gc. As there, it is for the whole process and for the contexts made after it is set.
+static std::atomic<bool> newContextsHaveGC { false };
+extern "C" void JSC__JSGlobalObject__addGc(JSC::JSGlobalObject*);
+
+extern "C" void Bun__NodeVM__setNewContextsHaveGC(bool value)
+{
+    newContextsHaveGC.store(value, std::memory_order_relaxed);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetNewContextsHaveGC, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    Bun__NodeVM__setNewContextsHaveGC(callFrame->argument(0).toBoolean(globalObject));
+    return JSValue::encode(jsUndefined());
+}
+
 NodeVMGlobalObject::NodeVMGlobalObject(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions contextOptions, JSValue importer)
     : Base(vm, structure, &globalObjectMethodTable())
     , m_dynamicImportCallback(vm, this, importer)
@@ -1050,6 +1065,9 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
         if (parentGlobalObject->isAsyncContextTrackingEnabled())
             setAsyncContextTrackingEnabled(true);
     }
+
+    if (newContextsHaveGC.load(std::memory_order_relaxed))
+        JSC__JSGlobalObject__addGc(this);
 }
 
 void NodeVMGlobalObject::destroy(JSCell* cell)

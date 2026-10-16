@@ -1361,6 +1361,7 @@ impl Run<'_> {
         unsafe extern "C" {
             fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
             fn JSC__JSGlobalObject__addGc(global: *const JSGlobalObject);
+            safe fn Bun__NodeVM__setNewContextsHaveGC(value: bool);
         }
         let ro = &ctx.runtime_options;
         if !ro.eval.script.is_empty() {
@@ -1370,6 +1371,7 @@ impl Run<'_> {
         if ro.expose_gc {
             // SAFETY: FFI; `vm.global` is live for the VM lifetime.
             unsafe { JSC__JSGlobalObject__addGc(vm.global) };
+            Bun__NodeVM__setNewContextsHaveGC(true);
         }
     }
 

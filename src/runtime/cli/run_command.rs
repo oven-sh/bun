@@ -1059,7 +1059,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
             let cwd_bytes = cwd.as_bytes();
             // In a specifier a `?` starts a query. In the entry it is part of a name, which a file URL says.
-            let escaped_path = if bun_core::strings::contains_char(entry, b'?') {
+            let escaped_path = if !cfg!(windows) && bun_core::strings::contains_char(entry, b'?') {
                 let entry_url = bun_url::file_url_from_string(&bun_core::String::borrow_utf8(
                     bun_paths::resolve_path::join_abs::<bun_paths::resolve_path::platform::Auto>(
                         cwd_bytes, entry,

@@ -226,7 +226,8 @@ impl MacroEntryPoint {
             }
 
             // In a specifier a `?` starts a query. In the path of the macro it is part of a name, which a file URL says.
-            let macro_url = (bun_paths::is_absolute(dir_to_use)
+            let macro_url = (!cfg!(windows)
+                && bun_paths::is_absolute(dir_to_use)
                 && (strings::contains_char(dir_to_use, b'?')
                     || strings::contains_char(import_path.filename, b'?')))
             .then(|| {

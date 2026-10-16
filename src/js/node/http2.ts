@@ -2615,8 +2615,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     this[bunHTTP2AsyncContextFrame] = undefined;
     const hasId = typeof this.#id === "number";
     if (!hasId) {
-      // For the same reason, a request that waits in its session's pending queue leaves it here.
-      // node does this after it emits 'aborted', where a listener that throws keeps the request.
+      // Also before the emit: a request that waits leaves its session's pending queue. node does it after.
       const pending = this[kPendingRequest];
       if (pending !== undefined) {
         this[kPendingRequest] = undefined;
@@ -4983,10 +4982,7 @@ function streamRejectedByGoawaySession(stream: Http2Stream) {
     stream.destroy(err);
   }
 }
-// A record in a client session's pending queue: a request that waits for the connect or for a
-// stream slot. The queue is an internal/linkedlist, so a request that is destroyed while it waits
-// leaves in O(1). remove() also cuts the record's links: a reference to the record that outlives
-// it (a JIT compilation in flight holds one) then keeps no other request alive.
+// A record in a client session's pending queue, an internal/linkedlist: a destroyed request leaves in O(1).
 interface PendingRequest {
   req: ClientHttp2Stream;
   // The on-wire form: an array keeps the duplicate-header interleaving that the object form cannot.
@@ -5041,10 +5037,9 @@ class ClientHttp2Session extends Http2Session {
   #strictFieldWhitespaceValidation: boolean = true;
   // Client-side SETTINGS_MAX_CONCURRENT_STREAMS accounting: requests whose HEADERS frame has been
   // submitted and whose stream has not closed yet, plus the queue of requests waiting for a slot
-  // (node returns a pending stream with no id and submits it once a slot frees). A request that is
-  // destroyed while it waits leaves the queue at once ([kRemovePendingRequest]). The queue is null
-  // while no request waits.
+  // (node returns a pending stream with no id and submits it once a slot frees).
   #activeRequestCount: number = 0;
+  // An internal/linkedlist of PendingRequest records. Null while no request waits.
   #pendingRequests: object | null = null;
 
   static #Handlers = {
@@ -5357,9 +5352,7 @@ class ClientHttp2Session extends Http2Session {
       // NGHTTP2_NO_ERROR since this side had no error. A graceful GOAWAY (NO_ERROR) begins a
       // shutdown: no new streams permitted, existing streams may finish naturally.
       if (errorCode === constants.NGHTTP2_NO_ERROR) {
-        // close() does nothing on a closed session, and the request rejected above can be the
-        // last thing that session waited for. node leaves that request queued, so its session
-        // stays.
+        // The request rejected above can be the last thing that a closed session waited for.
         if (self.#closed) self.#maybeDestroy();
         else self.close();
       } else if (self.closed && self.#connections === 0) {
@@ -5818,30 +5811,25 @@ class ClientHttp2Session extends Http2Session {
     this.goaway(constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
     this[kGoawaySent] = true;
     this.#parser?.flush?.();
+    // Requests queued while the socket is still connecting count as in-flight too: they are
+    // rejected with ERR_HTTP2_GOAWAY_SESSION from #onConnect (node's requestOnConnect), not
+    // canceled by an early destroy.
+    //
+    // A settings() whose ACK has not arrived also keeps the graceful close from destroying
+    // the session yet: node always observes that ACK before it gets here because it batches
+    // the SETTINGS frame into the same write as the request (so the ACK beats the response),
+    // and the vendored tests close() from the response's 'end' relying on it. The wait is
+    // bounded: an ACK is mandatory (RFC 9113 6.5.3) and arrives one round-trip later; the
+    // localSettings dispatch finishes the deferred destroy, and a dead socket still tears
+    // the session down. destroy() remains immediate.
     this.#maybeDestroy();
   }
 
-  // The stream half of node's kMaybeDestroy: a closed session is destroyed once it has no open
-  // stream and no pending request. node also waits while its handle has data to write
-  // (hasPendingData); that clause is not here.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1659-L1675
-  //
-  // Requests queued while the socket is still connecting count as in-flight too: they are
-  // rejected with ERR_HTTP2_GOAWAY_SESSION from #onConnect (node's requestOnConnect), not
-  // canceled by an early destroy.
-  //
-  // A settings() whose ACK has not arrived also keeps the graceful close from destroying
-  // the session yet: node always observes that ACK before it gets here because it batches
-  // the SETTINGS frame into the same write as the request (so the ACK beats the response),
-  // and the vendored tests close() from the response's 'end' relying on it. The wait is
-  // bounded: an ACK is mandatory (RFC 9113 6.5.3) and arrives one round-trip later; the
-  // localSettings dispatch finishes the deferred destroy, and a dead socket still tears
-  // the session down. destroy() remains immediate.
   #maybeDestroy() {
     if (!this.#closed || this.#destroying || this.destroyed) return;
     if (this.#connections !== 0 || this.#pendingRequests !== null) return;
-    // An unACKed ping gets the same bounded grace as an unACKed SETTINGS: node always
-    // delivers the ping callback its RTT on a healthy session, never a cancel error.
+    // An unACKed PING gets the same bounded grace as an unACKed SETTINGS.
     if (this.#pendingSettingsAckCount > 0 || (this.#pingCallbacks !== null && this.#pingCallbacks.length > 0)) {
       scheduleSettingsAckGraceNT(this);
     } else {
@@ -5850,11 +5838,7 @@ class ClientHttp2Session extends Http2Session {
     }
   }
 
-  // A request was destroyed while it waited: its session forgets it, and a closed session checks
-  // whether anything is still in flight. node does both from Http2Stream._destroy, but it still
-  // holds a request that was made before the connect until the connect.
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2468-L2477
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2492-L2499
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2468-L2499
   [kRemovePendingRequest](pending: PendingRequest) {
     remove(pending);
     const pendingRequests = this.#pendingRequests;
@@ -6308,9 +6292,7 @@ class ClientHttp2Session extends Http2Session {
         const req = new ClientHttp2Stream(undefined, this, headers);
         req.authority = authority;
         req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
-        // Queued before the publish, like node, so that a subscriber that destroys the request
-        // takes it out of the queue again.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1909-L1934
+        // Before the publish: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1909-L1934
         const pending: PendingRequest = {
           req,
           wireHeaders: rawHeadersList !== null ? rawHeadersList : headers,
@@ -6402,10 +6384,8 @@ class ClientHttp2Session extends Http2Session {
         break;
       }
       const { req, wireHeaders, sensitiveNames, options } = this.#takePendingRequest(queue);
-      // A pending stream that was close()d (but not destroyed) is still submitted. For a request
-      // made before the connect, node does the same: HEADERS, then the RST_STREAM once the id is
-      // known (see close()). destroy() takes a request out of the queue, so only the `destroyed`
-      // setter leaves one here.
+      // A pending stream that was close()d (but not destroyed) is still submitted: node sends its
+      // HEADERS, then the RST_STREAM once the id is known, for a request made before the connect.
       if (req.destroyed) continue;
       const stream_id: number = parser.getNextStream();
       if (stream_id < 0) {

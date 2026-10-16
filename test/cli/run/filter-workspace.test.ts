@@ -1560,7 +1560,7 @@ describe("output lines", () => {
 
   test.concurrent("the unterminated rest of each pipe is its own line", async () => {
     expect(await runWithSteps(`fs.writeSync(1, "out-rest"); fs.writeSync(2, "err-rest");`)).toEqual({
-      stdout: ["app: out-rest", "app: err-rest", "app go: Exited with code 0", ""].join("\n"),
+      stdout: ["app go: out-rest", "app go: err-rest", "app go: Exited with code 0", ""].join("\n"),
       stderr: "",
       exitCode: 0,
     });

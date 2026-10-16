@@ -57,7 +57,7 @@ enum Stream {
 /// One output pipe of a script. It is its reader's parent, so a chunk is known to come from it.
 pub(crate) struct PipeReader<'a> {
     reader: BufferedReader,
-    handle: *mut ProcessHandle<'a>, // set in ProcessHandle::start()
+    handle: *mut ProcessHandle<'a>, // set in ProcessHandle::start() before the reader starts
     stream: Stream,
     /// Line renderer: the unterminated last line read from this pipe.
     line_buffer: Vec<u8>,
@@ -328,7 +328,7 @@ impl<'a> ProcessHandle<'a> {
 
 // The reader holds no `&mut ProcessHandle` across the callback (it only holds a
 // `&mut` to the embedded `BufferedReader` field, which is disjoint from the
-// fields touched here). `state` backref valid for the lifetime of the run loop.
+// fields touched here). `handle` and `state` backrefs valid for the run loop.
 bun_io::impl_buffered_reader_parent! {
     FilterRunHandle for PipeReader<'a>;
     has_on_read_chunk = true;
@@ -477,8 +477,9 @@ impl<'a> State<'a> {
                 if !line_buffer.is_empty() {
                     writeln!(
                         &mut self.draw_buf,
-                        "{}: {}",
+                        "{} {}: {}",
                         bun_core::fmt::escape_control_chars(&handle.config.package_name),
+                        bun_core::fmt::escape_control_chars(&handle.config.script_name),
                         bstr::BStr::new(line_buffer),
                     )?;
                     line_buffer.clear();

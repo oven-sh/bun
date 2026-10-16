@@ -183,7 +183,7 @@ const TABLE_PIXELS_PER_COLOR: usize = 8;
 
 /// Colours the count table takes whatever they are.
 fn table_room(want: usize) -> usize {
-    TABLE_COLORS_PER_ENTRY * want.max(16)
+    TABLE_COLORS_PER_ENTRY * want
 }
 
 /// Pixel counts by colour. A photo has too many colours for a table to pay: its pixels are sorted.

@@ -1599,11 +1599,11 @@ describe("Bun.Image", () => {
 
       // [name, width, height, white pixels, distinct colours, colors]. The
       // quantizer counts colours in a table and writes each pixel from it.
-      // The table takes 1024 colours per palette entry (of at least 16). Past
-      // that it takes a new colour while the colours so far cover 8 pixels
-      // each. It never takes more colours than half the pixel count. When it
-      // gives up, the pixels are sorted to count them and each run of equal
-      // pixels is searched in the palette.
+      // The table takes 1024 colours per palette entry. Past that it takes
+      // a new colour while the colours so far cover 8 pixels each. It never
+      // takes more colours than half the pixel count. When it gives up, the
+      // pixels are sorted to count them and each run of equal pixels is
+      // searched in the palette.
       test.each([
         ["counted in the table", 128, 128, 8192, 4000, 16],
         ["more than 1024 colours per entry, and they repeat", 400, 375, 130000, 17000, 16],

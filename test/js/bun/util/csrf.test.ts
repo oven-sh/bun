@@ -278,7 +278,7 @@ describe("Bun.CSRF", () => {
       expect(thrown(NaN)).toEqual({
         constructor: RangeError,
         code: "ERR_OUT_OF_RANGE",
-        message: `${member} must be an integer (received NaN)`,
+        message: `The value of "${member}" is out of range. It must be an integer. Received NaN`,
       });
     });
 
@@ -286,36 +286,56 @@ describe("Bun.CSRF", () => {
       expect(() => call(undefined)).not.toThrow();
       // The token embeds expiresIn as a big-endian u64 at bytes 24..32, after
       // the timestamp and the nonce.
-      const embeddedExpiresIn = (options?: { expiresIn?: number | bigint }) =>
-        Buffer.from(CSRF.generate(secret, options as any), "base64url").readBigUInt64BE(24);
+      const embeddedExpiresIn = (options?: { expiresIn?: number }) =>
+        Buffer.from(CSRF.generate(secret, options), "base64url").readBigUInt64BE(24);
       expect(embeddedExpiresIn({ expiresIn: 0 })).toBe(0n);
       expect(embeddedExpiresIn({ expiresIn: undefined })).toBe(embeddedExpiresIn());
       expect(embeddedExpiresIn()).toBe(BigInt(24 * 60 * 60 * 1000));
       expect(embeddedExpiresIn({ expiresIn: 2 ** 53 - 1 })).toBe(BigInt(2 ** 53 - 1));
-      expect(embeddedExpiresIn({ expiresIn: 2n ** 64n - 1n })).toBe(2n ** 64n - 1n);
+    });
+
+    test("the largest value is one that a token can be verified with", () => {
+      expect(
+        CSRF.verify(CSRF.generate(secret, { expiresIn: Number.MAX_SAFE_INTEGER }), {
+          secret,
+          maxAge: Number.MAX_SAFE_INTEGER,
+        }),
+      ).toBe(true);
     });
 
     test("out-of-range and non-integer values throw RangeError [ERR_OUT_OF_RANGE]", () => {
-      expect(thrown(-1)).toEqual({
-        constructor: RangeError,
-        code: "ERR_OUT_OF_RANGE",
-        message: `${member} must be in the range [0, 18446744073709551615] (received -1)`,
-      });
-      for (const value of [2 ** 53, Infinity, 1.5]) {
+      for (const [value, received] of [
+        [-1, "-1"],
+        [2 ** 53, "9_007_199_254_740_992"],
+      ]) {
         expect(thrown(value)).toEqual({
           constructor: RangeError,
           code: "ERR_OUT_OF_RANGE",
-          message: `${member} must be an integer (received ${value})`,
+          message: `The value of "${member}" is out of range. It must be >= 0 && <= 9007199254740991. Received ${received}`,
+        });
+      }
+      for (const value of [Infinity, 1.5]) {
+        expect(thrown(value)).toEqual({
+          constructor: RangeError,
+          code: "ERR_OUT_OF_RANGE",
+          message: `The value of "${member}" is out of range. It must be an integer. Received ${value}`,
         });
       }
     });
 
     test("non-number values throw TypeError [ERR_INVALID_ARG_TYPE]", () => {
-      for (const value of ["100", null, true, {}, { valueOf: () => 1 }]) {
+      for (const [value, received] of [
+        ["100", "type string ('100')"],
+        [null, "null"],
+        [true, "type boolean (true)"],
+        [{ valueOf: () => 1 }, "an instance of Object"],
+        [1n, "type bigint (1n)"],
+        [2n ** 64n - 1n, "type bigint (18446744073709551615n)"],
+      ]) {
         expect(thrown(value)).toEqual({
           constructor: TypeError,
           code: "ERR_INVALID_ARG_TYPE",
-          message: `${member} must be a number`,
+          message: `The "${member}" property must be of type number. Received ${received}`,
         });
       }
     });

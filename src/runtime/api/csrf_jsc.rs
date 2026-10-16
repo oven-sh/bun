@@ -91,7 +91,7 @@ pub(crate) fn generate<'a>(
         &csrf::GenerateOptions {
             secret: secret.unwrap_or_else(default_secret),
             session_id: session_id.unwrap_or_default(),
-            expires_in_ms: options.expires_in.unwrap_or(csrf::DEFAULT_EXPIRATION_MS),
+            expires_in_ms: options.expires_in,
             algorithm,
         },
         &mut token_buffer,
@@ -138,7 +138,7 @@ pub(crate) fn verify<'a>(
         token,
         secret: secret.unwrap_or_else(default_secret),
         session_id: session_id.unwrap_or_default(),
-        max_age_ms: options.max_age.unwrap_or(csrf::DEFAULT_EXPIRATION_MS),
+        max_age_ms: options.max_age,
         encoding: token_format(heap, options.encoding)?,
         algorithm: algorithm(heap, options.algorithm)?,
     }))

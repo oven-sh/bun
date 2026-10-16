@@ -488,6 +488,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) react_compiler_result: Option<bun_react_compiler::CompileResult>,
     /// Visiting a function that is handed to the React Compiler, which re-declares its locals as new symbols.
     pub(crate) react_compiler_may_replace_body: bool,
+    /// A read in that function prints the symbol of one of its locals (`revoke_require_alias`): the body stays.
+    pub(crate) react_compiler_must_keep_body: bool,
 
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
@@ -1867,7 +1869,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let import_record_index =
             self.imports_to_convert_from_require[alias.import as usize].import_record_id;
         // Each folded read prints the symbol of the local, which the React Compiler would declare again.
-        self.react_compiler_may_replace_body &= items.count() == 0;
+        self.react_compiler_must_keep_body |= items.count() > 0;
         for (name, item) in items.keys().iter().zip(items.values()) {
             self.symbols[item.ref_.inner_index() as usize].namespace_alias =
                 Some(bun_alloc::ast_box(G::NamespaceAlias {
@@ -10163,6 +10165,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_pending: None,
             react_compiler_result: None,
             react_compiler_may_replace_body: false,
+            react_compiler_must_keep_body: false,
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             import_records_for_current_part: BumpVec::new_in(arena),

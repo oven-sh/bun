@@ -1549,6 +1549,16 @@ describe("bundler", () => {
           if (props.on) Local = { version: "rebound" };
           return early + "/" + Local.version;
         }
+        function ReboundAfterReadInClosure(props) {
+          useEffect(() => {});
+          const read = () => {
+            let Local = require("react");
+            const early = Local.version;
+            if (props.on) Local = { version: "rebound" };
+            return early + "/" + Local.version;
+          };
+          return read();
+        }
         function InArray(props) {
           useEffect(() => {});
           const read = () => {
@@ -1589,6 +1599,7 @@ describe("bundler", () => {
           InBlock,
           Rebound,
           ReboundAfterRead,
+          ReboundAfterReadInClosure,
           InArray,
           CheckInClosure,
           DefaultParameter,
@@ -1619,10 +1630,14 @@ describe("bundler", () => {
         return code.slice(start, code.indexOf("\n  }\n", start)).includes("useEffect(_temp");
       };
       const names = [
-        ...["Direct", "AsValue", "InBlock", "Rebound", "ReboundAfterRead", "InArray", "CheckInClosure"],
-        ...["DefaultParameter", "ModuleAlias", "ModuleRebound", "NoRequire"],
+        ...["Direct", "AsValue", "InBlock", "Rebound", "ReboundAfterRead", "ReboundAfterReadInClosure"],
+        ...["InArray", "CheckInClosure", "DefaultParameter", "ModuleAlias", "ModuleRebound", "NoRequire"],
       ];
-      expect(names.filter(name => !isCompiled(name))).toEqual(["ReboundAfterRead", "DefaultParameter"]);
+      expect(names.filter(name => !isCompiled(name))).toEqual([
+        "ReboundAfterRead",
+        "ReboundAfterReadInClosure",
+        "DefaultParameter",
+      ]);
       expect(code).toContain("return props.on ? $version : typeof $version;");
     },
     run: {
@@ -1632,6 +1647,7 @@ describe("bundler", () => {
         "InBlock 19.0.0 off",
         "Rebound rebound/outer 19.0.0/outer",
         "ReboundAfterRead 19.0.0/rebound 19.0.0/19.0.0",
+        "ReboundAfterReadInClosure 19.0.0/rebound 19.0.0/19.0.0",
         "InArray 19.0.0 off",
         "CheckInClosure on off",
         "DefaultParameter 19.0.0 function",

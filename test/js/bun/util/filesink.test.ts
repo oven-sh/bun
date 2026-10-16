@@ -1472,3 +1472,123 @@ it.skipIf(!isPosix)("a write() that fails while another is pending rejects the p
     if (readFdOpen) fs.closeSync(readFd);
   }
 });
+
+// Every writer hands out the one FileSink class by `.constructor`. A sink that script built from it had no parent
+// on its pipe writer, so its first write() read through a null pointer.
+describe("the FileSink class that a writer hands out by .constructor", () => {
+  it("cannot be constructed from script", async () => {
+    using dir = tempDir("filesink-constructor", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+const { S3Client } = require("bun");
+const outcome = fn => {
+  try {
+    return "returned " + fn();
+  } catch (e) {
+    return e.name + " " + e.code + ": " + e.message;
+  }
+};
+// A deep clone that makes every object that is not plain anew with make().
+const cloneWith = make =>
+  function clone(x) {
+    if (typeof x !== "object" || x === null) return x;
+    if (Array.isArray(x)) return x.map(clone);
+    const copy = x.constructor === Object ? {} : make(x);
+    for (const key of Object.keys(x)) copy[key] = clone(x[key]);
+    return copy;
+  };
+const clone = cloneWith(x => new x.constructor());
+// fast-copy does this: when the constructor throws, the copy is an object that has only the prototype.
+const cloneLikeFastCopy = cloneWith(x => {
+  try {
+    return new x.constructor();
+  } catch {
+    return Object.create(Object.getPrototypeOf(x));
+  }
+});
+const options = () => ({ level: "info", tags: ["app"], out: writer });
+
+const file = Bun.file("out.txt");
+const writer = file.writer();
+const FileSink = writer.constructor;
+const child = Bun.spawn({ cmd: [process.execPath, "--version"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+await using server = Bun.serve({ port: 0, fetch: () => new Response() });
+const upload = new S3Client({ accessKeyId: "a", secretAccessKey: "b", bucket: "c", endpoint: server.url.href })
+  .file("key")
+  .writer();
+
+const result = {
+  everyWriterHasThisClass: [Bun.stdout.writer(), Bun.stderr.writer(), child.stdin].every(
+    sink => sink.constructor === FileSink,
+  ),
+  "new FileSink().write()": outcome(() => new FileSink().write("x")),
+  "FileSink().write()": outcome(() => FileSink().write("x")),
+  "Reflect.construct(FileSink, []).write()": outcome(() => Reflect.construct(FileSink, []).write("x")),
+  "Reflect.construct(FileSink, [], class {}).write()": outcome(() =>
+    Reflect.construct(FileSink, [], class {}).write("x"),
+  ),
+  "write() to a deep clone of a writer": outcome(() => clone(options()).out.write("x")),
+  "write() to a deep clone of a writer, made like fast-copy": outcome(() =>
+    cloneLikeFastCopy(options()).out.write("x"),
+  ),
+  "new NetworkSink()": outcome(() => new upload.constructor()),
+  "new ArrayBufferSink(), write(), end()": outcome(() => {
+    const sink = new Bun.ArrayBufferSink();
+    sink.write("x");
+    return new Uint8Array(sink.end()).join();
+  }),
+};
+// The writer that bun made is not affected.
+writer.write("written\\n");
+await writer.end();
+result.file = await file.text();
+await upload.end();
+await child.exited;
+console.log(JSON.stringify(result, null, 2));
+`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const illegal = "TypeError ERR_ILLEGAL_CONSTRUCTOR: Illegal constructor";
+    expect({ stdout: stdout.trim() && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: {
+        everyWriterHasThisClass: true,
+        "new FileSink().write()": illegal,
+        "FileSink().write()": illegal,
+        "Reflect.construct(FileSink, []).write()": illegal,
+        "Reflect.construct(FileSink, [], class {}).write()": illegal,
+        "write() to a deep clone of a writer": illegal,
+        "write() to a deep clone of a writer, made like fast-copy": "TypeError ERR_INVALID_THIS: Expected FileSink",
+        "new NetworkSink()": illegal,
+        "new ArrayBufferSink(), write(), end()": "returned 120",
+        file: "written\n",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("allocates no native sink when the constructor throws", async () => {
+    using dir = tempDir("filesink-constructor-count", {});
+    const writer = Bun.file(join(String(dir), "out.txt")).writer();
+    try {
+      const FileSink = writer.constructor as new () => unknown;
+      const baseline = fileSinkInternals.liveCount();
+      for (let i = 0; i < 1000; i++) {
+        try {
+          new FileSink();
+        } catch {}
+      }
+      expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline);
+    } finally {
+      await writer.end();
+    }
+  });
+});

@@ -32,6 +32,22 @@ impl Property {
     }
 }
 
+impl PropertyId {
+    /// A property name in a value (`transition-property`): a `<custom-ident>`, so no css-wide keyword.
+    pub(crate) fn parse_custom_ident(input: &mut css::Parser) -> css::Result<PropertyId> {
+        let location = input.current_source_location();
+        let name = input.expect_ident_cloned()?;
+        let id = property_id_mixin::from_string(name);
+        // No property has a reserved name, so only an unknown name needs the check.
+        if matches!(id, PropertyId::Custom(_))
+            && css::css_values::ident::is_reserved_custom_ident(name)
+        {
+            return Err(location.new_unexpected_token_error(css::Token::Ident(name)));
+        }
+        Ok(id)
+    }
+}
+
 /// Ordered single-bit prefix flags. The crate-root `VendorPrefix::FIELDS` is
 /// a `&'static [VendorPrefix]` with the same values in the same declaration
 /// order (webkit, moz, ms, o, none); kept duplicated here as a fixed-size

@@ -17,10 +17,6 @@
 
 #pragma once
 
-#ifndef UWS_HTTP_MAX_HEADERS_COUNT
-#define UWS_HTTP_MAX_HEADERS_COUNT 200
-#endif
-
 // todo: HttpParser is in need of a few clean-ups and refactorings
 
 /* The HTTP parser is an independent module subject to unit testing / fuzz testing */
@@ -34,6 +30,7 @@
 #include <span>
 #include <type_traits>
 #include <wtf/Vector.h>
+#include "libusockets.h"
 #include "MoveOnlyFunction.h"
 #include "ChunkedEncoding.h"
 
@@ -61,6 +58,9 @@ struct HttpResponseData;
 
     /* We require at least this much post padding */
     inline constexpr unsigned int MINIMUM_HTTP_POST_PADDING = 32;
+
+    /* Header slots inside an HttpRequest: the request line, the fields and the end sentinel. This is a size and not a limit: HttpParser gives a node:http head with more fields a table from the heap. */
+    inline constexpr size_t HTTP_INLINE_HEADER_SLOTS = 200;
 
     /* Monotonic millisecond clock used for the node:http headers/request
      * timeout tracking (HttpResponseData::lastMessageStartMs). Kept separate
@@ -193,7 +193,10 @@ struct HttpResponseData;
         struct Header
         {
             std::string_view key, value;
-        } headers[UWS_HTTP_MAX_HEADERS_COUNT];
+        };
+        Header inlineHeaders[HTTP_INLINE_HEADER_SLOTS];
+        /* The table that every reader walks: slot 0 is the request line, the fields follow, and a slot with an empty key ends them. It is inlineHeaders, or the table that HttpParser::growHeaderTable made. */
+        Header *headers = inlineHeaders;
         bool ancientHttp;
         bool didYield;
         /* Written right before the request handler runs; see getHasTransferEncoding(). */
@@ -203,6 +206,11 @@ struct HttpResponseData;
         std::pair<int, std::string_view *> currentParameters;
 
     public:
+        HttpRequest() = default;
+        /* `headers` points into the object. */
+        HttpRequest(const HttpRequest &) = delete;
+        HttpRequest &operator=(const HttpRequest &) = delete;
+
         /* Any data pipelined after the HTTP headers (before response).
          * Used for Node.js compatibility: 'connect' and 'upgrade' events
          * pass this as the 'head' Buffer parameter.
@@ -591,30 +599,31 @@ struct HttpResponseData;
             return remainingStreamingBytes != 0;
         }
 
-        /* Header fields one request can carry: HttpRequest::headers also holds the request line in slot 0 and a sentinel after the last field. */
-        static constexpr unsigned MAX_HEADER_FIELDS = UWS_HTTP_MAX_HEADERS_COUNT - 2;
-        static_assert(MAX_HEADER_FIELDS + 2 <= std::extent_v<decltype(HttpRequest::headers)>);
+        /* The field limit of a server that sets none: every Bun.serve server, and a node:http server whose maxHeadersCount is not a number. */
+        static constexpr uint32_t DEFAULT_MAX_HEADER_FIELDS = 198;
+        static_assert(DEFAULT_MAX_HEADER_FIELDS + 2 <= HTTP_INLINE_HEADER_SLOTS);
 
-        /* Maximum number of trailer fields surfaced to JS (the section size cap
-         * already bounds memory; this matches the regular-header count cap). */
-        static constexpr unsigned MAX_TRAILER_FIELDS = UWS_HTTP_MAX_HEADERS_COUNT - 1;
-
-        /* Parse a complete trailer section (the bytes between the 0-size chunk and the
-         * final CRLF, as captured into nodeHttpRequestTrailers) into key/value pairs,
-         * reusing the same consumeFieldName / tryConsumeFieldValue / OWS-trim primitives
-         * that getHeaders uses for the main request header block. Wire casing of
-         * field names is preserved (req.rawTrailers). Returns the number of fields
-         * written to out[]. The captured section is raw wire bytes (the chunk
+        /* Walks the field lines of a complete trailer section (the bytes between the
+         * 0-size chunk and the final CRLF, as captured into nodeHttpRequestTrailers)
+         * with the same consumeFieldName / tryConsumeFieldValue / OWS-trim primitives
+         * that getHeaders uses for the main request header block. For each line it
+         * calls onName(name) when the name is complete, before it looks at the
+         * value, and then onValue(name, value, charged). Either one stops the walk
+         * when it returns false. Wire casing of field names is preserved
+         * (req.rawTrailers). `charged` is what the value costs against
+         * maxHeaderSize: llhttp counts it without its leading whitespace and with
+         * its trailing whitespace. The captured section is raw wire bytes (the chunk
          * iterator only size-caps it), so this is also the only gate on NUL /
-         * bare-CR/LF in a trailer line: any malformed line makes the call return 0
-         * and no trailer is surfaced, where Node's llhttp rejects the message.
-         * Consumes the section: it is post-padded in place and the returned
-         * string_views point into it, so it must outlive their use.
+         * bare-CR/LF in a trailer line. Returns true when it reached the end of the
+         * section: no line was malformed and no callback stopped it.
+         * Consumes the section: it is post-padded in place and the string_views
+         * point into it, so it must outlive their use.
          * KEEP IN LOCKSTEP with getHeaders' field-line loop below (same
          * consumeFieldName → tryConsumeFieldValue → CRLF/OWS sequence). */
-        static unsigned parseTrailerFields(std::string &section, std::pair<std::string_view, std::string_view> *out, bool useInsecureHTTPParser = false, unsigned outCapacity = MAX_TRAILER_FIELDS) {
+        template <typename OnName, typename OnValue>
+        static bool parseTrailerFields(std::string &section, bool useInsecureHTTPParser, OnName &&onName, OnValue &&onValue) {
             if (section.size() < 4) {
-                return 0;
+                return false;
             }
             /* tryConsumeFieldValue stops at the 8-byte word CONTAINING the value's
              * '\r', not at it, so its last load can reach 3 bytes past the final
@@ -623,17 +632,19 @@ struct HttpResponseData;
             section.append(MINIMUM_HTTP_POST_PADDING, '\0');
             char *p = section.data();
             char *end = p + length;
-            unsigned count = 0;
-            while (count < outCapacity) {
+            while (true) {
                 /* Empty line (the section's terminating CRLF) - done. */
                 if (p[0] == '\r') {
-                    return (p + 1 < end && p[1] == '\n') ? count : 0;
+                    return p + 1 < end && p[1] == '\n';
                 }
                 char *keyStart = p;
                 p = consumeFieldName(p);
                 std::string_view key(keyStart, (size_t)(p - keyStart));
                 if (p[0] != ':' || key.empty()) {
-                    return 0;
+                    return false;
+                }
+                if (!onName(key)) {
+                    return false;
                 }
                 p++;
                 char *valueStart = p;
@@ -646,20 +657,21 @@ struct HttpResponseData;
                     break;
                 }
                 if (p + 1 >= end || p[0] != '\r' || p[1] != '\n') {
-                    return 0;
+                    return false;
+                }
+                while (valueStart < p && isHTTPHeaderValueWhitespace((unsigned char) *valueStart)) {
+                    valueStart++;
                 }
                 std::string_view value(valueStart, (size_t)(p - valueStart));
+                const size_t charged = value.length();
                 p += 2;
                 while (value.length() && isHTTPHeaderValueWhitespace(value.back())) {
                     value.remove_suffix(1);
                 }
-                while (value.length() && isHTTPHeaderValueWhitespace(value.front())) {
-                    value.remove_prefix(1);
+                if (!onValue(key, value, charged)) {
+                    return false;
                 }
-                out[count] = { key, value };
-                count++;
             }
-            return count;
         }
 
         /* node:http compat: validate a captured, complete trailer section before the
@@ -671,37 +683,47 @@ struct HttpResponseData;
          * llhttp does (it runs trailers through the same header state machine, so
          * the already-set F_CHUNKED collides), unless insecureHTTPParser is set
          * (llhttp's LENIENT_CHUNKED_LENGTH / LENIENT_TRANSFER_ENCODING, which "relaxed" does not set). An empty
-         * section (bare CRLF, no trailers) is valid. Node counts trailer fields from
-         * zero against server.maxHeadersCount (maxHeadersCount here, 0 = not set).
+         * section (bare CRLF, no trailers) is valid. Node counts the trailer fields
+         * and the bytes of their names and values from zero against the limits of
+         * the head: fieldLimit and maxHeaderSize (0 = no size limit here).
          *
-         * Known bound: parseTrailerFields stops at MAX_TRAILER_FIELDS, so a section with
-         * more valid fields than that followed by a malformed line is accepted where node
-         * still errors; reaching it requires a deliberately padded (but size-capped)
-         * section, and rejecting it would need a second scanning mode. */
-        static HttpParserError validateNodeTrailerSection(const std::string *section, bool useInsecureHTTPParser, bool useLenientTransferEncoding, uint32_t maxHeadersCount) {
+         * The first violation in the order of the bytes decides, as in llhttp: a
+         * field over one of the two limits fails at its name, before a framing
+         * field is seen as one, and that before its value is read. */
+        static HttpParserError validateNodeTrailerSection(const std::string *section, bool useInsecureHTTPParser, bool useLenientTransferEncoding, uint32_t fieldLimit, uint64_t maxHeaderSize) {
             if (!section || section->size() <= 2) {
                 return HTTP_PARSER_ERROR_NONE;
             }
             /* parseTrailerFields consumes (post-pads) its input, so validate a copy. */
             std::string copy(*section);
-            std::pair<std::string_view, std::string_view> scratch[MAX_TRAILER_FIELDS];
-            unsigned count = parseTrailerFields(copy, scratch, useInsecureHTTPParser);
-            if (count == 0) {
-                return HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN;
-            }
-            if (maxHeadersCount && count > maxHeadersCount) {
-                return HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE;
-            }
-            if (!useLenientTransferEncoding) {
-                for (unsigned i = 0; i < count; i++) {
-                    std::string_view name = scratch[i].first;
+            uint64_t count = 0;
+            uint64_t charged = 0;
+            HttpParserError violation = HTTP_PARSER_ERROR_NONE;
+            const bool reachedEnd = parseTrailerFields(copy, useInsecureHTTPParser, [&](std::string_view name) {
+                count++;
+                charged += name.length();
+                if (count > fieldLimit || (maxHeaderSize && charged >= maxHeaderSize)) {
+                    violation = HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE;
+                } else if (!useLenientTransferEncoding) {
                     if (name.length() == 14 && !strncasecmp(name.data(), "content-length", 14)) {
-                        return HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH;
-                    }
-                    if (name.length() == 17 && !strncasecmp(name.data(), "transfer-encoding", 17)) {
-                        return HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING;
+                        violation = HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH;
+                    } else if (name.length() == 17 && !strncasecmp(name.data(), "transfer-encoding", 17)) {
+                        violation = HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING;
                     }
                 }
+                return violation == HTTP_PARSER_ERROR_NONE;
+            }, [&](std::string_view, std::string_view, size_t valueCharge) {
+                charged += valueCharge;
+                if (maxHeaderSize && charged >= maxHeaderSize) {
+                    violation = HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE;
+                }
+                return violation == HTTP_PARSER_ERROR_NONE;
+            });
+            if (violation != HTTP_PARSER_ERROR_NONE) {
+                return violation;
+            }
+            if (!reachedEnd || count == 0) {
+                return HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN;
             }
             return HTTP_PARSER_ERROR_NONE;
         }
@@ -723,11 +745,15 @@ struct HttpResponseData;
         const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
         /* maxHeaderSize bounds what llhttp counts (URL + field names/values), not framing
          * (method, " HTTP/1.1\r\n", ": ", "\r\n"). Raw bounds get that framing as slack so
-         * we don't reject requests Node accepts. Finite: ≤UWS_HTTP_MAX_HEADERS_COUNT*4 + 64. */
-        static constexpr size_t MAX_HEADER_FRAMING_SLACK = UWS_HTTP_MAX_HEADERS_COUNT * 4 + 64;
+         * we don't reject requests Node accepts: 4 bytes for each field the head can have,
+         * and a field costs at least 1 of the maxHeaderSize bytes. Never less than the
+         * slack of 200 fields: whitespace in front of a value does not count either, and
+         * a low field limit does not make it rare. */
+        static constexpr uint64_t MIN_HEADER_FRAMING_SLACK = 200 * 4 + 64;
         /* The raw bound for a non-zero maxHeaderSize. Saturates: node:http passes UINT64_MAX for "no limit". */
-        static constexpr uint64_t maxRawHeaderSize(uint64_t maxHeaderSize) {
-            return maxHeaderSize > UINT64_MAX - MAX_HEADER_FRAMING_SLACK ? UINT64_MAX : maxHeaderSize + MAX_HEADER_FRAMING_SLACK;
+        static constexpr uint64_t maxRawHeaderSize(uint64_t maxHeaderSize, uint32_t fieldLimit) {
+            const uint64_t slack = std::max<uint64_t>(MIN_HEADER_FRAMING_SLACK, std::min<uint64_t>(fieldLimit, maxHeaderSize) * 4 + 64);
+            return maxHeaderSize > UINT64_MAX - slack ? UINT64_MAX : maxHeaderSize + slack;
         }
 
         /* Maximum chunk-extension bytes per chunk, matching Node/llhttp's
@@ -1025,7 +1051,7 @@ struct HttpResponseData;
             }
         }
 
-        /* The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. maxHeaderFields must not exceed MAX_HEADER_FIELDS: it bounds the writes to headers. */
+        /* The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. maxHeaderFields bounds the writes to headers: the table has two more slots than that. */
         static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, bool &isAncientHTTP, bool &isConnectRequestLine, bool useStrictMethodValidation, bool useInsecureHTTPParser, uint64_t maxHeaderSize, unsigned int maxHeaderFields) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
 
@@ -1203,15 +1229,95 @@ struct HttpResponseData;
             return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
         }
 
+        /* The part of a node:http frame that is not the request: the field limit of the read, and the header table of a
+         * head with more fields than the request has slots. */
+        struct NodeHttpHeaderTable {
+            /* The most fields of a head or of a trailer section. */
+            uint32_t fieldLimit = DEFAULT_MAX_HEADER_FIELDS;
+            HttpRequest::Header *spill = nullptr;
+            size_t spillSlots = 0;
+
+            NodeHttpHeaderTable() = default;
+            NodeHttpHeaderTable(const NodeHttpHeaderTable &) = delete;
+            NodeHttpHeaderTable &operator=(const NodeHttpHeaderTable &) = delete;
+            ~NodeHttpHeaderTable() {
+                if (spill) [[unlikely]] {
+                    us_free(spill);
+                }
+            }
+        };
+        /* Bun.serve has one limit and no spill. */
+        struct BunServeHeaderTable {
+            static constexpr uint32_t fieldLimit = DEFAULT_MAX_HEADER_FIELDS;
+        };
+
+        /* What consumePostPadded keeps on its stack for one read: the request that the handlers get, and the state of
+         * its header table. The frame owns the spill, so that table lives as long as the dispatch, also when the
+         * handler destroys this parser. */
+        template <bool IsNodeHttp>
+        struct RequestFrame {
+            HttpRequest req;
+            NO_UNIQUE_ADDRESS std::conditional_t<IsNodeHttp, NodeHttpHeaderTable, BunServeHeaderTable> table;
+        };
+
+        /* The slots of the table that frame.req.headers points at. */
+        template <bool IsNodeHttp>
+        static size_t headerSlots(const RequestFrame<IsNodeHttp> &frame) {
+            if constexpr (IsNodeHttp) {
+                if (frame.table.spill) {
+                    ASSERT(frame.req.headers == frame.table.spill);
+                    return frame.table.spillSlots;
+                }
+            }
+            ASSERT(frame.req.headers == frame.req.inlineHeaders);
+            return HTTP_INLINE_HEADER_SLOTS;
+        }
+
+        /* The fields that one getHeaders call may store in that table: the limit at most, and the request line and
+         * the sentinel keep their two slots. */
+        template <bool IsNodeHttp>
+        static unsigned int storableFields(const RequestFrame<IsNodeHttp> &frame) {
+            return (unsigned int) std::min<size_t>(frame.table.fieldLimit, headerSlots(frame) - 2);
+        }
+
+        /* Cold. getHeaders answered 431 with fewer slots than the limit allows fields: gives the request a table for the
+         * field lines that arrived, so that the caller can parse the head again. The size comes from the received bytes,
+         * never from the limit. Returns false when those lines fit the table as it is (the 431 was for the size of the
+         * head), and when there is no memory: the 431 then stands. */
+        COLD NEVER_INLINE static bool growHeaderTable(RequestFrame<true> &frame, const char *data, const char *end, uint64_t maxHeaderSize) {
+            /* A field costs at least one byte of maxHeaderSize, so a head has fewer fields than that. */
+            const uint64_t mostFields = maxHeaderSize ? std::min<uint64_t>(frame.table.fieldLimit, maxHeaderSize) : frame.table.fieldLimit;
+            /* The field lines that arrived, complete or not: one starts behind each LF, until the blank line. */
+            uint64_t fields = 0;
+            for (const char *p = data; fields <= mostFields; fields++) {
+                p = (const char *) memchr(p, '\n', (size_t) (end - p));
+                if (!p || ++p == end || (end - p >= 2 && p[0] == '\r' && p[1] == '\n')) {
+                    break;
+                }
+            }
+            const size_t slots = (size_t) std::min(mostFields, fields) + 2;
+            if (slots <= headerSlots(frame)) {
+                return false;
+            }
+            auto *table = (HttpRequest::Header *) us_malloc(slots * sizeof(HttpRequest::Header));
+            if (!table) {
+                return false;
+            }
+            us_free(frame.table.spill);
+            frame.table.spill = table;
+            frame.table.spillSlots = slots;
+            frame.req.headers = table;
+            return true;
+        }
+
     /* This is the only caller of getHeaders and is thus the deepest part of the parser. */
     template <bool ConsumeMinimally, bool IsNodeHttp>
-    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, uint32_t maxHeadersCount, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
+    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, uint64_t maxBufferedHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, RequestFrame<IsNodeHttp> *frame, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
+        HttpRequest *req = &frame->req;
 
         /* How much data we CONSUMED (to throw away) */
         unsigned int consumedTotal = 0;
 
-        /* maxHeadersCount (node:http server.maxHeadersCount, 0 = not set) can only lower the field limit. */
-        const unsigned int maxHeaderFields = maxHeadersCount && maxHeadersCount < MAX_HEADER_FIELDS ? maxHeadersCount : MAX_HEADER_FIELDS;
 
         /* Fence two bytes past end of our buffer (buffer has post padded margins).
          * This is to always catch scan for \r but not for \r\n. */
@@ -1258,7 +1364,18 @@ struct HttpResponseData;
                 return HttpParserResult::success(consumedTotal + length, user);
             }
             bool isConnectRequestLine = false;
-            auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequestLine, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize, maxHeaderFields);
+            HttpParserResult result;
+            while (true) {
+                result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequestLine, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize, storableFields(*frame));
+                if constexpr (IsNodeHttp) {
+                    /* A 431 below the limit can be the end of the table and not of the limit: a head with that many field lines is parsed again into a table that holds them. */
+                    if (result.parserError == HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE && storableFields(*frame) < frame->table.fieldLimit
+                        && growHeaderTable(*frame, data, data + length, maxHeaderSize)) [[unlikely]] {
+                        continue;
+                    }
+                }
+                break;
+            }
             if(result.isError()) {
                 return result;
             }
@@ -1272,7 +1389,6 @@ struct HttpResponseData;
             consumedTotal += consumed;
 
             /* Even if we could parse it, check for length here as well */
-            const uint64_t maxBufferedHeaderSize = maxHeaderSize ? maxRawHeaderSize(maxHeaderSize) : MAX_FALLBACK_SIZE;
             if (consumed > maxBufferedHeaderSize) {
                 return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
             }
@@ -1515,7 +1631,7 @@ struct HttpResponseData;
                         /* The fin dispatch completes the message: a malformed or
                          * framing-field trailer must fail it first (node: HPE_*). */
                         if (IsNodeHttp && chunk.length() == 0) {
-                            if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, useLenientTransferEncoding, maxHeadersCount)) [[unlikely]] {
+                            if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, useLenientTransferEncoding, frame->table.fieldLimit, maxHeaderSize)) [[unlikely]] {
                                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
                             }
                         }
@@ -1590,12 +1706,19 @@ public:
     template <bool IsNodeHttp>
     HttpParserResult consumePostPadded(uint64_t maxHeaderSize, uint32_t maxHeadersCount, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         char *const readStart = data;
-        /* The fallback buffer may not exceed the configured per-request header
-         * limit (per-server maxHeaderSize can raise it above the default). */
-        const size_t maxFallbackSize = maxHeaderSize ? (size_t) maxRawHeaderSize(maxHeaderSize) : MAX_FALLBACK_SIZE;
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */
-        HttpRequest req;
+        RequestFrame<IsNodeHttp> frame;
+        if constexpr (IsNodeHttp) {
+            /* Only node:http has an option for the limit, and 0 is that option not set. */
+            if (maxHeadersCount) {
+                frame.table.fieldLimit = maxHeadersCount;
+            }
+        }
+        const uint32_t fieldLimit = frame.table.fieldLimit;
+        /* The fallback buffer may not exceed the configured per-request header
+         * limit (per-server maxHeaderSize can raise it above the default). */
+        const size_t maxFallbackSize = maxHeaderSize ? (size_t) maxRawHeaderSize(maxHeaderSize, fieldLimit) : MAX_FALLBACK_SIZE;
         if (IsNodeHttp && nodeHttpBodyUntilEof) {
             void *returnedUser = dataHandler(user, std::string_view(data, length), false);
             return HttpParserResult::success(returnedUser != user ? HttpParserResult::WHOLE_READ : 0, returnedUser);
@@ -1613,7 +1736,7 @@ public:
                     /* The fin dispatch completes the message: a malformed or
                      * framing-field trailer must fail it first (node: HPE_*). */
                     if (IsNodeHttp && chunk.length() == 0) {
-                        if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, useLenientTransferEncoding, maxHeadersCount)) [[unlikely]] {
+                        if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, useLenientTransferEncoding, fieldLimit, maxHeaderSize)) [[unlikely]] {
                             return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
                         }
                     }
@@ -1678,11 +1801,11 @@ public:
 
             if constexpr (IsNodeHttp) {
                 /* The part of this read that is not in the buffer. The dispatch extends it to the whole rest of the read. */
-                req.head = std::span<const char>(data + maxCopyDistance, length - maxCopyDistance);
+                frame.req.head = std::span<const char>(data + maxCopyDistance, length - maxCopyDistance);
             }
 
             // break here on break
-            HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, maxHeadersCount, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, reassembled.data(), (unsigned int) reassembled.length(), user, &req, requestHandler, dataHandler);
+            HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, maxFallbackSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, reassembled.data(), (unsigned int) reassembled.length(), user, &frame, requestHandler, dataHandler);
             /* Return data will be different than user if we are upgraded to WebSocket or have an error.
              * The parser can be gone by then: no member is touched before this return. */
             if (consumed.returnedData != user) {
@@ -1729,7 +1852,7 @@ public:
                             /* The fin dispatch completes the message: a malformed or
                              * framing-field trailer must fail it first (node: HPE_*). */
                             if (IsNodeHttp && chunk.length() == 0) {
-                                if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, useLenientTransferEncoding, maxHeadersCount)) [[unlikely]] {
+                                if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, useLenientTransferEncoding, fieldLimit, maxHeaderSize)) [[unlikely]] {
                                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
                                 }
                             }
@@ -1784,7 +1907,7 @@ public:
             }
         }
 
-        HttpParserResult consumed = fenceAndConsumePostPadded<false, IsNodeHttp>(maxHeaderSize, maxHeadersCount, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, data, length, user, &req, requestHandler, dataHandler);
+        HttpParserResult consumed = fenceAndConsumePostPadded<false, IsNodeHttp>(maxHeaderSize, maxFallbackSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, data, length, user, &frame, requestHandler, dataHandler);
         /* Return data will be different than user if we are upgraded to WebSocket or have an error */
         if (consumed.returnedData != user) {
             /* A body or a fallback head ahead of this request moved data forward. */

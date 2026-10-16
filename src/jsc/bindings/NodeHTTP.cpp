@@ -887,7 +887,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
     Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), static_cast<uint8_t>(lenientBits & 0x3), httpAllowHalfOpen.toBoolean(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
-    Server__setMaxHTTPHeaderSize(globalObject, JSValue::encode(serverValue), maxHTTPHeaderSizeFromNumber(maxHeaderSizeNumber));
+    uint64_t maxHTTPHeaderSize = maxHTTPHeaderSizeFromNumber(maxHeaderSizeNumber);
+    // Node's parser takes --max-http-header-size when the option selects the default.
+    if (!maxHTTPHeaderSize) maxHTTPHeaderSize = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
+    Server__setMaxHTTPHeaderSize(globalObject, JSValue::encode(serverValue), maxHTTPHeaderSize);
     RETURN_IF_EXCEPTION(scope, {});
 
     Server__setOnClientError(globalObject, JSValue::encode(serverValue), JSValue::encode(callback));
@@ -925,7 +928,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetAppFlags, (JSGlobalObject * globalObject, Call
     return JSValue::encode(jsUndefined());
 }
 
-// Also called on a listening server. 0 means the option is not set.
+// Also called on a listening server. 0 means the option is not a number, and UINT32_MAX means no limit.
 JSC_DEFINE_HOST_FUNCTION(jsHTTPSetMaxHeadersCount, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

@@ -273,30 +273,34 @@ extern "C" JSC::EncodedJSValue Bun__NodeHTTP__parseRequestTrailers(JSC::JSGlobal
 
     /* Parse with the same field-line primitives the request-header parser uses
      * (uWS::HttpParser::consumeFieldName / tryConsumeFieldValue / OWS-trim). */
-    std::pair<std::string_view, std::string_view> fields[uWS::HttpParser::MAX_TRAILER_FIELDS];
-    unsigned count = uWS::HttpParser::parseTrailerFields(section, fields, useInsecureHTTPParser);
-    if (count == 0) {
+    WTF::Vector<std::pair<std::string_view, std::string_view>, 16> fields;
+    auto everyName = [](std::string_view) { return true; };
+    auto collect = [&](std::string_view name, std::string_view value, size_t) {
+        fields.append({ name, value });
+        return true;
+    };
+    if (!uWS::HttpParser::parseTrailerFields(section, useInsecureHTTPParser, everyName, collect) || fields.isEmpty()) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    JSC::JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, count * 2);
+    JSC::JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(fields.size() * 2));
     RETURN_IF_EXCEPTION(scope, {});
 
     unsigned index = 0;
-    for (unsigned i = 0; i < count; i++) {
+    for (auto& [name, value] : fields) {
         // HTTP/1.1 obs-text bytes (0x80-0xFF) are valid header content (RFC 9110 §5.5); preserve
         // them 1:1 as Latin-1 like Node's req.rawTrailers (OneByteString) and like NodeHTTP.cpp's
         // rawHeaders construction. UTF-8 decoding would corrupt them to U+FFFD.
         std::span<Latin1Character> nameData;
-        auto nameString = WTF::String::createUninitialized(fields[i].first.size(), nameData);
-        if (!fields[i].first.empty())
-            memcpy(nameData.data(), fields[i].first.data(), fields[i].first.size());
+        auto nameString = WTF::String::createUninitialized(name.size(), nameData);
+        if (!name.empty())
+            memcpy(nameData.data(), name.data(), name.size());
         array->putDirectIndex(globalObject, index++, JSC::jsString(vm, nameString));
         RETURN_IF_EXCEPTION(scope, {});
         std::span<Latin1Character> valueData;
-        auto valueString = WTF::String::createUninitialized(fields[i].second.size(), valueData);
-        if (!fields[i].second.empty())
-            memcpy(valueData.data(), fields[i].second.data(), fields[i].second.size());
+        auto valueString = WTF::String::createUninitialized(value.size(), valueData);
+        if (!value.empty())
+            memcpy(valueData.data(), value.data(), value.size());
         array->putDirectIndex(globalObject, index++, JSC::jsString(vm, valueString));
         RETURN_IF_EXCEPTION(scope, {});
     }

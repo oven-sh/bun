@@ -1227,11 +1227,20 @@ function defineHttpAllowHalfOpen(server: Server) {
   });
 }
 
-// Node's int32 `maxHeadersCount << 1`, as a field count; 0 is no limit: https://github.com/nodejs/node/blob/v26.5.1/lib/_http_server.js#L795-L797
+// The native parser's "no limit on the number of header fields".
+const kNoHeaderCountLimit = 0xffffffff;
+
+// Node's `parser.maxHeaderPairs`, as a field count: the int32 `maxHeadersCount << 1` when the option is a number, and no
+// limit when that is not positive. https://github.com/nodejs/node/blob/v26.5.1/lib/_http_server.js#L795-L797
+//
+// A value that is not a number sends 0, and the native server keeps its own limit of 198 fields. Node's parser keeps
+// MAX_HEADER_PAIRS there, which is 1000 fields. Bun does not follow yet: fetch() sends 250 request headers and drops the
+// others in name order (MAX_USER_HEADERS in src/http/lib.rs), so a handler that forwards a larger head loses headers
+// with no error. https://github.com/oven-sh/bun/pull/36433
 function nativeMaxHeadersCount(maxHeadersCount) {
   if (typeof maxHeadersCount !== "number") return 0;
   const maxHeaderPairs = maxHeadersCount << 1;
-  return maxHeaderPairs > 0 ? maxHeaderPairs >>> 1 : 0;
+  return maxHeaderPairs > 0 ? maxHeaderPairs >>> 1 : kNoHeaderCountLimit;
 }
 
 function maxHeadersCountGet(this: Server) {

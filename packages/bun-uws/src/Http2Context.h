@@ -88,7 +88,7 @@ static constexpr uint32_t LOCAL_INITIAL_WINDOW_SIZE = 64 * 1024;
 static constexpr uint32_t LOCAL_STREAM_WINDOW_SIZE = 1u << 20;
 static constexpr uint32_t LOCAL_CONNECTION_WINDOW_SIZE = 1u << 24;
 static constexpr uint32_t LOCAL_MAX_CONCURRENT_STREAMS = 256;
-/* Same cap as the HTTP/1 parser (UWS_HTTP_MAX_HEADERS_COUNT). */
+/* The entries of one header block, pseudo-headers included. The HTTP/1 limit of Bun.serve is HttpParser::DEFAULT_MAX_HEADER_FIELDS. */
 static constexpr size_t MAX_HEADER_FIELDS = 200;
 static constexpr unsigned MAX_SETTINGS_PER_FRAME = 32;
 /* A header block may span this many CONTINUATION frames (the byte cap alone

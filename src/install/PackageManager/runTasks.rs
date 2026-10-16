@@ -1180,7 +1180,11 @@ fn run_tasks_erased(
         };
         manager.decrement_pending_tasks();
 
-        if !task.log.msgs.is_empty() {
+        // What is wrong with a manifest is reported by the dependency that needs it, if there is one.
+        let holds_log = task.tag == Task::Tag::PackageManifest
+            && task.status == Task::Status::Fail
+            && !cb.has_on_package_manifest_error;
+        if !task.log.msgs.is_empty() && !holds_log {
             // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
             // not `&mut Writer` (the underlying `Writer` is the FFI shape).
             // Propagate the write error (WriteFailed) out of `run_tasks`.
@@ -1201,6 +1205,11 @@ fn run_tasks_erased(
                     task: &raw mut *task.request_package_manifest_mut().network,
                 };
                 if task.status == Task::Status::Fail {
+                    let log_mark = manager.log_mut().msgs.len();
+                    if holds_log {
+                        task.log.append_to_with_recycled(manager.log_mut(), false);
+                        task.log.reset();
+                    }
                     let req = task.request_package_manifest();
                     let name = req.name.slice();
                     let err = task.err.unwrap_or(crate::Error::Failed);
@@ -1215,7 +1224,6 @@ fn run_tasks_erased(
                         let _ = (manager.manifest_failures)
                             .insert(task.id, ManifestFailure::already_reported());
                     } else {
-                        let log_mark = manager.log_mut().msgs.len();
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,

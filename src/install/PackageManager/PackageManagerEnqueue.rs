@@ -1268,8 +1268,11 @@ fn request_remote_package_ahead(
 /// Looks ahead from what a `file:` or `workspace:` folder of the project depends on. Resolving the
 /// folder needs no download, but it has to wait for its turn like any other dependency.
 fn look_ahead_from_project_folder(this: &mut PackageManager, id: DependencyID, asked: Asked<'_>) {
-    // What the `file:` folder of another package depends on is not resolved.
-    if !this.lockfile.is_workspace_dependency(id) {
+    // What the `file:` folder of another package depends on is not resolved. A dependency that
+    // bun.lock has resolved is done when its turn comes, and its folder is not read then either.
+    if !this.lockfile.is_workspace_dependency(id)
+        || this.lockfile.buffers.resolutions[id as usize] != invalid_package_id
+    {
         return;
     }
     let path = match asked.version.tag {
@@ -2381,7 +2384,7 @@ fn report_manifest_failure(
     let mut msgs: Vec<bun_ast::Msg> = failure.msgs.iter().map(bun_ast::Msg::clone).collect();
 
     if after != Report::Held {
-        if after != before {
+        if after != before && !(before == Report::Warned && this.raise_copies_to_errors(&msgs)) {
             this.log_copies(&msgs, kind);
         }
     } else if let Some(held) = &mut this.held_messages {
@@ -4132,6 +4135,25 @@ impl PackageManager {
             }
         }
         msgs
+    }
+
+    /// Turns the copies of `msgs` that `log_copies` logged as warnings into errors, so that the
+    /// failure is printed once. Returns false if the log no longer has them.
+    #[cold]
+    fn raise_copies_to_errors(&mut self, msgs: &[bun_ast::Msg]) -> bool {
+        let log = self.log_mut();
+        let mut raised = false;
+        for logged in &mut log.msgs {
+            if logged.kind == bun_ast::Kind::Warn
+                && msgs.iter().any(|msg| msg.data.text == logged.data.text)
+            {
+                logged.kind = bun_ast::Kind::Err;
+                log.warnings -= 1;
+                log.errors += 1;
+                raised = true;
+            }
+        }
+        raised
     }
 
     /// Logs copies of `msgs`, all as errors or all as warnings.

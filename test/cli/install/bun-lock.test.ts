@@ -4048,7 +4048,8 @@ type OrderedShape = {
 };
 const zVersions = { "1.0.0": {}, "1.0.5": {}, "1.1.0": {}, "2.0.0": {} };
 
-async function registryWithHolds(manifests: OrderedManifests) {
+// The manifests of the packages in `broken` are not JSON.
+async function registryWithHolds(manifests: OrderedManifests, broken: string[] = []) {
   const tarballs = new Map<string, Uint8Array>();
   for (const [name, versions] of Object.entries(manifests)) {
     for (const [version, extra] of Object.entries(versions)) {
@@ -4073,6 +4074,7 @@ async function registryWithHolds(manifests: OrderedManifests) {
       if (tarball) return new Response(tarball);
       const entry = manifests[name];
       if (!entry) return new Response("not found", { status: 404 });
+      if (broken.includes(name)) return new Response('{ "name": ');
       const versions: Record<string, unknown> = {};
       for (const [version, extra] of Object.entries(entry)) {
         versions[version] = { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` }, ...extra };
@@ -4626,6 +4628,31 @@ it("a tarball dependency is installed when the one before it cannot be downloade
   expect(instancesOf(lock, "a")).toEqual({});
   expect(instancesOf(lock, "c")).toEqual({ "c": `c@${server.url.origin}/c-1.0.0.tgz` });
   expect(instancesOf(lock, "z")).toEqual({ "z": "z@1.0.5" });
+});
+
+// While `a` is held, bun requests ahead what c's `x@^1.0.0` will most likely need: x@1.1.0 and so `junk`.
+// In the end c shares b's x@1.0.0, which does not depend on `junk`.
+it("a broken manifest that no dependency needs in the end does not fail the install", async () => {
+  const ordered = await registryWithHolds(
+    {
+      a: { "1.0.0": {} },
+      b: { "1.0.0": { dependencies: { x: "1.0.0" } } },
+      c: { "1.0.0": { dependencies: { x: "^1.0.0" } } },
+      x: { "1.0.0": {}, "1.1.0": { dependencies: { junk: "^1.0.0" } } },
+      junk: { "1.0.0": {} },
+    },
+    ["junk"],
+  );
+  using server = ordered.server;
+  ordered.hold([
+    { manifest: "a", until: "/junk" },
+    { manifest: "b", until: "/x" },
+  ]);
+  const lock = await freshInstallLock(server, {
+    "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0", c: "1.0.0" } },
+  });
+  expect(instancesOf(lock, "x")).toEqual({ "x": "x@1.0.0" });
+  expect(instancesOf(lock, "junk")).toEqual({});
 });
 
 // Dependencies are resolved in a fixed order, but none of them waits for its turn to start its requests.

@@ -7932,12 +7932,7 @@ describe("css tests", () => {
   });
 
   describe("supports", () => {
-    // The raw-condition scan (`expect_no_error_token`) used to stop after the
-    // first function or bracket block, so anything following one in a
-    // condition was left unconsumed and failed the stylesheet with
-    // "Unexpected token". Each `SupportsCondition` shape that stores a raw
-    // slice is covered: a parenthesized condition, `selector()`, and the
-    // declaration form used by `@import ... supports()`.
+    // Tokens after a nested block, in every raw `SupportsCondition` shape.
     minify_test(
       "@supports (transform:translate(1px) rotate(1deg)){a{color:red}}",
       "@supports (transform:translate(1px) rotate(1deg)){a{color:red}}",
@@ -7982,9 +7977,7 @@ describe("css tests", () => {
       '@import "x.css" supports(selector(a:has(b) c));',
     );
 
-    // A raw condition is printed as written up to its closing parenthesis, so
-    // whitespace and comments after a nested block are kept, as they already
-    // are after any other token.
+    // A raw condition is printed as written, up to its closing parenthesis.
     minify_test("@supports selector(:is(a) ){a{color:red}}", "@supports selector(:is(a) ){a{color:red}}");
     minify_test("@supports selector(:is(a) /* c */){a{color:red}}", "@supports selector(:is(a) /* c */){a{color:red}}");
     minify_test(
@@ -7992,7 +7985,6 @@ describe("css tests", () => {
       '@import "x.css" supports(transform:translate(1px) );',
     );
 
-    // Scanning past a block must still reject the error tokens behind it.
     for (const source of [
       "@supports (transform:translate(1px) ]){a{color:red}}",
       "@supports (transform:translate(1px) }){a{color:red}}",
@@ -8004,8 +7996,6 @@ describe("css tests", () => {
       });
     }
 
-    // Tokens after a block are not a license to accept junk after the
-    // condition itself.
     test("ERROR: @supports foo(bar) baz{a{color:red}}", () => {
       expect(() => minify_test_with_options("@supports foo(bar) baz{a{color:red}}", "")).toThrow("Unexpected token");
     });

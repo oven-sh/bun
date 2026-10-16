@@ -11,6 +11,7 @@ import {
   gc,
   isASAN,
   isDebug,
+  isLinux,
   isMusl,
   isWindows,
   tempDir,
@@ -36,7 +37,7 @@ import {
   Stream,
 } from "node:net";
 import { join } from "node:path";
-import { TLSSocket } from "node:tls";
+import { TLSSocket, connect as tlsConnect } from "node:tls";
 
 const socket_domain = tmpdirSync();
 
@@ -1378,7 +1379,7 @@ it.each([false, true])(
         host: "127.0.0.1",
         readable: false,
         pauseOnConnect,
-      });
+      } as import("node:net").NetConnectOpts);
       const events: string[] = [];
       client.on("data", chunk => events.push(`data:${chunk.length}`));
       client.on("end", () => events.push("end"));
@@ -1400,6 +1401,7 @@ it.each([false, true])(
 );
 
 // The same rule for a connected fd the socket adopts: every byte the peer sent was pushed after EOF.
+// createSocketPair() is not implemented on Windows.
 it.skipIf(isWindows)("a readable: false socket over an adopted fd never reads and keeps writing", async () => {
   const [fd, peerFd] = createSocketPair();
   const client = new Socket({ readable: false });
@@ -1424,6 +1426,84 @@ it.skipIf(isWindows)("a readable: false socket over an adopted fd never reads an
     client.destroy();
     fs.closeSync(peerFd);
   }
+});
+
+// Linux resets a unix-domain connection when one end closes with a byte unread. Other kernels are not relied on here.
+it.skipIf(!isLinux)(
+  "a readable: false socket over an adopted fd reports a reset that follows unread data as ECONNRESET",
+  async () => {
+    const [fd, peerFd] = createSocketPair();
+    let peerOpen = true;
+    const client = new Socket({ readable: false });
+    try {
+      const events: string[] = [];
+      client.on("data", chunk => events.push(`data:${chunk.length}`));
+      client.on("end", () => events.push("end"));
+      client.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+      const closed = Promise.withResolvers<boolean>();
+      client.on("close", closed.resolve);
+      client.connect({ fd } as never);
+      // The peer never reads this byte, so its close() is a reset, with the banner unread on the client's side.
+      await new Promise<void>((resolve, reject) => client.write("x", err => (err ? reject(err) : resolve())));
+      fs.writeSync(peerFd, "banner");
+      fs.closeSync(peerFd);
+      peerOpen = false;
+      expect({ hadError: await closed.promise, events, bytesRead: client.bytesRead }).toEqual({
+        hadError: true,
+        events: ["error:ECONNRESET"],
+        bytesRead: 0,
+      });
+    } finally {
+      client.destroy();
+      if (peerOpen) fs.closeSync(peerFd);
+    }
+  },
+);
+
+// The wrapped socket never reads, the TLS layer that adopts its fd does: a reset behind unread data
+// still hands the tail to the TLS socket (#39846). Windows discards the receive queue on a reset.
+it.skipIf(isWindows)("a TLS socket over a socket dialed with readable: false gets the data a reset follows", async () => {
+  const highWaterMark = 64 * 1024;
+  const accepted = Promise.withResolvers<_BunSocket>();
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls: tlsCert,
+    socket: {
+      handshake(peer, success, authorizationError) {
+        if (success) accepted.resolve(peer);
+        else accepted.reject(authorizationError ?? new Error("server handshake failed"));
+      },
+      data() {},
+      error: (_peer, error) => accepted.reject(error),
+    },
+  });
+  const raw = connect({ port: listener.port, host: "127.0.0.1", readable: false });
+  raw.on("error", () => {});
+  await once(raw, "connect");
+  const secure = tlsConnect({ socket: raw, ca: tlsCert.cert, servername: "localhost", highWaterMark });
+  const events: string[] = [];
+  const closed = Promise.withResolvers<void>();
+  secure.on("end", () => events.push("end"));
+  secure.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+  secure.on("close", () => closed.resolve());
+  const [peer] = await Promise.all([accepted.promise, once(secure, "secureConnect")]);
+
+  // Nothing reads `secure`, so one highWaterMark of data stops its handle.
+  expect(peer.write(Buffer.alloc(highWaterMark, "a"))).toBe(highWaterMark);
+  peer.flush();
+  while (secure.readableLength < highWaterMark && !secure.destroyed) {
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+  // In the kernel ahead of the reset: same connection, so TCP orders them.
+  expect(peer.write("tail")).toBe(4);
+  peer.flush();
+  peer.terminate();
+  await closed.promise;
+  expect({ events, bytesRead: secure.bytesRead }).toEqual({
+    events: ["error:ECONNRESET"],
+    bytesRead: highWaterMark + 4,
+  });
 });
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L830-L845

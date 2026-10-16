@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { spawn } from "child_process";
 import { once } from "events";
-import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
+import { bunEnv, bunExe, tls as certs } from "harness";
 import net from "net";
 import { Duplex } from "stream";
 import tls from "tls";
@@ -108,55 +108,6 @@ test.each([
     } finally {
       server.close();
     }
-  },
-);
-
-// The wrapped socket never reads, the TLS layer that adopts its fd does: a reset behind unread
-// data still hands the tail to the TLS socket (#39846). Windows discards the receive queue on a reset.
-test.skipIf(isWindows)(
-  "a TLS socket over a net.Socket with readable: false gets the data a reset follows",
-  async () => {
-    const highWaterMark = 64 * 1024;
-    const accepted = Promise.withResolvers<import("bun").Socket>();
-    using listener = Bun.listen({
-      hostname: "127.0.0.1",
-      port: 0,
-      tls: certs,
-      socket: {
-        handshake(peer, success, authorizationError) {
-          if (success) accepted.resolve(peer);
-          else accepted.reject(authorizationError ?? new Error("server handshake failed"));
-        },
-        data() {},
-        error: (_peer, error) => accepted.reject(error),
-      },
-    });
-    const raw = net.connect({ port: listener.port, host: "127.0.0.1", readable: false });
-    raw.on("error", () => {});
-    await once(raw, "connect");
-    const tlsSocket = tls.connect({ socket: raw, ca: certs.cert, servername: "localhost", highWaterMark });
-    const events: string[] = [];
-    const closed = Promise.withResolvers<void>();
-    tlsSocket.on("end", () => events.push("end"));
-    tlsSocket.on("error", error => events.push(`error ${(error as NodeJS.ErrnoException).code}`));
-    tlsSocket.on("close", () => closed.resolve());
-    const [peer] = await Promise.all([accepted.promise, once(tlsSocket, "secureConnect")]);
-
-    // Nothing reads tlsSocket, so one highWaterMark of data stops its handle.
-    expect(peer.write(Buffer.alloc(highWaterMark, "a"))).toBe(highWaterMark);
-    peer.flush();
-    while (tlsSocket.readableLength < highWaterMark && !tlsSocket.destroyed) {
-      await new Promise<void>(resolve => setImmediate(resolve));
-    }
-    // In the kernel ahead of the reset: same connection, so TCP orders them.
-    expect(peer.write("tail")).toBe(4);
-    peer.flush();
-    peer.terminate();
-    await closed.promise;
-    expect({ events, bytesRead: tlsSocket.bytesRead }).toEqual({
-      events: ["error ECONNRESET"],
-      bytesRead: highWaterMark + 4,
-    });
   },
 );
 

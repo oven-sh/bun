@@ -506,13 +506,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     /// `pause_stream` for an owner that never reads: see `us_socket_pause_no_reader`.
     pub fn pause_stream_no_reader(&self) -> bool {
-        on_socket!(self.socket;
-            connected s => if s.is_established() { s.pause_no_reader(); true } else { false },
-            connecting _c => false,
-            detached => true,
-            duplex d => d.pause_stream(),
-            pipe p => p.pause_stream(),
-        )
+        match self.socket {
+            InternalSocket::Connected(s) if sock(s).is_established() => {
+                sock(s).pause_no_reader();
+                true
+            }
+            _ => self.pause_stream(),
+        }
     }
 
     pub fn resume_stream(&self) -> bool {

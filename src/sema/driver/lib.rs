@@ -334,8 +334,9 @@ pub struct PlanOptions {
     /// `GetCurrentDirectory` of a program is the directory of its configuration file, as that of a
     /// `ConfiguredProject` of tsserver is. Without one it is `Request::cwd`, as always otherwise.
     pub current_directory_is_of_the_project: bool,
-    /// Nobody reads what is reported about the files that are checked, so no `Diagnostic` is made of it: each has a copy
-    /// of the lines around it, which in a bundle on one line is a copy of the file.
+    /// Nobody reads what is reported about the files that are checked. So no `Diagnostic` is made of it: each has a copy
+    /// of the lines around it, which in a bundle on one line is a copy of the file. And the files are not checked:
+    /// `Request::after_file` asks for the types that it needs. See `Requested::Types`.
     pub reports_nothing_about_files: bool,
     /// A file of `Request::paths` is checked only in a project that includes it: that of the nearest configuration
     /// file or one that it references, or else the same for the configuration files further up
@@ -3915,6 +3916,11 @@ fn check_named_files(
         }
         found.lock().extend(shown);
     };
+    // What `Request::after_file` is called after.
+    let wanted = match request.plan_options.reports_nothing_about_files {
+        true => Requested::Types,
+        false => Requested::All,
+    };
     let new_checker = |expected: Requested| {
         let mut checker = program.checker();
         checker.set_requested(expected);
@@ -3965,7 +3971,7 @@ fn check_named_files(
             for &file in files {
                 checked.push((file, checker.check_file(file)));
                 if let Some(after_file) = request.after_file
-                    && expected == Requested::All
+                    && expected == wanted
                 {
                     after_file(&mut checker, file);
                 }
@@ -4404,7 +4410,7 @@ fn check_named_files(
         }
         let emits_first = options.emits_first && !options.no_emit_on_error;
         for type_checked in [!emits_first, emits_first] {
-            check_files(Requested::All, type_checked);
+            check_files(wanted, type_checked);
             report.diagnostics.append(&mut found.lock());
             // What a checker reports without a file after this is never asked for.
             if type_checked {

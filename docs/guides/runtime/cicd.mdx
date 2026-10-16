@@ -42,4 +42,22 @@ jobs:
 
 ---
 
+To type check your project, run [`bun check`](/runtime/check#run-in-ci). GitHub shows each type error as an annotation on the pull request diff.
+
+```yaml workflow.yml icon="file-code"
+name: my-workflow
+jobs:
+  my-job:
+    name: my-job
+    runs-on: ubuntu-latest
+    steps:
+      # ...
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: bun check # [!code ++]
+```
+
+---
+
 See the [`setup-bun` README](https://github.com/oven-sh/setup-bun) for all options.

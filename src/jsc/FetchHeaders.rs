@@ -40,20 +40,6 @@ unsafe extern "C" {
     safe fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: *const c_void)
     -> *mut FetchHeaders;
     safe fn WebCore__FetchHeaders__createFromUWS(arg1: *mut c_void) -> *mut FetchHeaders;
-    fn WebCore__FetchHeaders__createValueNotJS(
-        arg0: *const JSGlobalObject,
-        arg1: *mut StringPointer,
-        arg2: *mut StringPointer,
-        arg3: *const EncodedSlice,
-        arg4: u32,
-    ) -> *mut FetchHeaders;
-    fn WebCore__FetchHeaders__createValue(
-        arg0: *const JSGlobalObject,
-        arg1: *mut StringPointer,
-        arg2: *mut StringPointer,
-        arg3: *const EncodedSlice,
-        arg4: u32,
-    ) -> JSValue;
     // safe: `FetchHeaders` is an `opaque_ffi!` ZST handle; `&mut` is ABI-identical
     // to a non-null `*mut` and the C++ refcount decrement is interior to the cell.
     safe fn WebCore__FetchHeaders__deref(arg0: &mut FetchHeaders);
@@ -131,38 +117,6 @@ impl FetchHeaders {
         }
 
         self.put(name_, value, global)
-    }
-
-    /// `fill` validates every name/value pair and throws on an invalid one.
-    pub fn create(
-        global: &JSGlobalObject,
-        names: *mut StringPointer,
-        values: *mut StringPointer,
-        buf: &EncodedSlice,
-        count_: u32,
-    ) -> JsResult<NonNull<FetchHeaders>> {
-        // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
-        // passed by address only.
-        crate::call_null_is_throw(global, || unsafe {
-            WebCore__FetchHeaders__createValueNotJS(global, names, values, buf, count_)
-        })
-    }
-
-    /// Like [`create`](Self::create) but wrapped as a JS `Headers`. The C++
-    /// side returns the wrapper even after `fill` threw, so the exception state
-    /// is checked explicitly.
-    pub fn from(
-        global: &JSGlobalObject,
-        names: *mut StringPointer,
-        values: *mut StringPointer,
-        buf: &EncodedSlice,
-        count_: u32,
-    ) -> JsResult<JSValue> {
-        // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
-        // passed by address only.
-        crate::call_check_slow(global, || unsafe {
-            WebCore__FetchHeaders__createValue(global, names, values, buf, count_)
-        })
     }
 
     pub fn is_empty(&mut self) -> bool {

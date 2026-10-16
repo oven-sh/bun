@@ -2983,7 +2983,7 @@ bitflags::bitflags! {
     pub struct ParserOpts: u8 {
         const CSS_MODULES = 0b1;
         /// A `url()` in an at-rule prelude token list is not an import: `TokenList::parse` keeps it raw.
-        const AT_RULE_PRELUDE_TOKENS = 0b10;
+        const AT_RULE_PRELUDE_TOKENS = 0b100;
     }
 }
 impl ParserOpts {

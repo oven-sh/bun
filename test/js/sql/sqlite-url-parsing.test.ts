@@ -1,6 +1,6 @@
 import { SQL } from "bun";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { isWindows, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -647,8 +647,12 @@ describe("what the options object inherits", () => {
     };
   }
 
+  type Shape = [string, (file: string, inherited: object) => SQL];
+  // `sqlite://C:\\Temp\\open.db` is not a URL.
+  const possible = (shapes: Shape[]) => shapes.filter(([shape]) => !isWindows || !shape.includes("new URL"));
+
   // An options object that stands alone behind a URL, or behind nothing, and `adapter` in it.
-  const asItIs: [string, (file: string, inherited: object) => SQL][] = [
+  const asItIs: Shape[] = [
     ["new SQL(file, { adapter })", (file, inherited) => new SQL(file, inheriting(inherited, { adapter: "sqlite" }))],
     [
       "new SQL('sqlite://file', { adapter })",
@@ -674,7 +678,7 @@ describe("what the options object inherits", () => {
       },
     ],
   ];
-  describe.each(asItIs)("%s", (_, make) => {
+  describe.each(possible(asItIs))("%s", (_, make) => {
     test("readonly: true", async () => {
       expect(await observe(true, file => make(file, { readonly: true }))).toEqual({
         integer: "number",
@@ -707,18 +711,20 @@ describe("what the options object inherits", () => {
   });
 
   // Only the scheme gives the adapter, or the object is the first argument.
-  test.each<[string, (file: string, inherited: object) => SQL]>([
-    ["new SQL('sqlite://file', {})", (file, inherited) => new SQL(`sqlite://${file}`, inheriting(inherited))],
-    [
-      "new SQL(new URL('sqlite://file'), {})",
-      (file, inherited) => new SQL(new URL(`sqlite://${file}`), inheriting(inherited)),
-    ],
-    [
-      "new SQL({ adapter, filename })",
-      (file, inherited) => new SQL(inheriting(inherited, { adapter: "sqlite", filename: file })),
-    ],
-    ["new SQL({ url })", (file, inherited) => new SQL(inheriting(inherited, { url: `sqlite://${file}` }))],
-  ])("%s: nothing that says how the file is opened counts", async (_, make) => {
+  test.each(
+    possible([
+      ["new SQL('sqlite://file', {})", (file, inherited) => new SQL(`sqlite://${file}`, inheriting(inherited))],
+      [
+        "new SQL(new URL('sqlite://file'), {})",
+        (file, inherited) => new SQL(new URL(`sqlite://${file}`), inheriting(inherited)),
+      ],
+      [
+        "new SQL({ adapter, filename })",
+        (file, inherited) => new SQL(inheriting(inherited, { adapter: "sqlite", filename: file })),
+      ],
+      ["new SQL({ url })", (file, inherited) => new SQL(inheriting(inherited, { url: `sqlite://${file}` }))],
+    ]),
+  )("%s: nothing that says how the file is opened counts", async (_, make) => {
     const inherited = { readonly: true, create: false, safeIntegers: true };
     expect(await observe(true, file => make(file, inherited))).toEqual({
       integer: "number",

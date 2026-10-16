@@ -85,6 +85,10 @@ class VersionSqlite3;
 
 namespace Bun {
 class StrongRootBlock;
+struct InternalModuleCodeTable;
+struct InternalModuleCodeTableDeleter {
+    void operator()(InternalModuleCodeTable*) const;
+};
 
 // JSC measures the live size of the heap at the end of each collection, but only
 // publishes it per scope: an eden collection updates
@@ -304,6 +308,10 @@ public:
     // only owner once the previous global is GC'd, so a weak map would empty
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
+
+    // Under `bun test --isolate`, the source and the unlinked function of each JS internal module (node:fs, ...)
+    // a test file has loaded, which the files after it link (see InternalModuleRegistry.cpp). Null otherwise.
+    std::unique_ptr<Bun::InternalModuleCodeTable, Bun::InternalModuleCodeTableDeleter> internalModuleCode;
 
     void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;
 

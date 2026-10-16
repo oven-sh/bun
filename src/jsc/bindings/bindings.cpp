@@ -134,6 +134,7 @@
 #include "FetchHeaders.h"
 #include "DOMURL.h"
 #include "JSDOMURL.h"
+#include "PendingEntries.h"
 
 #include <string_view>
 #include <bun-uws/src/App.h>
@@ -1984,96 +1985,231 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
     return std::nullopt;
 }
 
-// node's entry points: whether `probed` holds every member of `walked`, or a deep-equal member that `walked` does not hold. `walkedIsRight` keeps each comparison in (left, right) order. `misses` counts the members that needed a deep-equal one. Compiled once for both node modes.
-static bool setMembersMatch(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSSet* walked, JSSet* probed, bool walkedIsRight, unsigned& misses)
+// One copy of each Map lookup for the paths that run at most once per unsettled entry.
+static NEVER_INLINE bool mapHolds(JSC::JSGlobalObject* globalObject, JSMap* map, JSValue key)
 {
-    VM& vm = globalObject->vm();
-    auto walk = JSSetIterator::create(vm, globalObject->setIteratorStructure(), walked, IterationKind::Keys);
-    JSValue member;
-    while (walk->next(globalObject, member)) {
-        bool has = probed->has(globalObject, member);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (has) {
-            continue;
-        }
-
-        misses++;
-        auto scan = JSSetIterator::create(vm, globalObject->setIteratorStructure(), probed, IterationKind::Keys);
-        JSValue candidate;
-        bool foundMatchingMember = false;
-        while (scan->next(globalObject, candidate)) {
-            bool equal = mode.deepEquals(globalObject, walkedIsRight ? candidate : member, walkedIsRight ? member : candidate, gcBuffer, stack, scope, false);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!equal) {
-                continue;
-            }
-            // A member that both Sets hold is the partner of itself.
-            bool held = walked->has(globalObject, candidate);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!held) {
-                foundMatchingMember = true;
-                break;
-            }
-        }
-
-        if (!foundMatchingMember) {
-            return false;
-        }
-    }
-    return true;
+    return map->has(globalObject, key);
 }
 
-// The same for the entries of two Maps. An entry matches the first such deep-equal key, and then the two values must be deep-equal.
-static bool mapEntriesMatch(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSMap* walked, JSMap* probed, bool walkedIsRight, unsigned& misses)
+static NEVER_INLINE JSValue mapValueOrUndefined(JSC::JSGlobalObject* globalObject, JSMap* map, JSValue key)
 {
-    VM& vm = globalObject->vm();
-    auto walk = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), walked, IterationKind::Entries);
-    JSValue key, value;
-    while (walk->nextKeyValue(globalObject, key, value)) {
-        JSValue probedValue = probed->get(globalObject, key);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (probedValue.isUndefined()) {
-            // get() answers undefined for an absent key and for a key that holds undefined.
-            bool has = probed->has(globalObject, key);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!has) {
-                misses++;
-                auto scan = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), probed, IterationKind::Entries);
-                JSValue candidateKey;
-                bool foundMatchingKey = false;
-                while (scan->nextKeyValue(globalObject, candidateKey, probedValue)) {
-                    bool keysEqual = mode.deepEquals(globalObject, walkedIsRight ? candidateKey : key, walkedIsRight ? key : candidateKey, gcBuffer, stack, scope, false);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (!keysEqual) {
-                        continue;
-                    }
-                    // A key that both Maps hold is the partner of itself.
-                    bool held = walked->has(globalObject, candidateKey);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (!held) {
-                        foundMatchingKey = true;
-                        break;
-                    }
-                }
+    return map->get(globalObject, key);
+}
 
-                if (!foundMatchingKey) {
-                    return false;
+// node's strict setObjectEquiv / mapObjectEquiv (lib/internal/util/comparisons.js, v26.3.0): the right entries that the lookups of nodeSetEquiv / nodeMapEquiv did not settle pair with left entries one-to-one. Compiled once for both node modes.
+struct NodeUnorderedPairing {
+    const DeepEqualsMode& mode;
+    JSC::JSGlobalObject* globalObject;
+    MarkedArgumentBuffer& gcBuffer;
+    Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack;
+    ThrowScope& scope;
+    JSCell* left;
+    JSCell* right;
+    bool isMap;
+    // The right keys that need a partner. `twins` are the ones among them that `left` also holds, with an unequal value.
+    MarkedArgumentBuffer candidates {};
+    Bun::PendingEntries<size_t>::Queue open {};
+    WTF::HashSet<JSCell*> twins {};
+
+    // node's `typeof value === "object" && value !== null`: any other value equals only an identical one.
+    static bool isTypeofObject(JSValue value) { return value.isObject() && !value.isCallable(); }
+
+    JSCell* iterate(JSCell* collection) const
+    {
+        VM& vm = globalObject->vm();
+        if (isMap)
+            return JSMapIterator::create(vm, globalObject->mapIteratorStructure(), uncheckedDowncast<JSMap>(collection), IterationKind::Entries);
+        return JSSetIterator::create(vm, globalObject->setIteratorStructure(), uncheckedDowncast<JSSet>(collection), IterationKind::Keys);
+    }
+
+    // A Set member arrives as `key`, and `value` stays as it was.
+    bool next(JSCell* iterator, JSValue& key, JSValue& value) const
+    {
+        if (isMap)
+            return uncheckedDowncast<JSMapIterator>(iterator)->nextKeyValue(globalObject, key, value);
+        return uncheckedDowncast<JSSetIterator>(iterator)->next(globalObject, key);
+    }
+
+    bool holds(JSCell* collection, JSValue key) const
+    {
+        if (isMap)
+            return mapHolds(globalObject, uncheckedDowncast<JSMap>(collection), key);
+        return uncheckedDowncast<JSSet>(collection)->has(globalObject, key);
+    }
+
+    size_t size(JSCell* collection) const
+    {
+        if (isMap)
+            return uncheckedDowncast<JSMap>(collection)->size();
+        return uncheckedDowncast<JSSet>(collection)->size();
+    }
+
+    bool deepEquals(JSValue leftValue, JSValue rightValue) const
+    {
+        return mode.deepEquals(globalObject, leftValue, rightValue, gcBuffer, stack, scope, false);
+    }
+
+    // Whether the right entry under `rightKey` equals the left entry. node reads `b.get(key2)` at each probe, so the right value is read here and not copied. get() answers undefined for a key that a getter removed.
+    bool entriesEqual(JSValue key, JSValue value, JSValue rightKey) const
+    {
+        bool equal = deepEquals(key, rightKey);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!equal || !isMap)
+            return equal;
+        JSValue rightValue = mapValueOrUndefined(globalObject, uncheckedDowncast<JSMap>(right), rightKey);
+        RETURN_IF_EXCEPTION(scope, false);
+        equal = deepEquals(value, rightValue);
+        RETURN_IF_EXCEPTION(scope, false);
+        return equal;
+    }
+
+    void addCandidate(JSValue key)
+    {
+        open.append(candidates.size());
+        candidates.appendWithCrashOnOverflow(key);
+    }
+
+    // Queues the right entry (`key`, `value`) of a Map whose left side holds the key with an unequal value. node pairs this entry like any other: its partner can be a left entry under a deep-equal key. False when no left entry is one, as in Maps that differ in one value.
+    bool addTwin(JSValue key, JSValue value)
+    {
+        JSCell* leftIterator = iterate(left);
+        JSValue leftKey, leftValue;
+        while (next(leftIterator, leftKey, leftValue)) {
+            if (leftKey == key)
+                continue;
+            // A value that is not an object is the shorter half to compare, and it calls no getter.
+            bool valueFirst = !leftValue.isObject() || !value.isObject();
+            if (!valueFirst) {
+                // A left entry that `right` holds with the identical value is settled, so it is the partner of no other entry. A Map and its changed copy have such entries only.
+                JSValue rightValue = mapValueOrUndefined(globalObject, uncheckedDowncast<JSMap>(right), leftKey);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (rightValue == leftValue)
+                    continue;
+            }
+            bool equal = valueFirst ? deepEquals(leftValue, value) : deepEquals(leftKey, key);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!equal)
+                continue;
+            equal = valueFirst ? deepEquals(leftKey, key) : deepEquals(leftValue, value);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!equal)
+                continue;
+            twins.add(key.asCell());
+            addCandidate(key);
+            return true;
+        }
+        return false;
+    }
+
+    // Walks `left`, and every entry that the lookup in `right` does not settle claims a candidate of its own: front guess, back guess, then a scan from the back. The shortcut for Sets of fewer than three members (compareSmallSets) is not ported.
+    bool claimCandidates()
+    {
+        // When no right entry was settled, `right` holds no left entry either, so node skips the lookups (`extraChecks`).
+        bool lookUp = open.size() != size(left);
+        Bun::PendingEntries<size_t> pending(WTF::move(open));
+        JSCell* leftIterator = iterate(left);
+        JSValue key, value;
+        while (next(leftIterator, key, value)) {
+            // A left entry that is not an object claims nothing. When `right` does not hold it, a candidate stays open below.
+            if (!isTypeofObject(key))
+                continue;
+            if (lookUp) {
+                bool held = holds(right, key);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (held && !twins.contains(key.asCell()))
+                    continue;
+            }
+            Bun::Claim claim = pending.claimWith(scope, [&](size_t candidate) -> bool {
+                return entriesEqual(key, value, candidates.at(candidate));
+            });
+            RETURN_IF_EXCEPTION(scope, false);
+            if (claim == Bun::Claim::Missed)
+                return false;
+            if (claim == Bun::Claim::Exhausted) {
+                // `right` holds every other left entry, unless a getter changed a size. Then each of them must still be one that `right` holds.
+                if (size(left) == size(right))
+                    return true;
+                while (next(leftIterator, key, value)) {
+                    bool held = holds(right, key);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (!held)
+                        return false;
                 }
+                return true;
             }
         }
-
-        bool valuesEqual = mode.deepEquals(globalObject, walkedIsRight ? probedValue : value, walkedIsRight ? value : probedValue, gcBuffer, stack, scope, false);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!valuesEqual) {
-            return false;
-        }
+        // A candidate is open: a left entry that is not an object had no counterpart. When a getter took entries out of `left` instead, node ends the comparison here as equal.
+        return size(left) != size(right);
     }
-    return true;
+};
+
+// node's setEquiv: walks the right Set and looks each member up in the left one.
+static bool nodeSetEquiv(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSSet* left, JSSet* right)
+{
+    std::optional<NodeUnorderedPairing> pairing;
+    auto* rightIterator = JSSetIterator::create(globalObject->vm(), globalObject->setIteratorStructure(), right, IterationKind::Keys);
+    JSValue member;
+    while (rightIterator->next(globalObject, member)) {
+        bool held = left->has(globalObject, member);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (held)
+            continue;
+        // Nothing on the left equals a right member that is not an object.
+        if (!NodeUnorderedPairing::isTypeofObject(member))
+            return false;
+        if (!pairing)
+            pairing.emplace(mode, globalObject, gcBuffer, stack, scope, left, right, false);
+        pairing->addCandidate(member);
+    }
+    if (!pairing)
+        return true;
+    return pairing->claimCandidates();
+}
+
+// node's mapEquiv: the same for two Maps. A key that both hold is settled when the two values are deep-equal.
+static bool nodeMapEquiv(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSMap* left, JSMap* right)
+{
+    std::optional<NodeUnorderedPairing> pairing;
+    auto* rightIterator = JSMapIterator::create(globalObject->vm(), globalObject->mapIteratorStructure(), right, IterationKind::Entries);
+    JSValue key, value;
+    while (rightIterator->nextKeyValue(globalObject, key, value)) {
+        JSValue leftValue = left->get(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, false);
+        bool held = !leftValue.isUndefined();
+        if (!held) {
+            // get() answers undefined for an absent key and for a key that holds undefined.
+            held = mapHolds(globalObject, left, key);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        if (held) {
+            bool valuesEqual = mode.deepEquals(globalObject, leftValue, value, gcBuffer, stack, scope, false);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (valuesEqual)
+                continue;
+        }
+        // Nothing on the left equals a right entry that is not an object, other than an entry under the same key.
+        if (!NodeUnorderedPairing::isTypeofObject(key))
+            return false;
+        if (!pairing)
+            pairing.emplace(mode, globalObject, gcBuffer, stack, scope, left, right, true);
+        if (!held) {
+            pairing->addCandidate(key);
+            continue;
+        }
+        bool possible = pairing->addTwin(key, value);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!possible)
+            return false;
+    }
+    if (!pairing)
+        return true;
+    return pairing->claimCandidates();
 }
 
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2)
 {
+    static_assert(!checkPrototypes || (isStrict && !enableAsymmetricMatchers), "NodeUnorderedPairing is node's strict pairing: a loose mode must also pair primitives that are loosely equal, and a matcher can equal more than one entry");
     VM& vm = globalObject->vm();
     uint8_t c1Type = c1->type();
     uint8_t c2Type = c2->type();
@@ -2094,20 +2230,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
 
         if constexpr (checkPrototypes) {
-            // node walks the right Set and looks each member up in the left one.
-            unsigned misses = 0;
-            bool membersMatch = setMembersMatch(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, set2, set1, true, misses);
+            bool membersEqual = nodeSetEquiv(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, set1, set2);
             RETURN_IF_EXCEPTION(scope, {});
-            if (!membersMatch) {
+            if (!membersEqual) {
                 return false;
-            }
-            // One member without an identical counterpart has matched the one member left for it. Two or more can match the same one, so then the other direction decides too.
-            if (misses > 1) {
-                membersMatch = setMembersMatch(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, set1, set2, false, misses);
-                RETURN_IF_EXCEPTION(scope, {});
-                if (!membersMatch) {
-                    return false;
-                }
             }
             // node also compares own enumerable properties of Sets.
             break;
@@ -2157,20 +2283,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
 
         if constexpr (checkPrototypes) {
-            // node walks the right Map and looks each key up in the left one.
-            unsigned misses = 0;
-            bool entriesMatch = mapEntriesMatch(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, map2, map1, true, misses);
+            bool entriesEqual = nodeMapEquiv(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, map1, map2);
             RETURN_IF_EXCEPTION(scope, {});
-            if (!entriesMatch) {
+            if (!entriesEqual) {
                 return false;
-            }
-            // One key without an identical counterpart has matched the one key left for it. Two or more can match the same one, so then the other direction decides too.
-            if (misses > 1) {
-                entriesMatch = mapEntriesMatch(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, map1, map2, false, misses);
-                RETURN_IF_EXCEPTION(scope, {});
-                if (!entriesMatch) {
-                    return false;
-                }
             }
             // node also compares own enumerable properties of Maps.
             break;

@@ -36,4 +36,37 @@ bench("deepStrictEqual Map subclass of 10,000 entries", () => {
   assert.deepStrictEqual(customMap, customMapCopy);
 });
 
+const ids = Array.from({ length: 1000 }, (_, i) => i);
+const objectSet = order => new Set(order.map(id => ({ id })));
+const objectKeyMap = order => new Map(order.map(id => [{ id }, id]));
+
+const objects = objectSet(ids);
+const sameOrderObjects = objectSet(ids);
+bench("deepStrictEqual Set of 1,000 objects", () => {
+  assert.deepStrictEqual(objects, sameOrderObjects);
+});
+
+const reversedObjects = objectSet(ids.toReversed());
+bench("deepStrictEqual reversed Set of 1,000 objects", () => {
+  assert.deepStrictEqual(objects, reversedObjects);
+});
+
+const objectKeys = objectKeyMap(ids);
+const sameOrderObjectKeys = objectKeyMap(ids);
+bench("deepStrictEqual Map of 1,000 object keys", () => {
+  assert.deepStrictEqual(objectKeys, sameOrderObjectKeys);
+});
+
+const smallSet = objectSet(ids.slice(0, 16));
+const otherSmallSet = objectSet(ids.slice(16, 32));
+bench("notDeepStrictEqual Sets of 16 objects, none equal", () => {
+  assert.notDeepStrictEqual(smallSet, otherSmallSet);
+});
+
+const smallMap = objectKeyMap(ids.slice(0, 16));
+const otherSmallMap = objectKeyMap(ids.slice(16, 32));
+bench("notDeepStrictEqual Maps of 16 object keys, none equal", () => {
+  assert.notDeepStrictEqual(smallMap, otherSmallMap);
+});
+
 await run();

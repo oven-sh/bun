@@ -117,6 +117,10 @@ describe("node:vm importModuleDynamically lifetime", () => {
     "alive-runInContext": { result: "hooked", referrer: "Script" },
     "alive-compileFunction": { result: "hooked", referrer: "function" },
     "alive-module": { result: "hooked", referrer: "SourceTextModule" },
+    "alive-sameSourceModules": {
+      first: { result: "hooked by first", referrer: "SourceTextModule" },
+      second: { result: "hooked by second", referrer: "SourceTextModule" },
+    },
     "freed-perScriptClosures": { alive: 0 },
     "stringFilename": { result: "ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING" },
   };
@@ -134,6 +138,7 @@ describe("node:vm importModuleDynamically lifetime", () => {
       "alive-runInContext",
       "alive-compileFunction",
       "alive-module",
+      "alive-sameSourceModules",
     ])("%s while collecting continuously", async scenario => {
     const result = await bunRun([fixture, scenario], { BUN_JSC_collectContinuously: "1" });
     expect(result).toSpawn(JSON.stringify(expected[scenario]));

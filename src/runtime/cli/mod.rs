@@ -971,6 +971,8 @@ pub(crate) mod command {
 
         if USES_GLOBAL_OPTIONS[cmd] {
             ctx.args = arguments::parse(cmd, ctx)?;
+        } else {
+            arguments::disable_macros_if_in_argv();
         }
 
         super::set_up_watch_restarts(ctx);

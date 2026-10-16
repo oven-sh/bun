@@ -9,7 +9,6 @@ use std::io::Write as _;
 
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_options_types::context::MacroOptions;
 use bun_ptr::Interned;
 use bun_resolver::fs::FileSystem;
 use bun_sys::Fd;
@@ -380,18 +379,7 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if ctx.args.allow_ffi_cc == Some(false) {
         argv.push(lit(b"--no-ffi-cc\0"));
     }
-    match bun_core::code_generation_from_strings() {
-        bun_core::CodeGenerationFromStrings::Allowed => {}
-        bun_core::CodeGenerationFromStrings::DisallowedLikeNode => {
-            argv.push(lit(b"--disallow-code-generation-from-strings\0"));
-        }
-        bun_core::CodeGenerationFromStrings::Strict => {
-            argv.push(lit(b"--disallow-code-generation-from-strings=strict\0"));
-        }
-    }
-    if matches!(ctx.debug.macros, MacroOptions::Disable) {
-        argv.push(lit(b"--no-macros\0"));
-    }
+    argv.extend(bun_core::process_switches::flags_for_child().map(|flag| flag.as_ptr()));
     if let Some(jsx) = &ctx.args.jsx {
         if !jsx.factory.is_empty() {
             argv.push(print_z(format_args!(

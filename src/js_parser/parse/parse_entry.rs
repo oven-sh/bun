@@ -278,6 +278,7 @@ impl<'a> Options<'a> {
                 inlining: f.inlining,
                 inject_jest_globals: f.inject_jest_globals,
                 no_macros: f.no_macros,
+                macro_imports_are_plain: f.macro_imports_are_plain,
                 commonjs_named_exports: f.commonjs_named_exports,
                 minify_syntax: f.minify_syntax,
                 minify_identifiers: f.minify_identifiers,

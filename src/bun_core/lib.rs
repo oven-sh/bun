@@ -244,10 +244,13 @@ pub mod os {
 pub mod code_generation;
 pub mod env_var;
 pub mod feature_flags;
+pub mod js_macros;
+pub mod process_switches;
 pub use code_generation::{
     CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD, CodeGenerationFromStrings,
     code_generation_from_strings, disallow_code_generation_from_strings,
 };
+pub use js_macros::{disable_js_macros, js_macros_disabled};
 
 /// Tier-0 path-separator predicates. Sunk from `bun_paths` so `bun_core::util`
 /// (dirname, which) can use them without an upward dep. `bun_paths` re-exports

@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" with { type: "macro" };
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -706,6 +706,611 @@ describe("--no-macros", () => {
     const out = await Bun.file(path.join(String(dir), "dist", "entry.js")).text();
     expect(out).toContain("INLINED_RESULT");
     expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(true);
+  });
+
+  // `--no-macros`, and `macros = false` in bunfig.toml, are a switch for the whole process: a macro
+  // call is refused by every VM, transpiler and bundler that the process starts, not only by its main VM.
+  // A bun that the command starts to run a part of itself has the switch too.
+  describe.concurrent("holds for the whole process", () => {
+    // `bun install` looks up its registry when it starts. No case has a package to download.
+    let registry: ReturnType<typeof Bun.serve>;
+    beforeAll(() => {
+      registry = Bun.serve({ port: 0, fetch: () => new Response(null, { status: 404 }) });
+    });
+    afterAll(() => registry.stop(true));
+
+    async function run(
+      tree: Record<string, string>,
+      cmd: readonly string[],
+      { env, stdin }: { env?: Record<string, string>; stdin?: string } = {},
+    ) {
+      using dir = tempDir("no-macros", tree);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...cmd],
+        env: {
+          ...bunEnv,
+          // No bunfig.toml or REPL history of whoever runs the test.
+          HOME: String(dir),
+          USERPROFILE: String(dir),
+          BUN_CONFIG_REGISTRY: registry.url.href,
+          ...env,
+        },
+        cwd: String(dir),
+        stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode, macroRan: existsSync(path.join(String(dir), "MACRO_RAN")) };
+    }
+
+    // For a case that is several VMs or more than one process. In a debug build the doors below take
+    // 3 to 5 s alone (a `node:worker_threads` Worker is 1.2 s of it, each) and `bun lint` with its
+    // configuration process 3 s. The default limit is 5 s. A release build takes 0.3 s for either.
+    const slow = isDebug || isASAN ? 60_000 : undefined;
+
+    const importInATest = `
+      import { test } from "bun:test";
+      test("imports a module that calls a macro", async () => {
+        await import("./entry.ts");
+      });
+    `;
+    const refused = { stderr: expect.stringContaining("Macros are disabled"), macroRan: false, exitCode: 1 };
+    test.each([
+      ["bun --no-macros <file>", {}, ["--no-macros", "entry.ts"], {}, refused],
+      // `bun run` reads bunfig.toml after the flag. A `[macros]` table there does not turn macros back on.
+      [
+        "bun run --no-macros <file>, a [macros] table in bunfig.toml",
+        { "bunfig.toml": `[macros]\nsomepkg = { thing = "./macro.ts" }\n` },
+        ["run", "--no-macros", "entry.ts"],
+        {},
+        refused,
+      ],
+      [
+        "bun test --no-macros, an import() in a test",
+        { "entry.test.ts": importInATest },
+        ["test", "--no-macros", "./entry.test.ts"],
+        {},
+        refused,
+      ],
+      [
+        "bun --no-macros test, a call in the test file",
+        {
+          "call.test.ts": `
+            import { test, expect } from "bun:test";
+            import { f } from "./macro.ts" with { type: "macro" };
+            test("calls a macro", () => expect(f()).toBe("INLINED_RESULT"));
+          `,
+        },
+        ["--no-macros", "test", "./call.test.ts"],
+        {},
+        refused,
+      ],
+      [
+        "bun test --no-macros --preload",
+        { "empty.test.ts": `import { test } from "bun:test";\ntest("empty", () => {});\n` },
+        ["test", "--no-macros", "--preload", "./entry.ts", "./empty.test.ts"],
+        {},
+        refused,
+      ],
+      [
+        "bun test, macros = false in bunfig.toml",
+        { "entry.test.ts": importInATest, "bunfig.toml": "macros = false\n" },
+        ["test", "./entry.test.ts"],
+        {},
+        refused,
+      ],
+      [
+        "bun repl --no-macros",
+        {},
+        ["repl", "--no-macros"],
+        { stdin: `await import("./entry.ts");\n.exit\n` },
+        { stdout: expect.stringContaining("Macros are disabled"), macroRan: false, exitCode: 0 },
+      ],
+      [
+        "bun install --analyze --no-macros",
+        { "package.json": JSON.stringify({ name: "analyze", version: "1.0.0" }) },
+        ["install", "--analyze", "--no-macros", "./entry.ts"],
+        {},
+        refused,
+      ],
+      // The prompt has a parser of its own. What it prints for the refusal is not pinned.
+      [
+        "bun repl --no-macros, a macro call typed at the prompt",
+        {},
+        ["repl", "--no-macros"],
+        { stdin: `import { f } from "./macro.ts" with { type: "macro" }; f()\n.exit\n` },
+        { stdout: expect.not.stringContaining("INLINED_RESULT"), macroRan: false, exitCode: 0 },
+      ],
+      [
+        "bun repl without the flag, a macro call typed at the prompt",
+        {},
+        ["repl"],
+        { stdin: `import { f } from "./macro.ts" with { type: "macro" }; f()\n.exit\n` },
+        { stdout: expect.stringContaining("INLINED_RESULT"), macroRan: true, exitCode: 0 },
+      ],
+    ] as const)("%s", async (_, tree, cmd, options, expected) => {
+      expect(await run({ ...files, ...tree }, cmd, options)).toMatchObject(expected);
+    });
+
+    // These commands start another bun to run a part of themselves. It gets the flag.
+    test.each([
+      [
+        "bun test --parallel --no-macros",
+        { "a.test.ts": importInATest, "b.test.ts": importInATest },
+        ["test", "--parallel", "--no-macros", "./a.test.ts", "./b.test.ts"],
+        {},
+        { ...refused, stdout: expect.stringContaining("PARALLEL") },
+      ],
+      ["bun run --no-macros --parallel <file>", {}, ["run", "--no-macros", "--parallel", "./entry.ts"], {}, refused],
+      [
+        "bun --no-macros run --sequential <file>",
+        {},
+        ["--no-macros", "run", "--sequential", "./entry.ts"],
+        {},
+        refused,
+      ],
+      [
+        'bun run --no-macros --parallel "run <file>"',
+        {},
+        ["run", "--no-macros", "--parallel", "run ./entry.ts"],
+        {},
+        refused,
+      ],
+      [
+        'bun run --no-macros --parallel "test <file>"',
+        { "entry.test.ts": importInATest },
+        ["run", "--no-macros", "--parallel", "test ./entry.test.ts"],
+        {},
+        refused,
+      ],
+      [
+        "bun install --no-macros, a security scanner",
+        {
+          "package.json": JSON.stringify({ name: "scanned", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
+          "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+          "bunfig.toml": `[install]\ncache = false\n\n[install.security]\nscanner = "./scanner.ts"\n`,
+          "scanner.ts": `
+            import { f } from "./macro.ts" with { type: "macro" };
+            export const scanner = {
+              version: "1",
+              async scan() {
+                console.error(f());
+                return [];
+              },
+            };
+          `,
+        },
+        ["install", "--no-macros"],
+        {},
+        refused,
+      ],
+      // A package script is a command line of its own. `BUN_OPTIONS` is what reaches the bun it starts.
+      [
+        "a package script, BUN_OPTIONS=--no-macros",
+        { "package.json": JSON.stringify({ name: "scripted", scripts: { go: `${bunExe()} entry.ts` } }) },
+        ["run", "go"],
+        { env: { BUN_OPTIONS: "--no-macros" } },
+        refused,
+      ],
+    ] as const)(
+      "%s",
+      async (_, tree, cmd, options, expected) => {
+        expect(await run({ ...files, ...tree }, cmd, options)).toMatchObject(expected);
+      },
+      slow,
+    );
+
+    // The process of a file of `bun run --parallel` gets the other switch of the command the same way,
+    // and at the level the command has: only `=strict` refuses `new vm.Script()`.
+    test.each([
+      ["--disallow-code-generation-from-strings", "--parallel", "eval refused"],
+      ["--disallow-code-generation-from-strings", "--sequential", "eval refused"],
+      ["--disallow-code-generation-from-strings=strict", "--parallel", "eval refused, vm.Script refused"],
+    ] as const)(
+      "bun run %s %s <file>: the process of the file has the flag",
+      async (flag, how, printed) => {
+        const tree = {
+          "script.js": `
+            const tried = make => {
+              try {
+                make();
+                return "made";
+              } catch {
+                return "refused";
+              }
+            };
+            console.log("eval " + tried(() => eval("1 + 1")) + ", vm.Script " + tried(() => new (require("node:vm").Script)("1")));
+          `,
+        };
+        expect(await run(tree, ["run", flag, how, "./script.js"])).toMatchObject({
+          stdout: expect.stringContaining(printed),
+          exitCode: 0,
+        });
+      },
+      slow,
+    );
+
+    // `bun create <component>` bundles the component to see what it imports, and a bundle runs macros.
+    // The command reads its own flags, and `--` ends them.
+    const component = {
+      ...files,
+      "App.tsx": `
+        import { f } from "./macro.ts" with { type: "macro" };
+        export default function App() { return <div>{f()}</div>; }
+      `,
+      "package.json": JSON.stringify({ name: "my-app", private: true }),
+    };
+    const wroteFiles = (stdout: string) => stdout.split("\n").some(line => line.startsWith(" create "));
+    test.each([
+      ["bun --no-macros create <component>", ["--no-macros", "create", "./App.tsx"], {}],
+      ["bun create <component> --no-macros", ["create", "./App.tsx", "--no-macros"], {}],
+      [
+        "BUN_OPTIONS=--no-macros bun create <component>",
+        ["create", "./App.tsx"],
+        { env: { BUN_OPTIONS: "--no-macros" } },
+      ],
+    ] as const)("%s refuses the macro and writes no file", async (_, cmd, options) => {
+      const result = await run(component, cmd, options);
+      expect(result).toMatchObject(refused);
+      expect(wroteFiles(result.stdout)).toBe(false);
+    });
+
+    // With no registry these end with exit code 1 after the files are written.
+    // Windows: `bun create <component>` does not reach its install step there (see create-jsx.test.ts).
+    test.todoIf(isWindows).each([
+      ["bun create <component> without the flag", ["create", "./App.tsx"]],
+      ["bun create <component> -- --no-macros", ["create", "./App.tsx", "--", "--no-macros"]],
+    ] as const)(
+      "%s runs the macro and writes the files",
+      async (_, cmd) => {
+        const result = await run(component, cmd);
+        expect(result).toMatchObject({ macroRan: true });
+        expect(wroteFiles(result.stdout)).toBe(true);
+      },
+      slow,
+    );
+
+    // A file gets the flag on its command line, as `bun --no-macros <file>` has it. A name that
+    // `bun run --parallel` takes for a file can also start with a command of bun, and `bun x`, for one,
+    // refuses a flag there: the process of such a name gets the flag in `BUN_OPTIONS`.
+    test(
+      "bun run --no-macros --parallel: how the process of a file, and of a name that starts with a command, gets the flag",
+      async () => {
+        const tree = {
+          "print.js": `console.log(JSON.stringify([process.execArgv, process.env.BUN_OPTIONS ?? null]));\n`,
+        };
+        const [file, command] = await Promise.all([
+          run(tree, ["run", "--no-macros", "--parallel", "./print.js"]),
+          run(tree, ["run", "--no-macros", "--parallel", "run ./print.js"]),
+        ]);
+        expect(file.stdout).toContain(`./print.js | [["--no-macros"],null]\n`);
+        expect(command.stdout).toContain(`run ./print.js | [["--no-macros"],"--no-macros"]\n`);
+      },
+      slow,
+    );
+
+    // The gate is at the call: an import alone, and a call in dead code, are not refused. Without the
+    // flag a template tag loads the module of the macro before it fails, so the marker is at the top
+    // level of that module.
+    const loaded = `import { writeFileSync } from "node:fs";\nwriteFileSync("MACRO_RAN", "");\nexport function f() {\n  return "INLINED_RESULT";\n}\n`;
+    test.each([
+      [
+        "a macro that is imported and never called",
+        `import { f } from "./macro.ts" with { type: "macro" };\nconsole.log("no call");\n`,
+        { stdout: "no call\n", macroRan: false, exitCode: 0 },
+      ],
+      [
+        "a macro call in dead code",
+        `import { f } from "./macro.ts" with { type: "macro" };\nif (false) console.log(f());\nconsole.log("dead call");\n`,
+        { stdout: "dead call\n", macroRan: false, exitCode: 0 },
+      ],
+      [
+        "a macro call as a template tag",
+        "import { f } from './macro.ts' with { type: 'macro' };\nconsole.log(f`x`);\n",
+        refused,
+      ],
+    ] as const)("bun --no-macros <file>: %s", async (_, main, expected) => {
+      const tree = { "macro.ts": loaded, "main.ts": main };
+      expect(await run(tree, ["--no-macros", "main.ts"])).toMatchObject(expected);
+    });
+
+    // A `[macros]` table in bunfig.toml makes a macro of an ordinary import. Under the flag the table is
+    // dropped and the import stays ordinary, also where bunfig.toml is read after the flag (`bun run`).
+    const remapped = {
+      "node_modules/somepkg/package.json": JSON.stringify({ name: "somepkg", version: "1.0.0", type: "module" }),
+      "node_modules/somepkg/index.js": `export function thing() { return "ordinary import"; }\n`,
+      "macro.ts": `
+        import { writeFileSync } from "node:fs";
+        export function thing() {
+          writeFileSync("MACRO_RAN", "macro executed");
+          return "macro result";
+        }
+      `,
+      "bunfig.toml": `[macros]\nsomepkg = { thing = "./macro.ts" }\n`,
+      "main.ts": `
+        import { thing } from "somepkg";
+        console.log(thing());
+      `,
+    };
+    const ordinary = { macroRan: false, exitCode: 0 };
+    test.each([
+      ["bun <file>", ["main.ts"], { stdout: expect.stringContaining("macro result"), macroRan: true, exitCode: 0 }],
+      [
+        "bun build",
+        ["build", "main.ts"],
+        { stdout: expect.stringContaining("macro result"), macroRan: true, exitCode: 0 },
+      ],
+      ["bun --no-macros <file>", ["--no-macros", "main.ts"], { stdout: "ordinary import\n", ...ordinary }],
+      ["bun run --no-macros <file>", ["run", "--no-macros", "main.ts"], { stdout: "ordinary import\n", ...ordinary }],
+      [
+        "bun build --no-macros",
+        ["build", "--no-macros", "main.ts"],
+        { stdout: expect.stringContaining(`return "ordinary import"`), ...ordinary },
+      ],
+    ] as const)("a [macros] table in bunfig.toml: %s", async (_, cmd, expected) => {
+      expect(await run(remapped, cmd)).toMatchObject(expected);
+    });
+
+    // Without the table the import is transpiled as an ordinary import. A run without the flag must not
+    // read that from the transpiler cache, which takes files of 4 KiB and more.
+    test(
+      "a [macros] table in bunfig.toml: bun run --no-macros <file> leaves nothing in the transpiler cache",
+      async () => {
+        using dir = tempDir("no-macros-cache", {
+          ...remapped,
+          "main.ts": remapped["main.ts"] + `// ${Buffer.alloc(4096, "x").toString()}\n`,
+        });
+        const env = {
+          ...bunEnv,
+          HOME: String(dir),
+          USERPROFILE: String(dir),
+          BUN_RUNTIME_TRANSPILER_CACHE_PATH: path.join(String(dir), "cache"),
+          BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+        };
+        const printed: string[] = [];
+        for (const flags of [["--no-macros"], []]) {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "run", ...flags, "main.ts"],
+            env,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          printed.push(stdout.trim().split("\n").at(-1)!);
+        }
+        expect(printed).toEqual(["ordinary import", "macro result"]);
+      },
+      slow,
+    );
+
+    // One module per way to reach a macro from inside a running process. Each calls the macro, which
+    // leaves `ran.<door>` behind when it runs. `doors.ts` goes through all of them and prints what it saw.
+    const doors = [
+      "import",
+      "require",
+      "Worker",
+      "worker_threads",
+      "worker_threads_execArgv_empty",
+      "Bun.build",
+      "Bun.build_macros_true",
+      "Bun.Transpiler.transformSync",
+      "Bun.Transpiler.transformSync_macro_true",
+      "Bun.Transpiler.transformSync_macro_map",
+      "Bun.Transpiler.transform",
+      "Bun.Transpiler.scan",
+      "html",
+      "html_development",
+    ];
+    const doorFiles = {
+      "mark.ts": `
+        import { writeFileSync } from "node:fs";
+        import { join } from "node:path";
+        export function mark(door: string) {
+          writeFileSync(join(import.meta.dir, "ran." + door), "");
+          return "macro result";
+        }
+      `,
+      ...Object.fromEntries(
+        doors.map(door => [
+          `${door}.ts`,
+          `import { mark } from "./mark.ts" with { type: "macro" };\nexport default mark("${door}");\n`,
+        ]),
+      ),
+      // An ordinary import, which the `macro` option of the transpiler makes a macro.
+      "Bun.Transpiler.transformSync_macro_map.ts": `import { mark } from "somepkg";\nexport default mark("Bun.Transpiler.transformSync_macro_map");\n`,
+      "html.html": `<script type="module" src="./html.ts"></script>`,
+      "html_development.html": `<script type="module" src="./html_development.ts"></script>`,
+      "doors.ts": `
+        import { existsSync } from "node:fs";
+        import { join } from "node:path";
+        import { Worker as NodeWorker } from "node:worker_threads";
+        import html from "./html.html";
+        import htmlDevelopment from "./html_development.html";
+
+        const here = (name: string) => join(import.meta.dir, name);
+        const source = (door: string) => Bun.file(here(door + ".ts")).text();
+        const outcomes: Record<string, string> = {};
+        // "ran" when the macro left its marker, "refused" when it did not and the door said why.
+        function record(door: string, reported: unknown) {
+          const text = Bun.inspect(reported);
+          outcomes[door] = existsSync(here("ran." + door)) ? "ran" : text.includes("Macros are disabled") ? "refused" : text;
+        }
+
+        record("import", await import("./import.ts").catch(error => error));
+        try {
+          record("require", require("./require.ts"));
+        } catch (error) {
+          record("require", error);
+        }
+
+        for (const [door, options] of [
+          ["Bun.Transpiler.transformSync", {}],
+          ["Bun.Transpiler.transformSync_macro_true", { macro: true }],
+          ["Bun.Transpiler.transformSync_macro_map", { macro: { somepkg: { mark: "./mark.ts" } } }],
+        ] as const) {
+          try {
+            record(door, new Bun.Transpiler({ loader: "ts", ...options } as any).transformSync(await source(door)));
+          } catch (error) {
+            record(door, error);
+          }
+        }
+        const transpiler = new Bun.Transpiler({ loader: "ts" });
+        record(
+          "Bun.Transpiler.transform",
+          await transpiler.transform(await source("Bun.Transpiler.transform")).catch(error => error),
+        );
+        try {
+          record("Bun.Transpiler.scan", transpiler.scan(await source("Bun.Transpiler.scan")));
+        } catch (error) {
+          record("Bun.Transpiler.scan", error);
+        }
+
+        const { promise: worker, resolve: workerDone } = Promise.withResolvers();
+        const webWorker = new Worker(here("Worker.ts"));
+        webWorker.addEventListener("error", event => workerDone(event.message));
+        webWorker.addEventListener("close", workerDone);
+        record("Worker", await worker);
+
+        for (const [door, options] of [
+          ["worker_threads", {}],
+          ["worker_threads_execArgv_empty", { execArgv: [] }],
+        ] as const) {
+          const { promise, resolve } = Promise.withResolvers();
+          const nodeWorker = new NodeWorker(here(door + ".ts"), options);
+          nodeWorker.on("error", resolve);
+          nodeWorker.on("exit", resolve);
+          record(door, await promise);
+        }
+
+        for (const [door, options] of [
+          ["Bun.build", {}],
+          ["Bun.build_macros_true", { macros: true }],
+        ] as const) {
+          const build = await Bun.build({ entrypoints: [here(door + ".ts")], throw: false, ...options });
+          record(door, build.logs);
+        }
+
+        // A page whose bundle fails is a 500. The development server says why in the page, not as text.
+        for (const [door, page, development] of [
+          ["html", html, false],
+          ["html_development", htmlDevelopment, true],
+        ] as const) {
+          await using server = Bun.serve({ port: 0, development, routes: { "/": page } });
+          const response = await fetch(server.url);
+          const script = (await response.text()).match(/src="([^"]+)"/)?.[1];
+          if (script) await (await fetch(new URL(script, server.url))).text();
+          record(door, response.status === 500 ? "Macros are disabled" : response.status);
+        }
+
+        console.log(JSON.stringify(outcomes));
+      `,
+    };
+    const atEveryDoor = (outcome: string) => Object.fromEntries(doors.map(door => [door, outcome]));
+
+    // A Worker that ran a macro does not free its macro tables when it ends (#45439). The leak check of
+    // the ASAN lane reports that, and it is not what the first case is for.
+    const withoutLeakCheck = { ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") };
+    // One at a time: a case here is the most work of this file, and the cases above and below then do
+    // not run beside each other.
+    test.serial.each([
+      ["without the flag, every door runs the macro", [], withoutLeakCheck, {}, atEveryDoor("ran")],
+      ["--no-macros", ["--no-macros"], {}, {}, atEveryDoor("refused")],
+      ["BUN_OPTIONS=--no-macros", [], { BUN_OPTIONS: "--no-macros" }, {}, atEveryDoor("refused")],
+      ["macros = false in bunfig.toml", [], {}, { "bunfig.toml": "macros = false\n" }, atEveryDoor("refused")],
+    ] as const)(
+      "inside a running process: %s",
+      async (_, flags, env, bunfig, expected) => {
+        const { stdout, stderr, exitCode } = await run({ ...doorFiles, ...bunfig }, [...flags, "doors.ts"], { env });
+        const printed = stdout.trim().split("\n").at(-1)!;
+        expect({ outcomes: printed.startsWith("{") ? JSON.parse(printed) : stderr, exitCode }).toEqual({
+          outcomes: expected,
+          exitCode: 0,
+        });
+      },
+      slow,
+    );
+
+    // `bun lint` loads a plugin that `jsPlugins` names in its own process. It reads a configuration file in
+    // another process, which gets neither `BUN_OPTIONS` nor a bunfig.toml, and `bun fmt` does the same.
+    const plugin = {
+      "plugin.mjs": `
+        import { f } from "./macro.ts" with { type: "macro" };
+        const message = f();
+        const says = { create: context => ({ Program: node => context.report({ node, message }) }) };
+        export default { meta: { name: "own" }, rules: { says } };
+      `,
+      "a.js": "1;\n",
+    };
+    const lintPlugin = {
+      ...plugin,
+      ".oxlintrc.json": JSON.stringify({ jsPlugins: ["./plugin.mjs"], rules: { "own/says": "error" } }),
+    };
+    const lintConfiguration = {
+      ...plugin,
+      "eslint.config.mjs": `
+        import own from "./plugin.mjs";
+        export default [{ files: ["a.js"], plugins: { own }, rules: { "own/says": "error" } }];
+      `,
+    };
+    const fmtConfiguration = {
+      "prettier.config.mjs": `
+        import { f } from "./macro.ts" with { type: "macro" };
+        export default { semi: f() !== "INLINED_RESULT" };
+      `,
+      "a.js": "a;\n",
+    };
+    const macrosFalse = { "bunfig.toml": "macros = false\n" };
+    const lint = ["lint", "--threads", "2", "-f", "unix", "a.js"];
+    const viaBunOptions = { env: { BUN_OPTIONS: "--no-macros" } };
+    const pluginRefused = { stdout: expect.stringContaining("Macros are disabled"), macroRan: false, exitCode: 1 };
+    const configurationRefused = { ...refused, exitCode: 2 };
+    test.each([
+      ["bun --no-macros lint, a plugin", lintPlugin, ["--no-macros", ...lint], {}, pluginRefused],
+      ["bun lint, macros = false in bunfig.toml, a plugin", { ...lintPlugin, ...macrosFalse }, lint, {}, pluginRefused],
+      [
+        "bun --no-macros lint, a configuration file",
+        lintConfiguration,
+        ["--no-macros", ...lint],
+        {},
+        configurationRefused,
+      ],
+      [
+        "BUN_OPTIONS=--no-macros bun lint, a configuration file",
+        lintConfiguration,
+        lint,
+        viaBunOptions,
+        configurationRefused,
+      ],
+      [
+        "bun lint, macros = false in bunfig.toml, a configuration file",
+        { ...lintConfiguration, ...macrosFalse },
+        lint,
+        {},
+        configurationRefused,
+      ],
+      [
+        "bun fmt without the flag, a configuration file",
+        fmtConfiguration,
+        ["fmt", "a.js"],
+        {},
+        { macroRan: true, exitCode: 0 },
+      ],
+      [
+        "bun --no-macros fmt, a configuration file",
+        fmtConfiguration,
+        ["--no-macros", "fmt", "a.js"],
+        {},
+        configurationRefused,
+      ],
+    ] as const)(
+      "%s",
+      async (_, tree, cmd, options, expected) => {
+        expect(await run({ ...files, ...tree }, cmd, options)).toMatchObject(expected);
+      },
+      slow,
+    );
   });
 });
 

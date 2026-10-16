@@ -7713,7 +7713,16 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
             &mut wide_buf.0[..],
         ) {
             Ok(p) => p,
-            Err(_) => return Err(Error::from_code(E::EBADF, Tag::GetFinalPathNameByHandle)),
+            Err(e) => {
+                use crate::windows::GetFinalPathNameByHandleError as GE;
+                return Err(match e {
+                    GE::Failed(e) => Error::from_win32(e, Tag::GetFinalPathNameByHandle),
+                    GE::NameTooLong => {
+                        Error::from_code(E::ENAMETOOLONG, Tag::GetFinalPathNameByHandle)
+                    }
+                }
+                .with_fd(fd));
+            }
         };
         // Trust that Windows gives us valid UTF-16LE.
         let len = bun_paths::string_paths::from_w_path(&mut out.0[..], wide_slice).len();

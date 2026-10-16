@@ -1346,6 +1346,23 @@ b {
     },
   });
 
+  // The same holds inside a style rule. Where the rule prints is not checked.
+  itBundled("css/URLInUnknownAtRulePreludeInStyleRuleIsNotAnImport", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { @import url(sub/missing.css); color: red }
+        .z { @foo url(missing.png); color: blue }
+      `,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.css").match(/url\([^)]*\)/g)).toEqual([
+        "url(sub/missing.css)",
+        "url(missing.png)",
+      ]);
+    },
+  });
+
   // The target exists here. It must not become a bundle input.
   itBundled("css/URLInNestedAtImportKeptAsWrittenMinified", {
     files: {

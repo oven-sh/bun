@@ -60,12 +60,12 @@ export const SSLConfig = b.dictionary(
       internalName: "secure_options",
     },
     minVersion: {
-      type: b.i32,
+      type: b.TLSMinVersion,
       default: 0,
       internalName: "ssl_min_version",
     },
     maxVersion: {
-      type: b.i32,
+      type: b.TLSMaxVersion,
       default: 0,
       internalName: "ssl_max_version",
     },

@@ -75,7 +75,7 @@ test("version is number with dot", async () => {
   let [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   expect(err).toContain(
-    "warn: pnpm-lock.yaml is lockfileVersion 5.4, which bun cannot migrate; resolving from package.json instead\nnote: pnpm install --lockfile-only\n",
+    "warn: cannot migrate pnpm-lock.yaml: unsupported lockfileVersion 5.4, resolving from package.json\nnote: pnpm install --lockfile-only\n",
   );
   expect(err).not.toContain("Ignoring lockfile");
   expect(err).not.toContain("failed to migrate lockfile");
@@ -227,7 +227,7 @@ ${packages ?? ""}`,
     };
   }
 
-  const linkTooLong = "error: pnpm-lock.yaml dependency 'b' of importer 'packages/a' has a link path that is too long";
+  const linkTooLong = "error: pnpm-lock.yaml dependency 'b' of importer 'packages/a': link path too long";
 
   test.each<Project & { name: string; expected: string }>([
     {
@@ -293,7 +293,7 @@ snapshots:
 
   c@file:${longPath}: {}
 `,
-      expected: "error: pnpm-lock.yaml package 'c' has a directory path that is too long",
+      expected: "error: pnpm-lock.yaml package 'c': directory path too long",
     },
   ])("$name fails the migration", async project => {
     const { stderr, exitCode } = await migrate(project);

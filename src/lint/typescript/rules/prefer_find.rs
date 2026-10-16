@@ -51,6 +51,7 @@ fn is_arrayish(ty: Type) -> bool {
 /// several where it is a ternary. False if it can have another value.
 fn parse_array_filter_expressions(mut node: Expr, found: &mut FilterExpressions) -> bool {
     loop {
+        node = node.with_jsdoc_cast();
         match node.kind() {
             // Only the last expression of `(a, b, [1, 2, 3].filter(condition))[0]` matters.
             ExprKind::Binary {

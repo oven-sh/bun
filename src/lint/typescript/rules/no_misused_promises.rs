@@ -97,6 +97,7 @@ fn is_test(node: Expr) -> bool {
 /// Whether `node` is an operand, at any depth, of logical operators that make up a [test](is_test).
 fn is_in_test<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
     let decide = |at: Node<'a>, parent: Node<'a>| match (at, parent) {
+        (Node::Expr(at), _) if at.with_jsdoc_cast() != at => Some(false),
         (_, Node::Expr(parent)) if matches!(parent.kind(), ExprKind::Binary { op, .. } if is_logical_operator(op)) => None,
         (Node::Expr(at), _) => Some(is_test(at)),
         _ => Some(false),
@@ -111,6 +112,9 @@ struct ThenablePrimitives([Cell<Option<bool>>; 4]);
 
 /// Whether the type of `node` can have a `then`. All primitive values of a sort have the same.
 fn can_be_thenable(node: Expr, known: &ThenablePrimitives) -> bool {
+    if node.has_jsdoc_cast() {
+        return true;
+    }
     let sort = match node.kind() {
         ExprKind::Null | ExprKind::Unary { op: UnOp::Void, .. } => return false,
         ExprKind::True | ExprKind::False | ExprKind::Unary { op: UnOp::Not | UnOp::Delete, .. } => 0,
@@ -153,6 +157,9 @@ struct CallableLiterals([Cell<Option<bool>>; 5]);
 
 /// Whether the type of `node` can have call signatures. All literals of a sort have the same.
 fn can_be_function(node: Expr, known: &CallableLiterals) -> bool {
+    if node.has_jsdoc_cast() {
+        return true;
+    }
     let sort = match node.kind() {
         ExprKind::Missing | ExprKind::Null => return false,
         // `{ ...t }` has the type of `t` if that is a type parameter.
@@ -400,7 +407,7 @@ fn void_function_arguments<'a>(
     arguments: &mut [Argument<'a>],
 ) {
     let (node, is_new) = (node.ts_node(), node.tag() == ExprTag::New);
-    let expression = call.callee().ts_node();
+    let expression = call.callee().ts_node_with_parentheses();
     for sub_type in union_constituents(expression.get_type_at_location()) {
         let signatures = match is_new {
             true => sub_type.get_construct_signatures(),
@@ -443,6 +450,7 @@ fn tsgolint_promise_range(func: Func) -> Span {
 
 /// Where a value is reported. oxlint points into a function.
 fn place(value: Expr) -> Span {
+    let value = value.with_jsdoc_cast();
     match value.as_fn().filter(|_| value.file().language().is_oxlint) {
         Some(func) => tsgolint_promise_range(func),
         None => value.span(),
@@ -467,7 +475,7 @@ fn tsgolint_expectation_for_symbol<'a>(symbol: Option<TsSymbol<'a>>, ty: Type<'a
 /// What tsgolint's `voidFunctionArguments` keeps for the argument at `index`: the last parameter in this file whose
 /// type is that of a function that returns nothing, or else the first of which the contextual type of the argument is.
 fn tsgolint_expectation_for_argument<'a>(node: Expr<'a>, call: Call<'a>, index: usize) -> Expectation<'a> {
-    let expression = call.callee().ts_node();
+    let expression = call.callee().ts_node_with_parentheses();
     let contextual_type = node.ts_node().get_contextual_type_for_argument_at_index(index);
     let accepts_void = |ty: Type<'a>| {
         !is_thenable_returning_function_type(expression, ty) && is_void_returning_function_type(expression, ty)
@@ -527,6 +535,7 @@ fn tsgolint_labels<'a>(
 }
 
 fn tsgolint_labels_of_value<'a>(labels: &mut Details, value: Expr<'a>, expectation: Expectation<'a>) {
+    let value = value.with_jsdoc_cast();
     tsgolint_labels(labels, value.ty(), value.as_fn().is_some(), place(value), expectation);
 }
 
@@ -538,7 +547,7 @@ impl NoMisusedPromises {
         if !can_be_thenable(node, &cx.state.thenable_primitives) {
             return;
         }
-        let ts_node = node.ts_node();
+        let ts_node = node.ts_node_for_type();
         let is_misused = is_always_thenable(ts_node)
             || match self.checks_conditionals {
                 Some(FlagUnions::All) => is_sometimes_thenable(ts_node),
@@ -554,6 +563,7 @@ impl NoMisusedPromises {
     fn check_test<'a>(&self, test: Expr<'a>, cx: &Cx<'a, Self>) {
         let mut rest: SmallVec<[Expr; 8]> = smallvec![test];
         while let Some(node) = rest.pop() {
+            let node = node.with_jsdoc_cast();
             match node.kind() {
                 ExprKind::Binary { op, left, right } if is_logical_operator(op) => rest.extend([right, left]),
                 _ => self.check_conditional_operand(node, cx),
@@ -589,6 +599,7 @@ impl NoMisusedPromises {
         let ExprKind::Binary { op: BinOp::And | BinOp::Or, left, .. } = node.kind() else {
             return;
         };
+        let left = left.with_jsdoc_cast();
         if matches!(left.kind(), ExprKind::Binary { op, .. } if is_logical_operator(op))
             || !can_be_thenable(left, &cx.state.thenable_primitives)
             || is_in_test(node, &mut cx.state.tests)
@@ -610,7 +621,7 @@ impl NoMisusedPromises {
         // For tsgolint `(a.filter)` is a `ParenthesizedExpression`, and the callee no access expression.
         if (is_oxlint && call.callee().is_parenthesized())
             || !is_array_method_call_with_predicate(node)
-            || !returns_thenable(callback.ts_node())
+            || !returns_thenable(callback.ts_node_for_type())
         {
             return;
         }
@@ -638,7 +649,7 @@ impl NoMisusedPromises {
             .iter()
             .enumerate()
             .filter(|(_, argument)| {
-                can_be_function(*argument, &cx.state.callable_literals) && returns_thenable(argument.ts_node())
+                can_be_function(*argument, &cx.state.callable_literals) && returns_thenable(argument.ts_node_for_type())
             })
             .map(|(index, node)| Argument {
                 index,
@@ -675,8 +686,10 @@ impl NoMisusedPromises {
         if is_pattern || !can_be_function(value, &cx.state.callable_literals) {
             return;
         }
-        let left = target.ts_node();
-        if returns_thenable(value.ts_node()) && is_void_returning_function_type(left, left.get_type_at_location()) {
+        let left = target.ts_node_for_type();
+        if returns_thenable(value.ts_node_with_parentheses())
+            && is_void_returning_function_type(left, left.get_type_at_location())
+        {
             cx.report(place(value), VOID_RETURN_VARIABLE).labels_with(|labels| {
                 let expectation = tsgolint_expectation_for_symbol(target.ts_symbol(), left.get_type_at_location());
                 tsgolint_labels_of_value(labels, value, expectation);
@@ -694,7 +707,7 @@ impl NoMisusedPromises {
         if annotation.is_none() && !is_using {
             return;
         }
-        let initializer = init.ts_node();
+        let initializer = init.ts_node_with_parentheses();
         let disposes_asynchronously = || {
             has_dispose_method(initializer, initializer.get_type_at_location(), is_thenable_returning_function_type)
         };
@@ -754,10 +767,11 @@ impl NoMisusedPromises {
 
     /// `key: value` and `key`
     fn check_property_value<'a>(&self, value: Expr<'a>, cx: &Cx<'a, Self>) {
+        let value = value.with_jsdoc_cast();
         if !can_be_function(value, &cx.state.callable_literals) {
             return;
         }
-        let initializer = value.ts_node();
+        let initializer = value.ts_node_with_parentheses();
         if !returns_thenable(initializer)
             || !initializer
                 .get_contextual_type()
@@ -773,7 +787,7 @@ impl NoMisusedPromises {
             let Node::Expr(object) = property.parent() else {
                 return None;
             };
-            let symbol = object.contextual_type()?.get_property(property.key()?.name()?.bytes());
+            let symbol = object.ts_node().get_contextual_type()?.get_property(property.key()?.name()?.bytes());
             tsgolint_expectation_for_symbol(symbol, initializer.get_contextual_type()?)
         };
         match value.as_fn() {
@@ -793,7 +807,7 @@ impl NoMisusedPromises {
         if key.is_computed() || !returns_thenable(node.ts_node()) {
             return;
         }
-        let Some(obj_type) = obj.contextual_type() else {
+        let Some(obj_type) = obj.ts_node().get_contextual_type() else {
             return;
         };
         // tsgolint asks the contextual type itself, by the name without its quotes: a union has only
@@ -826,7 +840,7 @@ impl NoMisusedPromises {
         let Some(expression_container) = value.jsx_container_span() else {
             return;
         };
-        let expression = value.ts_node();
+        let expression = value.ts_node_for_type();
         if returns_thenable(expression)
             && expression
                 .get_contextual_type()
@@ -852,7 +866,7 @@ impl NoMisusedPromises {
         if function_node.return_type().is_some_and(|it| !is_possibly_function_type(it, is_oxlint)) {
             return;
         }
-        let expression = argument.ts_node();
+        let expression = argument.ts_node_with_parentheses();
         if returns_thenable(expression)
             && expression
                 .get_contextual_type()
@@ -930,7 +944,8 @@ impl NoMisusedPromises {
     // ───────────────────────────── spreads ─────────────────────────────
 
     fn check_spread_argument<'a>(argument: Expr<'a>, cx: &Cx<'a, Self>) {
-        if is_sometimes_thenable(argument.ts_node()) {
+        let argument = argument.with_jsdoc_cast();
+        if is_sometimes_thenable(argument.ts_node_with_parentheses()) {
             let dots = Span::before(argument.parent().span().start, argument.outer_span());
             cx.report(argument, SPREAD).comments_apply_at(dots).labels_with(|labels| {
                 tsgolint_labels(labels, argument.ty(), argument.as_fn().is_some(), dots, None);

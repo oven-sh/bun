@@ -135,6 +135,8 @@ struct AnsiRenderer<'a> {
     code_fenced: bool,
     /// Buffer of the current code block body, flushed on leaveBlock(.code).
     code_buf: Vec<u8>,
+    /// True inside an HTML block, whose lines keep the white space they start with.
+    in_html_block: bool,
     /// Heading level currently being rendered (0 = none).
     heading_level: u8,
     /// Buffer of the current heading text, flushed on leaveBlock(.h).
@@ -229,6 +231,9 @@ const SPAN_CODE: u32 = 1 << 4;
 /// produce output quadratic in the input size.
 const MAX_INDENT_COLS: u32 = 128;
 
+/// Where a terminal puts the cursor for a tab: at the next multiple of this.
+const TERMINAL_TAB_STOP: u32 = 8;
+
 struct InlineStyle {
     flag: u32,
     on: &'static [u8],
@@ -287,6 +292,7 @@ impl<'a> AnsiRenderer<'a> {
             code_lang: b"",
             code_fenced: false,
             code_buf: Vec::new(),
+            in_html_block: false,
             heading_level: 0,
             heading_buf: Vec::new(),
             table_cells: Vec::new(),
@@ -449,6 +455,7 @@ impl<'a> AnsiRenderer<'a> {
             }
             BlockType::Html => {
                 self.ensure_newline();
+                self.in_html_block = true;
             }
             BlockType::P => {
                 // When a paragraph sits directly inside a list item, the li
@@ -509,6 +516,7 @@ impl<'a> AnsiRenderer<'a> {
             }
             BlockType::Html => {
                 self.ensure_newline();
+                self.in_html_block = false;
             }
             BlockType::P => {
                 self.write_styled(ansi_b::RESET, b"");
@@ -697,6 +705,11 @@ impl<'a> AnsiRenderer<'a> {
                 // (\x1b[22m) rather than a full reset, then reapply any
                 // outer span/link styles.
                 self.write_styled(ansi_b::DIM, b"");
+                let content = if self.in_html_block && self.last_was_newline {
+                    self.write_html_block_indentation(content)
+                } else {
+                    content
+                };
                 self.write_content(content);
                 self.write_styled(b"\x1b[22m", b"");
                 self.reapply_styles();
@@ -745,6 +758,25 @@ impl<'a> AnsiRenderer<'a> {
         }
         // Normal paragraph flow: respect wrapping + indent.
         self.write_wrapped(data);
+    }
+
+    /// Writes the spaces and tabs that a line of an HTML block starts with as
+    /// they are: `write_wrapped` makes one space of them. Returns the rest.
+    #[inline(never)]
+    fn write_html_block_indentation<'c>(&mut self, content: &'c [u8]) -> &'c [u8] {
+        let blanks = content
+            .iter()
+            .take_while(|&&byte| helpers::is_blank(byte))
+            .count();
+        let (indentation, rest) = content.split_at(blanks);
+        self.out.write(indentation);
+        for &byte in indentation {
+            self.col = match byte {
+                b'\t' => (self.col / TERMINAL_TAB_STOP + 1).saturating_mul(TERMINAL_TAB_STOP),
+                _ => self.col.saturating_add(1),
+            };
+        }
+        rest
     }
 
     /// Emit a chunk to output, wrapping at word boundaries when the column

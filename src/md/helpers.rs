@@ -137,6 +137,75 @@ pub(crate) fn line_indentation(text: &[u8], total_indent: u32, off_start: OFF) -
     LineIndentation { indent, off }
 }
 
+/// How far back from `beg` `indentation_start` may go.
+#[derive(Copy, Clone)]
+pub enum Reach {
+    /// To the start of the line.
+    Line,
+    /// To the start of the spaces and tabs that end at `beg`. Columns that
+    /// they do not have are spaces to write: the count that `analyze_line`
+    /// takes from md4c's issue 6 can be more than what is written.
+    BlankRun,
+}
+
+/// The inverse of `line_indentation`: where the `indent` columns of white
+/// space that end at `beg` start, and how many columns before that place are
+/// the rest of a tab that starts further left.
+#[inline]
+pub fn indentation_start(text: &[u8], beg: OFF, indent: u32, reach: Reach) -> (OFF, u32) {
+    if indent == 0 {
+        return (beg, 0);
+    }
+    if let Some(start) = beg.checked_sub(indent)
+        && text
+            .get(start as usize..beg as usize)
+            .is_some_and(|run| run.iter().all(|&byte| byte == b' '))
+    {
+        return (start, 0);
+    }
+    indentation_start_by_columns(text, beg, indent, reach)
+}
+
+#[cold]
+fn indentation_start_by_columns(text: &[u8], beg: OFF, indent: u32, reach: Reach) -> (OFF, u32) {
+    fn next_column(column: u64, byte: u8) -> u64 {
+        match byte {
+            b'\t' => (column + 4) / 4 * 4,
+            _ => column + 1,
+        }
+    }
+    let end = (beg as usize).min(text.len());
+    let mut line_start = end;
+    while line_start > 0 && !is_newline(text[line_start - 1]) {
+        line_start -= 1;
+    }
+    let (mut offset, mut column) = (line_start, 0u64);
+    let (mut run_start, mut run_column) = (offset, column);
+    while offset < end {
+        let byte = text[offset];
+        column = next_column(column, byte);
+        offset += 1;
+        if !is_blank(byte) {
+            (run_start, run_column) = (offset, column);
+        }
+    }
+    let end_column = column;
+    (offset, column) = match reach {
+        Reach::Line => (line_start, 0),
+        Reach::BlankRun => (run_start, run_column),
+    };
+    let target = end_column.saturating_sub(u64::from(indent));
+    while offset < end && column < target {
+        column = next_column(column, text[offset]);
+        offset += 1;
+    }
+    let spaces = match reach {
+        Reach::Line => column - target,
+        Reach::BlankRun => u64::from(indent).saturating_sub(end_column - column),
+    };
+    (offset as OFF, spaces as u32)
+}
+
 pub(crate) struct Utf8DecodeResult {
     pub(crate) codepoint: u32,
     pub(crate) len: u8,
@@ -550,5 +619,118 @@ impl HeadingIdTracker {
     /// Call after using the slug to reset text buffer.
     pub fn clear_after_heading(&mut self) {
         self.text_buf.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn next_column(column: u32, byte: u8) -> u32 {
+        match byte {
+            b'\t' => (column + 4) / 4 * 4,
+            _ => column + 1,
+        }
+    }
+
+    fn column_of(text: &[u8], line_start: usize, offset: usize) -> u32 {
+        text[line_start..offset]
+            .iter()
+            .fold(0, |column, &byte| next_column(column, byte))
+    }
+
+    /// What `Reach::Line` has to give: the walk from the start of the line,
+    /// which is handed to it.
+    fn walk_from(text: &[u8], line_start: usize, beg: usize, indent: u32) -> (OFF, u32) {
+        let target = column_of(text, line_start, beg).saturating_sub(indent);
+        let (mut offset, mut column) = (line_start, 0);
+        while offset < beg && column < target {
+            column = next_column(column, text[offset]);
+            offset += 1;
+        }
+        (offset as OFF, column - target)
+    }
+
+    #[test]
+    fn indentation_start_of_known_lines() {
+        let start = |line: &[u8], indent: u32, reach: Reach| {
+            let beg = line.len() as OFF - 1;
+            indentation_start(line, beg, indent, reach)
+        };
+        for reach in [Reach::Line, Reach::BlankRun] {
+            // CommonMark 0.31.2, examples 5 to 7: a tab that is used up in part.
+            assert_eq!(start(b"\t\tx", 2, reach), (2, 2));
+            assert_eq!(start(b">\t\tx", 2, reach), (3, 2));
+            assert_eq!(start(b"-\t\tx", 2, reach), (3, 2));
+            // A tab that is not used up at all.
+            assert_eq!(start(b"\tx", 4, reach), (0, 0));
+            assert_eq!(start(b"\t\tx", 4, reach), (1, 0));
+            assert_eq!(start(b"   \tx", 2, reach), (2, 0));
+            assert_eq!(start(b">> \tx", 1, reach), (3, 0));
+            assert_eq!(start(b"x\r \tx", 4, reach), (2, 0));
+            // Spaces only.
+            assert_eq!(start(b"      x", 2, reach), (4, 0));
+            assert_eq!(start(b"x", 0, reach), (0, 0));
+        }
+        // More columns than there is white space.
+        assert_eq!(start(b">   x", 5, Reach::Line), (0, 0));
+        assert_eq!(start(b">   x", 5, Reach::BlankRun), (1, 2));
+        assert_eq!(start(b"> \tx", 9, Reach::BlankRun), (1, 6));
+        // Nothing to walk over.
+        assert_eq!(indentation_start(b"", 5, 3, Reach::Line), (0, 0));
+        assert_eq!(indentation_start(b"", 5, 3, Reach::BlankRun), (0, 3));
+        assert_eq!(indentation_start(b" ", 9, 1, Reach::BlankRun), (0, 0));
+    }
+
+    #[test]
+    fn indentation_start_is_the_inverse_of_line_indentation() {
+        let mut cases = 0;
+        for before in [&b""[..], b"\t a\n", b"a\r"] {
+            // Every line of up to four of these bytes, then a letter.
+            for shape in 0..(1 + 3 + 9 + 27 + 81) {
+                let mut text = before.to_vec();
+                let (mut rest, mut len) = (shape, 0);
+                while rest >= 3u32.pow(len) {
+                    rest -= 3u32.pow(len);
+                    len += 1;
+                }
+                for _ in 0..len {
+                    text.push(b" \t>"[(rest % 3) as usize]);
+                    rest /= 3;
+                }
+                let (line_start, beg) = (before.len(), text.len());
+                text.push(b'x');
+
+                let mut run_start = beg;
+                while run_start > line_start && is_blank(text[run_start - 1]) {
+                    run_start -= 1;
+                }
+                let run_column = column_of(&text, line_start, run_start);
+                let run = line_indentation(&text, run_column, run_start as OFF);
+                assert_eq!(run.off as usize, beg);
+                assert_eq!(run.indent, column_of(&text, line_start, beg) - run_column);
+
+                for indent in 0..=run.indent + 2 {
+                    cases += 1;
+                    let whole_line = indentation_start(&text, beg as OFF, indent, Reach::Line);
+                    assert_eq!(whole_line, walk_from(&text, line_start, beg, indent));
+
+                    let (start, spaces) =
+                        indentation_start(&text, beg as OFF, indent, Reach::BlankRun);
+                    if indent > run.indent {
+                        assert_eq!((start as usize, spaces), (run_start, indent - run.indent));
+                        continue;
+                    }
+                    assert_eq!((start, spaces), whole_line);
+                    assert!(spaces < 4 && start as usize >= run_start);
+                    assert!(spaces == 0 || text[start as usize - 1] == b'\t');
+                    let column = column_of(&text, line_start, start as usize);
+                    let written = line_indentation(&text, column, start);
+                    assert_eq!(written.off as usize, beg);
+                    assert_eq!(spaces + written.indent, indent);
+                }
+            }
+        }
+        assert_eq!(cases, 2193);
     }
 }

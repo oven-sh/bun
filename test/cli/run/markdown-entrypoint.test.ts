@@ -7,7 +7,7 @@ import { join } from "path";
 // assert it after snapshotting stdout (giving a readable diff on failure).
 let lastExitCode: number | null = null;
 
-async function runMd(source: string, env: Record<string, string> = {}) {
+async function runMd(source: string, env: Record<string, string | undefined> = {}) {
   using dir = tempDir("md-entry-", { "doc.md": source });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "./doc.md"],
@@ -212,6 +212,27 @@ describe("bun <file.md>", () => {
     expect(
       await runMd(["- outer", "  - inner 1", "  - inner 2", "    - deep", "- second outer", ""].join("\n")),
     ).toMatchSnapshot();
+  });
+
+  describe("lines of code and of an HTML block start with the white space that is written", () => {
+    const source = "~~~make\nbuild:\n\tcc -o app main.c\n~~~\n\n<pre>\n\tfoo\n  \tbar\n    baz\n</pre>\n";
+
+    test("with colors", async () => {
+      const dim = (text: string) => `\x1b[2m${text}\x1b[22m`;
+      expect(await runMd(source)).toBe(
+        "\x1b[2m┌─ \x1b[0m\x1b[2m\x1b[3mmake\x1b[0m\n" +
+          "\x1b[2m│ \x1b[0mbuild:\n" +
+          "\x1b[2m│ \x1b[0m\tcc -o app main.c\n" +
+          "\x1b[2m└─\x1b[0m\n" +
+          ["<pre>", "\n", "\tfoo", "\n", "  \tbar", "\n", "    baz", "\n", "</pre>", "\n"].map(dim).join(""),
+      );
+    });
+
+    test("without colors", async () => {
+      expect(await runMd(source, { NO_COLOR: "1", FORCE_COLOR: undefined })).toBe(
+        "+- make\n| build:\n| \tcc -o app main.c\n+-\n<pre>\n\tfoo\n  \tbar\n    baz\n</pre>\n",
+      );
+    });
   });
 
   test("runs without colors when NO_COLOR is set", async () => {

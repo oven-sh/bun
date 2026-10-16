@@ -447,7 +447,8 @@ impl<'a> Parser<'a> {
     //
     // render_blocks.rs — impl Parser:
     //   enter_block, leave_block, process_code_block, process_html_block,
-    //   process_table_block, process_table_row
+    //   emit_verbatim_line, emit_rest_of_tab, process_table_block,
+    //   process_table_row
     //
     // blocks.rs — impl Parser:
     //   process_doc, analyze_line, process_line, start_new_block,

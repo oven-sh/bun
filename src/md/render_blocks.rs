@@ -1,6 +1,6 @@
-use super::helpers;
+use super::helpers::{self, Reach};
 use super::parser::{Error as ParserError, Parser};
-use super::types::{self, BlockType, JsResult, TextType, VerbatimLine};
+use super::types::{self, BlockType, JsResult, OFF, TextType, VerbatimLine};
 
 impl Parser<'_> {
     pub(crate) fn enter_block(
@@ -40,32 +40,44 @@ impl Parser<'_> {
         }
 
         for vline in &block_lines[0..count] {
-            // Output indented content
-            for _ in 0..vline.indent {
-                self.emit_text(TextType::Normal, b" ")?;
-            }
-            let content = &self.text[vline.beg as usize..vline.end as usize];
-            self.emit_text(TextType::Normal, content)?;
-            self.emit_text(TextType::Normal, b"\n")?;
+            self.emit_verbatim_line(TextType::Normal, vline)?;
         }
         Ok(())
     }
 
     pub(crate) fn process_html_block(&mut self, block_lines: &[VerbatimLine]) -> JsResult<()> {
-        for (i, vline) in block_lines.iter().enumerate() {
-            if i > 0 {
-                self.emit_text(TextType::Html, b"\n")?;
-            }
-            for _ in 0..vline.indent {
-                self.emit_text(TextType::Html, b" ")?;
-            }
-            self.emit_text(
-                TextType::Html,
-                &self.text[vline.beg as usize..vline.end as usize],
-            )?;
+        for vline in block_lines {
+            self.emit_verbatim_line(TextType::Html, vline)?;
         }
-        self.emit_text(TextType::Html, b"\n")?;
         Ok(())
+    }
+
+    /// A line of code or of an HTML block as it is written, from the white
+    /// space of its own on.
+    #[inline(always)]
+    fn emit_verbatim_line(&mut self, text_type: TextType, vline: &VerbatimLine) -> JsResult<()> {
+        let start = match vline.indent {
+            0 => vline.beg,
+            _ => self.emit_rest_of_tab(text_type, vline)?,
+        };
+        self.emit_text(text_type, &self.text[start as usize..vline.end as usize])?;
+        self.emit_text(text_type, b"\n")
+    }
+
+    /// Where the white space of the line's own starts. Only what is left of a
+    /// tab that the indentation of the block ends in is made of spaces
+    /// (CommonMark 2.2): those are written here.
+    #[inline(never)]
+    fn emit_rest_of_tab(&mut self, text_type: TextType, vline: &VerbatimLine) -> JsResult<OFF> {
+        const SPACES: &[u8] = b"                ";
+        let (start, mut spaces) =
+            helpers::indentation_start(self.text, vline.beg, vline.indent, Reach::BlankRun);
+        while spaces > 0 {
+            let chunk = spaces.min(SPACES.len() as u32);
+            self.emit_text(text_type, &SPACES[..chunk as usize])?;
+            spaces -= chunk;
+        }
+        Ok(start)
     }
 
     pub(crate) fn process_table_block(

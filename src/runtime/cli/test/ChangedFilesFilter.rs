@@ -11,7 +11,6 @@
 //! Only those test entry points are returned.
 
 use bun_bundler::mal_prelude::*;
-use core::ffi::{c_char, c_int};
 
 use bstr::BStr;
 
@@ -362,7 +361,7 @@ pub(crate) fn init_watch_trigger() {
             // iterates the startup-captured slice in this process.
             // SAFETY: both strings are NUL-terminated; setenv copies into libc env storage.
             unsafe {
-                setenv(TRIGGER_FILE_ENV_VAR_Z.as_ptr(), fresh.as_ptr(), 1);
+                libc::setenv(TRIGGER_FILE_ENV_VAR_Z.as_ptr(), fresh.as_ptr(), 1);
             }
             fresh
         };
@@ -378,11 +377,6 @@ pub(crate) fn init_watch_trigger() {
         let _ = jsc::hot_reloader::WATCH_CHANGED_PATHS
             .set(jsc::hot_reloader::WatchChangedPaths::new(set));
     }
-}
-
-unsafe extern "C" {
-    #[allow(dead_code)]
-    pub(crate) fn setenv(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int;
 }
 
 /// If the previous process's watcher recorded which files triggered

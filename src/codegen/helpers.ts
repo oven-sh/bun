@@ -62,12 +62,16 @@ export function writeIfNotChanged(file: string, contents: string) {
     }
   } catch (e) {}
 
+  // Through a rename, so a reader never sees half a file: the build directories of two profiles both write the
+  // declarations in build/types, and tsc or an editor may be reading them.
+  const temporary = `${file}.${process.pid}.tmp`;
   try {
-    fs.writeFileSync(file, contents);
+    fs.writeFileSync(temporary, contents);
   } catch (error) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, contents);
+    fs.writeFileSync(temporary, contents);
   }
+  fs.renameSync(temporary, file);
 
   if (fs.readFileSync(file, "utf8") !== contents) {
     throw new Error(`Failed to write file ${file}`);

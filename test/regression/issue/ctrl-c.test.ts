@@ -132,13 +132,17 @@ for (const mode of [
 ]) {
   it("kills on SIGINT in: 'bun " + mode.join(" ") + "'", async () => {
     expect(installExitCode).toBe(0);
-    const proc = Bun.spawn({
+    // A failed case must not leave bun running. SIGKILL, because a bun that
+    // ignores SIGINT can ignore SIGTERM too: the dispose waits for the exit, and
+    // the test would time out and hide the failed assertion.
+    await using proc = Bun.spawn({
       cmd: [bunExe(), ...mode],
       cwd: projectDir,
       stdin: "inherit",
       stdout: "pipe",
       stderr: "inherit",
       env: bunEnv,
+      killSignal: "SIGKILL",
     });
 
     // wait for the bin to start

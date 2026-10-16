@@ -3181,8 +3181,7 @@ uint8_t GlobalObject::drainMicrotasks()
     if (result == 1)
         return 1;
 
-    // close() stops the worker at the checkpoint that ends the calling task (no script on the stack),
-    // whether or not that checkpoint reported an error.
+    // close() stops the worker at the checkpoint that ends the calling task (no script on the stack).
     auto* clientData = WebCore::clientData(vm);
     if (clientData->workerCloseRequested && !vm.entryScope) [[unlikely]] {
         clientData->workerCloseRequested = false;

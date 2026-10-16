@@ -295,6 +295,35 @@ static JSUint8Array* allocBufferUnsafe(JSC::JSGlobalObject* lexicalGlobalObject,
     return result;
 }
 
+// Takes a whole number from 0 up, stored as an int32 or as a double. The ToIndex() of the Uint8Array constructor gives the same number.
+static ALWAYS_INLINE bool tryGetAsIndex(JSC::JSValue value, size_t& index)
+{
+    if (value.isUInt32()) [[likely]] {
+        index = value.asUInt32();
+        return true;
+    }
+    if (!value.isDouble())
+        return false;
+    int64_t asInt52 = JSC::tryConvertToInt52(value.asDouble());
+    if (asInt52 < 0 || asInt52 == JSC::JSValue::notInt52)
+        return false;
+    index = asInt52;
+    return true;
+}
+
+// A Buffer that is a view of `buffer`. With no `length`, it tracks the length of a resizable or growable `buffer`.
+static ALWAYS_INLINE JSC::EncodedJSValue createBufferView(JSC::ThrowScope& scope, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, RefPtr<JSC::ArrayBuffer>&& buffer, size_t byteOffset, std::optional<size_t> length)
+{
+    auto* structure = buffer->isResizableOrGrowableShared() ? globalObject->JSResizableOrGrowableSharedBufferSubclassStructure() : globalObject->JSBufferSubclassStructure();
+    auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, structure, WTF::move(buffer), byteOffset, length);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!uint8Array) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(uint8Array));
+}
+
 // Normalize val to be an integer in the range of [1, -1] since
 // implementations of memcmp() can vary by platform.
 static int normalizeCompareVal(int val, size_t a_length, size_t b_length)
@@ -810,7 +839,6 @@ JSC_DEFINE_HOST_FUNCTION(constructFastBuffer, (JSGlobalObject * lexicalGlobalObj
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     JSValue bufferOrLength = callFrame->argument(0);
     JSValue offsetValue = callFrame->argument(1);
@@ -818,24 +846,25 @@ JSC_DEFINE_HOST_FUNCTION(constructFastBuffer, (JSGlobalObject * lexicalGlobalObj
     JSValue newTarget = callFrame->newTarget();
 
     if (newTarget == JSValue(callFrame->jsCallee())) [[likely]] {
-        if (bufferOrLength.isUInt32())
-            RELEASE_AND_RETURN(scope, JSValue::encode(allocBuffer(lexicalGlobalObject, bufferOrLength.asUInt32())));
+        size_t length = 0;
+        if (tryGetAsIndex(bufferOrLength, length))
+            RELEASE_AND_RETURN(scope, JSValue::encode(allocBuffer(lexicalGlobalObject, length)));
 
-        // A view that is in range of a fixed-length ArrayBuffer needs none of the constructor's argument coercion.
+        // A view that is in range of an attached ArrayBuffer needs none of the constructor's argument coercion.
         if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(bufferOrLength)) {
             RefPtr<ArrayBuffer> buffer = jsBuffer->impl();
-            if ((offsetValue.isUndefined() || offsetValue.isUInt32()) && (lengthValue.isUndefined() || lengthValue.isUInt32()) && !buffer->isDetached() && !jsBuffer->isResizableOrGrowableShared()) {
+            size_t offset = 0;
+            bool hasLength = !lengthValue.isUndefined();
+            if ((offsetValue.isUndefined() || tryGetAsIndex(offsetValue, offset)) && (!hasLength || tryGetAsIndex(lengthValue, length)) && !buffer->isDetached()) {
                 size_t byteLength = buffer->byteLength();
-                size_t offset = offsetValue.isUndefined() ? 0 : offsetValue.asUInt32();
-                size_t length = lengthValue.isUndefined() ? byteLength - offset : lengthValue.asUInt32();
-                if (offset <= byteLength && length <= byteLength - offset) {
-                    auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(buffer), offset, length);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    if (!uint8Array) [[unlikely]] {
-                        throwOutOfMemoryError(globalObject, scope);
-                        return {};
-                    }
-                    RELEASE_AND_RETURN(scope, JSValue::encode(uint8Array));
+                if (offset <= byteLength && (!hasLength || length <= byteLength - offset)) {
+                    // With no length, the view of a resizable or growable buffer tracks its length.
+                    std::optional<size_t> viewLength;
+                    if (hasLength)
+                        viewLength = length;
+                    else if (!buffer->isResizableOrGrowableShared())
+                        viewLength = byteLength - offset;
+                    return createBufferView(scope, defaultGlobalObject(lexicalGlobalObject), lexicalGlobalObject, WTF::move(buffer), offset, viewLength);
                 }
             }
         }
@@ -2308,26 +2337,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_sliceBody(JSC::JSGlobalObje
         return {};
     }
 
-    if (castedThis->isResizableOrGrowableShared()) {
-        auto* subclassStructure = globalObject->JSResizableOrGrowableSharedBufferSubclassStructure();
-        auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), byteOffset + startOffset, newLength);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        if (!uint8Array) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, throwScope);
-            return {};
-        }
-        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
-    }
-
-    auto* subclassStructure = globalObject->JSBufferSubclassStructure();
-    auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), byteOffset + startOffset, newLength);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    if (!uint8Array) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, throwScope);
-        return {};
-    }
-
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+    return createBufferView(throwScope, globalObject, lexicalGlobalObject, WTF::move(buffer), byteOffset + startOffset, newLength);
 }
 
 // https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L834
@@ -3951,29 +3961,9 @@ static EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope
         }
     }
 
-    auto isResizableOrGrowableShared = jsBuffer->isResizableOrGrowableShared();
-    if (isResizableOrGrowableShared) {
-        auto* subclassStructure = globalObject->JSResizableOrGrowableSharedBufferSubclassStructure();
-        // Node only returns a length-tracking Buffer when no explicit length is given.
-        std::optional<size_t> viewLength;
-        if (!lengthValue.isUndefined()) viewLength = length;
-        auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), offset, viewLength);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        if (!uint8Array) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, throwScope);
-            return {};
-        }
-        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
-    }
-    auto* subclassStructure = globalObject->JSBufferSubclassStructure();
-    auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), offset, length);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    if (!uint8Array) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, throwScope);
-        return {};
-    }
-
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+    // Node only returns a length-tracking Buffer when no explicit length is given.
+    bool tracksLength = lengthValue.isUndefined() && buffer->isResizableOrGrowableShared();
+    return createBufferView(throwScope, globalObject, lexicalGlobalObject, WTF::move(buffer), offset, tracksLength ? std::nullopt : std::optional<size_t>(length));
 }
 
 static JSC::EncodedJSValue jsBufferConstructorFunction_fromBody(JSC::JSGlobalObject* lexicalGlobalObject, JSValue value, JSValue encodingOrOffset, JSValue length);
@@ -3985,6 +3975,31 @@ static ALWAYS_INLINE bool isObjectPrototypeValueOf(Structure* structure, JSValue
 {
     JSGlobalObject* realm = structure->realm();
     return realm && valueOf == JSValue(realm->objectProtoValueOfFunction());
+}
+
+// The `data` of a Buffer that went through JSON: an object literal with `type: "Buffer"`, `data: [...]` and no other property.
+static ALWAYS_INLINE JSArray* dataOfJSONForm(JSC::VM& vm, JSObject* object)
+{
+    if (object->type() != FinalObjectType)
+        return nullptr;
+    Structure* structure = object->structure();
+    JSGlobalObject* realm = structure->realm();
+    // Two property slots hold `type` and `data`. So the object has no `length` and no `buffer` of its own.
+    if (structure->maxOffset() != 1 || !realm)
+        return nullptr;
+    JSObject* objectPrototype = realm->objectPrototype();
+    if (object->getPrototypeDirect() != JSValue(objectPrototype))
+        return nullptr;
+    JSValue type = object->getDirect(vm, vm.propertyNames->type);
+    JSValue data = object->getDirect(vm, WebCore::builtinNames(vm).dataPublicName());
+    if (!type || !type.isString() || !data || !isJSArray(data))
+        return nullptr;
+    StringImpl* typeImpl = asString(type)->tryGetValueImpl();
+    if (!typeImpl || !WTF::equal(StringView(typeImpl), "Buffer"_s))
+        return nullptr;
+    if (objectPrototype->getDirect(vm, vm.propertyNames->length) || objectPrototype->getDirect(vm, WebCore::builtinNames(vm).bufferPublicName()))
+        return nullptr;
+    return uncheckedDowncast<JSC::JSArray>(data);
 }
 
 // Buffer.from(object): https://github.com/nodejs/node/blob/v26.3.0/lib/buffer.js#L341-L364 and #L573-L584
@@ -4017,11 +4032,18 @@ static NEVER_INLINE JSC::EncodedJSValue constructBufferFromObject(JSC::JSGlobalO
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     // if (valueOf != null && valueOf !== value && (typeof valueOf === 'string' || typeof valueOf === 'object'))
-    if (valueOf.isString() || (valueOf.isObject() && valueOf != JSValue(object) && !valueOf.isCallable()))
+    if (valueOf.isString() || (valueOf.isObject() && valueOf != JSValue(object) && !valueOf.isCallable())) {
+        // Only this frame holds what valueOf() returned.
+        JSC::EnsureStillAliveScope keepAlive(valueOf);
         RELEASE_AND_RETURN(throwScope, jsBufferConstructorFunction_fromBody(lexicalGlobalObject, valueOf, encodingOrOffset, length));
+    }
 
     if (isJSArray(object))
         return constructBufferFromArray(throwScope, lexicalGlobalObject, uncheckedDowncast<JSC::JSArray>(object));
+
+    // Node's reads of `length`, `buffer`, `type` and `data` run no code for this object, so they need no generic lookup.
+    if (auto* data = dataOfJSONForm(vm, object))
+        return constructBufferFromArray(throwScope, lexicalGlobalObject, data);
 
     // if (obj.length !== undefined || isAnyArrayBuffer(obj.buffer))
     JSValue lengthValue = object->get(lexicalGlobalObject, vm.propertyNames->length);
@@ -4036,6 +4058,7 @@ static NEVER_INLINE JSC::EncodedJSValue constructBufferFromObject(JSC::JSGlobalO
         // if (typeof obj.length !== 'number') return new FastBuffer();
         if (!lengthValue.isNumber())
             RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(createEmptyBuffer(lexicalGlobalObject)));
+        // Node reads `obj.length` again for the size and for the copy. Here the one read answers each of them.
         return constructBufferFromArrayLike(throwScope, lexicalGlobalObject, object, lengthValue.asNumber());
     }
 
@@ -4170,9 +4193,10 @@ static NEVER_INLINE JSC::EncodedJSValue constructBufferFromNumber(JSC::JSGlobalO
 
     if (encodingOrOffset.isString())
         return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "string"_s, "string"_s, size);
-    // Every non-negative int32 passes the validation of Buffer.alloc().
-    if (size.isUInt32()) [[likely]]
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(allocBuffer(lexicalGlobalObject, size.asUInt32())));
+    // A whole number from 0 to kMaxLength passes the validation of Buffer.alloc().
+    size_t index = 0;
+    if (tryGetAsIndex(size, index) && index <= Bun::Buffer::kMaxLength) [[likely]]
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(allocBuffer(lexicalGlobalObject, index)));
     Bun::V::validateNumber(throwScope, lexicalGlobalObject, size, "size"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength));
     RETURN_IF_EXCEPTION(throwScope, {});
     size_t length = size.toLength(lexicalGlobalObject);

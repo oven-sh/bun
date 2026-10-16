@@ -19,6 +19,26 @@ const toPrimitiveString = {
     return "short string";
   },
 };
+const stringObjectWithProperty = Object.assign(new String("short string"), { extra: 1 });
+const classWithValueOf = new (class {
+  valueOf() {
+    return "short string";
+  }
+})();
+const date = new Date(0);
+
+const uint8Array100 = new Uint8Array(100);
+const valueOfView = {
+  valueOf() {
+    return uint8Array100;
+  },
+};
+const arrayWithValueOf = Object.assign([1, 2, 3, 4, 5, 6, 7, 8], {
+  valueOf() {
+    return this;
+  },
+});
+const dataView = new DataView(new ArrayBuffer(8));
 
 group("Buffer.from({ type: 'Buffer', data })", () => {
   bench("Buffer.from(json[8])", () => Buffer.from(json8));
@@ -31,6 +51,15 @@ group("Buffer.from(object that converts to a string)", () => {
   bench("Buffer.from(new String('short string'))", () => Buffer.from(stringObject));
   bench("Buffer.from({ valueOf() })", () => Buffer.from(valueOfString));
   bench("Buffer.from({ [Symbol.toPrimitive]() })", () => Buffer.from(toPrimitiveString));
+  bench("Buffer.from(new String('short string') with a property)", () => Buffer.from(stringObjectWithProperty));
+  bench("Buffer.from(instance of a class with valueOf())", () => Buffer.from(classWithValueOf));
+  bench("Buffer.from(new Date(0))", () => Buffer.from(date));
+});
+
+group("Buffer.from(object that converts to bytes)", () => {
+  bench("Buffer.from({ valueOf() }) that returns a Uint8Array(100)", () => Buffer.from(valueOfView));
+  bench("Buffer.from(array with its own valueOf())", () => Buffer.from(arrayWithValueOf));
+  bench("Buffer.from(new DataView(new ArrayBuffer(8)))", () => Buffer.from(dataView));
 });
 
 await run();

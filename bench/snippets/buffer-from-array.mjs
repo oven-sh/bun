@@ -51,4 +51,13 @@ group("new Buffer(array)", () => {
   bench("new Buffer(int32[64])", () => new Buffer(int32Array64));
 });
 
+// Keep this group last: the write changes how every later call finds `valueOf`.
+group("Buffer.from(array) after a write to Object.prototype.valueOf", () => {
+  bench("Buffer.from(int32[8]) after the write", function* () {
+    Object.prototype.valueOf = Object.prototype.valueOf;
+    yield () => Buffer.from(int32Array8);
+  });
+  bench("new Buffer(int32[8]) after the write", () => new Buffer(int32Array8));
+});
+
 await run();

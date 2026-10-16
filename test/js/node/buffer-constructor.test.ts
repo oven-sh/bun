@@ -9,14 +9,14 @@
  * (`{ type: "Buffer", data: [...] }`), for an object with `valueOf()` and for
  * an object with `Symbol.toPrimitive`.
  *
- * This file uses node:test/node:assert so the identical file also runs under
- * `node --test`, which is where the expected values come from. It cannot
- * import from "harness" for the same reason.
+ * This file uses node:test and node:assert, so the identical file runs under
+ * Node.js. The expected values come from there: the last test runs this file
+ * with the `node` on PATH.
  */
 import assert from "node:assert";
 import { kMaxLength } from "node:buffer";
-import { execFile } from "node:child_process";
-import { Stream } from "node:stream";
+import { execFile, type ChildProcess } from "node:child_process";
+import { Readable, Stream } from "node:stream";
 import { after, describe, test } from "node:test";
 import vm from "node:vm";
 
@@ -68,6 +68,15 @@ const invalidArgType = {
 
 const arrayBuffer = () => new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]).buffer;
 
+function detachedArrayBuffer() {
+  const buffer = arrayBuffer();
+  buffer.transfer();
+  return buffer;
+}
+
+// A whole number that JavaScriptCore stores as a double and not as an int32.
+const double = (value: number) => new Float64Array([value])[0];
+
 // The bytes as hex, or the name and the code of what the call throws.
 function outcome(call: () => Buffer) {
   try {
@@ -90,12 +99,55 @@ function checkEach(forms: [string, Call][], cases: [string, () => unknown[], str
   assert.deepStrictEqual(actual, expected);
 }
 
+const children: ChildProcess[] = [];
+after(() => {
+  for (const child of children) child.kill();
+});
+
+// Runs `script` in a child process. The script prints one line of JSON. The child starts at once, so it runs while
+// the tests do.
+function runChild(script: string, env: NodeJS.ProcessEnv = {}) {
+  const { promise, resolve } = Promise.withResolvers<{ results: unknown; stderr: string; code: unknown }>();
+  const prelude = `
+    process.noDeprecation = true;
+    const hex = buffer => buffer.toString("hex");
+    const forms = [x => Buffer.from(x), x => new Buffer(x), x => Buffer(x)];
+  `;
+  children.push(
+    execFile(
+      process.execPath,
+      ["-e", prelude + script],
+      { env: { ...process.env, NODE_NO_WARNINGS: "1", BUN_DEBUG_QUIET_LOGS: "1", ...env } },
+      (error, stdout, stderr) => {
+        let results: unknown = stdout;
+        try {
+          results = JSON.parse(stdout);
+        } catch {}
+        resolve({ results, stderr: error ? stderr : "", code: error ? (error.code ?? error.signal) : 0 });
+      },
+    ),
+  );
+  return promise;
+}
+
 describe("the Buffer constructor converts what Buffer.from() converts", () => {
   const dateString = Buffer.from(String(new Date(0))).toString("hex");
 
   const cases: [string, () => unknown[], string][] = [
     ["a Buffer that went through JSON", () => [JSON.parse(JSON.stringify(Buffer.from("hello")))], "68656c6c6f"],
     ["{ type: 'Buffer', data: [] }", () => [{ type: "Buffer", data: [] }], ""],
+    ["{ data, type: 'Buffer' }", () => [{ data: [1, 2], type: "Buffer" }], "0102"],
+    ["{ type: 'Buffer', data } and another property", () => [{ type: "Buffer", data: [1, 2], other: 1 }], "0102"],
+    // prettier-ignore
+    ["{ type: 'Buffer', data } after a delete", () => { const object: any = { other: 1, type: "Buffer", data: [1, 2] }; delete object.other; return [object]; }, "0102"],
+    [
+      "{ type: 'Buffer', data } from another realm",
+      () => [vm.runInContext("({ type: 'Buffer', data: [1, 2] })", context)],
+      "0102",
+    ],
+    ["{ type: a string made of two parts, data }", () => [{ type: "Buf".concat("fer"), data: [1, 2] }], "0102"],
+    // prettier-ignore
+    ["{ type: 'Buffer', data: an instance of a subclass of Array }", () => [{ type: "Buffer", data: class extends Array {}.from([1, 2]) }], "0102"],
     [
       "{ type: 'Buffer', data } with a null prototype",
       () => [{ __proto__: null, type: "Buffer", data: [1, 2] }],
@@ -161,6 +213,29 @@ describe("the Buffer constructor converts what Buffer.from() converts", () => {
     ["an instance of a subclass of String", () => [new (class extends String {})("hi")], "6869"],
     // prettier-ignore
     ["an instance of a subclass of String with valueOf()", () => [new (class extends String { valueOf() { return "yo"; } })("hi")], "796f"],
+    // A String object that valueOf() does not unwrap is an array-like object: each character is converted to a byte.
+    [
+      "a String object whose valueOf() returns a number",
+      () => [Object.assign(new String("123"), { valueOf: () => 5 })],
+      "010203",
+    ],
+    // prettier-ignore
+    ["a String object whose valueOf() returns undefined", () => [Object.assign(new String("abc"), { valueOf() {} })], "000000"],
+    ["a String object with valueOf: null", () => [Object.assign(new String("12"), { valueOf: null })], "0102"],
+    ["a String object with a null prototype", () => [Object.setPrototypeOf(new String("12"), null)], "0102"],
+    ["a String object with the prototype {}", () => [Object.setPrototypeOf(new String("12"), {})], "0102"],
+    // prettier-ignore
+    ["an instance of a subclass of String whose valueOf() returns a number", () => [new (class extends String { valueOf() { return 5; } })("12")], "0102"],
+    // prettier-ignore
+    ["a String object whose valueOf() returns a number, with an encoding", () => [Object.assign(new String("6162"), { valueOf: () => 5 }), "hex"], "06010602"],
+    // prettier-ignore
+    ["a String object with Symbol.toPrimitive", () => [Object.assign(new String("hi"), { [Symbol.toPrimitive]: () => "yo" })], "6869"],
+    // prettier-ignore
+    ["valueOf() that returns a function, before length", () => [{ valueOf() { return () => {}; }, length: 1, 0: 65 }], "41"],
+    // prettier-ignore
+    ["valueOf() that returns a function, before { type: 'Buffer', data }", () => [{ valueOf() { return () => {}; }, type: "Buffer", data: [1, 2] }], "0102"],
+    // prettier-ignore
+    ["valueOf() that returns a function, before Symbol.toPrimitive", () => [{ valueOf() { return () => {}; }, [Symbol.toPrimitive]() { return "hi"; } }], "6869"],
     ["an array-like object", () => [{ length: 2, 0: 104, 1: 105 }], "6869"],
     ["an array-like object with a fractional length", () => [{ length: 1.5, 0: 104, 1: 105 }], "68"],
     ["an array-like object with a null prototype", () => [{ __proto__: null, length: 1, 0: 5 }], "05"],
@@ -186,6 +261,8 @@ describe("the Buffer constructor converts what Buffer.from() converts", () => {
     // prettier-ignore
     ["an array with its own valueOf() that returns a number", () => [Object.assign([1, 2], { valueOf: () => 5 })], "0102"],
     // prettier-ignore
+    ["an array with its own valueOf() that returns a function", () => [Object.assign([1, 2], { valueOf: () => () => {} })], "0102"],
+    // prettier-ignore
     ["an instance of a subclass of Array with valueOf()", () => [new (class extends Array { valueOf() { return "hi"; } })()], "6869"],
     ["a string", () => ["hello"], "68656c6c6f"],
     ["a string and an encoding", () => ["6869", "hex"], "6869"],
@@ -196,6 +273,8 @@ describe("the Buffer constructor converts what Buffer.from() converts", () => {
     ["an ArrayBuffer", () => [arrayBuffer()], "0102030405060708"],
     ["an ArrayBuffer, with offset and length", () => [arrayBuffer(), 2, 3], "030405"],
     ["a SharedArrayBuffer", () => [new SharedArrayBuffer(3)], "000000"],
+    // prettier-ignore
+    ["a DataView with a length", () => [Object.assign(new DataView(new Uint8Array([1, 2, 3]).buffer), { length: 2, 0: 9 })], "0900"],
   ];
 
   test("Buffer.from(x), new Buffer(x) and Buffer(x) give the same bytes", () => {
@@ -564,10 +643,85 @@ describe("Buffer[Symbol.species]", () => {
     ["an ArrayBuffer", () => [arrayBuffer()], "0102030405060708"],
     ["an ArrayBuffer, byteOffset and length", () => [arrayBuffer(), 1, 2], "0203"],
     ["{ type: 'Buffer', data }", () => [{ type: "Buffer", data: [1, 2] }], ""],
+    ["2 stored as a double", () => [double(2)], "0000"],
+    ["1.5", () => [1.5], "00"],
+    ["-0", () => [-0], ""],
+    ["NaN", () => [NaN], ""],
+    ["-1", () => [-1], "RangeError undefined"],
+    ["2 ** 53", () => [2 ** 53], "RangeError undefined"],
+    ["an ArrayBuffer, byteOffset and length stored as doubles", () => [arrayBuffer(), double(1), double(2)], "0203"],
+    ["an ArrayBuffer and a byteOffset stored as a double", () => [arrayBuffer(), double(6)], "0708"],
+    ["an ArrayBuffer, -0 and -0", () => [arrayBuffer(), -0, -0], ""],
+    ["an ArrayBuffer, 1.5 and 2.5", () => [arrayBuffer(), 1.5, 2.5], "0203"],
+    ["an ArrayBuffer and the byteOffset 8", () => [arrayBuffer(), 8], ""],
+    ["an ArrayBuffer and the byteOffset 9", () => [arrayBuffer(), 9], "RangeError undefined"],
+    ["an ArrayBuffer and the byteOffset 2 ** 31", () => [arrayBuffer(), 2 ** 31], "RangeError undefined"],
+    ["an ArrayBuffer and the byteOffset 2 ** 32", () => [arrayBuffer(), 2 ** 32], "RangeError undefined"],
+    ["an ArrayBuffer and the byteOffset 2 ** 53", () => [arrayBuffer(), 2 ** 53], "RangeError undefined"],
+    ["an ArrayBuffer and the length 9", () => [arrayBuffer(), 0, 9], "RangeError undefined"],
+    ["an ArrayBuffer and the length 2 ** 32", () => [arrayBuffer(), 0, 2 ** 32], "RangeError undefined"],
+    ["an ArrayBuffer and the length 2 ** 53", () => [arrayBuffer(), 0, 2 ** 53], "RangeError undefined"],
+    ["an ArrayBuffer, the byteOffset 6 and the length 3", () => [arrayBuffer(), 6, 3], "RangeError undefined"],
+    ["a resizable ArrayBuffer and a byteOffset past its end", () => [new ArrayBuffer(4, { maxByteLength: 8 }), 5], "RangeError undefined"],
+    ["a resizable ArrayBuffer and a length past its end", () => [new ArrayBuffer(4, { maxByteLength: 8 }), 0, 5], "RangeError undefined"],
+    ["a detached ArrayBuffer", () => [detachedArrayBuffer()], "TypeError undefined"],
   ];
 
   test("is the Uint8Array constructor, not Buffer.from()", () => {
     checkEach([["new FastBuffer(x)", (...args) => new FastBuffer(...args)]], cases);
+  });
+
+  test("with no length it tracks a resizable ArrayBuffer and a growable SharedArrayBuffer", () => {
+    const resizable = new ArrayBuffer(4, { maxByteLength: 8 });
+    const growable = new SharedArrayBuffer(4, { maxByteLength: 8 });
+    const views = [resizable, growable].flatMap(buffer => [
+      new FastBuffer(buffer),
+      new FastBuffer(buffer, 1),
+      new FastBuffer(buffer, double(1)),
+      new FastBuffer(buffer, 1, 2),
+      new FastBuffer(buffer, double(1), double(2)),
+    ]);
+    resizable.resize(8);
+    growable.grow(8);
+    const eachBuffer = [
+      [true, 0, 8],
+      [true, 1, 7],
+      [true, 1, 7],
+      [true, 1, 2],
+      [true, 1, 2],
+    ];
+    assert.deepStrictEqual(
+      views.map(view => [Object.getPrototypeOf(view) === Buffer.prototype, view.byteOffset, view.length]),
+      [...eachBuffer, ...eachBuffer],
+    );
+  });
+
+  test("throws what the Uint8Array constructor throws", () => {
+    const thrown = (construct: () => unknown) => {
+      try {
+        construct();
+        return "no error";
+      } catch (error: any) {
+        return `${error.name}: ${error.message}`;
+      }
+    };
+    const rejected: (() => unknown[])[] = [
+      () => [detachedArrayBuffer()],
+      () => [detachedArrayBuffer(), 0],
+      () => [detachedArrayBuffer(), 0, 0],
+      () => [detachedArrayBuffer(), double(0), double(0)],
+      () => [-1],
+      () => [2 ** 53],
+      () => [arrayBuffer(), 9],
+      () => [arrayBuffer(), 0, 9],
+      () => [arrayBuffer(), 2 ** 32, 2 ** 32],
+      () => [new ArrayBuffer(4, { maxByteLength: 8 }), 5],
+      () => [new ArrayBuffer(4, { maxByteLength: 8 }), 0, 5],
+    ];
+    const actual = rejected.map(args => thrown(() => new FastBuffer(...args())));
+    const expected = rejected.map(args => thrown(() => new (Uint8Array as any)(...args())));
+    assert.deepStrictEqual(actual, expected);
+    assert.ok(!actual.includes("no error"));
   });
 
   test("is a class: it needs `new` and a subclass gets its own prototype", () => {
@@ -602,19 +756,56 @@ describe("Buffer[Symbol.species]", () => {
 
 describe("a valueOf() that every value of a kind reaches", () => {
   // The script replaces `valueOf` on shared prototypes and recurses until the stack ends, so it runs in a child
-  // process. It prints one line of JSON: { name: result }. Each result has an entry for each of `forms`.
+  // process. Each result has an entry for each of `forms`.
   const script = `
-    const hex = buffer => buffer.toString("hex");
-    const forms = [x => Buffer.from(x), x => new Buffer(x), x => Buffer(x)];
     const all = make => forms.map(call => hex(call(make()))).join(",");
     const results = {};
 
+    {
+      // An object literal, then the same shape with a property that comes from somewhere else.
+      const json = () => ({ type: "Buffer", data: [1, 2] });
+      const rows = [all(json)];
+      Object.prototype.length = 1;
+      Object.prototype[0] = 9;
+      rows.push(all(json));
+      delete Object.prototype.length;
+      delete Object.prototype[0];
+      Object.prototype.buffer = new ArrayBuffer(1);
+      rows.push(all(json));
+      delete Object.prototype.buffer;
+      Object.prototype.type = "Buffer";
+      Object.prototype.data = [5, 6];
+      rows.push(all(() => ({})));
+      delete Object.prototype.type;
+      delete Object.prototype.data;
+      Object.prototype[Symbol.toPrimitive] = () => "hi";
+      rows.push(all(() => ({})));
+      delete Object.prototype[Symbol.toPrimitive];
+      rows.push(all(() => Object.setPrototypeOf(json(), { length: 1, 0: 7 })));
+      rows.push(all(() => Object.defineProperty(json(), "type", { get: () => "Buffer" })));
+      rows.push(all(() => Object.defineProperty(json(), "data", { get: () => [3, 4] })));
+      rows.push(all(json));
+      results["an object literal reads each property where it is"] = rows;
+    }
+
+    {
+      // With this many named properties the array gains and loses a valueOf() and keeps one shape.
+      const array = Object.assign([1, 2], Object.fromEntries(Array.from({ length: 200 }, (_, i) => ["p" + i, i])));
+      const before = all(() => array);
+      array.valueOf = () => "hi";
+      const during = all(() => array);
+      delete array.valueOf;
+      results["an array with 200 named properties calls a valueOf() that it gains"] = [before, during, all(() => array)];
+    }
+
     for (const prototype of [Array.prototype, Object.prototype]) {
       const name = prototype === Array.prototype ? "Array.prototype" : "Object.prototype";
+      const original = Object.getOwnPropertyDescriptor(prototype, "valueOf");
       const before = all(() => [1, 2]);
       prototype.valueOf = function () { return Array.isArray(this) ? "hi" : this; };
       const during = all(() => [1, 2]);
-      delete prototype.valueOf;
+      if (original) Object.defineProperty(prototype, "valueOf", original);
+      else delete prototype.valueOf;
       results["an array calls a valueOf() that is put on " + name] = [before, during, all(() => [1, 2])];
     }
 
@@ -638,25 +829,24 @@ describe("a valueOf() that every value of a kind reaches", () => {
     }
 
     {
+      // An accessor is what the lockdown() of SES makes of Object.prototype.valueOf.
+      const original = Object.prototype.valueOf;
+      let answer = original;
+      Object.defineProperty(Object.prototype, "valueOf", { get: () => answer, set() {}, configurable: true });
+      const before = all(() => [1, 2]);
+      answer = function () { return Array.isArray(this) ? "hi" : this; };
+      const during = all(() => [1, 2]);
+      answer = original;
+      results["an array calls the valueOf() that an accessor on Object.prototype gives"] = [before, during, all(() => [1, 2])];
+      Object.defineProperty(Object.prototype, "valueOf", { value: original, writable: true, configurable: true });
+    }
+
+    {
       // Each valueOf() returns the next object of the chain. Node recurses for each one and runs out of stack.
       const chain = depth => ({ valueOf: () => (depth === 0 ? "end" : chain(depth - 1)) });
       results["a chain of 100000 valueOf() is a RangeError"] = forms.map(call => {
         try { call(chain(100000)); return "no error"; } catch (error) { return error.name; }
       });
-    }
-
-    {
-      // Nothing but the conversion holds the view that valueOf() returns.
-      const expected = Buffer.alloc(4096, 7);
-      let wrong = 0;
-      for (let i = 0; i < 60; i++) {
-        for (const View of [Uint8Array, Uint8ClampedArray, Uint16Array]) {
-          const fresh = { valueOf() { return new View(4096).fill(7); } };
-          for (const call of forms) if (!call(fresh).equals(expected)) wrong++;
-        }
-        if (i % 20 === 0 && typeof Bun !== "undefined") Bun.gc(true);
-      }
-      results["a view that only valueOf() returned is copied before it is collected"] = wrong;
     }
 
     {
@@ -668,22 +858,53 @@ describe("a valueOf() that every value of a kind reaches", () => {
     console.log(JSON.stringify(results));
   `;
 
+  const unchanged = ["0102,0102,0102", "6869,6869,6869", "0102,0102,0102"];
   const expected: Record<string, unknown> = {
-    "an array calls a valueOf() that is put on Array.prototype": ["0102,0102,0102", "6869,6869,6869", "0102,0102,0102"],
-    "an array calls a valueOf() that is put on Object.prototype": [
+    "an object literal reads each property where it is": [
       "0102,0102,0102",
+      "09,09,09",
+      ",,",
+      "0506,0506,0506",
       "6869,6869,6869",
+      "07,07,07",
+      "0102,0102,0102",
+      "0304,0304,0304",
       "0102,0102,0102",
     ],
+    "an array with 200 named properties calls a valueOf() that it gains": unchanged,
+    "an array calls a valueOf() that is put on Array.prototype": unchanged,
+    "an array calls a valueOf() that is put on Object.prototype": unchanged,
     "a String object calls a replaced String.prototype.valueOf": ["6869,6869,6869", "796f,796f,796f", "6869,6869,6869"],
     "an object calls a replaced Object.prototype.valueOf": ["05,05,05", "6869,6869,6869", "05,05,05"],
+    "an array calls the valueOf() that an accessor on Object.prototype gives": unchanged,
     "a chain of 100000 valueOf() is a RangeError": ["RangeError", "RangeError", "RangeError"],
-    "a view that only valueOf() returned is copied before it is collected": 0,
     "an array after Object.freeze(Object.prototype)": ["0102,0102,0102", "6869,6869,6869"],
   };
 
-  const env: NodeJS.ProcessEnv = { ...process.env, NODE_NO_WARNINGS: "1", BUN_DEBUG_QUIET_LOGS: "1" };
-  // Malloc=1 makes JavaScriptCore use the system allocator, so an ASAN build reports a read of a freed view.
+  const result = runChild(script);
+
+  test("every result is the one Node gives", async () => {
+    assert.deepStrictEqual(await result, { results: expected, stderr: "", code: 0 });
+  });
+});
+
+describe("a view that only valueOf() returned", () => {
+  // Nothing but the conversion holds the view. A collection inside the conversion ends the view, and its memory
+  // with it, unless the conversion still needs the view at that time.
+  const script = `
+    const expected = Buffer.alloc(4096, 7);
+    let wrong = 0;
+    for (let i = 0; i < 4; i++) {
+      for (const View of [Uint8Array, Uint8ClampedArray, Uint16Array]) {
+        const fresh = { valueOf() { return new View(4096).fill(7); } };
+        for (const call of forms) if (!call(fresh).equals(expected)) wrong++;
+      }
+    }
+    console.log(JSON.stringify({ wrong }));
+  `;
+
+  const env: NodeJS.ProcessEnv = {};
+  // Malloc=1 makes JavaScriptCore use the system allocator, so an ASAN build reports a read of freed memory.
   // WebKit has no such allocator on Windows: the child would trap when JavaScriptCore starts.
   if (process.platform !== "win32") {
     env.Malloc = "1";
@@ -691,27 +912,17 @@ describe("a valueOf() that every value of a kind reaches", () => {
     // symbolize=0: a report with symbols takes longer than the test has.
     env.ASAN_OPTIONS = [process.env.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":");
   }
-  const childResult = Promise.withResolvers<{ results: unknown; stderr: string; code: unknown }>();
-  // The child starts when this file loads, so it runs while the tests above do.
-  const child = execFile(
-    process.execPath,
-    ["-e", `process.noDeprecation = true;${script}`],
-    { env },
-    (error, stdout, stderr) => {
-      let results: unknown = stdout;
-      try {
-        results = JSON.parse(stdout);
-      } catch {}
-      childResult.resolve({ results, stderr: error ? stderr : "", code: error ? (error.code ?? error.signal) : 0 });
-    },
-  );
-  after(() => {
-    child.kill();
-  });
 
-  test("every result is the one Node gives", async () => {
-    assert.deepStrictEqual(await childResult.promise, { results: expected, stderr: "", code: 0 });
-  });
+  // The option makes JavaScriptCore collect at every Nth allocation that leaves its fast path. With no option, no
+  // collection starts inside a conversion of this script. Which conversions get one depends on the build, so the
+  // script runs with two values of N.
+  for (const period of [7, 8]) {
+    const result = runChild(script, { ...env, BUN_JSC_slowPathAllocsBetweenGCs: String(period) });
+
+    test(`is copied before a collection ends it (one collection for each ${period} slow allocations)`, async () => {
+      assert.deepStrictEqual(await result, { results: { wrong: 0 }, stderr: "", code: 0 });
+    });
+  }
 });
 
 describe("Stream._uint8ArrayToBuffer", () => {
@@ -762,6 +973,15 @@ describe("Stream._uint8ArrayToBuffer", () => {
     ["{ buffer: ArrayBuffer, byteLength: 9 }", () => ({ buffer: arrayBuffer(), byteLength: 9 }), "RangeError undefined"],
     ["{ buffer: ArrayBuffer, byteLength: -1 }", () => ({ buffer: arrayBuffer(), byteLength: -1 }), "RangeError undefined"],
     ["{ buffer: ArrayBuffer, byteOffset: 6, byteLength: 3 }", () => ({ buffer: arrayBuffer(), byteOffset: 6, byteLength: 3 }), "RangeError undefined"],
+    ["{ buffer: 2 stored as a double }", () => ({ buffer: double(2) }), "0000"],
+    ["{ buffer: ArrayBuffer, byteOffset and byteLength stored as doubles }", () => ({ buffer: arrayBuffer(), byteOffset: double(2), byteLength: double(3) }), "030405"],
+    ["{ buffer: ArrayBuffer, byteOffset: -0, byteLength: -0 }", () => ({ buffer: arrayBuffer(), byteOffset: -0, byteLength: -0 }), ""],
+    ["{ buffer: ArrayBuffer, byteOffset: 2 ** 31 }", () => ({ buffer: arrayBuffer(), byteOffset: 2 ** 31 }), "RangeError undefined"],
+    ["{ buffer: ArrayBuffer, byteLength: 2 ** 32 }", () => ({ buffer: arrayBuffer(), byteLength: 2 ** 32 }), "RangeError undefined"],
+    ["{ buffer: ArrayBuffer, byteLength: 2 ** 53 }", () => ({ buffer: arrayBuffer(), byteLength: 2 ** 53 }), "RangeError undefined"],
+    ["{ buffer: a detached ArrayBuffer }", () => ({ buffer: detachedArrayBuffer() }), "TypeError undefined"],
+    ["a Uint8Array of a resizable ArrayBuffer", () => new Uint8Array(new ArrayBuffer(3, { maxByteLength: 8 }), 1), "0000"],
+    ["a Uint8Array of a growable SharedArrayBuffer", () => new Uint8Array(new SharedArrayBuffer(3, { maxByteLength: 8 }), 1, 1), "00"],
   ];
 
   test("is the Uint8Array constructor for every chunk", () => {
@@ -778,4 +998,34 @@ describe("Stream._uint8ArrayToBuffer", () => {
     resizable.resize(4);
     assert.deepStrictEqual([tracking.length, fixed.length], [4, 1]);
   });
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/readable.js#L1707-L1708
+  test("readable.read(n) splits a chunk with it, for an n stored as an int32 and as a double", () => {
+    for (const n of [6, double(6)]) {
+      const readable = new Readable({ read() {} });
+      readable.push(Buffer.from([1, 2, 3, 4]));
+      readable.push(Buffer.from([5, 6, 7, 8]));
+      assert.deepStrictEqual([hex(readable.read(n)), hex(readable.read())], ["010203040506", "0708"]);
+    }
+  });
 });
+
+// Only in Bun: when Node.js runs this file it must not spawn itself again.
+if (typeof Bun !== "undefined") {
+  const node = Bun.which("node");
+  describe("Node.js compatibility", () => {
+    (node ? test : test.skip)("all tests pass in Node.js", async () => {
+      // A direct run, not `node --test`: the runner mode forks a second node process per file. node:test still
+      // exits non-zero on any failure.
+      await using proc = Bun.spawn({
+        cmd: [node!, "--v8-pool-size=1", import.meta.filename],
+        env: { ...process.env, UV_THREADPOOL_SIZE: "2" },
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      assert.deepStrictEqual({ exitCode, output: exitCode === 0 ? "" : stdout + stderr }, { exitCode: 0, output: "" });
+    });
+  });
+}

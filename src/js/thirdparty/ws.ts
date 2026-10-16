@@ -2042,7 +2042,8 @@ function keepIdentityError(websocket: WebSocket, tls: NativeTlsOptions): NativeT
 
   // If the verdict isn't enforced the connection goes on, and a later failure must not report this one.
   const rejectUnauthorized = getIgnoringObjectPrototype(tls, "rejectUnauthorized");
-  const enforced = rejectUnauthorized ?? process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0";
+  const enforced =
+    typeof rejectUnauthorized === "boolean" ? rejectUnauthorized : process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0";
 
   // Inherit from `tls` instead of copying it, so that getters and inherited options keep working.
   return {

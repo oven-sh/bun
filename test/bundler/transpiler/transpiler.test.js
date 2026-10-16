@@ -1927,6 +1927,145 @@ class Test extends Bar {
       ts.expectPrinted_("export import Foo = Baz.Bar;", "export const Foo = Baz.Bar");
     });
 
+    describe("import a = b.c that no value reads", () => {
+      // `treeShaking` makes one Part per top-level statement. The other modes visit the file as one Part,
+      // and `target: "bun"` and `minify.syntax` then merge adjacent declarations.
+      const modes = [
+        ["default", { loader: "ts" }],
+        ["treeShaking", { loader: "ts", treeShaking: true }],
+        ["target bun", { loader: "ts", target: "bun" }],
+        ["minify syntax", { loader: "ts", minify: { syntax: true } }],
+        ["treeShaking and minify syntax", { loader: "ts", treeShaking: true, minify: { syntax: true } }],
+      ];
+
+      // Runs transpiled code that has no import and no export. Returns what it logged.
+      function logged(code) {
+        const lines = [];
+        new Function("console", code)({ log: (...args) => lines.push(args.join(" ")) });
+        return lines;
+      }
+
+      const NS = "namespace NS { export const a = 1; export type T = string; export type U = number }\n";
+      const runs = [
+        [
+          "one removed alias: each statement runs once",
+          NS + 'import A = NS.a;\nimport T = NS.T;\nconsole.log("first");\nconsole.log("last", A);',
+          ["first", "last 1"],
+        ],
+        [
+          "two removed aliases: each statement runs once",
+          NS + 'import A = NS.a;\nimport T = NS.T;\nimport U = NS.U;\nconsole.log("first");\nconsole.log("last", A);',
+          ["first", "last 1"],
+        ],
+        [
+          "a const as the last statement is declared once",
+          NS + 'import A = NS.a;\nimport T = NS.T;\nconsole.log("first");\nconst last = A;',
+          ["first"],
+        ],
+        [
+          "a chain of type aliases, root first",
+          'namespace A { export namespace B { export type T = string } }\nimport B = A.B;\nimport T = B.T;\nconst v: T = "x";\nconsole.log("ok", v);',
+          ["ok x"],
+        ],
+        [
+          "a chain of type aliases, leaf first",
+          'namespace A { export namespace B { export type T = string } }\nimport T = B.T;\nimport B = A.B;\nconst v: T = "x";\nconsole.log("ok", v);',
+          ["ok x"],
+        ],
+        [
+          "an unused chain next to a used chain",
+          'const foo = { a: { b: { c: 123 } }, get x(): any { throw new Error("x was read"); } };\n' +
+            "import a = foo.a;\nimport b = a.b;\nimport c = b.c;\nimport x = foo.x;\nimport y = x.y;\nimport z = y.z;\n" +
+            'console.log("c is", c);',
+          ["c is 123"],
+        ],
+        [
+          "a used alias after a removed alias stays",
+          NS + 'import T = NS.T;\nimport A = NS.a;\nconsole.log("A is", A);',
+          ["A is 1"],
+        ],
+        [
+          "declarations after a removed alias stay",
+          NS +
+            'import U = NS.a;\nconst one = (console.log("one"), 1);\nconst two = (console.log("two"), 2);\nconsole.log("sum is", one + two);',
+          ["one", "two", "sum is 3"],
+        ],
+        [
+          "an alias after a declaration is removed",
+          'namespace Types { export type T = string }\nconst port = 3000;\nimport T = Types.T;\nconst x: T = "x";\nconsole.log(port, x);',
+          ["3000 x"],
+        ],
+        [
+          "a used alias between declarations stays",
+          NS + "const one = 1;\nimport A = NS.a;\nconst two = 2;\nconsole.log(one, A, two);",
+          ["1 1 2"],
+        ],
+      ];
+
+      // Each file here has imports, so its output is compared and not run.
+      const prints = [
+        [
+          "an alias of a named import: the clause keeps the names that values read",
+          'import { NS, real } from "./types";\nimport Foo = NS.Foo;\nconst x: Foo = real;\nconsole.log(x);',
+          'import { real } from "./types";\nconst x = real;\nconsole.log(x);\n',
+        ],
+        [
+          "an alias above the import of its root",
+          'import Foo = NS.Foo;\nimport { NS, real } from "./types";\nconst x: Foo = real;\nconsole.log(x);',
+          'import { real } from "./types";\nconst x = real;\nconsole.log(x);\n',
+        ],
+        [
+          "an import that only a removed alias read is removed",
+          'import { NS } from "./types";\nimport Foo = NS.Foo;\nconst x: Foo = 1;\nconsole.log(x);',
+          "const x = 1;\nconsole.log(x);\n",
+        ],
+        [
+          "a default import that only a removed alias read is removed",
+          'import NS from "./types";\nimport Foo = NS.Foo;\nconst x: Foo = 1;\nconsole.log(x);',
+          "const x = 1;\nconsole.log(x);\n",
+        ],
+        [
+          "a namespace import that only a removed alias read is removed",
+          'import * as T from "./types";\nimport Foo = T.NS.Foo;\nconst x: Foo = 1;\nconsole.log(x);',
+          "const x = 1;\nconsole.log(x);\n",
+        ],
+        [
+          "a namespace import that a value also reads stays",
+          'import * as T from "./types";\nimport Foo = T.NS.Foo;\nconst x: Foo = T.real;\nconsole.log(x);',
+          'import * as T from "./types";\nconst x = T.real;\nconsole.log(x);\n',
+        ],
+        [
+          "a used alias of a named import stays",
+          'import { NS } from "./types";\nimport a = NS.a;\nconsole.log(a);',
+          'import { NS } from "./types";\nconst a = NS.a;\nconsole.log(a);\n',
+        ],
+        ["an exported alias stays", "export import Foo = Baz.Bar;", "export const Foo = Baz.Bar;\n"],
+        ["import a = require() stays", 'import a = require("b");', 'const a = require("b");\n'],
+      ];
+
+      describe.each(modes)("%s", (_, options) => {
+        const transpiler = new Bun.Transpiler(options);
+
+        it.each(runs)("%s", (_, source, expected) => {
+          expect(logged(transpiler.transformSync(source))).toEqual(expected);
+        });
+      });
+
+      // Import clauses are trimmed only with `trimUnusedImports`, which `treeShaking` turns on.
+      const trimmingModes = [
+        ["trimUnusedImports", { loader: "ts", trimUnusedImports: true }],
+        ["treeShaking", { loader: "ts", treeShaking: true }],
+      ];
+
+      describe.each(trimmingModes)("%s", (_, options) => {
+        const transpiler = new Bun.Transpiler(options);
+
+        it.each(prints)("%s", (_, source, expected) => {
+          expect(transpiler.transformSync(source)).toBe(expected);
+        });
+      });
+    });
+
     it("re-declaring an import binding that is kept in the output is an error", () => {
       const err = ts.expectParseError;
 

@@ -1074,6 +1074,8 @@ pub enum StmtsKind {
     LoopBody,
     SwitchStmt,
     FnBody,
+    /// Every top-level statement of the file in one list, so use counts are final once it is visited.
+    WholeModule,
 }
 
 #[derive(Default)]

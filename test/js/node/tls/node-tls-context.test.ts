@@ -1136,6 +1136,66 @@ describe("SNI matching is case-insensitive", () => {
   });
 });
 
+// The TLS engine of these server sockets runs over the stream, not over a socket fd.
+// Every row is what node v26.3.0 prints for the same fixture.
+describe("an SNICallback over a stream with no fd to adopt", () => {
+  it.each([
+    ["emit", "TLSv1.3", 'server.emit("connection", duplex)'],
+    ["wrap", "TLSv1.3", "new TLSSocket(duplex, { isServer: true })"],
+    ["wrap", "TLSv1.2", "new TLSSocket(duplex, { isServer: true })"],
+    ["staged", "TLSv1.3", "new TLSSocket(duplex, { isServer: true }) after the ClientHello"],
+    ["tls-in-tls", "TLSv1.3", "new TLSSocket(tlsSocket, { isServer: true })"],
+    ["queued-write", "TLSv1.3", "new TLSSocket(netSocket, { isServer: true }) with a plain write queued"],
+  ])("%s, %s: %s", async (door, maxVersion) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "tls-sni-callback-over-duplex-fixture.mjs"), door, maxVersion],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const asked = `SNICallback(sni.test) on ${door === "emit" ? "a TLSSocket of the server" : "the TLSSocket"}`;
+    const selected = "client secureConnect agent2";
+    const byDefault = "client secureConnect agent1";
+    // No TLS alert: the client sees the connection go away.
+    const refused = [asked, "server error boom", "client error ECONNRESET"];
+    const byDoor = {
+      emit: {
+        "addContext()": [selected],
+        "addContext() wildcard": [selected],
+        "addContext() after the wrap, none before": [byDefault],
+        "addContext() after the wrap, one before": [selected],
+        "an SNICallback that never answers": [
+          asked,
+          "server error ERR_TLS_HANDSHAKE_TIMEOUT",
+          "client error ECONNRESET",
+        ],
+      },
+      wrap: {
+        "raw native context": [asked, selected],
+        "nothing": [asked, byDefault],
+        "async nothing": [asked, byDefault],
+        "cb(err)": refused,
+        "not a context": [asked, "server error Invalid SNI context", "client error ECONNRESET"],
+        "throw": refused,
+        "no server_name": [byDefault],
+        "a replaced _SNICallback": ["the replacement(sni.test)", selected],
+        "destroy() while the SNICallback is pending": [asked, "client error ECONNRESET", "the late answer did nothing"],
+        "the peer leaves while the SNICallback is pending": [asked, "the late answer did nothing"],
+        "never fed": ["0 bytes written"],
+      },
+    }[door];
+    expect(JSON.parse(stdout)).toEqual({
+      "sync": [asked, selected],
+      "async": [asked, selected],
+      "async cb(err)": refused,
+      ...byDoor,
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("server certificate chain built from `ca`", () => {
   it("presents an intermediate known only to the default store (NODE_EXTRA_CA_CERTS)", async () => {
     // With no `ca`, Node seeds the context's store with the default roots

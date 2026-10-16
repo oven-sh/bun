@@ -4424,6 +4424,15 @@ impl DuplexUpgradeContext {
             })
     }
 
+    fn on_server_name(this: bun_ptr::ThisPtr<Self>, name: &[u8]) {
+        match this.tls_this_ptr() {
+            Some(tls) => super::listener::resolve_wrapper_server_name(tls, name, |ctx, refuse| {
+                this.upgrade.sni_resolve(ctx, refuse)
+            }),
+            None => this.upgrade.sni_resolve(None, false),
+        }
+    }
+
     fn on_handshake(
         this: bun_ptr::ThisPtr<Self>,
         success: bool,
@@ -4774,6 +4783,8 @@ pub(crate) fn js_upgrade_duplex_to_tls(
     )?;
     // Nothing holds the callback cell until the TLS wrapper below does.
     let _cell_root = handlers.root_cell(global);
+    // The counterpart of `us_socket_on_server_name` in `upgrade_tls_impl`.
+    let resolves_server_name = is_server && !handlers.on_server_name().is_empty();
 
     // Resolve the `SSL_CTX*`. Prefer a passed `SecureContext` (the memoised
     // `tls.createSecureContext` path — what `[buntls]` now returns) so the
@@ -4969,6 +4980,14 @@ pub(crate) fn js_upgrade_duplex_to_tls(
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 server_identity: |c: *mut (), ssl| {
                     DuplexUpgradeContext::server_identity(bun_ptr::ThisPtr::new(c.cast()), ssl)
+                },
+                on_server_name: if resolves_server_name {
+                    // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
+                    Some(|c: *mut (), name: &[u8]| {
+                        DuplexUpgradeContext::on_server_name(bun_ptr::ThisPtr::new(c.cast()), name)
+                    })
+                } else {
+                    None
                 },
                 ctx: duplex_context.cast::<()>(),
             },

@@ -585,6 +585,14 @@ int us_ssl_take_error_reason(char *reason, size_t length);
 void us_ssl_set_wrapper(struct ssl_st *ssl, void *wrapper);
 /* `ctx` is the X509_STORE_CTX of a verify callback. */
 void *us_ssl_wrapper_from_verify(void *ctx);
+/* Server-name resolution for an SSL that no us_socket_t drives. The install on `ctx` is permanent,
+ * and a no-op for each SSL whose owner has no resolver. */
+void us_ssl_ctx_on_server_name(struct ssl_ctx_st *ctx);
+/* The host_name of `hello`'s server_name extension, NUL-terminated into `out`. Returns its length, 0 for none. */
+struct ssl_early_callback_ctx;
+size_t us_client_hello_servername(const struct ssl_early_callback_ctx *hello, char *out, size_t out_len);
+/* Every SNI context switch: SSL_set_SSL_CTX plus the per-name client-certificate policy of `ctx`. */
+void us_ssl_apply_selected_ctx(struct ssl_st *ssl, struct ssl_ctx_st *ctx);
 /* Owner data for us_dispatch_new_session. `on_free(sink)` runs once, on SSL_free. */
 void us_socket_set_session_sink(us_socket_r s, void *sink, void (*on_free)(void *));
 void *us_socket_session_sink(us_socket_r s);

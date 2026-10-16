@@ -127,6 +127,9 @@ pub(crate) struct Handlers {
     pub(crate) on_keylog: fn(*mut c_void, &[u8]),
     pub(crate) server_identity:
         fn(*mut c_void, &mut boringssl::SSL) -> bun_boringssl::ServerIdentity,
+    /// A server whose socket handlers have `serverName`: resolves the name of
+    /// the ClientHello and answers with [`WindowsNamedPipe::sni_resolve`].
+    pub(crate) on_server_name: Option<fn(*mut c_void, &[u8])>,
 }
 
 impl WindowsNamedPipe {
@@ -366,6 +369,10 @@ impl WindowsNamedPipe {
         // SAFETY: see block note above.
         unsafe { &*this }.on_keylog(d)
     }
+    fn ssl_on_server_name(this: *mut Self, name: &[u8]) {
+        // SAFETY: see block note above.
+        unsafe { &*this }.on_server_name(name)
+    }
     fn ssl_on_close(this: *mut Self) {
         // SAFETY: see block note above.
         unsafe { &*this }.on_close()
@@ -386,7 +393,25 @@ impl WindowsNamedPipe {
             on_session: Some(Self::ssl_on_session),
             on_keylog: Some(Self::ssl_on_keylog),
             server_identity: Some(Self::ssl_server_identity),
+            on_server_name: self
+                .handlers
+                .on_server_name
+                .map(|_| Self::ssl_on_server_name as fn(*mut WindowsNamedPipe, &[u8])),
         }
+    }
+
+    fn on_server_name(&self, name: &[u8]) {
+        bun_output::scoped_log!(WindowsNamedPipe, "onServerName");
+        let _keep_alive = self.keep_alive();
+        match self.handlers.on_server_name {
+            Some(on_server_name) => on_server_name(self.handlers.ctx, name),
+            None => self.sni_resolve(None, false),
+        }
+    }
+
+    /// The answer to `Handlers::on_server_name`, or `handle.resumeSNI(...)` for an asynchronous SNICallback.
+    pub(crate) fn sni_resolve(&self, ctx: Option<boringssl::OwnedSslCtx>, refuse: bool) {
+        let _ = self.with_wrapper(|w| w.sni_resolve(ctx, refuse));
     }
 
     fn on_handshake(&self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
@@ -1063,6 +1088,18 @@ pub(crate) extern "C" fn WindowsNamedPipe__set_inline_reject(this: *const c_void
     if let Some(wrapper) = unsafe { (*this.cast::<WindowsNamedPipe>()).wrapper_ref() } {
         wrapper.set_inline_reject();
     }
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn WindowsNamedPipe__sni_resolve(
+    this: *const c_void,
+    ctx: *mut boringssl::SSL_CTX,
+    refuse: bool,
+) {
+    // SAFETY: `ctx` is null or carries a reference for this call to take.
+    let ctx = unsafe { boringssl::OwnedSslCtx::from_raw(ctx) };
+    // SAFETY: `this` is a live `*const WindowsNamedPipe` from the bun_uws opaque handle.
+    unsafe { (*this.cast::<WindowsNamedPipe>()).sni_resolve(ctx, refuse) };
 }
 
 #[unsafe(no_mangle)]

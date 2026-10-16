@@ -343,8 +343,9 @@ impl Listener {
                         .strong_data
                         .set(Strong::create(default_data, cx.global()));
                 }
-                // TODO: server_name is not supported on named pipes, I belive its , lets wait for
-                // someone to ask for it
+                // A `serverName` handler (SNICallback) is resolved by each accepted pipe's TLS
+                // engine. `add_server_name` entries are not served on a named pipe: they need a
+                // uSockets listen socket.
 
                 // we need to add support for the backlog parameter on listen here we use the
                 // default value of nodejs
@@ -2043,7 +2044,8 @@ impl WindowsNamedPipeListeningContext {
 }
 
 /// `us_dispatch_server_name` for a socket adopted into TLS, which has no listen
-/// socket. Only the fd-adopt path registers this, not the duplex wrap.
+/// socket. A TLS socket over a stream or a named pipe has no `us_socket_t`:
+/// its engine resolves through `resolve_wrapper_server_name`.
 ///
 /// # Safety
 /// `socket` is the live us_socket_t processing this ClientHello and `hostname`
@@ -2134,10 +2136,29 @@ fn dispatch_server_name(
         Some(tls) => tls,
         None => return core::ptr::null_mut(),
     };
-    // An idle socket can drop its Handlers while the us_socket_t lives on;
+    // SAFETY: `hostname` is NUL-terminated per the fn contract.
+    let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
+    match call_server_name_handler(tls, name.to_bytes()) {
+        Some(result) => decode_sni_result(result, abort_handshake),
+        None => core::ptr::null_mut(),
+    }
+}
+
+/// Calls the JS `serverName` handler of `tls` with the server name of its
+/// ClientHello. `None`: the socket has no such handler. The handler returns:
+///   - undefined/null            -> fall through to the default context
+///   - a native SecureContext    -> install it on the in-flight SSL
+///   - `true`                    -> the SNICallback is asynchronous; suspend
+///     the handshake until handle.resumeSNI(...) fires
+///   - an Error (SNICallback reported one, returned an invalid context, or
+///     threw) -> abort the handshake; the connection is dropped without an
+///     alert and the JS side emits 'tlsClientError' from the
+///     handshake-failure path with the stashed error.
+fn call_server_name_handler(tls: bun_ptr::ThisPtr<TLSSocket>, name: &[u8]) -> Option<JSValue> {
+    // An idle socket can drop its Handlers while the connection lives on;
     // `get_handlers()` would panic. Same guard as `select_alpn_callback`.
     if !tls.has_handlers() {
-        return core::ptr::null_mut();
+        return None;
     }
     // No `Handlers::enter`/`exit` scope here: that protocol tracks the
     // accepted-socket callback lifecycle, and running it from inside the
@@ -2145,7 +2166,7 @@ fn dispatch_server_name(
     let handlers = tls.get_handlers();
     let callback = handlers.on_server_name();
     if callback.is_empty() {
-        return core::ptr::null_mut();
+        return None;
     }
     let global = handlers.global_object;
     // The resume handle an asynchronous SNICallback uses (`handle.resumeSNI(...)`).
@@ -2153,28 +2174,42 @@ fn dispatch_server_name(
     let socket_handle = tls.get_this_value(&global);
     // The handler's `this` is the `data` that carries `_SNICallback`: the
     // listener's (the net.Server, kept past `stop()` while connections remain)
-    // for an accepted socket, the socket's own (the TLSSocket) for an adopted one.
+    // for an accepted socket, the socket's own (the TLSSocket) for a wrapped one.
     let this_value = match handlers.listener() {
         Some(listener) => listener.strong_data.get().get(),
         None => TLSSocket::data_get_cached(socket_handle),
     }
     .unwrap_or(JSValue::UNDEFINED);
-    // SAFETY: `hostname` is NUL-terminated per the fn contract.
-    let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
     // Peer-supplied SNI bytes, decoded as Latin-1 like Node's `OneByteString`.
-    let js_name = EncodedSlice::latin1(name.to_bytes()).to_js(&global);
-    let result = match callback.call(&global, this_value, &[this_value, js_name, socket_handle]) {
-        Ok(v) => v,
-        Err(err) => global.take_exception(err),
+    let js_name = EncodedSlice::latin1(name).to_js(&global);
+    Some(
+        match callback.call(&global, this_value, &[this_value, js_name, socket_handle]) {
+            Ok(v) => v,
+            Err(err) => global.take_exception(err),
+        },
+    )
+}
+
+/// Server-name resolution for a TLS socket whose engine is an `SSLWrapper`.
+/// The engine asks after `SSL_do_handshake` returned, so no BoringSSL call is
+/// on the stack. `resolve` is the engine's `sni_resolve`. An asynchronous
+/// SNICallback does not call it: its answer comes through `handle.resumeSNI(...)`.
+pub(super) fn resolve_wrapper_server_name(
+    tls: bun_ptr::ThisPtr<TLSSocket>,
+    name: &[u8],
+    resolve: impl FnOnce(Option<boring_sys::OwnedSslCtx>, bool),
+) {
+    jsc::mark_binding!();
+    let Some(result) = call_server_name_handler(tls, name) else {
+        return resolve(None, false);
     };
-    // The JS handler returns:
-    //   - undefined/null            -> fall through to the default context
-    //   - a native SecureContext    -> install it on the in-flight SSL
-    //   - `true`                    -> the SNICallback is asynchronous; suspend
-    //     the handshake (select_cert_retry) until handle.resumeSNI(...) fires
-    //   - an Error (SNICallback reported one, returned an invalid context, or
-    //     threw) -> abort the handshake; the connection is dropped without an
-    //     alert and the JS side emits 'tlsClientError' from the
-    //     handshake-failure path with the stashed error.
-    decode_sni_result(result, abort_handshake)
+    let mut verdict: core::ffi::c_int = 0;
+    let ctx = decode_sni_result(result, &raw mut verdict);
+    // SAFETY: null, or the reference `decode_sni_result` made for its caller.
+    let ctx = unsafe { boring_sys::OwnedSslCtx::from_raw(ctx.cast()) };
+    match verdict {
+        2 => {}
+        1 => resolve(None, true),
+        _ => resolve(ctx, false),
+    }
 }

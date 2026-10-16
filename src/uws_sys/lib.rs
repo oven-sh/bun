@@ -227,6 +227,11 @@ unsafe extern "C" {
     safe fn UpgradedDuplex__latest_session(
         this: &UpgradedDuplex,
     ) -> *mut bun_boringssl_sys::SSL_SESSION;
+    fn UpgradedDuplex__sni_resolve(
+        this: *const UpgradedDuplex,
+        ctx: *mut bun_boringssl_sys::SSL_CTX,
+        refuse: bool,
+    );
     safe fn UpgradedDuplex__set_timeout(this: &mut UpgradedDuplex, seconds: core::ffi::c_uint);
     safe fn UpgradedDuplex__flush(this: &mut UpgradedDuplex);
     fn UpgradedDuplex__encode_and_write(
@@ -271,6 +276,12 @@ impl UpgradedDuplex {
     #[inline]
     pub(crate) fn latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
         UpgradedDuplex__latest_session(self)
+    }
+    /// Takes the reference `ctx` carries.
+    #[inline]
+    pub(crate) fn sni_resolve(&self, ctx: *mut bun_boringssl_sys::SSL_CTX, refuse: bool) {
+        // SAFETY: `self` is a live handle; `ctx` is null or a reference the callee takes.
+        unsafe { UpgradedDuplex__sni_resolve(self, ctx, refuse) }
     }
     #[inline]
     pub(crate) fn set_timeout(&mut self, seconds: core::ffi::c_uint) {
@@ -336,6 +347,11 @@ unsafe extern "C" {
     safe fn WindowsNamedPipe__latest_session(
         this: &WindowsNamedPipe,
     ) -> *mut bun_boringssl_sys::SSL_SESSION;
+    fn WindowsNamedPipe__sni_resolve(
+        this: *const WindowsNamedPipe,
+        ctx: *mut bun_boringssl_sys::SSL_CTX,
+        refuse: bool,
+    );
     safe fn WindowsNamedPipe__set_timeout(this: &mut WindowsNamedPipe, seconds: core::ffi::c_uint);
     safe fn WindowsNamedPipe__flush(this: &mut WindowsNamedPipe);
     fn WindowsNamedPipe__encode_and_write(
@@ -380,6 +396,12 @@ impl WindowsNamedPipe {
     #[inline]
     pub(crate) fn latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
         WindowsNamedPipe__latest_session(self)
+    }
+    /// Takes the reference `ctx` carries.
+    #[inline]
+    pub(crate) fn sni_resolve(&self, ctx: *mut bun_boringssl_sys::SSL_CTX, refuse: bool) {
+        // SAFETY: `self` is a live handle; `ctx` is null or a reference the callee takes.
+        unsafe { WindowsNamedPipe__sni_resolve(self, ctx, refuse) }
     }
     #[inline]
     pub(crate) fn set_timeout(&mut self, seconds: core::ffi::c_uint) {

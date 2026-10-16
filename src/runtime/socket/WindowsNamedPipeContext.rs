@@ -221,6 +221,19 @@ impl WindowsNamedPipeContext {
         }
     }
 
+    fn on_server_name(this: *mut Self, name: &[u8]) {
+        // SAFETY: see `on_open`.
+        let (socket, pipe) = unsafe { ((*this).socket, ptr::addr_of!((*this).named_pipe)) };
+        // SAFETY: `pipe` is the live `named_pipe` field; `sni_resolve` takes `&self`.
+        let resolve = |ctx, refuse| unsafe { (*pipe).sni_resolve(ctx, refuse) };
+        match socket {
+            SocketType::Tls(s) => {
+                crate::socket::listener::resolve_wrapper_server_name(s, name, resolve)
+            }
+            _ => resolve(None, false),
+        }
+    }
+
     fn on_handshake(this: *mut Self, success: bool, ssl_error: us_bun_verify_error_t) {
         // SAFETY: see `on_open`.
         let (socket, pipe) = unsafe { ((*this).socket, ptr::addr_of_mut!((*this).named_pipe)) };
@@ -362,6 +375,10 @@ impl WindowsNamedPipeContext {
         // must not form `&mut Self` (see the doc-comment on the `on_*` block
         // above for the Stacked-Borrows constraint vs the caller's
         // `&mut WindowsNamedPipe`).
+        // A server-side TLS pipe whose socket handlers have `serverName`.
+        let resolves_server_name = matches!(socket, SocketType::Tls(s)
+            if s.acts_as_tls_server()
+                && s.handlers_opt().is_some_and(|handlers| !handlers.on_server_name().is_empty()));
         let handlers = NamedPipeHandlers {
             ctx: this.cast::<c_void>(),
             // SAFETY: `p` is the `ctx` set above (`this.cast()`); the
@@ -384,6 +401,11 @@ impl WindowsNamedPipeContext {
             on_session: |p, d| Self::on_session(p.cast::<Self>(), d),
             on_keylog: |p, d| Self::on_keylog(p.cast::<Self>(), d),
             server_identity: |p, ssl| Self::server_identity(p.cast::<Self>(), ssl),
+            on_server_name: if resolves_server_name {
+                Some(|p, name| Self::on_server_name(p.cast::<Self>(), name))
+            } else {
+                None
+            },
         };
         let named_pipe = {
             let pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());

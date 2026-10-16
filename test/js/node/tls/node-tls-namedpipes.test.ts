@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
-import { connect, createServer, TLSSocket } from "node:tls";
+import { connect, createSecureContext, createServer, TLSSocket } from "node:tls";
 import { decodeErrorAlert, startMalformedServerHelloServer } from "./tls-handshake-alert-utils";
 
 it.if(isWindows)("should work with named pipes and tls", async () => {
@@ -282,6 +282,64 @@ it.if(isWindows)("setSecureContext() rotates the certificate of a server listeni
     expect(await presented()).toBe("agent1");
     server.setSecureContext({ ...agent3 });
     expect(await presented()).toBe("agent3");
+  } finally {
+    server.close();
+  }
+});
+
+it.if(isWindows)("a server listening on a named pipe resolves the server name with its SNICallback", async () => {
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
+  const agent1 = { key: fixture("agent1-key.pem"), cert: fixture("agent1-cert.pem") };
+  const agent2 = createSecureContext({ key: fixture("agent2-key.pem"), cert: fixture("agent2-cert.pem") });
+  const pipe = `\\\\.\\pipe\\test\\${randomUUID()}`;
+  type Answer = (err: Error | null, ctx?: ReturnType<typeof createSecureContext> | null) => void;
+  const answers: Record<string, (cb: Answer) => void> = {
+    "sync.test": cb => cb(null, agent2),
+    "async.test": cb => setImmediate(cb, null, agent2),
+    "default.test": cb => cb(null, null),
+    "refused.test": cb => setImmediate(cb, new Error("boom")),
+  };
+  const asked: string[] = [];
+  const errors: string[] = [];
+  const server = createServer(
+    {
+      ...agent1,
+      SNICallback(name, cb) {
+        asked.push(name);
+        answers[name](cb);
+      },
+    },
+    socket => socket.end(),
+  );
+  server.on("tlsClientError", err => errors.push(err.message));
+  // The common name of the certificate a client that asks for `servername` is presented with.
+  const presented = (servername: string) =>
+    new Promise<string>(resolve => {
+      const client = connect({ path: pipe, servername, rejectUnauthorized: false });
+      client.on("error", () => resolve("no handshake"));
+      client.on("secureConnect", () => {
+        resolve(client.getPeerCertificate().subject.CN as string);
+        client.destroy();
+      });
+    });
+  try {
+    server.listen(pipe);
+    await once(server, "listening");
+    expect({
+      sync: await presented("sync.test"),
+      async: await presented("async.test"),
+      default: await presented("default.test"),
+      refused: await presented("refused.test"),
+      asked,
+      errors,
+    }).toEqual({
+      sync: "agent2",
+      async: "agent2",
+      default: "agent1",
+      refused: "no handshake",
+      asked: ["sync.test", "async.test", "default.test", "refused.test"],
+      errors: ["boom"],
+    });
   } finally {
     server.close();
   }

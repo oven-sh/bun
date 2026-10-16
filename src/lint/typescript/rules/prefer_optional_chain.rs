@@ -92,6 +92,11 @@ enum EsType {
 impl<'a> Compared<'a> {
     /// `e` as the child of its parent.
     fn of(e: Expr<'a>) -> Self {
+        Self::in_cast(e.with_jsdoc_cast())
+    }
+
+    /// `e` as the child of an `As`, an `AsConst` or a `Satisfies`, which can be a JSDoc cast.
+    fn in_cast(e: Expr<'a>) -> Self {
         match e.is_chain_root() {
             true => Compared::Chain(e),
             false => Compared::Expr(e),
@@ -270,8 +275,8 @@ fn chain_length(node: Compared) -> u32 {
     let (mut e, mut length) = (node.expr(), 0);
     loop {
         e = match e.kind() {
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-            ExprKind::Call(call) => call.callee(),
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj.with_jsdoc_cast(),
+            ExprKind::Call(call) => call.callee().with_jsdoc_cast(),
             ExprKind::NonNull(operand) => {
                 e = operand;
                 continue;
@@ -332,11 +337,15 @@ impl Comparer {
                     b = expression;
                     continue;
                 }
+                // tsgolint's `isNodePrefixOf`: `(a as T) && (a as T).b`
+                let is_assertion_for_tsgolint = matches!(type_a, EsType::As | EsType::TypeAssertion)
+                    && a.expr().file().language().is_oxlint;
                 if must_be_equal
-                    || !matches!(
-                        type_a,
-                        EsType::Call | EsType::Identifier | EsType::Member | EsType::MetaProperty
-                    )
+                    || !(is_assertion_for_tsgolint
+                        || matches!(
+                            type_a,
+                            EsType::Call | EsType::Identifier | EsType::Member | EsType::MetaProperty
+                        ))
                 {
                     return Invalid;
                 }
@@ -424,6 +433,10 @@ impl Comparer {
         self.compare_nodes(Compared::of(a), Compared::of(b)) == Equal
     }
 
+    fn is_equal_in_cast<'a>(&self, a: Expr<'a>, b: Expr<'a>) -> bool {
+        self.compare_nodes(Compared::in_cast(a), Compared::in_cast(b)) == Equal
+    }
+
     fn compare_arrays<'a>(&self, a: List<'a, Expr<'a>>, b: List<'a, Expr<'a>>) -> bool {
         all_equal(a.iter(), b.iter(), |a, b| self.is_equal(a, b))
     }
@@ -447,9 +460,9 @@ impl Comparer {
             | (K::Super, K::Super)
             | (K::ImportMeta, K::ImportMeta)
             | (K::NewTarget, K::NewTarget) => true,
+            (K::AsConst(a), K::AsConst(b)) => self.is_equal_in_cast(a, b),
             (K::Await(a), K::Await(b))
             | (K::Spread(a), K::Spread(b))
-            | (K::AsConst(a), K::AsConst(b))
             // Nor are the operators.
             | (K::Unary { operand: a, .. }, K::Unary { operand: b, .. }) => self.is_equal(a, b),
             (K::Binary { op: BinOp::Comma, .. }, _) => {
@@ -488,9 +501,13 @@ impl Comparer {
                         _ => false,
                     }
             }
+            // tsgolint's `areNodesStructurallyEqual` does not compare the types.
+            (K::As { expr: a, .. }, K::As { expr: b, .. }) if a.file().language().is_oxlint => {
+                self.is_equal_in_cast(a, b)
+            }
             (K::As { expr: a, ty: type_a }, K::As { expr: b, ty: type_b })
             | (K::Satisfies { expr: a, ty: type_a }, K::Satisfies { expr: b, ty: type_b }) => {
-                self.is_equal(a, b) && self.compare_types(type_a, type_b)
+                self.is_equal_in_cast(a, b) && self.compare_types(type_a, type_b)
             }
             (
                 K::Instantiation {
@@ -803,6 +820,7 @@ fn flatten_logical_operands<'a>(operator: BinOp, left: Expr<'a>, right: Expr<'a>
     let mut operands = SmallVec::new();
     let mut stack: SmallVec<[Expr<'a>; 8]> = smallvec![right, left];
     while let Some(current) = stack.pop() {
+        let current = current.with_jsdoc_cast();
         match current.kind() {
             ExprKind::Binary { op, left, right } if op == operator => {
                 stack.push(right);
@@ -1440,7 +1458,7 @@ fn flatten_chain_expression(mut node: Expr, parts: &mut Vec<FlattenedChain>) -> 
                         arguments: opening_paren.span().to(closing_paren),
                     },
                 });
-                call.callee()
+                call.callee().with_jsdoc_cast()
             }
             ExprKind::Dot { obj, name, chain } => {
                 parts.push(FlattenedChain {
@@ -1450,7 +1468,7 @@ fn flatten_chain_expression(mut node: Expr, parts: &mut Vec<FlattenedChain>) -> 
                     requires_dot: true,
                     text: PartText::Node(name.span()),
                 });
-                obj
+                obj.with_jsdoc_cast()
             }
             ExprKind::Index { obj, index, chain } => {
                 parts.push(FlattenedChain {
@@ -1460,7 +1478,7 @@ fn flatten_chain_expression(mut node: Expr, parts: &mut Vec<FlattenedChain>) -> 
                     requires_dot: false,
                     text: PartText::Computed(index.span()),
                 });
-                obj
+                obj.with_jsdoc_cast()
             }
             ExprKind::NonNull(expression) => expression,
             _ => {
@@ -2145,6 +2163,7 @@ impl PreferOptionalChain {
         // It is among the operands of its parent.
         if let Node::Expr(parent) = node.parent()
             && matches!(parent.kind(), ExprKind::Binary { op, .. } if op == operator)
+            && node.with_jsdoc_cast() == node
         {
             return;
         }

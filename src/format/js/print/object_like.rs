@@ -95,7 +95,12 @@ impl<'a> Format<'a> for ObjectLike<'a> {
                 soft_block_indent_with_maybe_space(&members, f.options().bracket_spacing.value());
             match self.should_hug(f) {
                 true => write!(f, inner),
-                false => write!(f, group(&inner).should_expand(should_expand)),
+                false => write!(
+                    f,
+                    group(&inner)
+                        .should_expand(should_expand)
+                        .stays_expanded(f.options().expand == Expand::Auto)
+                ),
             }
         } else if self.breaks_with_pattern(f) {
             write!(f, soft_block_indent(&dangling_comments(self.node())));

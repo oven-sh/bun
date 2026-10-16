@@ -101,23 +101,24 @@ impl<'a> Reader<'a> {
             rule,
             message,
             message_id,
-            line: whole(line),
-            column: whole(column),
-            end: whole(end.0).zip(whole(end.1)),
+            line: place(line),
+            column: place(column),
+            end: place(end.0).zip(place(end.1)),
             fix,
             suggestions: suggested,
         })
     }
 }
 
-/// A line, a column or an index. `None`: NaN or infinite, which JSON doesn't have either.
+/// An index. `None`: NaN or infinite, which JSON doesn't have either.
 fn whole(number: f64) -> Option<u32> {
-    match number {
-        _ if !number.is_finite() => None,
-        // A column of -1, which ESLint has, is `u32::MAX`.
-        _ if number < 0.0 => Some((number as i64) as u32),
-        _ => Some(number as u32),
-    }
+    number.is_finite().then_some(number as u32)
+}
+
+/// A line or a column. ESLint passes on one below 0, which is kept as an `i32`: see
+/// [`LintMessage::line`](crate::linter::LintMessage::line).
+fn place(number: f64) -> Option<u32> {
+    number.is_finite().then_some(number as i32 as u32)
 }
 
 /// Appends the reports in `bytes` to `reports`.

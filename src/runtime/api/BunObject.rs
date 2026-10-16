@@ -94,7 +94,7 @@ use bun_jsc::{StringJsc as _, bun_string_jsc};
 
 use crate::generated_bindgen::bun_object::BracesOptions;
 use crate::generated_bindgen::glob::GlobClass as _;
-use bun_jsc::bindgen::JsScope;
+use bun_jsc::bindgen::{JsScope, PossiblySharedBytes};
 
 // ─── wrap_static_method adapters ───────────────────────────────────────────
 // `#[bun_jsc::host_fn(static)]` is not yet emitted,
@@ -255,7 +255,6 @@ pub(crate) mod bun_object {
         BunObject_callback_file => crate::webcore::blob::construct_bun_file,
         BunObject_callback_gunzipSync => JSZlib::gunzip_sync,
         BunObject_callback_gzipSync => JSZlib::gzip_sync,
-        BunObject_callback_indexOfLine => super::index_of_line,
         BunObject_callback_inflateSync => JSZlib::inflate_sync,
         BunObject_callback_jest => Jest::call,
         BunObject_callback_listen => super::static_adapters::listener_listen,
@@ -1301,35 +1300,17 @@ pub(crate) fn bun_resolve_sync_with_source_if_exists(
     })
 }
 
-#[bun_jsc::host_fn]
-fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments();
-    if arguments.is_empty() {
-        return Ok(JSValue::js_number_from_int32(-1));
-    }
-
-    let mut offset: usize = 0;
-    if arguments.len() > 1 {
-        let offset_value = arguments[1].coerce_to_int64(global_this)?;
-        offset = offset_value.max(0) as usize;
-    }
-
-    let Some(buffer) = arguments[0].as_array_buffer(global_this) else {
-        return Ok(JSValue::js_number_from_int32(-1));
-    };
-
-    let bytes = buffer.byte_slice();
-    if offset >= bytes.len() {
-        return Ok(JSValue::js_number_from_int32(-1));
-    }
-
+pub(crate) fn index_of_line(buffer: PossiblySharedBytes<'_>, offset: f64) -> f64 {
+    // The cast saturates: NaN and a negative offset are 0.
+    let offset = offset as usize;
     // 0x0A never appears inside a multi-byte UTF-8 sequence.
-    Ok(
-        match strings::index_of_char_usize(&bytes[offset..], b'\n') {
-            Some(i) => JSValue::js_number((offset + i) as f64),
-            None => JSValue::js_number_from_int32(-1),
-        },
-    )
+    match buffer
+        .get(offset..)
+        .and_then(|rest| rest.index_of_char(b'\n'))
+    {
+        Some(i) => (offset + i) as f64,
+        None => -1.0,
+    }
 }
 
 #[bun_jsc::host_fn]

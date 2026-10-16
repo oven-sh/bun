@@ -515,6 +515,7 @@ mod c {
             now_ns: u64,
         );
         pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
+        pub fn us_internal_sweep_soon(loop_: *mut Loop);
         pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
         #[cfg(not(windows))]
         pub(super) safe fn uws_get_loop() -> *mut Loop;
@@ -530,7 +531,7 @@ mod c {
 // event-loop thread parks inside it while worker threads call
 // `us_wakeup_loop` concurrently; routing either through a `&mut self`
 // receiver would create two live `&mut Loop` to the same singleton (UB).
-pub use c::{us_loop_run, us_wakeup_loop};
+pub use c::{us_internal_sweep_soon, us_loop_run, us_wakeup_loop};
 
 unsafe extern "C" {
     // safe: no args; frees this thread's lazily-created uws loop if it exists.

@@ -58,6 +58,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         /* We are done with this request */
         this->state &= ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
+        /* Every caller arms the timer after markDone(), so it arms the value this leaves. */
+        uwsRes->endTimeoutOverrideIfDrained();
 
         HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
         /* A queued pipelined response (node:http) still owes output on this
@@ -169,6 +171,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* node:http: the peer sent its FIN first (HTTP_NODE_RECEIVED_FIN only covers a
          * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
         HTTP_NODE_PEER_ENDED = 1 << 22,
+        /* HttpResponse::setTimeout() replaced the server's idle timeout in
+         * idleTimeoutInForce for the response in flight. Not derivable from the
+         * byte: before the first request it is 10, whatever the server's value. */
+        HTTP_TIMEOUT_OVERRIDDEN = 1 << 27,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
@@ -185,9 +191,13 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* Begin a new response on this connection. Clearing the word in one go is
      * what keeps a 204/304 (HTTP_NO_BODY_STATUS), a close-delimited body or a
      * previous response's trailers from leaking into the next request on a
-     * keep-alive socket; only the connection-scoped bits are carried over. */
-    void resetResponseState() {
+     * keep-alive socket; only the connection-scoped bits are carried over.
+     * The idle timeout starts over as well: serverIdleTimeout is
+     * HttpContextData::idleTimeout, so a setTimeout() override that its own
+     * response could not hand back yet ends here. */
+    void resetResponseState(uint8_t serverIdleTimeout) {
         state = (state & HTTP_CONNECTION_SCOPED) | HTTP_RESPONSE_PENDING;
+        idleTimeoutInForce = serverIdleTimeout;
         /* A response is in flight again (a new request dispatched, or a queued
          * pipelined response activated), so the connection is not idle. */
         this->isIdle = false;
@@ -226,7 +236,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
     /* Current state (content-length sent, status sent, write called, etc */
     uint32_t state = 0;
-    uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
+    /* Seconds resetTimeout() arms: 10 until the first request, then the
+     * server's value (resetResponseState) or a setTimeout() override. */
+    uint8_t idleTimeoutInForce = 10;
     /* The parser writes this through a bool& (getHeaders / consumePostPadded),
      * so it cannot live in `state`. */
     bool isConnectRequest = false;

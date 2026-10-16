@@ -662,7 +662,7 @@ static void startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool
     httpResponseData->offset = 0;
     // Clears the finished response's framing bits and keeps the connection-scoped
     // ones (notably HTTP_NODE_READS_PAUSED, read again below).
-    httpResponseData->resetResponseState();
+    httpResponseData->resetResponseState(uWS::HttpContext<SSL>::getSocketContextDataS(socket)->idleTimeout);
     if (connectionClose) {
         httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
     }

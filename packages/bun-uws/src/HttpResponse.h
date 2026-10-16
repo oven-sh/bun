@@ -53,16 +53,38 @@ public:
         return (HttpResponseData<SSL> *) Super::getAsyncSocketData();
     }
 
+    /* Replaces the server's idle timeout (HttpContextData::idleTimeout) for
+     * the response in flight, and arms it. */
     void setTimeout(uint8_t seconds) {
         auto* data = getHttpResponseData();
-        data->idleTimeout = seconds;
-        Super::timeout(data->idleTimeout);
+        if (!(data->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)) {
+            return;
+        }
+        data->state |= HttpResponseData<SSL>::HTTP_TIMEOUT_OVERRIDDEN;
+        data->idleTimeoutInForce = seconds;
+        Super::timeout(data->idleTimeoutInForce);
+    }
+
+    /* A setTimeout() override ends when its response is complete and
+     * hasFullyDrained(): a response that ended under backpressure keeps it
+     * until onWritable has drained the tail. Does not arm. */
+    void endTimeoutOverrideIfDrained() {
+        auto* data = getHttpResponseData();
+        if ((data->state & (HttpResponseData<SSL>::HTTP_TIMEOUT_OVERRIDDEN | HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)) == HttpResponseData<SSL>::HTTP_TIMEOUT_OVERRIDDEN) [[unlikely]] {
+            /* The cork buffer can hold the end of the response. Send it
+             * first: a tail the socket does not take is backpressure too. */
+            Super::sendCorked();
+            if (Super::hasFullyDrained()) {
+                data->state &= ~HttpResponseData<SSL>::HTTP_TIMEOUT_OVERRIDDEN;
+                data->idleTimeoutInForce = HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->idleTimeout;
+            }
+        }
     }
 
     void resetTimeout() {
         auto* data = getHttpResponseData();
 
-        Super::timeout(data->idleTimeout);
+        Super::timeout(data->idleTimeoutInForce);
     }
     /* The chunk-size line of a chunk. Returns its length. */
     static constexpr size_t CHUNK_HEAD_MAX = 10;
@@ -207,12 +229,14 @@ public:
      * after: the connection close gate does not apply (Connection: close,
      * HTTP/1.0 and close-when-idle describe the HTTP connection, not the
      * WebSocket that takes over the socket), and the cork stays so the
-     * handshake batches with the first frames written from open(). */
+     * handshake batches with the first frames written from open(). A
+     * setTimeout() override is dropped for that reason too: its hand-back
+     * in markDone() sends the cork, and the WebSocket arms its own timeout. */
     void endUpgradeHandshake() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         writeMark();
         Super::write("\r\n", 2);
-        httpResponseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
+        httpResponseData->state = (httpResponseData->state | HttpResponseData<SSL>::HTTP_END_CALLED) & ~HttpResponseData<SSL>::HTTP_TIMEOUT_OVERRIDDEN;
         httpResponseData->markDone(this);
     }
 
@@ -361,17 +385,21 @@ public:
 
             /* Success is when we wrote the entire thing without any failures */
             bool success = written == data.length() && !failed;
-            /* Reset the timeout on each tryEnd */
-            this->resetTimeout();
 
             /* Remove onAborted function if we reach the end */
             if (httpResponseData->offset == totalSize) {
                 httpResponseData->markDone(this);
+                /* After markDone(), which can end a setTimeout() override, and
+                 * before the close gate, which can destruct the ext. */
+                this->resetTimeout();
 
                 /* We need to check if we should close this socket here now */
                 if (uncorkCompletedResponse()) {
                     closeIfDoneAndMarked(httpResponseData);
                 }
+            } else {
+                /* Reset the timeout on each tryEnd */
+                this->resetTimeout();
             }
 
             return success;

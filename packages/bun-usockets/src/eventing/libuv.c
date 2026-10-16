@@ -503,6 +503,17 @@ struct us_loop_t *us_timer_loop(struct us_timer_t *t) {
   return internal_cb->loop;
 }
 
+void us_internal_sweep_soon(struct us_loop_t *loop) {
+  struct us_internal_callback_t *internal_cb =
+      (struct us_internal_callback_t *)loop->data.sweep_timer;
+
+  /* Not us_timer_set(): it does not restart a sweep timer that runs. */
+  if (internal_cb->has_added_timer_to_event_loop) {
+    uv_timer_start((uv_timer_t *)(internal_cb + 1), timer_cb, 1,
+                   LIBUS_TIMEOUT_GRANULARITY * 1000);
+  }
+}
+
 // async (internal only)
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop,
                                                    int fallthrough,

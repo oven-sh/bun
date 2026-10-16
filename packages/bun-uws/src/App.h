@@ -781,6 +781,11 @@ public:
         return std::move(*this);
     }
 
+    TemplatedApp &&setIdleTimeout(uint8_t seconds) {
+        httpContext->getSocketContextData()->idleTimeout = seconds;
+        return std::move(*this);
+    }
+
     TemplatedApp &&setMaxHeadersCount(uint32_t maxHeadersCount) {
         httpContext->getSocketContextData()->maxHeadersCount = maxHeadersCount;
         return std::move(*this);

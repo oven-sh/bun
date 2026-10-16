@@ -114,6 +114,10 @@ private:
 public:
     
     HttpFlags flags;
+    /* The server's idle timeout in seconds, 0 = never. Every response starts
+     * under it (resetResponseState); HttpResponse::setTimeout() replaces it
+     * for one response. */
+    uint8_t idleTimeout = 10;
 
     bool isParsing(struct us_socket_t *s) const { return flags.isParsingHttp && parsingSocket == s; }
 };

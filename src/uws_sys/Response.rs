@@ -287,11 +287,13 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_close_if_done_and_marked(Self::ssl_flag(), self.as_raw())
     }
 
+    /// Overrides the server's idle timeout until the response in flight completes.
     pub fn timeout(&mut self, seconds: u8) {
         c::uws_res_timeout(Self::ssl_flag(), self.as_raw(), seconds)
     }
 
-    pub(crate) fn reset_timeout(&mut self) {
+    /// Re-arms the idle timer; does not change its value.
+    pub fn reset_timeout(&mut self) {
         c::uws_res_reset_timeout(Self::ssl_flag(), self.as_raw())
     }
 
@@ -852,6 +854,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.state())
     }
 
+    /// `server.timeout(req, seconds)`: ends with the response (HTTP/1) or the stream (HTTP/2).
     pub fn timeout(self, seconds: u8) {
         any_dispatch!(self, |r| r.timeout(seconds))
     }
@@ -1059,6 +1062,16 @@ impl AnyResponse {
 
     pub fn reset_timeout(self) {
         any_dispatch!(self, |r| r.reset_timeout())
+    }
+
+    /// A request starts under the server's idle timeout.
+    pub fn start_timeout(self) {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).reset_timeout(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).reset_timeout(),
+            AnyResponse::H3(_) => {}
+            AnyResponse::H2(ptr) => H2Response::as_handle(ptr).start_timeout(),
+        }
     }
 
     pub fn clear_on_data(self) {

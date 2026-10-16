@@ -502,6 +502,15 @@ extern "C"
       uwsApp->setMaxHeadersCount(max_headers_count);
     }
   }
+  void uws_app_set_idle_timeout(int ssl, uws_app_t *app, uint8_t seconds) {
+    if (ssl) {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->setIdleTimeout(seconds);
+    } else {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->setIdleTimeout(seconds);
+    }
+  }
   void uws_app_set_flags(int ssl, uws_app_t *app, bool require_host_header, bool use_strict_method_validation, uint8_t lenient_http_flags, bool http_allow_half_open) {
     if (ssl) {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;

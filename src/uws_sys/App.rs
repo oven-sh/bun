@@ -146,6 +146,11 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_set_max_http_header_size(Self::SSL_FLAG, self.as_raw(), max_header_size)
     }
 
+    /// HTTP/1 only; seconds, 0 = never (`HttpContextData::idleTimeout`).
+    pub fn set_idle_timeout(&mut self, seconds: u8) {
+        c::uws_app_set_idle_timeout(Self::SSL_FLAG, self.as_raw(), seconds)
+    }
+
     pub fn set_max_headers_count(&mut self, max_headers_count: u32) {
         c::uws_app_set_max_headers_count(Self::SSL_FLAG, self.as_raw(), max_headers_count)
     }
@@ -528,6 +533,7 @@ pub mod c {
             app: &mut uws_app_t,
             max_header_size: u64,
         );
+        pub(crate) safe fn uws_app_set_idle_timeout(ssl: i32, app: &mut uws_app_t, seconds: u8);
         pub(crate) safe fn uws_app_set_max_headers_count(
             ssl: i32,
             app: &mut uws_app_t,

@@ -375,9 +375,7 @@ impl<'a> Printer<'a> {
             if !unique_key_for_additional_file.is_empty() {
                 return Ok(with_suffix(unique_key_for_additional_file, suffix));
             }
-            // The target has no URL form (a stylesheet, a `.toml` file). The
-            // resolver replaced `path` with the absolute path on this machine,
-            // so print the specifier as written.
+            // No URL form (a stylesheet, a `.toml` file): `path` is the resolver's absolute path.
             if !record.original_path.is_empty() {
                 return Ok(record.original_path);
             }

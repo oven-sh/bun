@@ -2982,10 +2982,7 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub struct ParserOpts: u8 {
         const CSS_MODULES = 0b1;
-        /// Set by `Parser::parse_at_rule_prelude_tokens` while a token list
-        /// is read as at-rule prelude text. A `url()` there is not an import:
-        /// `TokenList::parse` keeps it as a raw token with no import record,
-        /// so the bundler never resolves it and it prints as written.
+        /// A `url()` in an at-rule prelude token list is not an import: `TokenList::parse` keeps it raw.
         const AT_RULE_PRELUDE_TOKENS = 0b10;
     }
 }
@@ -3239,8 +3236,6 @@ impl<'a> Parser<'a> {
         result
     }
 
-    /// Execute the given closure with `ParserOpts::AT_RULE_PRELUDE_TOKENS`
-    /// set, then restore the flags, whether the closure fails or not.
     pub(crate) fn parse_at_rule_prelude_tokens<R>(
         &mut self,
         func: impl FnOnce(&mut Parser) -> CssResult<R>,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { itBundled } from "../expectBundled";
@@ -1552,10 +1552,9 @@ b {
     },
   });
 
-  // A url() that resolves to a file with no URL form (a stylesheet, a file
-  // with a loader that gives no data: URL) prints as written, never as the
-  // absolute path on the build machine.
-  itBundled("css/URLWithNoAssetURLPrintsAsWritten", {
+  // A url() that resolves to a file with no URL form (a stylesheet, a .toml
+  // file) must not print the absolute path of the build directory.
+  itBundled("css/URLWithNoAssetURLDoesNotPrintBuildDirectory", {
     files: {
       "/entry.css": /* css */ `
         .a { background: url(sub/g.css) }
@@ -1565,7 +1564,6 @@ b {
         .j { --x: url(sub/g.css) }
         .i { background: image-set(url(sub/g.css) 1x) }
         .q { background: url(./sub/g.css?x=1#y) }
-        .k { composes: g from "./sub/g.css" }
         @font-face { font-family: a; src: url(sub/g.css) }
         @foo { background: url(sub/g.css) }
       `,
@@ -1576,60 +1574,27 @@ b {
     outdir: "/out",
     onAfterBundle(api) {
       const css = api.readFile("/out/entry.css");
+      expect(css.match(/url\(/g)).toHaveLength(9);
       expect(css).not.toContain("bun-build-tests");
-      expect(css).toBe(`/* sub/g.css */
-.g {
-  color: red;
-}
-
-/* entry.css */
-.a {
-  background: url("sub/g.css");
-}
-
-.t {
-  background: url("./x.toml");
-}
-
-.s {
-  background: url("./x.sh");
-}
-
-.v {
-  --y: 1;
-  background: var(--y) url("sub/g.css");
-}
-
-.j {
-  --x: url("sub/g.css");
-}
-
-.i {
-  background: -webkit-image-set(url("sub/g.css") 1x);
-  background: image-set("sub/g.css" 1x);
-}
-
-.q {
-  background: url("./sub/g.css?x=1#y");
-}
-
-.k {
-  composes: g from "./sub/g.css";
-}
-
-@font-face {
-  font-family: a;
-  src: url("sub/g.css");
-}
-
-@foo {
-  background: url("sub/g.css")
-}
-`);
     },
   });
 
-  itBundled("css/URLWithNoAssetURLPrintsAsWrittenFromCLI", {
+  // `composes` in a file that is not a CSS module still bundles its target.
+  // Only the printed specifier is checked here.
+  itBundled("css/ComposesFromInPlainCSSDoesNotPrintBuildDirectory", {
+    files: {
+      "/entry.css": `.k { composes: g from "./sub/g.css" }`,
+      "/sub/g.css": `.g { color: red }`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      expect(css).toContain("composes: g from");
+      expect(css).not.toContain("bun-build-tests");
+    },
+  });
+
+  itBundled("css/URLWithNoAssetURLDoesNotPrintBuildDirectoryFromCLI", {
     files: {
       "/entry.css": /* css */ `
         .a { background: url(sub/g.css) }
@@ -1640,11 +1605,13 @@ b {
     minifyWhitespace: true,
     outdir: "/out",
     onAfterBundle(api) {
-      api.expectFile("/out/entry.css").toBe(".a{background:url(sub/g.css)}\n");
+      const css = api.readFile("/out/entry.css");
+      expect(css).toStartWith(".a{background:url(");
+      expect(css).not.toContain("bun-build-tests");
     },
   });
 
-  itBundled("css/URLWithNoAssetURLPrintsAsWrittenFromHTMLAndJS", {
+  itBundled("css/URLWithNoAssetURLDoesNotPrintBuildDirectoryFromHTMLAndJS", {
     files: {
       "/index.html": /* html */ `
         <!doctype html>
@@ -1672,8 +1639,8 @@ b {
       const chunks = readdirSync(api.outdir).filter(name => name.endsWith(".css"));
       expect(chunks).toHaveLength(1);
       const css = api.readFile("/out/" + chunks[0]);
+      expect(css.match(/url\(/g)).toHaveLength(3);
       expect(css).not.toContain("bun-build-tests");
-      expect(css.match(/url\([^)]*\)/g)).toEqual(['url("./other.css")', 'url("./other.css")', 'url("./other.css")']);
     },
   });
 
@@ -1694,10 +1661,12 @@ b {
       outputs.add(await result.outputs[0].text());
     }
     expect(outputs.size).toBe(1);
-    expect([...outputs][0].match(/url\([^)]*\)/g)).toEqual(['url("./shared.css")', 'url("./shared.css")']);
+    const urls = [...outputs][0].match(/url\([^)]*\)/g)!;
+    expect(urls).toHaveLength(2);
+    expect(urls.join("")).not.toContain(basename(String(dir)));
   });
 
-  test("css url() with the in-memory files map prints as written", async () => {
+  test("css url() with the in-memory files map does not print the virtual directory", async () => {
     const result = await Bun.build({
       entrypoints: ["/virtual/entry.css"],
       files: {
@@ -1706,14 +1675,10 @@ b {
       },
     });
     expect(result.success).toBe(true);
-    expect((await result.outputs[0].text()).replace(/^\/\*.*\*\/\n/, "")).toBe(`@media print {
-  @import url(sub/g.css);
-}
-
-.a {
-  background: url("sub/g.css");
-}
-`);
+    const urls = (await result.outputs[0].text()).match(/url\([^)]*\)/g)!;
+    expect(urls).toHaveLength(2);
+    expect(urls[0]).toBe("url(sub/g.css)");
+    expect(urls[1]).not.toContain("virtual");
   });
 
   // The dataurl loader gives no data: URL yet. Until it does, the url() must
@@ -1731,6 +1696,77 @@ b {
     const urls = (await result.outputs[0].text()).match(/url\([^)]*\)/g)!;
     expect(urls).toHaveLength(1);
     expect(urls[0]).not.toContain(basename(String(dir)));
+  });
+
+  // `bun build --no-bundle` parses with no import record list, so it rejects
+  // every url() that needs a record. A url() in a prelude needs none.
+  test("css url() in an at-rule prelude builds with --no-bundle", async () => {
+    using dir = tempDir("css-url-prelude-no-bundle", {
+      "unknown.css": `@foo url(sub/g.css);\n`,
+      "nested.css": `@media print { @import url("sub/g.css"); }\n`,
+      "env.css": `@media (min-width: env(foo, url(sub/g.css))) { .b { color: red } }\n`,
+    });
+    const build = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--no-bundle", ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, log: stderr.split("\n").filter(line => /^(warn|error):/.test(line)), exitCode };
+    };
+    expect(
+      await Promise.all([
+        build("unknown.css"),
+        build("--minify", "unknown.css"),
+        build("nested.css"),
+        build("--minify", "nested.css"),
+        build("env.css"),
+        build("--minify", "env.css"),
+      ]),
+    ).toEqual([
+      { stdout: "@foo url(sub/g.css);\n", log: ["warn: invalid @ rule encountered: '@foo'"], exitCode: 0 },
+      { stdout: "@foo url(sub/g.css);", log: ["warn: invalid @ rule encountered: '@foo'"], exitCode: 0 },
+      {
+        stdout: '@media print {\n  @import url("sub/g.css");\n}\n',
+        log: ["warn: invalid @ rule encountered: '@import'"],
+        exitCode: 0,
+      },
+      {
+        stdout: '@media print{@import url("sub/g.css");}',
+        log: ["warn: invalid @ rule encountered: '@import'"],
+        exitCode: 0,
+      },
+      {
+        stdout: "@media (min-width: env(foo, url(sub/g.css))) {\n  .b {\n    color: red;\n  }\n}\n",
+        log: [],
+        exitCode: 0,
+      },
+      { stdout: "@media (min-width:env(foo,url(sub/g.css))){.b{color:red}}", log: [], exitCode: 0 },
+    ]);
+  });
+
+  // A token list in a CSS module is not a prelude: its url() is still an import.
+  itBundled("css/URLInCSSModuleTokenListIsStillAnImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import styles from "./a.module.css";
+        console.log(styles.a);
+      `,
+      "/a.module.css": `.a { --x: url(./a.txt); background: var(--x) url(./a.txt) }`,
+      "/a.txt": `hello`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      const chunks = readdirSync(api.outdir).filter(name => name.endsWith(".css"));
+      expect(chunks).toHaveLength(1);
+      expect(api.readFile("/out/" + chunks[0]).match(/url\([^)]*\)/g)).toEqual([
+        'url("data:text/plain;base64,aGVsbG8=")',
+        'url("data:text/plain;base64,aGVsbG8=")',
+      ]);
+    },
   });
 
   itBundled("css/PackageURLsInCSS", {

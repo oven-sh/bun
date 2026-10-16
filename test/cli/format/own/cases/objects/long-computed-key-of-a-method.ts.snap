@@ -1,0 +1,70 @@
+------------------
+{ printWidth: 80 }
+------------------
+const a = {
+  ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
+  "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"](
+    node,
+  ) {
+    b;
+  },
+  get ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
+  "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"]() {
+    return 1;
+  },
+  set ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
+  "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"](
+    v,
+  ) {},
+  async ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
+  "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"]() {},
+  *["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
+  "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"]() {},
+  ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
+  "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"]:
+    1,
+};
+
+class A {
+  ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
+    "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"]() {}
+  ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
+  "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"] =
+    1;
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const a = {
+  ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
+  "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"](
+    node,
+  ) {
+    b;
+  },
+  get ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
+  "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"]() {
+    return 1;
+  },
+  set ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
+  "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"](
+    v,
+  ) {},
+  async ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
+  "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"]() {},
+  *["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
+  "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"]() {},
+  ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
+  "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"]: 1,
+};
+
+class A {
+  ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
+    "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"]() {}
+  ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb," +
+  "ccccccccccccccccccccccccccccccccccc, dddddddddddddddddddddddddddd, eeeeeeeeeeeeeeeeeeeeeeee"] =
+    1;
+}
+
+===================== End =====================

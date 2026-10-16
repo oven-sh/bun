@@ -1,0 +1,10 @@
+x = {
+  map: result.map ?
+  /** @type {RawSourceMap} */
+  result.map.toJSON() : undefined,
+};
+const predicate = logic ?
+/** @type {RangeValueCallback} */
+([value]) => value <= minMax :
+/** @type {RangeValueCallback} */
+([value]) => value >= minMax;

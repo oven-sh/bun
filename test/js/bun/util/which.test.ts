@@ -58,8 +58,11 @@ test("which converts the command, PATH and cwd to strings, in that order", () =>
   expect(which(123 as any, { PATH: bin })).toBe(found);
   expect(which(new String("123") as any, { PATH: bin })).toBe(found);
   expect(which("é", { PATH: bin })).toBe(isWindows ? null : join(bin, "é"));
-  expect(() => which(Symbol() as any)).toThrow(TypeError);
-  expect(() => which("123", { PATH: Symbol() } as any)).toThrow(TypeError);
+  for (const call of [() => which(Symbol() as any), () => which("123", { PATH: Symbol() } as any)]) {
+    expect(call).toThrow(
+      expect.objectContaining({ name: "TypeError", message: "Cannot convert a symbol to a string" }),
+    );
+  }
 });
 
 test("which ignores options that are not an object, and Object.prototype", () => {

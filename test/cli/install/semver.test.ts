@@ -119,7 +119,7 @@ test.each(["order", "satisfies"] as const)("Bun.semver.%s converts its arguments
       },
       stringLike("right", "1.2.3"),
     ),
-  ).toThrow(new RangeError("left"));
+  ).toThrow(expect.objectContaining({ name: "RangeError", message: "left" }));
   expect(log).toEqual(["left", "right"]);
 });
 

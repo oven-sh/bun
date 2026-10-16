@@ -249,8 +249,12 @@ console.log(JSON.stringify(out));`,
     expect(() => Bun.mmap(path, { offset: Infinity })).toThrow("EINVAL");
     expect(() => Bun.mmap(path, { offset: -Infinity })).toThrow("offset must be a non-negative integer");
     for (const member of ["size", "offset"]) {
-      expect(() => Bun.mmap(path, { [member]: 1n })).toThrow(TypeError);
-      expect(() => Bun.mmap(path, { [member]: Symbol() })).toThrow(TypeError);
+      expect(() => Bun.mmap(path, { [member]: 1n })).toThrow(
+        expect.objectContaining({ name: "TypeError", message: "Conversion from 'BigInt' to 'number' is not allowed." }),
+      );
+      expect(() => Bun.mmap(path, { [member]: Symbol() })).toThrow(
+        expect.objectContaining({ name: "TypeError", message: "Cannot convert a symbol to a number" }),
+      );
     }
   });
 

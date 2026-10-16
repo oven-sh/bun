@@ -112,7 +112,12 @@ it("Bun.unsafe.gcAggressionLevel returns the level it replaces", () => {
     // Nothing, and a level there is not, change nothing.
     Bun.unsafe.gcAggressionLevel(1);
     for (const level of [undefined, null, 3, -1]) expect(Bun.unsafe.gcAggressionLevel(level)).toBe(1);
-    expect(() => Bun.unsafe.gcAggressionLevel(Symbol())).toThrow(TypeError);
+    expect(() => Bun.unsafe.gcAggressionLevel(Symbol())).toThrow(
+      expect.objectContaining({ name: "TypeError", message: "Cannot convert a symbol to a number" }),
+    );
+    expect(() => Bun.unsafe.gcAggressionLevel(1n)).toThrow(
+      expect.objectContaining({ name: "TypeError", message: "Conversion from 'BigInt' to 'number' is not allowed." }),
+    );
     expect(Bun.unsafe.gcAggressionLevel()).toBe(1);
   } finally {
     Bun.unsafe.gcAggressionLevel(initial);

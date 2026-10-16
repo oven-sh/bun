@@ -197,7 +197,9 @@ describe("bunshell", () => {
       expect($.escape(plain as any)).toBe(plain as any);
       // @ts-expect-error
       expect($.escape()).toBeUndefined();
-      expect(() => $.escape(Symbol() as any)).toThrow(TypeError);
+      expect(() => $.escape(Symbol() as any)).toThrow(
+        expect.objectContaining({ name: "TypeError", message: "Cannot convert a symbol to a string" }),
+      );
     });
 
     test("quotes values containing a tab, carriage return, or question mark", async () => {

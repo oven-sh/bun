@@ -14,6 +14,7 @@ import {
   pgCommandComplete,
   pgErrorResponse,
   pgReadyForQuery,
+  pgScramServer,
 } from "./wire-frames";
 
 type Tag = Pick<SQL, "unsafe">;
@@ -775,6 +776,196 @@ describeWithContainer("postgres_plain", { image: "postgres_plain" }, container =
       jest.useRealTimers();
     }
   });
+});
+
+// A real server does not say how many logins it refused. Not concurrent: a login is 4096 rounds of PBKDF2 on this thread.
+describe("a password that SASLprep changes: one login finds out which form the server has", () => {
+  const typed = "\u00aa\u2168";
+  const prepared = "aIX";
+  type Mock = Awaited<ReturnType<typeof pgScramServer>>;
+
+  const client = (port: number, options: Bun.SQL.Options) =>
+    new SQL({
+      adapter: "postgres",
+      hostname: "127.0.0.1",
+      port,
+      username: "u",
+      database: "db",
+      tls: false,
+      ...options,
+    });
+  const logins = (mock: Mock) => ({
+    logins: mock.exchanges.length,
+    failed: mock.exchanges.filter(exchange => !exchange.proofOk).length,
+  });
+  const query = (sql: SQL) => sql.unsafe("select 1").simple();
+  const refused = "ERR_POSTGRES_SERVER_ERROR";
+
+  test.each([
+    ["that SASLprep changes, and the server has what it makes of it", prepared, typed, "resolved", 11, 1],
+    ["that SASLprep changes, and the server has it as it is", typed, typed, "resolved", 10, 0],
+    ["that SASLprep leaves as it is", prepared, prepared, "resolved", 10, 0],
+    ["that is wrong and that SASLprep changes", "other", typed, refused, 2, 2],
+    ["that is wrong and that SASLprep leaves as it is", "other", prepared, refused, 10, 10],
+  ])("a password %s", async (_, stored, password, result, all, failed) => {
+    await using mock = await pgScramServer({ password: stored });
+    const connected = new Calls();
+    await using sql = client(mock.port, { password, max: 10, onconnect: connected.hit });
+    expect(await outcome(query(sql))).toBe(result);
+    if (result === "resolved") await connected.reached(10);
+    expect(logins(mock)).toEqual({ logins: all, failed });
+  });
+
+  describe.each([1, 10])("%d in one tick", callers => {
+    test.each([
+      ["query", query],
+      ["reserve()", (sql: SQL) => sql.reserve().then(reserved => reserved.release())],
+      ["begin()", (sql: SQL) => sql.begin(tx => tx.unsafe("select 1").simple())],
+      ["connect()", (sql: SQL) => sql.connect()],
+    ])("%s", async (_, call) => {
+      await using mock = await pgScramServer({ password: prepared });
+      const connected = new Calls();
+      await using sql = client(mock.port, { password: typed, max: 3, onconnect: connected.hit });
+      const served = await Promise.all(Array.from({ length: callers }, () => outcome(call(sql))));
+      expect(served).toEqual(Array(callers).fill("resolved"));
+      await connected.reached(3);
+      expect(logins(mock)).toEqual({ logins: 4, failed: 1 });
+    });
+  });
+
+  test("--sql-preconnect", async () => {
+    await using mock = await pgScramServer({ password: prepared });
+    await using _ = Bun.spawn({
+      cmd: [bunExe(), "--sql-preconnect", "-e", "for await (const _ of Bun.stdin.stream());"],
+      env: { ...bunEnv, DATABASE_URL: `postgres://u:${encodeURIComponent(typed)}@127.0.0.1:${mock.port}/db?max=3` },
+      stdin: "pipe",
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    while (mock.exchanges.filter(exchange => exchange.proofOk).length < 3) await nextTurn();
+    expect(logins(mock)).toEqual({ logins: 4, failed: 1 });
+  });
+
+  test("max: 1", async () => {
+    await using mock = await pgScramServer({ password: prepared });
+    await using sql = client(mock.port, { password: typed, max: 1 });
+    expect([await outcome(query(sql)), await outcome(query(sql))]).toEqual(["resolved", "resolved"]);
+    expect(logins(mock)).toEqual({ logins: 2, failed: 1 });
+  });
+
+  test("a pool that idled out is started again with the form that logged in", async () => {
+    await using mock = await pgScramServer({ password: prepared });
+    const connected = new Calls();
+    const closed = new Calls();
+    const options = { password: typed, max: 3, idleTimeout: 0.05, onconnect: connected.hit, onclose: closed.hit };
+    await using sql = client(mock.port, options);
+    await query(sql);
+    await closed.reached(3);
+    await query(sql);
+    await connected.reached(6);
+    expect(logins(mock)).toEqual({ logins: 7, failed: 1 });
+  });
+
+  test("and all at once", async () => {
+    let dials = 0;
+    const tooMany = pgErrorResponse({ S: "FATAL", C: "53300", M: "sorry, too many clients already" });
+    // Four for the first three connections. Then nobody gets in.
+    await using mock = await pgScramServer({
+      password: prepared,
+      instead: nth => ((dials = nth) > 4 ? tooMany : undefined),
+    });
+    const closed = new Calls();
+    await using sql = client(mock.port, { password: typed, max: 3, idleTimeout: 0.05, onclose: closed.hit });
+    await query(sql);
+    await closed.reached(3);
+    expect([await outcome(query(sql)), dials]).toEqual([refused, 7]);
+  });
+
+  test("both forms are wrong: everybody who waits hears it, and the next query asks the server again", async () => {
+    await using mock = await pgScramServer({ password: "other" });
+    await using sql = client(mock.port, { password: typed, max: 3 });
+    const errno = (promise: PromiseLike<unknown>) => promise.then(String, err => err.errno);
+    expect(await Promise.all([query(sql), sql.reserve(), sql.connect()].map(errno))).toEqual(Array(3).fill("28P01"));
+    expect(logins(mock)).toEqual({ logins: 2, failed: 2 });
+    expect(await errno(query(sql))).toBe("28P01");
+    expect(logins(mock)).toEqual({ logins: 4, failed: 4 });
+  });
+
+  describe("the next caller is dialed for", () => {
+    test("when the first one is canceled while its login is out", async () => {
+      await using mock = await pgScramServer({ password: prepared });
+      const connected = new Calls();
+      await using sql = client(mock.port, { password: typed, max: 3, onconnect: connected.hit });
+      const first = query(sql).execute();
+      first.cancel();
+      expect([await outcome(first), await outcome(query(sql))]).toEqual(["ERR_POSTGRES_QUERY_CANCELLED", "resolved"]);
+      await connected.reached(3);
+      expect(logins(mock)).toEqual({ logins: 4, failed: 1 });
+    });
+
+    test("when that login then fails, with nobody waiting", async () => {
+      await using mock = await pgScramServer({ password: "other" });
+      const closed = new Calls();
+      await using sql = client(mock.port, { password: typed, max: 3, onclose: closed.hit });
+      const first = query(sql).execute();
+      first.cancel();
+      expect(await outcome(first)).toBe("ERR_POSTGRES_QUERY_CANCELLED");
+      await closed.reached(1);
+      expect(await outcome(query(sql))).toBe(refused);
+      expect(logins(mock)).toEqual({ logins: 4, failed: 4 });
+    });
+
+    test.each([
+      ["refused", pgErrorResponse({ S: "FATAL", C: "53300", M: "sorry, too many clients already" }), refused],
+      // Dialed again for the same caller, see "the budget for dialing a server that accepts and closes".
+      ["dropped before the login", Buffer.alloc(0), "resolved"],
+    ])("when the first dial is %s", async (_, answer, first) => {
+      await using mock = await pgScramServer({ password: prepared, instead: nth => (nth === 1 ? answer : undefined) });
+      const connected = new Calls();
+      await using sql = client(mock.port, { password: typed, max: 3, onconnect: connected.hit });
+      expect(await Promise.all([query(sql), sql.connect()].map(outcome))).toEqual([first, first]);
+      expect(await outcome(query(sql))).toBe("resolved");
+      await connected.reached(3);
+      expect(logins(mock)).toEqual({ logins: 4, failed: 1 });
+    });
+  });
+
+  test.each([
+    ["close()", undefined, "resolved", 2],
+    // The socket may be gone before the server has read anything.
+    ["close({ timeout: 0 })", { timeout: 0 }, "ERR_POSTGRES_CONNECTION_CLOSED", 1],
+  ])("%s while that login is out: nothing more is dialed", async (_, options, first, atMost) => {
+    await using mock = await pgScramServer({ password: prepared });
+    const sql = client(mock.port, { password: typed, max: 3 });
+    const waiting = outcome(sql.connect());
+    expect([await outcome(sql.close(options)), await waiting]).toEqual(["resolved", first]);
+    expect(await outcome(sql.connect())).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+    expect(mock.exchanges.length).toBeLessThanOrEqual(atMost);
+  });
+
+  test.each([
+    ["postgres", prepared, 10],
+    ["postgres", typed, 1],
+    ["mysql", typed, 10],
+  ] as const)(
+    "%s, password %p: %d dials are out before the server has answered one",
+    async (adapter, password, dials) => {
+      const sockets: net.Socket[] = [];
+      const { port, server } = await listeningServer(socket => void sockets.push(socket.on("error", () => {})));
+      const sql = client(port, { adapter, password, max: 10 });
+      const waiting = outcome(sql.connect());
+      // Accepted after whatever the pool has dialed.
+      const probe = net.connect(port, "127.0.0.1");
+      await once(probe, "connect");
+      while (!sockets.some(socket => socket.remotePort === probe.localPort)) await nextTurn();
+      expect(sockets.length - 1).toBe(dials);
+      await sql.close({ timeout: 0 });
+      await waiting;
+      probe.destroy();
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    },
+  );
 });
 
 // What follows needs a server that refuses, vanishes or closes at a chosen moment, which a healthy container does not.

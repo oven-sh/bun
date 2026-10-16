@@ -102,7 +102,7 @@ class PooledConnection<ConnectionHandle extends NativeConnection = any> {
 
   constructor(adapter: BaseSQLAdapter<ConnectionHandle, any>) {
     this.adapter = adapter;
-    this.saslprep = adapter.saslprep;
+    this.saslprep = adapter.saslprep === true;
     this.#releaseQuery = adapter.release.bind(adapter, this);
   }
 
@@ -149,7 +149,6 @@ class PooledConnection<ConnectionHandle extends NativeConnection = any> {
     }
     this.connection = connection;
     this.state = PooledConnectionState.open;
-    this.adapter.saslprep = this.saslprep;
     this.adapter.connectionOpened(this);
   }
 
@@ -435,7 +434,7 @@ async function createPooledConnectionHandle<ConnectionHandle>(
 
   password = String(password || "");
   const prepared = saslprep(password);
-  login.otherPassword ??= prepared !== password;
+  login.otherPassword ??= options.adapter === "postgres" && prepared !== password;
 
   return nativeCreateConnection(
     hostname,
@@ -500,8 +499,10 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   public queue: Array<OnConnected | Reservation> = [];
 
   public totalQueries: number = 0;
-  /// of the login that worked last
-  public saslprep: boolean = false;
+  /// Which form of the password logged in last, see Login. undefined: none has yet.
+  public saslprep: boolean | undefined;
+  /// One login is finding out which form the server has. Nothing else is dialed until it has settled.
+  #dialsHeld = false;
   public readonly generation: number = hotReloadGeneration();
   /// see retireUnusedPools()
   public asked: boolean = false;
@@ -650,12 +651,15 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   /// For the callers that wait. If no connection is ready, the pool is started: it dials until `max` is reached.
   /// Otherwise it grows by one dial for each waiting caller that no dial in flight covers.
   #dialForQueued() {
-    if (this.queue.length === 0) {
-      return;
+    if (this.queue.length !== 0) {
+      this.#dial(this.readyConnections.size === 0);
     }
-    const start = this.readyConnections.size === 0;
+  }
+
+  #dial(start: boolean) {
     const connections = this.connections;
     while (
+      !this.#dialsHeld &&
       connections.length < this.connectionInfo.max &&
       this.#closing === null &&
       (start || this.#connecting() < this.queue.length)
@@ -664,6 +668,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
         const connection = new PooledConnection(this);
         connections.push(connection);
         connection.dial();
+        if (connection.otherPassword === true && this.saslprep === undefined) {
+          this.#dialsHeld = true;
+        }
       }
     }
   }
@@ -804,7 +811,12 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   }
 
   connectionOpened(connection: PooledConnection) {
+    this.saslprep = connection.saslprep;
     this.readyConnections.add(connection);
+    if (this.#dialsHeld) {
+      this.#dialsHeld = false;
+      this.#dial(true);
+    }
     this.runUserCallback(this.connectionInfo.onconnect, null);
     this.#serve();
   }
@@ -814,6 +826,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     connections.splice(connections.indexOf(connection), 1);
     if (connections.length === 0) {
       hotPools.delete(this);
+      this.#dialsHeld = false;
     }
     this.readyConnections.delete(connection);
     const closeHandlers = connection.closeHandlers;

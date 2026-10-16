@@ -573,7 +573,7 @@ class ListenConnection {
     }));
   }
 
-  #connect(login = { saslprep: this.#adapter.saslprep }): Promise<ListenHandle> {
+  #connect(login = { saslprep: this.#adapter.saslprep === true }): Promise<ListenHandle> {
     const adapter = this.#adapter;
     const { promise, resolve, reject } = Promise.withResolvers<ListenHandle>();
     let live: ListenHandle | null = null;

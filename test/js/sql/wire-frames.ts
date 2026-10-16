@@ -517,7 +517,7 @@ const hmacSha256 = (key: Buffer, data: string) => createHmac("sha256", key).upda
 /**
  * Postgres mock that runs the server side of SCRAM-SHA-256 and SCRAM-SHA-256-PLUS (RFC 5802, RFC 7677, the
  * tls-server-end-point binding of RFC 5929), then answers AuthenticationOk + ReadyForQuery, or 28P01.
- * `exchanges` gets one entry per StartupMessage.
+ * `exchanges` gets one entry per StartupMessage. A simple query gets an empty result.
  */
 export async function pgScramServer(options: {
   /** What the role's verifier was made from: the password after the server's SASLprep. */
@@ -534,9 +534,12 @@ export async function pgScramServer(options: {
   first?: Buffer;
   /** Appended to the server-first-message, e.g. ",m=ext". */
   serverFirstExtra?: string;
+  /** What the nth connection gets for its first message in place of a login. The connection ends with it. */
+  instead?: (nth: number) => Buffer | undefined;
 }): Promise<{ port: number; exchanges: PgScramExchange[]; [Symbol.asyncDispose](): Promise<void> }> {
   const { password, iterations = 4096, mechanisms = ["SCRAM-SHA-256"], serverFirstExtra = "" } = options;
   const salt = randomBytes(16);
+  let saltedPassword: Buffer | undefined;
   const certificateHash = options.tls
     ? createHash(options.tls.digest ?? "sha256")
         .update(new X509Certificate(options.tls.cert).raw)
@@ -544,11 +547,14 @@ export async function pgScramServer(options: {
     : Buffer.alloc(0);
   const exchanges: PgScramExchange[] = [];
   const sockets = new Set<net.Socket>();
+  let accepted = 0;
 
   const { port, server } = await listeningServer(raw => {
     sockets.add(raw);
     raw.on("close", () => sockets.delete(raw));
     raw.on("error", () => {});
+    const instead = options.instead?.(++accepted);
+    if (instead) return void raw.once("data", () => raw.end(instead));
     let stream: net.Socket = raw;
     let buffered = Buffer.alloc(0);
     let exchange: PgScramExchange | undefined;
@@ -577,7 +583,7 @@ export async function pgScramServer(options: {
       const clientFinal = (exchange.clientFinal = body.toString("utf-8"));
       const proofAt = clientFinal.lastIndexOf(",p=");
       const authMessage = `${clientFirstBare},${serverFirst},${clientFinal.slice(0, proofAt)}`;
-      const saltedPassword = pbkdf2Sync(password, salt, iterations, 32, "sha256");
+      saltedPassword ??= pbkdf2Sync(password, salt, iterations, 32, "sha256");
       const clientKey = hmacSha256(saltedPassword, "Client Key");
       const clientSignature = hmacSha256(createHash("sha256").update(clientKey).digest(), authMessage);
       const proof = Buffer.from(clientKey.map((byte, i) => byte ^ clientSignature[i]));
@@ -628,6 +634,7 @@ export async function pgScramServer(options: {
       const current = exchange;
       buffered = pgReadFrontendMessages(buffered, (type, body) => {
         if (type === 0x70 /* 'p' */) onPasswordMessage(current, body);
+        if (type === 0x51 /* 'Q' */) stream.write(Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()]));
       });
     };
     raw.on("data", onData);

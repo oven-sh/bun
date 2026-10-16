@@ -1,5 +1,6 @@
 import { fileURLToPath, Loader } from "bun";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
 import { itBundled } from "./expectBundled";
@@ -258,6 +259,73 @@ describe("bundler", async () => {
       "/data.json5": `{__proto__: {x: 1}, a: 2}`,
     },
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
+  });
+
+  // true, false and null are JSON5 property names like any other: the three
+  // spellings of each key below are the same key, and each one is an export.
+  const json5KeywordKeys = {
+    "/bare.json5": `{true: 1, false: 2, null: 3}`,
+    // U+00A0 is JSON5 white space.
+    "/spaced.json5": `{true\u00A0: 1, false\u00A0: 2, null\u00A0: 3}`,
+    "/quoted.json5": `{'true': 1, 'false': 2, 'null': 3}`,
+  };
+  for (const minifySyntax of [false, true]) {
+    itBundled(`bun/loader-json5-keyword-keys${minifySyntax ? "-minify-syntax" : ""}`, {
+      target: "bun",
+      minifySyntax,
+      files: {
+        "/entry.ts": /* js */ `
+      import bare, { true as bareTrue, false as bareFalse, null as bareNull } from './bare.json5';
+      import spaced, { true as spacedTrue, false as spacedFalse, null as spacedNull } from './spaced.json5';
+      import quoted, { true as quotedTrue, false as quotedFalse, null as quotedNull } from './quoted.json5';
+      console.write(JSON.stringify([
+        [bare, bareTrue, bareFalse, bareNull],
+        [spaced, spacedTrue, spacedFalse, spacedNull],
+        [quoted, quotedTrue, quotedFalse, quotedNull],
+      ]));
+    `,
+        ...json5KeywordKeys,
+      },
+      run: { stdout: JSON.stringify(Array(3).fill([{ true: 1, false: 2, null: 3 }, 1, 2, 3])) },
+    });
+  }
+
+  // Bun.JSON5.stringify writes the keys true, false and null without quotes.
+  const json5Labels = { labels: { true: "Yes", false: "No", null: "Maybe" } };
+  itBundled("bun/loader-json5-stringify-keyword-keys-minify-syntax", {
+    target: "bun",
+    minifySyntax: true,
+    files: {
+      "/entry.ts": /* js */ `
+    import config from './config.json5';
+    console.write(JSON.stringify(config));
+  `,
+      "/config.json5": Bun.JSON5.stringify(json5Labels)!,
+    },
+    run: { stdout: JSON.stringify(json5Labels) },
+  });
+
+  test("Bun.Transpiler gives true, false and null JSON5 keys the output of the quoted keys", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          const transpiler = new Bun.Transpiler();
+          const [bare, spaced, quoted] = ${JSON.stringify(Object.values(json5KeywordKeys))}.map(source =>
+            transpiler.transformSync(source, "json5"),
+          );
+          console.log(JSON.stringify({ bare: bare === quoted, spaced: spaced === quoted }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: '{"bare":true,"spaced":true}', stderr: "" });
+    expect(exitCode).toBe(0);
   });
 
   itBundled("bun/loader-json-nested-proto-key-is-own-property", {

@@ -982,11 +982,9 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)(
-  "round-robin: RST-while-queued handle is dropped, not shipped stale",
-  async () => {
-    using dir = tempDir("cluster-rst-queued", {
-      "main.ts": `
+test.skipIf(isWindows)("round-robin: RST-while-queued handle is dropped, not shipped stale", async () => {
+  using dir = tempDir("cluster-rst-queued", {
+    "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 if (cluster.isPrimary) {
@@ -1021,20 +1019,18 @@ if (cluster.isPrimary) {
   server.listen(0, "127.0.0.1");
 }
 `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "worker got: REAL", stderr: expect.any(String) });
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "worker got: REAL", stderr: expect.any(String) });
+  expect(exitCode).toBe(0);
+});
 
 test("round-robin worker closes a server.blockList peer silently, like node", async () => {
   using dir = tempDir("cluster-blocklist", {
@@ -1244,11 +1240,9 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 }, 30_000);
 
-test.skipIf(isWindows)(
-  "worker death mid-handoff redistributes the connection to another worker",
-  async () => {
-    using dir = tempDir("cluster-mid-handoff", {
-      "main.ts": `const cluster = require("node:cluster");
+test.skipIf(isWindows)("worker death mid-handoff redistributes the connection to another worker", async () => {
+  using dir = tempDir("cluster-mid-handoff", {
+    "main.ts": `const cluster = require("node:cluster");
 const net = require("node:net");
 if (cluster.isPrimary) {
   // One shared round-robin handle on a pre-picked port. "die" registers first, so the first connection
@@ -1279,20 +1273,18 @@ if (cluster.isPrimary) {
   server.listen(+process.env.PORT, "127.0.0.1");
 }
 `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "live got: hi", stderr: expect.any(String) });
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "live got: hi", stderr: expect.any(String) });
+  expect(exitCode).toBe(0);
+});
 
 test("round-robin newconn reaches the worker's internalMessage listener via the handle slot", async () => {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L33-L49
@@ -1496,14 +1488,11 @@ test.skipIf(isWindows).each(["http", "https"])(
     });
     expect(exitCode).toBe(0);
   },
-  30_000,
 );
 
-test.skipIf(isWindows)(
-  "http workers listening on one unix path share the primary's socket",
-  async () => {
-    using dir = tempDir("cluster-http-unix", {
-      "fixture.js": /* js */ `
+test.skipIf(isWindows)("http workers listening on one unix path share the primary's socket", async () => {
+  using dir = tempDir("cluster-http-unix", {
+    "fixture.js": /* js */ `
 const cluster = require("node:cluster");
 const http = require("node:http");
 const fs = require("node:fs");
@@ -1569,39 +1558,35 @@ if (cluster.isPrimary) {
   server.listen(SOCK, () => process.send({ address: server.address() }));
 }
 `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ out: JSON.parse(stdout.trim().split("\n").pop()!), stderr }).toEqual({
-      out: {
-        addresses: [true, true],
-        listening: [
-          { address: true, addressType: -1, port: -1 },
-          { address: true, addressType: -1, port: -1 },
-        ],
-        served: 4,
-        existsAfterFirstClose: true,
-        servedAfterFirstClose: true,
-        existsAfterLastClose: false,
-      },
-      stderr: expect.any(String),
-    });
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim().split("\n").pop()!), stderr }).toEqual({
+    out: {
+      addresses: [true, true],
+      listening: [
+        { address: true, addressType: -1, port: -1 },
+        { address: true, addressType: -1, port: -1 },
+      ],
+      served: 4,
+      existsAfterFirstClose: true,
+      servedAfterFirstClose: true,
+      existsAfterLastClose: false,
+    },
+    stderr: expect.any(String),
+  });
+  expect(exitCode).toBe(0);
+});
 
-test.skipIf(isWindows)(
-  "http worker reports a port the primary cannot bind the way node does",
-  async () => {
-    using dir = tempDir("cluster-http-bind-error", {
-      "fixture.js": /* js */ `
+test.skipIf(isWindows)("http worker reports a port the primary cannot bind the way node does", async () => {
+  using dir = tempDir("cluster-http-bind-error", {
+    "fixture.js": /* js */ `
 const cluster = require("node:cluster");
 const http = require("node:http");
 const net = require("node:net");
@@ -1625,36 +1610,32 @@ if (cluster.isPrimary) {
   server.listen(+process.env.BUSY_PORT, "127.0.0.1");
 }
 `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
-      out: {
-        code: "EADDRINUSE",
-        syscall: "bind",
-        address: "127.0.0.1",
-        port: expect.any(Number),
-        portMatches: true,
-        message: "bind EADDRINUSE 127.0.0.1:PORT",
-      },
-      stderr: expect.any(String),
-    });
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+    out: {
+      code: "EADDRINUSE",
+      syscall: "bind",
+      address: "127.0.0.1",
+      port: expect.any(Number),
+      portMatches: true,
+      message: "bind EADDRINUSE 127.0.0.1:PORT",
+    },
+    stderr: expect.any(String),
+  });
+  expect(exitCode).toBe(0);
+});
 
-test.skipIf(isWindows)(
-  "http worker's close() releases the shared port so it can listen on it again",
-  async () => {
-    using dir = tempDir("cluster-http-relisten", {
-      "fixture.js": /* js */ `
+test.skipIf(isWindows)("http worker's close() releases the shared port so it can listen on it again", async () => {
+  using dir = tempDir("cluster-http-relisten", {
+    "fixture.js": /* js */ `
 const cluster = require("node:cluster");
 const http = require("node:http");
 
@@ -1675,29 +1656,25 @@ if (cluster.isPrimary) {
   });
 }
 `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
-      out: { relisten: "ok", samePort: true },
-      stderr: expect.any(String),
-    });
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+    out: { relisten: "ok", samePort: true },
+    stderr: expect.any(String),
+  });
+  expect(exitCode).toBe(0);
+});
 
-test.skipIf(isWindows)(
-  "worker.disconnect() closes the worker's http server before the channel goes away",
-  async () => {
-    using dir = tempDir("cluster-http-disconnect", {
-      "fixture.js": /* js */ `
+test.skipIf(isWindows)("worker.disconnect() closes the worker's http server before the channel goes away", async () => {
+  using dir = tempDir("cluster-http-disconnect", {
+    "fixture.js": /* js */ `
 const cluster = require("node:cluster");
 const http = require("node:http");
 
@@ -1729,25 +1706,23 @@ if (cluster.isPrimary) {
   });
 }
 `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const lines = stdout.trim().split("\n");
-    expect({ workerLines: lines.slice(0, -1), out: JSON.parse(lines.at(-1)!), stderr }).toEqual({
-      workerLines: ["worker: server closed"],
-      out: { connectAfterDisconnect: "ECONNREFUSED", killed: false, exit: { code: 0, signal: null } },
-      stderr: expect.any(String),
-    });
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const lines = stdout.trim().split("\n");
+  expect({ workerLines: lines.slice(0, -1), out: JSON.parse(lines.at(-1)!), stderr }).toEqual({
+    workerLines: ["worker: server closed"],
+    out: { connectAfterDisconnect: "ECONNREFUSED", killed: false, exit: { code: 0, signal: null } },
+    stderr: expect.any(String),
+  });
+  expect(exitCode).toBe(0);
+});
 
 test.skipIf(isWindows)(
   "http worker's listen(0) on the key a net worker's round-robin handle owns fails with EINVAL",
@@ -1803,7 +1778,6 @@ if (cluster.isPrimary) {
     });
     expect(exitCode).toBe(0);
   },
-  30_000,
 );
 
 // One fixture for the host spellings a worker has to translate before asking the primary: the
@@ -1856,37 +1830,25 @@ async function runHttpHostFormFixture(host: string) {
   return JSON.parse(stdout.trim());
 }
 
-test.skipIf(isWindows || !isIPv6())(
-  "http worker listen(0, '[::1]') binds ::1 through the primary",
-  async () => {
-    expect(await runHttpHostFormFixture("[::1]")).toEqual({
-      bound: { address: "::1", family: "IPv6", hasPort: true },
-      listening: { address: "::1", addressType: 6 },
-    });
-  },
-  30_000,
-);
+test.skipIf(isWindows || !isIPv6())("http worker listen(0, '[::1]') binds ::1 through the primary", async () => {
+  expect(await runHttpHostFormFixture("[::1]")).toEqual({
+    bound: { address: "::1", family: "IPv6", hasPort: true },
+    listening: { address: "::1", addressType: 6 },
+  });
+});
 
-test.skipIf(isWindows)(
-  "http worker listen(0, '[::1') is a name lookup that fails, not a bind of ::",
-  async () => {
-    expect(await runHttpHostFormFixture("[::1")).toEqual({ error: "ENOTFOUND" });
-  },
-  30_000,
-);
+test.skipIf(isWindows)("http worker listen(0, '[::1') is a name lookup that fails, not a bind of ::", async () => {
+  expect(await runHttpHostFormFixture("[::1")).toEqual({ error: "ENOTFOUND" });
+});
 
-test.skipIf(isWindows)(
-  "http worker listen(0, 'localhost') resolves the name before asking the primary",
-  async () => {
-    const out = await runHttpHostFormFixture("localhost");
-    expect(out).toEqual({
-      bound: { address: expect.any(String), family: expect.stringMatching(/^IPv[46]$/), hasPort: true },
-      listening: { address: out.bound.address, addressType: out.bound.family === "IPv6" ? 6 : 4 },
-    });
-    expect(net.isIP(out.bound.address)).toBeGreaterThan(0);
-  },
-  30_000,
-);
+test.skipIf(isWindows)("http worker listen(0, 'localhost') resolves the name before asking the primary", async () => {
+  const out = await runHttpHostFormFixture("localhost");
+  expect(out).toEqual({
+    bound: { address: expect.any(String), family: expect.stringMatching(/^IPv[46]$/), hasPort: true },
+    listening: { address: out.bound.address, addressType: out.bound.family === "IPv6" ? 6 : 4 },
+  });
+  expect(net.isIP(out.bound.address)).toBeGreaterThan(0);
+});
 
 test.skipIf(isWindows)(
   "http worker whose listen fails after Bun.serve() took the shared socket is left not running",
@@ -1934,5 +1896,90 @@ if (cluster.isPrimary) {
     });
     expect(exitCode).toBe(0);
   },
-  30_000,
 );
+
+test.skipIf(isWindows)("http worker binds a unix path longer than sun_path itself, as outside a cluster", async () => {
+  using dir = tempDir("cluster-http-long-path", {
+    "fixture.js": /* js */ `
+const cluster = require("node:cluster");
+const http = require("node:http");
+const path = require("node:path");
+const fs = require("node:fs");
+// Bun.serve({ unix }) binds through a directory descriptor, so only the file name must fit sun_path.
+const dir = path.join(__dirname, "l".repeat(120));
+fs.mkdirSync(dir, { recursive: true });
+const SOCK = path.join(dir, "s.sock");
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", async message => {
+    const body = message.error ?? (await (await fetch("http://localhost/", { unix: SOCK })).text());
+    console.log(JSON.stringify({ address: message.address === SOCK, body }));
+    worker.process.kill();
+  });
+} else {
+  const server = http.createServer((req, res) => res.end("served"));
+  server.on("error", error => process.send({ error: error.code }));
+  server.listen(SOCK, () => process.send({ address: server.address() }));
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+    out: { address: true, body: "served" },
+    stderr: expect.any(String),
+  });
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows)("http worker's second listen() before the primary answers leaves one listener", async () => {
+  using dir = tempDir("cluster-http-relisten-pending", {
+    "fixture.js": /* js */ `
+const cluster = require("node:cluster");
+const http = require("node:http");
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", result => {
+    if (result === "echo") return worker.send("echo");
+    console.log(JSON.stringify(result));
+    worker.process.kill();
+  });
+} else {
+  const server = http.createServer();
+  let listenings = 0;
+  server.on("listening", () => listenings++);
+  server.listen(0, "127.0.0.1");
+  // The first listen() is still waiting for the primary, so this one is not ERR_SERVER_ALREADY_LISTEN.
+  server.listen({ port: 0, host: "127.0.0.1", exclusive: true }, () => {
+    const port = server.address().port;
+    // The primary's late answer arrives before an echo of this message.
+    process.send("echo");
+    process.once("message", () => {
+      server.close(() => process.send({ listenings, closed: server.address() === null, port: port > 0 }));
+    });
+  });
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+    out: { listenings: 1, closed: true, port: true },
+    stderr: expect.any(String),
+  });
+  expect(exitCode).toBe(0);
+});

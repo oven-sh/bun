@@ -86,7 +86,7 @@ struct Argv0Result {
 // On Windows, a single path buffer can take 64 KB.
 fn get_argv0(
     global_this: &JSGlobalObject,
-    path: &[u8],
+    path: Option<&[u8]>,
     cwd: &[u8],
     pretend_argv0: Option<&CStr>,
     first_cmd: JSValue,
@@ -114,29 +114,30 @@ fn get_argv0(
     // libuv never appends .cmd/.bat, so a `\` path without one is still completed here.
     let names_a_file = strings::index_of_char(argv0_to_use, b'/').is_some()
         || (cfg!(windows) && bun_which::is_windows_path_with_executable_extension(argv0_to_use));
-    let path_to_use: &[u8] = if names_a_file {
-        b""
-        // If no $PATH is provided, we fallback to the one from environ
-        // This is already the behavior of the PATH passed in here.
-    } else if !path.is_empty() {
+    // `path` is the child's PATH: `None` when its env has no PATH entry,
+    // `Some(b"")` when it has an empty one. execvp and libuv substitute
+    // `_PATH_DEFPATH` only for the first. An empty PATH searches the cwd only.
+    let path_to_use: Option<&[u8]> = if names_a_file {
+        None
+    } else if path.is_some() {
         path
     } else if cfg!(unix) {
-        // If the user explicitly passed an empty $PATH, we fallback to the OS-specific default (which libuv also does)
         // SAFETY: BUN_DEFAULT_PATH_FOR_SPAWN is a NUL-terminated static C string.
-        unsafe { bun_core::ffi::cstr(BUN_DEFAULT_PATH_FOR_SPAWN) }.to_bytes()
+        Some(unsafe { bun_core::ffi::cstr(BUN_DEFAULT_PATH_FOR_SPAWN) }.to_bytes())
     } else {
-        b""
+        None
     };
 
-    let actual_argv0: ZBox = if path_to_use.is_empty() {
-        ZBox::from_bytes(argv0_to_use)
-    } else {
-        let Some(resolved) =
-            bun_which::which_for_spawn(&mut path_buf, path_to_use, cwd, argv0_to_use)
-        else {
-            return Err(throw_command_not_found(global_this, argv0_to_use));
-        };
-        ZBox::from_bytes(resolved.as_bytes())
+    let actual_argv0: ZBox = match path_to_use {
+        None => ZBox::from_bytes(argv0_to_use),
+        Some(path_to_use) => {
+            let Some(resolved) =
+                bun_which::which_for_spawn(&mut path_buf, path_to_use, cwd, argv0_to_use)
+            else {
+                return Err(throw_command_not_found(global_this, argv0_to_use));
+            };
+            ZBox::from_bytes(resolved.as_bytes())
+        }
     };
 
     Ok(Argv0Result {
@@ -157,7 +158,7 @@ fn get_argv0(
 fn get_argv(
     global_this: &JSGlobalObject,
     args: JSValue,
-    path: &[u8],
+    path: Option<&[u8]>,
     cwd: &[u8],
     argv0: &mut Option<*const c_char>,
     argv: &mut Vec<CStrPtr>,
@@ -377,7 +378,10 @@ fn spawn_maybe_sync(
     let mut on_disconnect_callback = JSValue::ZERO;
     // `env_loader()` is the audited safe accessor for the per-VM DotEnv loader
     // (process-lifetime; centralised non-null deref in `VirtualMachine`).
-    let mut path: &[u8] = jsc_vm.env_loader().get(b"PATH").unwrap_or(b"");
+    // `None` (no PATH in the env) and `Some(b"")` (an empty PATH) stay apart
+    // all the way to `get_argv0`, which substitutes the default PATH only for
+    // the first.
+    let mut path: Option<&[u8]> = jsc_vm.env_loader().get(b"PATH");
     let mut argv: Vec<CStrPtr> = Vec::new();
     let cmd_value: JSValue;
     let mut detached = false;
@@ -577,8 +581,9 @@ fn spawn_maybe_sync(
                 };
 
                 override_env = true;
-                // If the env object does not include a $PATH, it must disable path lookup for argv[0]
-                let mut new_path: &[u8] = b"";
+                // The child's PATH comes from the env object alone. Without a
+                // PATH entry there, `get_argv0` uses the default PATH.
+                let mut new_path: Option<&[u8]> = None;
                 // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
                 // centralised non-null-ZST deref proof.
                 append_envp_from_js(
@@ -2059,7 +2064,7 @@ fn append_envp_from_js(
     global_this: &JSGlobalObject,
     object: &JSObject,
     envp: &mut Vec<CStrPtr>,
-    path: &mut &[u8],
+    path: &mut Option<&[u8]>,
     storage: &mut Vec<ZBox>,
 ) -> JsResult<()> {
     let object_iter = JSPropertyIterator::init(
@@ -2130,11 +2135,12 @@ fn append_envp_from_js(
         } else {
             &line_bytes[..key_end] == b"PATH"
         };
-        if is_path_key && key_end < line_bytes.len() {
+        if is_path_key {
+            // `PATH=` with no value is an empty PATH, not an absent one.
             // SAFETY: `line` is moved into `storage` below (a `Vec<ZBox>` that
             // outlives every read of `*path`), and `ZBox` is heap-backed so the
             // bytes don't move when the `ZBox` value itself is moved.
-            *path = unsafe { bun_ptr::detach_lifetime(&line_bytes[key_end + 1..]) };
+            *path = Some(unsafe { bun_ptr::detach_lifetime(&line_bytes[key_end + 1..]) });
         }
 
         envp.push(line.as_ptr());

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { spawn as cpSpawn } from "child_process";
 import { chmodSync } from "fs";
-import { bunEnv, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 test.skipIf(isWindows)("spawn uses PATH from env if present", async () => {
@@ -88,5 +88,110 @@ describe.skipIf(isWindows)("spawn resolves relative PATH entries against the cwd
     expect(result.stderr).toBe("");
     expect(result.stdout.trim()).toBe("RAN");
     expect(result.code).toBe(0);
+  });
+});
+
+// execvp and libuv substitute the default PATH only when the child env has no
+// PATH entry at all. An empty PATH searches the cwd only, and an empty segment
+// (":/bin", "/bin:") is the cwd. See #44948.
+describe.skipIf(isWindows)("spawn with an empty PATH", () => {
+  function makeDir() {
+    const dir = tempDir("spawn-empty-path", {
+      "hello": "#!/bin/sh\necho HELLO_FROM_CWD\n",
+    });
+    chmodSync(path.join(String(dir), "hello"), 0o755);
+    return dir;
+  }
+
+  function spawnSyncResult(cmd: string[], env: Record<string, string>, cwd?: string) {
+    try {
+      const r = Bun.spawnSync({ cmd, env, cwd, stdout: "pipe", stderr: "pipe" });
+      return { ran: true, stdout: r.stdout.toString().trim(), exitCode: r.exitCode };
+    } catch (e: any) {
+      return { ran: false, code: e.code };
+    }
+  }
+
+  test.concurrent("env PATH='' does not find a binary that is not in the cwd", () => {
+    using dir = makeDir();
+    expect(spawnSyncResult(["uname"], { PATH: "" }, String(dir))).toEqual({ ran: false, code: "ENOENT" });
+  });
+
+  test.concurrent("env without a PATH entry keeps the default PATH", () => {
+    using dir = makeDir();
+    expect(spawnSyncResult(["uname"], {}, String(dir)).ran).toBe(true);
+  });
+
+  test.concurrent("env PATH='' finds a binary in the cwd", () => {
+    using dir = makeDir();
+    expect(spawnSyncResult(["hello"], { PATH: "" }, String(dir))).toEqual({
+      ran: true,
+      stdout: "HELLO_FROM_CWD",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("an empty PATH segment is the cwd", () => {
+    using dir = makeDir();
+    for (const PATH of [":/nonexistent", "/nonexistent:", "/nonexistent::/nonexistent"]) {
+      expect(spawnSyncResult(["hello"], { PATH }, String(dir))).toEqual({
+        ran: true,
+        stdout: "HELLO_FROM_CWD",
+        exitCode: 0,
+      });
+    }
+    expect(spawnSyncResult(["hello"], { PATH: "/nonexistent" }, String(dir))).toEqual({
+      ran: false,
+      code: "ENOENT",
+    });
+  });
+
+  test.concurrent("Bun.which keeps skipping an empty PATH segment", () => {
+    using dir = makeDir();
+    expect(Bun.which("hello", { PATH: "", cwd: String(dir) })).toBeNull();
+    expect(Bun.which("hello", { PATH: ":/nonexistent", cwd: String(dir) })).toBeNull();
+  });
+
+  test.concurrent("child_process.spawnSync with process.env.PATH = '' reports ENOENT", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { spawnSync } = require("node:child_process");
+         process.env.PATH = "";
+         const r = spawnSync("uname", []);
+         console.log(r.error ? r.error.code : "ran");
+         delete process.env.PATH;
+         const r2 = spawnSync("uname", [], { env: {} });
+         console.log(r2.error ? r2.error.code : "ran");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ENOENT\nran\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("PATH='' in the parent environ is an empty PATH for the child", async () => {
+    using dir = makeDir();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const r = (cmd) => { try { Bun.spawnSync({ cmd, stdout: "pipe" }); return "ran"; } catch (e) { return e.code; } };
+         console.log(r(["uname"]), r(["hello"]));`,
+      ],
+      env: { ...bunEnv, PATH: "" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ENOENT ran\n");
+    expect(exitCode).toBe(0);
   });
 });

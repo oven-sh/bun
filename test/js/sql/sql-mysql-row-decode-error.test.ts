@@ -196,7 +196,7 @@ describe.concurrent("mysql mock", () => {
     const mock = await mockServer({
       "call bad()": [
         mysqlBinaryResultSet(1, date, [[undecodableDate]], moreResults),
-        response(false, [["leftover", 777]]),
+        mysqlBinaryResultSet(5, [{ name: "leftover", type: MYSQL_TYPE_LONG }], [[mysqlBinaryLong(777)]]),
       ],
       "select 3 as n": numberRow(3),
       "select 4 as n": numberRow(4),

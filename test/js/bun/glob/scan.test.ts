@@ -24,7 +24,7 @@ import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import fg from "fast-glob";
-import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isRoot, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -1256,6 +1256,342 @@ describe("extglob and brace sequences", () => {
     expect(scan("**/!(x|page).js", cwd)).toEqual(["a.js", "a.test.js", "b.js", "c.js"]);
     expect(scan("app/(marketing)/*.js", cwd)).toEqual(["app/(marketing)/page.js"]);
     expect(scan("app/(marketing)/**", cwd)).toEqual(["app/(marketing)/page.js"]);
+  });
+});
+
+// A group with a `/` inside it, or with a `**` as an alternative, matches more than one directory level:
+// `src/{a,b/c}/index.ts` names `src/a/index.ts` and `src/b/c/index.ts`. From that path segment on, the scan lists what match() accepts.
+describe("a group that crosses a path separator", () => {
+  const norm = (paths: string[]) => paths.map(p => p.replaceAll("\\", "/")).sort();
+  const scan = (pattern: string, cwd: string, opts: GlobScanOptions = {}) =>
+    norm([...new Glob(pattern).scanSync({ cwd, ...opts })]);
+  const tree = (prefix: string, files: string[]) => tempDir(prefix, Object.fromEntries(files.map(f => [f, ""])));
+  const files = [
+    "src/a/index.ts",
+    "src/b/c/index.ts",
+    "src/index.ts",
+    "svc/src/env.ts",
+    "svc/env.ts",
+    "packages/app/src/index.ts",
+    "packages/lib/index.ts",
+    "README.md",
+    "x.js",
+    "a/x.js",
+    "a/a/x.js",
+  ];
+  const underSrc = ["src/a/index.ts", "src/b/c/index.ts", "src/index.ts"];
+
+  // [pattern, what it lists]
+  const rows: [string, string[]][] = [
+    // oven-sh/bun#32596
+    ["src/{a,b/c}/index.ts", ["src/a/index.ts", "src/b/c/index.ts"]],
+    ["svc/{src/env.ts,env.ts}", ["svc/env.ts", "svc/src/env.ts"]],
+    ["{packages/app/src,src}/index.ts", ["packages/app/src/index.ts", "src/index.ts"]],
+    ["{svc/env.ts,README.md}", ["README.md", "svc/env.ts"]],
+    // oven-sh/bun#24000
+    ["{*/*}", ["a/x.js", "src/index.ts", "svc/env.ts"]],
+    ["src/@(a|b/c)/index.ts", ["src/a/index.ts", "src/b/c/index.ts"]],
+    ["@(a/x|a/a/x).js", ["a/a/x.js", "a/x.js"]],
+    ["@(packages/app/src|src)/index.ts", ["packages/app/src/index.ts", "src/index.ts"]],
+    // A group in a group.
+    [
+      "{packages/{app/src,lib},src}/index.ts",
+      ["packages/app/src/index.ts", "packages/lib/index.ts", "src/index.ts"],
+    ],
+    [
+      "{packages/@(app/src|lib),src}/index.ts",
+      ["packages/app/src/index.ts", "packages/lib/index.ts", "src/index.ts"],
+    ],
+    // Two groups.
+    ["{src,svc}/{a/index.ts,env.ts}", ["src/a/index.ts", "svc/env.ts"]],
+    ["{a,a/a}/?(x.js|zz/y)", ["a/a/x.js", "a/x.js"]],
+    // A group that starts or ends inside a path segment.
+    ["s{rc/a,vc/src}/*.ts", ["src/a/index.ts", "svc/src/env.ts"]],
+    ["sr{c/a/in,c/in}dex.ts", ["src/a/index.ts", "src/index.ts"]],
+    ["{*.md,src/**/*.ts}", ["README.md", ...underSrc]],
+    ["{*,svc/**/*}.{md,ts}", ["README.md", "svc/env.ts", "svc/src/env.ts"]],
+    // A `**` in an alternative, and an alternative that is a `**`.
+    ["{src/**,svc/**}", [...underSrc, "svc/env.ts", "svc/src/env.ts"]],
+    ["src/{a,b/**}/index.ts", ["src/a/index.ts", "src/b/c/index.ts"]],
+    ["**/{b/c,a}/*.ts", ["src/a/index.ts", "src/b/c/index.ts"]],
+    ["src/{**,zzz}/index.ts", underSrc],
+    ["{**,a}/x.js", ["a/a/x.js", "a/x.js", "x.js"]],
+    // An optional group, and an alternative that ends with a separator.
+    ["src/?(b/c/)index.ts", ["src/b/c/index.ts", "src/index.ts"]],
+    ["?(svc/)src/*.ts", ["src/index.ts", "svc/src/env.ts"]],
+    ["?(a/)x.js", ["a/x.js", "x.js"]],
+    ["src{,/a}/index.ts", ["src/a/index.ts", "src/index.ts"]],
+    ["{src/,svc/src/}*.ts", ["src/index.ts", "svc/src/env.ts"]],
+    // An empty alternative leaves `src//index.ts`, and match() does not take `src/index.ts` for that.
+    ["src/{,b/c}/index.ts", ["src/b/c/index.ts"]],
+    // One alternative is a group too.
+    ["{src/*.ts}", ["src/index.ts"]],
+    ["svc/{src/env.ts}", ["svc/src/env.ts"]],
+    // A group that repeats.
+    ["+(a/)x.js", ["a/a/x.js", "a/x.js"]],
+    ["*(a/)x.js", ["a/a/x.js", "a/x.js", "x.js"]],
+    ["a/+(a/)x.js", ["a/a/x.js"]],
+    ["src/*(b/|c/)index.ts", ["src/b/c/index.ts", "src/index.ts"]],
+    ["**/+(a/)x.js", ["a/a/x.js", "a/x.js"]],
+    // `!(..)` matches in one path segment, so the `/` in it is never met.
+    ["!(a/b)/index.ts", ["src/index.ts"]],
+    ["src/!(b/c)/index.ts", ["src/a/index.ts"]],
+  ];
+
+  describe.each(["scanSync", "scan"] as const)("%s", method => {
+    test.each(rows)("%j", async (pattern, expected) => {
+      using dir = tree("glob-scan-group-separator", files);
+      const cwd = String(dir);
+      const glob = new Glob(pattern);
+      const listed = method === "scan" ? norm(await Array.fromAsync(glob.scan({ cwd }))) : scan(pattern, cwd);
+      expect(listed).toEqual(expected);
+      // match() accepts these files of the tree, and no other.
+      expect(files.filter(file => glob.match(file)).sort()).toEqual(expected);
+    });
+  });
+
+  test.each([
+    ["+(a/)*", { onlyFiles: false }, ["a/a", "a/a/x.js", "a/x.js"]],
+    // The pattern can end with the separator of the group: that is a directory.
+    ["a/+(a/)", { onlyFiles: false }, ["a/a"]],
+    ["a/*(a/)", { onlyFiles: false }, ["a", "a/a"]],
+    ["a/*(a/)", {}, []],
+    ["{src/a,svc/src}", { onlyFiles: false }, ["src/a", "svc/src"]],
+    ["src/{a,b/c}/", { onlyFiles: false }, ["src/a", "src/b/c"]],
+    ["{src/b,svc}/*", { onlyFiles: false }, ["src/b/c", "svc/env.ts", "svc/src"]],
+    ["src/?(b/c/)", { onlyFiles: false }, ["src", "src/b/c"]],
+    ["src/?(b/c/)", {}, []],
+    // A `*` does not match a name that starts with `.`, and a name that is written out does.
+    ["+(*/)x.js", {}, ["a/a/x.js", "a/x.js"]],
+    ["+(*/)x.js", { dot: true }, [".a/.a/x.js", ".a/x.js", "a/a/x.js", "a/x.js"]],
+    ["+(.a/)x.js", {}, [".a/.a/x.js", ".a/x.js"]],
+    ["{.a/.a,a}/*.js", {}, [".a/.a/x.js", "a/x.js"]],
+    ["{.a,a,svc/s}x.js", {}, []],
+    ["{.a/x,x}.js", {}, [".a/x.js", "x.js"]],
+  ] as [string, GlobScanOptions, string[]][])("%j with %j", (pattern, opts, expected) => {
+    using dir = tree("glob-scan-group-options", [...files, ".a/x.js", ".a/.a/x.js"]);
+    expect(scan(pattern, String(dir), opts)).toEqual(expected);
+  });
+
+  // What is before the group does not change what the group matches. With `absolute`, a `.` or `..` is not in the paths.
+  test.each([
+    ["src/{a,b/c}/index.ts", ["src/a/index.ts", "src/b/c/index.ts"], ["src/a/index.ts", "src/b/c/index.ts"]],
+    ["./{src/a,svc}/*.ts", ["./src/a/index.ts", "./svc/env.ts"], ["src/a/index.ts", "svc/env.ts"]],
+    ["./*(a/)x.js", ["./a/a/x.js", "./a/x.js", "./x.js"], ["a/a/x.js", "a/x.js", "x.js"]],
+    ["src/../+(a/)x.js", ["src/../a/a/x.js", "src/../a/x.js"], ["a/a/x.js", "a/x.js"]],
+    ["*/{a,b/c}/index.ts", ["src/a/index.ts", "src/b/c/index.ts"], ["src/a/index.ts", "src/b/c/index.ts"]],
+    ["**/a/*(a/)x.js", ["a/a/x.js", "a/x.js"], ["a/a/x.js", "a/x.js"]],
+  ])("after %j, and with absolute: true", (pattern, relative, absolute) => {
+    using dir = tree("glob-scan-group-prefix", files);
+    const cwd = String(dir).replaceAll("\\", "/");
+    expect(scan(pattern, String(dir))).toEqual(relative);
+    expect(scan(pattern, String(dir), { absolute: true })).toEqual(absolute.map(it => `${cwd}/${it}`));
+  });
+
+  test("an absolute pattern", () => {
+    using dir = tree("glob-scan-group-separator", files);
+    const cwd = String(dir).replaceAll("\\", "/");
+    const expected = [`${cwd}/src/a/index.ts`, `${cwd}/src/b/c/index.ts`];
+    expect(scan(`${cwd}/src/{a,b/c}/index.ts`, String(dir))).toEqual(expected);
+    expect(scan(`${cwd}/{src/a,src/b/c}/*.ts`, String(dir))).toEqual(expected);
+  });
+
+  test("a class or an escape is read before a group", () => {
+    using dir = tree("glob-scan-group-class", ["ax/y", "bx/y", "c/d", "a/b/d"]);
+    // `[!]{]` is one class: not `]` and not `{`.
+    expect(scan("[!]{]x/y", String(dir))).toEqual(["ax/y", "bx/y"]);
+    expect(scan("[a{]x/{y,z/w}", String(dir))).toEqual(["ax/y"]);
+    // A separator in a class or after a `\` ends no component. No name has one, so that alternative lists nothing.
+    expect(scan("{a[/]b,c}/d", String(dir))).toEqual(["c/d"]);
+    expect(scan("{a\\/b,c}/d", String(dir))).toEqual(["c/d"]);
+  });
+
+  test("two alternatives that are the same give each path once", () => {
+    using dir = tree("glob-scan-group-separator", files);
+    expect([...new Glob("{src/a,src/a}/index.ts").scanSync({ cwd: String(dir) })]).toHaveLength(1);
+    expect([...new Glob("src/{a/index.ts,*/index.ts}").scanSync({ cwd: String(dir) })]).toHaveLength(1);
+  });
+
+  test("a cwd that does not exist is an error", () => {
+    using dir = tree("glob-scan-group-separator", files);
+    const cwd = path.join(String(dir), "missing");
+    expect(() => [...new Glob("{src/a,svc}/*.ts").scanSync({ cwd })]).toThrow(
+      expect.objectContaining({ code: "ENOENT" }),
+    );
+  });
+
+  test.skipIf(!isWindows)("a backslash is a separator in a group too", () => {
+    using dir = tree("glob-scan-group-separator", files);
+    expect(scan("src\\{a,b\\c}\\index.ts", String(dir))).toEqual(["src/a/index.ts", "src/b/c/index.ts"]);
+    expect(scan("@(packages\\app\\src|src)\\index.ts", String(dir))).toEqual([
+      "packages/app/src/index.ts",
+      "src/index.ts",
+    ]);
+  });
+
+  test("a name that an alternative spells out is explicit", () => {
+    using dir = tree("glob-scan-group-dot", [...files, ".github/workflows/ci.yml", ".vscode/x.json"]);
+    // `.github` starts with a dot in the pattern, so `dot: true` is not necessary. A `*` still skips `.vscode`.
+    expect(scan("{.github/workflows,src}/*", String(dir))).toEqual([".github/workflows/ci.yml", "src/index.ts"]);
+    expect(scan("{.github/workflows,*}/*.{yml,json}", String(dir))).toEqual([".github/workflows/ci.yml"]);
+    expect(scan("{.vscode,.github/workflows}/*", String(dir))).toEqual([".github/workflows/ci.yml", ".vscode/x.json"]);
+  });
+
+  describe.skipIf(!canCreateDirSymlink)("symlinks", () => {
+    function makeTree() {
+      const dir = tree("glob-scan-group-symlink", ["real/file.txt", "plain/file.txt", "f.txt"]);
+      fs.symlinkSync("real", path.join(String(dir), "dirlink"), "dir");
+      fs.symlinkSync("f.txt", path.join(String(dir), "filelink"), "file");
+      fs.symlinkSync("missing", path.join(String(dir), "broken"), "file");
+      return dir;
+    }
+
+    test.each([
+      // A name inside a group is not a literal component: the link is followed only with followSymlinks.
+      ["{dirlink/file.txt,plain/*.txt}", {}, ["plain/file.txt"]],
+      ["{dirlink/file.txt,plain/*.txt}", { followSymlinks: true }, ["dirlink/file.txt", "plain/file.txt"]],
+      ["{*/file.txt,zz/y}", {}, ["plain/file.txt", "real/file.txt"]],
+      ["{*/file.txt,zz/y}", { followSymlinks: true }, ["dirlink/file.txt", "plain/file.txt", "real/file.txt"]],
+      // A link that is not followed is an entry like any other.
+      ["{dirlink/file.txt,*}", {}, ["f.txt"]],
+      ["{dirlink/file.txt,*}", { onlyFiles: false }, ["broken", "dirlink", "f.txt", "filelink", "plain", "real"]],
+      ["{filelink/x,*link}", { onlyFiles: false }, ["dirlink", "filelink"]],
+      ["{filelink,plain/*}", { followSymlinks: true }, ["filelink", "plain/file.txt"]],
+    ] as [string, GlobScanOptions, string[]][])("%j with %j", (pattern, opts, expected) => {
+      using dir = makeTree();
+      expect(scan(pattern, String(dir), opts)).toEqual(expected);
+    });
+  });
+
+  test.skipIf(isWindows || isRoot)("a directory that no alternative names is not opened", () => {
+    using dir = tree("glob-scan-group-unreadable", [...files, "locked/secret.ts"]);
+    const locked = path.join(String(dir), "locked");
+    fs.chmodSync(locked, 0o000);
+    try {
+      expect(scan("{src/a,svc}/*.ts", String(dir))).toEqual(["src/a/index.ts", "svc/env.ts"]);
+      expect(scan("+(a/)x.js", String(dir))).toEqual(["a/a/x.js", "a/x.js"]);
+      // A `**` reads every directory, with or without a group.
+      expect(() => scan("{**/a,svc}/*.ts", String(dir))).toThrow(expect.objectContaining({ code: "EACCES" }));
+    } finally {
+      fs.chmodSync(locked, 0o755);
+    }
+  });
+
+  test("a `!` that starts an alternative is a plain character", () => {
+    using dir = tree("glob-scan-group-bang", ["!x/a", "y/b", "z/a"]);
+    expect(scan("{!x/a,y/b}", String(dir))).toEqual(["!x/a", "y/b"]);
+    expect(scan("@(!x|y)/{a,b/c}", String(dir))).toEqual(["!x/a"]);
+  });
+
+  test("a group that is not closed is plain text", () => {
+    using dir = tree("glob-scan-group-unclosed", ["{a,b/c", "a", "b/c"]);
+    expect(scan("{a,b/c", String(dir))).toEqual(["{a,b/c"]);
+    // And the pieces of a group that is closed are not names.
+    expect(scan("{a,b/c}", String(dir))).toEqual(["a", "b/c"]);
+  });
+
+  test.each([11, 14, 40])("%d groups in a row", count => {
+    const repeat = (text: string) => Array.from({ length: count }, () => text).join("/");
+    using dir = tree("glob-scan-group-row", [`${repeat("a/q")}/f`, `${repeat("b")}/f`]);
+    expect(scan(`${repeat("{a/q,b}")}/f`, String(dir))).toEqual([`${repeat("a/q")}/f`, `${repeat("b")}/f`]);
+  });
+
+  test("groups that are adjacent in one path segment", () => {
+    using dir = tree("glob-scan-group-adjacent", ["a/1d/2", "a/1f", "cd/2", "cf"]);
+    expect(scan("{a/1,c}{d/2,f}", String(dir))).toEqual(["a/1d/2", "a/1f", "cd/2", "cf"]);
+    expect(scan("@(a/1|c)@(d/2|f)", String(dir))).toEqual(["a/1d/2", "a/1f", "cd/2", "cf"]);
+  });
+
+  test.each([42, 43, 300])("a list of %d paths in one group", count => {
+    const paths = Array.from({ length: count }, (_, i) => `d${i}/e/f${i}.ts`);
+    using dir = tree("glob-scan-group-list", paths);
+    expect(scan(`{${paths.join(",")}}`, String(dir))).toEqual([...paths].sort());
+  });
+
+  // No limit on the number of groups or of alternatives: the matcher reads the pattern once.
+  test("many groups and many alternatives", () => {
+    using dir = tree("glob-scan-group-many", ["x", "a/x", "a/b/x", "a0/q/b0/x", "a39/b39/x", "a/57/b", "a/123/b"]);
+    const cwd = String(dir);
+    expect(scan(Buffer.alloc(30 * 9, "{**/,**/}").toString() + "x", cwd)).toEqual([
+      "a/b/x",
+      "a/x",
+      "a0/q/b0/x",
+      "a39/b39/x",
+      "x",
+    ]);
+    const list = (count: number, item: (i: number) => string) =>
+      `{${Array.from({ length: count }, (_, i) => item(i))}}`;
+    expect(scan(`${list(40, i => `a${i}/**`)}/${list(40, i => `b${i}/x`)}`, cwd)).toEqual([
+      "a0/q/b0/x",
+      "a39/b39/x",
+    ]);
+    expect(scan(`${list(40, i => `a${i}/`)}${list(40, i => `b${i}/x`)}`, cwd)).toEqual(["a39/b39/x"]);
+    // Two groups in one path segment: a thousand times a thousand ways.
+    expect(scan(list(1000, i => `a/${i}`) + list(1000, i => `${i}/b`), cwd)).toEqual(["a/123/b", "a/57/b"]);
+    const nested = Buffer.alloc(2000 * 3, "{a/").toString() + "x" + Buffer.alloc(2000 * 3, ",b}").toString();
+    expect(scan(nested, cwd, { onlyFiles: false })).toEqual(["a/b"]);
+  });
+
+  test.skipIf(!isDebug)("a directory is read only if a path below it can match", async () => {
+    using dir = tree("glob-scan-group-reads", files);
+    const script = `for (const pattern of JSON.parse(process.argv[1])) { console.log("PATTERN"); [...new Bun.Glob(pattern).scanSync({ cwd: process.argv[2] })]; }`;
+    const patterns = ["src/{a,b/c}/index.ts", "{packages/app/src,src}/index.ts", "+(a/)x.js", "{src/**,svc/**}"];
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script, JSON.stringify(patterns), String(dir)],
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: undefined, BUN_DEBUG_Glob: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const reads = (stdout + stderr)
+      .split("PATTERN")
+      .slice(1)
+      .map(log =>
+        [...log.matchAll(/Transition\(dirpath=([^,]*),/g)].map(match => match[1].replaceAll("\\", "/") || ".").sort(),
+      );
+    expect(reads).toEqual([
+      [".", "src", "src/a", "src/b", "src/b/c"],
+      [".", "packages", "packages/app", "packages/app/src", "src"],
+      [".", "a", "a/a"],
+      [".", "src", "src/a", "src/b", "src/b/c", "svc", "svc/src"],
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Seeded, so a failure names its pattern. The scan lists the entries of the tree that match() accepts.
+  test.each([{ dot: false }, { dot: true }])("patterns from a seed list what match() accepts, with %j", ({ dot }) => {
+    const all = [...files, ".h/x.js", "a/.h/x.js", "src/b/.env"];
+    using dir = tree("glob-scan-group-seeded", all);
+    const cwd = String(dir);
+    // With `dot: false`, a name that starts with `.` is only for a pattern that writes the `.` out. No wildcard of these patterns does.
+    const isHidden = (file: string) => file.split("/").some(name => name.startsWith("."));
+    let state = 0x2f6e2b1;
+    const random = () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 0x100000000;
+    };
+    const pick = <T>(items: T[]) => items[Math.floor(random() * items.length)];
+    const others = ["zz", "*", "**", "src/b", "a/a", "svc", "b/c", "*/c", "packages/*", "**/a", "svc/src", "*/*"];
+    let listedSome = 0;
+    for (let i = 0; i < 200; i++) {
+      // Some segments of a real path become one alternative of a group.
+      const segments = pick(files).split("/");
+      const from = Math.floor(random() * segments.length);
+      const to = from + 1 + Math.floor(random() * (segments.length - from));
+      const alternatives = [segments.slice(from, to).join("/")];
+      while (alternatives.length < 2 || random() < 0.3) {
+        alternatives.splice(Math.floor(random() * (alternatives.length + 1)), 0, pick(others));
+      }
+      const open = pick(["{", "{", "@(", "?(", "+(", "*("]);
+      const group = open + alternatives.join(open === "{" ? "," : "|") + (open === "{" ? "}" : ")");
+      const pattern = [...segments.slice(0, from), group, ...segments.slice(to)].join("/");
+      if (!alternatives.some(alternative => /\/|\*\*/.test(alternative))) continue;
+      const glob = new Glob(pattern);
+      const expected = all.filter(file => glob.match(file) && (dot || !isHidden(file))).sort();
+      expect({ pattern, listed: scan(pattern, cwd, { dot }) }).toEqual({ pattern, listed: expected });
+      listedSome += Number(expected.length > 0);
+    }
+    expect(listedSome).toBeGreaterThan(100);
   });
 });
 

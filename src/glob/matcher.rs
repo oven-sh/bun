@@ -5651,10 +5651,10 @@ pub(crate) struct Below {
 }
 
 impl Below {
-    /// `None` for a pattern that a walk does not decide: a negated one, and one that isn't regular.
+    /// `None` for a negated pattern, which matches what the rest of it doesn't. `glob` has a group that the loop leaves to a walk.
     pub(crate) fn of(glob: &[u8], shape: &Shape) -> Option<Below> {
         let parsed = shape.parsed(glob);
-        if parsed.top > 0 || !parsed.is_regular {
+        if parsed.top > 0 {
             return None;
         }
         let mut program = Program::new();

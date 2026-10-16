@@ -231,7 +231,7 @@ test("--heap-prof-name specifies output filename", async () => {
 
 // Node creates a --heap-prof file with mode 0600 (WriteFileSync in src/node_file_utils.cc).
 // Node has no --heap-prof-md. That file gets the same mode.
-test.skipIf(isWindows).each([
+test.skipIf(isWindows).concurrent.each([
   {
     name: "--heap-prof",
     flags: ["--heap-prof", "--heap-prof-name", "out.heapprofile"],

@@ -136,7 +136,7 @@ describe("v8.GCProfiler", () => {
 
 // Node creates the snapshot file with mode 0600 (WriteSnapshot in src/heap_utils.cc), and only when
 // the call creates the file. Windows has no permission bits to check.
-describe.skipIf(isWindows)("v8.writeHeapSnapshot", () => {
+describe.concurrent.skipIf(isWindows)("v8.writeHeapSnapshot", () => {
   // Writes one snapshot into `cwd`, to `path` or to the default name, and returns where it is.
   async function writeHeapSnapshot(cwd: string, path?: string) {
     await using proc = Bun.spawn({

@@ -1,5 +1,5 @@
 /**
- * The tests in this file run in both Bun and Node.js, except the one that is
+ * The tests in this file run in both Bun and Node.js, except the two that are
  * marked Bun-only: `bun test` runs them here, and the last test runs this same
  * file under Node.js. The expected values come from Node.js v26.3.0.
  *
@@ -10,12 +10,17 @@
  * https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/tcp.c#L288-L289
  */
 import assert from "node:assert";
+import { spawn } from "node:child_process";
+import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 // Node.js cannot load the harness.
 const harness = typeof Bun !== "undefined" ? await import("harness") : undefined;
+const childEnv = harness ? harness.bunEnv : process.env;
 
 type Lookup = NonNullable<net.TcpSocketConnectOpts["lookup"]>;
 
@@ -63,7 +68,10 @@ function record(socket: net.Socket) {
     events.push("connect");
     socket.destroy();
   });
-  socket.on("error", (error: NodeJS.ErrnoException) => events.push(`error ${error.code} ${error.syscall}`));
+  // An AggregateError has the errors of a list of addresses and no syscall.
+  socket.on("error", (error: NodeJS.ErrnoException & { errors?: NodeJS.ErrnoException[] }) =>
+    events.push(`error ${error.code} ${error.errors ? `[${error.errors.map(each => each.code)}]` : error.syscall}`),
+  );
   const closed = new Promise<string[]>(resolve => {
     socket.on("close", hadError => {
       events.push(`close ${hadError}`);
@@ -135,6 +143,7 @@ describe("the step from a lookup result to the connect call", () => {
     callback(null, "127.0.0.1", 4);
     callback(null, "127.0.0.1", 4);
   };
+  const wrongFamily: Lookup = (_hostname, _options, callback) => process.nextTick(callback, null, "127.0.0.1", 6);
   const listOf = (...addresses: { address: string; family: number }[]) =>
     ((_hostname, _options, callback) => process.nextTick(callback, null, addresses)) as Lookup;
   const thenList = (lookup: Lookup) => (s: net.Socket, port: number) =>
@@ -154,6 +163,16 @@ describe("the step from a lookup result to the connect call", () => {
       (s, port) => s.connect({ host: "example.invalid", port, autoSelectFamily: false, lookup: twice }),
       twoAttempts,
     ],
+    // TCPWrap::Connect parses the address before it calls uv_tcp_connect.
+    [
+      test,
+      "a lookup result named in the wrong family",
+      (s, port) =>
+        s
+          .connect(port, "127.0.0.1")
+          .connect({ host: "example.invalid", port, autoSelectFamily: false, lookup: wrongFamily }),
+      ["attempt 127.0.0.1 4", "attempt 127.0.0.1 6", "error EINVAL connect", "close true"],
+    ],
     [
       bunOnly,
       "a second connect() to a list of addresses",
@@ -162,7 +181,7 @@ describe("the step from a lookup result to the connect call", () => {
         "attempt 127.0.0.1 4",
         "attempt 127.0.0.1 4",
         `attempt failed 127.0.0.1 4 ${busy}`,
-        `error ${busy} connect`,
+        `error ${busy} [${busy}]`,
         "close true",
       ],
     ],
@@ -173,7 +192,7 @@ describe("the step from a lookup result to the connect call", () => {
       [
         "attempt 127.0.0.1 4",
         "attempt failed 127.0.0.2 4 ERR_IP_BLOCKED",
-        "error ERR_IP_BLOCKED undefined",
+        "error ERR_IP_BLOCKED [ERR_IP_BLOCKED]",
         "close true",
       ],
     ],
@@ -194,6 +213,60 @@ describe("the step from a lookup result to the connect call", () => {
       }
     });
   }
+
+  // Node.js begins the trace span of a connect after libuv accepted it.
+  test("a connect that fails in the call has no trace span", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "connect-step-"));
+    try {
+      // Each socket reports a connect too and then closes, so that a build without the checks fails here and does not hang.
+      const script = `
+        const net = require("node:net");
+        const server = net.createServer(connection => connection.on("error", () => {}).resume());
+        server.listen(0, "127.0.0.1", () => {
+          const port = server.address().port;
+          const report = socket =>
+            socket.on("error", error => console.log(error.code)).on("connect", () => {
+              console.log("connect");
+              socket.destroy();
+            });
+          const lookup = (hostname, options, callback) => callback(null, "127.0.0.1", 6);
+          const wrongFamily = report(net.connect({ host: "example.invalid", port, autoSelectFamily: false, lookup }));
+          wrongFamily.on("close", () => {
+            const twice = report(new net.Socket());
+            twice.on("close", () => server.close());
+            twice.connect(port, "127.0.0.1").connect(port, "127.0.0.1");
+          });
+        });
+      `;
+      const child = spawn(
+        process.execPath,
+        ["--trace-events-enabled", "--trace-event-categories", "node.net.native", "-e", script],
+        { cwd, env: childEnv, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", chunk => (stdout += chunk));
+      child.stderr.on("data", chunk => (stderr += chunk));
+      const exitCode = await new Promise<number | null>((resolve, reject) => {
+        child.on("error", reject);
+        child.on("close", resolve);
+      });
+      const log = path.join(cwd, "node_trace.1.log");
+      const spans = fs.existsSync(log)
+        ? (JSON.parse(fs.readFileSync(log, "utf8")).traceEvents as { name: string; cat: string; ph: string }[])
+            .filter(event => event.name === "connect" && event.cat.includes("node.net.native"))
+            .map(event => event.ph)
+            .join("")
+        : "no trace file";
+      // The only span is the first connect of the second socket: it begins, and the destroy of the socket ends it.
+      assert.deepStrictEqual(
+        { stdout: stdout.trim().split("\n"), stderr, spans, exitCode },
+        { stdout: ["EINVAL", busy], stderr: "", spans: "be", exitCode: 0 },
+      );
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 });
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.

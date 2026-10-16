@@ -3448,7 +3448,7 @@ function internalConnectMultiple(context, canceled?) {
   if (current > 0) {
     // An earlier connect() of this socket is in flight on the handle: a new handle would close this one under it.
     if (self._handle?.readyState === 2) {
-      self.destroy(context.errors[context.errors.length - 1]);
+      self.destroy(new NodeAggregateError(context.errors));
       return;
     }
     self[kReinitializeHandle](newDetachedSocket(typeof self[bunTlsSymbol] === "function"));

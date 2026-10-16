@@ -150,12 +150,12 @@ function emitError(emitter, args) {
   if (events !== undefined) {
     const errorMonitor = events[kErrorMonitor];
     if (errorMonitor !== undefined) {
-      applyHandlers(errorMonitor, emitter, args);
+      applyHandlers(errorMonitor, emitter, kErrorMonitor, args);
     }
 
     const handlers = events.error;
     if (handlers !== undefined) {
-      applyHandlers(handlers, emitter, args);
+      applyHandlers(handlers, emitter, "error", args);
       return true;
     }
   }
@@ -184,21 +184,38 @@ function emitError(emitter, args) {
 // A listener list is a bare function for a single listener, else an array
 // (like node). Arrays are never mutated in place - mutators install a copy -
 // so a stored list can be iterated with no defensive clone.
-function applyHandlers(handlers, emitter, args) {
+function applyHandlers(handlers, emitter, type, args) {
   if (typeof handlers === "function") {
-    handlers.$apply(emitter, args);
+    const result = handlers.$apply(emitter, args);
+    if (result !== undefined && result !== null) {
+      addCatch(emitter, result, type, args);
+    }
     return;
   }
   for (let i = 0, { length } = handlers; i < length; i++) {
-    handlers[i].$apply(emitter, args);
+    const result = handlers[i].$apply(emitter, args);
+    if (result !== undefined && result !== null) {
+      addCatch(emitter, result, type, args);
+    }
   }
 }
 
 function addCatch(emitter, promise, type, args) {
-  promise.then(undefined, function (err) {
-    // The callback is called with nextTick to avoid a follow-up rejection from this promise.
-    process.nextTick(emitUnhandledRejectionOrErr, emitter, err, type, args);
-  });
+  if (!emitter[kCapture]) return;
+
+  // Handle Promises/A+ spec, then could be a getter that throws on second use.
+  try {
+    const then = promise.then;
+
+    if (typeof then === "function") {
+      then.$call(promise, undefined, function (err) {
+        // The callback is called with nextTick to avoid a follow-up rejection from this promise.
+        process.nextTick(emitUnhandledRejectionOrErr, emitter, err, type, args);
+      });
+    }
+  } catch (err) {
+    emitter.emit("error", err);
+  }
 }
 
 function emitUnhandledRejectionOrErr(emitter, err, type, args) {
@@ -303,7 +320,7 @@ const emitWithRejectionCapture = function emit(type, ...args) {
         result = handler.$apply(this, args);
         break;
     }
-    if (result !== undefined && $isPromise(result)) {
+    if (result !== undefined && result !== null) {
       addCatch(this, result, type, args);
     }
     return true;
@@ -331,7 +348,7 @@ const emitWithRejectionCapture = function emit(type, ...args) {
         result = listener.$apply(this, args);
         break;
     }
-    if (result !== undefined && $isPromise(result)) {
+    if (result !== undefined && result !== null) {
       addCatch(this, result, type, args);
     }
   }
@@ -995,6 +1012,10 @@ Object.defineProperties(EventEmitter, {
       validateBoolean(value, "EventEmitter.captureRejections");
 
       EventEmitterPrototype[kCapture] = value;
+      // An emitter whose constructor never ran has no own `emit`. A userland `emit` stays.
+      if (EventEmitterPrototype.emit === (value ? emitWithoutRejectionCapture : emitWithRejectionCapture)) {
+        EventEmitterPrototype.emit = value ? emitWithRejectionCapture : emitWithoutRejectionCapture;
+      }
     },
     enumerable: true,
   },

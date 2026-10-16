@@ -13,7 +13,8 @@ use bun_wyhash::Wyhash11;
 
 use crate::npm;
 use crate::{
-    DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageManager, PatchTask, Resolution,
+    DependencyID, ExtractData, ExtractTarball, Integrity, NetworkTask, PackageManager, PatchTask,
+    Resolution,
 };
 
 /// `'a` is forced by LIFETIMES.tsv (BORROW_PARAM on `Request::*.network`).
@@ -131,6 +132,20 @@ impl Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(b"tarball:");
         hasher.update(url);
+        Id(hasher.final_())
+    }
+
+    /// The download or read for a row of the lockfile, which is checked against what that row
+    /// pins. Rows that pin other bytes for one URL do not share it, and neither does a dependency
+    /// that `for_tarball` resolves from that URL.
+    pub(crate) fn for_locked_tarball(url: &[u8], resolved: &[u8], integrity: &Integrity) -> Id {
+        let mut hasher = Wyhash11::init(0);
+        hasher.update(b"locked-tarball:");
+        hasher.update(url);
+        hasher.update(b"\0");
+        hasher.update(resolved);
+        hasher.update(b"\0");
+        hasher.update(bytemuck::bytes_of(integrity));
         Id(hasher.final_())
     }
 

@@ -920,6 +920,22 @@ describe.concurrent.each(
       expect(await box.cacheEntries()).toEqual([v1.cacheEntry]);
     });
 
+    // `pkg` and `alias` are two rows then. The second row of a path or URL used to share the read
+    // of the first: `pkg` was left out, or the command did not end. The timeout is a minute and not
+    // the five of this file, for when the command does not end again.
+    it("bun add <the same path or URL> fails when nothing is cached and the new bytes carry another package name", async () => {
+      const { box } = await changed("tarball-renamed-second-dependent");
+      using _ = box;
+      await box.put("app", await tarball("renamed", {}, "renamed-pkg"));
+      await rm(join(box.root, "cache"), { recursive: true });
+      await rm(join(box.root, "app", "node_modules"), { recursive: true });
+
+      const { stderr, exitCode } = await box.run("app", "add", `alias@${box.spec}`);
+      // bun.lock still pins the bytes that `pkg` was resolved to, and the path or URL no longer has them.
+      expect(stderr).toContain("Integrity check failed for tarball: pkg");
+      expect(exitCode).toBe(1);
+    }, 60_000);
+
     it("fails a clean install, and names no other bytes in bun.lock", async () => {
       const { box, lockfile } = await changed("tarball-changed-clean-install");
       using _ = box;

@@ -91,6 +91,9 @@ enum UnderEslint {
     /// here. Without a name: whatever the plugin of the configuration says it is called. And the version of the package that
     /// the rules here do the same as.
     InPlaceOf(Option<&'static str>, &'static str),
+    /// The same for a plugin that has [languages](crate::languages), and rules for the files in them. Only ESLint has languages,
+    /// so with any other configuration, and with none, there is no such plugin.
+    Languages(&'static str, &'static str),
     /// The package of the project, which has other messages and other options: the rules here are those of oxlint,
     /// for a configuration of oxlint.
     Package,
@@ -127,7 +130,7 @@ macro_rules! plugins {
             pub(crate) const ALL: &'static [Plugin] = &[$(Plugin::$plugin),*];
 
             const fn names(self) -> Names {
-                use UnderEslint::{Always, Here, InPlaceOf, Package};
+                use UnderEslint::{Always, Here, InPlaceOf, Languages, Package};
                 match self {
                     $(Plugin::$plugin => Names {
                         prefixes: &$prefixes,
@@ -183,6 +186,8 @@ plugins! {
     BunTest: ["bun:test"], Always, Whole;
     /// `prettier/prettier`
     Prettier: ["prettier"], InPlaceOf(Some("eslint-plugin-prettier"), "5.5.6"), Whole;
+    /// `json/no-duplicate-keys`
+    Json: ["json"], Languages("@eslint/json", "2.1.1"), Part;
 }
 
 impl Plugin {
@@ -241,6 +246,7 @@ impl Plugin {
         let mut all = Plugin::ALL.iter().copied();
         all.find(|it| it.is_only_of_oxlint() && it.is_called(prefix))
             .or_else(|| Plugin::of_prefix(prefix))
+            .filter(|it| !matches!(it.names().under_eslint, UnderEslint::Languages(..)))
             .map(Plugin::in_oxlint)
     }
 
@@ -254,6 +260,10 @@ impl Plugin {
                     && (usual.zip(package))
                         .is_none_or(|(usual, package)| usual.as_bytes() == package)
             }
+            // The prefix alone is not enough: `json` is what ESLint makes of eslint-plugin-json.
+            UnderEslint::Languages(usual, _) => {
+                it.prefix().as_bytes() == prefix && package == Some(usual.as_bytes())
+            }
             UnderEslint::Always | UnderEslint::Here | UnderEslint::Package => false,
         })
     }
@@ -266,7 +276,18 @@ impl Plugin {
     /// The version of the package that the rules here do the same as, if they answer in place of one.
     pub fn follows(self) -> Option<&'static str> {
         match self.names().under_eslint {
-            UnderEslint::InPlaceOf(_, version) => Some(version),
+            UnderEslint::InPlaceOf(_, version) | UnderEslint::Languages(_, version) => {
+                Some(version)
+            }
+            UnderEslint::Always | UnderEslint::Here | UnderEslint::Package => None,
+        }
+    }
+
+    /// The package in whose place the rules here answer, if it has to be that one.
+    pub fn package(self) -> Option<&'static str> {
+        match self.names().under_eslint {
+            UnderEslint::InPlaceOf(package, _) => package,
+            UnderEslint::Languages(package, _) => Some(package),
             UnderEslint::Always | UnderEslint::Here | UnderEslint::Package => None,
         }
     }
@@ -278,7 +299,10 @@ impl Plugin {
             // oxlint accepts both prefixes for both plugins. Here `react-hooks/` only works for the hooks rules.
             Plugin::ReactHooks => &["react-hooks", "react_hooks", "react"],
             Plugin::React => &["react"],
-            plugin => plugin.names().prefixes,
+            plugin => match plugin.names().under_eslint {
+                UnderEslint::Languages(..) => &[],
+                _ => plugin.names().prefixes,
+            },
         }
     }
 
@@ -435,6 +459,8 @@ pub struct Meta {
     pub never_suggests: bool,
     /// [`Meta::hints`]
     pub has_hints: bool,
+    /// [`Meta::languages`]
+    pub languages: &'static [&'static str],
     pub reports: When,
     /// A hash of `name`.
     pub(crate) key: u32,
@@ -460,6 +486,7 @@ impl Meta {
             never_fixes: false,
             never_suggests: false,
             has_hints: false,
+            languages: &[],
             reports: When::Entering,
             key: hash_const(0, name.as_bytes()) as u32,
         }
@@ -543,6 +570,13 @@ impl Meta {
     /// Some of the rule's reports have a [`Report::hint`](crate::context::Report::hint). Hints aren't shown without this.
     pub const fn hints(mut self) -> Meta {
         self.has_hints = true;
+        self
+    }
+
+    /// ESLint's `meta.languages`, for a rule about a [language](crate::languages) other than JavaScript: `json/json`. It runs on
+    /// the files of these languages and on no other, and it exists only with a configuration of ESLint.
+    pub const fn languages(mut self, languages: &'static [&'static str]) -> Meta {
+        self.languages = languages;
         self
     }
 

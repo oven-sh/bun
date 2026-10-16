@@ -232,6 +232,9 @@ fn needs(target: &Target) -> Needs {
     };
     let mut on = (config.js_rules.iter()).filter(|it| it.severity != Severity::Off);
     let route = target.route();
+    if route == Route::Language {
+        return Needs::Nothing;
+    }
     if route != Route::Native && config.language.wants_types {
         return Needs::Heavy;
     }
@@ -551,7 +554,7 @@ impl Run<'_> {
             });
         }
         // With another parser it shows only when the text is read whether it can be read here.
-        if matches!(route, Route::Processor | Route::Eslint)
+        if matches!(route, Route::Processor | Route::Language | Route::Eslint)
             || config.language.parser == Parser::Other
         {
             let result = context.verify_processed_text(
@@ -912,7 +915,9 @@ impl Run<'_> {
             bun_lint_unicorn::RULES,
             bun_lint_react::RULES,
             bun_lint_jest::RULES,
-        ]);
+            bun_lint_json::RULES,
+        ])
+        .with_languages(crate::rules::LANGUAGES);
         if let Some(rule) = &options.explain {
             match explain::explain(&registry, rule, environment, options.color) {
                 Ok(page) => self.out.stdout = page,

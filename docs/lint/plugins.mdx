@@ -122,7 +122,7 @@ For one run, use `--plugin`. Next to an ESLint config its prefix is the name you
 bun lint --plugin perfectionist --rule 'perfectionist/sort-imports: error'
 ```
 
-With an ESLint config, six plugins run natively: `@typescript-eslint`, `react`, `react-hooks`, `import`, `n`, and `prettier`. Everything else runs from `node_modules`, including `unicorn`, `jsx-a11y`, `promise`, `jest`, and `vitest`. Bun's built-in versions of those follow oxlint, so Bun only uses them with `bunfig.toml` or an oxlint config.
+With an ESLint config, seven plugins run natively: `@typescript-eslint`, `react`, `react-hooks`, `import`, `n`, `prettier`, and `json`. Everything else runs from `node_modules`, including `unicorn`, `jsx-a11y`, `promise`, `jest`, and `vitest`. Bun's built-in versions of those follow oxlint, so Bun only uses them with `bunfig.toml` or an oxlint config.
 
 `bun lint --doctor` shows which of your rules run natively and which run in JavaScript.
 
@@ -165,13 +165,31 @@ Without Prettier, use [`bun/format`](/lint/rules/bun/format). It checks files ag
 
 ## Other languages
 
-Bun parses JavaScript and TypeScript. It hands other files to the `eslint` package in your project, so keep `eslint` 8.57 or later installed if you use:
+With an ESLint config, a file can have a `language` from a plugin. Bun reads the languages of `@eslint/json` itself: `json/json`, `json/jsonc`, and `json/json5`. It parses these files with its own parser and runs its own [rules](/lint/rules#json) on them, and `eslint` doesn't have to be installed.
 
-- A plugin language, such as `json/json` from `@eslint/json`, `markdown/gfm`, or `css/css`.
+```js eslint.config.js icon="/icons/javascript.svg"
+import json from "@eslint/json";
+
+export default [
+  {
+    files: ["**/*.json"],
+    plugins: { json },
+    language: "json/json",
+    rules: { "json/no-duplicate-keys": "error" },
+  },
+];
+```
+
+Comments such as `// eslint-disable-next-line` work in JSONC and JSON5, as they do in ESLint.
+
+Bun hands every other file to the `eslint` package in your project, so keep `eslint` 8.57 or later installed if you use:
+
+- A language of another plugin, such as `markdown/gfm` or `css/css`.
+- A rule for JSON that isn't built in, such as one of your own. Then the whole file goes to `eslint`.
 - A parser for another file type, such as `vue-eslint-parser`, `svelte-eslint-parser`, or `yaml-eslint-parser`.
 - `eslint-plugin-html`.
 
-You still run `bun lint`, and these files show up in the same report.
+You still run `bun lint`, and these files show up in the same report. `bun lint --doctor` says how many files go to `eslint`.
 
 ## Processors
 

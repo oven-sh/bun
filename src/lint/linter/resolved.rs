@@ -5,6 +5,7 @@ use super::registry::{Deprecated, Registry, formatting_rule, parse_rule_id};
 use crate::context::Severity;
 use crate::js_plugin::{self, Route};
 use crate::language::{LanguageOptions, Parser};
+use crate::languages::Dialect;
 use crate::options::Json;
 use crate::oxlint_order::Ran as InOxlint;
 use crate::rule::{Meta, Plugin};
@@ -286,8 +287,12 @@ pub struct ResolvedConfig {
     /// The plugins, of those that are implemented here, that the configuration objects for the file have. For ESLint the rules
     /// of any other do not exist there, and a comment cannot name them. `None`: all of them, as with `.oxlintrc.json`.
     pub plugins: Option<Vec<Plugin>>,
-    /// `language`, if it is configured: `js/js`, `json/json`, .. Only JavaScript can be linted.
+    /// `language`, if it is configured: `js/js`, `json/json`, ..
     pub language_name: Option<Box<[u8]>>,
+    /// `languageOptions`, if it is not JavaScript: they mean what that language says.
+    pub options_of_other_language: Option<Json>,
+    /// What it names, if that is not JavaScript and the file is linted here: [`Route::Language`].
+    pub dialect: Option<Dialect>,
     /// The name of the `processor`, if one is configured.
     pub processor: Option<Box<[u8]>>,
     /// Where it is, if the configuration is an `eslint.config.js`.
@@ -483,6 +488,20 @@ impl ResolvedConfig {
         (self.language_name.as_deref()).is_none_or(|it| matches!(it, b"@/js" | b"js/js"))
     }
 
+    /// ESLint's `normalizeLanguageName`
+    pub(crate) fn normalized_language_name(&self) -> &[u8] {
+        match self.language_name.as_deref() {
+            None | Some(b"@/js") => b"js/js",
+            Some(name) => name,
+        }
+    }
+
+    /// ESLint's `doesRuleSupportLanguage`
+    pub(crate) fn supports_language(&self, rule: &Meta) -> bool {
+        let name = self.normalized_language_name();
+        rule.languages.is_empty() || rule.languages.iter().any(|it| it.as_bytes() == name)
+    }
+
     /// Whether there are files that [`Route::Eslint`] is the way of.
     pub(crate) fn is_for_eslint(&self) -> bool {
         !self.is_javascript() || self.language.parser == Parser::Other || self.changes_linter
@@ -494,6 +513,7 @@ impl ResolvedConfig {
             || bun_sema::resolve::ScriptKind::from_file_name(path).is_some();
         match self.is_javascript() && is_read_here {
             true => Route::Native,
+            false if self.dialect.is_some() => Route::Language,
             false => Route::Eslint,
         }
     }
@@ -501,7 +521,7 @@ impl ResolvedConfig {
     /// How the file at `path` is linted. With a processor neither the language nor the parser reads the file itself.
     pub fn route(&self, path: &[u8]) -> Route {
         match (self.route_as_it_is(path), &self.processor) {
-            (Route::Native | Route::Eslint, Some(_)) => Route::Processor,
+            (Route::Native | Route::Language | Route::Eslint, Some(_)) => Route::Processor,
             (route, _) => route,
         }
     }

@@ -148,7 +148,9 @@ fn registry() -> Registry {
         bun_lint_unicorn::RULES,
         bun_lint_react::RULES,
         bun_lint_jest::RULES,
+        bun_lint_json::RULES,
     ])
+    .with_languages(crate::rules::LANGUAGES)
 }
 
 fn object(entries: Vec<(&[u8], Json)>) -> Json {

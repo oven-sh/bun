@@ -235,6 +235,8 @@ describe("docs/lint/rules", () => {
       if (!Bun.deepEquals(parsed.lint.rules[rule.id].slice(1), config.defaults.options))
         wrong.push(`${name}: the snippet sets ${JSON.stringify(parsed.lint.rules[rule.id].slice(1))}`);
     }
+    // bunfig.toml can't turn on a rule for another language.
+    if (plain.length === 0) return;
 
     const run = async (lines: string[]) => {
       put("bunfig.toml", `[lint.rules]\n${lines.join("\n")}\n`);

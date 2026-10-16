@@ -43,10 +43,12 @@ static NEXT_ID: AtomicU32 = AtomicU32::new(0);
 pub enum Route {
     /// It is JavaScript or TypeScript as it is.
     Native,
+    /// It is in another [language](crate::languages) that is read here, and all rules that are on for it are here too.
+    Language,
     /// A processor takes blocks out of it, each of which goes its own way.
     Processor,
-    /// By the `Linter` of the `eslint` that the project has installed: it has a `language` other than JavaScript, or a parser that
-    /// is not known here is to read what is not called like JavaScript.
+    /// By the `Linter` of the `eslint` that the project has installed: it has a `language` that is not read here or a rule for it that
+    /// is not here, or a parser that is not known here is to read what is not called like JavaScript.
     Eslint,
     /// Not at all: it is for a processor or for `eslint`, and the configuration is not ESLint's or the package is not installed.
     Unsupported,

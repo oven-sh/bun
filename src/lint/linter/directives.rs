@@ -78,9 +78,45 @@ fn range_in(outer: &[u8], inner: &[u8]) -> Span {
     Span::new(start as u32, (start + inner.len()).min(outer.len()) as u32)
 }
 
+/// `getInlineConfigNodes` of the languages of ESLint's own plugins. Whatever kind of comment it is, it can have any of these
+/// labels, and there are no others.
+fn config_comments_among(
+    text: &[u8],
+    comments: &[crate::languages::Comment],
+) -> Vec<ConfigComment> {
+    let found = comments.iter().filter_map(|comment| {
+        let value = text.get(comment.value.range())?;
+        let directive =
+            parse_directive(value, Space::Js).filter(|_| may_start_with_label(value))?;
+        let label = Label::of(directive.label).filter(|it| {
+            directive.label.starts_with(b"eslint")
+                && matches!(
+                    it,
+                    Label::Rules
+                        | Label::Enable
+                        | Label::Disable
+                        | Label::DisableLine
+                        | Label::DisableNextLine
+                )
+        })?;
+        Some(ConfigComment {
+            is_only_of_oxlint: false,
+            span: comment.span,
+            label,
+            label_span: range_in(text, directive.label),
+            value: range_in(text, directive.value),
+            justification: range_in(text, directive.justification),
+        })
+    });
+    found.collect()
+}
+
 /// ESLint's `getInlineConfigNodes`.
 pub(crate) fn config_comments<'a>(file: &'a File<'a>) -> Vec<ConfigComment> {
     let text = file.text();
+    if let Some(parsed) = file.parsed() {
+        return config_comments_among(text, &parsed.comments);
+    }
     let space = match file.language().is_oxlint {
         true => Space::Unicode,
         false => Space::Js,

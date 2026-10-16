@@ -13,6 +13,7 @@ A linter that is compatible with ESLint and typescript-eslint: the same rule nam
 | `src/lint/{unicorn,react,jest}/rules/` | `bun_lint_unicorn`, ..    | oxlint's `unicorn` / `react`, `react-perf`, `jsx-a11y`, `nextjs` / `jest`, `vitest`: ports of oxlint's rules, found with its configuration and without any, not with ESLint's. In `jest/` also `bun:test`: the same rules for `bun test`, found with every configuration |
 | `src/lint/oxlint/`                     | `bun_lint_oxlint`         | What the ports of oxlint's rules share: its `ast_util`, its printer, its module records                                                                                                                                                                                  |
 | `src/lint/react_compiler/`             | `bun_lint_react_compiler` | The rules of the React Compiler, `react/*` of oxlint and `react-hooks/*` of the plugin for ESLint. `convert.rs` makes the tree of Bun's parser of one function, `src/react_compiler` compiles it, once per file. The rules are declared in `src/lint/react/rules/`       |
+| `src/lint/json/`                       | `bun_lint_json`           | The languages and the rules of `@eslint/json`. See [Languages other than JavaScript](#languages-other-than-javascript)                                                                                                                                                   |
 | `src/lint/conformance/`                | `bun_lint_conformance`    | Runs the test cases below, in `bun lint --run-eslint-tests` (debug and canary builds)                                                                                                                                                                                    |
 | `test/cli/lint/conformance/bundle.zst` |                           | Upstream test cases as JSON, with what real ESLint reports for each. See the README there                                                                                                                                                                                |
 
@@ -203,6 +204,20 @@ Only one throw per file counts, so calling it from a listener that runs for ever
 - The clippy lints in `[workspace.lints.clippy]` are denied too. The ones that bite: `derive_partial_eq_without_eq`, `or_fun_call` (`.or_else(|| f())`, not `.or(f())`), `needless_pass_by_value`, `redundant_clone`, `trivially_copy_pass_by_ref`, `needless_collect`.
 - Comments: only what the next reader could not work out quickly. Never narrate the port, never reference ESLint line numbers. Naming the upstream helper a function corresponds to (`` /// ESLint's `isLoop` ``) is good.
 - Let-chains (`if let Some(x) = a && let Some(y) = b`) are available and preferred over nesting.
+
+## Languages other than JavaScript
+
+With an ESLint flat config a file can have a `language` of a plugin: `json/jsonc`, `markdown/gfm`, `css/css`. `src/lint/languages.rs` is all that a language has to do with the rest, and `src/lint/json` is the example. Nothing outside a language's crate knows what the language is.
+
+To plug one in:
+
+1. **The plugin**: a line in `plugins!` in `rule.rs`, `Languages("<package>", "<version>")`, `Part` until all of its rules are here. A line in `directory_of_docs` in `docs.rs`.
+2. **The language**: `impl Language` (`languages.rs`). `names` is what `language` has after the `/`. `configure` is `validateLanguageOptions`. `parse` takes the text, without a byte order mark, and returns a tree, which is any `'static` type (places in the text, not slices of it), and the comments: each with its span and the span of what is between its delimiters. Or it returns syntax errors, and no rule runs. `line_breaks` is where a line ends.
+3. **The rules**: a crate with `bun_lint::rules! { .. }`, like every other. A rule has `.languages(&["json/json", ..])` on its `Meta`, which is upstream's `meta.languages`, `ON = On::new().finish()`, gets the tree in `start` with `file.tree::<Tree>()`, and walks it in `finish`. It reports spans with `cx.report(..)`. The `File` has the text and no JavaScript. Where two reports can start at one place, `.listened_on(node)` and `.on_exit(true)` say which node upstream listens on.
+4. **The lists**: the crate in `rule_sets!` and the language in `LANGUAGES` (`driver/rules.rs`), its `RULES` in the two `Registry::new(..)` (`driver/run.rs`, `driver/for_tests.rs`).
+5. **The docs**: a page for each rule, as for every rule. An example is a code block in the language (` ```jsonc `), run below an ESLint config with a stand-in for the package. Add the plugin to `PLUGINS` and the languages to `FILES` in `src/codegen/lint-rule-docs.ts`.
+
+What the plumbing does with that (`Route::Language`): a file is linted here if the plugin behind the prefix of its `language` is the package that is named in `plugins!`, `nativePluginRules` has not turned the plugin off, and every rule that is on for the file has the language in its `Meta::languages`. Otherwise the whole file goes to the `eslint` package (`Route::Eslint`), also if a comment in it turns on another rule. Comments that configure (`eslint-disable`, `eslint rule: ..`), options, schemas, fixes, formats, `--stdin` and `--doctor` are the code that JavaScript has. These rules exist only with an ESLint config: `bunfig.toml` and oxlint's config don't find them.
 
 ## ESTree → this API
 

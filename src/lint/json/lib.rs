@@ -1,0 +1,92 @@
+//! The languages and the rules of `@eslint/json` 2.1.1: `json/json`, `json/jsonc` and `json/json5`. Each rule is a port of the rule
+//! of the same name, with the same options, the same messages, at the same places.
+//! - https://github.com/eslint/json (Copyright Nicholas C. Zakas, Apache License 2.0)
+//!
+//! The plugin parses with Momoa. Here the tokens are those of Bun's parser for JSON5 ([`bun_parsers::json5::SourceTokens`]), which
+//! reads all three languages. `parse.rs` puts them together the way Momoa does, so that the tree is the same and what is
+//! refused is refused with the same words.
+//! - https://github.com/humanwhocodes/momoa (Copyright Nicholas C. Zakas, Apache License 2.0)
+
+#![forbid(unsafe_code)]
+#![deny(clippy::iter_over_hash_type)]
+
+mod momoa;
+mod parse;
+mod tree;
+
+use bun_lint::languages::{Configured, Language, LineBreaks, Parsed, Refusal, SyntaxError};
+use bun_lint::options::Json as Value;
+use bun_lint::rule::Plugin;
+pub use tree::{Document, Member, Node, NodeKind, Tree};
+
+bun_lint::rules! {
+    no_duplicate_keys::NoDuplicateKeys,
+}
+
+/// `meta.languages` of all rules.
+pub(crate) const LANGUAGES: &[&str] = &["json/json", "json/jsonc", "json/json5"];
+
+/// Momoa's `mode`
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum Mode {
+    Json,
+    Jsonc,
+    Json5,
+}
+
+/// What Momoa's `parse` is told.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct Options {
+    pub(crate) mode: Mode,
+    pub(crate) allows_trailing_commas: bool,
+}
+
+pub struct Json;
+
+impl Language for Json {
+    fn plugin(&self) -> Plugin {
+        Plugin::Json
+    }
+
+    fn names(&self) -> &'static [&'static str] {
+        &["json", "jsonc", "json5"]
+    }
+
+    fn line_breaks(&self) -> LineBreaks {
+        LineBreaks::Newlines
+    }
+
+    fn configure(&self, name: &[u8], options: &Value) -> Result<Configured, Refusal> {
+        let mode = match name {
+            b"jsonc" => Mode::Jsonc,
+            b"json5" => Mode::Json5,
+            _ => Mode::Json,
+        };
+        let invalid = |message: &str| Err(Refusal::Invalid(message.into()));
+        let allows_trailing_commas = match options.get(b"allowTrailingCommas") {
+            None => false,
+            Some(Value::Bool(_)) if mode != Mode::Jsonc => {
+                return invalid("allowTrailingCommas option is only available in JSONC.");
+            }
+            Some(Value::Bool(allows)) => *allows,
+            Some(_) => return invalid("allowTrailingCommas must be a boolean if provided."),
+        };
+        Ok(std::sync::Arc::new(Options {
+            mode,
+            allows_trailing_commas: allows_trailing_commas || mode == Mode::Json5,
+        }))
+    }
+
+    fn parse(&self, text: &[u8], configured: &Configured) -> Result<Parsed, Vec<SyntaxError>> {
+        let options = configured.downcast_ref::<Options>();
+        let options = options.copied().unwrap_or(Options {
+            mode: Mode::Json,
+            allows_trailing_commas: false,
+        });
+        let (tree, comments) = parse::parse(text, options).map_err(|it| vec![it])?;
+        Ok(Parsed {
+            tree: Box::new(tree),
+            comments,
+        })
+    }
+}

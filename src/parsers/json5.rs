@@ -25,6 +25,8 @@ pub struct JSON5Parser<'a> {
     bump: &'a Bump,
     stack_check: StackCheck,
     token: Token<'a>,
+    /// For [`SourceTokens`]: a comment is a token, and a string without escapes is a slice of the source.
+    as_written: bool,
 }
 
 struct Token<'a> {
@@ -48,6 +50,9 @@ enum TokenData<'a> {
     Null,
     // Identifiers (for unquoted keys that aren't keywords)
     Identifier(&'a [u8]),
+    // Only with `as_written`
+    LineComment,
+    BlockComment,
 }
 
 impl<'a> TokenData<'a> {
@@ -64,8 +69,100 @@ impl<'a> TokenData<'a> {
             | TokenData::RightBrace
             | TokenData::RightBracket
             | TokenData::Colon
-            | TokenData::Comma => false,
+            | TokenData::Comma
+            | TokenData::LineComment
+            | TokenData::BlockComment => false,
         }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SourceTokenKind {
+    LeftBrace,
+    RightBrace,
+    LeftBracket,
+    RightBracket,
+    Colon,
+    Comma,
+    String,
+    /// With its sign. `Infinity` and `NaN` without one are identifiers.
+    Number,
+    Boolean,
+    Null,
+    Identifier,
+    LineComment,
+    BlockComment,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct SourceToken<'a> {
+    pub kind: SourceTokenKind,
+    pub start: usize,
+    pub end: usize,
+    /// What a string or an identifier stands for, once its escapes are read. Empty for the other kinds.
+    pub value: &'a [u8],
+}
+
+/// The tokens and the comments of a text one by one, for who wants a document as it is written. They are what
+/// [`JSON5Parser::parse`] reads. In which order they may come is not looked at.
+pub struct SourceTokens<'a>(JSON5Parser<'a>);
+
+impl<'a> SourceTokens<'a> {
+    /// `None`: the text is too long.
+    pub fn new(text: &'a [u8], bump: &'a Bump) -> Option<SourceTokens<'a>> {
+        i32::try_from(text.len()).ok()?;
+        Some(SourceTokens(JSON5Parser {
+            source: text,
+            pos: 0,
+            bump,
+            stack_check: StackCheck::init(),
+            token: Token {
+                loc: Loc::default(),
+                data: TokenData::Eof,
+            },
+            as_written: true,
+        }))
+    }
+
+    /// Where the last token ends.
+    pub fn position(&self) -> usize {
+        self.0.pos
+    }
+
+    /// The next token is looked for from `position` on.
+    pub fn seek(&mut self, position: usize) {
+        self.0.pos = position.min(self.0.source.len());
+    }
+
+    /// `Ok(None)`: the text ends. `Err`: there is no token here.
+    pub fn next(&mut self) -> Result<Option<SourceToken<'a>>, ParseError> {
+        self.0.scan()?;
+        let (kind, value): (_, &[u8]) = match self.0.token.data {
+            // The scanner takes a NUL for the end.
+            TokenData::Eof if self.0.pos < self.0.source.len() => {
+                return Err(ParseError::UnexpectedCharacter);
+            }
+            TokenData::Eof => return Ok(None),
+            TokenData::LeftBrace => (SourceTokenKind::LeftBrace, b""),
+            TokenData::RightBrace => (SourceTokenKind::RightBrace, b""),
+            TokenData::LeftBracket => (SourceTokenKind::LeftBracket, b""),
+            TokenData::RightBracket => (SourceTokenKind::RightBracket, b""),
+            TokenData::Colon => (SourceTokenKind::Colon, b""),
+            TokenData::Comma => (SourceTokenKind::Comma, b""),
+            TokenData::String(value) => (SourceTokenKind::String, value),
+            TokenData::Number(_) => (SourceTokenKind::Number, b""),
+            TokenData::Boolean(_) => (SourceTokenKind::Boolean, b""),
+            TokenData::Null => (SourceTokenKind::Null, b""),
+            TokenData::Identifier(value) => (SourceTokenKind::Identifier, value),
+            TokenData::LineComment => (SourceTokenKind::LineComment, b""),
+            TokenData::BlockComment => (SourceTokenKind::BlockComment, b""),
+        };
+        Ok(Some(SourceToken {
+            kind,
+            start: self.0.token.loc.to_usize(),
+            end: self.0.pos,
+            value,
+        }))
     }
 }
 
@@ -254,6 +351,7 @@ impl<'a> JSON5Parser<'a> {
                 loc: Loc::default(),
                 data: TokenData::Eof,
             },
+            as_written: false,
         };
         match parser.parse_root() {
             Ok(result) => Ok(result),
@@ -364,20 +462,31 @@ impl<'a> JSON5Parser<'a> {
                     };
                     break 'next TokenData::Number(self.scan_number()?);
                 }
-                // Comments — skip without setting loc
+                // Comments — skipped, unless they are tokens
                 b'/' => {
                     let n = if self.pos + 1 < self.source.len() {
                         self.source[self.pos + 1]
                     } else {
                         0
                     };
+                    if self.as_written {
+                        self.token.loc = Loc {
+                            start: i32::try_from(self.pos).expect("int cast"),
+                        };
+                    }
                     if n == b'/' {
                         self.pos += 2;
                         self.skip_to_end_of_line();
+                        if self.as_written {
+                            break 'next TokenData::LineComment;
+                        }
                         continue 'next;
                     } else if n == b'*' {
                         self.pos += 2;
                         self.skip_block_comment()?;
+                        if self.as_written {
+                            break 'next TokenData::BlockComment;
+                        }
                         continue 'next;
                     }
                     return Err(ParseError::UnexpectedCharacter);
@@ -658,6 +767,16 @@ impl<'a> JSON5Parser<'a> {
         self.pos += 1; // skip opening quote
 
         let mut buf: BumpVec<'a, u8> = BumpVec::new_in(self.bump);
+        if self.as_written {
+            let source: &'a [u8] = self.source;
+            let rest = &source[self.pos..];
+            let plain = bun_highway::index_of_interesting_character_in_string_literal(rest, quote)
+                .unwrap_or(rest.len());
+            if rest.get(plain) == Some(&quote) {
+                self.pos += plain + 1;
+                return Ok(&rest[..plain]);
+            }
+        }
 
         while self.pos < self.source.len() {
             let c = self.source[self.pos];

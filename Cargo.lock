@@ -1042,6 +1042,7 @@ dependencies = [
  "bun_lint_eslint",
  "bun_lint_graph",
  "bun_lint_jest",
+ "bun_lint_json",
  "bun_lint_plugins",
  "bun_lint_react",
  "bun_lint_typescript",
@@ -1093,6 +1094,17 @@ dependencies = [
  "bun_lint_oxlint",
  "rustc-hash",
  "smallvec",
+]
+
+[[package]]
+name = "bun_lint_json"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_core",
+ "bun_lint",
+ "bun_parsers",
+ "rustc-hash",
 ]
 
 [[package]]

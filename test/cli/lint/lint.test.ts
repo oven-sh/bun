@@ -12538,7 +12538,7 @@ describe.concurrent("nativePluginRules", () => {
   test.each([
     [
       `["imprt"]`,
-      'Unknown plugin "imprt" in --native-plugin-rules\n  Available plugins: @typescript-eslint, react-hooks, import, n, react, prettier\n',
+      'Unknown plugin "imprt" in --native-plugin-rules\n  Available plugins: @typescript-eslint, react-hooks, import, n, react, prettier, json\n',
     ],
     [`["unicorn"]`, 'Unknown plugin "unicorn" in --native-plugin-rules'],
     [`["true"]`, 'Unknown plugin "true" in --native-plugin-rules'],

@@ -16,6 +16,7 @@ use bun_lint::fix::SuggestionKind;
 use bun_lint::formats::{Formats, Reason};
 use bun_lint::js_plugin::{Host, ParseAgain, Route};
 use bun_lint::language::Parser;
+use bun_lint::languages::{Dialect, LineBreaks, Parsed};
 use bun_lint::linter::{
     Again, LintMessage, LintOptions, LintResult, ResolvedConfig, RuleId, Suggestion, apply_fixes,
     is_parse_error, is_redeclaration, may_be_misread,
@@ -127,6 +128,8 @@ struct How<'h> {
     script: Option<(ScriptKind, &'h RuleFilter<'h>)>,
     /// [`File::is_later_script`]
     is_later_script: bool,
+    /// It is not JavaScript: what [`File::in_language`] takes.
+    in_language: Option<(&'h [u8], &'h Parsed, LineBreaks)>,
     rules: Which<'h>,
 }
 
@@ -311,7 +314,7 @@ impl Context<'_, '_> {
         let was_made = result.had_types || Framework::of(&path).is_some();
         let says_more = |it: &LintMessage| matches!(&it.rule_id, Some(RuleId::Known(meta) | RuleId::Named(meta, _)) if meta.plugin == Plugin::BunTest || meta.follows_oxlint || meta.has_hints);
         let has_help = linted.config.language.is_oxlint || result.messages.iter().any(says_more);
-        if was_made || !has_help {
+        if was_made || !has_help || linted.config.dialect.is_some() {
             return Vec::new();
         }
         let is_asked_about = |id: &RuleId, _: Severity| only.is_none_or(|only| only.contains(&id));
@@ -360,6 +363,56 @@ impl Context<'_, '_> {
             ..How::default()
         };
         Some(self.verify_as(path, text, config, &how)).filter(|it| !it.is_unread)
+    }
+
+    /// The same for a text in `dialect`, which is not JavaScript. `physical_path_len`: as above, if it is such a block.
+    pub(crate) fn verify_in_language(
+        &self,
+        path: &[u8],
+        physical_path_len: Option<usize>,
+        text: &[u8],
+        (config, dialect): (&ResolvedConfig, &Dialect),
+        fixes: Fixes,
+    ) -> LintResult {
+        let started = self.timing.now();
+        let body = text.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(text);
+        let parsed = match dialect.language.parse(body, &dialect.configured) {
+            Ok(parsed) => parsed,
+            Err(errors) => {
+                self.timing.add(&self.timing.parse, started);
+                let fatal = |it: bun_lint::languages::SyntaxError| LintMessage {
+                    message: [&b"Parsing error: "[..], &it.message].concat(),
+                    line: it.line,
+                    column: it.column,
+                    ..too_deep()
+                };
+                return LintResult {
+                    messages: errors.into_iter().map(fatal).collect(),
+                    ..LintResult::default()
+                };
+            }
+        };
+        self.timing.add(&self.timing.parse, started);
+        let how = How {
+            fixes,
+            physical_path_len,
+            in_language: Some((body, &parsed, dialect.language.line_breaks())),
+            ..How::default()
+        };
+        let mut result = self.verify_as(path, body, config, &how);
+        // The language has not seen the byte order mark.
+        let mark = (text.len() - body.len()) as u32;
+        if mark > 0 {
+            result.line_starts = None;
+            for message in result.messages.iter_mut().chain(&mut result.suppressed) {
+                let suggested = message.suggestions.iter_mut().map(|it| &mut it.fix);
+                for fix in message.fix.iter_mut().chain(suggested) {
+                    fix.span.start += mark;
+                    fix.span.end += mark;
+                }
+            }
+        }
+        result
     }
 
     /// The same for a script in the file at `path`, in the language `kind`. Only the rules run of which `filter` says so.
@@ -456,11 +509,15 @@ impl Context<'_, '_> {
         let session = self.memory;
         let arena = session.arena();
         let how = config.language.parse_options(path);
+        let (script_kind, text) = match as_what.in_language {
+            Some(_) => (Some(ScriptKind::Js), &b""[..]),
+            None => (as_what.script.map(|it| it.0).or(how.script_kind), text),
+        };
         bun_sema_parser::with_summary(
             how.dialect,
             (arena, session),
             path,
-            as_what.script.map(|it| it.0).or(how.script_kind),
+            script_kind,
             text,
             self.atoms.of_this_thread(),
             how.experimental_decorators,
@@ -481,6 +538,10 @@ impl Context<'_, '_> {
                     return then(None);
                 }
                 let file = File::new(path, &hir, bound, atoms, &config.language, None);
+                let file = match as_what.in_language {
+                    Some((text, parsed, breaks)) => file.in_language(text, parsed, breaks),
+                    None => file,
+                };
                 file.set_modules(self.modules);
                 // Under the name of a component the formatter would print one of its scripts as a component.
                 if as_what.script.is_none() {

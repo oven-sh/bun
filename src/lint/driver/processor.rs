@@ -153,7 +153,26 @@ impl Context<'_, '_> {
             Route::Eslint if loaded.for_eslint.is_some() => {
                 self.verify_with_eslint(loaded, it, config).0
             }
+            Route::Language => self.verify_in_language_of(loaded, it, config),
             _ => self.verify_natively(loaded, it, it.path, it.text, config),
+        }
+    }
+
+    /// By the rules here for the language of `config`, which is not JavaScript.
+    fn verify_in_language_of(
+        &self,
+        loaded: &Loaded,
+        it: Text,
+        config: &ResolvedConfig,
+    ) -> LintResult {
+        let len = Some(it.physical_path_len).filter(|len| *len < it.path.len());
+        let linted = config.dialect.as_ref().map(|dialect| {
+            self.verify_in_language(it.path, len, it.text, (config, dialect), it.fixes)
+        });
+        match (linted.filter(|it| !it.is_unread), &loaded.for_eslint) {
+            (Some(result), _) => result,
+            (None, Some(_)) => self.verify_with_eslint(loaded, it, config).0,
+            (None, None) => thrown(not_installed(it.path, config)),
         }
     }
 
@@ -250,6 +269,7 @@ impl Context<'_, '_> {
         }
         match (route, &config.processor_location) {
             (Route::Native, _) => self.verify_natively(loaded, it, it.path, it.text, config),
+            (Route::Language, _) => self.verify_in_language_of(loaded, it, config),
             // A processor that finds a file for a processor in a file, and so on without end. ESLint overflows its stack.
             (Route::Processor, _) if !bun_core::StackCheck::init().is_safe_to_recurse() => {
                 LintResult::default()

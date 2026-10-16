@@ -844,6 +844,470 @@ rules = { "no-console" = "off" }
   );
 });
 
+// A stand-in for `@eslint/json`. What it reports shows that it was asked, which takes the package `eslint`.
+const jsonPackage = (name = "@eslint/json") => ({
+  "node_modules/@eslint/json/package.json": JSON.stringify({ name, version: "2.1.1", main: "index.js" }),
+  "node_modules/@eslint/json/index.js": `
+    const language = { parse: ({ body }) => ({ ok: true, ast: { lines: body.split("\\n") } }) };
+    const rule = name => ({ create: context => ({ Line: () => context.report({ line: 1, message: "the package: " + name }) }) });
+    module.exports = {
+      meta: { name: ${JSON.stringify(name)}, namespace: "json", version: "2.1.1" },
+      languages: { json: language, jsonc: language, json5: language },
+      rules: { "no-duplicate-keys": rule("no-duplicate-keys"), "only-in-the-package": rule("only-in-the-package") },
+    };`,
+});
+
+const jsonConfig = (more = "") => `
+  import json from "@eslint/json";
+  const rules = { "json/no-duplicate-keys": "error" };
+  export default [
+    { files: ["**/*.json"], plugins: { json }, language: "json/json", rules },
+    { files: ["**/*.jsonc"], plugins: { json }, language: "json/jsonc", rules },
+    { files: ["**/*.json5"], plugins: { json }, language: "json/json5", rules },
+    ${more}
+  ];`;
+
+// What is expected is what ESLint 10.13 with @eslint/json 2.1.1 reports.
+describe.concurrent("bun lint with the languages that are built in", () => {
+  const json = { ...jsonPackage(), "eslint.config.mjs": jsonConfig() };
+  const [mark, noBreakSpace, noCharacter] = [0xfeff, 0xa0, 0xffff].map(it => String.fromCodePoint(it));
+
+  test(
+    "JSON, JSONC and JSON5 are linted here, without the package eslint",
+    async () => {
+      const result = await lint(
+        {
+          ...json,
+          "a.json": '{\n  "a": 1,\n  "b": { "c": 1, "c": 2 },\n  "a": 2,\n  "\\u0061": 3\n}\n',
+          "b.jsonc": '// é😀\n{ "é😀": 1, /* c */ "é😀": 2 }\n',
+          "c.json5": "{ a: 1, 'a': 2, \"a\": 3, \\u0061: 4, }\n",
+          "crlf.json": `${mark}{\r\n  "a": 1,\r\n  "a": 2\r\n}\r\n`,
+          "fine.json": '{ "a": { "a": [{ "a": 1 }] }, "b": 1 }\n',
+        },
+        ["-f", "json", "--timing", "."],
+      );
+      expect(summary(result.raw)).toMatchInlineSnapshot(`
+      "a.json: 3:18 json/no-duplicate-keys Duplicate key "c" found.
+      a.json: 4:3 json/no-duplicate-keys Duplicate key "a" found.
+      a.json: 5:3 json/no-duplicate-keys Duplicate key "\\u0061" found.
+      b.jsonc: 2:21 json/no-duplicate-keys Duplicate key "é😀" found.
+      c.json5: 1:9 json/no-duplicate-keys Duplicate key "a" found.
+      c.json5: 1:17 json/no-duplicate-keys Duplicate key "a" found.
+      c.json5: 1:25 json/no-duplicate-keys Duplicate key "\\u0061" found.
+      crlf.json: 3:3 json/no-duplicate-keys Duplicate key "a" found."
+    `);
+      expect(JSON.parse(result.raw)[1].messages[0]).toEqual({
+        ruleId: "json/no-duplicate-keys",
+        severity: 2,
+        message: 'Duplicate key "é😀" found.',
+        line: 2,
+        column: 21,
+        messageId: "duplicateKey",
+        endLine: 2,
+        endColumn: 26,
+      });
+      expect(result.stderr).not.toContain("the eslint package linted");
+      expect(result.exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "an object with many keys",
+    async () => {
+      const keys = Array.from({ length: 50_000 }, (_, i) => `"k${i}": ${i}`);
+      const text = `{${keys.join(",")},"k7":0,"k49999":0,"new":0}`;
+      const result = await lint({ ...json, "a.json": text }, ["-f", "json", "."]);
+      expect(summary(result.raw).replaceAll(/\d+:\d+ /g, "")).toBe(
+        'a.json: json/no-duplicate-keys Duplicate key "k7" found.\na.json: json/no-duplicate-keys Duplicate key "k49999" found.',
+      );
+    },
+    timeout,
+  );
+
+  test(
+    "nesting is only limited by memory",
+    async () => {
+      const deep = `${'{"a":['.repeat(200_000)}{"b":1,"b":2}${"]}".repeat(200_000)}`;
+      const result = await lint({ ...json, "a.json": deep }, ["-f", "json", "."]);
+      expect(summary(result.raw)).toBe('a.json: 1:1200008 json/no-duplicate-keys Duplicate key "b" found.');
+    },
+    timeout,
+  );
+
+  test(
+    "what the parser of the plugin refuses is refused with its words, at its place",
+    async () => {
+      const cases: [string, string, string][] = [
+        ["json", "", "1:1 Unexpected end of input found."],
+        ["json", "{", "1:1 Unexpected token LBrace found."],
+        ["json", '{"a":1', "1:7 Unexpected end of input found."],
+        ["json", '{"a":', "1:1 Unexpected end of input found."],
+        ["json", '{"a":1,}', "1:8 Unexpected token RBrace found."],
+        ["json", "[1,]", "1:4 Unexpected token RBracket found."],
+        ["json", "[1", "1:2 Unexpected token Number found."],
+        ["json", "{} {}", "1:4 Unexpected token LBrace found."],
+        ["json", "// c\n1", "1:1 Unexpected character '/' found."],
+        ["json", "{a:1}", "1:2 Unexpected character 'a' found."],
+        ["json", "'a'", "1:1 Unexpected character ''' found."],
+        ["json", "tru", "1:1 Unexpected identifier 'tru' found."],
+        ["json", "01", "1:1 Unexpected character '1' found."],
+        ["json", "+1", "1:1 Unexpected character '+' found."],
+        ["json", '{\n  "a": "\\q"\n}', "2:9 Unexpected character 'q' found."],
+        ["json", '"abc\n\n', "2:2 Unexpected end of input found."],
+        ["json", `${noBreakSpace}1`, `1:1 Unexpected character '${noBreakSpace}' found.`],
+        ["jsonc", '{"a":1,} // c', "1:8 Unexpected token RBrace found."],
+        ["jsonc", "/* c", "1:5 Unexpected end of input found."],
+        ["jsonc", "[1, // c\n", "1:5 Unexpected token LineComment found."],
+        ["jsonc", "{a:1}", "1:2 Unexpected character 'a' found."],
+        ["json5", "{true:1}", "1:2 Unexpected token Boolean found."],
+        ["json5", "-.5", "1:1 Unexpected character '.' found."],
+        ["json5", "0x", `1:3 Unexpected character '${noCharacter}' found.`],
+        ["json5", "[,]", "1:2 Unexpected token Comma found."],
+        ["json5", "{a-b:1}", "1:3 Unexpected character 'b' found."],
+      ];
+      const files = cases.map(([language, text], i) => [`${String(i).padStart(2, "0")}.${language}`, text]);
+      const result = await lint({ ...json, ...Object.fromEntries(files) }, ["-f", "json", "."]);
+      expect(summary(result.raw).split("\n")).toEqual(
+        cases.map(([, , expected], i) => {
+          const [place, ...message] = expected.split(" ");
+          return `${files[i][0]}: ${place} null Parsing error: ${message.join(" ")} [fatal]`;
+        }),
+      );
+      expect(result.exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "what only JSON5 has is read in JSON5",
+    async () => {
+      const text = `// c\n{ a: +1, b: .5, c: 5., d: 0xF, e: -Infinity, f: NaN, g: 'a\\\nb', "h": "\\x41\\v\\0", $_: [1,], NaN: 1, ${noBreakSpace}}\n`;
+      const result = await lint({ ...json, "a.json5": text }, ["-f", "json", "."]);
+      expect(summary(result.raw)).toBe("");
+      expect(result.exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  test(
+    "comments disable and configure rules in JSONC and JSON5",
+    async () => {
+      const twice = '"a": 1, "a": 2';
+      const result = await lint(
+        {
+          ...json,
+          "next-line.jsonc": `{\n  // eslint-disable-next-line json/no-duplicate-keys -- why\n  ${twice}\n}`,
+          "line.json5": `{\n  ${twice} /* eslint-disable-line */\n}`,
+          "block.jsonc": `/* eslint-disable json/no-duplicate-keys */\n{\n  ${twice},\n/* eslint-enable json/no-duplicate-keys */\n"a": 3\n}`,
+          "to-the-end-of-the-line.jsonc": `// eslint-disable\n{\n  ${twice}\n}`,
+          "unused.jsonc": `{\n  // eslint-disable-next-line json/no-duplicate-keys\n  "a": 1\n}`,
+          "unknown.jsonc": `/* eslint-disable json/nope */\n{ ${twice} }`,
+          "off.jsonc": `/* eslint json/no-duplicate-keys: "off" */\n{ ${twice} }`,
+          "warn.jsonc": `// eslint json/no-duplicate-keys: "warn"\n{ ${twice} }`,
+          "options.jsonc": `/* eslint json/no-duplicate-keys: ["error", 1] */\n{ "a": 1 }`,
+          "other-labels.jsonc": `/* global a */ /* exported b */ /* eslint-env node */ /* oxlint-disable */\n{ ${twice} }`,
+          "several-lines.jsonc": `{\n  ${twice} /* eslint-disable-line\n */\n}`,
+        },
+        ["-f", "json", "."],
+      );
+      expect(summary(result.raw)).toMatchInlineSnapshot(`
+      "block.jsonc: 5:1 json/no-duplicate-keys Duplicate key "a" found.
+      block.jsonc: 3:11 json/no-duplicate-keys Duplicate key "a" found. [suppressed: ]
+      line.json5: 2:11 json/no-duplicate-keys Duplicate key "a" found. [suppressed: ]
+      next-line.jsonc: 3:11 json/no-duplicate-keys Duplicate key "a" found. [suppressed: why]
+      options.jsonc: 1:1 json/no-duplicate-keys Inline configuration for rule "json/no-duplicate-keys" is invalid:
+      	Value [1] should NOT have more than 0 items.
+
+      other-labels.jsonc: 2:11 json/no-duplicate-keys Duplicate key "a" found.
+      several-lines.jsonc: 2:11 json/no-duplicate-keys Duplicate key "a" found.
+      several-lines.jsonc: 2:18 null eslint-disable-line comment should not span multiple lines.
+      to-the-end-of-the-line.jsonc: 3:11 json/no-duplicate-keys Duplicate key "a" found. [suppressed: ]
+      unknown.jsonc: 1:1 json/nope Definition for rule 'json/nope' was not found.
+      unknown.jsonc: 2:11 json/no-duplicate-keys Duplicate key "a" found.
+      unused.jsonc: 2:3 null Unused eslint-disable directive (no problems were reported from 'json/no-duplicate-keys'). [fix 4,54 " "]
+      warn.jsonc: 2:11 json/no-duplicate-keys Duplicate key "a" found."
+    `);
+      const severities = JSON.parse(result.raw).flatMap((it: any) => it.messages.map((it: any) => it.severity));
+      expect(severities).toEqual([2, 2, 2, 2, 2, 2, 2, 1, 1]);
+    },
+    timeout,
+  );
+
+  test(
+    "--fix removes a comment that disables nothing, after a byte order mark too",
+    async () => {
+      const files = { "a.jsonc": `${mark}{ "é": 1 /* eslint-disable-line */ }\n` };
+      const result = await lint({ ...json, ...files }, ["--fix", "."], ["a.jsonc"]);
+      expect(result.files).toEqual({ "a.jsonc": `${mark}{ "é": 1   }\n` });
+      expect(result.exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  test(
+    "noInlineConfig, --no-inline-config and --report-unused-disable-directives-severity",
+    async () => {
+      const files = {
+        ...jsonPackage(),
+        "eslint.config.mjs": jsonConfig(`{ files: ["no/*"], linterOptions: { noInlineConfig: true } }`),
+        "no/a.jsonc": '{ "a": 1, "a": 2 } // eslint-disable-line',
+        "b.jsonc": '{ "a": 1 } // eslint-disable-line',
+      };
+      const [plain, ignoring, strict] = await Promise.all([
+        lint(files, ["-f", "json", "."]),
+        lint(files, ["-f", "json", "--no-inline-config", "."]),
+        lint(files, ["-f", "json", "--report-unused-disable-directives-severity", "error", "b.jsonc"]),
+      ]);
+      expect(summary(plain.raw)).toMatchInlineSnapshot(`
+      "b.jsonc: 1:12 null Unused eslint-disable directive (no problems were reported). [fix 11,33 " "]
+      a.jsonc: 1:11 json/no-duplicate-keys Duplicate key "a" found.
+      a.jsonc: 1:20 null '// eslint-disable-line' has no effect because you have 'noInlineConfig' setting in your config."
+    `);
+      expect(summary(ignoring.raw)).toBe('a.jsonc: 1:11 json/no-duplicate-keys Duplicate key "a" found.');
+      expect(JSON.parse(strict.raw)[0].errorCount).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "languageOptions are those of the language",
+    async () => {
+      const files = (options: string) => ({
+        ...jsonPackage(),
+        "eslint.config.mjs": jsonConfig(`{ files: ["**/*.jsonc", "x.json"], languageOptions: ${options} }`),
+        "a.jsonc": '{ "a": [1,], }',
+        "x.json": "{}",
+      });
+      const [allowed, printed, refused, wrong, elsewhere] = await Promise.all([
+        lint(files("{ allowTrailingCommas: true, globals: { a: true } }"), ["-f", "json", "a.jsonc"]),
+        lint(files("{ allowTrailingCommas: true }"), ["--print-config", "a.jsonc"]),
+        lint(files("{ allowTrailingCommas: false }"), ["-f", "json", "a.jsonc"]),
+        lint(files("{ allowTrailingCommas: 1 }"), ["a.jsonc"]),
+        lint(files("{ allowTrailingCommas: true }"), ["x.json"]),
+      ]);
+      expect(summary(allowed.raw)).toBe("");
+      expect(allowed.exitCode).toBe(0);
+      expect(JSON.parse(printed.raw).language).toBe("json/jsonc");
+      expect(JSON.parse(printed.raw).languageOptions).toEqual({ allowTrailingCommas: true });
+      expect(summary(refused.raw)).toBe("a.jsonc: 1:11 null Parsing error: Unexpected token RBracket found. [fatal]");
+      expect(wrong.stderr).toContain('Key "languageOptions": allowTrailingCommas must be a boolean if provided.');
+      expect(wrong.exitCode).toBe(2);
+      expect(elsewhere.stderr).toContain(
+        'Key "languageOptions": allowTrailingCommas option is only available in JSONC.',
+      );
+      expect(elsewhere.exitCode).toBe(2);
+    },
+    timeout,
+  );
+
+  test(
+    "--stdin, and a format that shows the code",
+    async () => {
+      using dir = tempDir("bun-lint-js-parsers", json);
+      const run = async (format: string) => {
+        await using proc = spawn({
+          cmd: [bunExe(), "lint", "--stdin", "--stdin-filename", "x.jsonc", "-f", format],
+          env,
+          cwd: String(dir),
+          stdin: Buffer.from('{\n  "a": 1, // c\n  "a": 2\n}\n'),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(exitCode).toBe(1);
+        return normalizeBunSnapshot(stdout, String(dir));
+      };
+      const [unix, pretty] = await Promise.all([run("unix"), run("pretty")]);
+      expect(unix).toMatchInlineSnapshot(`
+      "<dir>/x.jsonc:3:3: Duplicate key "a" found. [Error/json/no-duplicate-keys]
+
+      1 problem"
+    `);
+      expect(pretty).toContain('3 |   "a": 2');
+    },
+    timeout,
+  );
+
+  test(
+    "--doctor counts the files and the rules as native",
+    async () => {
+      const files = { ...json, "package.json": "{}", "a.jsonc": "{}", "b.js": "" };
+      const result = await lint(files, ["--doctor", "-f", "json"]);
+      const { rules, ...rest } = JSON.parse(result.raw);
+      expect(rest.files.linted).toBe(4);
+      expect(JSON.stringify(rest.files)).not.toContain("json");
+      expect(rules.native).toEqual(["json/no-duplicate-keys"]);
+      expect(rules.javascript).toEqual({});
+    },
+    timeout,
+  );
+
+  test(
+    "a block in JSON that a processor finds is linted here",
+    async () => {
+      const result = await lint(
+        {
+          ...jsonPackage(),
+          "fenced.mjs": fenced(true),
+          "eslint.config.mjs": `
+            import json from "@eslint/json";
+            import fenced from "./fenced.mjs";
+            export default [
+              { files: ["**/*.md"], plugins: { fenced }, processor: "fenced/fenced" },
+              { files: ["**/*.md/*.json"], plugins: { json }, language: "json/json", rules: { "json/no-duplicate-keys": "error" } },
+            ];`,
+          "a.md": '# a\n\n```json\n{\n  "a": 1,\n  "a": 2\n}\n```\n',
+        },
+        ["-f", "json", "a.md"],
+      );
+      expect(summary(result.raw)).toBe('a.md: 6:3 json/no-duplicate-keys Duplicate key "a" found.');
+    },
+    timeout,
+  );
+
+  test(
+    "a rule for JSON does not take a file in JavaScript",
+    async () => {
+      const files = {
+        ...jsonPackage(),
+        "eslint.config.mjs": `
+        import json from "@eslint/json";
+        export default [{ plugins: { json } }, { files: ["on/*.js"], rules: { "json/no-duplicate-keys": "error" } }];`,
+        "on/a.js": "",
+        "b.js": '/* eslint json/no-duplicate-keys: "error" */',
+      };
+      const [result, inline] = await Promise.all([lint(files, ["on/a.js"]), lint(files, ["-f", "json", "b.js"])]);
+      expect(result.stderr).toContain(
+        'Key "rules": The following rules do not support the language "js/js":\n\t- "json/no-duplicate-keys"',
+      );
+      expect(result.exitCode).toBe(2);
+      expect(summary(inline.raw)).toMatchInlineSnapshot(`
+      "b.js: 1:1 json/no-duplicate-keys Inline configuration for rule "json/no-duplicate-keys" is invalid:
+      	Rule does not support the language "js/js". Use a config block with "files" to apply the rule only to supported files, or disable it.
+      "
+    `);
+    },
+    timeout,
+  );
+
+  // ESLint makes the same prefix of its name.
+  test.each<[string, Record<string, string>, string[]]>([
+    [
+      "an .eslintrc.json",
+      { ".eslintrc.json": `{ "root": true, "plugins": ["json"], "rules": { "json/no-duplicate-keys": "error" } }` },
+      [],
+    ],
+    [
+      "--plugin",
+      { "eslint.config.mjs": `export default [{ rules: { "json/no-duplicate-keys": "error" } }];` },
+      ["--plugin", "json"],
+    ],
+    [
+      "bunfig.toml",
+      { "bunfig.toml": `[lint]\nplugins = ["eslint-plugin-json"]\n[lint.rules]\n"json/no-duplicate-keys" = "error"\n` },
+      [],
+    ],
+    [
+      "an .oxlintrc.json",
+      { ".oxlintrc.json": `{ "jsPlugins": ["eslint-plugin-json"], "rules": { "json/no-duplicate-keys": "error" } }` },
+      [],
+    ],
+  ])(
+    "eslint-plugin-json is a package like any other, named by %s",
+    async (_, files, args) => {
+      const result = await lint(
+        {
+          "package.json": "{}",
+          "node_modules/eslint-plugin-json/package.json": `{ "name": "eslint-plugin-json", "main": "index.js" }`,
+          "node_modules/eslint-plugin-json/index.js": `
+            const create = context => ({ Program: node => context.report({ node, message: "eslint-plugin-json" }) });
+            module.exports = { meta: { name: "eslint-plugin-json" }, rules: { "no-duplicate-keys": { create } } };`,
+          "a.js": "a;\n",
+          ...files,
+        },
+        ["-f", "unix", ...args, "a.js"],
+      );
+      expect(result.stdout).toMatch(/a\.js:1:1: eslint-plugin-json \[Error\/json[/(]no-duplicate-keys\)?\]/);
+    },
+    timeout,
+  );
+
+  // Nothing that works with the package stops working.
+  describe("the whole file goes to the package eslint", () => {
+    const own = {
+      "own.mjs": `export default { rules: { seen: { create: context => ({ Line: () => context.report({ line: 1, message: "own" }) }) } } };`,
+    };
+    const withOwn = (more: string) =>
+      jsonConfig(more).replace("export default", `import own from "./own.mjs";\n  export default`);
+    const text = '{ "a": 1, "a": 2 }';
+    test.each<[string, Record<string, string>, string[], string]>([
+      [
+        "a rule of the plugin that is not built in is on",
+        { "eslint.config.mjs": jsonConfig(`{ files: ["*.json"], rules: { "json/only-in-the-package": "warn" } }`) },
+        [],
+        "the package: no-duplicate-keys, the package: only-in-the-package",
+      ],
+      [
+        "a rule of another plugin is on",
+        {
+          ...own,
+          "eslint.config.mjs": withOwn(`{ files: ["*.json"], plugins: { own }, rules: { "own/seen": "error" } }`),
+        },
+        [],
+        "the package: no-duplicate-keys, own",
+      ],
+      ["--no-native-plugin-rules", {}, ["--no-native-plugin-rules"], "the package: no-duplicate-keys"],
+      ["--native-plugin-rules names others", {}, ["--native-plugin-rules=import"], "the package: no-duplicate-keys"],
+      ["another package has the prefix", jsonPackage("eslint-plugin-json"), [], "the package: no-duplicate-keys"],
+    ])(
+      "if %s",
+      async (_, files, args, expected) => {
+        const all = { ...eslintPackage, ...json, ...files, "a.json": text };
+        const result = await lint(all, ["-f", "json", "--timing", ...args, "a.json"]);
+        const messages = JSON.parse(result.raw)[0].messages.map((it: any) => it.message);
+        expect(messages.join(", ")).toBe(expected);
+        expect(result.stderr).toContain("the eslint package linted 1 files");
+      },
+      timeout,
+    );
+
+    test(
+      "if a comment in it turns on a rule that is not built in",
+      async () => {
+        const files = {
+          ...eslintPackage,
+          ...json,
+          "a.jsonc": `/* eslint json/only-in-the-package: "error" */ ${text}`,
+          "b.jsonc": text,
+        };
+        const result = await lint(files, ["-f", "json", "--timing", "."]);
+        expect(summary(result.raw)).toMatchInlineSnapshot(`
+          "a.jsonc: 1:1 json/no-duplicate-keys the package: no-duplicate-keys
+          b.jsonc: 1:11 json/no-duplicate-keys Duplicate key "a" found."
+        `);
+        expect(result.stderr).toContain("the eslint package linted 1 files");
+      },
+      timeout,
+    );
+
+    test(
+      "which has to be installed",
+      async () => {
+        const config = jsonConfig(`{ files: ["a.json"], rules: { "json/only-in-the-package": "warn" } }`);
+        const files = { ...json, "eslint.config.mjs": config, "a.json": text, "b.json": text };
+        const result = await lint(files, ["-f", "unix", "."]);
+        expect(result.stdout).toContain('b.json:1:11: Duplicate key "a" found. [Error/json/no-duplicate-keys]');
+        expect(result.stderr).toContain("1 file was not linted");
+        expect(result.stderr).toContain(
+          "(1 *.json): a.json\n  To lint other languages, install eslint: bun add -d eslint",
+        );
+        expect(result.exitCode).toBe(2);
+      },
+      timeout,
+    );
+  });
+});
 const oxlintrc = JSON.stringify({
   categories: { correctness: "off" },
   rules: {

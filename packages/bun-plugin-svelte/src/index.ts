@@ -35,7 +35,7 @@ function SveltePlugin(options: SvelteOptions = kEmptyObject as SvelteOptions): B
       // just passes a fake one to plugins and then never uses it. we need to to
       // update it to ~not~ do this.
       if (builder?.config) {
-        var conditions = builder.config.conditions ?? [];
+        let conditions = builder.config.conditions ?? [];
         if (typeof conditions === "string") {
           conditions = [conditions];
         }
@@ -75,7 +75,7 @@ function SveltePlugin(options: SvelteOptions = kEmptyObject as SvelteOptions): B
             hmr,
           });
 
-          var { js, css } = result;
+          const { js, css } = result;
           if (css?.code && generate != "server") {
             const uid = `${basename(path)}-${hash(path)}-style`.replaceAll(`"`, `'`);
             const virtualName = virtualNamespace + ":" + uid + ".css";
@@ -99,7 +99,7 @@ function SveltePlugin(options: SvelteOptions = kEmptyObject as SvelteOptions): B
               : "server";
           const generate = baseModuleCompileOptions.generate ?? side;
 
-          var sourceText = await Bun.file(path).text();
+          let sourceText = await Bun.file(path).text();
           if (path.endsWith(".ts")) {
             sourceText = await ts.transform(sourceText);
           }

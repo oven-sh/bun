@@ -1084,21 +1084,24 @@ pub(crate) extern "C" fn WindowsNamedPipe__ssl(this: *const c_void) -> *mut bori
     }
 }
 
+impl bun_io::pipe_writer::WriterParent for WindowsNamedPipe {
+    #[inline]
+    unsafe fn ref_(this: *mut Self) {
+        // SAFETY: BACKREF set via `set_parent`. Intrusive refcount bump.
+        unsafe { (*this).r#ref() };
+    }
+    #[inline]
+    unsafe fn deref(this: *mut Self) {
+        // SAFETY: see ref_. May free `this`.
+        unsafe { (*this).deref() };
+    }
+}
+
 impl bun_io::pipe_writer::WindowsWriterParent for WindowsNamedPipe {
     #[inline]
     unsafe fn loop_(this: *mut Self) -> *mut uv::Loop {
         // SAFETY: BACKREF set via `set_parent`; shared-only read.
         unsafe { (*this).vm.uv_loop() }
-    }
-    #[inline]
-    unsafe fn ref_(this: *mut Self) {
-        // SAFETY: see loop_. Intrusive refcount bump.
-        unsafe { (*this).r#ref() };
-    }
-    #[inline]
-    unsafe fn deref(this: *mut Self) {
-        // SAFETY: see loop_. May free `this`.
-        unsafe { (*this).deref() };
     }
 }
 

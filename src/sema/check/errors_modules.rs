@@ -31,6 +31,7 @@
 use super::*;
 use crate::bind::{Decl, Parent, ScopeId, SymbolId};
 use crate::resolve::{ModuleKind, is_relative, normalize_path};
+use crate::util::SharedSort;
 use bun_collections::ArrayHashMap;
 
 /// State that is constant for a whole file.
@@ -98,7 +99,7 @@ impl Checker<'_, '_> {
         } else {
             let mut uses = hir.specifier_uses.to_vec();
             uses.retain(|u| !u.kind.is_call());
-            uses.sort_unstable_by_key(|u| u.pos);
+            uses.shared_sort_unstable_by_key(|u| u.pos);
             sorted = uses;
             &sorted
         };
@@ -306,6 +307,9 @@ impl Checker<'_, '_> {
 
     /// `bindModuleDeclaration`, `checkModuleDeclaration`
     fn modules_declaration(&mut self, cx: &Cx<'_>, s: StmtId, m: ModuleId, around: Around) {
+        if self.is_stack_low() {
+            return;
+        }
         let (hir, files) = (self.hir(cx.file), self.files());
         let module = hir[m];
         let name_pos = module.name_pos;
@@ -1722,12 +1726,33 @@ impl Checker<'_, '_> {
                 flags: PropFlags::empty(),
                 source: PropSource::Type(ty),
                 mapper: MapperId::IDENTITY,
+                name_type: TypeId::UNRESOLVED,
             });
         }
         Some(self.synth(Shape {
             props,
             ..Shape::new_in(self.arena)
         }))
+    }
+
+    /// After `checkSourceFile`: `checkImportType` only reads `resolution-mode` from the options. It checks none of the values.
+    pub(super) fn never_check_options_of_import_types(&self, file: FileId) {
+        let hir = self.hir(file);
+        if hir.import_attributes.is_empty() {
+            return;
+        }
+        for node in (0..hir.types.len() as u32).map(TypeNodeId) {
+            let options = hir.attributes_of_import_type(node);
+            let Some(ExprKind::Object(options)) = options.map(|it| hir[it].kind) else {
+                continue;
+            };
+            for value in options.iter().map(|it| hir[it].value) {
+                // 1453 is reported at a string.
+                if value.is_some() && self.modules_string_literal_like(file, value).is_none() {
+                    self.never_check(self.start_of(file, value), self.end_of_expr(file, value));
+                }
+            }
+        }
     }
 
     /// `checkImportType`: `getResolutionModeOverride`
@@ -1740,12 +1765,8 @@ impl Checker<'_, '_> {
             if !matches!(node.kind, TypeNodeKind::Import { .. }) || bound.is_unchecked_type(i) {
                 continue;
             }
-            let within = TextRange {
-                pos: node.pos,
-                end: self.end_of_type_node(cx.file, TypeNodeId(i as u32)),
-            };
-            if let Some((_, object, attributes)) =
-                self.modules_get_import_attributes(cx.file, within)
+            if let Some(object) = hir.attributes_of_import_type(TypeNodeId(i as u32))
+                && let ExprKind::Object(attributes) = hir[object].kind
             {
                 // The `ImportAttributes` node starts at the inner `{`: `with` is a property of the enclosing object literal.
                 let end = self.modules_end_of_import_attributes(cx.file, object);

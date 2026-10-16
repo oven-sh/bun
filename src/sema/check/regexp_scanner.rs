@@ -1545,7 +1545,7 @@ fn parse_hex(digits: &[u8]) -> u32 {
 
 /// `utf8.DecodeRuneInString`: the first character and its length in bytes. Invalid UTF-8 yields
 /// U+FFFD with length 1. Empty input yields U+FFFD with length 0.
-pub fn decode_rune(text: &[u8]) -> (u32, usize) {
+fn decode_rune(text: &[u8]) -> (u32, usize) {
     let Some(&first) = text.first() else {
         return (RUNE_ERROR, 0);
     };

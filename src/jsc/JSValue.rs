@@ -365,15 +365,6 @@ impl JSValue {
     pub fn is_error(self) -> bool {
         self.is_cell() && self.js_type() == JSType::ErrorInstance
     }
-    /// `JSValue.isJSXElement(globalObject)`. Checks via the
-    /// global's `Symbol.for("react.element")` / `Symbol.for("react.transitional.element")`
-    /// for `$$typeof`; may invoke a user getter and throw.
-    pub fn is_jsx_element(self, global: &JSGlobalObject) -> JsResult<bool> {
-        unsafe extern "C" {
-            safe fn JSC__JSValue__isJSXElement(this: JSValue, global: &JSGlobalObject) -> bool;
-        }
-        host_fn::from_js_host_call_generic(global, || JSC__JSValue__isJSXElement(self, global))
-    }
     /// `JSValue.isAggregateError(globalObject)`.
     #[inline]
     pub fn is_aggregate_error(self, global: &JSGlobalObject) -> bool {
@@ -473,7 +464,7 @@ impl JSValue {
         if i <= i32::MAX as u64 {
             Self::js_number_from_int32(i as i32)
         } else {
-            Self::js_number(i as f64)
+            Self::js_double_number(i as f64)
         }
     }
     /// `JSValue.jsNumberFromInt64` — int32 fast-path,
@@ -482,7 +473,7 @@ impl JSValue {
         if i <= i32::MAX as i64 && i >= i32::MIN as i64 {
             Self::js_number_from_int32(i as i32)
         } else {
-            Self::js_number(i as f64)
+            Self::js_double_number(i as f64)
         }
     }
     pub fn js_number(n: f64) -> JSValue {
@@ -1589,7 +1580,6 @@ impl JSValue {
                 min,
                 max,
                 field_name: property_name.as_bytes(),
-                always_allow_zero: false,
             },
         )?))
     }
@@ -1721,12 +1711,7 @@ impl JSValue {
         this_value: JSValue,
         args: &[JSValue],
     ) -> JsResult<JSValue> {
-        // A `Bun.ModuleGraph` that was disposed hears nothing more from native code, nor does a
-        // test file that finished (only `--isolate` retires a realm).
-        let vm = global.bun_vm();
-        if vm.calls_nobody()
-            || (vm.test_isolation_enabled && self.is_from_retired_test_isolation_realm())
-        {
+        if self.has_nobody_to_call(global) {
             return Ok(JSValue::UNDEFINED);
         }
         host_fn::from_js_host_call(global, || {
@@ -1734,6 +1719,22 @@ impl JSValue {
             // JSValues for the duration of the call.
             unsafe { Bun__JSValue__call(global, self, this_value, args.len(), args.as_ptr()) }
         })
+    }
+
+    /// A `Bun.ModuleGraph` that was disposed hears nothing more from native code, nor does a
+    /// test file that finished (only `--isolate` retires a realm).
+    #[inline]
+    fn has_nobody_to_call(self, global: &JSGlobalObject) -> bool {
+        let vm = global.bun_vm();
+        vm.calls_nobody()
+            || (vm.test_isolation_enabled && self.is_from_retired_test_isolation_realm())
+    }
+
+    /// Whether the `undefined` that [`call`](Self::call) just returned may be its silent no-op, for a caller that reads it as consent.
+    pub fn call_may_have_been_dropped(self, global: &JSGlobalObject) -> bool {
+        self.has_nobody_to_call(global)
+            || !global.bun_vm().script_allowed()
+            || global.vm().execution_forbidden()
     }
 }
 

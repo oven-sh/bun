@@ -4455,7 +4455,7 @@ mod windows_impl {
                 0,
                 core::ptr::null_mut(),
                 w::OPEN_EXISTING,
-                w::FILE_ATTRIBUTE_NORMAL | w::FILE_FLAG_BACKUP_SEMANTICS,
+                w::FILE_FLAG_BACKUP_SEMANTICS,
                 core::ptr::null_mut(),
             )
         };

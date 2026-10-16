@@ -244,16 +244,24 @@ In other properties and in `@keyframes`, write an RGB declaration before the dec
 }
 ```
 
-A browser accepts any value in a custom property, so the second declaration always wins there. Put the newer color in an `@supports` rule instead:
+A browser accepts any value in a custom property, so the second declaration always wins there. Put the newer colors in one `@supports` rule instead:
 
 ```css title="styles.css" icon="file-code"
 :root {
   --accent: #bf5702;
 }
 
+.dark {
+  --accent: #ed7e31;
+}
+
 @supports (color: lab(0% 0 0)) {
   :root {
     --accent: lab(50% 40 59);
+  }
+
+  .dark {
+    --accent: lab(65% 40 59);
   }
 }
 ```

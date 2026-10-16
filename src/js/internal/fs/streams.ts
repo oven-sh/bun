@@ -378,15 +378,14 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
 
   let fastPath = options?.$fastPath;
 
-  options = copyObject(getStreamOptions(options));
+  // A stream over an open FileSink (child.stdin) takes no option. The null
+  // prototype keeps an fd, fs or autoClose on Object.prototype away from it.
+  options = fastPath && fastPath !== true ? { __proto__: null } : copyObject(getStreamOptions(options));
 
   // Only buffers are supported.
   options.decodeStrings = true;
 
   let { fd, autoClose, fs: customFs, start, flush } = options;
-  // A stream over an open FileSink (child.stdin) has no fd. Drop one that the
-  // for-in copy took from Object.prototype: the sink is where the bytes go.
-  if (fastPath && fastPath !== true) fd = undefined;
   if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;

@@ -508,21 +508,30 @@ describe("spawn()", () => {
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "hello", stderr: "", exitCode: 0 });
     });
 
-    // The stream options are copied with for-in, which also copies an inherited
-    // `fd`. The stream must still write to the child's pipe, not to that fd.
-    it("when Object.prototype has an fd", async () => {
+    // The stream over the child's pipe takes no option. One that Object.prototype
+    // carries must not reach it: with that fd, the input would go to the fd.
+    it("when Object.prototype has stream options", async () => {
+      const inherited = { fd: 2147483647, autoClose: false };
+      let child!: ChildProcess;
       let result;
-      (Object.prototype as any).fd = 2147483647;
+      Object.assign(Object.prototype, inherited);
       try {
         // spawn() and end() run before the first await of echoed().
-        result = echoed(["pipe", "pipe", "pipe"], child => {
+        result = echoed(["pipe", "pipe", "pipe"], spawned => {
+          child = spawned;
           child.stdin!.on("error", () => child.kill());
           child.stdin!.end("hello");
         });
       } finally {
-        delete (Object.prototype as any).fd;
+        for (const key of Object.keys(inherited)) delete (Object.prototype as any)[key];
       }
-      expect(await result).toEqual({ stdout: "hello", stderr: "", exitCode: 0 });
+      try {
+        const { fd, autoClose } = child.stdin as any;
+        expect({ fd, autoClose }).toEqual({ fd: null, autoClose: true });
+        expect(await result).toEqual({ stdout: "hello", stderr: "", exitCode: 0 });
+      } finally {
+        child.kill();
+      }
     });
   });
 
@@ -555,8 +564,15 @@ describe("spawn()", () => {
         { env: bunEnv, stdio: ["pipe", "pipe"] },
       );
       try {
-        child.stderr!.resume();
-        await once(child.stdout!, "data");
+        let stderr = "";
+        child.stderr!.on("data", chunk => (stderr += chunk));
+        await new Promise<void>((resolve, reject) => {
+          child.on("error", reject);
+          child.on("exit", code => reject(new Error(`child exited with ${code} before it was ready: ${stderr}`)));
+          child.stdout!.once("data", () => resolve());
+        });
+        child.removeAllListeners("error");
+        child.removeAllListeners("exit");
         // With two stdio entries this first access creates the stream.
         const stdin = child.stdin!;
         const log: string[] = [];

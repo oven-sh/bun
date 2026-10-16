@@ -328,10 +328,12 @@ declare module "bun:test" {
    * });
    * ```
    *
-   * @param fn the function to run
+   * @param fn the function to run. If it returns a promise, or any other object with a `then()` method,
+   * the hook waits for that value to settle. If it takes a `done` parameter, a returned object that is not
+   * a promise is ignored: its `then()` is not called.
    */
   export function beforeAll(
-    fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    fn: (() => void | PromiseLike<unknown>) | ((done: (err?: unknown) => void) => void),
     options?: HookOptions,
   ): void;
   /**
@@ -342,10 +344,12 @@ declare module "bun:test" {
    *
    * If the function throws, the test does not run.
    *
-   * @param fn the function to run
+   * @param fn the function to run. If it returns a promise, or any other object with a `then()` method,
+   * the hook waits for that value to settle. If it takes a `done` parameter, a returned object that is not
+   * a promise is ignored: its `then()` is not called.
    */
   export function beforeEach(
-    fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    fn: (() => void | PromiseLike<unknown>) | ((done: (err?: unknown) => void) => void),
     options?: HookOptions,
   ): void;
   /**
@@ -364,10 +368,12 @@ declare module "bun:test" {
    * });
    * ```
    *
-   * @param fn the function to run
+   * @param fn the function to run. If it returns a promise, or any other object with a `then()` method,
+   * the hook waits for that value to settle. If it takes a `done` parameter, a returned object that is not
+   * a promise is ignored: its `then()` is not called.
    */
   export function afterAll(
-    fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    fn: (() => void | PromiseLike<unknown>) | ((done: (err?: unknown) => void) => void),
     options?: HookOptions,
   ): void;
   /**
@@ -376,10 +382,12 @@ declare module "bun:test" {
    * Use this for cleanup, like closing a socket or
    * deleting temporary files.
    *
-   * @param fn the function to run
+   * @param fn the function to run. If it returns a promise, or any other object with a `then()` method,
+   * the hook waits for that value to settle. If it takes a `done` parameter, a returned object that is not
+   * a promise is ignored: its `then()` is not called.
    */
   export function afterEach(
-    fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    fn: (() => void | PromiseLike<unknown>) | ((done: (err?: unknown) => void) => void),
     options?: HookOptions,
   ): void;
   /**
@@ -397,10 +405,12 @@ declare module "bun:test" {
    * });
    * ```
    *
-   * @param fn the function to run
+   * @param fn the function to run. If it returns a promise, or any other object with a `then()` method,
+   * the hook waits for that value to settle. If it takes a `done` parameter, a returned object that is not
+   * a promise is ignored: its `then()` is not called.
    */
   export function onTestFinished(
-    fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    fn: (() => void | PromiseLike<unknown>) | ((done: (err?: unknown) => void) => void),
     options?: HookOptions,
   ): void;
   /**
@@ -490,20 +500,30 @@ declare module "bun:test" {
     (
       label: string,
       options: number | TestOptions,
+      /**
+       * If the function returns a promise, or any other object with a `then()` method, the test waits for
+       * that value to settle, the same way `await` does, and fails if it rejects. If the function takes a
+       * `done` parameter, a returned object that is not a promise is ignored: its `then()` is not called.
+       */
       fn: (
         ...args: __internal.IsTuple<T> extends true
           ? [...table: __internal.Flatten<T>, done: (err?: unknown) => void]
           : T
-      ) => void | Promise<unknown>,
+      ) => void | PromiseLike<unknown>,
     ): void;
     (
       label: string,
 
+      /**
+       * If the function returns a promise, or any other object with a `then()` method, the test waits for
+       * that value to settle, the same way `await` does, and fails if it rejects. If the function takes a
+       * `done` parameter, a returned object that is not a promise is ignored: its `then()` is not called.
+       */
       fn: (
         ...args: __internal.IsTuple<T> extends true
           ? [...table: __internal.Flatten<T>, done: (err?: unknown) => void]
           : T
-      ) => void | Promise<unknown>,
+      ) => void | PromiseLike<unknown>,
 
       /**
        * - If a `number`, sets the timeout for the test in milliseconds.

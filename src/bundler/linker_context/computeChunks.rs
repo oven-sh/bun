@@ -279,7 +279,7 @@ pub(crate) fn compute_chunks(
     }
     if code_splitting && this.options.fold_chunks {
         let min_chunk_size = this.options.min_chunk_size;
-        merge_small_chunks(this, temp, min_chunk_size)?;
+        this.early_entry_files = merge_small_chunks(this, temp, min_chunk_size)?;
     }
     let css_asts = this.graph.ast.items_css();
     let ast_targets = this.graph.ast.items_target();
@@ -309,6 +309,7 @@ pub(crate) fn compute_chunks(
     };
 
     // reshaped for borrowck — re-borrow file_entry_bits after the loop above mutated it
+    let early_entry_files = this.early_entry_files.as_ref();
     let file_entry_bits: &mut [AutoBitSet] = this.graph.files.items_entry_bits_mut();
 
     let css_reprs = this.graph.ast.items_css();
@@ -327,8 +328,15 @@ pub(crate) fn compute_chunks(
                         if !contributes_code.is_set(source_index.get() as usize) {
                             continue;
                         }
-                        let js_chunk_key =
-                            temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len()));
+                        let is_early = early_entry_files
+                            .is_some_and(|files| files.is_set(source_index.get() as usize));
+                        let js_chunk_key: &[u8] = temp.alloc_slice_copy(
+                            &[
+                                entry_bits.bytes(this.graph.entry_points.len()),
+                                &[1][..usize::from(is_early)],
+                            ]
+                            .concat(),
+                        );
                         let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
 
                         if !js_chunk_entry.found_existing {
@@ -678,6 +686,14 @@ pub(crate) fn compute_chunks(
             output_paths[chunk.entry_point.entry_point_id() as usize].slice(),
         );
         chunk.template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
+        // The chunk with the code that the entry point shares has the plain name.
+        if this.is_early_entry_file(chunk.entry_point.source_index()) {
+            let first_file =
+                &parse_graph.input_files.items_source()[chunk.entry_point.source_index() as usize];
+            chunk.template.placeholder.name = [pathname.base, b"-", first_file.path.name().base]
+                .concat()
+                .into_boxed_slice();
+        }
         chunk.template.placeholder.ext = chunk.content.ext().to_vec().into_boxed_slice();
 
         if chunk.template.needs(PlaceholderField::Target) {

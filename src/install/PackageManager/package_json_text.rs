@@ -610,12 +610,22 @@ impl<'a> Text<'a> {
 
     /// Ends the line of a `//` comment before `next` is written after it.
     fn end_line_comment(&mut self, next: u8) {
-        if self.in_line_comment {
-            self.in_line_comment = false;
-            if !matches!(next, b'\n' | b'\r') {
-                self.out.list.extend_from_slice(self.line_break);
-            }
+        if !self.in_line_comment {
+            return;
         }
+        self.in_line_comment = false;
+        if matches!(next, b'\n' | b'\r') {
+            return;
+        }
+        // The next line starts where the line of the comment starts.
+        let out = &mut self.out.list;
+        let line = strings::last_index_of_char(out, b'\n').map_or(0, |i| i + 1);
+        let blanks = out[line..]
+            .iter()
+            .take_while(|byte| matches!(byte, b' ' | b'\t'))
+            .count();
+        out.extend_from_slice(self.line_break);
+        out.extend_from_within(line..line + blanks);
     }
 
     fn break_line(&mut self) {

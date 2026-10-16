@@ -622,9 +622,7 @@ describe("bundler", () => {
           stderr: "pipe",
         });
         const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(err).toBe("");
-        expect(out).toBe(stdout + "\n");
-        expect(exitCode).toBe(0);
+        expect({ stdout: out, stderr: err, exitCode }).toEqual({ stdout: stdout + "\n", stderr: "", exitCode: 0 });
       });
     }
 

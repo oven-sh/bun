@@ -1,0 +1,28 @@
+{
+  "_id": "react-dom",
+  "name": "react-dom",
+  "dist-tags": {
+    "latest": "18.3.1"
+  },
+  "versions": {
+    "18.3.1": {
+      "name": "react-dom",
+      "version": "18.3.1",
+      "main": "index.js",
+      "exports": {
+        ".": "./index.js",
+        "./client": "./client.js",
+        "./package.json": "./package.json"
+      },
+      "peerDependencies": {
+        "react": "^18.3.1"
+      },
+      "_id": "react-dom@18.3.1",
+      "dist": {
+        "integrity": "sha512-VH0Nh0sDv5ePA76AbUDbuXuLsYeneX1LgnPpaKbGz4DR+eQzQwipY700/fSxlFhC4+NVNlcmoxUuueZueMtmyw==",
+        "shasum": "e326956e7007244fc3c2993710ac7e4168047ea3",
+        "tarball": "http://localhost:4873/react-dom/-/react-dom-18.3.1.tgz"
+      }
+    }
+  }
+}

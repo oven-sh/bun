@@ -72,7 +72,11 @@ class DOMWrapperWorld;
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
 #include "BunCommonStrings.h"
+#include "Bindgen/SchemaStrings.h"
 #include "DOMURLBaseCache.h"
+#include "NodeHTTPRequestHeaderValues.h"
+#include "NodeVMOptionNames.h"
+#include "NodeVMSourceOriginCache.h"
 #include <JavaScriptCore/HeapObserver.h>
 namespace Zig {
 class GlobalObject;
@@ -242,8 +246,12 @@ public:
 
     // Public so Bun::commonStrings(vm) below is a static_cast and a member load.
     Bun::CommonStrings commonStrings;
+    Bun::Bindgen::SchemaStrings schemaStrings;
 
     WebCore::DOMURLBaseCache& urlBaseCache() { return m_urlBaseCache; }
+    Bun::NodeHTTPRequestHeaderValues& nodeHTTPRequestHeaderValues() { return m_nodeHTTPRequestHeaderValues; }
+    Bun::NodeVMOptionNames& nodeVMOptionNames() { return m_nodeVMOptionNames; }
+    Bun::NodeVMSourceOriginCache& nodeVMSourceOriginCache() { return m_nodeVMSourceOriginCache; }
 
     // Live size of the heap as measured by the most recent collection, eden or full.
     size_t heapSizeAfterLastCollection() const { return m_heapSizeAfterLastCollection.get(); }
@@ -296,6 +304,8 @@ public:
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
 
+    void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;
+
     JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
     void setDecoderStringTable(std::span<const uint8_t>);
 
@@ -338,6 +348,9 @@ private:
     WebCore::HTTPHeaderIdentifiers m_httpHeaderIdentifiers;
 
     WebCore::DOMURLBaseCache m_urlBaseCache;
+    Bun::NodeHTTPRequestHeaderValues m_nodeHTTPRequestHeaderValues;
+    Bun::NodeVMOptionNames m_nodeVMOptionNames;
+    Bun::NodeVMSourceOriginCache m_nodeVMSourceOriginCache;
 
     Bun::HeapSizeAfterLastCollection m_heapSizeAfterLastCollection;
 

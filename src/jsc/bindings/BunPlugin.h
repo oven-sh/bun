@@ -62,6 +62,8 @@ public:
 
         void append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* func, String& namespaceString);
 
+        bool isEmpty() const { return fileNamespace.filters.isEmpty() && groups.isEmpty(); }
+
         void clear()
         {
             fileNamespace.clear();

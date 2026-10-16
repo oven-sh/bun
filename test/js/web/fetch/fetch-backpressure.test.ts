@@ -7,12 +7,13 @@ import { once } from "node:events";
 import { statSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
-import { createSecureServer } from "node:http2";
+import { createSecureServer, type ServerHttp2Stream } from "node:http2";
 import { createServer as createHttpsServer } from "node:https";
 import { connect, createServer as createTcpServer } from "node:net";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import type { ReadableStreamDefaultReader } from "node:stream/web";
 import { createServer as createTlsServer } from "node:tls";
 import {
   brotliCompressSync,
@@ -84,7 +85,7 @@ function progress(wire: number) {
   return {
     add(n: number) {
       sent += n;
-      for (let i = waiters.length; i--; ) if (sent >= waiters[i][0]) waiters.splice(i, 1)[0][1]();
+      for (let i = waiters.length; i--;) if (sent >= waiters[i][0]) waiters.splice(i, 1)[0][1]();
       if (sent >= wire) finished.resolve();
     },
     // A write that did not go through once the server is past MARK. A client holds MARK before it
@@ -102,7 +103,7 @@ function progress(wire: number) {
       async settled() {
         await Promise.race([blocked.promise, finished.promise]);
         let last = -1;
-        for (let stable = 0; stable < 3; ) {
+        for (let stable = 0; stable < 3;) {
           await Bun.sleep(10);
           stable = sent === last ? stable + 1 : 0;
           last = sent;
@@ -123,7 +124,7 @@ async function serve(kind: Kind, count = COUNT): Promise<Server> {
       sockets.add(s);
       s.on("close", () => sockets.delete(s));
     });
-    srv.on("stream", stream => {
+    srv.on("stream", (stream: ServerHttp2Stream) => {
       stream.respond({ ":status": 200, "content-type": "application/octet-stream" });
       stream.on("error", () => {});
       stream.on("close", p.close);
@@ -576,13 +577,15 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
   // A CONNECT proxy that pipes both ways. bun does not pause a tunnelled socket, so the origin's
   // bytes keep arriving while the reader is paused.
   async function serveConnectProxy() {
+    let connects = 0;
     const server = await listening(
       createTcpServer(client => {
         let upstream: import("node:net").Socket | undefined;
         client.on("error", () => upstream?.destroy());
         client.on("close", () => upstream?.destroy());
         client.once("data", head => {
-          const [, target] = head.toString("latin1").split(" ");
+          const [method, target] = head.toString("latin1").split(" ");
+          if (method === "CONNECT") connects++;
           const colon = target.lastIndexOf(":");
           upstream = connect(Number(target.slice(colon + 1)), target.slice(0, colon), () => {
             client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
@@ -594,7 +597,7 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
         });
       }),
     );
-    return { ...server, url: `http://127.0.0.1:${server.port}` };
+    return { ...server, url: `http://127.0.0.1:${server.port}`, connects: () => connects };
   }
 
   // Takes one chunk, lets the client's memory settle, takes a few more, and reports the largest
@@ -778,7 +781,7 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
               ? brotliCompressSync(raw, { params: { [q]: 0 } })
               : kind === "br-hq"
                 ? brotliCompressSync(Buffer.alloc(SIZE), { params: { [q]: 4 } })
-                : zstdCompressSync(raw, { level: 1 }));
+                : zstdCompressSync(raw, { level: 1 } as any));
     }
 
     // Content-Length bodies end with the origin's FIN, which reaches a client that still holds
@@ -849,6 +852,246 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
         });
         expect(exitCode).toBe(0);
       });
+    });
+  });
+
+  // A gzip body that arrives whole, and whose trailer says it inflates to between 512 KB and
+  // 32 MB, is worth one exact-size libdeflate call instead of zlib passes. A reader's budget rules
+  // that call out, and such a body is usually here before anyone has said how the Response is
+  // read. So the client holds it undecoded until a consumer attaches: `.bytes()` gets the one
+  // call, a reader gets its passes.
+  describe("a gzip body that arrived whole waits for its consumer", () => {
+    const SIZE = 1024 * 1024 + 77;
+    const raw = Buffer.alloc(SIZE, "alpha beta gamma delta lorem ipsum ");
+    const digest = md5(raw);
+    // A few KB, so one packet carries it.
+    const wire = gzipSync(raw);
+
+    type Framing = "content-length" | "chunked";
+    // "with the head": one write, so the body is complete before the caller has a Response.
+    // "after the head": the body goes out when `sendBody()` says so.
+    type When = "with the head" | "after the head";
+    async function serveWhole(framing: Framing, when: When, secure = false) {
+      const head =
+        framing === "chunked"
+          ? `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n`
+          : `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: ${wire.length}\r\n\r\n`;
+      const body =
+        framing === "chunked"
+          ? Buffer.concat([Buffer.from(`${wire.length.toString(16)}\r\n`), wire, Buffer.from("\r\n0\r\n\r\n")])
+          : wire;
+      const requested = Promise.withResolvers<import("node:net").Socket>();
+      const closed = Promise.withResolvers<void>();
+      const handler = (s: import("node:net").Socket) => {
+        s.on("error", () => {});
+        s.on("close", () => closed.resolve());
+        s.once("data", () => {
+          s.write(when === "with the head" ? Buffer.concat([Buffer.from(head), body]) : head);
+          requested.resolve(s);
+        });
+      };
+      const server = await listening(secure ? createTlsServer(tls, handler) : createTcpServer(handler));
+      return {
+        ...server,
+        url: `${secure ? "https" : "http"}://127.0.0.1:${server.port}/`,
+        closed: closed.promise,
+        sendBody: async () => {
+          const socket = await requested.promise;
+          await new Promise<void>(written => socket.write(body, () => written()));
+        },
+        // What an origin's keep-alive timeout does: the connection ends after a complete response.
+        end: async () => void (await requested.promise).end(),
+      };
+    }
+
+    const consumers: [string, (res: Response) => Promise<string>][] = [
+      ["res.bytes()", async res => md5(await res.bytes())],
+      [
+        "a streaming reader",
+        async res => {
+          const hasher = new Bun.CryptoHasher("md5");
+          for await (const chunk of res.body!) hasher.update(chunk);
+          return hasher.digest("hex");
+        },
+      ],
+    ];
+
+    // The libdeflate call logs "Decompressing N bytes with libdeflate", and every zlib pass
+    // "Decompressing N bytes". Only a debug build has the log.
+    test.skipIf(!isDebug)("res.bytes() inflates it in one libdeflate call", async () => {
+      await using server = await serveWhole("content-length", "with the head");
+      const script = /* js */ `
+        const bytes = await (await fetch(${JSON.stringify(server.url)})).bytes();
+        console.log("RESULT", bytes.byteLength, new Bun.CryptoHasher("md5").update(bytes).digest("hex"));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, BUN_DEBUG_HTTPInternalState: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Output.scoped writes to whichever stream it chose at init; scan both.
+      const output = stdout + stderr;
+      expect({
+        result: output.match(/RESULT .*/g),
+        passes: output.match(/Decompressing \d+ bytes.*/g),
+      }).toEqual({
+        result: [`RESULT ${SIZE} ${digest}`],
+        passes: [`Decompressing ${wire.length} bytes with libdeflate`],
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    describe.each(["content-length", "chunked"] as Framing[])("%s", framing => {
+      test.each(consumers)("%s takes a body that came with the head", async (_, consume) => {
+        await using server = await serveWhole(framing, "with the head");
+        expect(await consume(await fetch(server.url))).toBe(digest);
+      });
+
+      test.each(consumers)("%s takes a body that came after the head", async (_, consume) => {
+        await using server = await serveWhole(framing, "after the head");
+        const res = await fetch(server.url);
+        await server.sendBody();
+        expect(await consume(res)).toBe(digest);
+      });
+
+      // Nothing is held for a consumer that is already there.
+      test.each(consumers)("%s already waits when the body comes", async (_, consume) => {
+        await using server = await serveWhole(framing, "after the head");
+        const consumed = consume(await fetch(server.url));
+        await server.sendBody();
+        expect(await consumed).toBe(digest);
+      });
+    });
+
+    test.each(consumers)("%s takes a body that came with the head over TLS", async (_, consume) => {
+      await using server = await serveWhole("content-length", "with the head", true);
+      const res = await fetch(server.url, { tls: { rejectUnauthorized: false } });
+      expect(await consume(res)).toBe(digest);
+    });
+
+    // A tunnelled socket is never paused. The consumer's resume reaches the client all the same.
+    test.each([
+      ["res.bytes()", `[await (await fetch(url, opts)).bytes()]`],
+      ["a streaming reader", `await Array.fromAsync((await fetch(url, opts)).body)`],
+    ])("%s takes a body that came with the head through a CONNECT proxy", async (_, chunks) => {
+      await using server = await serveWhole("content-length", "with the head", true);
+      await using proxy = await serveConnectProxy();
+      const opts = { proxy: proxy.url, tls: { rejectUnauthorized: false } };
+      const script = /* js */ `
+        const url = ${JSON.stringify(server.url)}, opts = ${JSON.stringify(opts)};
+        const body = Buffer.concat(${chunks});
+        const digest = new Bun.CryptoHasher("md5").update(body).digest("hex");
+        process.stdout.write(JSON.stringify({ total: body.length, digest }));
+      `;
+      // An ambient NO_PROXY that lists 127.0.0.1 makes fetch() ignore its `proxy` option.
+      const env = {
+        ...bunEnv,
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        http_proxy: undefined,
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+        ALL_PROXY: undefined,
+        all_proxy: undefined,
+      };
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, connects: proxy.connects() }).toEqual({
+        stdout: JSON.stringify({ total: SIZE, digest }),
+        stderr: "",
+        connects: 1,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // The socket of a held body is paused, so the client sees this close only once a consumer
+    // resumes it.
+    test.each(consumers)("%s takes a held body after the origin closed the connection", async (_, consume) => {
+      await using server = await serveWhole("content-length", "with the head");
+      const res = await fetch(server.url);
+      await server.end();
+      expect(await consume(res)).toBe(digest);
+    });
+
+    // A tunnelled socket is never paused, so the close reaches the client while it still holds
+    // the body. `server.closed` settles once the client has closed its side, which is after it
+    // handled the end of the body. Only then does the consumer attach.
+    test.each([
+      ["res.bytes()", `[await res.bytes()]`],
+      ["a streaming reader", `await Array.fromAsync(res.body)`],
+    ])("%s takes a held body after the origin closed the tunnel", async (_, chunks) => {
+      await using server = await serveWhole("content-length", "with the head", true);
+      await using proxy = await serveConnectProxy();
+      const opts = { proxy: proxy.url, tls: { rejectUnauthorized: false } };
+      const script = /* js */ `
+        const res = await fetch(${JSON.stringify(server.url)}, ${JSON.stringify(opts)});
+        process.stdout.write("held\\n");
+        for await (const line of console) if (line === "go") break;
+        const body = Buffer.concat(${chunks});
+        const digest = new Bun.CryptoHasher("md5").update(body).digest("hex");
+        process.stdout.write(JSON.stringify({ total: body.length, digest }) + "\\n");
+      `;
+      // An ambient NO_PROXY that lists 127.0.0.1 makes fetch() ignore its `proxy` option.
+      const env = {
+        ...bunEnv,
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        http_proxy: undefined,
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+        ALL_PROXY: undefined,
+        all_proxy: undefined,
+      };
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stderr = proc.stderr.text();
+      let result = "";
+      for await (const line of forEachLine(proc.stdout)) {
+        if (line === "held") {
+          await server.end();
+          await server.closed;
+          proc.stdin.write("go\n");
+          proc.stdin.end();
+        } else result = line;
+      }
+      const exitCode = await proc.exited;
+      expect({ result, stderr: await stderr, connects: proxy.connects() }).toEqual({
+        result: JSON.stringify({ total: SIZE, digest }),
+        stderr: "",
+        connects: 1,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("held and never read: the process is not held", async () => {
+      await using server = await serveWhole("content-length", "with the head");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `globalThis.keep = await fetch(${JSON.stringify(server.url)});`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
+
+    test("held, and its Response is collected: the fetch is aborted", async () => {
+      await using server = await serveWhole("content-length", "with the head");
+      // Its own frame, so that nothing on this one still refers to the response afterwards.
+      async function abandon() {
+        expect((await fetch(server.url)).status).toBe(200);
+      }
+      await abandon();
+      await collectUntil(server.closed);
     });
   });
 });
@@ -971,7 +1214,7 @@ describe.concurrent("fetch() receive backpressure — streaming consumer shapes"
       let total = 0;
       let foreign = 0;
       const err = await (async () => {
-        for (let r; !(r = await reader.read()).done; ) {
+        for (let r; !(r = await reader.read()).done;) {
           total += r.value.byteLength;
           if (!isAllA(r.value)) foreign++;
         }
@@ -999,7 +1242,7 @@ describe.concurrent("fetch() receive backpressure — streaming consumer shapes"
       await server.settled();
       const hasher = new Bun.CryptoHasher("md5").update(first.value!);
       let total = first.value!.byteLength;
-      for (let r; !(r = await reader.read()).done; ) {
+      for (let r; !(r = await reader.read()).done;) {
         total += r.value.byteLength;
         hasher.update(r.value);
       }
@@ -1033,7 +1276,7 @@ async function serveByHand() {
     response,
     [Symbol.asyncDispose]: () => {
       srv.closeAllConnections();
-      return new Promise(r => srv.close(() => r(undefined)));
+      return new Promise<void>(r => srv.close(() => r(undefined)));
     },
   };
 }
@@ -1151,7 +1394,7 @@ async function rawOrigin(framing: Framing, length: number, holdTail = false) {
     let pending = "";
     socket.on("data", data => {
       pending += data.toString("latin1");
-      for (let end; (end = pending.indexOf("\r\n\r\n")) !== -1; ) {
+      for (let end; (end = pending.indexOf("\r\n\r\n")) !== -1;) {
         pending = pending.slice(end + 4);
         requested++;
         for (const [n, resolve] of requestWaiters) if (requested >= n) resolve();
@@ -1455,7 +1698,7 @@ describe.concurrent("S3 receive backpressure", () => {
     // partSize 5 MiB × queueSize 1: with the first part held, the sink fills and the origin has
     // to stop long before its 1 GiB is out.
     const written = Bun.write(
-      bucket.s3.file("up", { partSize: 5 * 1024 * 1024, queueSize: 1 }),
+      bucket.s3.file("up", { partSize: 5 * 1024 * 1024, queueSize: 1 }) as any,
       await fetch(origin.url, { signal: abort.signal }),
     );
     await bucket.firstPart;
@@ -1477,7 +1720,7 @@ describe.concurrent("S3 receive backpressure", () => {
   test("Bun.write(s3file, res) resolves with the byte count", async () => {
     await using origin = await serve("h1");
     await using bucket = await fakeUploadBucket();
-    expect(await Bun.write(bucket.s3.file("up"), await fetch(origin.url))).toBe(TOTAL);
+    expect(await Bun.write(bucket.s3.file("up") as any, await fetch(origin.url))).toBe(TOTAL);
     expect({ uploaded: bucket.uploaded(), foreign: bucket.foreign(), completed: bucket.completed() }).toEqual({
       uploaded: TOTAL,
       foreign: 0,
@@ -1764,7 +2007,7 @@ describe.serial("fetch() receive backpressure — an abandoned body stream under
       "a reader loop",
       async res => {
         let total = 0;
-        for (let r, reader = res.body!.getReader(); !(r = await reader.read()).done; ) total += r.value.byteLength;
+        for (let r, reader = res.body!.getReader(); !(r = await reader.read()).done;) total += r.value.byteLength;
         return total;
       },
     ],

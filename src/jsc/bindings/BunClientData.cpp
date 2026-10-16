@@ -57,6 +57,7 @@ JSHeapData::~JSHeapData() = default;
 
 JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvider)
     : commonStrings(vm)
+    , schemaStrings(vm)
     , m_builtinNames(vm)
     , m_builtinFunctions(makeUnique<JSBuiltinFunctions>(vm, sourceProvider, m_builtinNames))
     , m_heapData(JSHeapData::ensureHeapData(vm.heap))
@@ -168,7 +169,7 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
     // (~VM -> lastChanceToFinalize -> delete clientData), so the capture stays
     // valid for every collection.
     vm->heap.addMarkingConstraint(makeUnique<JSC::SimpleMarkingConstraint>(
-        "Srb", "Bun StrongRootBlocks",
+        "Srb"_s, "Bun StrongRootBlocks"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([clientData](auto& visitor) {
             JSC::SetRootMarkReasonScope rootScope(visitor, JSC::RootMarkReason::StrongHandles);
             visitor.appendUnbarriered(clientData->m_strongRootBlockHead);
@@ -179,10 +180,11 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
 
     // The common string cache: slots filled by the JS thread, read here with the world stopped (as above).
     vm->heap.addMarkingConstraint(makeUnique<JSC::SimpleMarkingConstraint>(
-        "Bcs", "Bun CommonStrings",
+        "Bcs"_s, "Bun CommonStrings"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([clientData](auto& visitor) {
             JSC::SetRootMarkReasonScope rootScope(visitor, JSC::RootMarkReason::StrongHandles);
             clientData->commonStrings.visit(visitor);
+            clientData->schemaStrings.visit(visitor);
         })),
         JSC::ConstraintVolatility::GreyedByExecution));
 
@@ -276,6 +278,11 @@ DOMIsoSubspaces::~DOMIsoSubspaces()
 DOMClientIsoSubspaces::~DOMClientIsoSubspaces()
 {
     deleteSubspaceTable<JSC::GCClient::IsoSubspace>(this);
+}
+
+void JSVMClientData::reconcileWeakReferencesAtGCEnd(JSC::VM& vm, JSC::CollectionScope)
+{
+    Bun::JSCTaskScheduler::cancelWorkOfDeadRealms(this, vm);
 }
 
 void JSVMClientData::setDecoderStringTable(std::span<const uint8_t> bytes)

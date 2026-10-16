@@ -22,7 +22,7 @@ use bun_core::{self as str, String as BunString, ZStr, strings};
 use bun_core::{Environment, Output};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::{LogJsc as _, StringJsc as _};
 use bun_paths::{self as paths, PathBuffer};
 use bun_sys as sys;
@@ -36,7 +36,6 @@ use crate::bake;
 use crate::bake::framework_router::{self as framework_router, FrameworkRouter, OpaqueFileId};
 use crate::server::html_bundle::HTMLBundleRoute;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
-use crate::webcore::{Request as WebRequest, Response};
 use bun_ast::Loader;
 use bun_bundler::{self as bundler, BundleV2, Transpiler};
 use bun_http::{Method, MimeType};
@@ -149,12 +148,6 @@ pub(crate) struct Options<'a> {
     pub broadcast_console_log_from_browser_to_server: bool,
 }
 
-// Note: the fields (`arena`, `root`, `vm`, `framework`,
-// `bundler_options`, `broadcast_console_log_from_browser_to_server`) are
-// required with no sensible zero value, so `Default` is intentionally NOT
-// implemented. Callers construct `Options` via struct-literal at the call site
-// (see `bake_body.rs::UserOptions::into_dev_server_options`).
-
 // The fields `client_graph`, `server_graph`, `directory_watchers`, and `assets`
 // all use `@fieldParentPointer` to access DevServer's state. This pattern has
 // made it easier to group related fields together, but one must remember those
@@ -235,10 +228,6 @@ pub(crate) struct CurrentBundle {
     /// Unlike parse failures (`handleParseTaskFailure`), the resolution
     /// failures can be created asynchronously, and out of order.
     pub(crate) resolution_failure_entries: ArrayHashMap<serialized_failure::OwnerPacked, Log>,
-
-    /// 1. Always make sure to deinit this promise
-    /// 2. Always drain microtasks after resolving it
-    pub(crate) promise: DeferredPromise,
 }
 
 pub(crate) struct NextBundle {
@@ -249,8 +238,6 @@ pub(crate) struct NextBundle {
     pub(crate) reload_event: Option<*mut HotReloadEvent>, // BORROW_FIELD: ptr into dev.watcher_atomics.events[]
     /// The list of requests that are blocked on this bundle.
     pub(crate) requests: deferred_request::List,
-
-    pub(crate) promise: DeferredPromise,
 }
 
 // Note: this is the **canonical** `DevServer` struct. `dev_server/mod.rs`
@@ -423,34 +410,6 @@ const ASSET_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/asset");
 /// Example: `/_bun/client/index-00000000f209a20e.js`
 const CLIENT_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/client");
 
-#[derive(Default)]
-pub(crate) struct DeferredPromise {
-    pub(crate) strong: jsc::JSPromiseStrong,
-    pub(crate) route_bundle_indices: ArrayHashMap<route_bundle::Index, ()>,
-}
-
-impl DeferredPromise {
-    pub(crate) fn set_route_bundle_state(
-        &mut self,
-        dev: &mut DevServer,
-        state: route_bundle::State,
-    ) {
-        for route_bundle_index in self.route_bundle_indices.keys() {
-            dev.route_bundle_ptr(*route_bundle_index).server_state = state;
-        }
-    }
-
-    pub(crate) fn reset(&mut self) {
-        self.strong = jsc::JSPromiseStrong::empty();
-        self.route_bundle_indices.clear_retaining_capacity();
-    }
-
-    pub(crate) fn deinit_idempotently(&mut self) {
-        self.strong = jsc::JSPromiseStrong::empty();
-        self.route_bundle_indices = Default::default();
-    }
-}
-
 /// DevServer is stored on the heap, storing its allocator.
 pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // Note: `Features.dev_server +|= 1` (saturating add). AtomicUsize has
@@ -507,8 +466,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         );
         w!(generation, 0);
         w!(graph_safety_lock, ThreadLock::init_unlocked());
-        w!(framework, options.framework);
-        w!(bundler_options, options.bundler_options);
         w!(emit_incremental_visualizer_events, 0);
         w!(emit_memory_visualizer_events, 0);
         w!(
@@ -518,9 +475,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         // `dev.frontend_only = dev.framework.file_system_router_types.len == 0`
         w!(
             frontend_only,
-            (*addr_of_mut!((*p).framework))
-                .file_system_router_types
-                .is_empty()
+            options.framework.file_system_router_types.is_empty()
         );
         w!(client_graph, IncrementalGraph::default());
         w!(server_graph, IncrementalGraph::default());
@@ -538,7 +493,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 route_queue: Default::default(),
                 reload_event: None,
                 requests: deferred_request::List::default(),
-                promise: DeferredPromise::default(),
             }
         );
         w!(inspector_server_id, DebuggerId::init(0)); // TODO paper clover:
@@ -630,8 +584,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     //
     // SAFETY: `init_transpiler` writes the slot via `MaybeUninit::write` (see
     // `bake_body.rs`), so the previous (uninitialized) bytes are never dropped.
-    // `framework`/`log`/`bundler_options` were written above; reborrowing each
-    // individually via `addr_of_mut!` is sound because no `&mut DevServer` exists.
+    // `log` was written above; reborrowing it is sound because no `&mut DevServer` exists.
     // Note: `Transpiler<'static>` erases the arena lifetime — `options.arena`
     // is the `UserOptions.arena` which is moved into / outlives the `DevServer`
     // box. Widen `'a → 'static` here once.
@@ -644,9 +597,10 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // accessed below were each written above and are reborrowed disjointly via
     // `addr_of_mut!`, so no overlapping `&mut` exists.
     unsafe {
-        let framework = &mut *addr_of_mut!((*p).framework);
+        // Still in `options`, so that an early return drops them.
+        let framework = &options.framework;
         let log = &mut *addr_of_mut!((*p).log);
-        let bundler_options = &mut *addr_of_mut!((*p).bundler_options);
+        let bundler_options = &options.bundler_options;
 
         match framework.init_transpiler(
             arena,
@@ -699,6 +653,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         }
 
         w!(bundler_framework_views, bundler_framework_views);
+        w!(framework, options.framework);
+        w!(bundler_options, options.bundler_options);
     }
 
     // ── every field is now written ───────────────────────────────────────────
@@ -753,7 +709,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             unsafe { &mut (*(*dev_ptr).server_transpiler.as_mut_ptr()).resolver },
             // SAFETY: see above; `client_transpiler` was initialized and is disjoint from `framework`.
             unsafe { &mut (*(*dev_ptr).client_transpiler.as_mut_ptr()).resolver },
-            options.arena,
         )
         .is_err()
     {
@@ -895,7 +850,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     }
 
     if !dev.frontend_only {
-        dev.init_server_runtime();
+        dev.init_server_runtime()?;
     }
 
     // Initialize FrameworkRouter
@@ -950,7 +905,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                     .iter()
                     .map(|e| Box::<[u8]>::from(e.as_ref()))
                     .collect(),
-                style: fsr.style.clone(),
+                style: fsr.style,
                 allow_layouts: fsr.allow_layouts,
                 server_file: to_opaque_file_id::<{ bake::Side::Server }>(server_file),
                 client_file: if let Some(client) = &fsr.entry_client {
@@ -1108,7 +1063,6 @@ impl Drop for DevServer {
                 data.deref_();
                 r = next;
             }
-            self.next_bundle.promise.deinit_idempotently();
         }
 
         for value in self.source_maps.entries.values_mut() {
@@ -1189,7 +1143,7 @@ impl Drop for DevServer {
 // re-exports from memory_cost module already declared at top
 
 impl DevServer {
-    fn init_server_runtime(&mut self) {
+    fn init_server_runtime(&mut self) -> JsResult<()> {
         let runtime = BunString::create_static_external(
             crate::bake::bake_body::get_hmr_runtime(crate::bake::bake_body::Side::Server)
                 .code
@@ -1210,6 +1164,13 @@ impl DevServer {
                 .unwrap_or(false),
         ) {
             Ok(v) => v,
+            // Nothing says that what the dev server bundles is static code.
+            Err(err)
+                if bun_core::code_generation_from_strings()
+                    == bun_core::CodeGenerationFromStrings::Strict =>
+            {
+                return Err(err);
+            }
             Err(err) => {
                 // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
                 // `print_error_like_object_to_console` needs `&mut VM`, so cast
@@ -1245,6 +1206,7 @@ impl DevServer {
 
         fetch_function.ensure_still_alive();
         register_update.ensure_still_alive();
+        Ok(())
     }
 
     /// Deferred one tick so that the server can be up faster
@@ -1383,16 +1345,21 @@ pub(crate) fn is_allowed_host_header(
     {
         return true;
     }
-    if bun_core::ip_address::is_ip_address(bun_core::ip_address::strip_ipv6_brackets(host)) {
+    // A host that the resolver reads as a number is never looked up, so DNS cannot rebind it.
+    let numeric = bun_core::ip_address::strip_ipv6_brackets(host);
+    if bun_core::ip_address::is_ip_address(numeric)
+        || (numeric.first().is_some_and(u8::is_ascii_digit)
+            && bun_core::ip_address::to_ip_address(numeric).is_some_and(|ip| ip.is_ipv4()))
+    {
         return true;
     }
-    if let Some(crate::server::server_config::Address::Tcp {
-        hostname: Some(h), ..
-    }) = address
-    {
-        return strings::eql_case_insensitive_ascii(host, h.as_bytes(), true);
+    use crate::server::server_config::Address;
+    match address {
+        Some(Address::Tcp {
+            hostname: Some(h), ..
+        }) => strings::eql_case_insensitive_ascii(host, h.as_bytes(), true),
+        Some(Address::Tcp { hostname: None, .. }) | Some(Address::Unix(_)) | None => false,
     }
-    false
 }
 
 /// `host[":" port]` / `"[" v6 "]" [":" port]` → host (brackets retained for IPv6).
@@ -1879,23 +1846,8 @@ impl RequestEnsureRouteBundledCtx {
         Ok(())
     }
 
-    fn to_dev_response(&mut self) -> DevResponse<'_> {
-        DevResponse::Http(self.resp)
-    }
-}
-
-impl EnsureRouteCtx for RequestEnsureRouteBundledCtx {
-    fn on_defer(&mut self, b: BundleQueueType) -> JsResult<()> {
-        Self::on_defer(self, b)
-    }
-    fn on_loaded(&mut self) -> JsResult<()> {
-        Self::on_loaded(self)
-    }
-    fn on_plugin_error(&mut self) -> JsResult<()> {
-        Self::on_plugin_error(self)
-    }
-    fn to_dev_response(&mut self) -> DevResponse<'_> {
-        Self::to_dev_response(self)
+    fn to_dev_response(&mut self) -> AnyResponse {
+        self.resp
     }
 }
 
@@ -1905,17 +1857,10 @@ enum BundleQueueType {
     CurrentBundle,
 }
 
-trait EnsureRouteCtx {
-    fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()>;
-    fn on_loaded(&mut self) -> JsResult<()>;
-    fn on_plugin_error(&mut self) -> JsResult<()>;
-    fn to_dev_response(&mut self) -> DevResponse<'_>;
-}
-
-fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
+fn ensure_route_is_bundled(
     dev: &mut DevServer,
     route_bundle_index: route_bundle::Index,
-    ctx: &mut Ctx,
+    ctx: &mut RequestEnsureRouteBundledCtx,
 ) -> JsResult<()> {
     debug_assert!(dev.magic == Magic::Valid);
     debug_assert!(dev.server.is_some());
@@ -2216,7 +2161,7 @@ enum CheckResult {
 fn check_route_failures(
     dev: &mut DevServer,
     route_bundle_index: route_bundle::Index,
-    resp: DevResponse,
+    resp: AnyResponse,
 ) -> crate::Result<CheckResult> {
     let mut gts = dev.init_graph_trace_state(0)?;
     // Note: erase to a raw pointer so the deferred cleanup only fires on
@@ -2334,22 +2279,12 @@ impl DevServer {
     }
 }
 
-// C++ side defines `extern "C" SYSV_ABI` (BakeAdditionsToGlobalObject.cpp).
-bun_jsc::jsc_abi_extern! {
-    safe fn Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global: &JSGlobalObject) -> JSValue;
-    safe fn Bake__getBundleNewRouteJSFunction(global: &JSGlobalObject) -> JSValue;
-    safe fn Bake__getNewRouteParamsJSFunction(global: &JSGlobalObject) -> JSValue;
-}
-
 struct FrameworkRequestArgs {
     router_type_main: JSValue,
     route_modules: JSValue,
     client_id: JSValue,
     styles: JSValue,
     params: JSValue,
-    bundle_new_route: JSValue,
-    new_route_params: JSValue,
-    set_async_local_storage: JSValue,
 }
 
 impl DevServer {
@@ -2371,7 +2306,6 @@ impl DevServer {
         route_bundle_index: route_bundle::Index,
         framework_bundle: &mut route_bundle::Framework,
         params_js_value: JSValue,
-        first_request: bool,
     ) -> JsResult<FrameworkRequestArgs> {
         // SAFETY: `this` is live; `vm` is a `BackRef` (safe Deref); `vm.global`
         // is valid for VM lifetime.
@@ -2537,23 +2471,6 @@ impl DevServer {
             },
             // params
             params: params_js_value,
-
-            // setAsyncLocalStorage
-            set_async_local_storage: if first_request {
-                Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global)
-            } else {
-                JSValue::NULL
-            },
-            bundle_new_route: if first_request {
-                Bake__getBundleNewRouteJSFunction(global)
-            } else {
-                JSValue::NULL
-            },
-            new_route_params: if first_request {
-                Bake__getNewRouteParamsJSFunction(global)
-            } else {
-                JSValue::NULL
-            },
         })
     }
 
@@ -2616,7 +2533,6 @@ impl DevServer {
                 route_bundle_index,
                 framework_bundle,
                 params_js_value,
-                true,
             )
         }?;
 
@@ -2633,9 +2549,6 @@ impl DevServer {
                     args.client_id,
                     args.styles,
                     args.params,
-                    args.set_async_local_storage,
-                    args.bundle_new_route,
-                    args.new_route_params,
                 ],
             );
         Ok(())
@@ -2908,11 +2821,6 @@ impl DevServer {
     }
 }
 
-enum DevResponse<'a> {
-    Http(AnyResponse),
-    Promise(PromiseResponse<'a>),
-}
-
 /// When requests are waiting on a bundle, the relevant request information is
 /// prepared and stored in a linked list.
 pub(crate) struct DeferredRequest {
@@ -2938,13 +2846,6 @@ pub(crate) mod deferred_request {
     pub(crate) type List = bun_collections::pool::SinglyLinkedList<DeferredRequest>;
     pub(crate) type Node = bun_collections::pool::Node<DeferredRequest>;
 
-    /// Sometimes we will call `await bundleNewRoute()` and this will either
-    /// resolve with the args for the route, or reject with data
-    pub(crate) struct PromiseResponse<'a> {
-        pub(crate) promise: jsc::JSPromiseStrong,
-        pub global: &'a JSGlobalObject,
-    }
-
     pub(crate) enum Handler {
         /// For a .framework route. This says to call and render the page.
         ServerHandler(SavedRequest),
@@ -2964,7 +2865,7 @@ pub(crate) mod deferred_request {
         BundledHtmlPage,
     }
 }
-use deferred_request::{Handler, PromiseResponse};
+use deferred_request::Handler;
 
 // LAYERING: `SavedRequestUnion` was a local mirror because `server_body`'s
 // copy was unnameable; the canonical enum now lives in `crate::server` so
@@ -3238,11 +3139,9 @@ impl DevServer {
             start_data,
             had_reload_event,
             requests: ::core::mem::take(&mut self.next_bundle.requests),
-            promise: ::core::mem::take(&mut self.next_bundle.promise),
             resolution_failure_entries: Default::default(),
         });
 
-        self.next_bundle.promise = DeferredPromise::default();
         self.next_bundle.requests = deferred_request::List::default();
         self.next_bundle.route_queue.clear_retaining_capacity();
         Ok(())
@@ -3742,9 +3641,6 @@ impl<'a> HotUpdateContext<'a> {
 
 fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr_event: bool) {
     bv2.deinit_without_freeing_arena();
-    if let Some(cb) = &mut dev.current_bundle {
-        cb.promise.deinit_idempotently();
-    }
     // Drops `CurrentBundle.heap` (the arena `bv2.graph.heap` borrows).
     dev.current_bundle = None;
     dev.log.clear_and_free();
@@ -4616,37 +4512,6 @@ pub(super) fn finalize_bundle(
         // lives in the VM's `Debugger`, which outlives this scope.
         let mut inspector_agent_ptr: Option<*const BunFrontendDevServerAgent> =
             dev.inspector().map(std::ptr::from_ref);
-        if current_bundle!().promise.strong.has_value() {
-            // SAFETY: see `current_bundle!` SAFETY; guard runs before the outer `finalize_bundle_cleanup` defer.
-            // Note: copy the raw ptr so `defer!`'s by-ref capture does not
-            // hold `*current_bundle_ptr` borrowed across `current_bundle!()` uses.
-            let cb_ptr_defer: *mut CurrentBundle = current_bundle_ptr;
-            scopeguard::defer! {
-                // SAFETY: `cb_ptr_defer` points into `dev.current_bundle`, live until the outer `finalize_bundle_cleanup` defer runs.
-                unsafe { (*cb_ptr_defer).promise.reset() }
-            };
-            current_bundle!()
-                .promise
-                .set_route_bundle_state(dev, route_bundle::State::PossibleBundlingFailures);
-            let global = dev.global();
-            // Note: `bundling_failures` lives on `*dev` but
-            // `send_serialized_failures` needs `&mut self`; reborrow the keys
-            // through `dev_ptr`. The callee never touches
-            // `bundling_failures`.
-            // SAFETY: `dev_ptr` is live for the entire fn body (see line 3133).
-            let failures = unsafe { (*dev_ptr).bundling_failures.values() };
-            dev.send_serialized_failures(
-                DevResponse::Promise(PromiseResponse {
-                    promise: current_bundle!().promise.strong.take(),
-                    global,
-                }),
-                failures,
-                // SAFETY: agent ptr is from `dev.inspector()` just above; live for this scope.
-                // `take()` so the queued-request loop and the fallback below
-                // do not notify the inspector a second time for this bundle.
-                inspector_agent_ptr.take().map(|p| unsafe { &*p }),
-            )?;
-        }
 
         while let Some(node) = current_bundle!().requests.pop_first() {
             // SAFETY: `pop_first` hands back ownership of the intrusive node;
@@ -4659,14 +4524,14 @@ pub(super) fn finalize_bundle(
             let rb = dev.route_bundle_ptr(req.route_bundle_index);
             rb.server_state = route_bundle::State::PossibleBundlingFailures;
 
-            let resp: DevResponse = match &mut req.handler {
+            let resp: AnyResponse = match &mut req.handler {
                 Handler::Aborted => continue,
                 Handler::ServerHandler(saved) => 'brk: {
                     let resp = saved.response;
                     saved.deinit();
-                    break 'brk DevResponse::Http(resp);
+                    break 'brk resp;
                 }
-                Handler::BundledHtmlPage(ram) => DevResponse::Http(ram.response),
+                Handler::BundledHtmlPage(ram) => ram.response,
             };
 
             // SAFETY: see Note on `failures` above; `dev_ptr` is live and
@@ -4755,12 +4620,7 @@ pub(super) fn finalize_bundle(
                             break 'rbi unsafe { (*first).data.assume_init_ref() }
                                 .route_bundle_index;
                         }
-                        let route_bundle_indices =
-                            current_bundle!().promise.route_bundle_indices.keys();
-                        if route_bundle_indices.is_empty() {
-                            break 'brk None;
-                        }
-                        break 'rbi route_bundle_indices[0];
+                        break 'brk None;
                     };
 
                     // Note: index `route_bundles` immutably so `dev.relative_path`
@@ -4819,26 +4679,6 @@ pub(super) fn finalize_bundle(
             rb.server_state = route_bundle::State::Loaded;
             node = n.next;
         }
-    }
-
-    if current_bundle!().promise.strong.has_value() {
-        // SAFETY: see `current_bundle!` SAFETY; guard runs before the outer `finalize_bundle_cleanup` defer.
-        // Note: copy the raw ptr so `defer!`'s by-ref capture does not
-        // hold `*current_bundle_ptr` borrowed across `current_bundle!()` uses.
-        let cb_ptr_defer: *mut CurrentBundle = current_bundle_ptr;
-        scopeguard::defer! {
-            // SAFETY: `cb_ptr_defer` points into `dev.current_bundle`, live until the outer `finalize_bundle_cleanup` defer runs.
-            unsafe { (*cb_ptr_defer).promise.deinit_idempotently() }
-        };
-        current_bundle!()
-            .promise
-            .set_route_bundle_state(dev, route_bundle::State::Loaded);
-        let vm = dev.vm();
-        let _exit = vm.enter_event_loop_scope();
-        current_bundle!()
-            .promise
-            .strong
-            .resolve(vm.global(), JSValue::TRUE)?;
     }
 
     while let Some(node) = current_bundle!().requests.pop_first() {
@@ -4908,10 +4748,7 @@ impl DevServer {
         self.emit_visualizer_message_if_needed();
 
         // If there were pending requests, begin another bundle.
-        if self.next_bundle.reload_event.is_some()
-            || !self.next_bundle.requests.first.is_null()
-            || self.next_bundle.promise.strong.has_value()
-        {
+        if self.next_bundle.reload_event.is_some() || !self.next_bundle.requests.first.is_null() {
             let mut entry_points = EntryPointList::empty();
 
             let (is_reload, timer) = if let Some(event) = self.next_bundle.reload_event.take() {
@@ -5369,7 +5206,7 @@ impl DevServer {
 
     fn send_serialized_failures(
         &mut self,
-        resp: DevResponse,
+        resp: AnyResponse,
         failures: &[SerializedFailure],
         inspector_agent: Option<&BunFrontendDevServerAgent>,
     ) -> crate::Result<()> {
@@ -5408,50 +5245,16 @@ impl DevServer {
         buf.extend_from_slice(bun_zstd::embed_compressed!(codegen "bake.error.js"));
         buf.extend_from_slice(post.as_bytes());
 
-        match resp {
-            DevResponse::Http(r) => StaticRoute::send_blob_then_deinit(
-                r,
-                crate::webcore::blob::Any::from_array_list(buf),
-                crate::server::static_route::InitFromBytesOptions {
-                    mime_type: Some(&MimeType::HTML),
-                    server: self.server,
-                    status_code: 500,
-                    ..Default::default()
-                },
-            ),
-            DevResponse::Promise(mut r) => {
-                let global = r.global;
-                let mut any_blob = crate::webcore::blob::Any::from_array_list(buf);
-                let mut headers = bun_http_jsc::headers_jsc::from_fetch_headers(
-                    None,
-                    crate::webcore::headers_ref::any_blob_content_type(&any_blob),
-                );
-                headers.append(b"Content-Type", &MimeType::HTML.value);
-                if headers.get(b"etag").is_none() && !any_blob.slice().is_empty() {
-                    bun_http::headers::append_etag(any_blob.slice(), &mut headers);
-                }
-                let fetch_headers = bun_http_jsc::headers_jsc::to_fetch_headers(&headers, global)?;
-                // SAFETY: `to_fetch_headers` returns a fresh +1 `FetchHeaders*`;
-                // ownership is transferred to `HeadersRef`.
-                let headers_ref =
-                    unsafe { crate::webcore::response::HeadersRef::adopt(fetch_headers) };
-                let response: Response = Response::init(
-                    crate::webcore::response::Init {
-                        status_code: 500,
-                        headers: Some(headers_ref),
-                        ..Default::default()
-                    },
-                    crate::webcore::Body::new(crate::webcore::body::Value::Blob(
-                        any_blob.to_blob(global),
-                    )),
-                    BunString::EMPTY,
-                    false,
-                );
-                let vm = self.vm();
-                let _exit = vm.enter_event_loop_scope();
-                r.promise.reject(global, Ok(response.to_js(global)))?;
-            }
-        }
+        StaticRoute::send_blob_then_deinit(
+            resp,
+            crate::webcore::blob::Any::from_array_list(buf),
+            crate::server::static_route::InitFromBytesOptions {
+                mime_type: Some(&MimeType::HTML),
+                server: self.server,
+                status_code: 500,
+                ..Default::default()
+            },
+        );
         Ok(())
     }
 }
@@ -6366,395 +6169,6 @@ static DEV_SERVER_DEINIT_COUNT_FOR_TESTING: ::core::sync::atomic::AtomicUsize =
     ::core::sync::atomic::AtomicUsize::new(0);
 pub(crate) fn get_deinit_count_for_testing() -> usize {
     DEV_SERVER_DEINIT_COUNT_FOR_TESTING.load(::core::sync::atomic::Ordering::Relaxed)
-}
-
-struct PromiseEnsureRouteBundledCtx<'a> {
-    // Note: raw ptr — `dev` is re-borrowed across the ctx while also passed
-    // as `&mut` into `ensure_route_is_bundled`.
-    dev: *mut DevServer,
-    global: &'a JSGlobalObject,
-    promise: Option<jsc::JSPromiseStrong>,
-    p: Option<*mut jsc::JSPromise>, // BORROW_FIELD: from sibling self.promise
-    route_bundle_index: route_bundle::Index,
-}
-
-impl<'a> PromiseEnsureRouteBundledCtx<'a> {
-    /// Reborrow the erased `dev` pointer.
-    /// SAFETY: `self.dev` is set from a live `&mut DevServer` at ctx
-    /// construction; the ctx is stack-local in the request handler scope.
-    #[inline]
-    fn dev_mut(&mut self) -> &mut DevServer {
-        // SAFETY: `self.dev` was set from a live `&mut DevServer` at ctx
-        // construction and outlives this stack-local ctx.
-        unsafe { &mut *self.dev }
-    }
-
-    /// Reborrow the GC-heap `JSPromise` recorded in `self.p`. Single `unsafe`
-    /// site for the set-once `p: Option<*mut JSPromise>` self-borrow field;
-    /// callers (`on_loaded` / `on_plugin_error` / the `to_js()` epilogue in
-    /// `js_get_route_bundle_promise`) reach this only after `ensure_promise`
-    /// or `on_defer` has populated `p`.
-    #[inline]
-    fn promise_mut(&mut self) -> &mut jsc::JSPromise {
-        // SAFETY: `p` is `Some(strong.get())` after `ensure_promise`/`on_defer`;
-        // the JSPromise GC cell is rooted for the lifetime of `self` by either
-        // `self.promise: JSPromiseStrong` or the bundle's `promise.strong`
-        // (`current_bundle`/`next_bundle`), so the pointee outlives the borrow.
-        unsafe { &mut *self.p.expect("infallible: promise bound") }
-    }
-
-    fn ensure_promise(&mut self) -> jsc::JSPromiseStrong {
-        if self.promise.is_none() {
-            let strong = jsc::JSPromiseStrong::init(self.global);
-            self.p = Some(std::ptr::from_mut(strong.get()));
-            self.promise = Some(strong);
-        }
-        // Note: `Strong` owns its slot, so allocate a second
-        // handle to the same JSPromise — both `self.promise` and the
-        // returned value root the same cell.
-        let value = self.promise.as_ref().unwrap().value();
-        jsc::JSPromiseStrong::from_value(value, self.global)
-    }
-
-    fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()> {
-        let route_bundle_index = self.route_bundle_index;
-        match bundle_field {
-            BundleQueueType::CurrentBundle => {
-                let cb = self
-                    .dev_mut()
-                    .current_bundle
-                    .as_mut()
-                    .expect("infallible: bundle active");
-                if cb.promise.strong.has_value() {
-                    cb.promise
-                        .route_bundle_indices
-                        .put(route_bundle_index, ())
-                        .expect("oom");
-                    self.p = Some(cb.promise.strong.get());
-                    return Ok(());
-                }
-                let strong_promise = self.ensure_promise();
-                let cb = self
-                    .dev_mut()
-                    .current_bundle
-                    .as_mut()
-                    .expect("infallible: bundle active");
-                cb.promise
-                    .route_bundle_indices
-                    .put(route_bundle_index, ())
-                    .expect("oom");
-                cb.promise.strong = strong_promise;
-                Ok(())
-            }
-            BundleQueueType::NextBundle => {
-                if self.dev_mut().next_bundle.promise.strong.has_value() {
-                    self.dev_mut()
-                        .next_bundle
-                        .promise
-                        .route_bundle_indices
-                        .put(route_bundle_index, ())
-                        .expect("oom");
-                    self.p = Some(self.dev_mut().next_bundle.promise.strong.get());
-                    return Ok(());
-                }
-                let strong_promise = self.ensure_promise();
-                self.dev_mut()
-                    .next_bundle
-                    .promise
-                    .route_bundle_indices
-                    .put(route_bundle_index, ())
-                    .expect("oom");
-                self.dev_mut().next_bundle.promise.strong = strong_promise;
-                Ok(())
-            }
-        }
-    }
-
-    fn on_loaded(&mut self) -> JsResult<()> {
-        let _ = self.ensure_promise();
-        let global = self.global;
-        self.promise_mut().resolve(global, JSValue::TRUE)?;
-        // SAFETY: dev.vm is JSC_BORROW — valid for DevServer lifetime
-        self.dev_mut().vm_mut().drain_microtasks();
-        Ok(())
-    }
-
-    fn on_plugin_error(&mut self) -> JsResult<()> {
-        let _ = self.ensure_promise();
-        let global = self.global;
-        self.promise_mut()
-            .reject(global, BunString::static_("Plugin error").to_js(global))?;
-        // SAFETY: dev.vm is JSC_BORROW — valid for DevServer lifetime
-        self.dev_mut().vm_mut().drain_microtasks();
-        Ok(())
-    }
-
-    fn to_dev_response(&mut self) -> DevResponse<'_> {
-        DevResponse::Promise(PromiseResponse {
-            promise: self.ensure_promise(),
-            global: self.global,
-        })
-    }
-}
-
-impl<'a> EnsureRouteCtx for PromiseEnsureRouteBundledCtx<'a> {
-    fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()> {
-        PromiseEnsureRouteBundledCtx::on_defer(self, bundle_field)
-    }
-    fn on_loaded(&mut self) -> JsResult<()> {
-        PromiseEnsureRouteBundledCtx::on_loaded(self)
-    }
-    fn on_plugin_error(&mut self) -> JsResult<()> {
-        PromiseEnsureRouteBundledCtx::on_plugin_error(self)
-    }
-    fn to_dev_response(&mut self) -> DevResponse<'_> {
-        PromiseEnsureRouteBundledCtx::to_dev_response(self)
-    }
-}
-
-// C++ side declares `extern "C" SYSV_ABI` (BakeAdditionsToGlobalObject.cpp).
-bun_jsc::jsc_host_abi! {
-    #[unsafe(no_mangle)]
-    pub unsafe fn Bake__bundleNewRouteJSFunctionImpl(
-        global: &JSGlobalObject,
-        request_ptr: *mut c_void,
-        url: &BunString,
-    ) -> JSValue {
-        jsc::to_js_host_call(global, || bundle_new_route_js_function_impl(global, request_ptr, url))
-    }
-}
-
-fn bundle_new_route_js_function_impl(
-    global: &JSGlobalObject,
-    request_ptr: *mut c_void,
-    url_bunstr: &BunString,
-) -> JsResult<JSValue> {
-    let url = url_bunstr.to_utf8();
-
-    // SAFETY: request_ptr is a *bun.webcore.Request from C++
-    let request: &mut WebRequest = unsafe { &mut *request_ptr.cast::<WebRequest>() };
-    let Some(dev) = request.request_context.dev_server() else {
-        return Err(global.throw(format_args!(
-            "Request context does not belong to dev server"
-        )));
-    };
-    // Extract pathname from URL (remove protocol, host, query, hash)
-    let pathname = extract_pathname_from_url(url.slice());
-
-    if pathname.is_empty() || pathname[0] != b'/' {
-        return Err(global.throw(format_args!(
-            "Invalid path \"{}\" it should be non-empty and start with a slash",
-            bstr::BStr::new(pathname)
-        )));
-    }
-
-    let mut params: framework_router::MatchedParams = Default::default();
-    let Some(route_index) = dev.router.match_slow(pathname, &mut params) else {
-        return Err(global.throw(format_args!(
-            "No route found for path: {}",
-            bstr::BStr::new(pathname)
-        )));
-    };
-
-    let _exit = dev.vm().enter_event_loop_scope();
-
-    let _ = dev;
-    let Some(dev_ptr) = request.request_context.dev_server_mut() else {
-        return Err(global.throw(format_args!(
-            "Request context does not belong to dev server"
-        )));
-    };
-    // SAFETY: JS-thread single-writer; `dev_server_mut` returns the
-    // `Box<DevServer>` slot in `NewServer` populated by `set_routes`.
-    let dev: &mut DevServer = unsafe { &mut *dev_ptr };
-
-    let route_bundle_index = dev
-        .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
-        .expect("oom");
-    let dev_ptr: *mut DevServer = dev;
-    let mut ctx = PromiseEnsureRouteBundledCtx {
-        dev: dev_ptr,
-        global,
-        promise: None,
-        p: None,
-        route_bundle_index,
-    };
-
-    let rbi = ctx.route_bundle_index;
-    // SAFETY: `ctx.dev` aliases the same DevServer. Reborrow via raw ptr to
-    // satisfy borrowck while ctx is also &mut-borrowed.
-    ensure_route_is_bundled(unsafe { &mut *dev_ptr }, rbi, &mut ctx)?;
-
-    let array = JSValue::create_empty_array(global, 2)?;
-
-    array.put_index(global, 0, JSValue::js_number_from_uint64(rbi.get() as u64))?;
-
-    if ctx.p.is_none() {
-        array.put_index(global, 1, JSValue::UNDEFINED)?;
-        return Ok(array);
-    }
-
-    debug_assert!(ctx.p.is_some());
-    // Route through the single `promise_mut()` accessor (one audited deref for
-    // the set-once `p` field) instead of open-coding the raw deref here.
-    array.put_index(global, 1, ctx.promise_mut().to_js())?;
-
-    Ok(array)
-}
-
-// `JSGlobalObject` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`; remaining args
-// are by-value `JSValue`s — validity is encoded in the signature.
-// C++ side defines `extern "C" SYSV_ABI` (BakeAdditionsToGlobalObject.cpp).
-bun_jsc::jsc_abi_extern! {
-    safe fn Bake__createDevServerFrameworkRequestArgsObject(
-        global: &JSGlobalObject,
-        router_type_main: JSValue,
-        route_modules: JSValue,
-        client_entry_url: JSValue,
-        styles: JSValue,
-        params: JSValue,
-    ) -> JSValue;
-}
-
-fn create_dev_server_framework_request_args_object(
-    global: &JSGlobalObject,
-    router_type_main: JSValue,
-    route_modules: JSValue,
-    client_entry_url: JSValue,
-    styles: JSValue,
-    params: JSValue,
-) -> JsResult<JSValue> {
-    jsc::from_js_host_call(global, || {
-        Bake__createDevServerFrameworkRequestArgsObject(
-            global,
-            router_type_main,
-            route_modules,
-            client_entry_url,
-            styles,
-            params,
-        )
-    })
-}
-
-#[bun_jsc::host_fn(export = "Bake__getNewRouteParamsJSFunctionImpl")]
-fn bake_get_new_route_params_js_function_impl(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JSValue {
-    jsc::to_js_host_call(global, || {
-        new_route_params_for_bundle_promise_for_js(global, callframe)
-    })
-}
-
-fn new_route_params_for_bundle_promise_for_js(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    if callframe.arguments_count() != 3 {
-        return Err(global.throw(format_args!("Expected 3 arguments")));
-    }
-
-    let request_js = callframe.argument(0);
-    let route_bundle_index_js = callframe.argument(1);
-    let url_js = callframe.argument(2);
-
-    if !request_js.is_object() {
-        return Err(global.throw(format_args!("Request must be an object")));
-    }
-    if !route_bundle_index_js.is_any_int() {
-        return Err(global.throw(format_args!("Route bundle index must be an integer")));
-    }
-    if !url_js.is_string() {
-        return Err(global.throw(format_args!("URL must be a string")));
-    }
-
-    let Some(request_ptr) = <WebRequest as bun_jsc::JsClass>::from_js(request_js) else {
-        return Err(global.throw(format_args!("Expected a Request object")));
-    };
-    // SAFETY: `from_js` returned a live native pointer; JS holds the GC ref.
-    let request: &mut WebRequest = unsafe { &mut *request_ptr };
-    let Some(dev_ptr) = request.request_context.dev_server_mut() else {
-        return Err(global.throw(format_args!(
-            "Request context does not belong to dev server"
-        )));
-    };
-    // SAFETY: JS-thread single-writer; `dev_server_mut` returns the
-    // `Box<DevServer>` slot in `NewServer` populated by `set_routes`.
-    let dev: &mut DevServer = unsafe { &mut *dev_ptr };
-
-    let route_bundle_index = route_bundle::Index::init(
-        u32::try_from(route_bundle_index_js.to_int32()).expect("int cast"),
-    );
-
-    let url = url_js.to_bun_string(global)?;
-    let url_utf8 = url.to_utf8();
-
-    new_route_params_for_bundle_promise(dev, route_bundle_index, url_utf8.slice())
-}
-
-fn new_route_params_for_bundle_promise(
-    dev: &mut DevServer,
-    route_bundle_index: route_bundle::Index,
-    url: &[u8],
-) -> JsResult<JSValue> {
-    // Note: erase `dev` so the `route_bundle` / `framework_bundle`
-    // borrows don't conflict with `dev.router` / `dev.compute_arguments_...`.
-    let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
-    // SAFETY: statement-scoped reborrow; the returned `&mut RouteBundle`
-    // immediately decays to a raw pointer.
-    let route_bundle: *mut RouteBundle =
-        unsafe { &mut *dev_ptr }.route_bundle_ptr(route_bundle_index);
-    // SAFETY: `route_bundle` points into `dev.route_bundles` (not resized in
-    // this fn); the exclusive borrow decays to a raw pointer at this statement.
-    let framework_bundle: *mut route_bundle::Framework = match unsafe { &mut (*route_bundle).data }
-    {
-        route_bundle::Data::Framework(f) => f,
-        _ => unreachable!(),
-    };
-
-    let pathname = extract_pathname_from_url(url);
-
-    let global = dev.global();
-    let mut params: framework_router::MatchedParams = Default::default();
-    let Some(route_index) = dev.router.match_slow(pathname, &mut params) else {
-        return Err(global.throw(format_args!(
-            "No route found for path: {}",
-            bstr::BStr::new(pathname)
-        )));
-    };
-    // SAFETY: statement-scoped read of a `Copy` field of `*framework_bundle`.
-    let expected_route_index = unsafe { (*framework_bundle).route_index };
-    if route_index != expected_route_index {
-        return Err(global.throw(format_args!(
-            "Route index mismatch, expected {} but got {}",
-            expected_route_index.get(),
-            route_index.get()
-        )));
-    }
-    let params_js_value = params.to_js(global);
-
-    // SAFETY: `dev_ptr` is live; `framework_bundle` points into
-    // `(*dev_ptr).route_bundles[route_bundle_index].data` and its reborrow is
-    // scoped to this call. Raw-ptr receiver — see Note on
-    // `compute_arguments_for_framework_request`.
-    let args = unsafe {
-        DevServer::compute_arguments_for_framework_request(
-            dev_ptr,
-            route_bundle_index,
-            &mut *framework_bundle,
-            params_js_value,
-            false,
-        )
-    }?;
-
-    create_dev_server_framework_request_args_object(
-        global,
-        args.router_type_main,
-        args.route_modules,
-        args.client_id,
-        args.styles,
-        args.params,
-    )
 }
 
 // TODO: this is shitty

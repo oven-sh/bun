@@ -1390,6 +1390,28 @@ test("captureStackTrace does not crash when stackTraceLimit is non-numeric", () 
   }
 });
 
+test.concurrent.each([
+  ["NaN", `Error.stackTraceLimit = NaN;`],
+  ["a string", `Error.stackTraceLimit = "foo";`],
+  ["an accessor", `Object.defineProperty(Error, "stackTraceLimit", { get: () => 10 });`],
+  ["deleted", `delete Error.stackTraceLimit;`],
+])("Error.appendStackTrace does not crash when stackTraceLimit is %s", async (_, setup) => {
+  // An error made under such a limit has no frames, so appendStackTrace captures them first.
+  const src = `${setup}
+    const source = new Error("source"), destination = new Error("destination");
+    Error.appendStackTrace(source, destination);
+    console.log(typeof destination.stack);`;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: "undefined", signalCode: null });
+  expect(exitCode).toBe(0);
+});
+
 test("Error.stackTraceLimit default matches the limit captureStackTrace applies", async () => {
   // Run in a fresh process so nothing has written to Error.stackTraceLimit yet.
   const src = `

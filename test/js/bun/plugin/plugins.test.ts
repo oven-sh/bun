@@ -3700,6 +3700,56 @@ describe.concurrent("patched Promise methods can't observe module loading", () =
   });
 });
 
+// The original is loaded under a key of its own. onLoad used to get that key, "price.ts?actual": a filter that ends in $
+// did not match it, and there is no file of that name to read.
+it.concurrent.each([[[]], [["--isolate"]]])(
+  "onLoad gets the path of the file for the original of a mocked module %j",
+  async args => {
+    using dir = tempDir("plugin-original", {
+      "preload.ts": `
+      globalThis.paths = [];
+      Bun.plugin({
+        name: "compile",
+        setup(build) {
+          build.onLoad({ filter: /(price|tax|rate)\\.ts$/ }, async ({ path }) => {
+            globalThis.paths.push(require("node:path").basename(path));
+            return { contents: (await Bun.file(path).text()).replaceAll("source", "compiled"), loader: "ts" };
+          });
+        },
+      });
+    `,
+      "price.ts": `export const price = "source"; export const other = "source";`,
+      "tax.ts": `export const tax = "source";`,
+      "rate.ts": `export function rate() { return "source"; }`,
+      "original.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      vi.mock("./price", async importOriginal => ({ ...(await importOriginal()), other: "mock" }));
+      vi.mock("./tax", () => ({ tax: "mock" }));
+      vi.mock("./rate", { spy: true });
+      import { price, other } from "./price";
+      import { tax } from "./tax";
+      import { rate } from "./rate";
+      test("the plugin's output", async () => {
+        expect([price, other, tax, rate()]).toEqual(["compiled", "mock", "mock", "compiled"]);
+        expect(rate).toHaveBeenCalledTimes(1);
+        expect((await vi.importActual("./tax")).tax).toBe("compiled");
+        expect(globalThis.paths.toSorted()).toEqual(["price.ts", "rate.ts", "tax.ts"]);
+      });
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--preload", "./preload.ts", ...args, "./original.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
 describe.concurrent("an invalid result from a plugin is an error", () => {
   async function run(files: Record<string, string>, args: string[]) {
     using dir = tempDir("plugin-answers", files);

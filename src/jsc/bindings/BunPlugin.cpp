@@ -646,6 +646,17 @@ static String originalModuleKey(const String& specifier)
     return makeString(specifier, specifier.contains('?') ? '&' : '?', "actual"_s);
 }
 
+// The path of the file behind originalModuleKey(), also of a copy of a copy, or of the one a spy wraps.
+static String withoutOriginalModuleQuery(const String& key)
+{
+    String path = key;
+    if (path.endsWith("&spy"_s))
+        path = path.left(path.length() - "&spy"_s.length());
+    while (path.endsWith("?actual"_s) || path.endsWith("&actual"_s))
+        path = path.left(path.length() - "?actual"_s.length());
+    return path;
+}
+
 // A second module for a mock: it has the mock's exports and waits for nothing. For what a factory loads while the mock's own module waits for that factory.
 static String unwaitedModuleMockKey(const String& specifier)
 {
@@ -3488,7 +3499,7 @@ JSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, const String& 
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    String path = namespaceLength ? key.substringSharingImpl(namespaceLength + 1) : key;
+    String path = Zig::withoutOriginalModuleQuery(namespaceLength ? key.substringSharingImpl(namespaceLength + 1) : key);
 
     for (size_t i = 0; i < group->filters.size(); i++) {
         auto matchResult = group->filters[i]->match(globalObject, path, 0);

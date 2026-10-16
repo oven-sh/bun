@@ -80,7 +80,21 @@ it("length counts the arguments up to the last that is not optional, or is what 
 itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.i32.enforceRange(0, 5).loose).toThrow(".loose is another way");
   expect(() => b.i32.validateInteger().wrap).toThrow(".wrap is another way");
+  for (const refuses of [() => b.i32.wrap, () => b.i32.enforceRange(0, 5), () => b.i32.validateInteger()]) {
+    expect(() => refuses().allowBigInt).toThrow(
+      ".allowBigInt is for the strict and the .loose conversion; the others are ToNumber, which refuses a BigInt",
+    );
+  }
+  expect(() => b.i32.allowBigInt.wrap).toThrow(".wrap refuses a BigInt, which .allowBigInt asked for");
+  expect(() => b.i32.allowBigInt.enforceRange(0, 5)).toThrow(".enforceRange() refuses a BigInt");
+  expect(() => b.i32.loose.allowBigInt.validateInteger()).toThrow(".validateInteger() refuses a BigInt");
+  expect(b.u16.allowBigInt.loose.idlType).toBe(b.u16.loose.allowBigInt.idlType);
   expect(() => b.string.utf8.owned.default("x")).toThrow("cannot have a default");
+  expect(() => b.namespace({})).toThrow("a namespace with no functions");
+  expect(() => b.namespace({ f: b.fn({ args: { x: b.i32 } }) as any })).toThrow(
+    "f: write what b.fn takes, without b.fn",
+  );
+  expect(() => b.namespace({ "not-a-name": {} })).toThrow("not-a-name: a function is named by an identifier");
   expect(() => b.array(b.null)).toThrow("an array of nothing but null");
   expect(() => b.bufferSource.bytes.allowShared.optional).toThrow(
     ".allowShared is for an argument that is always there",
@@ -148,27 +162,116 @@ itAlways("unsigned integer dictionary fields reject negative values", () => {
 });
 
 describe("integers", () => {
-  it("strict takes an integer in range, as a number or a BigInt", () => {
-    for (const value of [5, 5n, 5.0]) expect(bindgen.makeToken(value).id).toBe(5);
+  const outOfRange = (message: string) =>
+    expect.objectContaining({ name: "RangeError", code: "ERR_OUT_OF_RANGE", message });
+  const notANumber = (name: string) =>
+    expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: `${name} must be a number` });
+  const bigIntToNumber = expect.objectContaining({
+    name: "TypeError",
+    message: "Conversion from 'BigInt' to 'number' is not allowed.",
+  });
+
+  it("strict takes a number that is an integer in range", () => {
+    for (const value of [5, 5.0]) expect(bindgen.makeToken(value).id).toBe(5);
     expect(bindgen.makeToken(-0).id).toBe(0);
-    const outOfRange = (message: string) =>
-      expect.objectContaining({ name: "RangeError", code: "ERR_OUT_OF_RANGE", message });
     for (const value of [NaN, Infinity, -Infinity, 1.5, 2 ** 53]) {
       expect(() => bindgen.makeToken(value)).toThrow(outOfRange(`id must be an integer (received ${value})`));
     }
-    for (const value of [-1, 2 ** 32, 2n ** 40n]) {
+    for (const value of [-1, 2 ** 32]) {
       expect(() => bindgen.makeToken(value)).toThrow(
         outOfRange(`id must be in the range [0, 4294967295] (received ${value})`),
       );
     }
-    for (const value of [-1n, 2n ** 70n]) {
-      expect(() => bindgen.makeToken(value)).toThrow(outOfRange("id must be in the range [0, 4294967295]"));
+    for (const value of ["5", true, null, undefined, {}, 5n, 0n, -1n, 2n ** 70n, Object(5n)]) {
+      expect(() => bindgen.makeToken(value)).toThrow(notANumber("id"));
     }
-    for (const value of ["5", true, null, undefined, {}]) {
-      expect(() => bindgen.makeToken(value)).toThrow(
-        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "id must be a number" }),
+    expect(() => bindgen.sumArray([1, 2n])).toThrow(notANumber("element of numbers"));
+  });
+
+  it(".allowBigInt takes a BigInt in the same range too", () => {
+    for (const value of [5, 5n, 5.0]) expect(bindgen.integerOrBigInt(value)).toBe(5);
+    for (const value of [0n, -0]) expect(bindgen.integerOrBigInt(value)).toBe(0);
+    for (const value of [2 ** 32 - 1, 2n ** 32n - 1n]) expect(bindgen.integerOrBigInt(value)).toBe(4294967295);
+    for (const value of [-1, 2 ** 32, 2n ** 32n, 2n ** 40n]) {
+      expect(() => bindgen.integerOrBigInt(value)).toThrow(
+        outOfRange(`value must be in the range [0, 4294967295] (received ${value})`),
       );
     }
+    for (const value of [-1n, 2n ** 70n]) {
+      expect(() => bindgen.integerOrBigInt(value)).toThrow(outOfRange("value must be in the range [0, 4294967295]"));
+    }
+    for (const value of [1.5, NaN, 2 ** 53]) {
+      expect(() => bindgen.integerOrBigInt(value)).toThrow(outOfRange(`value must be an integer (received ${value})`));
+    }
+    for (const value of ["5", true, null, undefined, {}, Object(5n)]) {
+      expect(() => bindgen.integerOrBigInt(value)).toThrow(notANumber("value"));
+    }
+  });
+
+  it(".allowBigInt is how a u64 above 2 ** 53 gets in", () => {
+    for (const value of [0, 0n, 2 ** 53 - 1, 2n ** 53n, 2n ** 64n - 1n]) {
+      expect(bindgen.wideIntegerOrBigInt(value)).toBe(String(value));
+    }
+    expect(() => bindgen.wideIntegerOrBigInt(2 ** 53)).toThrow(
+      outOfRange("value must be an integer (received 9007199254740992)"),
+    );
+    for (const value of [-1n, 2n ** 64n]) {
+      expect(() => bindgen.wideIntegerOrBigInt(value)).toThrow(
+        outOfRange("value must be in the range [0, 18446744073709551615]"),
+      );
+    }
+  });
+
+  it(".loose is ToNumber, which refuses a BigInt", () => {
+    for (const value of [80, "80", " 0x50 ", [80], { valueOf: () => 80 }, new Number(80)]) {
+      expect(bindgen.looseInteger(value)).toBe(80);
+    }
+    for (const value of [null, false, "", []]) expect(bindgen.looseInteger(value)).toBe(0);
+    for (const value of [80n, Object(80n), { valueOf: () => 80n }]) {
+      expect(() => bindgen.looseInteger(value)).toThrow(bigIntToNumber);
+    }
+    expect(() => bindgen.looseInteger(undefined)).toThrow(outOfRange("value must be an integer (received NaN)"));
+    expect(() => bindgen.looseInteger("65536")).toThrow(
+      outOfRange("value must be in the range [0, 65535] (received 65536)"),
+    );
+  });
+
+  it("a .loose.allowBigInt double is ToNumeric, and a BigInt is the double nearest to it", () => {
+    for (const value of [1.5, "1.5", [1.5], { valueOf: () => 1.5 }])
+      expect(bindgen.looseDoubleOrBigInt(value)).toBe(1.5);
+    for (const value of [undefined, {}, "x", NaN]) expect(bindgen.looseDoubleOrBigInt(value)).toBeNaN();
+    for (const value of [
+      0n,
+      5n,
+      -5n,
+      2n ** 31n,
+      2n ** 53n,
+      2n ** 53n + 1n,
+      2n ** 64n + 5n,
+      -(2n ** 70n),
+      10n ** 400n,
+    ]) {
+      expect(bindgen.looseDoubleOrBigInt(value)).toBe(Number(value));
+      expect(bindgen.looseDoubleOrBigInt(Object(value))).toBe(Number(value));
+      expect(bindgen.looseDoubleOrBigInt({ valueOf: () => value })).toBe(Number(value));
+    }
+    expect(() => bindgen.looseDoubleOrBigInt(Symbol())).toThrow(
+      expect.objectContaining({ name: "TypeError", message: "Cannot convert a symbol to a number" }),
+    );
+  });
+
+  it(".loose.allowBigInt is ToNumeric", () => {
+    for (const value of [80, "80", [80], { valueOf: () => 80 }, 80n, Object(80n), { valueOf: () => 80n }]) {
+      expect(bindgen.looseIntegerOrBigInt(value)).toBe(80);
+    }
+    for (const value of [65536n, { valueOf: () => 65536n }, "65536"]) {
+      expect(() => bindgen.looseIntegerOrBigInt(value)).toThrow(
+        outOfRange("value must be in the range [0, 65535] (received 65536)"),
+      );
+    }
+    expect(() => bindgen.looseIntegerOrBigInt(Symbol())).toThrow(
+      expect.objectContaining({ name: "TypeError", message: "Cannot convert a symbol to a number" }),
+    );
   });
 });
 
@@ -699,7 +802,6 @@ describe("overloads", () => {
     const cases: [unknown[], string][] = [
       [["ab"], "text times ab"],
       [["ab", 2], "text times abab"],
-      [["ab", 2n], "text times abab"],
       [["ab", undefined], "text times ab"],
       [["ab", true], "text upper AB"],
       [[new String("ab"), false], "text upper ab"],
@@ -724,6 +826,7 @@ describe("overloads", () => {
     expect(() => bindgen.overloaded({})).toThrow("text must be a string");
     expect(() => bindgen.overloaded(null, 1)).toThrow("text must be a string");
     expect(() => bindgen.overloaded("ab", "x")).toThrow("times must be a number");
+    expect(() => bindgen.overloaded("ab", 2n)).toThrow("times must be a number");
   });
 
   itAlways("a signature that cannot be chosen is an error in the schema", () => {

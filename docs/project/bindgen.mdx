@@ -63,13 +63,35 @@ which is otherwise the number of arguments up to the last that is not written
 the ones TypeScript lets a caller leave out.
 
 Nothing else is written by hand, except once per crate: `src/<crate>/generated_bindgen.rs`
-includes the generated file, and the crate root declares `mod generated_bindgen`. If the
-Rust signature does not match the schema, the generated code does not compile.
+includes the generated file, the crate root declares `mod generated_bindgen`, and a
+`build.rs` like `src/semver_jsc/build.rs` says where the generated file is, for a `cargo check`
+outside of `bun bd`. If the Rust signature does not match the schema, the generated code does
+not compile.
 
 To reach the function:
 
 - from `src/js`: `$bindgen("bindgen_test.bind.ts", "add")`, which is typed from the schema;
 - from a C++ static property table: `Bun::Bindgen::Generated::BindgenTest::jsAdd` in `GeneratedBindgenTest.h`.
+
+### Namespaces
+
+`b.namespace` is a plain object that holds functions, like `Bun.semver`. Each is written as
+the argument of `b.fn` is:
+
+```ts src/semver_jsc/SemverObject.bind.ts icon="/icons/typescript.svg"
+export const semver = b.namespace({
+  satisfies: {
+    args: { version: b.string.loose.utf8, range: b.string.loose.utf8 },
+    returns: b.bool,
+    throws: true,
+  },
+  order: { .. },
+});
+```
+
+`Bun::Bindgen::Generated::SemverObject::createSemver` makes the object. It has the signature of
+a `PropertyCallback` of a static property table, so the object is made when the property is
+first read.
 
 ### What a function may do: `capability`
 
@@ -93,7 +115,8 @@ takes one of those to run JavaScript has stepped around the check.
 
 `throws: true` makes the return type a `Result`. The error is a
 `bindgen::Error<'a>`, made by `heap.error(..)`, `heap.type_error(..)`,
-`heap.range_error(..)` or `bindgen::Error::from_value(value)`, or any type that
+`heap.range_error(..)`, `heap.error_with_code(ErrorCode::INVALID_ARG_TYPE, ..)` or
+`bindgen::Error::from_value(value)` (`?` makes one of a `JsError` or an `AllocError`), or any type that
 implements `bindgen::IntoError` (`bun_sys::Error`, `SystemError`, `JsError` and a `Box` of
 one do), which lets a `capability: "none"` function fail too.
 
@@ -134,7 +157,7 @@ an error when the schema is loaded.
 ## Types
 
 Conversions are strict unless the schema says otherwise: `b.i32` takes a number
-or BigInt that is an integer in range, and nothing else. A failed strict or
+that is an integer in range, and nothing else. A failed strict or
 `.validateInteger` conversion, or a `.loose` one of an integer, throws
 `ERR_INVALID_ARG_TYPE` or `ERR_OUT_OF_RANGE` naming the argument or the dictionary
 member; `.wrap`, `.enforceRange` and the other `.loose` conversions throw what WebIDL does. An argument that was not passed is `undefined` and is converted like
@@ -143,8 +166,8 @@ any other: nothing looks at how many there are.
 | Schema                                           | Rust, as an argument             | Takes                                                         |
 | ------------------------------------------------ | -------------------------------- | ------------------------------------------------------------- |
 | `b.bool`                                         | `bool`                           | a boolean; `.loose` is `ToBoolean`                            |
-| `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | a number or BigInt that is an integer in range; see below     |
-| `b.f64`                                          | `f64`                            | a number; `.loose` is `ToNumber`                              |
+| `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | a number that is an integer in range; see below               |
+| `b.f64`                                          | `f64`                            | a number; `.loose` is `ToNumber`; see below                   |
 | `b.string`                                       | `bun_core::String`               | a string; `.loose` is `ToString`                              |
 | `b.string.utf8`                                  | `&'a [u8]`                       | the same, and a `String` object                               |
 | `b.string.utf8.owned`                            | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
@@ -155,14 +178,16 @@ any other: nothing looks at how many there are.
 | `b.blob`                                         | `ExternalShared<Blob>`           | a `Blob`                                                      |
 | `b.any`                                          | `JsLocal<'a>`                    | anything                                                      |
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
-| `b.array(T)`                                     | `Vec<T>`                         | an array                                                      |
+| `b.array(T)`                                     | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
 | `b.dictionary(members)`                          | a generated `struct`             | an object that is not an array                                |
 | `b.union(alternatives)`                          | a generated `enum`               | see [Unions and kinds](#unions-and-kinds)                     |
 | `b.class(options)`                               | `JsWrapper<'a, T>`               | an instance                                                   |
 
 One JS type has one name; a modifier picks the Rust form. The last four are named
-types: each is called what it is exported as, and has to be exported.
+types: each is called what it is exported as, and has to be exported. It is used by
+schemas of the crate it is generated into. A member or an alternative also names a C++
+field, so one that is a C++ keyword is refused: a member takes a `rustName`.
 
 These come last, in this order (`b.any` already takes `undefined` and `null`, so only `.withValue` applies to it):
 
@@ -172,12 +197,18 @@ These come last, in this order (`b.any` already takes `undefined` and `null`, so
 - `.default(value)`: what to use when absent; `T`. `.nullable.default(value)` also applies to `null`.
 - `.withValue`, for arguments: see [Keeping the original value](#keeping-the-original-value). Not with `.default()`.
 
-As results, `b.string.utf8` is anything that is `AsRef<[u8]>` and `b.array(T)` anything
-that is `IntoIterator`.
+As results, `b.string.utf8` is anything that is `AsRef<[u8]>` and `b.array(T)` anything that
+is `IntoIterator`. The body of a `b.fn` or of a namespace's function whose bytes do not outlive
+it returns the string itself, from `heap.create_utf8_string(bytes)`.
 
-### Integers
+### Numbers
 
-- `.loose`: `ToNumeric` first, then as strict as the default.
+A BigInt is refused unless the schema says `.allowBigInt`, which is for an argument whose
+type is `number | bigint`. `b.f64.loose.allowBigInt` is `ToNumeric`, and a BigInt becomes the
+double nearest to it. On an integer:
+
+- `.allowBigInt`: a BigInt in the same range too. It is how a `b.u64` above 2<sup>53</sup> gets in. It goes with the strict conversion and with `.loose`; the others refuse a BigInt.
+- `.loose`: `ToNumber` first, or `ToNumeric` with `.allowBigInt`, then as strict as the default.
 - `.wrap`: the WebIDL conversion, `ToNumber` then wrap modulo the width.
 - `.enforceRange(min, max)`: WebIDL `[EnforceRange]`.
 - `.validateInteger(min, max)`: Node's `validateInteger`, with its exact errors. Use it when implementing Node.js APIs.
@@ -212,7 +243,9 @@ export const BracesOptions = b.dictionary({
 Each member is read, then converted, in declaration order, once. A member
 whose type does not accept `undefined` is required. A member can be written
 `{ type, rustName, altNames }` to rename its field or to accept other spellings.
-A dictionary whose members can all be absent implements `Default`.
+A dictionary whose members can all be absent implements `Default`. The thunk hands the struct
+over by value, so the body of one over 64 bytes needs
+`#[allow(clippy::large_types_passed_by_value)]`.
 
 A member is looked up on the object and its prototype chain, **stopping before
 the calling realm's `Object.prototype`**, so a polluted `Object.prototype` cannot
@@ -225,11 +258,11 @@ each one on it. An `.optional` member that is `None` is left out.
 
 The second argument of `b.dictionary` takes:
 
-| Key                | What it does                                                                                                                                                                             |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `allowArray`       | an array is read like any other object, not refused                                                                                                                                      |
-| `nonObjectAsEmpty` | a value whose `typeof` is not `"object"` gives every member its default, as in Node's `if (typeof options !== "object") options = null`; every member must be optional or have a default |
-| `fromJS`           | also generates `Name::from_js(global, value)`, for a `#[host_fn]` body; one that holds JS values is lent to a closure, `Name::from_js(global, value, \|converted\| ..)`                  |
+| Key                | What it does                                                                                                                                                                                                      |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `allowArray`       | an array is read like any other object, not refused                                                                                                                                                               |
+| `nonObjectAsEmpty` | a value that is not an object gives every member its default; with `"typeof"` so does a function, as in Node's `if (typeof options !== "object") options = null`; every member must be optional or have a default |
+| `fromJS`           | also generates `Name::from_js(global, value)`, for a `#[host_fn]` body; one that holds JS values is lent to a closure, `Name::from_js(global, value, \|converted\| ..)`                                           |
 
 ### Enumerations
 

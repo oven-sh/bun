@@ -2,6 +2,7 @@
 /// <reference types="../../build/types/ErrorCode.d.ts" />
 /// <reference types="../../build/types/ZigGeneratedClasses.d.ts" />
 /// <reference types="../../build/types/WebCoreJSBuiltins.d.ts" />
+/// <reference types="../../build/types/Bindgen.d.ts" />
 
 // Typedefs for JSC intrinsics. Instead of @, we use $
 type TODO = any;

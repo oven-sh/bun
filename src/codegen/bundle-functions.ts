@@ -17,7 +17,7 @@
 //   to refer to the private slot.
 // - Some magic macros (see replacements.ts) such as `$assert()` (which forcibly
 //   deletes the argument in a release build, unlike a define macro), and the
-//   magical `$cpp` and `$bindgenFn` bindgen stuff -- a story for another day.
+//   magical `$cpp` and `$bindgen` bindgen stuff -- a story for another day.
 //
 // Part of the transpilation process involves removing type annotations. And
 // that is done with Bun's bundler. But we need to construct an IIFE, and the

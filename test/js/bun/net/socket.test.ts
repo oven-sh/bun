@@ -2,6 +2,7 @@ import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair, setSocketOptions, socketFaultInjection } from "bun:internal-for-testing";
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test";
+import { generateKeyPairSync } from "crypto";
 import { closeSync, fstatSync, readFileSync } from "fs";
 import {
   bunEnv,
@@ -6545,4 +6546,77 @@ describe.concurrent("Bun.listen() with tls.secureContext and the client certific
       expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
     );
   });
+});
+
+it("socket and tls options are not read from Object.prototype", async () => {
+  const polluted: Record<string, unknown> = {
+    port: 1,
+    hostname: "256.256.256.256",
+    unix: "/nonexistent/socket",
+    tls: true,
+    passphrase: 5,
+    ca: 5,
+  };
+  Object.assign(Object.prototype, polluted);
+  try {
+    expect(() => Bun.listen({ socket: { data() {} } } as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: 'Expected either "hostname" or "unix"' }),
+    );
+    using server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    expect(server.port).toBeGreaterThan(1);
+    expect(server.hostname).toBe("127.0.0.1");
+    using secure = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { ...tls } });
+    expect(secure.port).toBeGreaterThan(1);
+  } finally {
+    for (const name of Object.keys(polluted)) delete (Object.prototype as any)[name];
+  }
+});
+
+it("a view of part of a buffer as a tls option is read as the view", () => {
+  const { privateKey: otherKey } = generateKeyPairSync("ec", {
+    namedCurve: "P-256",
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" },
+  });
+  const listen = (key: unknown) =>
+    Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { key, cert: tls.cert } as any });
+  // OpenSSL reads the first key it finds, which does not go with the certificate.
+  const both = Buffer.concat([Buffer.from(otherKey), Buffer.from(tls.key)]);
+  expect(() => listen(both)).toThrow("KEY_TYPE_MISMATCH");
+  const [offset, length] = [both.byteOffset + Buffer.byteLength(otherKey), Buffer.byteLength(tls.key)];
+  for (const view of [
+    both.subarray(Buffer.byteLength(otherKey)),
+    new Uint8Array(both.buffer, offset, length),
+    new DataView(both.buffer, offset, length),
+  ]) {
+    for (const key of [view, [view]]) {
+      using listener = listen(key);
+      expect(listener.port).toBeGreaterThan(0);
+    }
+  }
+});
+
+it("Array.prototype as a tls option is none of the types one takes", () => {
+  for (const name of ["key", "cert", "ca", "crl"]) {
+    expect(() =>
+      Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { [name]: Array.prototype } as any }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `TLSOptions.${name} must be of type string, ArrayBuffer, Blob, array of <string, ArrayBuffer, or Blob>, or null`,
+      }),
+    );
+  }
+});
+
+it("a view of shared memory as a tls option is refused", () => {
+  const shared = new SharedArrayBuffer(8);
+  const values = [shared, new Uint8Array(shared), new DataView(shared), Buffer.from(shared), [new Uint8Array(shared)]];
+  for (const name of ["key", "cert", "ca", "crl", "ALPNProtocols"]) {
+    for (const value of values) {
+      expect(() =>
+        Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { [name]: value } as any }),
+      ).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }));
+    }
+  }
 });

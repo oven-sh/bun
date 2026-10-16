@@ -5667,6 +5667,22 @@ pub(crate) extern "C" fn Blob__getDataPtr(value: JSValue) -> *mut c_void {
     data.as_ptr().cast_mut().cast::<c_void>()
 }
 
+/// False, and nothing written, for a `Blob` whose bytes are in a file.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Blob__getInMemoryBytes(
+    this: &Blob,
+    data: &mut *const u8,
+    length: &mut usize,
+) -> bool {
+    if this.needs_to_read_file() {
+        return false;
+    }
+    let bytes = this.shared_view();
+    *data = bytes.as_ptr();
+    *length = bytes.len();
+    true
+}
+
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__getSize(value: JSValue) -> usize {
     let Some(blob) = Blob::from_js(value) else {

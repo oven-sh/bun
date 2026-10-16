@@ -202,9 +202,13 @@ export abstract class Type {
   get holdsJSValue(): boolean {
     return this.dependencies.some(type => type.holdsJSValue);
   }
-  /** Points into memory JavaScript can detach, resize or free: not for a function that can run it. */
+  /** Points into memory JavaScript can detach, resize or free, so it is read once everything is converted: only for an argument. */
   get borrowsHeap(): boolean {
     return this.dependencies.some(type => type.borrowsHeap);
+  }
+  /** What it borrows from the heap is a copy where the function can run JavaScript. Otherwise it is not for such a function. */
+  get copiesWhereJavaScriptRuns(): boolean {
+    return this.dependencies.some(type => type.copiesWhereJavaScriptRuns);
   }
   /** Points into the C++ host function's frame: only usable for the duration of a host call. */
   get borrowsFrame(): boolean {
@@ -239,6 +243,18 @@ export abstract class Type {
   /** A C++ expression that converts `value`. `ctx` is a conversion context, `name` what to call the value. */
   cppConvert(value: string, ctx: string, name: string): string {
     return `Bun::convertIDL<${this.idlType}>(*globalObject, ${value}, ${ctx})`;
+  }
+  /** C++ lines that read into `target`, which was converted from `value`, what `borrowsHeap` is about, after every argument is converted. */
+  cppReadLast(
+    target: string,
+    value: string,
+    ctx: string,
+    name: string,
+    at: { isLast: boolean; capability: Capability },
+  ): string[] {
+    // Nothing ran since it was converted.
+    if (!this.borrowsHeap || at.isLast) return [];
+    return [`${target} = ${this.cppConvert(value, ctx, name)};`, `scope.assertNoException();`];
   }
   /** Large, or holds something large: built where it ends up, not returned and moved there. */
   get convertsInPlace(): boolean {
@@ -407,8 +423,30 @@ export class IntegerType extends PrimitiveType {
     this.#refusesBigInt(".validateInteger()");
     return new RangeType(this.info, min, max, "validateInteger");
   }
+  /** As a result: a BigInt, which holds every `u64`. */
+  get asBigInt(): BigIntResultType {
+    assert(this.info.rust === "u64" && this.#conversion === "Strict" && !this.#allowBigInt, ".asBigInt follows b.u64");
+    return new BigIntResultType();
+  }
   #refusesBigInt(modifier: string): void {
     assert(!this.#allowBigInt, `${modifier} refuses a BigInt, which .allowBigInt asked for`);
+  }
+}
+
+export class BigIntResultType extends Type {
+  readonly idlType = "";
+  readonly tsType = "bigint";
+  layout(): Layout {
+    return { size: 8, align: 8 };
+  }
+  rustExternType(): string {
+    return "u64";
+  }
+  rustType(): string {
+    return "u64";
+  }
+  rustToJS(value: string): string {
+    return `bindgen::to_js::u64_as_bigint(heap, ${value})`;
   }
 }
 
@@ -646,7 +684,7 @@ export class Utf8Type extends Type {
   }
 }
 
-const bufferSourceKinds: ValueKinds = ["arrayBuffer", "arrayBufferView"];
+const bufferSourceKinds: readonly ValueKind[] = ["arrayBuffer", "arrayBufferView"];
 const sharedBuffers = "shared buffers";
 
 /** The bytes of a typed array, `DataView` or `ArrayBuffer`, as `&[u8]`. */
@@ -689,6 +727,73 @@ export class PossiblySharedBytesType extends BytesType {
   }
   rustFromExtern(expr: string): string {
     return `${expr}.get_possibly_shared(heap)`;
+  }
+}
+
+/**
+ * A string, as UTF-8, or the bytes of a typed array, `DataView`, `ArrayBuffer` or `SharedArrayBuffer`: `&[u8]` that nothing
+ * changes during the call. What something could change is a copy: a shared buffer, and any buffer where JavaScript can run.
+ */
+export class StringOrBufferType extends Type {
+  readonly isLoose: boolean;
+  readonly takesBlob: boolean;
+  constructor(isLoose = false, takesBlob = false) {
+    super();
+    this.isLoose = isLoose;
+    this.takesBlob = takesBlob;
+  }
+  /** `ToString` of anything else. */
+  get loose(): StringOrBufferType {
+    return new StringOrBufferType(true, this.takesBlob);
+  }
+  /** Also the bytes of a `Blob`. One whose bytes are in a file throws. */
+  get orBlob(): StringOrBufferType {
+    return new StringOrBufferType(this.isLoose, true);
+  }
+  get idlType(): string {
+    return `Bun::Bindgen::IDL${this.isLoose ? "Loose" : "Strict"}StringOrBuffer<Bun::Bindgen::AllowBlob::${this.takesBlob ? "Yes" : "No"}>`;
+  }
+  get tsType(): string {
+    return `string | ArrayBuffer | SharedArrayBuffer | ArrayBufferView${this.takesBlob ? " | Blob" : ""}`;
+  }
+  get valueKinds(): ValueKinds {
+    if (this.isLoose) return "any";
+    const kinds: ValueKind[] = ["string", "stringObject", ...bufferSourceKinds];
+    return this.takesBlob ? [...kinds, { cpp: "WebCore::JSBlob" }] : kinds;
+  }
+  get borrowsFrame(): boolean {
+    return true;
+  }
+  get borrowsHeap(): boolean {
+    return true;
+  }
+  get copiesWhereJavaScriptRuns(): boolean {
+    return true;
+  }
+  get convertsInPlace(): boolean {
+    return true;
+  }
+  cppConvertInto(target: string, value: string, ctx: string): string {
+    return `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target});`;
+  }
+  cppReadLast(target: string, value: string, ctx: string, name: string, at: { capability: Capability }): string[] {
+    const copyBuffers = at.capability === "js" ? "Always" : "IfShared";
+    return [
+      `${target}.read<Bun::Bindgen::CopyBuffers::${copyBuffers}>(*globalObject, ${value});`,
+      `RETURN_IF_EXCEPTION(scope, {});`,
+    ];
+  }
+  layout(): Layout {
+    return { size: 16, align: 8 };
+  }
+  rustExternType(): string {
+    return "bindgen::extern_types::ExternBytes";
+  }
+  rustType(): string {
+    return "&'a [u8]";
+  }
+  rustFromExtern(expr: string): string {
+    return `${expr}.get(heap)`;
   }
 }
 
@@ -778,6 +883,9 @@ export class WithValueType extends Type {
   }
   cppConvert(value: string, ctx: string, name: string): string {
     return this.inner.cppConvert(value, ctx, name);
+  }
+  cppReadLast(...args: Parameters<Type["cppReadLast"]>): string[] {
+    return this.inner.cppReadLast(...args);
   }
   layout(): Layout {
     return structLayout([this.inner.layout(), { size: 8, align: 8 }]);
@@ -896,6 +1004,7 @@ export class OptionalType extends Type {
     assert(!(inner instanceof WithValueType), "put .withValue last");
     assert(!inner.takesUndefined, `${inner.tsType} already takes undefined`);
     assert(!(inner instanceof PossiblySharedBytesType), ".allowShared is for an argument that is always there");
+    assert(!(inner instanceof StringOrBufferType), "b.stringOrBuffer is for an argument that is always there");
     this.inner = inner;
     this.modifier = modifier;
   }
@@ -1079,7 +1188,7 @@ export class ArrayType extends Type {
     assert(!(element instanceof WithValueType), ".withValue is only for an argument");
     assert(
       !element.borrowsHeap,
-      "b.bufferSource.bytes is only for an argument: it is read after everything else is converted",
+      "the bytes of a buffer are only for an argument: they are read after everything else is converted",
     );
     assert(!(element instanceof UnitType), "an array of nothing but null");
     assert(
@@ -1292,7 +1401,7 @@ export class DictionaryType extends NamedType {
     );
     assert(
       !this.borrowsHeap,
-      "b.bufferSource.bytes is only for an argument: it is read after everything else is converted",
+      "the bytes of a buffer are only for an argument: they are read after everything else is converted",
     );
     assert(
       !this.fromJS || !this.borrowsFrame,
@@ -1387,7 +1496,7 @@ export class UnionType extends NamedType {
     );
     assert(
       !this.borrowsHeap,
-      "b.bufferSource.bytes is only for an argument: it is read after everything else is converted",
+      "the bytes of a buffer are only for an argument: they are read after everything else is converted",
     );
     for (const { name, type } of this.alternatives) {
       assert(!(type instanceof UnionType), `${name}: list the alternatives of the other union here`);
@@ -1506,8 +1615,9 @@ export class Signature {
       `length: ${this.length} is not a count`,
     );
     for (const { name, type } of this.args) {
+      assert(!(type instanceof BigIntResultType), `${name}: .asBigInt is a result; an argument is b.u64.allowBigInt`);
       assert(
-        !type.borrowsHeap || this.capability !== "js",
+        !type.borrowsHeap || type.copiesWhereJavaScriptRuns || this.capability !== "js",
         type instanceof PossiblySharedBytesType
           ? `${name}: JavaScript can detach a buffer; .allowShared is for a function that cannot run it`
           : `${name}: JavaScript can detach a buffer; take b.bufferSource without .bytes and use with_bytes`,
@@ -1802,11 +1912,17 @@ export class ClassType extends NamedType {
   }
 }
 
+export interface NamespaceOptions {
+  /** The object is itself a function, named as the namespace is, that does what this one of its functions does. */
+  call?: string;
+}
+
 /** A plain object whose properties are native functions, as WebIDL's `namespace`. */
 export class NamespaceDefinition {
   readonly functions: readonly FunctionDefinition[];
+  readonly call: FunctionDefinition | undefined;
   name = "";
-  constructor(functions: Record<string, SignatureOptions>) {
+  constructor(functions: Record<string, SignatureOptions>, options: NamespaceOptions = {}) {
     this.functions = Object.entries(functions).map(([name, options]) => {
       assert(/^[A-Za-z_$][\w$]*$/.test(name), `${name}: a function is named by an identifier`);
       assert(!(options instanceof FunctionDefinition), `${name}: write what b.fn takes, without b.fn`);
@@ -1815,6 +1931,8 @@ export class NamespaceDefinition {
       return fn;
     });
     assert(this.functions.length > 0, "a namespace with no functions");
+    this.call = this.functions.find(fn => fn.name === options.call);
+    assert(options.call === undefined || this.call, `call: ${options.call} is not one of its functions`);
   }
 }
 

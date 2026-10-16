@@ -7,6 +7,7 @@
 #include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/RefPtr.h>
+#include "Bindgen/JSStringOrBufferView.h"
 #include "Bindgen/JSStringUTF8View.h"
 
 namespace Bun::Bindgen {
@@ -115,6 +116,16 @@ template<> struct ExternTraits<JSStringUTF8View> {
 
     // The storage stays with `cppValue`, which outlives the call this is an argument of.
     static ExternType convertToExtern(JSStringUTF8View&& cppValue)
+    {
+        return ExternTraits<std::span<const uint8_t>>::convertToExtern(cppValue.bytes());
+    }
+};
+
+template<> struct ExternTraits<JSStringOrBufferView> {
+    using ExternType = ExternBytes;
+
+    // As for JSStringUTF8View.
+    static ExternType convertToExtern(JSStringOrBufferView&& cppValue)
     {
         return ExternTraits<std::span<const uint8_t>>::convertToExtern(cppValue.bytes());
     }

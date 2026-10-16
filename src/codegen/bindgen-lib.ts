@@ -16,8 +16,10 @@ import {
   type MemberOptions,
   ModuleDefinition,
   NamespaceDefinition,
+  type NamespaceOptions,
   RefType,
   type SignatureOptions,
+  StringOrBufferType,
   StringType,
   type Type,
   UnionType,
@@ -30,7 +32,7 @@ export { null_ as null };
 /** Strict: only a boolean. `.loose` for `ToBoolean`. */
 export const bool = new BoolType();
 
-/** Strict: a number that is an integer in range. `.allowBigInt`, `.loose`, `.wrap`, `.enforceRange()`, `.validateInteger()`. */
+/** Strict: a number that is an integer in range. `.allowBigInt`, `.loose`, `.wrap`, `.enforceRange()`, `.validateInteger()`. As a result, `b.u64.asBigInt`. */
 export const { u8, u16, i32, u32, u64, usize } = integers;
 
 /** Strict: only a number. `.loose` for `ToNumber`, then `.allowBigInt`. */
@@ -44,6 +46,9 @@ export const any = new AnyType();
 
 /** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.bytes`, `.arrayBuffer`. */
 export const bufferSource = new BufferSourceType();
+
+/** A string as UTF-8, or the bytes of a buffer, shared or not, as `&[u8]` that nothing changes during the call. `.orBlob`, `.loose`. */
+export const stringOrBuffer = new StringOrBufferType();
 
 /** The native `Blob` behind a JS `Blob`. */
 export const blob = new RefType(
@@ -83,7 +88,8 @@ export const fn = (signature: SignatureOptions) => new FunctionDefinition([signa
 export const overloads = (...signatures: SignatureOptions[]) => new FunctionDefinition(signatures);
 
 /** `export const semver = b.namespace({ satisfies: { args, returns }, .. })`: an object that holds those functions. */
-export const namespace = (functions: Record<string, SignatureOptions>) => new NamespaceDefinition(functions);
+export const namespace = (functions: Record<string, SignatureOptions>, options?: NamespaceOptions) =>
+  new NamespaceDefinition(functions, options);
 
 /** `export default b.module({ rustPath: "crate::node::os" })`: where the file's Rust functions are. */
 export const module = (options: { rustPath: string }) => new ModuleDefinition(options);

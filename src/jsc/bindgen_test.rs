@@ -225,6 +225,48 @@ pub(crate) fn sum_before_and_after_callback<'a>(
     Ok([before, buffer.with_bytes(&cx.heap, sum)])
 }
 
+pub(crate) fn bytes_of(data: &[u8]) -> Vec<u8> {
+    data.to_vec()
+}
+
+pub(crate) use bytes_of as bytes_of_loose;
+pub(crate) use bytes_of as bytes_of_loose_or_blob;
+pub(crate) use bytes_of as bytes_of_or_blob;
+
+pub(crate) fn bytes_of_then(data: &[u8], _: f64) -> Vec<u8> {
+    data.to_vec()
+}
+
+pub(crate) fn bytes_of_after_callback<'a>(
+    cx: &mut JsScope<'a>,
+    data: &'a [u8],
+    callback: JsLocal<'a>,
+) -> bindgen::Result<'a, Vec<u8>> {
+    let Some(callback) = callback.as_callable() else {
+        return Err(cx
+            .heap
+            .type_error(format_args!("callback must be a function")));
+    };
+    callback.call(cx, JsLocal::UNDEFINED, &[])?;
+    Ok(data.to_vec())
+}
+
+pub(crate) fn bytes_of_are_same_memory(data: &[u8], again: &[u8]) -> bool {
+    core::ptr::eq(data, again)
+}
+
+pub(crate) fn bytes_of_are_same_memory_where_java_script_runs(
+    _: &mut JsScope<'_>,
+    data: &[u8],
+    again: &[u8],
+) -> bool {
+    core::ptr::eq(data, again)
+}
+
+pub(crate) fn as_big_int(_: &JsHeap<'_>, value: u64) -> u64 {
+    value
+}
+
 pub(crate) fn with_value_echo<'a>(_: &JsHeap<'a>, text: WithValue<'a, &'a [u8]>) -> JsLocal<'a> {
     if text.converted.is_empty() {
         return JsLocal::UNDEFINED;

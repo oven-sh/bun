@@ -408,7 +408,11 @@ namespace Bun::Bindgen::Generated::${origin.namespace} {
 ${cppNamespaceSignature(namespace)}
 {
     JSC::JSGlobalObject* globalObject = owner->globalObject();
-    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min<unsigned>(${namespace.functions.length}, JSC::JSFinalObject::maxInlineCapacity));
+    JSC::JSObject* object = ${
+      namespace.call
+        ? `JSC::JSFunction::create(vm, globalObject, ${namespace.call.length}, ${asciiLiteral(namespace.name)}, ${hostFunctionName(namespace.call)}, JSC::ImplementationVisibility::Public)`
+        : `JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min<unsigned>(${namespace.functions.length}, JSC::JSFinalObject::maxInlineCapacity))`
+    };
 ${namespace.functions
   .map(
     fn =>
@@ -543,20 +547,21 @@ function cppDeclareConverted(type: Type, variable: string, value: string, ctx: s
 /** Converts the arguments, then returns what `symbol(globalObject, ...leading, ...converted)` returns. */
 function cppCallBody(signature: Signature, symbol: string, leading: readonly string[] = []): string {
   const lines: string[] = [];
-  const rereads: string[] = [];
+  // Converting a later argument can run JavaScript that detaches or resizes a buffer.
+  const readLast: string[] = [];
   signature.args.forEach(({ name, type }, i) => {
     lines.push(`JSC::EnsureStillAliveScope argument${i} = callFrame->argument(${i});`);
     lines.push(`[[maybe_unused]] auto ctx${i} = Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(name)} };`);
-    // Converting a later argument can run JavaScript that detaches or resizes the buffer.
-    if (type.borrowsHeap && i < signature.args.length - 1)
-      rereads.push(
-        `converted${i} = ${type.cppConvert(`argument${i}.value()`, `ctx${i}`, name)};`,
-        `scope.assertNoException();`,
-      );
+    readLast.push(
+      ...type.cppReadLast(`converted${i}`, `argument${i}.value()`, `ctx${i}`, name, {
+        isLast: i === signature.args.length - 1,
+        capability: signature.capability,
+      }),
+    );
     lines.push(...cppDeclareConverted(type, `converted${i}`, `argument${i}.value()`, `ctx${i}`, name));
     if (type.conversionThrows) lines.push(`RETURN_IF_EXCEPTION(scope, {});`);
   });
-  lines.push(...rereads);
+  lines.push(...readLast);
   const args = signature.args.map(({ type }, i) => {
     return type instanceof WithValueType
       ? `${externType(type)} { ${toExtern(`converted${i}`)}, JSC::JSValue::encode(argument${i}.value()) }`

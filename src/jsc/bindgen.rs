@@ -565,6 +565,11 @@ pub mod to_js {
         f64: f64 => |n| JSValue::js_number(JSValue::purify_nan(n));
     }
 
+    #[inline]
+    pub fn u64_as_bigint<'a>(heap: &JsHeap<'a>, value: u64) -> Result<'a, JsLocal<'a>> {
+        JsLocal::from_js_result(JSValue::from_uint64_no_truncate(heap.global(), value))
+    }
+
     #[inline(always)]
     pub fn undefined<'a>(_: &JsHeap<'a>, (): ()) -> Result<'a, JsLocal<'a>> {
         Ok(JsLocal::UNDEFINED)

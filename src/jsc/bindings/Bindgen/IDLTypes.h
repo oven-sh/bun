@@ -1,4 +1,5 @@
 #pragma once
+#include "Bindgen/JSStringOrBufferView.h"
 #include "Bindgen/JSStringUTF8View.h"
 // WebCore's. In quotes it would be this file.
 #include <IDLTypes.h>
@@ -98,6 +99,20 @@ struct IDLStrictUTF8String : WebCore::IDLType<JSStringUTF8View> {
 struct IDLLooseUTF8String : IDLStrictUTF8String {};
 // The values IDLStrictUTF8String takes, as the WTF::String.
 struct IDLStrictStringOrStringObject : WebCore::IDLDOMString {};
+
+enum class AllowBlob : bool {
+    No,
+    Yes,
+};
+
+// What IDLStrictUTF8String takes, as UTF-8, or the bytes of a BufferSource, shared or not.
+template<AllowBlob = AllowBlob::No>
+struct IDLStrictStringOrBuffer : WebCore::IDLType<JSStringOrBufferView> {
+    using SequenceStorageType = void;
+};
+// `ToString` of anything else.
+template<AllowBlob allowBlob = AllowBlob::No>
+struct IDLLooseStringOrBuffer : IDLStrictStringOrBuffer<allowBlob> {};
 
 // The bytes of a BufferSource that is not shared. Valid while the argument is alive and no JavaScript runs.
 struct IDLBufferSourceBytes : WebCore::IDLType<std::span<const uint8_t>> {

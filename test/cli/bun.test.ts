@@ -574,6 +574,7 @@ describe("bun", () => {
         fileInInterpreterPath: { first: ["#!/dev/null/sh\n", 0o755], second: stub },
         notExecutable: { first: ["not executable\n", 0o644], second: stub },
         noExecFormat: { first: ["not a program\n", 0o755], second: stub },
+        refusedOnly: { first: "directory" },
         nowhere: {},
       };
       const results = Object.entries(cases).map(async ([name, openers]) => [name, await open(openers)]);
@@ -589,6 +590,8 @@ describe("bun", () => {
         notExecutable: ran,
         // ENOEXEC: exec found the program and cannot run it. The search stops there, as in posix_spawnp.
         noExecFormat: didNotRun,
+        // exec refuses the only candidate.
+        refusedOnly: didNotRun,
         nowhere: didNotRun,
       });
     });

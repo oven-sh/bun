@@ -162,6 +162,17 @@ static NODE_PATH_TO_USE_SET_ONCE: bun_core::RwLock<Option<Box<[u8]>>> = bun_core
 // PORTING.md §Concurrency: OnceLock — set once from CLI flag, read many.
 pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
 
+static DEFAULT_FILES_EXCLUDED: AtomicBool = AtomicBool::new(false);
+
+/// From here on no `Loader` of this process reads a default `.env` file, whatever its caller asks.
+pub fn exclude_default_files() {
+    DEFAULT_FILES_EXCLUDED.store(true, Ordering::SeqCst);
+}
+
+fn default_files_excluded() -> bool {
+    DEFAULT_FILES_EXCLUDED.load(Ordering::SeqCst)
+}
+
 impl Loader {
     /// Shared "empty-ish" predicate for proxy env vars: an unset/empty value,
     /// or a literal empty-quote pair left over from shell `export FOO=""` /
@@ -614,7 +625,7 @@ impl Loader {
             //
             // See https://github.com/oven-sh/bun/issues/9635#issuecomment-2021350123
             // for more details on how this edge case works.
-            if !skip_default_env {
+            if !skip_default_env && !default_files_excluded() {
                 self.load_default_files(suffix, dir, &mut value_buffer)?;
             }
         }

@@ -42,6 +42,29 @@ describe("bundler", () => {
     },
   });
 
+  // An executable that does not load .env files does not load them for its own Bun.build() either
+  itBundled("compile/AutoloadDotenvDisabledBunBuild", {
+    compile: {
+      autoloadDotenv: false,
+    },
+    files: {
+      "/entry.ts": /* js */ `
+        const result = await Bun.build({ entrypoints: ["./client.js"], env: "inline" });
+        const text = await result.outputs[0].text();
+        console.log(text.includes("from_dotenv") ? "inlined from .env" : "not inlined");
+        console.log(process.env.TEST_VAR || "not found");
+      `,
+    },
+    runtimeFiles: {
+      "/.env": `TEST_VAR=from_dotenv`,
+      "/client.js": `console.log(process.env.TEST_VAR);`,
+    },
+    run: {
+      stdout: "not inlined\nnot found",
+      setCwd: true,
+    },
+  });
+
   // Test that .env files can be explicitly enabled with autoloadDotenv: true
   itBundled("compile/AutoloadDotenvEnabledExplicitly", {
     compile: {

@@ -642,6 +642,11 @@ impl<'a> Transpiler<'a> {
         // for the duration of this call.
         let env: &mut dot_env::Loader = self.env_mut();
 
+        // A `Bun.build`, a macro VM and the dev server run this with default options: the options of the process decide.
+        if !self.options.env.loads_default_files() {
+            dot_env::exclude_default_files();
+        }
+
         match self.options.env.behavior {
             DotEnvBehavior::prefix
             | DotEnvBehavior::load_all

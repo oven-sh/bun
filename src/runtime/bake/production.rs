@@ -409,8 +409,14 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // this is probably wrong
     // Note: process-lifetime dotenv singleton owned via `OnceLock`
     // (PORTING.md §Forbidden: no leaking).
+    // With the default files excluded, nothing fills this loader: it starts as what the command read, `--env-file` included.
+    let app_env = if vm.transpiler.options.env.loads_default_files() {
+        dotenv::Loader::init()
+    } else {
+        vm.transpiler.env().clone_for_worker()?
+    };
     let backing = DOTENV_SINGLETON.get_or_init(|| DotenvSingleton {
-        loader: UnsafeCell::new(dotenv::Loader::init()),
+        loader: UnsafeCell::new(app_env),
     });
     // SAFETY: single-threaded CLI init; `get_or_init` guarantees one-time
     // setup and `backing` is never moved (static storage).

@@ -2133,6 +2133,13 @@ impl Default for Env {
     }
 }
 
+impl Env {
+    /// No `--no-env-file` or bunfig `env = false`, and no `--env-file`, which replaces the default files.
+    pub fn loads_default_files(&self) -> bool {
+        !self.disable_default_env_files && self.files.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct PathTemplate {
     pub data: Box<[u8]>,

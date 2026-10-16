@@ -106,6 +106,8 @@ env = false
 
 Files passed with `--env-file` still load even when default loading is disabled.
 
+The setting applies to the whole process. [`Bun.build()`](/bundler) and its [macros](/bundler/macros), [HTML routes](/bundler/fullstack), and [`Worker`](/runtime/workers) threads also get no value from a default `.env` file.
+
 When invoked as `node` (for example via `bun --bun`, `bunx --bun`, or a `node` symlink pointing at Bun), Bun disables automatic `.env` loading to match Node.js. This lets tools with their own mode-aware `.env` resolution, such as Vite's `loadEnv`, pick the correct `.env.{mode}` file instead of seeing Bun's pre-populated values as shell-set overrides. Bun still honors explicit `--env-file` arguments.
 
 ---

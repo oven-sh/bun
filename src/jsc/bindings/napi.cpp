@@ -85,8 +85,7 @@
 using namespace JSC;
 using namespace Zig;
 
-// Node's NAPI_PREAMBLE entry check (NapiEnv::entryStatus, which see): the status of an exception the addon can
-// read, else of the closed can_call_into_js() gate, read off the VM without servicing its traps.
+// Node's NAPI_PREAMBLE entry check: NapiEnv::entryStatus.
 #define NAPI_RETURN_ENTRY_STATUS_WITH_SCOPE(_env, _scope)                  \
     do {                                                                   \
         if (napi_status napi_entry_status__ = (_env)->entryStatus(_scope); \
@@ -119,8 +118,7 @@ using namespace Zig;
         NAPI_CHECK_ARG(_env, _env);        \
     } while (0)
 
-// NAPI_PREAMBLE_NO_THROW_SCOPE plus the entry check, for a function Node opens with NAPI_PREAMBLE. The scope it
-// reads the VM through is closed again before the function opens its own.
+// NAPI_PREAMBLE_NO_THROW_SCOPE plus the entry check, for a function Node opens with NAPI_PREAMBLE.
 #define NAPI_PREAMBLE_NO_THROW_SCOPE_GATED(_env)                                      \
     do {                                                                              \
         NAPI_PREAMBLE_NO_THROW_SCOPE(_env);                                           \
@@ -131,8 +129,7 @@ using namespace Zig;
 // What the value constructors/accessors Node gates with CHECK_ENV only run under (NAPI_PREAMBLE_NO_PENDING_CHECK
 // here, `ungated!` in napi_body.rs): callable with an exception pending (stashed for the call; only then, since the
 // restore is unconditional) and never where a worker.terminate() / node:vm timeout is delivered (DeferTraps: the
-// next JSC exception check after the call delivers it, as in Node; a gated call's entry check is not one either,
-// see NapiEnv::entryStatus). No JS or addon code may run under it.
+// next JSC exception check after the call delivers it, as in Node). No JS or addon code may run under it.
 struct NapiUngatedScope {
     explicit NapiUngatedScope(JSC::VM& vm)
         : deferTraps(vm)
@@ -1369,8 +1366,7 @@ extern "C" napi_status napi_is_exception_pending(napi_env env, bool* result)
             auto& vm = JSC::getVM(globalObject);
             // Use a catch scope instead of throw scope for safety during cleanup
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            // A pending termination is the VM's stop, not an exception the addon can read or clear
-            // (see NapiEnv::entryStatus); Node's readers only ever see what a script threw.
+            // A pending termination is not an exception the addon can read (NapiEnv::entryStatus).
             auto* exception = scope.exception();
             *result = exception && !vm.isTerminationException(exception);
         }
@@ -1393,7 +1389,7 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* exception = scope.exception();
-    // A pending termination stays where it is (tryClearException below refuses it too) and is not handed out.
+    // A pending termination is not handed out (NapiEnv::entryStatus); tryClearException leaves it too.
     if (exception && !vm.isTerminationException(exception)) [[unlikely]] {
         *result = toNapi(JSValue(exception->value()), globalObject);
     } else if (std::optional<JSValue> pending = env->pendingException()) {

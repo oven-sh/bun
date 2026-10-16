@@ -186,10 +186,8 @@ impl NapiEnv {
         unsafe { NapiEnv__setCompletingForStoppedContext(self.as_mut_ptr(), previous) };
     }
 
-    /// Node's `NAPI_PREAMBLE` entry check (napi.h `NapiEnv::entryStatus`): `napi_pending_exception` for an
-    /// exception the addon can read, then the `can_call_into_js()` gate. Reads the VM without servicing its
-    /// traps, so a termination another thread requested is never delivered inside the addon's frame.
-    /// `Err` is the status Node returns, set as the last error.
+    /// Node's `NAPI_PREAMBLE` entry check (napi.h `NapiEnv::entryStatus`). `Err` is the status Node
+    /// returns, set as the last error.
     pub(crate) fn entry_status(&self) -> Result<(), napi_status> {
         // SAFETY: env is non-null; C++ side is read-only here.
         let status = unsafe { NapiEnv__entryStatus(self.as_mut_ptr()) };

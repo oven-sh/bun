@@ -795,8 +795,6 @@ pub mod ntdll {
 }
 pub use ntdll::NtClose;
 
-/// `user32` namespace (subset placeholder; fill in as needed).
-pub mod user32 {}
 /// `advapi32` namespace (subset placeholder; fill in as needed).
 pub mod advapi32 {}
 

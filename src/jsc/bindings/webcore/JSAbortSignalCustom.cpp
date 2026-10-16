@@ -46,8 +46,24 @@ bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
             return true;
         }
 
+        // Before a Request had its own signal, a listener on `request.signal` was a listener on the
+        // signal the Request was handed, and went away with it. So the Request's own signal is kept
+        // for its observers (abort listeners and abort algorithms) only while a source can still
+        // abort: its AbortController is reachable (JSAbortController adds the signal as an opaque
+        // root), its timeout is armed, or native code holds pending activity on it. This runs on GC
+        // marker threads, so it must not prune the set (isEmptyIgnoringNullReferences() would).
+        if (abortSignal.isOwnedByRequest() && abortSignal.hasTimeoutObserver()) {
+            for (auto& source : std::as_const(abortSignal).sourceSignals()) {
+                if (source.hasActiveTimeoutTimer() || source.hasPendingActivity() || visitor.containsOpaqueRoot(&source)) {
+                    if (reason) [[unlikely]]
+                        *reason = "Has Source Signal That Can Abort And Abort Observer"_s;
+                    return true;
+                }
+            }
+        }
+
         if (abortSignal.hasAbortEventListener()) {
-            if (abortSignal.isDependent()) {
+            if (abortSignal.isDependent() && !abortSignal.isOwnedByRequest()) {
                 // This runs on GC marker threads, so it must not mutate the signal:
                 // sourceSignals().isEmptyIgnoringNullReferences() prunes dead entries.
                 if (abortSignal.hasAliveSourceSignals()) {

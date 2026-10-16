@@ -11,6 +11,7 @@ import {
   tempDirWithFiles,
   tls,
 } from "harness";
+import net from "node:net";
 import path from "path";
 
 describe.concurrent("Server", () => {
@@ -3860,4 +3861,136 @@ describe.concurrent("handler GC tracing (heapStats wrapper-count)", () => {
       exitCode: 0,
     });
   }, 30_000);
+});
+
+describe.concurrent("a Request derived from a Bun.serve request", () => {
+  const closed = "The connection was closed.";
+  const derivations: [string, (req: Request) => Request][] = [
+    ["req.clone()", req => req.clone()],
+    ["new Request(req)", req => new Request(req)],
+    ["new Request(req, { method })", req => new Request(req, { method: "POST" })],
+    ["new Request(url, { signal: req.signal })", req => new Request(req.url, { signal: req.signal })],
+  ];
+
+  // Sends one request, waits until the handler is ready, then drops the connection.
+  async function disconnectWhen(server: Server, ready: Promise<void>) {
+    const { promise: connected, resolve: onConnect, reject } = Promise.withResolvers<void>();
+    const socket = net.connect(server.port!, "127.0.0.1", () => onConnect());
+    socket.on("error", reject);
+    await connected;
+    socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    await ready;
+    socket.destroy();
+  }
+
+  function serve(kind: "fetch" | "routes", handler: (req: Request) => Promise<Response>) {
+    return kind === "routes"
+      ? Bun.serve({ port: 0, routes: { "/": handler } })
+      : Bun.serve({ port: 0, fetch: handler });
+  }
+
+  describe.each(derivations)("%s", (_, derive) => {
+    test.each(["fetch", "routes"] as const)(
+      "%s handler: has its own signal, which the disconnect aborts",
+      async kind => {
+        const { promise: ready, resolve: onReady } = Promise.withResolvers<void>();
+        const { promise: seen, resolve: onSeen } = Promise.withResolvers<object>();
+        await using server = serve(kind, async req => {
+          const own = derive(req).signal;
+          const aborted = new Promise<void>(resolve => own.addEventListener("abort", () => resolve()));
+          onReady();
+          await aborted;
+          onSeen({
+            isOwnSignal: own !== req.signal,
+            aborted: own.aborted,
+            reason: own.reason?.message,
+            serverReason: req.signal.reason?.message,
+          });
+          return new Response("late");
+        });
+        await disconnectWhen(server, ready);
+        expect(await seen).toEqual({ isOwnSignal: true, aborted: true, reason: closed, serverReason: closed });
+      },
+    );
+
+    test("is aborted, with the reason, when .signal is first read after the disconnect", async () => {
+      const { promise: ready, resolve: onReady } = Promise.withResolvers<void>();
+      const { promise: seen, resolve: onSeen } = Promise.withResolvers<object>();
+      await using server = serve("fetch", async req => {
+        const derived = derive(req);
+        const disconnected = new Promise<void>(resolve =>
+          req.clone().signal.addEventListener("abort", () => resolve()),
+        );
+        onReady();
+        await disconnected;
+        const own = derived.signal;
+        onSeen({ isOwnSignal: own !== req.signal, aborted: own.aborted, reason: own.reason?.message });
+        return new Response("late");
+      });
+      await disconnectWhen(server, ready);
+      expect(await seen).toEqual({ isOwnSignal: true, aborted: true, reason: closed });
+    });
+  });
+
+  test("the disconnect reaches a listener on the signal of a derived Request that was dropped", async () => {
+    const { promise: ready, resolve: onReady } = Promise.withResolvers<void>();
+    const { promise: reached, resolve: onReached } = Promise.withResolvers<number>();
+    let calls = 0;
+    const total = 20;
+    await using server = serve("fetch", async req => {
+      const { promise: aborted, resolve: onAborted } = Promise.withResolvers<void>();
+      for (let i = 0; i < total; i++) {
+        new Request(req, { method: "POST" }).signal.addEventListener("abort", () => {
+          if (++calls === total) onAborted();
+        });
+      }
+      Bun.gc(true);
+      onReady();
+      await aborted;
+      onReached(calls);
+      return new Response("late");
+    });
+    await disconnectWhen(server, ready);
+    expect(await reached).toBe(total);
+  });
+
+  test("every clone made after the disconnect has the abort reason, and so does the request", async () => {
+    const { promise: ready, resolve: onReady } = Promise.withResolvers<void>();
+    const { promise: seen, resolve: onSeen } = Promise.withResolvers<object>();
+    await using server = serve("fetch", async req => {
+      const disconnected = new Promise<void>(resolve => req.clone().signal.addEventListener("abort", () => resolve()));
+      onReady();
+      await disconnected;
+      const first = req.clone().signal.reason?.message;
+      Bun.gc(true);
+      const second = req.clone().signal.reason?.message;
+      Bun.gc(true);
+      onSeen({ first, second, request: req.signal.reason?.message });
+      return new Response("late");
+    });
+    await disconnectWhen(server, ready);
+    expect(await seen).toEqual({ first: closed, second: closed, request: closed });
+  });
+
+  test("server.fetch(request) gives the handler a Request with its own signal", async () => {
+    let handled: Request | undefined;
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        handled = req;
+        return new Response("ok");
+      },
+    });
+    const controller = new AbortController();
+    const original = new Request("http://example.com/", { signal: controller.signal });
+    await server.fetch(original);
+    const own = handled!.signal;
+    const reason = new Error("stop");
+    controller.abort(reason);
+    expect({
+      isOwnSignal: own !== original.signal && own !== controller.signal,
+      aborted: own.aborted,
+      hasCallersReason: own.reason === reason,
+    }).toEqual({ isOwnSignal: true, aborted: true, hasCallersReason: true });
+  });
 });

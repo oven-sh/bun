@@ -65,6 +65,10 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn WebCore__AbortSignal__new(arg0: &JSGlobalObject) -> *mut AbortSignal;
     safe fn WebCore__AbortSignal__jsReason(arg0: &AbortSignal, arg1: &JSGlobalObject) -> JSValue;
+    safe fn WebCore__AbortSignal__createDependent(
+        arg0: &JSGlobalObject,
+        source: &AbortSignal,
+    ) -> *mut AbortSignal;
     safe fn Bun__wrapAbortError(global_object: &JSGlobalObject, cause: JSValue) -> JSValue;
 }
 
@@ -173,6 +177,14 @@ impl AbortSignal {
     pub fn new(global: &JSGlobalObject) -> *mut AbortSignal {
         crate::mark_binding!();
         WebCore__AbortSignal__new(global)
+    }
+
+    /// The own signal of a Request that was handed `self`: a new signal, without a wrapper,
+    /// that aborts when `self` does and with the same reason
+    /// (https://dom.spec.whatwg.org/#create-a-dependent-abort-signal).
+    pub fn create_dependent(&self, global: &JSGlobalObject) -> AbortSignalRef {
+        // SAFETY: the return is a new signal and carries its +1.
+        unsafe { AbortSignalRef::adopt(WebCore__AbortSignal__createDependent(global, self)) }
     }
 
     /// Returns a borrowed handle to the internal Timeout, or null.

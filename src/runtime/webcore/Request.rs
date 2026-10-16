@@ -84,11 +84,7 @@ pub(crate) struct Request {
     pub(crate) url: JsCell<BunString>,
 
     headers: JsCell<Option<HeadersRef>>,
-    // AbortSignal is an opaque C++ handle with intrusive WebCore refcounting —
-    // `Arc` of an opaque ZST is meaningless (its payload address is not the
-    // C++ object). `AbortSignalRef` wraps `NonNull<AbortSignal>` and routes
-    // Clone/Drop to the C++ ref/unref.
-    signal: JsCell<Option<AbortSignalRef>>,
+    signal: JsCell<RequestSignal>,
     /// Owning `+1` handle into the per-VM `Body::Value` hive pool. The
     /// `Request` and (when served by `Bun.serve`) the `RequestContext` each
     /// hold their own `+1` on the same slot. `ManuallyDrop` because
@@ -102,6 +98,22 @@ pub(crate) struct Request {
     pub(crate) weak_ptr_data: WeakPtrData,
     // We must report a consistent value for this
     reported_estimated_size: Cell<usize>,
+}
+
+/// The signal of a `Request`. `Request.signal` is never the signal the Request was handed
+/// (https://fetch.spec.whatwg.org/#dom-request): it is a dependent of it.
+///
+/// `AbortSignal` is an opaque C++ handle with intrusive WebCore refcounting.
+/// `AbortSignalRef` routes Clone/Drop to the C++ ref/unref.
+enum RequestSignal {
+    /// No signal was handed. `.signal` is a default signal that only the wrapper keeps.
+    None,
+    /// The signal the Request was handed. `.signal` is a dependent of it, made at the first
+    /// read. Until then this is the signal that aborts the Request.
+    Follows(AbortSignalRef),
+    /// The Request's own signal: the dependent after the first `.signal` read, or the signal
+    /// that `Bun.serve` made for its request.
+    Own(AbortSignalRef),
 }
 
 // A `#[repr(C)]` 4-byte struct for direct
@@ -409,6 +421,11 @@ impl Request {
         }
         cloned.check_body_stream_ref(global_this);
         self.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
+        cloned.keep_followed_signal_wrapper(
+            js_wrapper,
+            global_this,
+            self.followed_signal_wrapper(this_value),
+        );
     }
 }
 
@@ -423,7 +440,7 @@ impl Request {
         Request {
             url: JsCell::new(url),
             headers: JsCell::new(headers),
-            signal: JsCell::new(None),
+            signal: JsCell::new(RequestSignal::None),
             body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::empty()),
             method,
@@ -679,25 +696,65 @@ impl Request {
         JSValue::js_empty_string(global_this)
     }
 
-    /// The `AbortSignal` this request was constructed with or lazily created
-    /// for its `signal` getter, if any.
+    /// The signal that aborts this request, if any: the one it follows, or its own.
     pub(crate) fn abort_signal(&self) -> Option<&AbortSignalRef> {
-        self.signal.get().as_ref()
+        match self.signal.get() {
+            RequestSignal::None => None,
+            RequestSignal::Follows(signal) | RequestSignal::Own(signal) => Some(signal),
+        }
     }
 
-    pub(crate) fn get_signal(&self, global_this: &JSGlobalObject) -> JSValue {
-        // Already have a C++ instance
-        if let Some(signal) = self.signal.get() {
-            return signal.to_js(global_this);
-        }
-        // Lazy create default signal
-        let js_signal = AbortSignal::create(global_this);
-        js_signal.ensure_still_alive();
-        if let Some(signal) = AbortSignal::ref_from_js(js_signal) {
-            // `ref_from_js` already bumped the C++ refcount.
-            self.signal.set(Some(signal));
-        }
+    /// The `signal` slot of the wrapper holds the wrapper of the signal in `self.signal`
+    /// (of the default signal for `RequestSignal::None`), once that wrapper exists.
+    pub(crate) fn get_signal(&self, this_value: JSValue, global_this: &JSGlobalObject) -> JSValue {
+        let own = match self.signal.get() {
+            RequestSignal::Follows(source) => source.create_dependent(global_this),
+            RequestSignal::Own(signal) => match js_gen::signal_get_cached(this_value) {
+                Some(wrapper) => return wrapper,
+                None => signal.clone(),
+            },
+            RequestSignal::None => {
+                return js_gen::signal_get_cached(this_value).unwrap_or_else(|| {
+                    let js_signal = AbortSignal::create(global_this);
+                    js_gen::signal_set_cached(this_value, global_this, js_signal);
+                    js_signal
+                });
+            }
+        };
+        let js_signal = own.to_js(global_this);
+        self.signal.set(RequestSignal::Own(own));
+        js_gen::signal_set_cached(this_value, global_this, js_signal);
         js_signal
+    }
+
+    /// The one place a Request takes a signal it was handed: it follows `source`, and
+    /// `.signal` never returns `source` itself.
+    fn follow_signal(&self, source: &AbortSignal) {
+        self.signal.set(RequestSignal::Follows(source.ref_()));
+    }
+
+    /// The wrapper, if it exists, of the signal that a clone or a copy of this Request follows.
+    pub(crate) fn followed_signal_wrapper(&self, this_value: JSValue) -> Option<JSValue> {
+        match self.signal.get() {
+            RequestSignal::None => None,
+            RequestSignal::Follows(_) | RequestSignal::Own(_) => {
+                js_gen::signal_get_cached(this_value)
+            }
+        }
+    }
+
+    /// Until `.signal` is read, nothing but the followed signal has the abort reason, and that
+    /// signal holds it only while its wrapper lives. So this Request's wrapper keeps that
+    /// wrapper. Call this where the wrapper of a Request that follows a signal first exists.
+    pub(crate) fn keep_followed_signal_wrapper(
+        &self,
+        this_value: JSValue,
+        global_this: &JSGlobalObject,
+        source_wrapper: Option<JSValue>,
+    ) {
+        if let (RequestSignal::Follows(_), Some(wrapper)) = (self.signal.get(), source_wrapper) {
+            js_gen::signal_set_cached(this_value, global_this, wrapper);
+        }
     }
 
     pub(crate) fn get_method(&self, global_this: &JSGlobalObject) -> JSValue {
@@ -715,7 +772,7 @@ impl Request {
         self.url.set(BunString::EMPTY);
 
         // AbortSignalRef::Drop unrefs the C++ handle.
-        self.signal.set(None);
+        self.signal.set(RequestSignal::None);
     }
 
     pub(crate) fn finalize(self: Box<Self>) {
@@ -990,7 +1047,7 @@ impl Request {
         let mut req = Request {
             url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
-            signal: JsCell::new(None),
+            signal: JsCell::new(RequestSignal::None),
             body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::init_weak(this_value)),
             method: Method::GET,
@@ -1099,6 +1156,11 @@ impl Request {
                             Ok(()) => {}
                             Err(e) => bail!(Err(e)),
                         }
+                        req.keep_followed_signal_wrapper(
+                            this_value,
+                            cx.global(),
+                            request.followed_signal_wrapper(value),
+                        );
                         success = true;
                         cleanup(&mut req, body_seed_ptr, success);
                         return Ok(req);
@@ -1275,6 +1337,24 @@ impl Request {
                 }
             }
 
+            if !fields.contains(Fields::Signal) && value_type == bun_jsc::JSType::DOMWrapper {
+                if let Some(input) = value.as_::<Request>() {
+                    // A Request: follow the signal in its slot. Its `signal` getter would
+                    // make the input's own signal.
+                    fields.insert(Fields::Signal);
+                    // SAFETY: `as_` returns the live payload of the wrapper `value` keeps alive.
+                    let input = unsafe { &*input };
+                    if let Some(source) = input.abort_signal() {
+                        req.follow_signal(source);
+                        req.keep_followed_signal_wrapper(
+                            this_value,
+                            cx.global(),
+                            input.followed_signal_wrapper(value),
+                        );
+                    }
+                }
+            }
+
             if !fields.contains(Fields::Signal) {
                 // WebIDL `AbortSignal?`: present iff the member is not undefined.
                 // `fast_get` maps absent/undefined → None; `null` is Some(null) and
@@ -1284,11 +1364,14 @@ impl Request {
                         fields.insert(Fields::Signal);
                         if signal_.is_null() {
                             // explicit detach; leave `req.signal` as None
-                        } else if let Some(signal) = AbortSignal::ref_from_js(signal_) {
-                            // Keep it alive
-                            signal_.ensure_still_alive();
-                            // `ref_from_js` already ref'd.
-                            req.signal.set(Some(signal));
+                        } else if let Some(source) = AbortSignal::from_js(signal_) {
+                            // S008: `AbortSignal` is an `opaque_ffi!` ZST handle, safe deref.
+                            req.follow_signal(bun_opaque::opaque_deref(source));
+                            req.keep_followed_signal_wrapper(
+                                this_value,
+                                cx.global(),
+                                Some(signal_),
+                            );
                         } else {
                             bail!(Err(cx.global().throw_type_error(format_args!(
                                 "Failed to construct 'Request': signal is not of type AbortSignal."
@@ -1462,6 +1545,12 @@ impl Request {
         // SAFETY: cloned_ptr was just created via heap::alloc above; toJS adopts ownership.
         let js_wrapper = unsafe { (*cloned_ptr).to_js(global_this) };
         self.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
+        // SAFETY: `js_wrapper` owns `cloned_ptr` and is live.
+        unsafe { &*cloned_ptr }.keep_followed_signal_wrapper(
+            js_wrapper,
+            global_this,
+            self.followed_signal_wrapper(this_value),
+        );
         Ok(js_wrapper)
     }
 
@@ -1501,7 +1590,7 @@ impl Request {
                 Request {
                     url: JsCell::new(url),
                     headers: JsCell::new(headers),
-                    signal: JsCell::new(None),
+                    signal: JsCell::new(RequestSignal::None),
                     body: ManuallyDrop::new(body),
                     js_ref: JsCell::new(JsRef::empty()),
                     method: self.method,
@@ -1513,9 +1602,8 @@ impl Request {
             );
         }
 
-        if let Some(signal) = self.signal.get() {
-            // `AbortSignalRef::clone` → C++ `ref()`.
-            req.signal.set(Some(signal.clone()));
+        if let Some(source) = self.abort_signal() {
+            req.follow_signal(source);
         }
         Ok(())
     }
@@ -1527,7 +1615,7 @@ impl Request {
         let mut req = Box::new(Request {
             url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
-            signal: JsCell::new(None),
+            signal: JsCell::new(RequestSignal::None),
             // `clone_into` `ptr::write`s the whole struct without dropping the
             // sentinel; seed with a non-deref'd dangling handle. `ManuallyDrop`
             // suppresses drop, so the `?` error path won't unref the dangling ptr.
@@ -1559,7 +1647,7 @@ impl Request {
         Request {
             url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
-            signal: JsCell::new(signal),
+            signal: JsCell::new(signal.map_or(RequestSignal::None, RequestSignal::Own)),
             body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::empty()),
             method,

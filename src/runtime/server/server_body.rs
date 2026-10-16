@@ -2357,6 +2357,16 @@ where
         // SAFETY: `request` was just allocated via `heap::alloc`; ownership
         // transfers to the JS wrapper inside `to_js`.
         let request_value = unsafe { (*request).to_js(&global_this) };
+        // SAFETY: `request_value` owns `request` and is live. `first_arg`, when it is a
+        // Request, keeps its payload alive.
+        unsafe {
+            (*request).keep_followed_signal_wrapper(
+                request_value,
+                &global_this,
+                <Request as bun_jsc::JsClass>::from_js(first_arg)
+                    .and_then(|input| (*input).followed_signal_wrapper(first_arg)),
+            );
+        }
         let response_value =
             match on_request.call(&global_this, self.js_value_assert_alive(), &[request_value]) {
                 Ok(v) => v,

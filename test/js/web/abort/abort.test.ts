@@ -299,12 +299,12 @@ describe.concurrent("AbortSignal.timeout() still fires after its observers go aw
     expect(summarize(signal)).toEqual({ aborted: true, reason: "TimeoutError" });
   });
 
-  // A Request keeps its signal as a native ref and wraps it again on demand, so
+  // An Event keeps its target as a native ref and wraps it again on demand, so
   // the signal's JS wrapper can be collected while the timeout is still
-  // observable through request.signal. The timer has to survive the wrapper as
+  // observable through event.target. The timer has to survive the wrapper as
   // well; only the signal itself going away (or aborting) may stop it.
   // Subprocess so heapStats() only sees this scenario's signals.
-  test("after its wrapper was collected while a Request still held the signal", async () => {
+  test("after its wrapper was collected while an Event still held the signal", async () => {
     const src = `
       const { heapStats } = require("bun:jsc");
       const wrappers = () => heapStats().objectTypeCounts.AbortSignal ?? 0;
@@ -317,9 +317,11 @@ describe.concurrent("AbortSignal.timeout() still fires after its observers go aw
       // has to come after it.
       const deadline = 1000;
       const started = performance.now();
-      const requests = [];
+      const events = [];
       for (let i = 0; i < N; i++) {
-        requests.push(new Request("http://localhost/", { signal: AbortSignal.timeout(deadline) }));
+        const event = new Event("held");
+        AbortSignal.timeout(deadline).dispatchEvent(event);
+        events.push(event);
       }
       const fence = AbortSignal.timeout(deadline + 100);
       const withWrappers = wrappers();
@@ -329,8 +331,8 @@ describe.concurrent("AbortSignal.timeout() still fires after its observers go aw
       const collected = withWrappers - wrappers();
       const collectedBeforeDeadline = performance.now() - started < deadline;
       await new Promise(resolve => fence.addEventListener("abort", resolve, { once: true }));
-      // request.signal wraps the native signal again.
-      const timedOut = requests.filter(r => r.signal.aborted && r.signal.reason.name === "TimeoutError").length;
+      // event.target wraps the native signal again.
+      const timedOut = events.filter(e => e.target.aborted && e.target.reason.name === "TimeoutError").length;
       console.log(JSON.stringify({ N, collected, collectedBeforeDeadline, timedOut }));
     `;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
@@ -341,6 +343,48 @@ describe.concurrent("AbortSignal.timeout() still fires after its observers go aw
     // anything; allow a straggler or two in case something still pins one.
     expect(collected).toBeGreaterThanOrEqual(N - 4);
     expect({ collectedBeforeDeadline, timedOut }).toEqual({ collectedBeforeDeadline: true, timedOut: N });
+    expect(exitCode).toBe(0);
+  });
+
+  // Until request.signal is read, only the wrapper of the followed signal keeps the abort
+  // reason. So a Request keeps that wrapper, and lets it go with itself.
+  test("while a Request follows it, and not after the Request is gone", async () => {
+    const src = `
+      const { heapStats } = require("bun:jsc");
+      const wrappers = () => heapStats().objectTypeCounts.AbortSignal ?? 0;
+      const N = 32;
+      Bun.gc(true);
+      const deadline = 1000;
+      // Functions, so that this module's suspended frame holds no Request.
+      const make = () => {
+        const requests = [];
+        for (let i = 0; i < N; i++) {
+          requests.push(new Request("http://localhost/", { signal: AbortSignal.timeout(deadline) }));
+        }
+        return requests;
+      };
+      const countTimedOut = requests =>
+        requests.filter(r => r.signal.aborted && r.signal.reason.name === "TimeoutError").length;
+      const held = { requests: make() };
+      const fence = AbortSignal.timeout(deadline + 100);
+      await new Promise(resolve => setImmediate(resolve));
+      Bun.gc(true);
+      const keptWhileFollowed = wrappers();
+      await new Promise(resolve => fence.addEventListener("abort", resolve, { once: true }));
+      const timedOut = countTimedOut(held.requests);
+      held.requests = null;
+      await new Promise(resolve => setImmediate(resolve));
+      Bun.gc(true);
+      Bun.gc(true);
+      console.log(JSON.stringify({ N, keptWhileFollowed, timedOut, keptAfterwards: wrappers() }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { N, keptWhileFollowed, timedOut, keptAfterwards } = JSON.parse(stdout);
+    expect(keptWhileFollowed).toBeGreaterThanOrEqual(N);
+    expect(timedOut).toBe(N);
+    expect(keptAfterwards).toBeLessThanOrEqual(N / 2);
     expect(exitCode).toBe(0);
   });
 });

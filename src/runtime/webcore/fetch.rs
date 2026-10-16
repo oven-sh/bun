@@ -1005,6 +1005,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // non-AbortSignal is a TypeError.
     signal = 'extract_signal: {
         if let Some(options) = options_object {
+            if let Some(init) = options.as_::<Request>() {
+                // A Request as the init: the signal in its slot. Its `signal` getter would
+                // make the Request's own signal.
+                // SAFETY: `as_` returns the live payload of the wrapper `options` keeps alive.
+                break 'extract_signal unsafe { &*init }.abort_signal().map(|signal| signal.ref_());
+            }
             if let Some(signal_) = options.fast_get(global_this, jsc::BuiltinName::signal)? {
                 if signal_.is_null() {
                     break 'extract_signal None;
@@ -1028,6 +1034,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(options) = request_init_object {
+            if let Some(init) = options.as_::<Request>() {
+                // SAFETY: `as_` returns the live payload of the wrapper `options` keeps alive.
+                break 'extract_signal unsafe { &*init }.abort_signal().map(|signal| signal.ref_());
+            }
             if let Some(signal_) = options.fast_get(global_this, jsc::BuiltinName::signal)? {
                 if signal_.is_null() {
                     break 'extract_signal None;

@@ -69,6 +69,7 @@ private:
         Aborted = 2,
         HasAbortEventListener = 4,
         IsFiringEventListeners = 8,
+        OwnedByRequest = 16,
     };
 
 public:
@@ -79,6 +80,9 @@ public:
     static Ref<AbortSignal> abort(ScriptExecutionContext&, JSC::JSValue reason);
     static Ref<AbortSignal> timeout(ScriptExecutionContext&, uint64_t milliseconds);
     static Ref<AbortSignal> any(ScriptExecutionContext&, const Vector<RefPtr<AbortSignal>>&);
+    // The own signal of a Request that was handed `source`:
+    // https://dom.spec.whatwg.org/#create-a-dependent-abort-signal for one source, without a wrapper.
+    static Ref<AbortSignal> createDependent(JSC::JSGlobalObject&, AbortSignal& source);
 
     static uint32_t addAbortAlgorithmToSignal(AbortSignal&, Ref<AbortAlgorithm>&&);
     static void removeAbortAlgorithmFromSignal(AbortSignal&, uint32_t algorithmIdentifier);
@@ -153,6 +157,8 @@ public:
     }
     bool hasPendingActivity() const { return pendingActivityCount > 0; }
     bool isDependent() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::Dependent); }
+
+    bool isOwnedByRequest() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::OwnedByRequest); }
 
     size_t memoryCost() const;
 

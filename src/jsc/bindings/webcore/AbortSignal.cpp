@@ -94,6 +94,25 @@ Ref<AbortSignal> AbortSignal::any(ScriptExecutionContext& context, const Vector<
     return resultSignal;
 }
 
+Ref<AbortSignal> AbortSignal::createDependent(JSC::JSGlobalObject& globalObject, AbortSignal& source)
+{
+    auto* context = source.scriptExecutionContext();
+    if (!context)
+        context = uncheckedDowncast<Zig::GlobalObject>(&globalObject)->currentScriptExecutionContext();
+
+    if (source.aborted()) {
+        auto signal = adoptRef(*new AbortSignal(context, Aborted::Yes, source.jsReason(globalObject)));
+        // No wrapper marks the reason yet; the common reason can build it again.
+        signal->m_commonReason = source.m_commonReason;
+        return signal;
+    }
+
+    Ref signal = AbortSignal::create(context);
+    signal->applyFlags(static_cast<uint8_t>(AbortSignalFlags::Dependent) | static_cast<uint8_t>(AbortSignalFlags::OwnedByRequest));
+    signal->addSourceSignal(source);
+    return signal;
+}
+
 AbortSignal::AbortSignal(ScriptExecutionContext* context, Aborted aborted, JSC::JSValue reason)
     : ContextDestructionObserver(context)
     , m_reason(reason)
@@ -128,7 +147,9 @@ JSValue AbortSignal::jsReason(JSC::JSGlobalObject& globalObject)
     if (existingValue.isUndefined()) {
         if (m_commonReason != CommonAbortReason::None) {
             existingValue = toJS(&globalObject, m_commonReason);
-            m_commonReason = CommonAbortReason::None;
+            // Without a wrapper nothing marks the value: keep the common reason to build it again.
+            if (wrapper())
+                m_commonReason = CommonAbortReason::None;
             m_reason.set(globalObject.vm(), wrapper(), existingValue);
         }
     }
@@ -371,3 +392,8 @@ template void AbortSignal::visitAbortAlgorithms(JSC::AbstractSlotVisitor&);
 template void AbortSignal::visitAbortAlgorithms(JSC::SlotVisitor&);
 
 } // namespace WebCore
+
+extern "C" WebCore::AbortSignal* WebCore__AbortSignal__createDependent(JSC::JSGlobalObject* globalObject, WebCore::AbortSignal* source)
+{
+    return &WebCore::AbortSignal::createDependent(*globalObject, *source).leakRef();
+}

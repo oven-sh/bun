@@ -15,7 +15,9 @@ export default [
     configurable: false,
     overridesToJS: true,
     memoryCost: true,
-    values: ["stream"],
+    // `signal` holds the wrapper of the signal in the native slot. The getter is not
+    // `cache: true` because that wrapper is not always the value of `Request.signal`.
+    values: ["stream", "signal"],
     proto: {
       text: { fn: "getText", async: true },
       textStream: { fn: "getTextStream" },
@@ -66,7 +68,7 @@ export default [
       },
       signal: {
         getter: "getSignal",
-        cache: true,
+        this: true,
       },
     },
   }),

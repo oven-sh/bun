@@ -3329,18 +3329,6 @@ mod line_column_tracker_tests {
         )
     }
 
-    fn with_line_break(lf: &[u8], line_break: &[u8]) -> Vec<u8> {
-        let mut spelled = Vec::new();
-        for &byte in lf {
-            if byte == b'\n' {
-                spelled.extend_from_slice(line_break);
-            } else {
-                spelled.push(byte);
-            }
-        }
-        spelled
-    }
-
     #[test]
     fn crlf_and_lone_cr_are_located_like_lf() {
         let sources = [
@@ -3351,8 +3339,8 @@ mod line_column_tracker_tests {
             "s = '\u{00E9}\u{4E2D}\u{1F600}';\n];\n",
         ];
         for lf in sources.map(str::as_bytes) {
-            let crlf = with_line_break(lf, b"\r\n");
-            let cr = with_line_break(lf, b"\r");
+            let crlf = bun_core::strings::replace_owned(lf, b"\n", b"\r\n");
+            let cr = bun_core::strings::replace_owned(lf, b"\n", b"\r");
             let source = bstr::BStr::new(lf);
             let mut line_breaks_before = 0;
             // Through `lf.len()`, the `Loc` of an error at the end of the file.

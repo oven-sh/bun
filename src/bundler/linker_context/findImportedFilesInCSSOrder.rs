@@ -378,6 +378,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     // file, replace all but the last copy with just the layers that are in that
     // file. This works because in CSS, the last instance of a declaration
     // overrides all previous instances of that declaration.
+    let mut masked_import_has_layer = false;
     {
         let mut source_index_duplicates: ArrayHashMap<u32, Vec<u32>> = ArrayHashMap::new();
         let mut external_path_duplicates: StringArrayHashMap<Vec<u32>> = StringArrayHashMap::new();
@@ -435,8 +436,13 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             // Don't remove duplicates entirely. The import conditions may
                             // still introduce layers to the layer order. Represent this as a
                             // file with an empty layer list.
+                            masked_import_has_layer |=
+                                entry.conditions.slice().iter().any(|c| c.layer.is_some());
                             order.mut_(i as usize).kind =
-                                CssImportOrderKind::Layers(Layers::Owned(Vec::new()));
+                                CssImportOrderKind::Layers(Layers::Masked {
+                                    path: *p,
+                                    conditions_len: entry.conditions.len() as u32,
+                                });
                             continue 'next_backward;
                         }
                     }
@@ -498,7 +504,10 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             // truncated tail is arena-owned (`deep_clone_conditions`)
                             // and bulk-freed with the arena, so skipping `Drop` is sound.
                             unsafe { entry.conditions.set_len((i as u32) as usize) };
-                            layers.replace(Vec::new());
+                            // A masked import has no layer names, and it has to keep its path.
+                            if !matches!(layers, Layers::Masked { .. }) {
+                                layers.replace(Vec::new());
+                            }
                             break;
                         }
                     }
@@ -687,6 +696,53 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             CssOrderDebugStep::WhileOptimizingRedundantLayerRules,
         );
 
+        // Without a layer in its conditions, the loop above removed every masked import.
+        if masked_import_has_layer {
+            let mut seen_import = false;
+            let mut len: usize = 0;
+            for i in 0..wip_order.len() {
+                let entry = wip_order.at(i);
+                if let CssImportOrderKind::Layers(Layers::Masked {
+                    path,
+                    conditions_len,
+                }) = entry.kind
+                {
+                    if !seen_import && entry.prints_as_layer_statements() {
+                        // An "@layer" statement is valid ahead of the first "@import".
+                        wip_order.mut_(i).kind =
+                            CssImportOrderKind::Layers(Layers::Owned(Vec::new()));
+                    } else {
+                        let conditions = entry.conditions.slice();
+                        let next_declares_same_layers =
+                            wip_order.slice().get(i + 1).is_some_and(|next| {
+                                next.conditions.len() >= conditions.len()
+                                    && is_conditional_import_redundant(
+                                        conditions,
+                                        &next.conditions.slice()[..conditions.len()],
+                                    )
+                            });
+                        if next_declares_same_layers {
+                            continue;
+                        }
+                        // esbuild prints a layer rule here, so each later "@import" is invalid.
+                        let entry = wip_order.mut_(i);
+                        entry.kind = CssImportOrderKind::ExternalPath(path);
+                        // SAFETY: `conditions_len` is the length that this list
+                        // had before the loop above shortened it with `set_len`.
+                        // That call does not drop or overwrite the tail, and
+                        // nothing else writes to the arena-owned slab, so the
+                        // tail is still initialized and within capacity.
+                        unsafe { entry.conditions.set_len(conditions_len as usize) };
+                    }
+                }
+                seen_import |= matches!(wip_order.at(i).kind, CssImportOrderKind::ExternalPath(_));
+                wip_order.swap(len, i);
+                len += 1;
+            }
+            // Only masked imports that the next entry made redundant are past `len`.
+            wip_order.truncate(len);
+        }
+
         memcpy_and_reset(&mut order, &mut wip_order);
     }
     debug_css_order(
@@ -732,7 +788,25 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         CssOrderDebugStep::AfterMergingAdjacentLayerRules,
     );
 
+    debug_assert!(import_prologue_is_valid(order.slice()));
     order
+}
+
+/// Whether only "@layer" statements precede the external imports and nothing else is between them.
+fn import_prologue_is_valid(order: &[CssImportOrder]) -> bool {
+    let imports_end = order
+        .iter()
+        .rposition(|entry| matches!(entry.kind, CssImportOrderKind::ExternalPath(_)))
+        .map_or(0, |last| last + 1);
+    let mut seen_import = false;
+    order[..imports_end].iter().all(|entry| match entry.kind {
+        CssImportOrderKind::ExternalPath(_) => {
+            seen_import = true;
+            true
+        }
+        CssImportOrderKind::Layers(Layers::Masked { .. }) => false,
+        _ => !seen_import && entry.prints_as_layer_statements(),
+    })
 }
 
 /// The returned list is later bitwise-copied into `CssImportOrder` entries via
@@ -826,16 +900,16 @@ fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -
 /// Note that all of this deliberately ignores the existence of "@layer" because
 /// that is handled separately. All of this is only for handling unlayered styles.
 fn is_conditional_import_redundant(
-    earlier: &Vec<ImportConditions>,
-    later: &Vec<ImportConditions>,
+    earlier: &[ImportConditions],
+    later: &[ImportConditions],
 ) -> bool {
     if later.len() > earlier.len() {
         return false;
     }
 
     for i in 0..later.len() as usize {
-        let a = earlier.at(i);
-        let b = later.at(i);
+        let a = &earlier[i];
+        let b = &later[i];
 
         // Only compare "@supports" and "@media" if "@layers" is equal
         if ImportConditions::layers_eql(a, b) {

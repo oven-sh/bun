@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -2115,6 +2115,265 @@ c {
       `,
     },
     outfile: "/out.css",
+  });
+
+  // A later copy of an external "@import" masks an earlier one, but the earlier
+  // one can still be the rule that puts its layer first in the layer order.
+  // Only "@charset" and "@layer" statements are valid ahead of an "@import", so
+  // a layer rule cannot stand for the earlier import inside the import block.
+  const externalImportDuplicates: Record<string, { files: Record<string, string>; out: string }> = {
+    // The import right after the masked one declares layer "a" wherever the masked one does.
+    CoveredByNextImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/a.css" layer(a) print;
+          @import "https://example.com/a.css" layer(a);
+        `,
+      },
+      out: `@import "https://example.com/a.css" layer(a);`,
+    },
+    NestedInDuplicateFile: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./sub/a.css" layer(theme) print;
+          @import "./sub/a.css" layer(theme) print;
+          .c0 { color: blue }
+        `,
+        "/sub/a.css": /* css */ `
+          @import "https://example.com/fonts.css" screen;
+          .c0 { color: red }
+        `,
+      },
+      out: String.raw`@import "data:text/css,@import \"https://example.com/fonts.css\" screen;" layer(theme) print;@media print{@layer theme{.c0{color:red}}}.c0{color:#00f}`,
+    },
+    // In print, layer "a" comes before layer "b". Only the masked import says so.
+    Media: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/a.css" layer(a) print;
+          @import "https://example.com/b.css" layer(b);
+          @import "https://example.com/a.css" layer(a) print;
+        `,
+      },
+      out: `@import "https://example.com/a.css" layer(a) print;@import "https://example.com/b.css" layer(b);@import "https://example.com/a.css" layer(a) print;`,
+    },
+    Supports: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/a.css" layer(a) supports(display: grid);
+          @import "https://example.com/b.css" layer(b);
+          @import "https://example.com/a.css" layer(a) supports(display: grid);
+        `,
+      },
+      out: `@import "https://example.com/a.css" layer(a) supports(display:grid);@import "https://example.com/b.css" layer(b);@import "https://example.com/a.css" layer(a) supports(display:grid);`,
+    },
+    NestedLayers: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css" layer(outer);
+          @import "https://example.com/b.css";
+          @import "./a.css" layer(outer);
+        `,
+        "/a.css": /* css */ `@import "https://example.com/f.css" layer(inner);`,
+      },
+      out: String.raw`@import "data:text/css,@import \"https://example.com/f.css\" layer(inner);" layer(outer);@import "https://example.com/b.css";@import "data:text/css,@import \"https://example.com/f.css\" layer(inner);" layer(outer);@layer outer;`,
+    },
+    // An "@layer" statement is not valid between two "@import" rules. The first import has a layer of its own.
+    AfterOtherImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/first.css" layer(first);
+          @import "https://example.com/a.css" layer(a);
+          @import "https://example.com/b.css" layer(b);
+          @import "https://example.com/a.css" layer(a);
+        `,
+      },
+      out: `@import "https://example.com/first.css" layer(first);@import "https://example.com/a.css" layer(a);@import "https://example.com/b.css" layer(b);@import "https://example.com/a.css" layer(a);`,
+    },
+    NestedLayerThenFlat: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css" layer(outer);
+          @import "https://example.com/f.css" layer(outer);
+        `,
+        "/a.css": /* css */ `@import "https://example.com/f.css" layer(inner);`,
+      },
+      out: String.raw`@import "data:text/css,@import \"https://example.com/f.css\" layer(inner);" layer(outer);@import "https://example.com/f.css" layer(outer);@layer outer;`,
+    },
+    // The masked import keeps "screen", a condition that declares no layer.
+    KeepsTrailingCondition: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css" layer(theme) print;
+          @import "https://example.com/b.css" layer(b);
+          @import "./a.css" layer(theme) print;
+        `,
+        "/a.css": /* css */ `@import "https://example.com/fonts.css" screen;`,
+      },
+      out: String.raw`@import "data:text/css,@import \"https://example.com/fonts.css\" screen;" layer(theme) print;@import "https://example.com/b.css" layer(b);@import "data:text/css,@import \"https://example.com/fonts.css\" screen;" layer(theme) print;@media print{@layer theme;}`,
+    },
+    // An "@layer" statement is valid ahead of the first "@import".
+    LeadingLayerStatement: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/a.css" layer(a);
+          @import "https://example.com/b.css" layer(b);
+          @import "https://example.com/a.css" layer(a);
+        `,
+      },
+      out: `@layer a;@import "https://example.com/b.css" layer(b);@import "https://example.com/a.css" layer(a);`,
+    },
+    // The leading statement also stands for the second masked import.
+    LeadingLayerStatementTwice: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/a.css" layer(a);
+          @import "./sub.css" layer(a);
+          @import "https://example.com/a.css" layer(a);
+          @import "https://example.com/b.css" layer(b);
+          @import "https://example.com/a.css" layer(a);
+        `,
+        "/sub.css": /* css */ `@import "https://example.com/c.css" screen;`,
+      },
+      out: String.raw`@layer a;@import "data:text/css,@import \"https://example.com/c.css\" screen;" layer(a);@import "https://example.com/b.css" layer(b);@import "https://example.com/a.css" layer(a);@layer a;`,
+    },
+    Adjacent: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/a.css" layer(a) print;
+          @import "https://example.com/a.css" layer(a) print;
+        `,
+      },
+      out: `@import "https://example.com/a.css" layer(a) print;`,
+    },
+    AdjacentOtherImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/x.css" layer(a) print;
+          @import "https://example.com/y.css" layer(a) print;
+          @import "https://example.com/x.css" layer(a) print;
+        `,
+      },
+      out: `@import "https://example.com/y.css" layer(a) print;@import "https://example.com/x.css" layer(a) print;`,
+    },
+    // The first masked import is an "@import" again, so "@layer c;" is not valid after it.
+    StatementAfterRestoredImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/x.css" layer(a) print;
+          @import "https://example.com/c.css" layer(c);
+          @import "https://example.com/y.css" layer(b);
+          @import "https://example.com/x.css" layer(a) print;
+          @import "https://example.com/c.css" layer(c);
+        `,
+      },
+      out: `@import "https://example.com/x.css" layer(a) print;@import "https://example.com/c.css" layer(c);@import "https://example.com/y.css" layer(b);@import "https://example.com/x.css" layer(a) print;@import "https://example.com/c.css" layer(c);`,
+    },
+    // Each masked copy is covered by the one after it. The last one is a valid leading statement.
+    EachCoveredByNext: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/x.css" layer(a) supports(display: grid) print;
+          @import "https://example.com/x.css" layer(a) print;
+          @import "https://example.com/x.css" layer(a);
+          @import "https://example.com/x.css";
+        `,
+      },
+      out: `@layer a;@import "https://example.com/x.css";`,
+    },
+    // "print" is not covered by "screen", so the first copy stays. The second copy is covered by the third.
+    TwoMaskedCopies: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/x.css" layer(a) print;
+          @import "https://example.com/x.css" layer(a) screen;
+          @import "https://example.com/x.css" layer(a);
+        `,
+      },
+      out: `@import "https://example.com/x.css" layer(a) print;@import "https://example.com/x.css" layer(a);`,
+    },
+    TwoMaskedLayers: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/x.css" layer(a) print;
+          @import "https://example.com/x.css" layer(b);
+          @import "https://example.com/x.css";
+        `,
+      },
+      out: `@import "https://example.com/x.css" layer(a) print;@import "https://example.com/x.css" layer(b);@import "https://example.com/x.css";`,
+    },
+    // Only layer "a" matters for the layer order, but the import keeps its anonymous layer.
+    NamedThenAnonymousLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/first.css" layer(first);
+          @import "./a.css" layer(a);
+          @import "https://example.com/b.css" layer(b);
+          @import "./a.css" layer(a);
+        `,
+        "/a.css": /* css */ `@import "https://example.com/x.css" layer;`,
+      },
+      out: String.raw`@import "https://example.com/first.css" layer(first);@import "data:text/css,@import \"https://example.com/x.css\" layer;" layer(a);@import "https://example.com/b.css" layer(b);@import "data:text/css,@import \"https://example.com/x.css\" layer;" layer(a);@layer a;`,
+    },
+  };
+
+  // The CSS parser rejects an "@import" that comes after any other rule.
+  async function expectValidImports(file: string) {
+    const again = await Bun.build({ entrypoints: [file], throw: false });
+    expect(again.logs.map(log => log.message)).toEqual([]);
+    expect(again.success).toBe(true);
+  }
+
+  for (const [name, { files, out }] of Object.entries(externalImportDuplicates)) {
+    itBundled(`css/CSSAtImportExternalDuplicate${name}`, {
+      files,
+      outfile: "/out.css",
+      minifyWhitespace: true,
+      async onAfterBundle(api) {
+        api.expectFile("/out.css").toBe(out + "\n");
+        await expectValidImports(api.outfile);
+      },
+    });
+  }
+
+  itBundled("css/CSSAtImportExternalDuplicateCLI", {
+    files: externalImportDuplicates.NestedInDuplicateFile.files,
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    backend: "cli",
+    async onAfterBundle(api) {
+      api.expectFile("/out.css").toBe(externalImportDuplicates.NestedInDuplicateFile.out + "\n");
+      await expectValidImports(api.outfile);
+    },
+  });
+
+  // The two stylesheets of one JS entry share an import block.
+  itBundled("css/CSSAtImportExternalDuplicateFromJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./one.css";
+        import "./two.css";
+      `,
+      "/one.css": /* css */ `
+        @import "https://example.com/a.css" layer(a) print;
+        .one { color: red }
+      `,
+      "/two.css": /* css */ `
+        @import "https://example.com/b.css" layer(b);
+        @import "https://example.com/a.css" layer(a) print;
+        .two { color: red }
+      `,
+    },
+    outdir: "/out",
+    minifyWhitespace: true,
+    async onAfterBundle(api) {
+      api
+        .expectFile("/out/entry.css")
+        .toBe(
+          `@import "https://example.com/a.css" layer(a) print;@import "https://example.com/b.css" layer(b);@import "https://example.com/a.css" layer(a) print;.one{color:red}.two{color:red}\n`,
+        );
+      await expectValidImports(api.join("out/entry.css"));
+    },
   });
 
   // This test mainly just makes sure that this scenario doesn't crash

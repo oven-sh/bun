@@ -697,6 +697,7 @@ impl<'s> Program<'s> {
             context_checked_under: Vec::new(),
             initializers_resolved_by_nested_visit: Vec::new(),
             resolved_parameter_types: Default::default(),
+            partial_sig_params: Default::default(),
             quick_initializers: Vec::new(),
             contextual: Vec::new(),
             pulls_contextual_types_at: usize::MAX,
@@ -1119,6 +1120,10 @@ struct QueryFrame {
 pub enum Requested {
     /// `GetSyntacticDiagnostics`: the diagnostics of the parser and the scanner.
     Syntactic,
+    /// The same, for a caller that then asks for the types it needs, as typescript-eslint and tsgolint do, and reads no
+    /// diagnostics. A file that can be too large for control flow analysis (2563) is checked as under `All`: the check
+    /// disables the analysis for one block at a time, and stores the types of the rest before anything asks.
+    Types,
     /// .. and `GetDeclarationDiagnostics`. The declaration transformer queries the checker only
     /// about what the file exports.
     Declaration,
@@ -1715,6 +1720,9 @@ pub struct Checker<'p, 's> {
     /// `sig_params` computes the types of all parameters at once. See
     /// `note_parameter_types_resolved`.
     resolved_parameter_types: crate::util::FxHashSet<(SigId, u32)>,
+    /// The lists of `sig_params_with_first` that lack a type, each with the number of parameters
+    /// before the first that does.
+    partial_sig_params: FxHashMap<SigId, (usize, &'p [SigParam])>,
     /// Ranges of `stack`: the resolutions of declarations whose initializer
     /// `getQuickTypeOfExpression` is evaluating, and those of a `...rest`. See
     /// `is_flow_loop_visible`.

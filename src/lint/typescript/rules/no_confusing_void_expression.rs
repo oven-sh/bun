@@ -52,8 +52,9 @@ enum InvalidAncestor<'a> {
     Other,
 }
 
+/// The call itself: `/** @type {number} */ (f())` is still a void expression in another one.
 fn is_void_like_at(node: Expr) -> bool {
-    is_type_flag_set(get_constrained_type_at_location(node), TypeFlags::VOID_LIKE)
+    is_type_flag_set(get_constrained_type_at_location(node.ts_node()), TypeFlags::VOID_LIKE)
 }
 
 fn wrap_void_fix(fixer: Fixer, node: Expr) -> Fix {
@@ -162,7 +163,7 @@ fn is_void_returning_function_node(function_node: Func) -> bool {
     match (function_node.kind(), function_node.owner()) {
         (FnKind::Arrow | FnKind::Expr, Node::Expr(expression)) => {
             let is_oxlint = expression.file().language().is_oxlint;
-            expression.contextual_type().is_some_and(|function_type| {
+            expression.ts_node().get_contextual_type().is_some_and(|function_type| {
                 union_constituents(function_type)
                     .iter()
                     .any(|part| is_function_return_type_includes_void(part, is_oxlint))
@@ -178,6 +179,9 @@ impl NoConfusingVoidExpression {
     /// short-circuiting, whose parents are looked at instead.
     fn find_invalid_ancestor<'a>(&self, mut node: Expr<'a>) -> Option<InvalidAncestor<'a>> {
         loop {
+            if node.with_jsdoc_cast() != node {
+                return Some(InvalidAncestor::Other);
+            }
             match node.parent() {
                 Node::Expr(parent) => match parent.kind() {
                     ExprKind::Binary { op: BinOp::Comma, right, .. } => {

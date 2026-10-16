@@ -5,7 +5,7 @@
 // (harness) preloads a shim that plays the remover from inside getdents64, so
 // no test here has a race. Its trace has every listing in order, which says
 // which reader met the removal.
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, removedDirReaddir, tempDir } from "harness";
 import { existsSync, mkdirSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -62,6 +62,9 @@ const folderDependency = {
 };
 
 describe.skipIf(!removedDirReaddir.available)("a directory that is removed while it is read", () => {
+  // A C compiler on a busy CI machine can take longer than the default hook timeout.
+  beforeAll(() => void removedDirReaddir.compile(), 30_000);
+
   // These readers list, or delete what they list. A directory that was removed
   // is an empty one for them: the command goes on where it failed before.
   describe.concurrent("ends its listing", () => {

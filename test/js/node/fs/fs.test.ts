@@ -6261,6 +6261,9 @@ int statfs64(const char *path, struct statfs64 *buf) { (void)path; FILL(buf); re
 // the marked directories are really removed and the kernel itself produces
 // the ENOENT.
 describe.skipIf(!removedDirReaddir.available)("a directory that is removed while it is read", () => {
+  // A C compiler on a busy CI machine can take longer than the default hook timeout.
+  beforeAll(() => void removedDirReaddir.compile(), 30_000);
+
   const helpers = `
 const fs = require("node:fs");
 const path = require("node:path");

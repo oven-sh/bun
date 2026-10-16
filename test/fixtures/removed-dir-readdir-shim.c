@@ -41,10 +41,16 @@ static __thread char last_listed[PATH_MAX];
 static void record(const char *name, const char *path) {
   const char *log = getenv("REMOVED_DIR_READDIR_LOG");
   if (!log) return;
+  char line[PATH_MAX + 64];
+  int len = snprintf(line, sizeof line, "%s %s\n", name, path);
+  if (len <= 0 || (size_t)len >= sizeof line) return;
   // Opened and closed for each line: bun can exit without running atexit handlers.
   int fd = open(log, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
   if (fd < 0) return;
-  dprintf(fd, "%s %s\n", name, path);
+  // One write for each line: bun reads directories on several threads, and
+  // musl's dprintf() writes a line in pieces.
+  if (write(fd, line, len) < 0) {
+  }
   close(fd);
 }
 

@@ -491,9 +491,11 @@ test("operands longer than the path scratch buffers are reported, not a crash", 
 // reports as the end of the directory. Two removers that race are not
 // deterministic, so `removedDirReaddir` preloads a shim that plays the other
 // one from inside getdents64.
-test.skipIf(!removedDirReaddir.available)(
-  "a directory that is removed while the shell reads it ends its listing",
-  async () => {
+describe.skipIf(!removedDirReaddir.available)("a directory that is removed while the shell reads it", () => {
+  // A C compiler on a busy CI machine can take longer than the default hook timeout.
+  beforeAll(() => void removedDirReaddir.compile(), 30_000);
+
+  test("ends its listing", async () => {
     using dir = tempDir("rm-vanishing-dir", {});
     const log = path.join(String(dir), "shim.log");
 
@@ -575,8 +577,8 @@ test.skipIf(!removedDirReaddir.available)(
       },
     });
     expect(exitCode).toBe(0);
-  },
-);
+  });
+});
 
 // The same with no shim: each operand is removed by its own worker, so
 // operands that cover each other race over every directory. A stress probe,

@@ -233,6 +233,127 @@ describe("css tests", () => {
     ); // ideally -400% - 8vh + 3ic
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
   });
+  describe("calc, lightningcss test_calc", () => {
+    // The rows of lightningcss v1.33.0, src/lib.rs:8064-8169, in that order. Two of them do not pass.
+    minify_test(".foo { width: calc(20px * 2) }", ".foo{width:40px}");
+    minify_test(".foo { font-size: calc(100vw / 35) }", ".foo{font-size:2.85714vw}");
+    minify_test(".foo { width: calc(20px * 2 * 3) }", ".foo{width:120px}");
+    minify_test(".foo { width: calc(20px + 30px) }", ".foo{width:50px}");
+    minify_test(".foo { width: calc(20px + 30px + 40px) }", ".foo{width:90px}");
+    minify_test(".foo { width: calc(100% - 30px) }", ".foo{width:calc(100% - 30px)}");
+    minify_test(".foo { width: calc(100% - 30px + 20px) }", ".foo{width:calc(100% - 10px)}");
+    minify_test(".foo { width: calc(20px + 100% - 30px) }", ".foo{width:calc(100% - 10px)}");
+    minify_test(".foo { width: calc(20px + 100% + 10vw - 30px) }", ".foo{width:calc(100% - 10px + 10vw)}");
+    minify_test(".foo { width: calc(20px + 100% - 30px) }", ".foo{width:calc(100% - 10px)}");
+    minify_test(".foo { width: calc(2 * (100% - 20px)) }", ".foo{width:calc(200% - 40px)}");
+    minify_test(".foo { width: calc((100% - 20px) * 2) }", ".foo{width:calc(200% - 40px)}");
+    minify_test(".foo { width: calc(100% - 20px * 2) }", ".foo{width:calc(100% - 40px)}");
+    minify_test(".foo { width: calc(1px + 1px) }", ".foo{width:2px}");
+    minify_test(".foo { width: calc(100vw / 2) }", ".foo{width:50vw}");
+    minify_test(".foo { width: calc(50px - (20px - 30px)) }", ".foo{width:60px}");
+    minify_test(".foo { width: calc(100px - (100px - 100%)) }", ".foo{width:100%}");
+    minify_test(".foo { width: calc(100px + (100px - 100%)) }", ".foo{width:calc(200px - 100%)}");
+    minify_test(".foo { width: calc(1px - (2em + 3%)) }", ".foo{width:calc(1px + -2em - 3%)}");
+    minify_test(".foo { width: calc((100vw - 50em) / 2) }", ".foo{width:calc(50vw - 25em)}");
+    minify_test(".foo { width: calc(1px - (2em + 4vh + 3%)) }", ".foo{width:calc(1px + -2em - 4vh - 3%)}");
+    minify_test(".foo { width: calc(1px + (2em + (3vh + 4px))) }", ".foo{width:calc(2em + 3vh + 5px)}");
+    minify_test(".foo { width: calc(1px - (2em + 4px - 6vh) / 2) }", ".foo{width:calc(-1em - 1px + 3vh)}");
+    minify_test(".foo { width: calc(100% - calc(50% + 25px)) }", ".foo{width:calc(50% - 25px)}");
+    minify_test(".foo { width: calc(1px/100) }", ".foo{width:.01px}");
+    minify_test(".foo { width: calc(100vw / 2 - 6px + 0px) }", ".foo{width:calc(50vw - 6px)}");
+    minify_test(".foo { width: calc(1px + 1) }", ".foo{width:calc(1px + 1)}");
+    minify_test(".foo { width: calc( (1em - calc( 10px + 1em)) / 2) }", ".foo{width:-5px}");
+    test.todo(".foo { width: calc((100px - 1em) + (-50px + 1em)) }");
+    test.todo(".foo { width: calc(100% + (2 * 100px) - ((75.37% - 63.5px) - 900px)) }");
+    minify_test(
+      ".foo { width: calc(((((100% + (2 * 30px) + 63.5px) / 0.7537) - (100vw - 60px)) / 2) + 30px) }",
+      ".foo{width:calc(66.3394% + 141.929px - 50vw)}",
+    );
+    minify_test(
+      ".foo { width: calc(((75.37% - 63.5px) - 900px) + (2 * 100px)) }",
+      ".foo{width:calc(75.37% - 763.5px)}",
+    );
+    minify_test(".foo { width: calc((900px - (10% - 63.5px)) + (2 * 100px)) }", ".foo{width:calc(1163.5px - 10%)}");
+    minify_test(".foo { width: calc(500px/0) }", ".foo{width:calc(500px/0)}");
+    minify_test(".foo { width: calc(500px/2px) }", ".foo{width:calc(500px/2px)}");
+    minify_test(".foo { width: calc(100% / 3 * 3) }", ".foo{width:100%}");
+    minify_test(".foo { width: calc(+100px + +100px) }", ".foo{width:200px}");
+    minify_test(".foo { width: calc(+100px - +100px) }", ".foo{width:0}");
+    minify_test(".foo { width: calc(200px * +1) }", ".foo{width:200px}");
+    minify_test(".foo { width: calc(200px / +1) }", ".foo{width:200px}");
+    minify_test(".foo { width: calc(1.1e+1px + 1.1e+1px) }", ".foo{width:22px}");
+    minify_test(".foo { border-width: calc(1px + 2px) }", ".foo{border-width:3px}");
+    minify_test(".foo { border-width: calc(1em + 2px + 2em + 3px) }", ".foo{border-width:calc(3em + 5px)}");
+  });
+  describe("calc sum written without brackets", () => {
+    const F = "min(1px,1em)";
+    const Fs = (count: number) => Array(count).fill(F).join(" + ");
+    // `width` is a length-percentage and `outline-width` is a length. Each has its own calc() type.
+    for (const prop of ["width", "outline-width"]) {
+      const sum = (source: string, expected: string) =>
+        minify_test(`a { ${prop}: ${source} }`, `a{${prop}:${expected}}`);
+      // A value is added to the first term that has a unit it can be added to.
+      sum(`calc(1px + 1em + 1vh + 2px + 2em + 2vh)`, `calc(3px + 3em + 3vh)`);
+      sum(`calc(${F} + 1px + ${F} + 1px)`, `calc(${F} + 2px + ${F})`);
+      sum(`calc(1vh + ${F} + 1vh)`, `calc(2vh + ${F})`);
+      sum(`calc(${F} + 2px - 3px)`, `calc(${F} - 1px)`);
+      // A term that becomes zero is removed. A later value goes to the end.
+      sum(`calc(1px + 1em + 1vh - 1px)`, `calc(1em + 1vh)`);
+      sum(`calc(1px + 1em + 1vh - 1em)`, `calc(1px + 1vh)`);
+      sum(`calc(1px + ${F} - 1px + 1px)`, `calc(${F} + 1px)`);
+      sum(`calc(1px + 1em - 1px - 1em)`, `0`);
+      // The first two terms change places when the first is negative and the second is positive.
+      sum(`calc(-1px + 1em + 1vh)`, `calc(1em - 1px + 1vh)`);
+      sum(`calc(-1px - 2em + 3em)`, `calc(1em - 1px)`);
+      sum(`calc(1px + 2em - 3px)`, `calc(2em - 2px)`);
+      sum(`calc(1px - 2em + 3vh + 4vw - 1px)`, `calc(3vh - 2em + 4vw)`);
+      sum(`calc(-2 - 1px + 3 + 1px)`, `calc(3 - 2)`);
+      // A math function is never added to another term.
+      sum(`calc(${F} - ${F})`, `calc(${F} + -1*${F})`);
+      sum(`calc(0px - ${F})`, `calc(-1*${F})`);
+      sum(`calc(2 * (${F} + 1vh))`, `calc(2*${F} + 2vh)`);
+      // The same rules in a sum of more than eight terms, where the values are found through an index.
+      sum(`calc(${Fs(8)} + 1px)`, `calc(${Fs(8)} + 1px)`);
+      sum(`calc(${Fs(8)} + 1px + 1px)`, `calc(${Fs(8)} + 2px)`);
+      sum(`calc(${Fs(9)} + 1px + 1em + 2px + 2em)`, `calc(${Fs(9)} + 3px + 3em)`);
+      sum(`calc(${Fs(9)} + 1px + 1em + 1vh - 1px + 2em)`, `calc(${Fs(9)} + 3em + 1vh)`);
+      sum(`calc(${Fs(9)} + 1px - 1px + 1em)`, `calc(${Fs(9)} + 1em)`);
+      sum(`calc(1px + 1em + ${Fs(7)} + 1vh - 1px + 2vh - 1em + 3vh)`, `calc(${Fs(7)} + 6vh)`);
+      sum(`calc(1px + 1em + ${Fs(7)} + 1vh - 2px + 1em)`, `calc(2em - 1px + ${Fs(7)} + 1vh)`);
+      sum(`calc(1px + 3 + ${Fs(7)} + 1em - 2px + 5px)`, `calc(3 + 4px + ${Fs(7)} + 1em)`);
+      sum(`calc(-2 - 1px + ${Fs(7)} + 3px + 1px)`, `calc(3px - 2 + ${Fs(7)})`);
+    }
+    minify_test(`a { width: calc(100% - 1px - 1%) }`, `a{width:calc(99% - 1px)}`);
+    // Two numbers add only when the first of them is all of the sum so far.
+    minify_test(`a { width: calc(1% + 2 + 3) }`, `a{width:calc(1% + 2 + 3)}`);
+    // The types that cannot hold a sum. A sum of them is one value, or it stays as written.
+    minify_test(`a { opacity: calc(0.25 + 0.5) }`, `a{opacity:.75}`);
+    minify_test(`a { opacity: calc(10% + 20% - 5%) }`, `a{opacity:.25}`);
+    minify_test(
+      `a { opacity: calc(min(1%,2) + min(1%,2) + min(1%,2)) }`,
+      `a{opacity:calc(min(1%,2) + min(1%,2) + min(1%,2))}`,
+    );
+    minify_test(
+      `a { opacity: calc(min(1,2) + min(3,4) + min(5,6)) }`,
+      `a{opacity:calc(min(1,2) + min(3,4) + min(5,6))}`,
+    );
+    minify_test(`a { flex-grow: calc(1 + 2 - 0.5) }`, `a{flex-grow:2.5}`);
+    minify_test(`a { flex-grow: calc(min(1,2) + min(3,4) + 1) }`, `a{flex-grow:calc(min(1,2) + min(3,4) + 1)}`);
+    minify_test(`a { rotate: calc(10deg + 0.5turn - 5deg) }`, `a{rotate:185deg}`);
+    minify_test(
+      `a { rotate: calc(min(1deg,2) + min(1deg,2) + 1deg) }`,
+      `a{rotate:calc(min(1deg,2) + min(1deg,2) + 1deg)}`,
+    );
+    minify_test(
+      `a { rotate: calc(min(1deg,1) + min(1deg,1) + 1deg) }`,
+      `a{rotate:calc(min(1deg,1) + min(1deg,1) + 1deg)}`,
+    );
+    minify_test(`a { transition-duration: calc(1s + 500ms - 0.25s) }`, `a{transition-duration:1.25s}`);
+    minify_test(
+      `a { background: conic-gradient(red calc(10deg + 5% + 20deg), blue) }`,
+      `a{background:conic-gradient(red calc(30deg + 5%),#00f)}`,
+    );
+  });
   describe("border_spacing", () => {
     minify_test(
       `

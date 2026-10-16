@@ -792,9 +792,7 @@ fn pages_of(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
     let mut pages = match html_pages::pages_of(cwd, page) {
         Ok(Pages::Named) => vec![page.to_vec()],
         // src/js/internal/html.ts reports the error, when it asks for the pages to serve them.
-        Ok(Pages::Matched { pages, error: _ }) => {
-            pages.keys().iter().map(|it| it.to_vec()).collect()
-        }
+        Ok(Pages::Matched { pages, error: _ }) => pages.into_iter().map(Vec::from).collect(),
         Err(_) => Vec::new(),
     };
     pages.retain(|page| {

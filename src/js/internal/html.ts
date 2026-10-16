@@ -8,7 +8,7 @@ const argv = process.argv;
 const path = require("node:path");
 
 // `undefined` if `arg` is the path of a page, else the pages that match it. `pages_of` in check_command.rs asks too.
-const pagesOf: (arg: string, cwd: string) => string[] | undefined = $newRustFunction("html_pages.rs", "jsPagesOf", 2);
+const pagesOf = $bindgen("html_pages.bind.ts", "pagesOf");
 
 const env = Bun.env;
 

@@ -295,6 +295,9 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
     if (!callFrame->thisValue().isObject()) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotAConstructorError(lexicalGlobalObject, callFrame->jsCallee()));
 
+    auto* structure = structureForNewTarget<Cookie>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
     RefPtr<Cookie> cookie;
 
     // Static method: parse(cookieString)
@@ -370,10 +373,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     }
 
-    JSValue jsValue = toJSNewlyCreated(lexicalGlobalObject, castedThis->globalObject(), cookie.releaseNonNull());
-    setSubclassStructureIfNeeded<Cookie>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    return JSValue::encode(jsValue);
+    return JSValue::encode(createWrapper<Cookie>(castedThis->globalObject(), structure, cookie.releaseNonNull()));
 }
 
 JSC_ANNOTATE_HOST_FUNCTION(JSCookieDOMConstructorConstruct, JSCookieDOMConstructor::construct);

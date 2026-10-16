@@ -472,6 +472,7 @@ class DockerComposeHelper {
         const socket = await Bun.connect({
           hostname: host,
           port,
+          socket: { data() {} },
         });
         socket.end();
         return;

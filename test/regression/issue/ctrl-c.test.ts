@@ -73,7 +73,7 @@ test.skipIf(isWindows)("verify that we forward SIGINT from parent to child in bu
     stdout: "inherit",
     stderr: "inherit",
   });
-  expect(result.exitCode).toBe(null);
+  expect<number | null>(result.exitCode).toBe(null);
   expect(result.signalCode).toBe("SIGKILL");
 });
 

@@ -1,0 +1,12 @@
+// @flow
+export type A = {
+  a: () => Array<string>,
+
+  ...
+};
+export type B = {
+  a: 1,
+
+  // comment
+  ...
+};

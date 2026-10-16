@@ -112,7 +112,8 @@ public:
     static SYSV_ABI void writeBytesForBun(CloneSerializer*, const uint8_t*, uint32_t);
     static SYSV_ABI bool isTransferable(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 
-    WEBCORE_EXPORT static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationForStorage = SerializationForStorage::No, SerializationContext = SerializationContext::Default, SerializationForCrossProcessTransfer = SerializationForCrossProcessTransfer::No);
+    // `beforeTransfer` runs after the value is serialized and before a non-empty `transfer` is detached. It may throw and may run user code.
+    WEBCORE_EXPORT static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationForStorage = SerializationForStorage::No, SerializationContext = SerializationContext::Default, SerializationForCrossProcessTransfer = SerializationForCrossProcessTransfer::No, const ScopedLambda<void()>* beforeTransfer = nullptr);
 
     WEBCORE_EXPORT static RefPtr<SerializedScriptValue> create(JSC::JSGlobalObject&, JSC::JSValue, SerializationForStorage = SerializationForStorage::No, SerializationErrorMode = SerializationErrorMode::Throwing, SerializationContext = SerializationContext::Default, SerializationForCrossProcessTransfer = SerializationForCrossProcessTransfer::No);
 
@@ -153,7 +154,7 @@ public:
     WEBCORE_EXPORT ~SerializedScriptValue();
 
 private:
-    static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationForStorage, SerializationErrorMode, SerializationContext, SerializationForCrossProcessTransfer);
+    static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationForStorage, SerializationErrorMode, SerializationContext, SerializationForCrossProcessTransfer, const ScopedLambda<void()>* beforeTransfer);
     WEBCORE_EXPORT SerializedScriptValue(Vector<unsigned char>&&, std::unique_ptr<ArrayBufferContentsArray>&& = nullptr);
 
     SerializedScriptValue(Vector<unsigned char>&&, std::unique_ptr<ArrayBufferContentsArray>, std::unique_ptr<ArrayBufferContentsArray> sharedBuffers

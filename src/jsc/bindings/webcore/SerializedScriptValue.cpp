@@ -85,6 +85,7 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/MainThread.h>
 #include <wtf/RunLoop.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/Vector.h>
 #include <wtf/threads/BinarySemaphore.h>
 
@@ -4481,18 +4482,18 @@ static bool isObjectFastPathCandidate(Structure* structure)
 RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSC::JSGlobalObject& globalObject, JSC::JSValue value, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext serializationContext, SerializationForCrossProcessTransfer forTransfer)
 {
     Vector<RefPtr<MessagePort>> dummyPorts;
-    auto result = create(globalObject, value, {}, dummyPorts, forStorage, throwExceptions, serializationContext, forTransfer);
+    auto result = create(globalObject, value, {}, dummyPorts, forStorage, throwExceptions, serializationContext, forTransfer, nullptr);
     if (result.hasException())
         return nullptr;
     return result.releaseReturnValue();
 }
 
-ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& globalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationContext serializationContext, SerializationForCrossProcessTransfer forTransfer)
+ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& globalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationContext serializationContext, SerializationForCrossProcessTransfer forTransfer, const ScopedLambda<void()>* beforeTransfer)
 {
-    return create(globalObject, value, WTF::move(transferList), messagePorts, forStorage, SerializationErrorMode::Throwing, serializationContext, forTransfer);
+    return create(globalObject, value, WTF::move(transferList), messagePorts, forStorage, SerializationErrorMode::Throwing, serializationContext, forTransfer, beforeTransfer);
 }
 
-ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& lexicalGlobalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext context, SerializationForCrossProcessTransfer forTransfer)
+ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& lexicalGlobalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext context, SerializationForCrossProcessTransfer forTransfer, const ScopedLambda<void()>* beforeTransfer)
 {
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -4805,6 +4806,14 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     // Most calls have no transfer list; this keeps them at one branch.
     std::unique_ptr<ArrayBufferContentsArray> arrayBufferContentsArray;
     if (!transferList.isEmpty()) {
+        // Can run user code, as serializing did: the check below covers both.
+        if (beforeTransfer) [[unlikely]] {
+            (*beforeTransfer)();
+            if (scope.exception()) [[unlikely]] {
+                releaseSerializedBlockListRefs();
+                RELEASE_AND_RETURN(scope, Exception { ExistingExceptionError });
+            }
+        }
         if (auto exception = transferListChangedDuringSerialization(vm, transferList, arrayBuffers, messagePorts)) [[unlikely]] {
             releaseSerializedBlockListRefs();
             RELEASE_AND_RETURN(scope, WTF::move(*exception));

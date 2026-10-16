@@ -666,6 +666,8 @@ export const structuredCloneAdvanced: (
   forTransfer: boolean,
   forStorage: boolean,
   serializationContext: SerializationContext,
+  /** Runs once the value is serialized, before a transfer list that is not empty is detached. */
+  beforeTransfer?: () => void,
 ) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);

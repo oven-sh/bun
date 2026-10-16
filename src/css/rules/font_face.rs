@@ -368,7 +368,7 @@ impl FontStyle {
             FontStyle::Italic => dest.write_str("italic"),
             FontStyle::Oblique(angle) => {
                 dest.write_str("oblique")?;
-                if !Size2D::<Angle>::eql(angle, &FontStyle::default_oblique_angle()) {
+                if *angle != FontStyle::default_oblique_angle() {
                     dest.write_char(b' ')?;
                     angle.to_css(dest)?;
                 }

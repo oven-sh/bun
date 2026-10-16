@@ -12,10 +12,9 @@ use crate::css_values::size::Size2D;
 use bun_alloc::ArenaVecExt as _;
 
 /// A value for the [border-radius](https://www.w3.org/TR/css-backgrounds-3/#border-radius) property.
-// `Size2D<T>` carries no `Clone`/`PartialEq` derives (it exposes
-// inherent `deep_clone`/`eql` instead), so
-// `BorderRadius` can't `#[derive]` them either. The handler below uses
-// `Size2D::deep_clone`/`Size2D::eql` directly.
+// `Size2D<T>` has no `Clone` derive (it exposes an inherent `deep_clone`),
+// so `BorderRadius` can't `#[derive(Clone)]` either.
+#[derive(PartialEq)]
 pub struct BorderRadius {
     /// The x and y radius values for the top left corner.
     pub(crate) top_left: Size2D<LengthPercentage>,
@@ -35,13 +34,6 @@ impl BorderRadius {
             bottom_right: self.bottom_right.deep_clone(bump),
             bottom_left: self.bottom_left.deep_clone(bump),
         }
-    }
-
-    pub fn eql(&self, other: &Self) -> bool {
-        Size2D::eql(&self.top_left, &other.top_left)
-            && Size2D::eql(&self.top_right, &other.top_right)
-            && Size2D::eql(&self.bottom_right, &other.bottom_right)
-            && Size2D::eql(&self.bottom_left, &other.bottom_left)
     }
 
     pub fn parse(input: &mut css::Parser) -> css::Result<BorderRadius> {
@@ -133,9 +125,6 @@ impl BorderRadius {
         }
         Ok(())
     }
-
-    // deep_clone comes from #[derive(Clone)].
-    // eql comes from #[derive(PartialEq)].
 }
 
 #[derive(Default)]
@@ -174,7 +163,7 @@ macro_rules! maybe_flush {
         // If two vendor prefixes for the same property have different
         // values, we need to flush what we have immediately to preserve order.
         if let Some(existing) = &$self.$prop {
-            if !Size2D::eql(&existing.0, $val) && !existing.1.contains($vp) {
+            if existing.0 != *$val && !existing.1.contains($vp) {
                 $self.flush($d, $ctx);
             }
         }

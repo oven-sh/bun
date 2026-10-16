@@ -2260,7 +2260,7 @@ impl PackageManager {
         let committish = repository.committish.slice(buf);
         let commit = repository.resolved_commit(buf);
         let git_ref = if commit.is_empty()
-            // A package-lock.json migration puts the committish itself in `resolved`.
+            // A lockfile migrated from npm or pnpm has the committish itself in `resolved`.
             || repository.resolved.eql(repository.committish, buf, buf)
             // The 7 digits in `resolved` can be ambiguous on GitHub (404): keep a longer sha.
             || (committish.len() > commit.len()

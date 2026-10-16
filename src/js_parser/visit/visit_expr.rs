@@ -2462,15 +2462,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// A direct eval reads names from the scope of its call. When its argument
-    /// is a string literal that names `__dirname` or `__filename`, resolve the
-    /// name like a reference, so that a bundled CommonJS module declares it.
+    /// is a string literal that names `__dirname` or `__filename`, count a use
+    /// of the parser's symbol, so that a bundled CommonJS module declares it.
     #[cold]
     #[inline(never)]
     fn record_path_names_read_by_direct_eval(p: &mut Self, call: &E::Call) {
-        const NAMES: [&[u8]; 2] = [b"__dirname", b"__filename"];
+        use crate::parser::options::Format;
 
-        // The wrapper of a CommonJS output file binds both names at run time.
-        if p.options.output_format == crate::parser::options::Format::Cjs {
+        // In cjs and iife output such an eval keeps what it reads today: the
+        // names of the output file, when its loader binds them.
+        if !matches!(
+            p.options.output_format,
+            Format::Esm | Format::InternalBakeDev
+        ) {
             return;
         }
         let Some(arg) = call.args.slice().first() else {
@@ -2479,7 +2483,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let Data::EString(code) = &arg.data else {
             return;
         };
-        for name in NAMES {
+        let names: [(&'static [u8], Ref); 2] = [
+            (b"__dirname", p.dirname_ref),
+            (b"__filename", p.filename_ref),
+        ];
+        for (name, ambient) in names {
             if !contains_identifier(code, name) {
                 continue;
             }
@@ -2490,7 +2498,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 continue;
             }
-            let _ = p.find_symbol(arg.loc, name).expect("unreachable");
+            // A declaration in the file shadows the parser's symbol. The eval reads that one.
+            let found = p
+                .find_symbol_with_record_usage::<false>(arg.loc, name)
+                .expect("unreachable");
+            if found.r#ref.eql(ambient) {
+                p.record_usage_impl(ambient, false);
+            }
         }
     }
 

@@ -76,6 +76,29 @@ devTest('uses "development" condition', {
     await dev.fetch("/").equals("Environment: development");
   },
 });
+devTest("direct eval reads __dirname and __filename in a commonjs package", {
+  framework: minimalFramework,
+  files: {
+    "node_modules/example/package.json": JSON.stringify({
+      name: "example",
+      version: "1.0.0",
+      main: "./index.js",
+    }),
+    "node_modules/example/index.js": `
+      module.exports = [eval("__dirname"), eval("__filename")];
+    `,
+    "routes/index.ts": `
+      import paths from 'example';
+      const last = (p, n) => p.split(/[\\\\/]/).slice(-n).join("/");
+      export default function (req, meta) {
+        return new Response(last(paths[0], 2) + " " + last(paths[1], 3));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("node_modules/example node_modules/example/index.js");
+  },
+});
 devTest("importing a file before it is created", {
   files: {
     "index.html": emptyHtmlFile({
@@ -822,25 +845,6 @@ devTest("commonjs forms", {
       await dev.write("cjs.js", `require; eval("module.exports.field = '6'");`);
     });
     await c.expectMessage({ field: "6" });
-  },
-});
-devTest("direct eval reads __dirname and __filename in a commonjs module", {
-  files: {
-    "index.html": emptyHtmlFile({
-      scripts: ["index.ts"],
-    }),
-    "index.ts": `
-      import paths from "./lib/paths.cjs";
-      const last = (p, n) => p.split(/[\\\\/]/).slice(-n).join("/");
-      console.log(last(paths[0], 1) + " " + last(paths[1], 2));
-    `,
-    "lib/paths.cjs": `
-      module.exports = [eval("__dirname"), eval("__filename")];
-    `,
-  },
-  async test(dev) {
-    await using c = await dev.client("/");
-    await c.expectMessage("lib lib/paths.cjs");
   },
 });
 

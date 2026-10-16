@@ -2,7 +2,7 @@
 // On the server, communication is established with `server_exports`.
 import type { Bake } from "bun";
 import "./debug";
-import { loadExports, replaceModules, serverManifest, ssrManifest } from "./hmr-module";
+import { loadExports, replaceModules, serverManifest, ssrManifest, staticExportNames } from "./hmr-module";
 // import { AsyncLocalStorage } from "node:async_hooks";
 const { AsyncLocalStorage } = require("node:async_hooks");
 
@@ -172,10 +172,11 @@ server_exports = {
     if (componentManifestAdd) {
       for (const uid of componentManifestAdd) {
         try {
-          const exports = await loadExports<{}>(uid);
+          // Avoid evaluating the component: a file it imports can have a build error at this point.
+          const exportNames = staticExportNames(uid) ?? Object.keys(await loadExports<{}>(uid));
 
           const client = {};
-          for (const exportName of Object.keys(exports)) {
+          for (const exportName of exportNames) {
             serverManifest[uid + "#" + exportName] = {
               id: uid,
               name: exportName,

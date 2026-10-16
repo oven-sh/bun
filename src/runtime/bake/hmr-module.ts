@@ -58,6 +58,23 @@ export async function loadExports<T>(id: Id): Promise<T> {
   return m.esm ? m.exports : m.cjs.exports;
 }
 
+/** `export * from` is lowered to a spread, so it forwards `default` too. `null` if only an evaluation can tell. */
+export function staticExportNames(id: Id): string[] | null {
+  const names = new Set<string>();
+  const queue: Id[] = [id];
+  const visited = new Set<Id>();
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const unloaded = unloadedModuleRegistry[current];
+    if (!Array.isArray(unloaded)) return null;
+    for (const name of unloaded[ESMProps.exports]) names.add(name);
+    queue.push(...unloaded[ESMProps.stars]);
+  }
+  return [...names];
+}
+
 interface HotAccept {
   modules: string[];
   cb: HotAcceptFunction;

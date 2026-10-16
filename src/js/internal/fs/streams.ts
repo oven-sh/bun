@@ -378,8 +378,7 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
 
   let fastPath = options?.$fastPath;
 
-  // A stream over an open FileSink (child.stdin) takes no option. The null
-  // prototype keeps an fd, fs or autoClose on Object.prototype away from it.
+  // A stream over an open FileSink (child.stdin) takes no options, own or inherited from Object.prototype.
   options = fastPath && fastPath !== true ? { __proto__: null } : copyObject(getStreamOptions(options));
 
   // Only buffers are supported.
@@ -389,9 +388,7 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
   if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
-    // Internal $fastPath callers (writableFromFileSink) have no path; do not
-    // resolve it - path.resolve() needs process.cwd(), which throws when
-    // the cwd has been deleted (Node still spawns children in that state).
+    // $fastPath callers (tty, child.stdin) have no path to validate or resolve.
     this.path = fastPath ? path : getValidatedPath(path);
     const { flags, mode } = options;
     this.flags = flags === undefined ? "w" : flags;
@@ -479,9 +476,7 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
     this.write = writeFast as any;
     this._final = finalFast;
     if (fastPath !== true) {
-      // Already-open sink (stdio, child.stdin): skip the async _construct
-      // round-trip so the stream is born constructed, like node's stdio streams
-      // (net.Socket / tty.WriteStream), which never allocate construct TickObjects.
+      // Open sink (stdio, child.stdin): born constructed like node's stdio streams, with no construct TickObjects.
       this._construct = undefined;
     }
   }
@@ -761,8 +756,7 @@ writeStreamPrototype._writev = function (data, cb) {
 writeStreamPrototype._destroy = function (err, cb) {
   const sink = this[kWriteStreamFastPath];
   if (sink && sink !== true) {
-    // Before 'finish' a failed flush is a write error on a destroyed stream, which node drops.
-    // After 'finish' it is the only report of a failed graceful end().
+    // Before 'finish' node drops this write error. After 'finish' it is the only report of a failed end().
     const onEndFailure = this._writableState.finished ? cb : () => cb(err);
     let end;
     try {
@@ -824,8 +818,7 @@ Object.defineProperty(writeStreamPrototype, "autoClose", {
 Object.defineProperty(writeStreamPrototype, "pending", {
   get() {
     if (this.fd !== null) return false;
-    // child.stdin is a stream over an open FileSink: no fd, nothing to open, no 'ready'.
-    // Like node's child.stdin (a connected net.Socket), it is pending only once destroyed.
+    // Over an open sink (child.stdin) there is nothing to open: pending only once destroyed, as in node.
     const sink = this[kWriteStreamFastPath];
     return sink === undefined || sink === true || this.destroyed;
   },

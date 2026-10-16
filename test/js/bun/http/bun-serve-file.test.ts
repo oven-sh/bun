@@ -1158,10 +1158,6 @@ test.concurrent("a download resumed with If-Range after the file changed gets th
 //
 // The Content-Length of a Bun.file(fd) slice is still the size of the file
 // (#44826), so the tests of a slice compare only the body.
-//
-// Windows reads through libuv, which saves the position, reads, and puts the
-// position back. There the position is safe only while nothing else uses the
-// descriptor, so the test with two responses in flight does not check it.
 describe.concurrent("Bun.file(fd) of a regular file from a fetch handler", () => {
   const content = "0123456789ABCDEF";
 
@@ -1393,14 +1389,18 @@ describe.concurrent("Bun.file(fd) of a regular file from a fetch handler", () =>
       for (const client of clients) (await client.connected).resume();
       const responses = await Promise.all(clients.map(client => client.closed));
       const bodies = responses.map(raw => raw.subarray(raw.indexOf("\r\n\r\n") + 4));
-      expect({ inFlight, bodies: bodies.map(body => ({ length: body.length, intact: body.equals(bytes) })) }).toEqual({
+      expect({
+        inFlight,
+        bodies: bodies.map(body => ({ length: body.length, intact: body.equals(bytes) })),
+        positionAfter: readAtPosition(fd, 1),
+      }).toEqual({
         inFlight: 2,
         bodies: [
           { length: bytes.length, intact: true },
           { length: bytes.length, intact: true },
         ],
+        positionAfter: "0",
       });
-      if (!isWindows) expect(readAtPosition(fd, 1)).toBe("0");
     } finally {
       closeSync(fd);
     }

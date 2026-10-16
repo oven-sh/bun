@@ -1022,6 +1022,28 @@ describe.concurrent("GitHub template", () => {
     expect(await tree(String(dir))).toEqual(before);
     expect(exitCode).toBe(1);
   });
+
+  // `bun install` reads package.json with comments and trailing commas allowed, so a template may use them.
+  // package-json-comments.test.ts has the same cases for a template from a local folder.
+  it.each([
+    ["a trailing comma", `{\n  "name": "template",\n  "bun-create": { "start": "bun run go" },\n}\n`],
+    ["a comment", `{\n  // note\n  "name": "template",\n  "bun-create": { "start": "bun run go" }\n}\n`],
+  ])("applies the package.json transforms when package.json has %s", async (_, manifest) => {
+    using github = await serveGithub({ "package.json": manifest });
+    using dir = tempDir("create-github-package-json", {});
+    const created = await create(
+      String(dir),
+      ["dylan-conway/create-test", "dest", "--no-install", "--no-git"],
+      github.env,
+    );
+
+    expect(created).toEqual({
+      out: expect.stringContaining("\n  cd dest\n  bun run go\n"),
+      err: expect.not.stringContaining("error:"),
+      exitCode: 0,
+    });
+    expect(await Bun.file(join(String(dir), "dest", "package.json")).json()).toEqual({ name: "dest" });
+  });
 });
 
 describe.concurrent.each([

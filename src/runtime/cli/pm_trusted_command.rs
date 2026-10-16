@@ -606,7 +606,7 @@ impl TrustCommand {
 
         let bump = Bump::new();
         // SAFETY: `ctx.log` set by `Command::init`, non-null for the command.
-        let mut package_json: bun_ast::Expr = match bun_parsers::json::parse_utf8(
+        let mut package_json: bun_ast::Expr = match bun_parsers::json::parse_package_json_utf8(
             &package_json_source,
             unsafe { ctx.log_mut() },
             &bump,

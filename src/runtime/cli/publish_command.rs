@@ -722,7 +722,55 @@ impl PublishCommand {
         }
     }
 
-    /// `false`: `--tolerate-republish`, and the registry already had this `name@version`, so nothing was sent.
+    fn warn_already_published(version_without_build_tag: &[u8]) {
+        bun_core::warn!(
+            "Registry already knows about version {}; skipping.",
+            bun_fmt::escape_control_chars(version_without_build_tag),
+        );
+    }
+
+    /// registry.npmjs.org answers the upload of a version that it lists with a 403 whose `error` starts with this.
+    const VERSION_TAKEN: &'static [u8] =
+        b"You cannot publish over the previously published versions";
+
+    /// Whether the `error` of a registry's JSON answer starts with [`Self::VERSION_TAKEN`].
+    fn says_version_taken(response_body: &[u8]) -> Result<bool, AllocError> {
+        let source = bun_ast::Source::init_path_string(b"???", response_body);
+        let mut log = bun_ast::Log::init();
+        let bump = bun_alloc::Arena::new();
+        let error = match json_mod::parse_utf8(&source, &mut log, &bump) {
+            Ok(json) => json.get(b"error"),
+            Err(bun_parsers::Error::Alloc(_)) => return Err(AllocError),
+            Err(_) => None,
+        };
+        let error = error.as_ref().and_then(Expr::as_utf8_string_literal);
+        Ok(error.is_some_and(|error| error.starts_with(Self::VERSION_TAKEN)))
+    }
+
+    /// `false`: `--tolerate-republish`, and the registry refused the upload with [`Self::VERSION_TAKEN`].
+    fn upload_refused<const OTP_RESPONSE: bool>(
+        manager: &PackageManager,
+        ctx: &Context,
+        req: &http::AsyncHTTP<'_>,
+        res: &http::HTTPResponseMetadata,
+        response_buf: &mut MutableString,
+    ) -> Result<bool, AllocError> {
+        if manager.options.publish_config.tolerate_republish
+            && res.status_code() == 403
+            && Self::says_version_taken(response_buf.list.as_slice())?
+        {
+            Self::warn_already_published(dependency::without_build_tag(&ctx.package_version));
+            return Ok(false);
+        }
+        match Npm::response_error::<OTP_RESPONSE>(
+            req,
+            res,
+            Some((&ctx.package_name, &ctx.package_version)),
+            response_buf,
+        )? {}
+    }
+
+    /// `false`: `--tolerate-republish`, and the registry already has this `name@version`, so this run published nothing.
     fn publish(manager: &PackageManager, ctx: &Context) -> Result<bool, AllocError> {
         let registry = manager.scope_for_package_name(&ctx.package_name);
         let registry_url = registry.url.url();
@@ -737,10 +785,7 @@ impl PublishCommand {
                 version_without_build_tag,
                 registry,
             ) {
-                bun_core::warn!(
-                    "Registry already knows about version {}; skipping.",
-                    bun_fmt::escape_control_chars(version_without_build_tag),
-                );
+                Self::warn_already_published(version_without_build_tag);
                 return Ok(false);
             }
         }
@@ -815,12 +860,7 @@ impl PublishCommand {
         };
 
         if !prompt_for_otp {
-            Npm::response_error::<false>(
-                &req,
-                &res,
-                Some((&ctx.package_name, &ctx.package_version)),
-                &mut response_buf,
-            )?;
+            return Self::upload_refused::<false>(manager, ctx, &req, &res, &mut response_buf);
         }
 
         let otp = Self::get_otp(manager, ctx, registry, &mut response_buf)?;
@@ -845,12 +885,13 @@ impl PublishCommand {
             Self::send_or_crash(&mut otp_req, &mut response_buf, "failed to publish package")?;
 
         if otp_res.status_code() >= 400 {
-            Npm::response_error::<true>(
+            return Self::upload_refused::<true>(
+                manager,
+                ctx,
                 &otp_req,
                 &otp_res,
-                Some((&ctx.package_name, &ctx.package_version)),
                 &mut response_buf,
-            )?;
+            );
         }
 
         Ok(true)

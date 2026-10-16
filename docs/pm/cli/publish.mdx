@@ -59,7 +59,7 @@ bun publish --recursive
 bun publish --filter "@acme/*"
 ```
 
-Packages that are `"private"` or whose version is already on the registry are skipped. Every package is packed before the first one is published, and the first failure ends the run; running the command again skips what was published.
+Packages that are `"private"` or whose version the registry's manifest already lists are skipped. Every package is packed before the first one is published, and the first failure ends the run. Running the command again skips the versions that the manifest lists by then. With [`--tolerate-republish`](#--tolerate-republish), the run also goes on after an upload that the registry refuses with status `403` and a message that starts with `You cannot publish over the previously published versions`. Every other refused upload ends the run.
 
 ### `--access`
 
@@ -144,6 +144,14 @@ Exit with code 0 instead of 1 if the package version already exists. Useful in C
 ```sh terminal icon="terminal"
 bun publish --tolerate-republish
 ```
+
+With the flag, `bun publish` reads the package's manifest from the registry before it uploads. If the manifest lists the version, `bun publish` prints a warning, uploads nothing, and exits with code 0.
+
+If the manifest does not list the version, the upload goes out. The manifest can be older than the registry, and another job can publish the same version in the meantime. registry.npmjs.org refuses the upload of a version that it lists with status `403` and a message that starts with `You cannot publish over the previously published versions`. `bun publish` treats that answer the same way: it prints the warning and exits with code 0, and a `--recursive` or `--filter` run goes on to the next package.
+
+Every other refusal of the upload is still an error, including every `409`. For example, registry.npmjs.org scans a newly published version before it lists the version, and it answers another upload of that version with a `409` until then. A job that you re-run before the registry lists the version can still fail.
+
+The registry's manifest may not list the version yet, so exit code 0 does not mean that the version can be installed.
 
 ### `--gzip-level`
 

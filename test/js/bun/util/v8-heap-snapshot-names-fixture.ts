@@ -23,9 +23,10 @@ names.push(...(await fromWorker.promise), v8.writeHeapSnapshot());
 await worker.terminate();
 
 // Each of the next two names is taken between two readings of the real clock.
-const underMockedClock = { before: Date.now(), name: "", after: 0 };
+const underMockedClock = { before: Date.now(), mockedNow: 0, name: "", after: 0 };
 const { setSystemTime } = Bun.jest(import.meta.path);
 setSystemTime(new Date("2000-01-01T00:00:00Z"));
+underMockedClock.mockedNow = Date.now();
 underMockedClock.name = v8.writeHeapSnapshot();
 setSystemTime();
 underMockedClock.after = Date.now();

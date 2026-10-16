@@ -119,7 +119,8 @@ test("v8.writeHeapSnapshot() default names", async () => {
   expect(names.map(threadAndSequence)).toEqual(["0.001", "0.002", "1.003", "1.004", "0.005"]);
 
   const timestamp = (name: string) => name.match(/^Heap\.(\d{8}\.\d{6})\./)?.[1] ?? name;
-  // `setSystemTime` had moved `Date` to the year 2000.
+  // `setSystemTime` had moved `Date` to the year 2000. The name keeps the real clock.
+  expect(underMockedClock.mockedNow).toBe(Date.UTC(2000, 0, 1));
   expect(timestamps(underMockedClock)).toContain(timestamp(underMockedClock.name));
   // `process.env.TZ` had become "Pacific/Kiritimati", which is UTC+14 all year.
   expect(timestamps(inKiritimati, 14)).toContain(timestamp(inKiritimati.name));

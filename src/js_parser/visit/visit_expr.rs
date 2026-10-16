@@ -770,6 +770,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        if let Some(call) = p.call_tag_with_raw_strings(expr) {
+            *e = call;
+            return;
+        }
+
         // When mangling, inline string values into the template literal. Note that
         // it may no longer be a template literal after this point (it may turn into
         // a plain string literal instead).
@@ -777,6 +782,59 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             *e = e_.fold(p.arena, expr.loc);
             return;
         }
+    }
+
+    /// `` tag`é${x}` `` to `` tag(__rawTemplate(["é", ""])`\u00E9${0}`, x) ``. Escaped text would reach the tag in `strings.raw`.
+    fn call_tag_with_raw_strings(&mut self, expr: Expr) -> Option<Expr> {
+        if !self.options.features.ascii_only || !self.options.features.allow_runtime {
+            return None;
+        }
+        let mut template = expr.data.e_template()?;
+        let tag = template.tag?;
+        let E::TemplateContents::Raw(head) = &template.head else {
+            return None;
+        };
+        let head = *head;
+        let mut is_ascii = strings::is_all_ascii(head.slice());
+        for part in template.parts() {
+            let E::TemplateContents::Raw(tail) = &part.tail else {
+                return None;
+            };
+            is_ascii = is_ascii && strings::is_all_ascii(tail.slice());
+        }
+        if is_ascii {
+            return None;
+        }
+
+        let count = template.parts().len() + 1;
+        let mut raw = bun_alloc::ArenaVec::<Expr>::with_capacity_in(count, self.arena);
+        let mut args = bun_alloc::ArenaVec::<Expr>::with_capacity_in(count, self.arena);
+        raw.push(self.new_expr(E::String::init(head.slice()), expr.loc));
+        args.push(expr);
+        for part in template.parts_mut() {
+            if let E::TemplateContents::Raw(tail) = &part.tail {
+                raw.push(Expr::init(E::String::init(tail.slice()), part.tail_loc));
+            }
+            args.push(part.value);
+            part.value = Expr::init(E::Number::new(0.0), part.value.loc);
+        }
+        let raw = self.new_expr(
+            E::Array {
+                items: ExprNodeList::from_bump_vec(raw),
+                ..Default::default()
+            },
+            expr.loc,
+        );
+        template.tag =
+            Some(self.call_runtime(expr.loc, b"__rawTemplate", ExprNodeList::init_one(raw)));
+        Some(self.new_expr(
+            E::Call {
+                target: tag,
+                args: ExprNodeList::from_bump_vec(args),
+                ..Default::default()
+            },
+            expr.loc,
+        ))
     }
     fn e_binary(p: &mut Self, e: &mut Expr) {
         let expr = *e;

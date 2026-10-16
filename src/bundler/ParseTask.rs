@@ -2551,6 +2551,7 @@ pub mod parse_worker {
         // JavaScriptCore implements `using` / `await using` natively, so when
         // targeting Bun there is no need to lower them.
         opts.features.lower_using = !target.is_bun();
+        opts.features.ascii_only = target.is_bun();
         opts.features.hot_module_reloading =
             output_format == options::Format::InternalBakeDev && !task.source_index.is_runtime();
         opts.features.auto_polyfill_require =

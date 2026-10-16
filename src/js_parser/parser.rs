@@ -252,6 +252,9 @@ pub mod Runtime {
         // TODO: make this a bitset of all unsupported features
         pub lower_using: bool,
 
+        /// The printer escapes everything that is not ASCII.
+        pub ascii_only: bool,
+
         /// Feature flags for dead-code elimination via `import { feature } from "bun:bundle"`
         /// When `feature("FLAG_NAME")` is called, it returns true if FLAG_NAME is in this set.
         ///
@@ -312,6 +315,7 @@ pub mod Runtime {
                 remove_cjs_module_wrapper: false,
                 runtime_transpiler_cache: None,
                 lower_using: true,
+                ascii_only: false,
                 bundler_feature_flags: None,
                 define_hash: None,
                 repl_mode: false,
@@ -365,7 +369,7 @@ pub mod Runtime {
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 17] = [
+            let bools: [bool; 18] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
@@ -383,6 +387,7 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
+                self.ascii_only,
                 // `hash_test_features_for_runtime_transpiler` hashes `inject_jest_globals` and `vitest_globals`.
             ];
 
@@ -1658,6 +1663,8 @@ impl Jest {
         "vitest",
         "onTestFailed",
         "assertType",
+        "aroundEach",
+        "aroundAll",
     ];
 
     #[cold]

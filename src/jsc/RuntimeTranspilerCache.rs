@@ -71,7 +71,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 39: Looking up any `bun test` global, or having a statement hoisted, counts as using that API.
 /// Version 40: Vitest globals leave out `jest`, `xit`, `xtest`, `xdescribe`. Files importing "vitest" get their own features hash.
 /// Version 41: Long hexadecimal, octal and binary literals are rounded to the nearest double.
-const EXPECTED_VERSION: u32 = 41;
+/// Version 42: A tag gets the non-ASCII text of its template unescaped in `strings.raw`. `aroundEach` and `aroundAll` are `bun test` globals.
+const EXPECTED_VERSION: u32 = 42;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

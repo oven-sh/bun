@@ -1389,8 +1389,8 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       );
       expect(stdout).toMatchInlineSnapshot(`
         "<dir>/a.js:1:1: No foo in a ExpressionStatement. [Error/demo/no-foo]
-        <dir>/b.ts:1:1: No foo in a ExpressionStatement. [Error/demo/no-foo]
-        <dir>/b.ts:1:1: No foo in a ExpressionStatement. [Warning/fixed/no-foo]
+        <dir>/b.js:1:1: No foo in a ExpressionStatement. [Error/demo/no-foo]
+        <dir>/b.js:1:1: No foo in a ExpressionStatement. [Warning/fixed/no-foo]
 
         3 problems"
       `);
@@ -1838,8 +1838,8 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       expect(stdout).toMatchInlineSnapshot(`
         "<dir>/a.js:1:1: typed/untyped [Error/typed/untyped]
         <dir>/a.js:2:1: Unexpected var, use let or const instead. [Error/no-var]
-        <dir>/b.ts:1:1: typed/untyped [Error/typed/untyped]
-        <dir>/b.ts:1:1: Unexpected var, use let or const instead. [Error/no-var]
+        <dir>/b.js:1:1: typed/untyped [Error/typed/untyped]
+        <dir>/b.js:1:1: Unexpected var, use let or const instead. [Error/no-var]
 
         4 problems"
       `);
@@ -2120,7 +2120,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       );
       expect(stderr).toContain("error: nobody handles this");
       expect(stdout).toContain("<dir>/a.js:1:1: first [Error/first/rejects]");
-      expect(stdout).toContain("<dir>/b.ts:1:1: second [Error/second/late]");
+      expect(stdout).toContain("<dir>/b.js:1:1: second [Error/second/late]");
       expect(exitCode).toBe(1);
     },
     timeout,

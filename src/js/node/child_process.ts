@@ -1370,10 +1370,8 @@ class ChildProcess extends EventEmitter {
     return result;
   }
 
-  // Node assigns these as own data properties in spawn(). Bun creates the
-  // streams on first read, so a getter materializes the own property then.
-  // A setter creates it directly: the private slots only hold what spawn()
-  // created, which exit handling drains.
+  // Own data properties as in node. A getter creates the stream on first read.
+  // The private slots only hold what spawn() created, which exit handling drains.
   #defineOwn(key: string, value) {
     Object.defineProperty(this, key, { value, enumerable: true, configurable: true, writable: true });
   }
@@ -1422,8 +1420,7 @@ class ChildProcess extends EventEmitter {
     this.#defineOwn("stdio", value);
   }
 
-  // An assigned `connected` is kept until spawn() or a disconnect changes
-  // the channel state, which node's own writes to `this.connected` also do.
+  // Holds an assigned `connected` until spawn() or a disconnect overwrites it, as in node.
   #connected;
 
   get connected() {

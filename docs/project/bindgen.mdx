@@ -289,10 +289,10 @@ out-of-bounds view is empty.
 
 Another thread can write the bytes of a `SharedArrayBuffer` at any time, which a `&[u8]` says
 cannot happen, so these types refuse one. `.allowShared`, WebIDL's `[AllowShared]`, takes it,
-and the body gets a `PossiblySharedBytes<'a>` whether the buffer is shared or not. It has a
-length and sub-ranges, and no way to a slice. What reads the bytes is a method of it, written
-for a byte that can differ each time it is read: `index_of_char` hands the pointer to a kernel
-that uses nothing it reads as an index or a length.
+and the body gets a `PossiblySharedBytes<'a>` whether the buffer is shared or not. There is no
+way from it to a slice. What reads the bytes is a method of it, written for a byte that can
+differ each time it is read: `index_of_char` hands the pointer to a kernel that uses nothing
+it reads as an index or a length.
 
 ### Keeping the original value
 

@@ -310,16 +310,6 @@ pub struct PossiblySharedBytes<'a> {
 }
 
 impl PossiblySharedBytes<'_> {
-    #[inline(always)]
-    pub fn len(self) -> usize {
-        self.length
-    }
-
-    #[inline(always)]
-    pub fn is_empty(self) -> bool {
-        self.length == 0
-    }
-
     /// `None` if `range` starts beyond the end.
     #[inline]
     pub fn get(self, range: core::ops::RangeFrom<usize>) -> Option<Self> {

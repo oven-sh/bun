@@ -316,6 +316,72 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     return true;
 }
 
+// Body of `[#!...\n][// @bun...\n](function(exports, require, module, __filename, __dirname[, $Bun_import_meta]) {<body>});`
+static String stripCommonJSWrapper(StringView source)
+{
+    size_t start = 0;
+    while (source.substring(start).startsWith("#!"_s) || source.substring(start).startsWith("//"_s)) {
+        start = source.find('\n', start);
+        if (start == WTF::notFound)
+            return {};
+        start++;
+    }
+    if (!source.substring(start).startsWith("(function"_s))
+        return {};
+    size_t bodyStart = source.find('{', start);
+    size_t bodyEnd = source.reverseFind("})"_s);
+    if (bodyStart == WTF::notFound || bodyEnd == WTF::notFound || bodyEnd <= bodyStart)
+        return {};
+    return source.substring(bodyStart + 1, bodyEnd - bodyStart - 1).toString();
+}
+
+static bool isDefaultCompileFunction(JSValue value);
+
+static bool evaluateCommonJSModuleWithCompileHook(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue compileFunction = moduleObject->m_overriddenCompile.get();
+    if (!compileFunction)
+        compileFunction = globalObject->m_modulePrototypeCompileOverride.get();
+
+    // Node does not run the -e / stdin entry through _compile; its source has no wrapper.
+    if (isDefaultCompileFunction(compileFunction) || Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename)))
+        return evaluateCommonJSModuleOnce(vm, globalObject, moduleObject, dirname, filename);
+
+    JSC::CallData callData = compileFunction.isCell() ? JSC::getCallData(compileFunction) : JSC::CallData();
+    if (callData.type == JSC::CallData::Type::None) {
+        throwTypeError(globalObject, scope, "module._compile is not a function"_s);
+        return false;
+    }
+
+    SourceCode code = WTF::move(moduleObject->sourceCode);
+    if (code.isNull()) [[unlikely]] {
+        throwException(globalObject, scope, createError(globalObject, "Failed to evaluate module"_s));
+        return false;
+    }
+    String body = stripCommonJSWrapper(code.view());
+    if (body.isNull()) [[unlikely]] {
+        throwTypeError(globalObject, scope, "Expected CommonJS module to have a function wrapper. If you weren't messing around with Bun's internals, this is a bug in Bun"_s);
+        return false;
+    }
+    code = {};
+
+    MarkedArgumentBuffer args;
+    args.append(jsString(vm, WTF::move(body)));
+    args.append(filename);
+    JSC::profiledCall(globalObject, ProfilingReason::API, compileFunction, callData, moduleObject, args);
+    RETURN_IF_EXCEPTION(scope, false);
+    moduleObject->hasEvaluated = true;
+    return true;
+}
+
+static bool evaluateCommonJSModule(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
+{
+    if (!moduleObject->m_overriddenCompile && !globalObject->hasOverriddenModulePrototypeCompile) [[likely]]
+        return evaluateCommonJSModuleOnce(vm, globalObject, moduleObject, dirname, filename);
+    return evaluateCommonJSModuleWithCompileHook(vm, globalObject, moduleObject, dirname, filename);
+}
+
 bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -323,7 +389,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         return true;
     }
 
-    evaluateCommonJSModuleOnce(
+    evaluateCommonJSModule(
         globalObject->vm(),
         globalObject,
         this,
@@ -800,28 +866,23 @@ JSC_DEFINE_CUSTOM_SETTER(setterLoaded,
     return true;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(getterUnderscoreCompile, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+JSC_DECLARE_CUSTOM_GETTER(getterUnderscoreCompile);
+JSC_DECLARE_CUSTOM_SETTER(setterUnderscoreCompile);
+
+static bool isDefaultCompileFunction(JSValue value)
 {
-    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]] {
-        return JSValue::encode(jsUndefined());
-    }
-    if (thisObject->m_overriddenCompile) {
-        return JSValue::encode(thisObject->m_overriddenCompile.get());
-    }
-    return JSValue::encode(defaultGlobalObject(globalObject)->modulePrototypeUnderscoreCompileFunction());
+    if (!value.isCallable())
+        return false;
+    JSC::CallData callData = JSC::getCallData(value);
+    return callData.type == JSC::CallData::Type::Native
+        && callData.native.function.untaggedPtr() == &functionJSCommonJSModule_compile;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
+static JSValue modulePrototypeCompileFunction(Zig::GlobalObject* globalObject)
 {
-    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
-    if (!thisObject)
-        return false;
-    JSValue decodedValue = JSValue::decode(value);
-    thisObject->m_overriddenCompile.set(globalObject->vm(), thisObject, decodedValue);
-    return true;
+    if (globalObject->hasOverriddenModulePrototypeCompile) [[unlikely]]
+        return globalObject->m_modulePrototypeCompileOverride.get();
+    return globalObject->modulePrototypeUnderscoreCompileFunction();
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
@@ -848,6 +909,8 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
             zigGlobalObject->m_moduleWrapperStart,
             sourceString,
             zigGlobalObject->m_moduleWrapperEnd);
+    } else if (sourceString.contains(commonJSImportMetaParameter)) [[unlikely]] {
+        wrappedString = makeString(commonJSImportMetaWrapperStart, sourceString, "\n"_s, commonJSDefaultWrapperEnd);
     } else {
         wrappedString = makeString(commonJSDefaultWrapperStart, sourceString, "\n"_s, commonJSDefaultWrapperEnd);
     }
@@ -951,10 +1014,54 @@ public:
             clientData(vm)->builtinNames().requireNativeModulePrivateName(),
             0,
             jsFunctionRequireNativeModule, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
+        this->putDirectCustomAccessor(
+            vm,
+            clientData(vm)->builtinNames().requirePublicName(),
+            JSC::CustomGetterSetter::create(vm, getterRequireFunction, setterRequireFunction),
+            0);
     }
 };
 
 const JSC::ClassInfo JSCommonJSModulePrototype::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModulePrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(getterUnderscoreCompile, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    if (auto* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue))) {
+        if (thisObject->m_overriddenCompile) {
+            return JSValue::encode(thisObject->m_overriddenCompile.get());
+        }
+    }
+    return JSValue::encode(modulePrototypeCompileFunction(defaultGlobalObject(globalObject)));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSValue receiver = JSValue::decode(thisValue);
+    JSValue decodedValue = JSValue::decode(value);
+    if (auto* thisObject = dynamicDowncast<JSCommonJSModule>(receiver)) {
+        thisObject->m_overriddenCompile.set(vm, thisObject, decodedValue);
+        return true;
+    }
+    if (receiver.inherits<JSCommonJSModulePrototype>()) {
+        auto* zigGlobalObject = defaultGlobalObject(globalObject);
+        if (isDefaultCompileFunction(decodedValue)) {
+            zigGlobalObject->hasOverriddenModulePrototypeCompile = false;
+            zigGlobalObject->m_modulePrototypeCompileOverride.clear();
+        } else {
+            zigGlobalObject->m_modulePrototypeCompileOverride.set(vm, zigGlobalObject, decodedValue);
+            zigGlobalObject->hasOverriddenModulePrototypeCompile = true;
+        }
+        return true;
+    }
+    JSObject* object = receiver.getObject();
+    if (!object)
+        return false;
+    object->putDirect(vm, propertyName, decodedValue);
+    return true;
+}
 
 void JSCommonJSModule::finishCreation(JSC::VM& vm, const JSC::SourceCode& sourceCode)
 {
@@ -1290,6 +1397,13 @@ Structure* createCommonJSModuleStructure(
     return JSCommonJSModule::createStructure(globalObject);
 }
 
+void initCommonJSModuleClassStructure(JSC::LazyClassStructure::Initializer& init)
+{
+    auto* globalObject = static_cast<Zig::GlobalObject*>(init.global);
+    init.setStructure(JSCommonJSModule::createStructure(globalObject));
+    init.setConstructor(createNodeModuleConstructor(init.vm, globalObject));
+}
+
 void JSCommonJSModule::setModuleGraph(JSC::VM& vm, JSModuleGraph* graph)
 {
     if (!graph)
@@ -1517,11 +1631,11 @@ void JSCommonJSModule::evaluate(
 
     if (globalObject->hasOverriddenModuleWrapper) [[unlikely]] {
         auto string = source.source_code.transferToWTFString();
-        auto trimStart = string.find('\n');
-        if (trimStart != WTF::notFound) {
+        String body = stripCommonJSWrapper(string);
+        if (!body.isNull()) {
             string = makeString(
                 globalObject->m_moduleWrapperStart,
-                string.substring(trimStart, string.length() - trimStart - 4),
+                body,
                 globalObject->m_moduleWrapperEnd);
         }
         source.source_code = Bun::toStringRef(string);
@@ -1539,7 +1653,7 @@ void JSCommonJSModule::evaluate(
 
     this->sourceCode = JSC::SourceCode(WTF::move(sourceProvider));
 
-    evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
+    evaluateCommonJSModule(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
 }
 
 void JSCommonJSModule::evaluate(
@@ -1552,49 +1666,7 @@ void JSCommonJSModule::evaluate(
     if (this->hasEvaluated)
         return;
     this->sourceCode = JSC::SourceCode(WTF::move(sourceProvider));
-    evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
-}
-
-void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
-    Zig::GlobalObject* globalObject,
-    const WTF::String& key,
-    JSValue keyJSString,
-    ResolvedSource& source)
-{
-    if (JSValue compileFunction = this->m_overriddenCompile.get()) {
-        auto& vm = globalObject->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        if (!compileFunction) {
-            throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
-            return;
-        }
-        JSC::CallData callData = JSC::getCallData(compileFunction.asCell());
-        if (callData.type == JSC::CallData::Type::None) {
-            throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
-            return;
-        }
-        WTF::String sourceString = source.source_code.transferToWTFString();
-        // Remove the wrapper from the source string, since the transpiler has added it.
-        auto trimStart = sourceString.find('\n');
-        WTF::String sourceStringWithoutWrapper;
-        if (trimStart != WTF::notFound) {
-            auto wrapperStart = globalObject->m_moduleWrapperStart;
-            auto wrapperEnd = globalObject->m_moduleWrapperEnd;
-            sourceStringWithoutWrapper = sourceString.substring(trimStart, sourceString.length() - trimStart - 4);
-        } else {
-            sourceStringWithoutWrapper = sourceString;
-        }
-        RETURN_IF_EXCEPTION(scope, );
-
-        // _compile(source, filename)
-        MarkedArgumentBuffer arguments;
-        arguments.append(jsString(vm, sourceStringWithoutWrapper));
-        arguments.append(keyJSString);
-        JSC::profiledCall(globalObject, ProfilingReason::API, compileFunction, callData, this, arguments);
-        RETURN_IF_EXCEPTION(scope, );
-        return;
-    }
-    this->evaluate(globalObject, key, source, false);
+    evaluateCommonJSModule(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
 }
 
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*);
@@ -1700,7 +1772,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
                         if (!moduleObject->hasEvaluated) {
-                            evaluateCommonJSModuleOnce(
+                            evaluateCommonJSModule(
                                 vm,
                                 globalObject,
                                 moduleObject,

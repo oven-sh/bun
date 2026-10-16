@@ -1,0 +1,34 @@
+thread 'rustc' panicked at /rustc-dev/574ff7d98bd6d037e5236a8453029173b32631fd/compiler/rustc_metadata/src/rmeta/encoder.rs:2509:51:
+no entry found for key
+stack backtrace:
+   0:     0x7f494801f255 - <std[e88b123c45551a4b]::backtrace::Backtrace>::create
+   1:     0x7f494801f1a5 - <std[e88b123c45551a4b]::backtrace::Backtrace>::force_capture
+   2:     0x7f4946d62275 - std[e88b123c45551a4b]::panicking::update_hook::<alloc[d256a4456fbff4f9]::boxed::Box<rustc_driver_impl[c5d5f53170729273]::install_ice_hook::{closure#1}>>::{closure#0}
+   3:     0x7f49480350b2 - std[e88b123c45551a4b]::panicking::panic_with_hook
+   4:     0x7f4948013222 - std[e88b123c45551a4b]::panicking::panic_handler::{closure#0}
+   5:     0x7f494800c039 - std[e88b123c45551a4b]::sys::backtrace::__rust_end_short_backtrace::<std[e88b123c45551a4b]::panicking::panic_handler::{closure#0}, !>
+   6:     0x7f4948014dfd - __rustc[4dff85908f3a4c57]::rust_begin_unwind
+   7:     0x7f4944a6134c - core[e3370a31d8f1c8c0]::panicking::panic_fmt
+   8:     0x7f49455eac74 - core[e3370a31d8f1c8c0]::option::expect_failed
+   9:     0x7f4949bb4d7b - rustc_metadata[7cc8cffbddd8922]::rmeta::encoder::encode_metadata
+  10:     0x7f49498cd05a - rustc_metadata[7cc8cffbddd8922]::fs::encode_and_write_metadata
+  11:     0x7f49498cb7d1 - <rustc_interface[fe52a0dd05c9819f]::queries::Linker>::codegen_and_build_linker
+  12:     0x7f49498c1e09 - rustc_interface[fe52a0dd05c9819f]::interface::run_compiler::<(), rustc_driver_impl[c5d5f53170729273]::run_compiler::{closure#0}>::{closure#2}
+  13:     0x7f4946d7719a - <rustc_thread_pool[96f2ed9bb8bc7a7a]::job::StackJob<rustc_thread_pool[96f2ed9bb8bc7a7a]::latch::LatchRef<rustc_thread_pool[96f2ed9bb8bc7a7a]::latch::LockLatch>, <rustc_thread_pool[96f2ed9bb8bc7a7a]::registry::Registry>::in_worker_cold<<rustc_thread_pool[96f2ed9bb8bc7a7a]::thread_pool::ThreadPool>::install<rustc_interface[fe52a0dd05c9819f]::util::run_in_thread_pool_with_globals<rustc_interface[fe52a0dd05c9819f]::interface::run_compiler<(), rustc_driver_impl[c5d5f53170729273]::run_compiler::{closure#0}>::{closure#2}, ()>::{closure#5}::{closure#0}::{closure#1}::{closure#0}, ()>::{closure#0}, ()>::{closure#0}::{closure#0}, ()> as rustc_thread_pool[96f2ed9bb8bc7a7a]::job::Job>::execute
+  14:     0x7f4947ca3787 - <rustc_thread_pool[96f2ed9bb8bc7a7a]::registry::WorkerThread>::wait_or_steal_until_cold
+  15:     0x7f4947ca21a2 - <rustc_thread_pool[96f2ed9bb8bc7a7a]::registry::ThreadBuilder>::run
+  16:     0x7f4946d5988c - std[e88b123c45551a4b]::sys::backtrace::__rust_begin_short_backtrace::<<rustc_thread_pool[96f2ed9bb8bc7a7a]::ThreadPoolBuilder>::build_scoped<rustc_interface[fe52a0dd05c9819f]::util::run_in_thread_pool_with_globals<rustc_interface[fe52a0dd05c9819f]::interface::run_compiler<(), rustc_driver_impl[c5d5f53170729273]::run_compiler::{closure#0}>::{closure#2}, ()>::{closure#5}::{closure#0}::{closure#0}, rustc_interface[fe52a0dd05c9819f]::util::run_in_thread_pool_with_globals<rustc_interface[fe52a0dd05c9819f]::interface::run_compiler<(), rustc_driver_impl[c5d5f53170729273]::run_compiler::{closure#0}>::{closure#2}, ()>::{closure#5}::{closure#0}::{closure#1}, ()>::{closure#0}::{closure#0}::{closure#0}, ()>
+  17:     0x7f4946d6478a - <std[e88b123c45551a4b]::thread::lifecycle::spawn_unchecked<<rustc_thread_pool[96f2ed9bb8bc7a7a]::ThreadPoolBuilder>::build_scoped<rustc_interface[fe52a0dd05c9819f]::util::run_in_thread_pool_with_globals<rustc_interface[fe52a0dd05c9819f]::interface::run_compiler<(), rustc_driver_impl[c5d5f53170729273]::run_compiler::{closure#0}>::{closure#2}, ()>::{closure#5}::{closure#0}::{closure#0}, rustc_interface[fe52a0dd05c9819f]::util::run_in_thread_pool_with_globals<rustc_interface[fe52a0dd05c9819f]::interface::run_compiler<(), rustc_driver_impl[c5d5f53170729273]::run_compiler::{closure#0}>::{closure#2}, ()>::{closure#5}::{closure#0}::{closure#1}, ()>::{closure#0}::{closure#0}::{closure#0}, ()>::{closure#1} as core[e3370a31d8f1c8c0]::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}
+  18:     0x7f4949914d1b - <std[e88b123c45551a4b]::sys::thread::unix::Thread>::new::thread_start
+  19:     0x7f4942a9e8bb - start_thread
+                               at ./nptl/pthread_create.c:448:8
+  20:     0x7f4942b1c538 - __GI___clone3
+                               at ./misc/../sysdeps/unix/sysv/linux/x86_64/clone3.S:78:0
+  21:                0x0 - <unknown>
+
+
+rustc version: 1.100.0-nightly (574ff7d98 2026-09-14)
+platform: x86_64-unknown-linux-gnu
+
+query stack during panic:
+end of query stack

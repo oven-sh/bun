@@ -1396,6 +1396,10 @@ pub struct BundleOptions<'a> {
 
     pub ignore_module_resolution_errors: bool,
 
+    /// Bundle `import(specifier, options)` when the `with` attributes of `options`
+    /// cannot be read, as the dev server does. For a build whose warnings nobody sees.
+    pub bundles_unreadable_imports: bool,
+
     /// Package names whose barrel files should be optimized.
     /// When set, barrel files from these packages will only load submodules
     /// that are actually imported. Also, any file with sideEffects: false
@@ -1575,6 +1579,7 @@ impl<'a> BundleOptions<'a> {
             supports_multiple_outputs: self.supports_multiple_outputs,
             force_node_env: self.force_node_env,
             ignore_module_resolution_errors: self.ignore_module_resolution_errors,
+            bundles_unreadable_imports: self.bundles_unreadable_imports,
             optimize_imports: self.optimize_imports,
         }
     }
@@ -1827,6 +1832,7 @@ impl<'a> BundleOptions<'a> {
             supports_multiple_outputs: true,
             force_node_env: ForceNodeEnv::Unspecified,
             ignore_module_resolution_errors: false,
+            bundles_unreadable_imports: false,
             optimize_imports: None,
         };
 

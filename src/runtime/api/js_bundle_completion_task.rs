@@ -1084,6 +1084,8 @@ impl CompletionStruct for JSBundleCompletionTask {
         };
         transpiler.options.code_splitting = config.code_splitting;
         transpiler.options.split_require = config.split_require;
+        // A route shows no warnings, and what it serves has to match the dev server.
+        transpiler.options.bundles_unreadable_imports = self.html_build_task.is_some();
         transpiler.options.emit_dce_annotations = config
             .emit_dce_annotations
             .unwrap_or(!config.minify.whitespace);

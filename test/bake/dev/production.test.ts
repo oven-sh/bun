@@ -780,4 +780,36 @@ export default function IndexPage() {
     expect(indexHtml).toContain("readyState=<!-- -->" + WebSocket.CONNECTING);
     expect(buildProc.exitCode).toBe(0);
   });
+
+  // The build prints no warnings, so it keeps the import in the bundle, as the dev server does.
+  test("import() whose options are in a variable is bundled", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-import-options", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `const options = { with: { type: "json" } };
+export default async function IndexPage() {
+  const data = await import("../data.json", options);
+  return <div>magic={data.default.magic}</div>;
+}`,
+      "data.json": JSON.stringify({ magic: "from data.json" }),
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const buildProc = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+
+    const indexHtml = await Bun.file(path.join(dir, "dist", "index.html"))
+      .text()
+      .catch(() => buildProc.stderr.toString());
+    expect(indexHtml).toContain("magic=<!-- -->from data.json");
+    expect(buildProc.exitCode).toBe(0);
+  });
 });

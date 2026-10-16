@@ -1613,3 +1613,39 @@ describe("production headers and import.meta.env", () => {
     expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
 });
+
+// A route prints no warnings, so it keeps the import in the bundle, as the dev server does.
+test.concurrent.each(["false", "{ hmr: false }"])(
+  "development: %s bundles import() whose options are in a variable",
+  async development => {
+    using dir = tempDir("html-import-options", {
+      "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.js"></script></body></html>`,
+      "app.js": /*js*/ `
+        const options = { with: { type: "json" } };
+        import("./data.json", options).then(data => console.log(data.default.magic));
+      `,
+      "data.json": JSON.stringify({ magic: "from data.json" }),
+      "serve.js": /*js*/ `
+        import index from "./index.html";
+        const server = Bun.serve({ port: 0, development: ${development}, routes: { "/": index } });
+        const html = await (await fetch(server.url)).text();
+        const js = await (await fetch(new URL(html.match(/src="([^"]+\\.js)"/)[1], server.url))).text();
+        console.log(JSON.stringify({
+          hasData: js.includes("from data.json"),
+          importCalls: js.split("import(").length - 1,
+        }));
+        await server.stop(true);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "serve.js"],
+      env: { ...bunEnv, NODE_ENV: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(stdout + "\n" + stderr);
+    expect(JSON.parse(stdout)).toEqual({ hasData: true, importCalls: 0 });
+  },
+);

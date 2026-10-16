@@ -6697,9 +6697,12 @@ pub mod bv2_impl {
             path: &Fs::Path,
             target: options::Target,
         ) -> UnreadableImport {
-            // A graph that is only scanned follows bound records, and a browser build has
-            // no runtime module behind a node polyfill.
-            if self.transpiler.options.ignore_module_resolution_errors || path.namespace == b"node"
+            // A graph that is only scanned follows bound records, a build that shows no
+            // warnings matches the dev server, and a browser build has no runtime module
+            // behind a node polyfill.
+            if self.transpiler.options.ignore_module_resolution_errors
+                || self.transpiler.options.bundles_unreadable_imports
+                || path.namespace == b"node"
             {
                 return UnreadableImport::Bind;
             }

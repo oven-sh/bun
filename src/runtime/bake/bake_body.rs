@@ -765,6 +765,8 @@ impl Framework {
 
         out.options.production = mode != Mode::Development;
         out.options.tree_shaking = mode != Mode::Development;
+        // A production build shows no warnings, and has to match the dev server.
+        out.options.bundles_unreadable_imports = true;
         // The dev server never minifies.
         let minify = |option: Option<bool>| mode != Mode::Development && option.unwrap_or(true);
         out.options.minify_syntax = minify(bundler_options.minify_syntax);

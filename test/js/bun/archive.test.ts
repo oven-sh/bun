@@ -1628,6 +1628,181 @@ describe("Bun.Archive", () => {
       expect(xmlFiles.size).toBe(0);
     });
 
+    // The content of each regular file below `dir`, sorted.
+    const contents = (dir: string) =>
+      (existsSync(dir) ? (readdirSync(dir, { recursive: true }) as string[]) : [])
+        .filter(path => statSync(join(dir, path)).isFile())
+        .map(path => readFileSync(join(dir, path), "utf8"))
+        .sort();
+    // What each pattern selects in files() and in extract(), as file contents. Each entry of an archive has its own content.
+    async function selectedBy(archive: Bun.Archive, patterns: Record<string, string | string[]>) {
+      using dir = tempDir("archive-files-glob", {});
+      const selected: Record<string, { files: string[]; extracted: string[] }> = {};
+      for (const [label, glob] of Object.entries(patterns)) {
+        const dest = join(String(dir), String(Object.keys(selected).length));
+        await archive.extract(dest, { glob });
+        const files = await archive.files(glob);
+        selected[label] = {
+          files: (await Promise.all([...files.values()].map(file => file.text()))).sort(),
+          extracted: contents(dest),
+        };
+      }
+      return selected;
+    }
+    const both = (...entries: string[]) => ({ files: entries.sort(), extracted: [...entries].sort() });
+
+    // `tar -cf x.tar -C dir .` stores every entry with a leading "./".
+    const dotSlashArchive = () =>
+      new Bun.Archive(
+        buildTarball([
+          { name: "./src/a.ts", data: "a" },
+          { name: "./src/a.test.ts", data: "test" },
+          { name: "./node_modules/x/i.js", data: "module" },
+          { name: "./secret.env", data: "secret" },
+          { name: "lib//b.ts", data: "b" },
+        ]),
+      );
+
+    test("a glob pattern selects the same entries in files() as in extract()", async () => {
+      const selected = await selectedBy(dotSlashArchive(), {
+        "src/*": "src/*",
+        "src/**, lib/**": ["src/**", "lib/**"],
+        "**, !node_modules/**": ["**", "!node_modules/**"],
+        "src/**, !**/*.test.ts": ["src/**", "!**/*.test.ts"],
+        "!secret.env": "!secret.env",
+      });
+
+      expect(selected).toEqual({
+        "src/*": both("a", "test"),
+        "src/**, lib/**": both("a", "b", "test"),
+        "**, !node_modules/**": both("a", "b", "secret", "test"),
+        "src/**, !**/*.test.ts": both("a"),
+        "!secret.env": both("a", "b", "module", "test"),
+      });
+    });
+
+    test('a "." component and an empty component of a glob pattern are ignored', async () => {
+      const inSrc = both("a", "test");
+      const notSecret = both("a", "b", "module", "test");
+
+      expect(
+        await selectedBy(dotSlashArchive(), {
+          "./src/*": "./src/*",
+          "././src/*": "././src/*",
+          ".//src/*": ".//src/*",
+          "src/./*": "src/./*",
+          "src//*": "src//*",
+          "lib//b.ts": "lib//b.ts",
+          "lib//*": "lib//*",
+          "!./secret.env": "!./secret.env",
+          "./!secret.env": "./!secret.env",
+          "!.//secret.env": "!.//secret.env",
+          "src/**, ./!src/a.test.ts": ["src/**", "./!src/a.test.ts"],
+          // A group stays as written, and no name starts with "./".
+          "{./src,./lib}/**": "{./src,./lib}/**",
+        }),
+      ).toEqual({
+        "./src/*": inSrc,
+        "././src/*": inSrc,
+        ".//src/*": inSrc,
+        "src/./*": inSrc,
+        "src//*": inSrc,
+        "lib//b.ts": both("b"),
+        "lib//*": both("b"),
+        "!./secret.env": notSecret,
+        "./!secret.env": notSecret,
+        "!.//secret.env": notSecret,
+        "src/**, ./!src/a.test.ts": both("a"),
+        "{./src,./lib}/**": both(),
+      });
+    });
+
+    test("a glob pattern sees a backslash in an entry name as a separator", async () => {
+      // extract() writes the second entry as the file "i.txt" in the directory "h".
+      const archive = new Bun.Archive(
+        buildTarball([
+          { name: "top.txt", data: "top" },
+          { name: "h\\i.txt", data: "inner" },
+        ]),
+      );
+
+      expect(await selectedBy(archive, { "*": "*", "h/*": "h/*" })).toEqual({
+        "*": both("top"),
+        "h/*": both("inner"),
+      });
+    });
+
+    test('a glob pattern does not see a ".." component or a leading "/" of an entry name', async () => {
+      const archive = new Bun.Archive(
+        buildTarball([
+          { name: "src/ok.ts", data: "ok" },
+          { name: "../src/x.ts", data: "x" },
+          { name: "ok/../../src/y.ts", data: "y" },
+          { name: "/abs/src/z.ts", data: "z" },
+          { name: "../../top.txt", data: "top" },
+        ]),
+      );
+      const patterns: Record<string, string | string[]> = {
+        "src/*": "src/*",
+        "*": "*",
+        "abs/**": "abs/**",
+        "../**": "../**",
+        "**, !**/../**": ["**", "!**/../**"],
+      };
+      using dir = tempDir("archive-files-glob-outside", {});
+
+      // The key of an entry in files(), next to the path that extract() writes for it below the destination.
+      const selected: Record<string, Record<string, string>> = {};
+      for (const [label, glob] of Object.entries(patterns)) {
+        const dest = join(String(dir), String(Object.keys(selected).length));
+        await archive.extract(dest, { glob });
+        const written = (existsSync(dest) ? (readdirSync(dest, { recursive: true }) as string[]) : [])
+          .filter(path => statSync(join(dest, path)).isFile())
+          .map(path => [readFileSync(join(dest, path), "utf8"), path.replaceAll("\\", "/")]);
+        const pathOf = Object.fromEntries(written);
+        selected[label] = {};
+        for (const [key, file] of await archive.files(glob)) selected[label][key] = pathOf[await file.text()];
+      }
+
+      const all = {
+        "src/ok.ts": "src/ok.ts",
+        "../src/x.ts": "src/x.ts",
+        "ok/../../src/y.ts": "src/y.ts",
+        "/abs/src/z.ts": "abs/src/z.ts",
+        "../../top.txt": "top.txt",
+      };
+      expect(selected).toEqual({
+        "src/*": { "src/ok.ts": "src/ok.ts", "../src/x.ts": "src/x.ts", "ok/../../src/y.ts": "src/y.ts" },
+        "*": { "../../top.txt": "top.txt" },
+        "abs/**": { "/abs/src/z.ts": "abs/src/z.ts" },
+        "../**": {},
+        "**, !**/../**": all,
+      });
+    });
+
+    test("files(glob) lists an entry that extract() with a glob leaves out for its name", async () => {
+      // With a glob, extract() does not write a name whose second byte is ":". Without a glob it writes that name on POSIX.
+      const archive = new Bun.Archive(
+        buildTarball([
+          { name: "a:b.txt", data: "colon" },
+          { name: "c.txt", data: "c" },
+        ]),
+      );
+
+      expect(await selectedBy(archive, { "*.txt": "*.txt" })).toEqual({
+        "*.txt": { files: ["c", "colon"], extracted: ["c"] },
+      });
+    });
+
+    test("files(glob) lists an entry with a name longer than a path", async () => {
+      // No file is made, so the length limit of a path does not apply.
+      const name = Buffer.alloc(5000, "d/").toString() + "payload.txt";
+      const archive = new Bun.Archive(buildPaxTarball([{ name, data: "payload" }]));
+
+      const files = await archive.files("**/payload.txt");
+      expect(await Promise.all([...files.values()].map(file => file.text()))).toEqual(["payload"]);
+    });
+
     test("handles binary data correctly", async () => {
       const binaryData = new Uint8Array([0, 1, 2, 255, 254, 253, 128, 127]);
       const archive = new Bun.Archive({

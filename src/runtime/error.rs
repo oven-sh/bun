@@ -108,8 +108,6 @@ pub enum Error {
     ThreadSpawnFailed,
     #[error("CouldntReadCurrentDirectory")]
     CouldntReadCurrentDirectory,
-    #[error("FailedToGetTempPath")]
-    FailedToGetTempPath,
     #[error("UnableToEncode")]
     UnableToEncode,
     #[error("InvalidHeaderName")]
@@ -392,7 +390,6 @@ impl Error {
             Self::InvalidLoader => "InvalidLoader",
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::CouldntReadCurrentDirectory => "CouldntReadCurrentDirectory",
-            Self::FailedToGetTempPath => "FailedToGetTempPath",
             Self::UnableToEncode => "UnableToEncode",
             Self::InvalidHeaderName => "InvalidHeaderName",
             Self::FormatError => "FormatError",

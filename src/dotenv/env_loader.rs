@@ -7,6 +7,7 @@ use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringSet};
 use bun_core::{self, Output};
 use bun_core::{ZStr, strings};
+use bun_paths::bun_node_link::is_bun_node_link;
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_sys;
 use bun_url::URL;
@@ -222,7 +223,8 @@ impl Loader {
         let env_len = self
             .get(b"NODE")
             .or_else(|| self.get(b"npm_node_execpath"))
-            .filter(|n| !n.is_empty() && n.len() < MAX_PATH_BYTES)
+            // The `node` link of a parent bun says nothing about `node` on `PATH`.
+            .filter(|n| !n.is_empty() && n.len() < MAX_PATH_BYTES && !is_bun_node_link(n))
             .map(|node| {
                 buf[..node.len()].copy_from_slice(node);
                 buf[node.len()] = 0;

@@ -383,7 +383,6 @@ pub struct RunCommand;
 pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-#[cfg(not(windows))]
 use bun_core::ZStr;
 
 impl RunCommand {
@@ -396,14 +395,8 @@ impl RunCommand {
     /// builds at the same commit share this dir. `create_fake_temporary_node_executable`
     /// therefore re-points a stale link on EEXIST instead of trusting it.
     #[cfg(not(windows))]
-    pub fn bun_node_dir() -> &'static ZStr {
-        const TMP: &str = if cfg!(target_os = "macos") {
-            "/private/tmp"
-        } else if cfg!(target_os = "android") {
-            "/data/local/tmp"
-        } else {
-            "/tmp"
-        };
+    fn bun_node_dir() -> &'static ZStr {
+        use bun_paths::bun_node_link::{DIR_PREFIX, POSIX_ROOT};
         const SUFFIX: &str = if bun_core::env::IS_DEBUG {
             "-debug"
         } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
@@ -413,23 +406,35 @@ impl RunCommand {
         };
         static DIR: std::sync::OnceLock<bun_core::ZBox> = std::sync::OnceLock::new();
         DIR.get_or_init(|| {
-            bun_core::ZBox::from_bytes(format!("{TMP}/bun-node-{}{SUFFIX}", bun_sys::c::getuid()))
+            bun_core::ZBox::from_bytes(format!(
+                "{POSIX_ROOT}/{DIR_PREFIX}-{}{SUFFIX}",
+                bun_sys::c::getuid()
+            ))
+        })
+    }
+
+    #[cfg(not(windows))]
+    fn bun_node_link() -> &'static ZStr {
+        static LINK: std::sync::OnceLock<bun_core::ZBox> = std::sync::OnceLock::new();
+        LINK.get_or_init(|| {
+            bun_core::ZBox::from_vec([Self::bun_node_dir().as_bytes(), b"/node"].concat())
         })
     }
 
     /// Under `%TEMP%`, or beside bun.exe when that is another drive, which no hard link reaches.
     #[cfg(windows)]
-    pub fn windows_node_shim_dir(buf: &mut [u16]) -> Option<usize> {
+    fn windows_node_shim_dir(buf: &mut [u16]) -> Option<usize> {
+        use bun_paths::bun_node_link::DIR_PREFIX;
         use bun_sys::windows as win;
 
         const TEMP_DIR_NAME: &str = if bun_core::env::IS_DEBUG {
-            "bun-node-debug"
+            const_format::concatcp!(DIR_PREFIX, "-debug")
         } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
-            "bun-node"
+            DIR_PREFIX
         } else {
-            const_format::concatcp!("bun-node-", bun_core::env::GIT_SHA_SHORT)
+            const_format::concatcp!(DIR_PREFIX, "-", bun_core::env::GIT_SHA_SHORT)
         };
-        const BESIDE_EXE_DIR_NAME: &str = "bun-node";
+        const BESIDE_EXE_DIR_NAME: &str = DIR_PREFIX;
 
         // The case of a drive letter varies.
         fn drive(path: &[u16]) -> Option<u16> {
@@ -533,6 +538,7 @@ impl RunCommand {
 
     /// Symlinks/hardlinks the running bun binary as
     /// `node` + `bun` inside a temp dir and prepends that dir to `path`.
+    /// Returns the `node` link only when both links exist and their directory is in `path`.
     ///
     /// `#[cold]`: only reached on the `bun run <script>` / lifecycle-script
     /// slow path, never on plain `bun foo.js` startup. Forcing it into
@@ -543,10 +549,10 @@ impl RunCommand {
     pub fn create_fake_temporary_node_executable(
         path: &mut Vec<u8>,
         optional_bun_path: &mut &[u8],
-    ) -> Result<(), crate::Error> {
+    ) -> Result<Option<&'static ZStr>, crate::Error> {
         // If we are already running as "node", the path should exist
         if PRETEND_TO_BE_NODE.load(core::sync::atomic::Ordering::Relaxed) {
-            return Ok(());
+            return Ok(None);
         }
 
         #[cfg(not(windows))]
@@ -589,7 +595,7 @@ impl RunCommand {
                             // the target would recreate the #30711 self-loop; the
                             // OUTER bun already planted working shims and PATH, so
                             // leave them untouched.
-                            return Ok(());
+                            return Ok(None);
                         }
                         if argv0_bytes.first() == Some(&b'/') {
                             *optional_bun_path = argv0_bytes;
@@ -599,15 +605,16 @@ impl RunCommand {
                             // have one, otherwise leave PATH unmodified.
                             return match result {
                                 Err(e) => Err(e.into()),
-                                Ok(_) => Ok(()),
+                                Ok(_) => Ok(None),
                             };
                         }
                     }
                 }
             };
 
-            let links = [&b"/node"[..], b"/bun"]
-                .map(|name| bun_core::ZBox::from_vec([dir.as_bytes(), name].concat()));
+            let node_link = Self::bun_node_link();
+            let bun_link = bun_core::ZBox::from_vec([dir.as_bytes(), b"/bun"].concat());
+            let links: [&ZStr; 2] = [node_link, &bun_link];
 
             // Don't trust attacker-created entries in a shared temp dir
             // (`BUN_NODE_DIR` lives under e.g. `/tmp`). Create it `0700`; if it
@@ -621,12 +628,12 @@ impl RunCommand {
                             == bun_sys::FileKind::Directory
                             && st.st_uid == bun_sys::c::getuid()
                             && (st.st_mode as bun_sys::Mode) & 0o022 == 0 => {}
-                    _ => return Ok(()),
+                    _ => return Ok(None),
                 },
-                Err(_) => return Ok(()),
+                Err(_) => return Ok(None),
             }
 
-            for dest in &links {
+            for dest in links {
                 let mut replaced = false;
                 loop {
                     match bun_sys::symlink(argv0_z, dest) {
@@ -650,7 +657,7 @@ impl RunCommand {
                             let _ = bun_sys::unlink(dest);
                             replaced = true;
                         }
-                        Err(_) => return Ok(()),
+                        Err(_) => return Ok(None),
                     }
                 }
             }
@@ -664,7 +671,7 @@ impl RunCommand {
             // to the end of the path slice rather than the start.
             path.extend_from_slice(dir.as_bytes());
             path.push(bun_paths::DELIMITER);
-            Ok(())
+            Ok(Some(node_link))
         }
 
         #[cfg(windows)]
@@ -681,7 +688,7 @@ impl RunCommand {
             else {
                 // Non-fatal; fall through and leave
                 // PATH unmodified. (No `RUN` scope is declared in this crate.)
-                return Ok(());
+                return Ok(None);
             };
             target_path_buffer[..prefix.len()].copy_from_slice(prefix);
             let dir_slice_len = prefix.len() + dir_len;
@@ -755,7 +762,7 @@ impl RunCommand {
                                     ),
                                 );
                             }}
-                            return Ok(());
+                            return Ok(None);
                         }
                     }
                 }
@@ -771,7 +778,17 @@ impl RunCommand {
             strings::to_utf8_append_to_list(path, &target_path_buffer[prefix.len()..dir_slice_len]);
             path.push(bun_paths::DELIMITER);
             let _ = optional_bun_path;
-            Ok(())
+            static NODE_LINK: std::sync::OnceLock<bun_core::ZBox> = std::sync::OnceLock::new();
+            let node_link: &'static ZStr = NODE_LINK.get_or_init(|| {
+                let mut link = Vec::new();
+                strings::to_utf8_append_to_list(
+                    &mut link,
+                    &target_path_buffer[prefix.len()..dir_slice_len],
+                );
+                link.extend_from_slice(b"\\node.exe");
+                bun_core::ZBox::from_vec(link)
+            });
+            Ok(Some(node_link))
         }
     }
 }

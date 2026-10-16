@@ -343,6 +343,7 @@ pub mod component_iterator;
 pub use component_iterator::{
     Component, ComponentIterator, MakePathStep, PathFormat, make_path_with,
 };
+pub mod bun_node_link;
 pub mod classify;
 pub use classify::classify_rel_t;
 // Crate-root re-exports for the path-mutation helpers so `#[cfg(windows)]`

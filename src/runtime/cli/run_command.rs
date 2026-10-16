@@ -21,6 +21,7 @@ use bun_md::root as md;
 use bun_options_types::schema::api;
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
+use bun_paths::bun_node_link::is_bun_node_link;
 use bun_paths::strings;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::package_json::PackageJSON;
@@ -1801,45 +1802,6 @@ impl RunCommand {
         Global::exit(1);
     }
 
-    /// Returns the path to the
-    /// fake `node` shim that points back at the running `bun` binary.
-    pub(crate) fn bun_node_file_utf8() -> crate::Result<&'static ZStr> {
-        #[cfg(not(windows))]
-        {
-            Ok(bun_install::RunCommand::bun_node_dir())
-        }
-        #[cfg(windows)]
-        {
-            let mut shim_dir_buffer = bun_paths::w_path_buffer_pool::get();
-            let mut target_path_buffer = bun_paths::path_buffer_pool::get();
-            let Some(len) =
-                bun_install::RunCommand::windows_node_shim_dir(&mut shim_dir_buffer[..])
-            else {
-                return Err(crate::Error::FailedToGetTempPath);
-            };
-
-            let converted = strings::convert_utf16_to_utf8_in_buffer(
-                &mut target_path_buffer,
-                &shim_dir_buffer[..len],
-            );
-
-            const FILE_NAME: &str = "\\node.exe";
-            let conv_len = converted.len();
-            let total = conv_len + FILE_NAME.len();
-            target_path_buffer[conv_len..total].copy_from_slice(FILE_NAME.as_bytes());
-            target_path_buffer[total] = 0;
-
-            // Park the
-            // bytes in the per-process `runner_arena()` instead of leaking
-            // (PORTING.md §Forbidden bars per-call leaks).
-            let stored: &'static [u8] =
-                runner_arena().alloc_slice_copy(&target_path_buffer[..=total]);
-            // SAFETY: `stored[total] == 0` (written above before the copy);
-            // arena-backed slice lives for process lifetime.
-            Ok(ZStr::from_buf(&stored[..], total))
-        }
-    }
-
     /// Creates
     /// `<tmp>/bun-node*/node` and `<tmp>/bun-node*/bun` symlinks (or hard
     /// links on Windows) pointing at the running `bun` binary, then appends
@@ -1852,7 +1814,7 @@ impl RunCommand {
     pub(crate) fn create_fake_temporary_node_executable(
         path: &mut Vec<u8>,
         optional_bun_path: &mut &[u8],
-    ) -> crate::Result<()> {
+    ) -> crate::Result<Option<&'static ZStr>> {
         bun_install::RunCommand::create_fake_temporary_node_executable(path, optional_bun_path)
             .map_err(Into::into)
     }
@@ -1914,21 +1876,10 @@ impl RunCommand {
             op.clone_from(&path);
         }
 
-        let bun_node_exe = Self::bun_node_file_utf8()?;
-        let bun_node_dir_win =
-            bun_paths::dirname(bun_node_exe.as_bytes()).ok_or(crate::Error::FailedToGetTempPath)?;
-        let found_node = env_loader
-            .load_node_js_config(
-                bun_paths::fs::FileSystem::instance(),
-                if force_using_bun {
-                    bun_node_exe.as_bytes()
-                } else {
-                    b""
-                },
-            )
-            .unwrap_or(false);
-
-        let mut needs_to_force_bun = force_using_bun || !found_node;
+        let found_node = !force_using_bun
+            && env_loader
+                .load_node_js_config(bun_paths::fs::FileSystem::instance(), b"")
+                .unwrap_or(false);
         let mut optional_bun_self_path: &[u8] = b"";
 
         let mut new_path_len: usize = path.len() + 2;
@@ -1951,44 +1902,47 @@ impl RunCommand {
                 strings::without_trailing_slash(remain).len() + b"node_modules.bin".len() + 1 + 2; // +2 for path separators, +1 for path delimiter
         }
 
-        if needs_to_force_bun {
-            new_path_len += bun_node_dir_win.len() + 1;
-        }
-
         let mut new_path: Vec<u8> = Vec::with_capacity(new_path_len);
 
-        if needs_to_force_bun {
-            match Self::create_fake_temporary_node_executable(
+        if !found_node {
+            let node_link = match Self::create_fake_temporary_node_executable(
                 &mut new_path,
                 &mut optional_bun_self_path,
             ) {
-                Ok(()) => {}
+                Ok(node_link) => node_link,
                 Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
                 Err(other) => panic!(
                     "unexpected error from createFakeTemporaryNodeExecutable: {}",
                     other.name()
                 ),
-            }
+            };
 
+            const NODE_VARIABLES: [&[u8]; 2] = [b"NODE", b"npm_node_execpath"];
+            match node_link {
+                Some(node_link) => {
+                    for name in NODE_VARIABLES {
+                        env_loader
+                            .map
+                            .put(name, node_link.as_bytes())
+                            .unwrap_or_oom();
+                    }
+                }
+                // No links were made, so this bun does not pass on a link that it inherited.
+                None => {
+                    for name in NODE_VARIABLES {
+                        if env_loader.get(name).is_some_and(is_bun_node_link) {
+                            env_loader.map.remove(name);
+                        }
+                    }
+                }
+            }
             if !force_using_bun {
-                let env_mut = &mut *env_loader;
-                env_mut
-                    .map
-                    .put(b"NODE", bun_node_exe.as_bytes())
-                    .unwrap_or_oom();
-                env_mut
-                    .map
-                    .put(b"npm_node_execpath", bun_node_exe.as_bytes())
-                    .unwrap_or_oom();
-                env_mut
+                env_loader
                     .map
                     .put(b"npm_execpath", optional_bun_self_path)
                     .unwrap_or_oom();
             }
-
-            needs_to_force_bun = false;
         }
-        let _ = needs_to_force_bun;
 
         {
             if !package_json_dir.is_empty() {

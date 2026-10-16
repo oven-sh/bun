@@ -66,6 +66,34 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
     });
   });
 
+  test("changes the version in the text of package.json and keeps the comments", async () => {
+    const packageJson = (range: string) =>
+      `{\n  "name": "test-project",\n  // why this pin: see the incident of March\n  "dependencies": {\n    "no-deps": "${range}" /* do not bump */\n  }\n}\n`;
+    using dir = tempDir("update-interactive-comments", {
+      "bunfig.toml": `[install]\ncache = false\nregistry = "${registry.registryUrl()}"\n`,
+      "package.json": packageJson("^1.0.0"),
+    });
+
+    await using install = Bun.spawn({ cmd: [bunExe(), "install"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+    expect({ stderr: await install.stderr.text(), exitCode: await install.exited }).toMatchObject({ exitCode: 0 });
+
+    await using update = Bun.spawn({
+      cmd: [bunExe(), "update", "--interactive"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // 'l' toggles the row to Latest and selects it.
+    update.stdin.write("l\r");
+    update.stdin.end();
+    const [stderr, exitCode] = await Promise.all([update.stderr.text(), update.exited, update.stdout.text()]);
+    expect(stderr).not.toContain("error:");
+    expect(await Bun.file(join(String(dir), "package.json")).text()).toBe(packageJson("^2.0.0"));
+    expect(exitCode).toBe(0);
+  });
+
   test("refuses to prompt when stdin is not a TTY", async () => {
     using dir = tempDir("update-interactive-no-tty", {
       "package.json": JSON.stringify({

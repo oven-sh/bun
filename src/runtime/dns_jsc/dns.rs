@@ -4779,41 +4779,29 @@ impl Resolver {
     /// UnsafeCell-backed, LLVM cannot cache `ref_count` across the FFI call —
     /// the structural fix for the previously ASM-verified PROVEN_CACHED
     /// miscompile that needed `black_box` laundering under `&mut self`.
-    ///
-    /// `poll` is raw for the same reason: `Channel::process` also fires the
-    /// socket-state callback, and `on_dns_socket_state` re-registers or deinits
-    /// this very poll through the pointer in `self.polls`. A `&mut FilePoll`
-    /// parameter would be a protected reference spanning those accesses, so
-    /// the poll is read into locals before `process` and not touched after.
-    ///
-    /// # Safety
-    /// `poll` is the live `FilePoll` this resolver registered for one of its
-    /// c-ares sockets (`__bun_run_file_poll`'s contract).
     #[cfg(not(windows))]
     pub(crate) unsafe fn on_dns_poll(&self, poll: *mut FilePoll) {
         let vm = self.vm();
         let _exit = vm.enter_event_loop_scope();
-        // SAFETY: fn contract; the read ends with the statement.
+        // SAFETY: `poll` is live (caller contract).
         let fd = unsafe { (*poll).fd.native() };
         let Some(channel) = self.channel.get() else {
             self.polls.with_mut(|p| {
                 let _ = p.remove(&fd);
             });
-            // SAFETY: fn contract; the map entry removed above was the only
-            // other handle to the slot, so this is its last use.
+            // SAFETY: `poll` is live, and its map entry is gone, so this is its last use.
             unsafe { (*poll).deinit() };
             return;
         };
 
         let _guard = self.ref_guard();
 
-        // SAFETY: fn contract; both autoref'd `&mut`s end with the statement,
-        // before `process` can reach the slot through the map.
+        // SAFETY: `poll` is live; both borrows end before `process` runs.
         let (readable, writable) = unsafe { ((*poll).is_readable(), (*poll).is_writable()) };
 
         // SAFETY: `channel` is the live c-ares channel owned by `self`; no `&mut`
-        // to `*self` (all fields are UnsafeCell-backed) or to `*poll` is held
-        // across this re-entrant call.
+        // to `*self` is held across this re-entrant call (all fields are
+        // UnsafeCell-backed).
         unsafe { (*channel).process(fd, readable, writable) };
 
         // c-ares detaches a query only *after* its callback returns, so

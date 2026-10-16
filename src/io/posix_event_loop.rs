@@ -335,23 +335,11 @@ impl FilePoll {
         FileType::Pipe
     }
 
-    // The ready-poll dispatch chain (`Bun__internal_dispatch_ready_poll` ->
-    // `on_kqueue_event`/`on_epoll_event` -> `on_update` ->
-    // `__bun_run_file_poll`) carries the poll as `*mut FilePoll` and takes no
-    // loop parameter. The owner handler at the bottom reaches this same slot
-    // through the pointer the owner keeps (`FilePollRef`, `PollerPosix::Fd`,
-    // the resolver's poll map): a one-shot re-arm reads and clears the
-    // `NeedsRearm` that `on_update` set, and an owner that is finished deinits
-    // the slot. A `&mut self` receiver on any frame of the chain would be a
-    // protected reference spanning those foreign accesses, and a protected
-    // `&mut Loop` would alias the fresh `&mut Loop` the handler conjures via
-    // `EventLoopCtx::platform_event_loop()`. Each frame only needs the slot to
-    // be live when it is entered: nothing on the chain touches it after the
-    // handler returns, so what the handler did to it (up to returning it to
-    // the store) does not matter here.
-
-    /// # Safety
-    /// `this` is a live hive slot (the dispatch entry has checked `IgnoreUpdates`).
+    // Note: these handlers take no loop parameter: holding a
+    // protected `&mut Loop` across `on_update` would alias the fresh `&mut Loop`
+    // that downstream `__bun_run_file_poll` handlers conjure via
+    // `EventLoopCtx::platform_event_loop()` when they re-enter the loop
+    // (`register_with_fd`/`unregister`/`deinit`).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub(crate) unsafe fn on_kqueue_event(this: *mut FilePoll, kqueue_event: &KQueueEvent) {
         // SAFETY: caller contract; the borrow ends with the statement.
@@ -376,8 +364,6 @@ impl FilePoll {
         unsafe { Self::on_update(this, kqueue_event.data as i64) };
     }
 
-    /// # Safety
-    /// `this` is a live hive slot (the dispatch entry has checked `IgnoreUpdates`).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) unsafe fn on_epoll_event(
         this: *mut FilePoll,
@@ -448,15 +434,8 @@ impl FilePoll {
             || self.flags.contains(Flags::PollMemoryPressure)
     }
 
-    /// Hands the ready poll to its owner; raw for the reasons given above
-    /// `on_kqueue_event` (the owner's re-arm reads the `NeedsRearm` set here
-    /// through its own pointer while this frame is still on the stack).
-    ///
-    /// # Safety
-    /// `this` is a live hive slot.
     pub(crate) unsafe fn on_update(this: *mut FilePoll, size_or_offset: i64) {
-        // SAFETY: caller contract; every borrow in the block ends with its
-        // statement, before the owner runs.
+        // SAFETY: caller contract; each borrow ends with its statement.
         unsafe {
             if (*this).flags.contains(Flags::OneShot) && !(*this).flags.contains(Flags::NeedsRearm)
             {
@@ -469,8 +448,7 @@ impl FilePoll {
         // Hot-path hoisted-match: the per-tag `match` lives in
         // `bun_runtime::dispatch::__bun_run_file_poll` (link-time extern) so
         // this T3 crate names no variant types.
-        // SAFETY: caller contract (`this` is live on entry). The owner may
-        // deinit the slot in there; nothing reads it afterwards, here or above.
+        // SAFETY: caller contract; nothing reads `this` after the owner runs.
         unsafe { __bun_run_file_poll(this, size_or_offset) };
     }
 
@@ -1519,14 +1497,8 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
         return;
     }
 
-    // Kept raw for the whole dispatch; see the note above
-    // `FilePoll::on_kqueue_event`.
     let file_poll: *mut FilePoll = tag.as_file_poll();
-    // SAFETY: tag matched FilePoll; the pointer was set via `Pollable::init` in
-    // `register_with_fd`, and `Store::put` keeps a slot whose owner has since
-    // deinited it readable for this check (it flags it `IgnoreUpdates` and
-    // defers the free to the tick's after-callback). The borrow ends with the
-    // statement.
+    // SAFETY: tag matched FilePoll; pointer was set via Pollable::init in register_with_fd.
     if unsafe { (*file_poll).flags.contains(Flags::IgnoreUpdates) } {
         return;
     }
@@ -1540,8 +1512,7 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
     // handler is free to form its own `&mut Loop`.
     let ev = unsafe { &*loop_ }.current_ready_event();
 
-    // SAFETY: `file_poll` is live (checked above) and is not touched again here
-    // once the owner has run.
+    // SAFETY: `file_poll` is live (checked above); nothing reads it after the owner runs.
     unsafe {
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         FilePoll::on_kqueue_event(file_poll, &ev);

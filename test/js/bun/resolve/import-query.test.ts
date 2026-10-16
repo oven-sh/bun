@@ -639,23 +639,29 @@ test.concurrent("a / in the suffix of a file:// URL does not move the directory 
 });
 
 // `bun build --compile` finds an embedded module by its exact key, so a suffix must not reach
-// that key: every spelling loads the one embedded instance.
+// that key: every spelling loads the one embedded instance. The non-ASCII name makes the
+// file: spellings go through percent-decoding on their way to that key.
 test.concurrent("a module embedded by bun build --compile loads with a ?query or a #fragment", async () => {
   using dir = tempDir("import-query-compile-embedded", {
-    "x.mjs": `export default "embedded";`,
+    "café-日本語.mjs": `globalThis.evaluations = (globalThis.evaluations ?? 0) + 1;\nexport default "embedded";`,
     "entry.mjs": `
-      const url = new URL("./x.mjs", import.meta.url).href;
-      const specifiers = { url, "url?t=1": url + "?t=1", "url#a": url + "#a", relative: "./x.mjs", "relative?t=1": "./x.mjs?t=1" };
-      const out = {};
-      for (const label in specifiers) out[label] = (await import(specifiers[label])).default;
-      console.log(JSON.stringify(out));
+      const relative = "./café-日本語.mjs";
+      const url = new URL(relative, import.meta.url).href;
+      const specifiers = [url, url + "?q=1", url + "#a", url + "?q=1#a", relative, relative + "?q=1"];
+      const modules = [];
+      for (const specifier of specifiers) modules.push(await import(specifier));
+      console.log(JSON.stringify({
+        values: modules.map(m => m.default),
+        same: modules.every(m => m === modules[0]),
+        evaluations: globalThis.evaluations,
+      }));
     `,
     "elsewhere/.keep": ``,
   });
   const exe = path.join(String(dir), isWindows ? "app.exe" : "app");
   {
     await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "entry.mjs", "x.mjs", "--outfile", exe],
+      cmd: [bunExe(), "build", "--compile", "entry.mjs", "café-日本語.mjs", "--outfile", exe],
       env: bunEnv,
       cwd: String(dir),
       stdout: "ignore",
@@ -674,11 +680,9 @@ test.concurrent("a module embedded by bun build --compile loads with a ?query or
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual({
-    "url": "embedded",
-    "url?t=1": "embedded",
-    "url#a": "embedded",
-    "relative": "embedded",
-    "relative?t=1": "embedded",
+    values: ["embedded", "embedded", "embedded", "embedded", "embedded", "embedded"],
+    same: true,
+    evaluations: 1,
   });
   expect(exitCode).toBe(0);
 });

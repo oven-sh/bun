@@ -2412,40 +2412,129 @@ long syscall(long nr, ...) {
     expect(exitCode).toBe(0);
   });
 
-  it("Bun.build keeps the listing of the last build when a later read fails", async () => {
-    using dir = tempDir("resolver-readdir-fault-rebuild", {
-      ...staleSibling,
-      "build.js": `
-        const { unlinkSync, writeFileSync } = require("fs");
-        const faultIsOn = process.env.READDIR_FAULT_WHILE;
-        async function build() {
-          try {
-            const result = await Bun.build({ entrypoints: ["./entry.ts"] });
-            const text = await result.outputs[0].text();
-            return text.includes("x.ts, the current source") ? "x.ts" : text;
-          } catch (e) {
-            return (e.errors ?? [e]).map(e => e.message);
-          }
-        }
-        const out = { healthy: await build() };
-        writeFileSync(faultIsOn, "");
-        out.failing = await build();
-        unlinkSync(faultIsOn);
-        out.healthyAgain = await build();
-        console.log(JSON.stringify(out));
-      `,
+  // Builds its arguments in turn, in one process. The shim fails reads only
+  // during the second build. That build resolves against what the first build
+  // cached: the listings, and the directory records that point at them.
+  const buildInTurn = `
+    const { unlinkSync, writeFileSync } = require("fs");
+    const faultIsOn = process.env.READDIR_FAULT_WHILE;
+    // The path comments of a bundle name the files in it.
+    async function build(entrypoint) {
+      try {
+        const result = await Bun.build({ entrypoints: [entrypoint] });
+        const text = await result.outputs[0].text();
+        return text.split("\\n").filter(line => line.startsWith("// "));
+      } catch (e) {
+        return (e.errors ?? [e]).map(e => e.message);
+      }
+    }
+    const [first, second = first] = process.argv.slice(2);
+    const out = { healthy: await build(first) };
+    writeFileSync(faultIsOn, "");
+    out.failing = await build(second);
+    unlinkSync(faultIsOn);
+    out.healthyAgain = await build(second);
+    console.log(JSON.stringify(out));
+  `;
+
+  const pkg = (name: string) => JSON.stringify({ name, version: "1.0.0" });
+
+  describe.each([
+    {
+      // The lookup of a file reads the directory that holds it.
+      name: "a file",
+      files: staleSibling,
+      faultDir: "src",
+      hide: "x.ts",
+      specifier: "./src/x",
+      bundled: ["// src/x.ts", "// entry.ts"],
+    },
+    {
+      // The index file is looked up in the listing that the directory record points at.
+      name: "a directory",
+      files: {
+        "entry.ts": `import index from "./src";\nconsole.log(index);\n`,
+        "src/index.ts": `export default "index.ts, the current source";\n`,
+        "src/index.js": `export default "index.js, a stale build output";\n`,
+      },
+      faultDir: "src",
+      hide: "index.ts",
+      specifier: "./src",
+      bundled: ["// src/index.ts", "// entry.ts"],
+    },
+    {
+      // The target of "exports" is looked up in the listing of its directory.
+      name: 'a package with "exports"',
+      files: {
+        "entry.ts": `import dep from "dep";\nconsole.log(dep);\n`,
+        "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", exports: "./lib/index.js" }),
+        "node_modules/dep/lib/index.js": `export default "dep";\n`,
+      },
+      faultDir: "node_modules/dep/lib",
+      hide: "index.js",
+      specifier: "dep",
+      bundled: ["// node_modules/dep/lib/index.js", "// entry.ts"],
+    },
+    {
+      // A package that is not found here is looked for in the parent directories.
+      name: "a package that a parent directory also has",
+      cwd: "outer/project",
+      files: {
+        "outer/node_modules/dep/package.json": pkg("dep"),
+        "outer/node_modules/dep/index.js": `export default "the dep of the parent directory";\n`,
+        "outer/project/node_modules/dep/package.json": pkg("dep"),
+        "outer/project/node_modules/dep/index.js": `export default "the dep of the project";\n`,
+        "outer/project/entry.ts": `import dep from "dep";\nconsole.log(dep);\n`,
+      },
+      faultDir: "outer/project/node_modules/dep",
+      hide: "index.js",
+      specifier: "dep",
+      bundled: ["// node_modules/dep/index.js", "// entry.ts"],
+    },
+  ])("Bun.build of an import of $name", ({ files, cwd = "", faultDir, hide, specifier, bundled }) => {
+    it("keeps the listing of the last build when a later read fails", async () => {
+      using dir = tempDir("resolver-readdir-fault-rebuild", { ...files, [join(cwd, "build.js")]: buildInTurn });
+      const root = realpathSync(String(dir));
+      const result = await runWithFault(["build.js", "./entry.ts"], join(root, cwd), {
+        dir: join(root, faultDir),
+        hide,
+        while: join(root, "fault-is-on"),
+      });
+      expect({ ...result, stdout: JSON.parse(result.stdout || "null") }).toEqual({
+        stdout: {
+          healthy: bundled,
+          failing: [`Cannot read directory "${join(root, faultDir)}": EIO while resolving "${specifier}"`],
+          healthyAgain: bundled,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // The listing of node_modules says that node_modules/linked is a symlink.
+  it("Bun.build does not take a symlinked package for a directory when the read of its parent fails", async () => {
+    using dir = tempDir("resolver-readdir-fault-symlink", {
+      "build.js": buildInTurn,
+      "node_modules/plain/package.json": pkg("plain"),
+      "node_modules/plain/index.js": `export default "plain";\n`,
+      "packages/linked/package.json": pkg("linked"),
+      "packages/linked/index.js": `export default "linked";\n`,
+      "plain.ts": `import plain from "plain";\nconsole.log(plain);\n`,
+      "linked.ts": `import linked from "linked";\nconsole.log(linked);\n`,
     });
     const root = realpathSync(String(dir));
-    const result = await runWithFault(["build.js"], root, {
-      dir: join(root, "src"),
-      hide: "x.ts",
+    symlinkSync(join("..", "packages", "linked"), join(root, "node_modules", "linked"));
+    const result = await runWithFault(["build.js", "./plain.ts", "./linked.ts"], root, {
+      dir: join(root, "node_modules"),
+      hide: "linked",
       while: join(root, "fault-is-on"),
     });
     expect({ ...result, stdout: JSON.parse(result.stdout || "null") }).toEqual({
       stdout: {
-        healthy: "x.ts",
-        failing: [`Cannot read directory "${join(root, "src")}": EIO while resolving "./src/x"`],
-        healthyAgain: "x.ts",
+        healthy: ["// node_modules/plain/index.js", "// plain.ts"],
+        failing: [`Cannot read directory "${join(root, "node_modules")}": EIO while resolving "linked"`],
+        healthyAgain: ["// packages/linked/index.js", "// linked.ts"],
       },
       stderr: "",
       exitCode: 0,
@@ -2488,6 +2577,30 @@ long syscall(long nr, ...) {
       errno: constants.errno.EACCES,
     });
     expect(result).toEqual({ stdout: "loaded\n", stderr: "", exitCode: 0 });
+  });
+
+  // A later build reads the ancestor again, for the first directory that it visits below it.
+  it("Bun.build takes an ancestor that may not be listed for an empty directory in a later build", async () => {
+    using dir = tempDir("resolver-readdir-fault-eacces-rebuild", {
+      "outer/project/build.js": buildInTurn,
+      "outer/project/entry.ts": `console.log("project");\n`,
+      "outer/other/entry.ts": `console.log("other");\n`,
+    });
+    const root = realpathSync(String(dir));
+    const result = await runWithFault(["build.js", "./entry.ts", "../other/entry.ts"], join(root, "outer/project"), {
+      dir: join(root, "outer"),
+      errno: constants.errno.EACCES,
+      while: join(root, "fault-is-on"),
+    });
+    expect({ ...result, stdout: JSON.parse(result.stdout || "null") }).toEqual({
+      stdout: {
+        healthy: ["// entry.ts"],
+        failing: ["// ../other/entry.ts"],
+        healthyAgain: ["// ../other/entry.ts"],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it("an ancestor whose read keeps failing fails the resolutions below it", async () => {

@@ -81,6 +81,25 @@ test("fetch({toString throwing}, {headers} isn't accessed)", async () => {
   expect(str.toString).toHaveBeenCalledTimes(1);
 });
 
+test("fetch({toString throwing}, {integrity} isn't accessed) and fetch(url, {integrity} is accessed once)", async () => {
+  let reads = 0;
+  const init = {
+    get integrity() {
+      reads++;
+      return undefined;
+    },
+  };
+  const str = {
+    toString() {
+      throw new Error("bad3");
+    },
+  };
+  await expect(fetch(str as any, init)).rejects.toThrow("bad3");
+  const afterThrow = reads;
+  await fetch(server!.url, init);
+  expect({ afterThrow, afterFetch: reads }).toEqual({ afterThrow: 0, afterFetch: 1 });
+});
+
 // https://github.com/oven-sh/bun/issues/33644
 describe("fetch() rejects instead of throwing synchronously when option conversion throws", () => {
   function expectRejects(factory: () => Promise<Response>, message: string) {
@@ -124,6 +143,7 @@ describe("fetch() rejects instead of throwing synchronously when option conversi
     "body",
     "decompress",
     "headers",
+    "integrity",
     "keepalive",
     "method",
     "proxy",
@@ -178,6 +198,16 @@ describe.concurrent("fetch() early rejections are reported when unhandled", () =
     ],
     ["data: url without a comma", `fetch("data:text/plain")`, "failed to fetch the data URL"],
     ["data: url with invalid base64", `fetch("data:text/plain;base64,@@@")`, "failed to fetch the data URL"],
+    [
+      "data: url that does not match its integrity",
+      `fetch("data:,x", { integrity: "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" })`,
+      'Integrity check failed: the response body has the digest "sha256-LXEWQrcmsEQBYnyp+6wy9chTD7GQPMTbAiWHF5IaSIE="',
+    ],
+    [
+      "blob: url that does not match its integrity",
+      `fetch(URL.createObjectURL(new Blob(["x"])), { integrity: "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" })`,
+      'Integrity check failed: the response body has the digest "sha256-LXEWQrcmsEQBYnyp+6wy9chTD7GQPMTbAiWHF5IaSIE="',
+    ],
     ["url toString() throws", `fetch({ toString() { throw new Error("UBOOM"); } })`, "UBOOM"],
     [
       "GET with a body",
@@ -439,6 +469,7 @@ describe("does not send a request when", () => {
     "body",
     "decompress",
     "headers",
+    "integrity",
     "keepalive",
     "method",
     "proxy",

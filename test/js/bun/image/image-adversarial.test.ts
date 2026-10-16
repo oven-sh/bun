@@ -1228,18 +1228,21 @@ describe("concurrent terminals on one Image", () => {
   // its promise. The terminal still gets the settings of its own call.
   describe.concurrent("setters after a terminal on a file-backed Blob source", () => {
     const photo = makePng(64, 48, (x, y) => [x * 4, y * 5, (x + y) * 2, 255]);
+    // `behind.png` holds `photo` after another picture: a slice that starts at `photo` must not see it.
+    const other = makePng(20, 30, (x, y) => [y * 8, x * 12, 99, 255]);
+    const files = () => ({ "photo.png": Buffer.from(photo), "behind.png": Buffer.concat([other, photo]) });
     const shape = async (bytes: Uint8Array) => {
       const { format, width, height } = await new Bun.Image(bytes).metadata();
       return `${format} ${width}x${height}`;
     };
     const fromDataUrl = (url: string) => Buffer.from(url.slice(url.indexOf(",") + 1), "base64");
 
-    const sources: Record<string, (path: string, fds: number[]) => Bun.Image> = {
-      "Bun.file(path).image()": path => Bun.file(path).image(),
-      "new Bun.Image(Bun.file(path))": path => new Bun.Image(Bun.file(path)),
-      "a slice of Bun.file(path)": path => Bun.file(path).slice(0, photo.length).image(),
-      "Bun.file(fd).image()": (path, fds) => {
-        fds.push(openSync(path, "r"));
+    const sources: Record<string, (dir: string, fds: number[]) => Bun.Image> = {
+      "Bun.file(path).image()": dir => Bun.file(join(dir, "photo.png")).image(),
+      "new Bun.Image(Bun.file(path))": dir => new Bun.Image(Bun.file(join(dir, "photo.png"))),
+      "a slice of Bun.file(path)": dir => Bun.file(join(dir, "behind.png")).slice(other.length).image(),
+      "Bun.file(fd).image()": (dir, fds) => {
+        fds.push(openSync(join(dir, "photo.png"), "r"));
         return Bun.file(fds.at(-1)!).image();
       },
     };
@@ -1256,18 +1259,18 @@ describe("concurrent terminals on one Image", () => {
     describe.each(Object.keys(sources))("%s", sourceName => {
       // One terminal per image: concurrent terminals on one fd share its offset.
       test.each(Object.keys(terminals))("%s() keeps the settings of its call", async terminalName => {
-        using dir = tempDir("image-blob-snapshot", { "photo.png": Buffer.from(photo) });
+        using dir = tempDir("image-blob-snapshot", files());
         const fds: number[] = [];
         try {
-          const img = sources[sourceName](join(String(dir), "photo.png"), fds)
-            .resize(32, 32)
-            .png();
+          const img = sources[sourceName](String(dir), fds).resize(32, 32).png();
           const pending = terminals[terminalName](img, join(String(dir), "out.png"));
           img.resize(8, 8).rotate(90).flip().flop().modulate({ brightness: 0.2 }).jpeg();
           const out = await pending;
           expect(await shape(out)).toBe("png 32x32");
           // The shape cannot show a late rotate, flip, flop or modulate. The pixels can.
           expect(Buffer.from(out)).toEqual(Buffer.from(await new Bun.Image(photo).resize(32, 32).png().bytes()));
+          // The later calls are not lost: the next terminal has them.
+          expect(await shape(await img.bytes())).toBe("jpeg 8x8");
         } finally {
           for (const fd of fds) closeSync(fd);
         }
@@ -1308,6 +1311,16 @@ describe("concurrent terminals on one Image", () => {
       expect(await shape(await Bun.file(out).bytes())).toBe("jpeg 32x32");
       // The inferred format is for that write only: the Image has none set.
       expect(await shape(await written.bytes())).toBe("png 8x8");
+      // Only a path string that names an encode format is inferred from. A decode-only
+      // extension and a Bun.file() destination keep the source format.
+      const gif = join(String(dir), "kept.gif");
+      const viaFile = join(String(dir), "file.webp");
+      await Bun.file(path).image().write(gif);
+      await Bun.file(path).image().write(Bun.file(viaFile));
+      expect([await shape(await Bun.file(gif).bytes()), await shape(await Bun.file(viaFile).bytes())]).toEqual([
+        "png 64x48",
+        "png 64x48",
+      ]);
     });
 
     test("flip, flop and modulate set after the call do not change the pixels", async () => {
@@ -1318,7 +1331,7 @@ describe("concurrent terminals on one Image", () => {
       expect(Buffer.from(await pending)).toEqual(Buffer.from(await new Bun.Image(photo).png().bytes()));
     });
 
-    test("placeholder() of a JPEG uses the resize of its call for the decode hint", async () => {
+    test("placeholder() of a JPEG does not see a resize set after the call", async () => {
       const jpeg = await new Bun.Image(photo).jpeg({ quality: 90 }).bytes();
       using dir = tempDir("image-blob-snapshot", { "photo.jpg": Buffer.from(jpeg) });
       const path = join(String(dir), "photo.jpg");

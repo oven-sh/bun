@@ -30,6 +30,8 @@ unsafe extern "C" {
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM, full: bool);
     safe fn JSC__VM__collectAsyncIdle(vm: &VM);
+    safe fn JSC__VM__shrinkFootprintNow(vm: &VM) -> bool;
+    safe fn JSC__VM__setStartupJITDeferralScale(vm: &VM, scale: f64);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
     safe fn JSC__VM__isEntered(vm: &VM) -> bool;
@@ -105,6 +107,19 @@ impl VM {
         JSC__VM__collectAsyncIdle(self)
     }
 
+    /// Let go of what JSC gets back cheaply, of functions that have no linked code any more (an idle collection has found
+    /// them not running): unlinked bytecode it can decode again from a bytecode cache, the parser's caches. Nothing that
+    /// would have to be parsed again. The caller's next full collection frees it. `false`: nothing was done, because JS
+    /// is on the stack or a collection is under way (JSC would wait for it to finish).
+    pub(crate) fn shrink_footprint_now(&self) -> bool {
+        JSC__VM__shrinkFootprintNow(self)
+    }
+
+    /// Multiply JSC's LLInt->Baseline and Baseline->DFG tier-up thresholds by `scale` (1 = normal). Mutator thread only.
+    pub fn set_startup_jit_deferral_scale(&self, scale: f64) {
+        JSC__VM__setStartupJITDeferralScale(self, scale)
+    }
+
     pub fn execution_forbidden(&self) -> bool {
         JSC__VM__executionForbidden(self)
     }
@@ -126,12 +141,6 @@ impl VM {
     /// until thrown.
     pub fn termination_exception(&self) -> JSValue {
         JSC__VM__terminationException(self)
-    }
-
-    /// Has termination been requested on this VM (worker.terminate(), or
-    /// teardown's forbidExecution)? JS thread.
-    pub fn has_termination_request(&self) -> bool {
-        crate::cpp::JSC__VM__hasTerminationRequest(self)
     }
 
     #[track_caller]

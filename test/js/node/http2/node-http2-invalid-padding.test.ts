@@ -239,7 +239,7 @@ test("should zero-fill padding octets in padded DATA frames sent by the client",
     socket.setNoDelay(true);
     // Acknowledge the client's SETTINGS so the session emits `connect`.
     socket.write(new http2utils.SettingsFrame(true).data);
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       received = Buffer.concat([received, chunk]);
       if (!sawPreface) {
         if (received.length < http2utils.kClientMagic.length) return;
@@ -279,7 +279,7 @@ test("should zero-fill padding octets in padded DATA frames sent by the client",
   try {
     await new Promise<void>(resolve => client.on("connect", () => resolve()));
 
-    const requestOptions = { paddingStrategy: http2.constants.PADDING_STRATEGY_MAX };
+    const requestOptions: any = { paddingStrategy: http2.constants.PADDING_STRATEGY_MAX };
 
     // First request: a longer body, so the scratch buffer used to assemble
     // padded DATA frames has held known payload bytes well past the region

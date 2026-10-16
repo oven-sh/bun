@@ -2,7 +2,7 @@
 //
 // Registered via `jsPlugins` in oxlint.json. Rules are written against
 // oxlint's ESTree-compatible AST (see the `oxlint/plugins-dev` type
-// definitions). Run with `bun run lint`.
+// definitions). Run with `bun lint`.
 
 /**
  * Return a textual key for a simple static member expression chain made of

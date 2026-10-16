@@ -123,7 +123,7 @@ export const zlib: Dependency = {
   versionMacro: "ZLIB_HASH",
 
   source: () => ({
-    kind: "github",
+    kind: "github-archive",
     repo: "zlib-ng/zlib-ng",
     commit: ZLIB_COMMIT,
   }),

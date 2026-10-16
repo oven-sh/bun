@@ -60,8 +60,6 @@ pub trait StringJsc {
     /// atomized, a borrowed `EncodedSlice` copied.
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue;
 }
 impl StringJsc for String {
     #[track_caller]
@@ -109,12 +107,6 @@ impl StringJsc for String {
     }
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         error_instance(self, global, ErrorKind::TypeError)
-    }
-    fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        error_instance(self, global, ErrorKind::SyntaxError)
-    }
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        error_instance(self, global, ErrorKind::RangeError)
     }
 }
 

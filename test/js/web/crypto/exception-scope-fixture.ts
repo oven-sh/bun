@@ -60,6 +60,7 @@ const cases: Record<string, () => Promise<unknown>> = {
     crypto.subtle.deriveKey(bad, pb, { name: "AES-GCM", length: 256 }, false, ["encrypt"]),
   "deriveKey bogus derived type": () => crypto.subtle.deriveKey(pbkdf2, pb, bad, false, ["encrypt"]),
   "deriveKey importable but no key length": () =>
+    // @ts-expect-error
     crypto.subtle.deriveKey(pbkdf2, pb, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]),
 
   "deriveBits ok": () => crypto.subtle.deriveBits(pbkdf2, pb, 64),

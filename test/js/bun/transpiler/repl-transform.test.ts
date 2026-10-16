@@ -150,6 +150,26 @@ describe("Bun.Transpiler replMode", () => {
       expect(context.x).toBe(20);
     });
 
+    test("var in a body without braces, and in a for head without initializer, persists", async () => {
+      const { results } = await runReplSession([
+        "if (true) var a = 1",
+        "if (false) {} else var b = 2",
+        "var n = 1; while (n--) var c = 3",
+        "do var d = 4; while (0)",
+        "if (false) var notTaken = 5",
+        "for (var e; !e;) e = 6",
+        "[a, b, c, d, typeof notTaken, e]",
+      ]);
+
+      expect(results.at(-1)).toEqual([1, 2, 3, 4, "undefined", 6]);
+    });
+
+    test("enum in a body without braces persists", async () => {
+      const { results } = await runReplSession(["if (true) enum Color { Red = 1 }", "Color.Red"]);
+
+      expect(results[1]).toBe(1);
+    });
+
     test("let persists with await", async () => {
       const { results } = await runReplSession(["let y = await Promise.resolve(100)", "y * 2"]);
 

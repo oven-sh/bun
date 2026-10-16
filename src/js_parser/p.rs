@@ -645,6 +645,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // The old "var" statements are turned into regular assignments instead. This
     // makes it easier to quickly scan the top-level statements for "var" locals
     // with the guarantee that all will be found.
+    // Not all yet: see `relocates_single_stmt_body_decls`, and a lowered top-level `using` keeps them in its `try` (#38284).
     pub(crate) relocated_top_level_vars: List<'a, js_ast::LocRef>,
 
     // ArrowFunction is a special case in the grammar. Although it appears to be
@@ -6890,7 +6891,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 value: None,
             }]);
 
-            if self.current_scope == self.module_scope {
+            if self.current_scope == self.module_scope && self.relocates_single_stmt_body_decls() {
+                // `if (c) enum E {}`: `append_part` declares the "var" at the top level.
+                self.relocated_top_level_vars.push(LocRef {
+                    loc: name_loc,
+                    ref_: name_ref,
+                });
+            } else if self.current_scope == self.module_scope {
                 // Top-level namespace: "var"
                 stmts.push(self.s(
                     S::Local {
@@ -8023,6 +8030,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .push(LocRef { loc, ref_: r#ref });
         self.record_usage(r#ref);
         Expr::init_identifier(r#ref, loc)
+    }
+
+    /// The linker's `__esm` wrapper and the REPL transform move top-level declarations out of their closure, and only those.
+    #[inline]
+    pub(crate) fn lifts_top_level_decls(&self) -> bool {
+        self.options.repl_mode
+            || (self.options.bundle && !self.options.features.hot_module_reloading)
+    }
+
+    /// A brace-less `if`/`else`/`while`/`do` body opens no scope, so `lifts_top_level_decls` needs its declarations relocated too.
+    #[inline]
+    pub(crate) fn relocates_single_stmt_body_decls(&self) -> bool {
+        self.is_inside_single_stmt_body
+            && self.lifts_top_level_decls()
+            // A bundle is module code, which rejects a top-level "var f" beside "function f" (#44001).
+            && !(self.options.bundle && self.has_top_level_function_merged_with_var)
     }
 
     // One statement could potentially expand to several statements

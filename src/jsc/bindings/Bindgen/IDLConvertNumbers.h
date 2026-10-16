@@ -11,8 +11,8 @@ namespace Bun::Bindgen::Detail {
 template<std::signed_integral T>
 std::optional<T> tryBigIntToInt(JSC::JSValue value)
 {
-    static constexpr std::int64_t minInt = std::numeric_limits<T>::min();
-    static constexpr std::int64_t maxInt = std::numeric_limits<T>::max();
+    static constexpr int64_t minInt = std::numeric_limits<T>::min();
+    static constexpr int64_t maxInt = std::numeric_limits<T>::max();
     using ComparisonResult = JSC::JSBigInt::ComparisonResult;
     if (JSC::JSBigInt::compare(value, minInt) != ComparisonResult::LessThan
         && JSC::JSBigInt::compare(value, maxInt) != ComparisonResult::GreaterThan) {
@@ -24,8 +24,8 @@ std::optional<T> tryBigIntToInt(JSC::JSValue value)
 template<std::unsigned_integral T>
 std::optional<T> tryBigIntToInt(JSC::JSValue value)
 {
-    static constexpr std::uint64_t minInt = 0;
-    static constexpr std::uint64_t maxInt = std::numeric_limits<T>::max();
+    static constexpr uint64_t minInt = 0;
+    static constexpr uint64_t maxInt = std::numeric_limits<T>::max();
     using ComparisonResult = JSC::JSBigInt::ComparisonResult;
     if (JSC::JSBigInt::compare(value, minInt) != ComparisonResult::LessThan
         && JSC::JSBigInt::compare(value, maxInt) != ComparisonResult::GreaterThan) {
@@ -36,7 +36,7 @@ std::optional<T> tryBigIntToInt(JSC::JSValue value)
 }
 
 template<std::integral T>
-    requires(sizeof(T) <= sizeof(std::uint64_t))
+    requires(sizeof(T) <= sizeof(uint64_t))
 struct WebCore::Converter<Bun::Bindgen::IDLStrictInteger<T>>
     : Bun::DefaultTryConverter<Bun::Bindgen::IDLStrictInteger<T>> {
 
@@ -48,9 +48,8 @@ struct WebCore::Converter<Bun::Bindgen::IDLStrictInteger<T>>
         JSC::JSValue value,
         Ctx& ctx)
     {
-        if (value.isInt32() && std::in_range<T>(value.asInt32())) [[likely]] {
+        if (value.isInt32() && std::in_range<T>(value.asInt32())) [[likely]]
             return static_cast<T>(value.asInt32());
-        }
         return tryConvertSlow(globalObject, value, ctx);
     }
 
@@ -81,11 +80,10 @@ private:
             return {};
         }
 
-        using Largest = std::conditional_t<std::signed_integral<T>, std::int64_t, std::uint64_t>;
+        using Largest = std::conditional_t<std::signed_integral<T>, int64_t, uint64_t>;
         if (value.isBigInt()) {
-            if (auto result = Bun::Bindgen::Detail::tryBigIntToInt<T>(value)) {
+            if (auto result = Bun::Bindgen::Detail::tryBigIntToInt<T>(value))
                 return *result;
-            }
             if constexpr (maxInt < std::numeric_limits<Largest>::max()) {
                 if (auto result = Bun::Bindgen::Detail::tryBigIntToInt<Largest>(value)) {
                     ctx.throwIntegerOutOfRange(globalObject, scope, *result, minInt, maxInt);
@@ -96,27 +94,20 @@ private:
             return {};
         }
 
-        if (!value.isNumber()) {
+        if (!value.isNumber())
             return std::nullopt;
-        }
 
         double number = value.asNumber();
-        // Written so that NaN is caught here: casting it to an integer is undefined.
-        if (!(number <= JSC::maxSafeInteger() && number >= JSC::minSafeInteger())) {
+        if (!JSC::isSafeInteger(number)) {
             ctx.throwNumberNotInteger(globalObject, scope, number);
             return {};
         }
-        auto intVal = static_cast<std::int64_t>(number);
-        if (intVal != number) {
-            ctx.throwNumberNotInteger(globalObject, scope, number);
-            return {};
-        }
+        auto intVal = static_cast<int64_t>(number);
         if constexpr (maxInt >= JSC::maxSafeIntegerAsUInt64()) {
-            if (std::signed_integral<T> || intVal >= 0) {
+            if (std::signed_integral<T> || intVal >= 0)
                 return static_cast<T>(intVal);
-            }
-        } else if (intVal >= static_cast<std::int64_t>(minInt)
-            && intVal <= static_cast<std::int64_t>(maxInt)) {
+        } else if (intVal >= static_cast<int64_t>(minInt)
+            && intVal <= static_cast<int64_t>(maxInt)) {
             return static_cast<T>(intVal);
         }
         ctx.throwIntegerOutOfRange(globalObject, scope, intVal, minInt, maxInt);
@@ -134,9 +125,8 @@ struct WebCore::Converter<Bun::Bindgen::IDLStrictDouble> : Bun::DefaultTryConver
         JSC::JSValue value,
         Ctx& ctx)
     {
-        if (value.isNumber()) {
+        if (value.isNumber())
             return value.asNumber();
-        }
         return std::nullopt;
     }
 

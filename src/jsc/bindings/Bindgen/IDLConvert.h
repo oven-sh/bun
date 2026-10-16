@@ -60,18 +60,15 @@ void throwNotUnsharedBufferSource(JSC::JSGlobalObject& globalObject, JSC::ThrowS
 }
 
 // std::nullopt for anything else, a shared buffer included. A detached or out-of-bounds view is empty.
-inline std::optional<std::span<const uint8_t>> unsharedBufferSourceSpan(JSC::JSValue value)
+inline std::optional<std::span<const uint8_t>> unsharedBufferSourceSpan(JSC::VM& vm, JSC::JSValue value)
 {
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
         if (view->isShared())
             return std::nullopt;
         return view->span();
     }
-    if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
-        if (buffer->isShared())
-            return std::nullopt;
-        return buffer->impl()->span();
-    }
+    if (auto* buffer = JSC::toUnsharedArrayBuffer(vm, value))
+        return buffer->span();
     return std::nullopt;
 }
 
@@ -129,12 +126,12 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictStringOrStringObject
 
 template<> struct WebCore::Converter<Bun::Bindgen::IDLBufferSourceBytes> : Bun::DefaultTryConverter<Bun::Bindgen::IDLBufferSourceBytes> {
     template<Bun::IDLConversionContext Ctx>
-    static std::optional<std::span<const uint8_t>> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    static std::optional<std::span<const uint8_t>> tryConvert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx&)
     {
-        auto bytes = Bun::Bindgen::unsharedBufferSourceSpan(value);
+        auto bytes = Bun::Bindgen::unsharedBufferSourceSpan(JSC::getVM(&globalObject), value);
         // Null data is the null value.
         if (bytes && !bytes->data())
-            return std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(""), 0 };
+            return byteCast<uint8_t>(WTF::nonNullEmptyUTF8Span());
         return bytes;
     }
 
@@ -147,9 +144,9 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLBufferSourceBytes> : Bun::
 
 template<> struct WebCore::Converter<Bun::Bindgen::IDLRawBufferSource> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawBufferSource> {
     template<Bun::IDLConversionContext Ctx>
-    static std::optional<JSC::JSValue> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    static std::optional<JSC::JSValue> tryConvert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx&)
     {
-        if (!Bun::Bindgen::unsharedBufferSourceSpan(value))
+        if (!Bun::Bindgen::unsharedBufferSourceSpan(JSC::getVM(&globalObject), value))
             return std::nullopt;
         return value;
     }
@@ -211,9 +208,8 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictBoolean>
         JSC::JSValue value,
         Ctx& ctx)
     {
-        if (value.isBoolean()) {
+        if (value.isBoolean())
             return value.asBoolean();
-        }
         return std::nullopt;
     }
 
@@ -238,9 +234,8 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictString>
         JSC::JSValue value,
         Ctx& ctx)
     {
-        if (value.isString()) {
+        if (value.isString())
             return value.toWTFString(&globalObject);
-        }
         return std::nullopt;
     }
 
@@ -262,9 +257,8 @@ struct WebCore::Converter<Bun::Bindgen::IDLArray<IDL>> : Bun::DefaultTryConverte
         JSC::JSValue value,
         Ctx& ctx)
     {
-        if (JSC::isJSArray(value)) {
+        if (JSC::isJSArray(value))
             return Bun::convertIDL<typename Bun::Bindgen::IDLArray<IDL>::Base>(globalObject, value, ctx);
-        }
         return std::nullopt;
     }
 
@@ -290,17 +284,14 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLArrayBufferRef>
         Ctx& ctx)
     {
         auto& vm = JSC::getVM(&globalObject);
-        if (auto* jsBuffer = JSC::toUnsharedArrayBuffer(vm, value)) {
+        if (auto* jsBuffer = JSC::toUnsharedArrayBuffer(vm, value))
             return jsBuffer;
-        }
         if (auto* jsView = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
-            if (jsView->isShared()) {
+            if (jsView->isShared())
                 return std::nullopt;
-            }
             // A copy: the view's buffer can hold more than the view shows.
-            if (auto bytes = JSC::ArrayBuffer::tryCreate(jsView->span())) {
+            if (auto bytes = JSC::ArrayBuffer::tryCreate(jsView->span()))
                 return bytes;
-            }
             // Declared where it throws: at the top, every caller would owe a check for the paths that cannot.
             auto scope = DECLARE_THROW_SCOPE(vm);
             JSC::throwOutOfMemoryError(&globalObject, scope);

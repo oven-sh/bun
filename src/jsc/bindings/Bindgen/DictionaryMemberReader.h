@@ -7,6 +7,8 @@ namespace Bun::Bindgen {
 
 // Reads the members of a dictionary, by index into its run of Tables::memberNames.
 class DictionaryMemberReader {
+    WTF_FORBID_HEAP_ALLOCATION;
+
 public:
     DictionaryMemberReader(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, unsigned firstMemberNameIndex, unsigned memberNameCount)
         : m_vm(vm)

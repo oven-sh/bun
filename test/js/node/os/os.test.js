@@ -372,7 +372,7 @@ it("setPriority with an undefined priority takes the first argument as the prior
     expect.objectContaining({
       name: "RangeError",
       code: "ERR_OUT_OF_RANGE",
-      message: 'The value of "priority" is out of range. It must be >= -20 and <= 19. Received 20',
+      message: 'The value of "priority" is out of range. It must be >= -20 && <= 19. Received 20',
     }),
   );
   const priority = os.getPriority();

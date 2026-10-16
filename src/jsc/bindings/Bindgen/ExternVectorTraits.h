@@ -20,14 +20,14 @@ template<typename T>
 struct ExternVector {
     T* data;
     // WTF::Vector stores the length and capacity as `unsigned`. We can save space by using that
-    // instead of `std::size_t` here.
+    // instead of `size_t` here.
     unsigned length;
     unsigned capacity;
 };
 
 namespace Detail {
 template<typename T>
-void asanSetBufferSizeToFullCapacity(T* buffer, std::size_t length, std::size_t capacity)
+void asanSetBufferSizeToFullCapacity(T* buffer, size_t length, size_t capacity)
 {
 #if ASAN_ENABLED
     // Without this, ASan will complain if the Rust side touches memory in the range
@@ -42,7 +42,7 @@ void asanSetBufferSizeToFullCapacity(T* buffer, std::size_t length, std::size_t 
 }
 }
 
-template<typename T, typename OverflowHandler, std::size_t minCapacity>
+template<typename T, typename OverflowHandler, size_t minCapacity>
 struct ExternTraits<WTF::Vector<T, 0, OverflowHandler, minCapacity, MimallocMalloc>> {
 private:
     using CPPType = WTF::Vector<T, 0, OverflowHandler, minCapacity, MimallocMalloc>;
@@ -54,19 +54,12 @@ public:
     static ExternType convertToExtern(CPPType&& cppValue)
     {
         if constexpr (std::is_same_v<T, ExternElement>) {
-            // We can reuse the allocation.
-            alignas(CPPType) std::byte cppStorage[sizeof(CPPType)];
-            // This prevents the contents from being freed or destructed.
-            CPPType* const vec = new (cppStorage) CPPType { std::move(cppValue) };
-            T* const buffer = vec->mutableSpan().data();
-            const std::size_t length = vec->size();
-            const std::size_t capacity = vec->capacity();
-            Detail::asanSetBufferSizeToFullCapacity(buffer, length, capacity);
-
+            unsigned capacity = cppValue.capacity();
+            auto span = cppValue.releaseBuffer().leakSpan();
             return ExternType {
-                .data = vec->mutableSpan().data(),
-                .length = static_cast<unsigned>(length),
-                .capacity = static_cast<unsigned>(capacity),
+                .data = span.data(),
+                .length = static_cast<unsigned>(span.size()),
+                .capacity = capacity,
             };
         } else {
             static_assert(sizeof(ExternElement) <= sizeof(T) && alignof(ExternElement) <= MimallocMalloc::maxAlign);
@@ -74,20 +67,20 @@ public:
             // We can reuse the allocation, but we still need to convert the elements.
             alignas(CPPType) std::byte cppStorage[sizeof(CPPType)];
             // Prevent the memory from being freed.
-            CPPType* const vec = new (cppStorage) CPPType { std::move(cppValue) };
-            const std::size_t length = vec->size();
-            const std::size_t capacity = vec->capacity();
+            CPPType* const vec = new (cppStorage) CPPType { WTF::move(cppValue) };
+            const size_t length = vec->size();
+            const size_t capacity = vec->capacity();
 
             T* const buffer = vec->mutableSpan().data();
             Detail::asanSetBufferSizeToFullCapacity(buffer, length, capacity);
             std::byte* storage = reinterpret_cast<std::byte*>(buffer);
 
             // Convert the elements.
-            for (std::size_t i = 0; i < length; ++i) {
+            for (size_t i = 0; i < length; ++i) {
                 T* oldPtr = std::launder(reinterpret_cast<T*>(storage + i * sizeof(T)));
-                ExternElement newElem { ExternTraits<T>::convertToExtern(std::move(*oldPtr)) };
+                ExternElement newElem { ExternTraits<T>::convertToExtern(WTF::move(*oldPtr)) };
                 oldPtr->~T();
-                new (storage + i * sizeof(ExternElement)) ExternElement { std::move(newElem) };
+                new (storage + i * sizeof(ExternElement)) ExternElement { WTF::move(newElem) };
             }
 
 #if __cpp_lib_start_lifetime_as >= 202207L

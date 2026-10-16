@@ -49,7 +49,7 @@ struct DefaultTryConverter : DefaultContextConverter<IDL> {
         auto result = WebCore::Converter<IDL>::tryConvert(globalObject, value, ctx);
         if (result.has_value()) [[likely]] {
             scope.release();
-            return std::move(*result);
+            return WTF::move(*result);
         }
         RETURN_IF_EXCEPTION(scope, {});
         throwConversionFailedSlow(globalObject, scope, ctx);

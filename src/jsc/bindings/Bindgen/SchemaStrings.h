@@ -2,6 +2,7 @@
 #include "root.h"
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSString.h>
+#include <wtf/FixedVector.h>
 
 namespace Bun::Bindgen {
 
@@ -38,8 +39,8 @@ private:
 
     JSC::VM& m_vm;
     // Not arrays sized by the tables: most of the C++ includes this through BunClientData.h.
-    const std::unique_ptr<JSC::Identifier[]> m_memberNames;
-    const std::unique_ptr<JSC::JSString*[]> m_enumerationValues;
+    WTF::FixedVector<JSC::Identifier> m_memberNames;
+    WTF::FixedVector<JSC::JSString*> m_enumerationValues;
 };
 
 SchemaStrings& schemaStrings(JSC::VM&);

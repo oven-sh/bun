@@ -7,10 +7,6 @@
 #include <span>
 #include <wtf/Vector.h>
 
-namespace WTF {
-struct CrashOnOverflow;
-}
-
 namespace Bun {
 struct MimallocMalloc;
 }
@@ -72,7 +68,7 @@ struct IDLArrayBufferRef : IDLRef<JSC::ArrayBuffer> {};
 // Defined in IDLConvertBlob.h
 struct IDLBlobRef;
 
-// Dictionaries that hold a raw `JSValue` or a `JSStringUTF8View` must live on the stack.
+// A dictionary that holds a raw `JSValue` or a `JSStringUTF8View`. Its struct is WTF_FORBID_HEAP_ALLOCATION.
 template<typename T>
 struct IDLStackOnlyDictionary : WebCore::IDLType<T> {
     using SequenceStorageType = void;

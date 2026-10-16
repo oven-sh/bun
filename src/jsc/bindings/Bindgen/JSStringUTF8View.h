@@ -7,8 +7,9 @@
 
 namespace Bun::Bindgen {
 
-// Bun::UTF8View for an argument of a host call. Lives in the host function's frame.
+// Bun::UTF8View for an argument of a host call.
 class JSStringUTF8View {
+    WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(JSStringUTF8View);
     WTF_MAKE_NONMOVABLE(JSStringUTF8View);
 
@@ -39,13 +40,13 @@ public:
     }
 
     // Null data only for a view that was not initialized.
-    std::span<const uint8_t> bytes() const
+    std::span<const uint8_t> bytes() const LIFETIME_BOUND
     {
         if (m_isNull)
             return {};
-        auto span = m_isConverted ? m_converted.span() : byteCast<uint8_t>(m_view->span8());
+        auto span = byteCast<uint8_t>(m_isConverted ? m_converted.span() : byteCast<char8_t>(m_view->span8()));
         if (!span.data())
-            return { reinterpret_cast<const uint8_t*>(""), 0 };
+            return byteCast<uint8_t>(WTF::nonNullEmptyUTF8Span());
         return span;
     }
 
@@ -54,7 +55,7 @@ private:
 
     // The owner is not always the string: the characters of a substring are its base's.
     JSC::GCOwnedDataScope<WTF::StringView> m_view;
-    WTF::Vector<uint8_t, 128> m_converted;
+    WTF::Vector<char8_t, 128> m_converted;
     bool m_isConverted { false };
     bool m_isNull { true };
 };

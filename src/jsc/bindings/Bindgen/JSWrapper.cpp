@@ -7,7 +7,6 @@
 namespace Bun::Bindgen {
 using namespace JSC;
 
-// It shares a subspace with the constructors of `.classes.ts` classes.
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSClassConstructor, InternalFunction);
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSClassConstructor);
 
@@ -19,8 +18,7 @@ JSC_DEFINE_HOST_FUNCTION(callJSClassConstructor, (JSGlobalObject * globalObject,
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* constructor = uncheckedDowncast<JSClassConstructor>(callFrame->jsCallee());
-    Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, makeString(constructor->name(), " constructor cannot be invoked without 'new'"_s));
-    return {};
+    return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, makeString(constructor->name(), " constructor cannot be invoked without 'new'"_s));
 }
 
 JSClassConstructor::JSClassConstructor(VM& vm, Structure* structure, NativeFunction construct)
@@ -52,7 +50,7 @@ void setupClassStructure(LazyClassStructure::Initializer& init, unsigned classIn
         definition.finishPrototypeCreation(vm, init.global, prototype);
     Bun::putToStringTagWithoutTransition(vm, prototype, definition.info);
     init.setPrototype(prototype);
-    init.setStructure(Bun::createClassStructure(vm, init.global, prototype, TypeInfo(static_cast<JSC::JSType>(WebCore::JSDOMWrapperType), JSDestructibleObject::StructureFlags), definition.info));
+    init.setStructure(definition.createStructure(vm, init.global, prototype));
     if (definition.construct)
         init.setConstructor(JSClassConstructor::create(vm, init.global, definition, prototype));
 }
@@ -71,14 +69,15 @@ JSObject* constructorForClass(JSGlobalObject* globalObject, unsigned classIndex)
 
 Structure* structureForNewTarget(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned classIndex)
 {
+    // JSC_GET_DERIVED_STRUCTURE, for a Structure that is not a member of the global object.
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    if (newTarget == callFrame->jsCallee()) [[likely]]
+        return structureForClass(globalObject, classIndex);
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* newTarget = asObject(callFrame->newTarget());
-    if (newTarget == constructorForClass(globalObject, classIndex)) [[likely]]
-        return structureForClass(globalObject, classIndex);
-    // ShadowRealm functions belong to a different global object.
-    auto* functionGlobalObject = getFunctionRealm(globalObject, newTarget);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* functionGlobalObject = tryGetFunctionRealm(newTarget);
+    if (!functionGlobalObject)
+        functionGlobalObject = globalObject;
     RELEASE_AND_RETURN(scope, InternalFunction::createSubclassStructure(globalObject, newTarget, structureForClass(functionGlobalObject, classIndex)));
 }
 

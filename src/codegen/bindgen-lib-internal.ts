@@ -414,7 +414,7 @@ export class RangeType extends IntegerType {
 }
 
 const integer = (rust: string, cpp: string, size: number, webidl: string, min: number | bigint, max: number | bigint) =>
-  new IntegerType({ rust, cpp: `std::${cpp}`, size, webidl, min, max });
+  new IntegerType({ rust, cpp, size, webidl, min, max });
 
 export const integers = {
   u8: integer("u8", "uint8_t", 1, "IDLOctet", 0, 255),

@@ -1,11 +1,8 @@
 #pragma once
 #include "root.h"
 #include "Bindgen/IDLTypes.h"
-#include "ErrorCode.h"
-#include "JSDOMConvertBase.h"
-#include <JavaScriptCore/MathCommon.h>
-#include <cmath>
-#include <wtf/text/MakeString.h>
+#include "JSDOMConvertNumbers.h"
+#include "NodeValidator.h"
 
 namespace Bun::Bindgen {
 
@@ -27,13 +24,7 @@ struct WebCore::Converter<Bun::Bindgen::IDLEnforceRange<T, Min, Max>> : WebCore:
         auto scope = DECLARE_THROW_SCOPE(vm);
         double number = value.toNumber(&globalObject);
         RETURN_IF_EXCEPTION(scope, 0);
-        if (std::isfinite(number)) {
-            number = std::trunc(number);
-            if (number >= Min && number <= Max)
-                return static_cast<T>(number);
-        }
-        throwTypeError(&globalObject, scope, makeString("Value "_s, number, " is outside the range ["_s, static_cast<double>(Min), ", "_s, static_cast<double>(Max), ']'));
-        return 0;
+        RELEASE_AND_RETURN(scope, static_cast<T>(WebCore::enforceRange(globalObject, number, Min, Max)));
     }
 };
 
@@ -43,19 +34,11 @@ struct WebCore::Converter<Bun::Bindgen::IDLValidateInteger<T, Min, Max>> : WebCo
     {
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        if (!value.isNumber()) {
-            Bun::ERR::INVALID_ARG_TYPE(scope, &globalObject, name, "number"_s, value);
-            return 0;
-        }
-        double number = value.asNumber();
-        if (!JSC::isInteger(number)) {
-            Bun::ERR::OUT_OF_RANGE(scope, &globalObject, name, "an integer"_s, value);
-            return 0;
-        }
-        if (number < Min || number > Max) {
-            Bun::ERR::OUT_OF_RANGE(scope, &globalObject, name, Min, Max, value);
-            return 0;
-        }
-        return static_cast<T>(number);
+        // The widths it is instantiated for.
+        using Validated = std::conditional_t<std::signed_integral<T>, int32_t, std::conditional_t<sizeof(T) <= sizeof(uint32_t), uint32_t, size_t>>;
+        static_assert(sizeof(T) <= sizeof(Validated));
+        Validated result = 0;
+        Bun::V::validateInteger(scope, &globalObject, value, name, JSC::jsNumber(Min), JSC::jsNumber(Max), &result);
+        return static_cast<T>(result);
     }
 };

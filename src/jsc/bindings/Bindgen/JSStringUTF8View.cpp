@@ -14,19 +14,19 @@ bool JSStringUTF8View::convert()
         auto span = view.span8();
         if (!m_converted.tryGrow(span.size() * 2))
             return false;
-        m_converted.shrink(simdutf::convert_latin1_to_utf8(byteCast<char>(span.data()), span.size(), byteCast<char>(m_converted.mutableSpan().data())));
+        m_converted.shrink(simdutf::convert_latin1_to_utf8(byteCast<char8_t>(span), m_converted.mutableSpan()));
         return true;
     }
     auto span = view.span16();
     if (!m_converted.tryGrow(span.size() * 3))
         return false;
-    size_t length = simdutf::convert_utf16le_to_utf8(span.data(), span.size(), byteCast<char>(m_converted.mutableSpan().data()));
-    if (length) [[likely]] {
+    size_t length = StringImpl::tryConvertUTF16ToUTF8(span, m_converted.mutableSpan());
+    if (length != notFound) [[likely]] {
         m_converted.shrink(length);
         return true;
     }
     // simdutf refuses unpaired surrogates; each becomes U+FFFD.
-    m_converted.shrink(WTF::Unicode::convertReplacingInvalidSequences(span, byteCast<char8_t>(m_converted.mutableSpan())).buffer.size());
+    m_converted.shrink(WTF::Unicode::convertReplacingInvalidSequences(span, m_converted.mutableSpan()).buffer.size());
     return true;
 }
 

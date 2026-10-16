@@ -23,7 +23,7 @@ JSValue DictionaryMemberReader::get(unsigned index)
         JSValue value = m_object->getDirect(m_vm, m_memberNames[index], attributes);
         if (!value)
             return jsUndefined();
-        if (!(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) [[likely]]
+        if (!(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) [[likely]]
             return value;
     }
     return getIfPropertyExistsPrototypePollutionMitigation(m_vm, m_globalObject, m_object, m_memberNames[index]);

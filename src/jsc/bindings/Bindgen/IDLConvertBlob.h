@@ -18,9 +18,8 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLBlobRef> : Bun::DefaultTry
         Ctx& ctx)
     {
         if (auto* jsBlob = dynamicDowncast<WebCore::JSBlob>(value)) {
-            if (void* wrapped = jsBlob->wrapped()) {
+            if (void* wrapped = jsBlob->wrapped())
                 return static_cast<BlobImpl*>(wrapped);
-            }
         }
         return std::nullopt;
     }

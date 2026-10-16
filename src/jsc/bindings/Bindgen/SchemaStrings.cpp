@@ -9,8 +9,8 @@ using namespace JSC;
 
 SchemaStrings::SchemaStrings(VM& vm)
     : m_vm(vm)
-    , m_memberNames(std::make_unique<Identifier[]>(Tables::memberNames.size()))
-    , m_enumerationValues(std::make_unique<JSString*[]>(Tables::enumerationValues.size()))
+    , m_memberNames(Tables::memberNames.size())
+    , m_enumerationValues(WTF::FillWith {}, Tables::enumerationValues.size(), nullptr)
 {
 }
 
@@ -30,10 +30,8 @@ void SchemaStrings::initializeEnumerationValue(unsigned index)
 template<typename Visitor>
 void SchemaStrings::visit(Visitor& visitor)
 {
-    for (unsigned i = 0; i < Tables::enumerationValues.size(); ++i) {
-        if (auto* string = m_enumerationValues[i])
-            visitor.appendUnbarriered(string);
-    }
+    for (auto* string : m_enumerationValues)
+        visitor.appendUnbarriered(string);
 }
 template void SchemaStrings::visit(AbstractSlotVisitor&);
 template void SchemaStrings::visit(SlotVisitor&);

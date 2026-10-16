@@ -21,7 +21,7 @@ using ExternOf = typename ExternTraits<typename IDL::ImplementationType>::Extern
 template<typename T>
 ALWAYS_INLINE auto toExtern(T& value)
 {
-    return ExternTraits<T>::convertToExtern(std::move(value));
+    return ExternTraits<T>::convertToExtern(WTF::move(value));
 }
 
 template<typename T>
@@ -30,19 +30,19 @@ struct TrivialExtern {
 
     static ExternType convertToExtern(T&& cppValue)
     {
-        return std::move(cppValue);
+        return WTF::move(cppValue);
     }
 };
 
 template<> struct ExternTraits<bool> : TrivialExtern<bool> {};
-template<> struct ExternTraits<std::uint8_t> : TrivialExtern<std::uint8_t> {};
-template<> struct ExternTraits<std::uint16_t> : TrivialExtern<std::uint16_t> {};
-template<> struct ExternTraits<std::int32_t> : TrivialExtern<std::int32_t> {};
-template<> struct ExternTraits<std::uint32_t> : TrivialExtern<std::uint32_t> {};
-template<> struct ExternTraits<std::uint64_t> : TrivialExtern<std::uint64_t> {};
+template<> struct ExternTraits<uint8_t> : TrivialExtern<uint8_t> {};
+template<> struct ExternTraits<uint16_t> : TrivialExtern<uint16_t> {};
+template<> struct ExternTraits<int32_t> : TrivialExtern<int32_t> {};
+template<> struct ExternTraits<uint32_t> : TrivialExtern<uint32_t> {};
+template<> struct ExternTraits<uint64_t> : TrivialExtern<uint64_t> {};
 template<> struct ExternTraits<double> : TrivialExtern<double> {};
 
-enum ExternNullPtr : std::uint8_t {};
+enum ExternNullPtr : uint8_t {};
 
 template<> struct ExternTraits<std::nullptr_t> {
     using ExternType = ExternNullPtr;
@@ -59,7 +59,7 @@ struct ExternOptional {
         ExternNullPtr none;
         T some;
     } data;
-    std::uint8_t tag;
+    uint8_t tag;
 };
 
 template<typename T>
@@ -71,7 +71,7 @@ struct ExternTraits<std::optional<T>> {
         ExternType result;
         result.tag = cppValue.has_value();
         if (cppValue)
-            result.data.some = ExternTraits<T>::convertToExtern(std::move(*cppValue));
+            result.data.some = ExternTraits<T>::convertToExtern(WTF::move(*cppValue));
         else
             result.data.none = ExternNullPtr {};
         return result;
@@ -97,14 +97,14 @@ template<> struct ExternTraits<JSC::JSValue> {
 };
 
 struct ExternBytes {
-    const std::uint8_t* data;
-    std::size_t length;
+    const uint8_t* data;
+    size_t length;
 };
 
-template<> struct ExternTraits<std::span<const std::uint8_t>> {
+template<> struct ExternTraits<std::span<const uint8_t>> {
     using ExternType = ExternBytes;
 
-    static ExternType convertToExtern(std::span<const std::uint8_t> cppValue)
+    static ExternType convertToExtern(std::span<const uint8_t> cppValue)
     {
         return { cppValue.data(), cppValue.size() };
     }
@@ -116,7 +116,7 @@ template<> struct ExternTraits<JSStringUTF8View> {
     // The storage stays with `cppValue`, which outlives the call this is an argument of.
     static ExternType convertToExtern(JSStringUTF8View&& cppValue)
     {
-        return ExternTraits<std::span<const std::uint8_t>>::convertToExtern(cppValue.bytes());
+        return ExternTraits<std::span<const uint8_t>>::convertToExtern(cppValue.bytes());
     }
 };
 

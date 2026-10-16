@@ -138,18 +138,18 @@ const externType = (type: Type): string =>
     : `Bun::Bindgen::ExternOf<${type.idlType}>`;
 const toExtern = (variable: string) => `Bun::Bindgen::toExtern(${variable})`;
 
-/** How C++ tells that a value is of a kind: `ofValue` if it is not a cell, `ofCell` from `type`, the cell's type byte. */
+/** How C++ tells that a value is of a kind: `ofValue` if it is not a cell, `ofCell` of `cell`, by its type byte. */
 const kindTests: Record<Exclude<ValueKind, JSClass>, { ofValue?: (value: string) => string; ofCell?: string }> = {
   undefined: { ofValue: value => `${value}.isUndefined()` },
   null: { ofValue: value => `${value}.isNull()` },
   boolean: { ofValue: value => `${value}.isBoolean()` },
   number: { ofValue: value => `${value}.isNumber()` },
-  bigint: { ofValue: value => `${value}.isBigInt32()`, ofCell: "type == JSC::HeapBigIntType" },
-  string: { ofCell: "type == JSC::StringType" },
-  stringObject: { ofCell: "type == JSC::StringObjectType || type == JSC::DerivedStringObjectType" },
-  array: { ofCell: "type == JSC::ArrayType" },
-  arrayBuffer: { ofCell: "type == JSC::ArrayBufferType" },
-  arrayBufferView: { ofCell: "JSC::isTypedArrayTypeIncludingDataView(type)" },
+  bigint: { ofValue: value => `${value}.isBigInt32()`, ofCell: "cell->isHeapBigInt()" },
+  string: { ofCell: "cell->isString()" },
+  stringObject: { ofCell: "cell->inherits<JSC::StringObject>()" },
+  array: { ofCell: "JSC::isJSArray(cell)" },
+  arrayBuffer: { ofCell: "cell->inherits<JSC::JSArrayBuffer>()" },
+  arrayBufferView: { ofCell: "cell->inherits<JSC::JSArrayBufferView>()" },
 };
 
 /**
@@ -191,7 +191,6 @@ function cppChooseByKind<T>(value: string, byKind: ReadonlyMap<ValueKind | "othe
   const lines = [`unsigned ${choice} = 0;`];
   if (ofType.size + ofClass.size > 0) {
     lines.push(`if (${value}.isCell()) {`, `    auto* cell = ${value}.asCell();`);
-    if (ofType.size > 0) lines.push("    JSC::JSType type = cell->type();");
     lines.push(indent(cppChain(ofType, ofClass), 4), ofValue.size > 0 ? `} else ${cppChain(ofValue)}` : "}");
   } else if (ofValue.size > 0) {
     lines.push(cppChain(ofValue));
@@ -212,7 +211,8 @@ function humanReadableEnumeration(type: EnumerationType): string {
 }
 
 /** Value-initialization zeroes a struct whose constructor is implicit, and these hold the buffers of string views. */
-const cppDefaultConstructor = (name: string) => `    ${name}() {}`;
+const cppDefaultConstructor = (type: NamedType) =>
+  `${type.needsLifetime ? "    WTF_FORBID_HEAP_ALLOCATION;\n\npublic:\n" : ""}    ${type.name}() {}`;
 
 /** C++ that offers `value` to `candidates`, indices of alternatives, in order. All but the last may refuse it. */
 function cppConvertToAlternative(type: UnionType, candidates: readonly number[]): string {
@@ -222,7 +222,7 @@ function cppConvertToAlternative(type: UnionType, candidates: readonly number[])
       const member = `result.${name}`;
       if (alternative.refuses)
         return `if (auto converted = Bun::tryConvertIDL<${alternative.idlType}>(*globalObject, value, ctx)) {
-    ${member} = std::move(*converted);
+    ${member} = WTF::move(*converted);
     result.tag = ${i};
     return;
 }
@@ -256,15 +256,15 @@ function cppHeaderForUnion(type: UnionType): string {
   return `
 namespace Bun::Bindgen::Generated {
 struct ${name} {
-${cppDefaultConstructor(name)}
+${cppDefaultConstructor(type)}
 ${held.map(a => `    ${a.type.convertsInPlace ? `std::optional<${implementationType(a.type)}> ${a.name}` : `${implementationType(a.type)} ${a.name} {}`};`).join("\n")}
-    std::uint8_t tag;
+    uint8_t tag;
 };
 struct Extern${name} {
     union {
 ${alternatives.map(a => `        ${externType(a.type)} ${a.name};`).join("\n")}
     } data;
-    std::uint8_t tag;
+    uint8_t tag;
 };
 ${layoutAssert(`Extern${name}`, type)}
 }
@@ -321,7 +321,7 @@ function cppHeaderForType(type: NamedType): string {
   if (type instanceof EnumerationType) {
     return `
 namespace Bun::Bindgen::Generated {
-enum class ${name} : std::uint32_t {
+enum class ${name} : uint32_t {
 ${type.variants.map(variant => `    ${variant},`).join("\n")}
 };
 }
@@ -339,7 +339,7 @@ template<> std::optional<${type.cpp}> WebCore::parseEnumeration<${type.cpp}>(JSC
   return `
 namespace Bun::Bindgen::Generated {
 struct ${name} {
-${cppDefaultConstructor(name)}
+${cppDefaultConstructor(type)}
 ${type.members.map(member => `    ${implementationType(member.type)} ${member.fieldName};`).join("\n")}
 };
 struct Extern${name} {
@@ -403,7 +403,7 @@ function cppSourceForEnum(type: EnumerationType): string {
 template<> std::optional<${type.cpp}> WebCore::parseEnumerationFromString<${type.cpp}>(const WTF::String& string)
 {
     static constexpr WTF::SortedArrayMap mapping { std::to_array<${pair}>({
-${pairs.map(([spelling, variant]) => `        ${pair} { ${asciiLiteral(spelling)}, ${type.cpp}::${variant} },`).join("\n")}
+${pairs.map(([spelling, variant]) => `        { ${asciiLiteral(spelling)}, ${type.cpp}::${variant} },`).join("\n")}
     }) };
     if (auto* value = mapping.tryGet(string)) [[likely]]
         return *value;
@@ -733,6 +733,7 @@ ${privateMethods
   }
 const Bun::Bindgen::ClassDefinition Bun::Bindgen::Generated::JS${name}ClassDefinition = {
     .info = ${type.cpp}::info(),
+    .createStructure = ${type.cpp}::createStructure,
     .prototypeTableValues = ${span(`JS${name}PrototypeTableValues`, prototypeRows)},
     .constructorTableValues = ${span(`JS${name}ConstructorTableValues`, constructorRows)},
     .finishPrototypeCreation = ${privateMethods.length > 0 ? `finish${name}PrototypeCreation` : "nullptr"},

@@ -35,14 +35,15 @@ struct InheritsTraits<Bun::Bindgen::JSWrapper<Traits>> {
     }
 };
 
-} // namespace JSCastingHelpers
-} // namespace JSC
+}
+}
 
 namespace Bun::Bindgen {
 
 // One per class, defined by generated code.
 struct ClassDefinition {
     const JSC::ClassInfo* info;
+    JSC::Structure* (*createStructure)(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
     std::span<const JSC::HashTableValue> prototypeTableValues;
     std::span<const JSC::HashTableValue> constructorTableValues;
     // Properties a static table cannot describe (private names). May be null.
@@ -58,7 +59,6 @@ class JSWrapper final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
     static constexpr unsigned numberOfInternalFields = Traits::numberOfInternalFields;
 
     DECLARE_INFO;
@@ -80,6 +80,11 @@ public:
             nullptr);
     }
 
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(WebCore::JSDOMWrapperType), StructureFlags), info());
+    }
+
     // The payload is uninitialized: the caller writes it before anything else can run.
     static JSWrapper* create(JSC::VM& vm, JSC::Structure* structure)
     {
@@ -98,7 +103,7 @@ public:
     static constexpr size_t offsetOfPayload() { return offsetOfInternalFields() + numberOfInternalFields * sizeof(JSC::WriteBarrier<JSC::Unknown>); }
     static size_t allocationSize() { return offsetOfPayload() + Traits::payloadSize(); }
 
-    void* payload() { return reinterpret_cast<uint8_t*>(this) + offsetOfPayload(); }
+    void* payload() { return std::bit_cast<char*>(this) + offsetOfPayload(); }
     JSC::WriteBarrier<JSC::Unknown>& internalField(unsigned index)
     {
         ASSERT(index < numberOfInternalFields);
@@ -106,7 +111,7 @@ public:
     }
     std::span<JSC::WriteBarrier<JSC::Unknown>, numberOfInternalFields> internalFields()
     {
-        return std::span<JSC::WriteBarrier<JSC::Unknown>, numberOfInternalFields> { reinterpret_cast<JSC::WriteBarrier<JSC::Unknown>*>(reinterpret_cast<uint8_t*>(this) + offsetOfInternalFields()), numberOfInternalFields };
+        return std::span<JSC::WriteBarrier<JSC::Unknown>, numberOfInternalFields> { std::bit_cast<JSC::WriteBarrier<JSC::Unknown>*>(std::bit_cast<char*>(this) + offsetOfInternalFields()), numberOfInternalFields };
     }
 
 private:
@@ -116,9 +121,10 @@ private:
         // Rust reads the schema's `internalFields`, which start as `undefined`. The rest hold cached getters: empty until computed.
         unsigned index = 0;
         for (auto& field : internalFields()) {
-            new (NotNull, &field) JSC::WriteBarrier<JSC::Unknown>;
             if (index++ < numberOfInternalFields - Traits::numberOfCachedGetters)
-                field.setWithoutWriteBarrier(JSC::jsUndefined());
+                new (NotNull, &field) JSC::WriteBarrier<JSC::Unknown>(JSC::UndefinedWriteBarrierTag);
+            else
+                new (NotNull, &field) JSC::WriteBarrier<JSC::Unknown>;
         }
     }
 
@@ -146,18 +152,7 @@ template<typename Traits> struct ExternTraits<JSWrapper<Traits>*> : TrivialExter
 class JSClassConstructor final : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
     DECLARE_INFO;
-
-    template<typename, JSC::SubspaceAccess mode>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSClassConstructor, WebCore::UseCustomHeapCellType::No>(
-            vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForBunClassConstructor, m_subspaceForBunClassConstructor));
-    }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {

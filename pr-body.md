@@ -6,8 +6,8 @@
 ### Fix
 - A write with a callback also sends a zero-length marker through `Writable`, which orders it with `end()`, `_final` and `destroy()`.
 - A chunk that `Writable` holds goes out first. A failed write destroys the stream even without `autoDestroy`, and `process.stdout` recovers as in Node.
-- Verified: `test/js/node/process/process-stdio-write-callback.test.ts` and two more. 56 of 103 tests fail on main.
-- Self-reviewed: 14 concerns raised, 13 addressed. Open: Windows has not run yet.
+- Verified: `test/js/node/process/process-stdio-write-callback.test.ts` and two more. 64 of 114 tests fail on main.
+- Self-reviewed: 14 concerns raised, 14 addressed.
 
 ### Background
 - These streams are `fs.WriteStream`s whose own `write()` (`writeFast`) gives each chunk to a `FileSink`, which can hold it, and skips `Writable`.
@@ -53,6 +53,7 @@ else {
 | The pipe breaks with `write(1 MiB, w0); write("", w1); write("b", w2)` pending | `w1` inside `write()`, `w0:EPIPE`, `w2:EPIPE`, `error` | `w0:EPIPE`, `w1:EPIPE`, `w2:EPIPE`, `error` | same as this PR |
 | `write(1 MiB, cb); Writable.prototype.write.call(stdout, "B"); write("C")`: the bytes after the first chunk | `BC` | `BC` | `BC` |
 | Two writes of 1 MiB in one turn: `'drain'` events | 2 | 1 | 1 |
+| The pipe is already broken: `cork(); write(1 MiB, w0); write("b", w1)`, and `uncork()` on the next turn | `w0:EPIPE`, `error`, `w1:EPIPE`, all before `uncork()` | after `uncork()`: `w0:EPIPE`, `w1:EPIPE`, `error` | same as this PR |
 | After a handled `EPIPE` on piped stdout: `errored`, and a later `write(chunk, cb)` | `EPIPE`, the callback runs inside `write()` | `null`, the callback runs | `null`, the callback runs |
 
 #### How the marker works
@@ -64,9 +65,9 @@ else {
 
 #### The contract table
 
-- `process-stdio-write-callback-fixture.js` runs one row: a stream (`process.stdout`, `process.stderr`, `child.stdin`), the state of its pipe (room, full, breaks) and a sequence of calls. It runs unchanged under Node: `node process-stdio-write-callback-fixture.js stdout parked "write x3"`.
-- All 96 rows, Node against this PR: 84 reports are identical. The other 12 are rows with `destroy()` or with a write made from the `'error'` listener. There the test checks only that each write callback runs once, in order, after the calls, because Node and Bun do not give those callbacks the same result.
-- Main differs from Node in 67 of the 96 rows.
+- `process-stdio-write-callback-fixture.js` runs one row: a stream (`process.stdout`, `process.stderr`, `child.stdin`), the state of its pipe (room, full, breaks after the calls, already broken) and a sequence of calls. It runs unchanged under Node: `node process-stdio-write-callback-fixture.js stdout parked "write x3"`.
+- All 111 rows, Node against this PR: 99 reports are identical. The other 12 are rows with `destroy()` or with a write made from the `'error'` listener. There the test checks only that each write callback runs once, in order, after the calls, because Node and Bun do not give those callbacks the same result.
+- Main differs from Node in 78 of the 111 rows.
 - A larger table from the review of this branch (141 rows: also `tty.WriteStream`, a Worker's `process.stdout`, `net.Socket`, `fs.createWriteStream`, `PassThrough`) has four clauses: no callback inside `write()`, write callbacks in write order, the `end()` callback and `'finish'` after them, each callback once. This PR: 0 rows fail. Main: 60.
 
 #### Cost (release builds of main and of this branch, Linux x64)
@@ -91,11 +92,13 @@ else {
 
 #### Tests
 
-- The three test files: 103 pass with this PR (debug build and release build). With main: 47 pass, 56 fail.
-- Each clause of the new code was removed in turn, 16 changes. 13 make at least one test fail. The other three change nothing that a caller can see: clearing the run when it settles, the `markers === 0` condition, and the tick before a marker reports the error of a run that failed before `Writable` dispatched it.
+- The three test files: 114 pass with this PR (debug build and release build). With main: 50 pass, 64 fail.
+- Each clause of the new code was removed in turn, 16 changes. 15 make at least one test fail. The other one is the line that clears the run of a stream when the run settles. Without it, a later write on `process.stdout` reports the error of a run that failed before. No row covers that: on a pipe that stays broken, Node reports `EPIPE` for that write and the sink reports success (#41568).
+- The rows with `cork()` are there for two of those clauses. A corked write reports when the stream is uncorked. In the state where the pipe is already broken, its write has failed by then.
 - `test/js/node/{process,child_process,readline,stream}`, `tty.test.ts` and `test/regression/issue/25432.test.ts` (42 files, 852 tests, debug build): 14 fail. 10 of them fail with main's stream code in the same run. The other 4 are 5 s timeouts of tests that need 3 to 5 s in this container and that also time out on main.
 - Vendored Node tests: 238 files (`child-process`, `stdio`, `stdout`, `stderr`, `stdin`, `tty`, `readline`, `console`, `fs-write-stream`, `process-exit`, `stream-writable`, `stream-pipeline`, `stream-finished`, unhandled rejections), release builds: 234 pass on main and with this PR, same exit code per file.
-- Not run: macOS and Windows. The `process.stdout` and `process.stderr` rows use a FIFO and do not run on Windows. On Windows the sink of `process.stdout` writes synchronously, and one `uv_write` takes a whole chunk for `child.stdin`, so the tests that need a held write or a write that fails after it was accepted are skipped there.
+- macOS and Windows: the three files pass there, as they were before the rows with `cork()` and the state of a pipe that is already broken. Those rows have run on Linux only.
+- The `process.stdout` and `process.stderr` rows use a FIFO and do not run on Windows. On Windows the sink of `process.stdout` writes synchronously, and one `uv_write` takes a whole chunk for `child.stdin`, so the tests that need a held write or a write that fails after it was accepted are skipped there.
 
 #### What changes for callers
 
@@ -129,3 +132,4 @@ else {
 - #44954 conflicts textually in `streams.ts`, where both add functions at one place. #45195 and #45318 conflict in test files only. #36316 makes `child.stdin` a `net.Socket`, which takes it off this path. #44980 and #42031 do not conflict.
 
 </details>
+

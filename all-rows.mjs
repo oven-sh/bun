@@ -8,9 +8,9 @@ const rt = process.argv[2];
 const filter = process.argv[3] ?? "";
 for (const stream of ["stdout", "stderr", "child.stdin"]) {
   if (filter && !stream.includes(filter)) continue;
-  for (const state of ["idle", "parked", "failing"]) {
+  for (const state of ["idle", "parked", "failing", "broken"]) {
     for (const [sequence, { states }] of Object.entries(sequences)) {
-      if (states && !states.includes(state)) continue;
+      if (!(states ?? ["idle", "parked", "failing"]).includes(state)) continue;
       if (state === "failing" && sequence.includes("destroy()")) continue;
       const r = spawnSync(rt, [FIX, stream, state, sequence], { encoding: "utf8", timeout: 20000, env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" } });
       const text = (stream === "stdout" ? r.stderr : r.stdout).trim().split("\n").at(-1);

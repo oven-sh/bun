@@ -1,8 +1,18 @@
 import { $ } from "bun";
 import { describe, expect, it } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, linkSync } from "fs";
-import { bunEnv as bunEnv_, bunExe, forEachLine, isWindows, substDrive, tempDir, tempDirWithFiles } from "harness";
-import { basename, join } from "path";
+import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, realpathSync, rmSync, symlinkSync } from "fs";
+import {
+  bunEnv as bunEnv_,
+  bunExe,
+  forEachLine,
+  isLinux,
+  isWindows,
+  mergeWindowEnvs,
+  substDrive,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
+import { basename, delimiter, dirname, join } from "path";
 
 const bunEnv: typeof bunEnv_ = {
   ...bunEnv_,
@@ -1443,7 +1453,7 @@ describe.concurrent("bun run", () => {
     using dir = tempDir("bun-run-node-shim", {
       "package.json": JSON.stringify({
         name: "shim",
-        scripts: { v: `node -e "console.log(process.execPath)"` },
+        scripts: { v: `node -e "console.log(process.execPath)"`, n: 'echo "<$NODE><$npm_node_execpath>"' },
       }),
       "bin/.keep": "",
       // Takes the name of the directory.
@@ -1478,18 +1488,27 @@ describe.concurrent("bun run", () => {
     };
 
     const bun = ownBun("bin");
+    const alias = join(String(dir), "bin", "bun-node", "node.exe").toLowerCase();
     for (const flag of [[], ["--bun"]]) {
       expect(await run(bun, ...flag, "run", "v")).toEqual({
-        stdout: join(String(dir), "bin", "bun-node", "node.exe").toLowerCase(),
+        stdout: alias,
         stderr: '$ node -e "console.log(process.execPath)"\n',
+        exitCode: 0,
+      });
+      expect(await run(bun, ...flag, "run", "--silent", "n")).toEqual({
+        stdout: `<${alias}><${alias}>`,
+        stderr: "",
         exitCode: 0,
       });
     }
 
-    const blocked = await run(ownBun("blocked"), "run", "v");
+    const blockedBun = ownBun("blocked");
+    const blocked = await run(blockedBun, "run", "v");
     expect(blocked.stderr).toContain("warn: failed to create node alias in ");
     expect(blocked.stderr).toContain("command not found: node");
     expect(blocked).toMatchObject({ stdout: "", exitCode: 1 });
+    // The alias does not exist, so the script gets no NODE from this bun.
+    expect(await run(blockedBun, "run", "--silent", "n")).toMatchObject({ stdout: "<><>", exitCode: 0 });
   });
 
   // Windows runs a .cmd or .bat file through cmd.exe, which reads the arguments a second time: it
@@ -1582,6 +1601,276 @@ describe.concurrent("bun run", () => {
       shimDir: expect.stringMatching(new RegExp(`/bun-node-${process.getuid!()}(-|$)`)),
       bunType: "object",
       exitCode: 0,
+    });
+  });
+
+  // npm exports the node executable as NODE and npm_node_execpath. Where scripts get bun as
+  // `node`, that executable is the `node` link that bun makes, not the directory that holds it.
+  describe("NODE and npm_node_execpath when scripts get bun as node", () => {
+    const nodeLink = /[\\/]bun-node[^\\/]*[\\/]node(\.exe)?$/;
+    // `echo` is a builtin of bun's shell and of sh, so this line runs nothing from PATH.
+    const printNode = 'echo "<$NODE><$npm_node_execpath>"';
+    // The one value that a `printNode` line shows for both variables.
+    const exported = (line: string | undefined) => /^<(.*)><\1>$/.exec(line ?? "")?.[1];
+    const run = async (cwd: string, args: string[], env: Record<string, string | undefined> = bunEnv) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    // A PATH of one directory that has no node in it.
+    const withPath = (path: string, extra: Record<string, string> = {}) =>
+      mergeWindowEnvs([bunEnv, { PATH: path, ...extra }]);
+    // Asks a `--bun` run for the link, which also makes it.
+    const makeLink = async (cwd: string) => {
+      const { stdout } = await run(cwd, ["--bun", "--shell=bun", "run", "--silent", "print"]);
+      const link = exported(stdout.trim());
+      expect(link).toMatch(nodeLink);
+      return link!;
+    };
+
+    describe.each([
+      ["--bun", ["--bun"], {}, false],
+      ["[run] bun = true in bunfig.toml", [], { "bunfig.toml": "[run]\nbun = true\n" }, false],
+      ["no node in PATH", [], {}, true],
+    ] as const)("%s", (_, flags, files, hideNode) => {
+      it("a script runs a file with the exported value", async () => {
+        using dir = tempDir("bun-run-node-link", {
+          ...files,
+          "package.json": JSON.stringify({
+            name: "node-link",
+            scripts: { preuse: printNode, use: '"$npm_node_execpath" hello.js', postuse: printNode },
+          }),
+          "hello.js": "console.log(typeof Bun);",
+        });
+        const cwd = String(dir);
+
+        const { stdout, stderr, exitCode } = await run(
+          cwd,
+          [...flags, "--shell=bun", "run", "--silent", "use"],
+          hideNode ? withPath(cwd) : bunEnv,
+        );
+        const [pre, ran, post] = stdout.split("\n");
+
+        expect({ link: exported(pre), ran, post, stderr }).toEqual({
+          link: expect.stringMatching(nodeLink),
+          ran: "object",
+          post: pre,
+          stderr: "",
+        });
+        expect(exitCode).toBe(0);
+      });
+    });
+
+    it("a bun run inside a --bun script exports the same link", async () => {
+      using dir = tempDir("bun-run-node-link-nested", {
+        "package.json": JSON.stringify({
+          name: "node-link-nested",
+          scripts: {
+            outer: `${printNode} && bun --shell=bun run --silent inner`,
+            inner: `${printNode} && node -p "typeof Bun"`,
+          },
+        }),
+      });
+
+      const { stdout, stderr, exitCode } = await run(String(dir), ["--bun", "--shell=bun", "run", "--silent", "outer"]);
+      const [outer, inner, ran] = stdout.split("\n");
+
+      expect({ link: exported(outer), inner, ran, stderr }).toEqual({
+        link: expect.stringMatching(nodeLink),
+        inner: outer,
+        ran: "object",
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // A script of an outer `bun run` can start this bun with another PATH and the outer NODE.
+    it("an inherited link does not stand for a node in PATH", async () => {
+      using dir = tempDir("bun-run-node-link-inherited", {
+        "package.json": JSON.stringify({
+          name: "node-link-inherited",
+          scripts: { print: printNode, go: 'node -p "typeof Bun"' },
+        }),
+      });
+      const cwd = String(dir);
+      const link = await makeLink(cwd);
+
+      expect(await run(cwd, ["--shell=bun", "run", "--silent", "go"], withPath(cwd, { NODE: link }))).toEqual({
+        stdout: "object\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.skipIf(isWindows)("an inherited link gives way to a node in PATH", async () => {
+      using dir = tempDir("bun-run-node-link-real-node", {
+        "package.json": JSON.stringify({ name: "node-link-real-node", scripts: { print: printNode } }),
+        "bin/node": "#!/bin/sh\n",
+      });
+      const cwd = String(dir);
+      const realNode = join(cwd, "bin", "node");
+      chmodSync(realNode, 0o755);
+      const link = await makeLink(cwd);
+
+      expect(
+        await run(cwd, ["--shell=bun", "run", "--silent", "print"], withPath(join(cwd, "bin"), { NODE: link })),
+      ).toEqual({ stdout: `<${realNode}><${realNode}>\n`, stderr: "", exitCode: 0 });
+    });
+
+    // Every bun has its own link directory: the name has the uid and the commit of the build.
+    it.skipIf(isWindows)("the link of another bun does not stand for a node in PATH", async () => {
+      using dir = tempDir("bun-run-node-link-other-bun", {
+        "package.json": JSON.stringify({
+          name: "node-link-other-bun",
+          scripts: { print: printNode, go: `${printNode} && node -p "typeof Bun"` },
+        }),
+      });
+      const cwd = String(dir);
+      const ownLink = await makeLink(cwd);
+      const otherDirectory = join(dirname(dirname(ownLink)), `bun-node-${process.getuid!()}-${Bun.randomUUIDv7()}`);
+      mkdirSync(otherDirectory, { mode: 0o700 });
+      using _ = { [Symbol.dispose]: () => rmSync(otherDirectory, { recursive: true, force: true }) };
+      symlinkSync(bunExe(), join(otherDirectory, "node"));
+
+      expect(
+        await run(cwd, ["--shell=bun", "run", "--silent", "go"], withPath(cwd, { NODE: join(otherDirectory, "node") })),
+      ).toEqual({ stdout: `<${ownLink}><${ownLink}>\nobject\n`, stderr: "", exitCode: 0 });
+    });
+
+    // The Docker images have bun as `/usr/local/bun-node-fallback-bin/node`: a node, not a link for scripts.
+    it.skipIf(isWindows)("a node in a directory with a similar name is still a node", async () => {
+      using dir = tempDir("bun-run-node-link-similar-name", {
+        "package.json": JSON.stringify({
+          name: "node-link-similar-name",
+          scripts: { go: `${printNode} && echo "$PATH"` },
+        }),
+        "bun-node-fallback-bin/node": "#!/bin/sh\n",
+      });
+      const cwd = String(dir);
+      const node = join(cwd, "bun-node-fallback-bin", "node");
+      chmodSync(node, 0o755);
+
+      const { stdout, stderr, exitCode } = await run(
+        cwd,
+        ["--shell=bun", "run", "--silent", "go"],
+        withPath(cwd, { NODE: node }),
+      );
+      const [exports, path] = stdout.split("\n");
+
+      expect({
+        exports,
+        linkDirectories: path?.split(delimiter).filter(entry => nodeLink.test(join(entry, "node"))),
+        stderr,
+      }).toEqual({
+        exports: `<${node}><${node}>`,
+        linkDirectories: [],
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // `bun install` gives lifecycle scripts bun itself as NODE, and puts the links in PATH for them.
+    it.skipIf(isWindows)("a bun install that a script starts with another PATH gives node to postinstall", async () => {
+      using dir = tempDir("bun-run-node-link-install", {
+        "package.json": JSON.stringify({
+          name: "node-link-install",
+          scripts: {
+            reinstall: `${printNode} && PATH="$NO_NODE" "$BUN_UNDER_TEST" install`,
+            postinstall: `${printNode} && node -p "typeof Bun"`,
+          },
+        }),
+        "no-node/.keep": "",
+      });
+      const cwd = String(dir);
+
+      const { stdout, stderr, exitCode } = await run(cwd, ["--bun", "--shell=system", "run", "--silent", "reinstall"], {
+        ...bunEnv,
+        NO_NODE: join(cwd, "no-node"),
+        BUN_UNDER_TEST: bunExe(),
+        BUN_INSTALL_CACHE_DIR: join(cwd, ".cache"),
+      });
+      const lines = stdout.split("\n");
+      const [inScript, inPostinstall] = lines.map(exported).filter(value => value !== undefined);
+
+      expect(stderr).not.toContain("error:");
+      expect({ inScript, inPostinstall, ranNode: lines.includes("object") }).toEqual({
+        inScript: expect.stringMatching(nodeLink),
+        inPostinstall: realpathSync(bunExe()),
+        ranNode: true,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it.skipIf(isWindows)("bunx --bun exports the link", async () => {
+      using dir = tempDir("bunx-node-link", {
+        "package.json": JSON.stringify({ name: "bunx-node-link" }),
+        "node_modules/.bin/print-node": `#!/bin/sh\n${printNode}\n`,
+      });
+      const cwd = String(dir);
+      chmodSync(join(cwd, "node_modules", ".bin", "print-node"), 0o755);
+
+      const { stdout, stderr, exitCode } = await run(cwd, ["x", "--bun", "print-node"]);
+
+      expect({ link: exported(stdout.trim()), stderr }).toEqual({ link: expect.stringMatching(nodeLink), stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    // bun makes no links in a directory that it cannot trust, for example one that another user
+    // of /tmp can write to. The scripts then get no NODE from this bun.
+    // The path is fixed, so the test needs a /tmp of its own: a mount namespace.
+    const privateTmp = (script: string) => ["unshare", "-Urm", "sh", "-c", `mount -t tmpfs tmpfs /tmp && ${script}`];
+    const canMountPrivateTmp =
+      isLinux &&
+      Bun.which("unshare") !== null &&
+      Bun.spawnSync({ cmd: [...privateTmp('test -x "$0"'), bunExe()], stdout: "ignore", stderr: "ignore" }).exitCode ===
+        0;
+
+    describe.skipIf(!canMountPrivateTmp).each([
+      ["--bun, node in PATH", ["--bun"], "/tmp/pkg/bin"],
+      ["--bun, no node in PATH", ["--bun"], "/tmp/pkg"],
+      ["no node in PATH", [], "/tmp/pkg"],
+    ] as const)("%s", (_, flags, scriptPath) => {
+      it("a link in a directory that bun refuses is not exported", async () => {
+        // Lets bun make its directory, then lets everybody write to it and puts another file in the place of `node`.
+        // The second run inherits that file as NODE, as the script of an outer bun would.
+        const stage = `
+          mkdir -p /tmp/pkg/bin && cd /tmp/pkg &&
+          printf '%s' "$PACKAGE_JSON" > package.json &&
+          printf '#!/bin/sh\\n' > bin/node && chmod +x bin/node &&
+          "$BUN_UNDER_TEST" --bun --shell=bun run --silent print > /dev/null &&
+          for made in /tmp/bun-node*; do
+            chmod 777 "$made" && rm "$made/node" && cp bin/node "$made/node" || exit
+          done &&
+          export PATH="$SCRIPT_PATH" &&
+          "$BUN_UNDER_TEST" "$@" &&
+          NODE="$made/node" npm_node_execpath="$made/node" exec "$BUN_UNDER_TEST" "$@"
+        `;
+        await using proc = Bun.spawn({
+          cmd: [...privateTmp(stage), "sh", ...flags, "--shell=bun", "run", "--silent", "go"],
+          env: {
+            ...bunEnv,
+            TMPDIR: "/tmp",
+            BUN_UNDER_TEST: bunExe(),
+            SCRIPT_PATH: scriptPath,
+            PACKAGE_JSON: JSON.stringify({
+              name: "node-link-refused",
+              scripts: { print: printNode, go: `${printNode} && echo "$PATH"` },
+            }),
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const [exports, path, exportsWhenInherited, pathWhenInherited] = stdout.split("\n");
+
+        expect({
+          exports,
+          exportsWhenInherited,
+          linksInPath: `${path}${pathWhenInherited}`.includes("bun-node"),
+          stderr,
+        }).toEqual({ exports: "<><>", exportsWhenInherited: "<><>", linksInPath: false, stderr: "" });
+        expect(exitCode).toBe(0);
+      });
     });
   });
 });

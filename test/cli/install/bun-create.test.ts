@@ -1297,6 +1297,17 @@ describe.concurrent("bun-create tasks", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `bun create` makes `node` and `bun` links to itself for the tasks. NODE is that `node` link.
+  it("get a NODE that runs a file", async () => {
+    const { err, exitCode, written } = await createFrom({
+      "bun-create": { preinstall: `"$NODE" -p 1+1 > NODE_RAN` },
+    });
+
+    expect(err).not.toContain("error:");
+    expect(written).toEqual({ NODE_RAN: "2" });
+    expect(exitCode).toBe(0);
+  });
+
   it("stop at the first task that fails, with its exit code", async () => {
     const { out, err, exitCode, written } = await createFrom({
       "bun-create": { postinstall: ["echo first > FIRST", "exit 3", "echo after > AFTER"] },

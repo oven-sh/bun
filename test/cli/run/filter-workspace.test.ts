@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, runBunInstall, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, mergeWindowEnvs, runBunInstall, tempDir, tempDirWithFiles } from "harness";
 import { existsSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { constants } from "os";
@@ -1527,6 +1527,44 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     expect(r.stderr).toContain("Expected boolean");
     expect(r.stdout).not.toContain("Bun is");
     expect(r.exitCode).toBe(1);
+  });
+});
+
+// When scripts get bun as `node`, the packages of one run share the environment: the second
+// package starts with the NODE that bun exported for the first one.
+describe.concurrent("every package gets bun as node", () => {
+  test.each([
+    ["--filter --bun", ["--bun", "--shell=bun", "--filter", "*", "go"], false],
+    ["--filter, no node in PATH", ["--shell=bun", "--filter", "*", "go"], true],
+    ["--parallel --filter, no node in PATH", ["run", "--shell=bun", "--parallel", "--filter", "*", "go"], true],
+    ["--sequential --filter --bun", ["run", "--bun", "--shell=bun", "--sequential", "--filter", "*", "go"], false],
+  ] as const)("%s", async (_, args, hideNode) => {
+    const names = ["a", "b", "c"];
+    using dir = tempDir("filter-node-link", {
+      "package.json": JSON.stringify({ name: "filter-node-link", workspaces: ["packages/*"] }),
+      ...Object.fromEntries(
+        names.map(name => [
+          `packages/${name}/package.json`,
+          JSON.stringify({ name, scripts: { go: `node -e "console.log('${name}', process.env.NODE, typeof Bun)"` } }),
+        ]),
+      ),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: hideNode ? mergeWindowEnvs([bunEnv, { PATH: String(dir) }]) : bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // `--filter` prints "a go: <line>", `--parallel` and `--sequential` print "a:go | <line>".
+    const ran = [...stdout.matchAll(/^(\w)(?: go:|:go +\|) \1 (.*) object$/gm)].map(([, name, node]) => [name, node]);
+    const nodeLink = expect.stringMatching(/[\\/]bun-node[^\\/]*[\\/]node(\.exe)?$/);
+
+    expect(stderr).not.toContain("error");
+    expect(ran.sort()).toEqual(names.map(name => [name, nodeLink]));
+    expect(exitCode).toBe(0);
   });
 });
 

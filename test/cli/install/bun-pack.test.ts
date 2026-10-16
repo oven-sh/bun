@@ -23,6 +23,7 @@ import {
   isRoot,
   isWindows,
   MAX_PATH_BYTES,
+  mergeWindowEnvs,
   normalizeBunSnapshot,
   pack,
   runBunInstall,
@@ -2359,6 +2360,32 @@ describe.concurrent("lifecycle scripts run the commands in node_modules/.bin", (
     expect(stdout.match(/^tool of .*$/gm)).toEqual(Array(3).fill(`tool of the ${runs}`));
     expect(exitCode).toBe(0);
   });
+});
+
+// Without a node in PATH, bun makes `node` and `bun` links to itself for the scripts. The scripts of
+// one `bun pm pack` share the environment: the second one starts with the NODE of the first one.
+test.concurrent("lifecycle scripts get bun as node when there is no node in PATH", async () => {
+  const script = `"$NODE" -p "'NODE ' + typeof Bun" && node -p "'node ' + typeof Bun"`;
+  using dir = tempDir("pack-node-link", {
+    "package.json": JSON.stringify({
+      name: "pack-node-link",
+      version: "1.0.0",
+      scripts: { prepack: script, prepare: script, postpack: script },
+    }),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "pack", "--dry-run"],
+    cwd: String(dir),
+    env: mergeWindowEnvs([bunEnv, { PATH: String(dir) }]),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("error");
+  expect(stdout.match(/^(NODE|node) .*$/gm)).toEqual(Array(3).fill(["NODE object", "node object"]).flat());
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("lifecycle script modifying version updates tarball filename (#17195)", async () => {

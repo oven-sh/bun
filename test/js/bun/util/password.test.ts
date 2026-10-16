@@ -74,6 +74,10 @@ describe("hash", () => {
       test("password is required", () => {
         // @ts-expect-error
         expect(() => hash()).toThrow();
+        // @ts-expect-error
+        expect(() => hash(undefined)).toThrow();
+        // @ts-expect-error
+        expect(() => hash(undefined, "bcrypt")).toThrow();
       });
 
       test("invalid algorithm throws", () => {
@@ -245,6 +249,10 @@ describe("verify", () => {
         expect(() => verify()).toThrow();
         // @ts-expect-error
         expect(() => verify("")).toThrow();
+        // @ts-expect-error
+        expect(() => verify(undefined, "$")).toThrow(/password (must|to) be a string/);
+        // @ts-expect-error
+        expect(() => verify("$", undefined)).toThrow(/hash (must|to) be a string/);
       });
 
       test("empty values return false", async () => {

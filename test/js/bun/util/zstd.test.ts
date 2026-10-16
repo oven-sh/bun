@@ -633,6 +633,62 @@ describe("sync compression argument handling", () => {
     ).toThrow("data must be a string, ArrayBuffer or ArrayBufferView");
   });
 
+  it("a numeric option is converted to a number, and then treated as that number is", () => {
+    const input = "hello hello hello";
+    for (const compress of [gzipSync, deflateSync, zstdCompressSync] as ((
+      data: string,
+      options: any,
+    ) => Uint8Array)[]) {
+      const expected = compress(input, { level: 1 });
+      for (const level of ["1", 1n, [1], { valueOf: () => 1 }]) expect(compress(input, { level })).toEqual(expected);
+      for (const level of [2 ** 32 + 1, "4294967297", { valueOf: () => 2 ** 32 + 1 }, "Infinity"]) {
+        expect(() => compress(input, { level })).toThrow();
+      }
+    }
+  });
+
+  it("zstdDecompressSync takes no options", () => {
+    const compressed = zstdCompressSync("hello");
+    for (const ignored of [undefined, null, 5, "x", {}]) {
+      expect(
+        (zstdDecompressSync as (data: Uint8Array, ignored: unknown) => Buffer)(compressed, ignored).toString(),
+      ).toBe("hello");
+    }
+  });
+
+  it("takes the bytes of every kind of buffer, and a string as UTF-8", () => {
+    const text = "h\u00e9llo w\u00f6rld, \u65e5\u672c\u8a9e!";
+    const bytes = new TextEncoder().encode(text);
+    const shared = new Uint8Array(new SharedArrayBuffer(bytes.length));
+    shared.set(bytes);
+    const padded = new Uint8Array(bytes.length + 8);
+    padded.set(bytes, 4);
+    const inputs = [
+      text,
+      new String(text),
+      bytes,
+      bytes.buffer,
+      Buffer.from(bytes),
+      new DataView(bytes.buffer),
+      padded.subarray(4, 4 + bytes.length),
+      shared,
+      shared.buffer,
+    ];
+    for (const [compress, decompress] of [
+      [gzipSync, gunzipSync],
+      [deflateSync, inflateSync],
+      [zstdCompressSync, zstdDecompressSync],
+    ] as ((data: any) => Uint8Array)[][]) {
+      const expected = compress(text);
+      for (const input of inputs) expect(compress(input)).toEqual(expected);
+      const sharedCompressed = new Uint8Array(new SharedArrayBuffer(expected.length));
+      sharedCompressed.set(expected);
+      for (const compressed of [expected, sharedCompressed, new DataView(expected.slice().buffer)]) {
+        expect(new TextDecoder().decode(decompress(compressed))).toBe(text);
+      }
+    }
+  });
+
   // An empty result must not register a GC-time deallocator: the backing Vec is
   // empty, so its pointer is dangling and freeing it at collection is an invalid
   // free (aborts under ASAN/debug allocators).

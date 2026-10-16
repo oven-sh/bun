@@ -63,7 +63,6 @@ pub(crate) fn get_public_path_with_asset_prefix(
 }
 
 use bun_jsc::HostReturn as _;
-use core::ffi::c_void;
 use std::io::Write as _;
 
 use bun_core::Output;
@@ -1439,6 +1438,8 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: MMapOptions) -> J
 
     #[cfg(not(windows))]
     {
+        use core::ffi::c_void;
+
         if path.len() > MAX_PATH_BYTES {
             return Err(global_this.throw_invalid_arguments(format_args!("Path too long")));
         }

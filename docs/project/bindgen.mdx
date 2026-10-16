@@ -93,6 +93,10 @@ export const semver = b.namespace({
 a `PropertyCallback` of a static property table, so the object is made when the property is
 first read.
 
+A namespace that can itself be called, like `Bun.hash`, names the function that a call runs:
+`b.namespace({ wyhash: { .. }, crc32: { .. } }, { call: "wyhash" })`. The object is then a
+function named after the namespace.
+
 ### What a function may do: `capability`
 
 What a function can do to the JS heap is a parameter it is given, so it is
@@ -113,9 +117,22 @@ The compiler holds a body to its capability as far as this API goes. The older A
 other ways to a `&JSGlobalObject` (`VirtualMachine::get().global()`), and a body that
 takes one of those to run JavaScript has stepped around the check.
 
+Much of the older API takes a `&JSGlobalObject` only to allocate or to throw. A `"heap"`
+function calls it with `heap.global()`, which is `unsafe`: nothing the global object is passed
+to may run JavaScript, and the compiler cannot see that. Read what is called all the way down
+before writing the `SAFETY` comment. `ToString` of an object, a property that is looked up or
+set and not defined, and a call to a constructor found on the global object all run JavaScript.
+
+```rust
+// SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are strings, and its properties are
+// defined and not set.
+let global = unsafe { heap.global() };
+```
+
 `throws: true` makes the return type a `Result`. The error is a
 `bindgen::Error<'a>`, made by `heap.error(..)`, `heap.type_error(..)`,
-`heap.range_error(..)`, `heap.error_with_code(ErrorCode::INVALID_ARG_TYPE, ..)` or
+`heap.range_error(..)`, `heap.error_with_code(ErrorCode::INVALID_ARG_TYPE, ..)`,
+`heap.error_with_custom_code(b"PASSWORD_INVALID_ENCODING", ..)` or
 `bindgen::Error::from_value(value)` (`?` makes one of a `JsError` or an `AllocError`), or any type that
 implements `bindgen::IntoError` (`bun_sys::Error`, `SystemError`, `JsError` and a `Box` of
 one do), which lets a `capability: "none"` function fail too.
@@ -175,6 +192,7 @@ any other: nothing looks at how many there are.
 | `b.bufferSource.bytes`                           | `&'a [u8]`                       | the same; see [Buffers](#buffers)                             |
 | `b.bufferSource.bytes.allowShared`               | `PossiblySharedBytes<'a>`        | the same, and a shared one                                    |
 | `b.bufferSource.arrayBuffer`                     | `ExternalShared<JSCArrayBuffer>` | the same; the bytes of a view are copied                      |
+| `b.stringOrBuffer`                               | `&'a [u8]`                       | see [A string or a buffer](#a-string-or-a-buffer)             |
 | `b.blob`                                         | `ExternalShared<Blob>`           | a `Blob`                                                      |
 | `b.any`                                          | `JsLocal<'a>`                    | anything                                                      |
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
@@ -199,7 +217,10 @@ These come last, in this order (`b.any` already takes `undefined` and `null`, so
 
 As results, `b.string.utf8` is anything that is `AsRef<[u8]>` and `b.array(T)` anything that
 is `IntoIterator`. The body of a `b.fn` or of a namespace's function whose bytes do not outlive
-it returns the string itself, from `heap.create_utf8_string(bytes)`.
+it returns the string itself, from `heap.create_utf8_string(bytes)`. `b.u64.asBigInt` is a
+result only: a `u64` that is always returned as a BigInt. `b.bufferSource` as a result is what
+`heap.create_uninitialized_uint8_array(length)`, `heap.create_uint8_array_from_vec(vec)` or
+`heap.create_buffer_from_box(bytes)` made. The last two take over the allocation.
 
 ### Numbers
 
@@ -326,6 +347,35 @@ and the body gets a `PossiblySharedBytes<'a>` whether the buffer is shared or no
 way from it to a slice. What reads the bytes is a method of it, written for a byte that can
 differ each time it is read: `index_of_char` hands the pointer to a kernel that uses nothing
 it reads as an index or a length. Such an argument is always there: it is not `.optional`.
+
+### A string or a buffer
+
+Many functions take "a string or a buffer" and want its bytes. `b.stringOrBuffer` is a string
+or a `String` object, as UTF-8, or the bytes of a typed array, `DataView`, `ArrayBuffer` or
+`SharedArrayBuffer`. The body gets `&'a [u8]`, and nothing changes the bytes during the call.
+
+- `.orBlob`: the bytes of a `Blob` too. One that is a file throws.
+- `.loose`: anything else is `ToString`. Without it, anything else throws.
+
+```ts
+export const gzipSync = b.fn({
+  args: { data: b.stringOrBuffer, options: ZlibCompressionOptions.default({}) },
+  returns: b.bufferSource,
+  capability: "heap",
+  throws: true,
+});
+```
+
+```rust
+fn gzip_sync<'a>(heap: &JsHeap<'a>, data: &[u8], options: ZlibCompressionOptions<'a>) -> bindgen::Result<'a, JsLocal<'a, BufferSource>>
+```
+
+Nothing is copied but what has to be: a string that is not ASCII is converted, and the bytes
+of a shared buffer, which another thread could write, are copied. Everything else is borrowed
+from where it is. Like `.bytes` it is for an argument of a function that cannot run JavaScript,
+its kind is checked in the order of the arguments, and a buffer's pointer and length are read
+after every argument is converted. It is always there: it is not `.optional`. `.withValue` tells
+a string from a buffer, or `undefined` from `"undefined"` under `.loose`.
 
 ### Keeping the original value
 

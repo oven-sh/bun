@@ -247,6 +247,71 @@ describe("xxHash32 / xxHash64 reference vectors", () => {
   });
 });
 
+describe("what Bun.hash and its algorithms take", () => {
+  const functions = [Bun.hash, ...Object.values(Bun.hash)];
+  const bytes = new TextEncoder().encode("hello world!");
+
+  it("there are thirteen functions, and Bun.hash is wyhash", () => {
+    expect(functions).toHaveLength(13);
+    expect(Bun.hash).toBeFunction();
+    expect(Bun.hash.name).toBe("hash");
+    for (const hash of functions) expect(hash.length).toBe(1);
+    expect(Bun.hash("a", 5n)).toBe(Bun.hash.wyhash("a", 5n));
+  });
+
+  it("the same bytes hash the same, whatever holds them", () => {
+    const shared = new Uint8Array(new SharedArrayBuffer(bytes.length));
+    shared.set(bytes);
+    const padded = new Uint8Array(bytes.length + 8);
+    padded.set(bytes, 4);
+    for (const hash of functions) {
+      const expected = hash("hello world!");
+      for (const data of [
+        bytes,
+        bytes.buffer,
+        Buffer.from(bytes),
+        new DataView(bytes.buffer),
+        new Uint32Array(bytes.buffer),
+        padded.subarray(4, 4 + bytes.length),
+        shared,
+        shared.buffer,
+        new Blob([bytes]),
+        new String("hello world!"),
+        { toString: () => "hello world!" },
+      ]) {
+        expect(hash(data)).toBe(expected);
+      }
+    }
+  });
+
+  it("a Blob that is a file is refused, and does not hash as nothing", () => {
+    for (const hash of functions) {
+      expect(() => hash(Bun.file(import.meta.path))).toThrow("File blob cannot be used here");
+    }
+  });
+
+  it("no argument is undefined", () => {
+    for (const hash of functions) {
+      expect(hash()).toBe(hash(undefined));
+      expect(hash()).toBe(hash("undefined"));
+    }
+  });
+
+  it("a seed that is neither a number nor a BigInt is not converted", () => {
+    const seeded = functions.filter(hash => hash("a", 1) !== hash("a"));
+    expect(seeded).toHaveLength(11);
+    const unconverted = {
+      valueOf() {
+        throw new Error("the seed was converted");
+      },
+    };
+    for (const hash of functions) {
+      for (const seed of [undefined, null, "1", true, [1], unconverted]) expect(hash("a", seed)).toBe(hash("a", 0));
+    }
+    for (const hash of seeded) expect(hash("a", 1n)).toBe(hash("a", 1));
+  });
+});
+
 it("does not crash when changing Int32Array constructor with Bun.hash.xxHash32 as species", () => {
   const arr = new Int32Array();
   function foo(a4) {

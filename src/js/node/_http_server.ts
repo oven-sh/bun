@@ -395,8 +395,8 @@ function Server(options, callback): void {
         ciphers: options.ciphers || undefined,
         clientCertEngine: options.clientCertEngine || undefined,
         ticketKeys: options.ticketKeys || undefined,
-        // BoringSSL has no DHE suites to apply it to.
-        dhparam: undefined,
+        // BoringSSL has no DHE suites to apply it to; the size check still runs as in Node.
+        dhparam: options.dhparam === "auto" ? undefined : options.dhparam,
       });
       const crl = options.crl || undefined;
       if (crl) {

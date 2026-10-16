@@ -215,6 +215,69 @@ impl SecureContext {
         Ok(result)
     }
 
+    /// `SecureContext.dhParamSize(dhparam)` - the byte length of the prime in
+    /// a "DH PARAMETERS" PEM given as a string or ArrayBufferView, or -1 when
+    /// the value is neither or does not parse. node:tls rejects a prime under
+    /// 128 bytes the way Node's `SecureContext::SetDHParam` does; a value that
+    /// does not parse is ignored, as in Node. Same codegen shim arrangement as
+    /// `intern` (no `#[host_fn]` attribute here).
+    pub(crate) fn dh_param_size(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let not_dh = JSValue::js_number_from_int32(-1);
+        let args = callframe.arguments();
+        let Some(&value) = args.first() else {
+            return Ok(not_dh);
+        };
+        let view;
+        let string;
+        let bytes: &[u8] = match value.as_array_buffer(global) {
+            Some(v) => {
+                view = v;
+                view.byte_slice()
+            }
+            None if value.is_string() => {
+                string = value.to_utf8(global)?;
+                string.slice()
+            }
+            None => return Ok(not_dh),
+        };
+        if bytes.is_empty() || bytes.len() > core::ffi::c_int::MAX as usize {
+            return Ok(not_dh);
+        }
+        // SAFETY: `bytes` outlives `bio`; BoringSSL only reads from it.
+        let bio =
+            unsafe { boringssl::BIO_new_mem_buf(bytes.as_ptr().cast(), bytes.len() as isize) };
+        if bio.is_null() {
+            return Ok(not_dh);
+        }
+        // SAFETY: `bio` is live; no out-pointer and no password callback.
+        let dh = unsafe {
+            boringssl::PEM_read_bio_DHparams(
+                bio,
+                core::ptr::null_mut(),
+                None,
+                core::ptr::null_mut(),
+            )
+        };
+        // SAFETY: `bio` came from `BIO_new_mem_buf` above.
+        unsafe { boringssl::BIO_free(bio) };
+        // A failed parse leaves PEM/ASN.1 errors on the queue; they must not
+        // surface from the next unrelated BoringSSL call.
+        boringssl::ERR_clear_error();
+        if dh.is_null() {
+            return Ok(not_dh);
+        }
+        // SAFETY: `dh` is the parsed group, owned here until `DH_free`.
+        let size = unsafe {
+            let size = boringssl::DH_size(dh);
+            boringssl::DH_free(dh);
+            size
+        };
+        Ok(JSValue::js_number_from_int32(size))
+    }
+
     /// `tls.createSecureContext()` / `new tls.SecureContext()` entry - builds a context that owns its
     /// SSL_CTX exclusively: no digest memoisation at either the JS-wrapper
     /// cache or the native SSLContextCache level, so prototype mutators like

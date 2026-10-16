@@ -242,6 +242,23 @@ function validateSecureContextOptions(options) {
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L254
   if (dhparam === "auto") {
     throw $ERR_CRYPTO_UNSUPPORTED_OPERATION("Automatic DH parameter selection is not supported");
+  } else if (dhparam !== undefined && dhparam !== null) {
+    // Node's SecureContext::SetDHParam: a value that does not parse as a DH
+    // PEM is ignored, a prime under 1024 bits throws, one under 2048 warns.
+    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L871-L901
+    NativeSecureContext ??= $rust("SecureContext.rs", "js.getConstructor");
+    const size = NativeSecureContext.dhParamSize(dhparam);
+    if (size !== -1) {
+      if (size < 128) {
+        // Not $ERR_INVALID_ARG_VALUE: that formats "The argument 'x' is invalid";
+        // Node's native THROW_ERR_INVALID_ARG_VALUE takes the bare message.
+        const err = new TypeError("DH parameter is less than 1024 bits") as TypeError & { code: string };
+        err.code = "ERR_INVALID_ARG_VALUE";
+        throw err;
+      } else if (size < 256) {
+        process.emitWarning("DH parameter is less than 2048 bits", "SecurityWarning");
+      }
+    }
   }
   if (minVersion != null && !VALID_TLS_VERSIONS.has(minVersion))
     throw $ERR_TLS_INVALID_PROTOCOL_VERSION(JSON.stringify(minVersion), "minimum");
@@ -394,8 +411,8 @@ const nodeClientTlsKeys = [
 
 // `options` of tls.connect(), as a null-prototype copy, to the `tls` option of fetch() and WebSocket.
 function nodeClientTlsToNative(options) {
-  // BoringSSL has no DHE suites to apply it to.
-  options.dhparam = undefined;
+  // BoringSSL has no DHE suites to apply it to; the size check still runs as in Node.
+  if (options.dhparam === "auto") options.dhparam = undefined;
   validateSecureContextOptions(options);
   if (options.ciphers) {
     // BoringSSL has no security levels to set.

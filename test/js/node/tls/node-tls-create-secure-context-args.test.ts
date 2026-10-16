@@ -150,3 +150,67 @@ describe("tls.createSecureContext pfx argument", () => {
     }
   });
 });
+
+// `openssl dhparam 512` and `openssl dhparam 1024`.
+const dh512 = `-----BEGIN DH PARAMETERS-----
+MEkCQQDC31d/lprCPy5Q5Zk0PpZvSAlwFGE0qTRG6WGxVF7KVWLyjHs59LjjdAHv
+wqiwog1pBprJxEwQKX2BiMzgfjI3AgECAgF9
+-----END DH PARAMETERS-----
+`;
+const dh1024 = `-----BEGIN DH PARAMETERS-----
+MIGLAoGBAMLQCJ5WTwa/ZA0sFs1q77v7MAmiJquR/mkXoTiXB39SRH5D69D1Jep1
+ZuDKsy9pi3EaEXaec+zbhHVZs1S2vtQsMaE/BeIs6UxBPXJXHDrmpOPwhKaGi4sN
+7gR8tLiPfoloi5biQJPmIipFD7EMIxM4fEKUVwpto9DRQjrlRZdHAgECAgIArw==
+-----END DH PARAMETERS-----
+`;
+
+describe("tls.createSecureContext dhparam argument", () => {
+  const tooSmall = expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_VALUE",
+    message: "DH parameter is less than 1024 bits",
+  });
+
+  it.each([
+    ["string", dh512],
+    ["Buffer", Buffer.from(dh512)],
+    ["Uint8Array", new Uint8Array(Buffer.from(dh512))],
+  ])("throws on a 512-bit dhparam given as a %s, like Node", (_, dhparam) => {
+    expect(() => tls.createSecureContext({ dhparam })).toThrow(tooSmall);
+    expect(() => new tls.SecureContext({ dhparam })).toThrow(tooSmall);
+    expect(() => tls.createServer({ dhparam })).toThrow(tooSmall);
+  });
+
+  it("warns on a 1024-bit dhparam, like Node", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import tls from "node:tls";
+          process.on("warning", w => console.log(w.name + ": " + w.message));
+          tls.createSecureContext({ dhparam: process.env.DHPARAM });
+          console.log("created");
+          await new Promise(r => setImmediate(r));
+        `,
+      ],
+      env: { ...bunEnv, DHPARAM: dh1024 },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("created\nSecurityWarning: DH parameter is less than 2048 bits\n");
+    expect(stderr).toContain("SecurityWarning: DH parameter is less than 2048 bits");
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    ["a string that is not a PEM", "not a pem"],
+    ["an empty string", ""],
+    ["a number", 42],
+    ["an object", {}],
+  ])("ignores %s, like Node", (_, dhparam) => {
+    // @ts-expect-error
+    expect(tls.createSecureContext({ dhparam })).toHaveProperty("context");
+  });
+});

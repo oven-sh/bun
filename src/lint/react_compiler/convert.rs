@@ -1157,7 +1157,7 @@ impl<'a> Converter<'a, '_> {
         }
         Ok(E::Template {
             tag,
-            parts: leak(parts),
+            parts: E::TemplateParts::borrowed(leak(parts)),
             head: contents(0),
         })
     }

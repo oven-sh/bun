@@ -3501,6 +3501,14 @@ pub mod formatter {
             let target = value.get_proxy_internal_field(jsc::ProxyField::Target);
             // Proxy does not allow non-objects here.
             debug_assert!(target.is_cell());
+            // A Proxy adds no depth and is not tracked as circular: a chain of them has no other bound.
+            if !self.stack_check.is_safe_to_recurse() {
+                self.failed = true;
+                if self.can_throw_stack_overflow {
+                    return Err(self.global_this.throw_stack_overflow());
+                }
+                return Ok(());
+            }
             // TODO: if (options.showProxy), print like
             // `Proxy { target: ..., handlers: ... }` — this is default off so
             // it is not used.

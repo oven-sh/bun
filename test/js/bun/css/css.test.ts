@@ -234,7 +234,8 @@ describe("css tests", () => {
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
   });
   describe("calc, lightningcss test_calc", () => {
-    // The rows of lightningcss v1.33.0, src/lib.rs:8064-8169, in that order. Two of them do not pass.
+    // The rows of lightningcss v1.33.0, src/lib.rs:8064-8169, in that order. Four of them have another
+    // expected value here, each with a comment.
     minify_test(".foo { width: calc(20px * 2) }", ".foo{width:40px}");
     minify_test(".foo { font-size: calc(100vw / 35) }", ".foo{font-size:2.85714vw}");
     minify_test(".foo { width: calc(20px * 2 * 3) }", ".foo{width:120px}");
@@ -253,18 +254,25 @@ describe("css tests", () => {
     minify_test(".foo { width: calc(50px - (20px - 30px)) }", ".foo{width:60px}");
     minify_test(".foo { width: calc(100px - (100px - 100%)) }", ".foo{width:100%}");
     minify_test(".foo { width: calc(100px + (100px - 100%)) }", ".foo{width:calc(200px - 100%)}");
-    minify_test(".foo { width: calc(1px - (2em + 3%)) }", ".foo{width:calc(1px + -2em - 3%)}");
+    // lightningcss prints `calc(1px + -2em - 3%)` here. Its test has a note to fix that sign.
+    minify_test(".foo { width: calc(1px - (2em + 3%)) }", ".foo{width:calc(1px - 2em - 3%)}");
     minify_test(".foo { width: calc((100vw - 50em) / 2) }", ".foo{width:calc(50vw - 25em)}");
-    minify_test(".foo { width: calc(1px - (2em + 4vh + 3%)) }", ".foo{width:calc(1px + -2em - 4vh - 3%)}");
-    minify_test(".foo { width: calc(1px + (2em + (3vh + 4px))) }", ".foo{width:calc(2em + 3vh + 5px)}");
-    minify_test(".foo { width: calc(1px - (2em + 4px - 6vh) / 2) }", ".foo{width:calc(-1em - 1px + 3vh)}");
+    // lightningcss prints `calc(1px + -2em - 4vh - 3%)` here. Its test has the same note.
+    minify_test(".foo { width: calc(1px - (2em + 4vh + 3%)) }", ".foo{width:calc(1px - 2em - 4vh - 3%)}");
+    // lightningcss prints `calc(2em + 3vh + 5px)` here. This is what `calc(1px + 2em + 3vh + 4px)` prints.
+    minify_test(".foo { width: calc(1px + (2em + (3vh + 4px))) }", ".foo{width:calc(5px + 2em + 3vh)}");
+    // lightningcss prints `calc(-1em - 1px + 3vh)` here. This is what `calc(1px - 1em - 2px + 3vh)` prints.
+    minify_test(".foo { width: calc(1px - (2em + 4px - 6vh) / 2) }", ".foo{width:calc(-1px - 1em + 3vh)}");
     minify_test(".foo { width: calc(100% - calc(50% + 25px)) }", ".foo{width:calc(50% - 25px)}");
     minify_test(".foo { width: calc(1px/100) }", ".foo{width:.01px}");
     minify_test(".foo { width: calc(100vw / 2 - 6px + 0px) }", ".foo{width:calc(50vw - 6px)}");
     minify_test(".foo { width: calc(1px + 1) }", ".foo{width:calc(1px + 1)}");
     minify_test(".foo { width: calc( (1em - calc( 10px + 1em)) / 2) }", ".foo{width:-5px}");
-    test.todo(".foo { width: calc((100px - 1em) + (-50px + 1em)) }");
-    test.todo(".foo { width: calc(100% + (2 * 100px) - ((75.37% - 63.5px) - 900px)) }");
+    minify_test(".foo { width: calc((100px - 1em) + (-50px + 1em)) }", ".foo{width:50px}");
+    minify_test(
+      ".foo { width: calc(100% + (2 * 100px) - ((75.37% - 63.5px) - 900px)) }",
+      ".foo{width:calc(24.63% + 1163.5px)}",
+    );
     minify_test(
       ".foo { width: calc(((((100% + (2 * 30px) + 63.5px) / 0.7537) - (100vw - 60px)) / 2) + 30px) }",
       ".foo{width:calc(66.3394% + 141.929px - 50vw)}",
@@ -352,6 +360,67 @@ describe("css tests", () => {
     minify_test(
       `a { background: conic-gradient(red calc(10deg + 5% + 20deg), blue) }`,
       `a{background:conic-gradient(red calc(30deg + 5%),#00f)}`,
+    );
+  });
+  describe("calc sum with a sum as an operand", () => {
+    // An operand in brackets and a nested calc() are sums. Each term of the operand is added in turn.
+    for (const prop of ["width", "outline-width"]) {
+      const sum = (source: string, expected: string) =>
+        test(`a { ${prop}: ${source} }`, () => {
+          const once = minify_test_with_options(`a { ${prop}: ${source} }`, "");
+          expect(once).toEqual(`a{${prop}:${expected}}`);
+          // The result has no brackets, and it stays as it is when it is minified again.
+          expect(minify_test_with_options(once, "")).toEqual(once);
+        });
+      sum(`calc(1vw - (1em + 2px))`, `calc(1vw - 1em - 2px)`);
+      sum(`calc((1px + 1em) + (2px + 2em))`, `calc(3px + 3em)`);
+      sum(`calc(1px + (2em + 3px))`, `calc(4px + 2em)`);
+      sum(`calc(1em + (1px + 1em))`, `calc(2em + 1px)`);
+      sum(`calc((1px + 1em) - (1px + 1em))`, `0`);
+      sum(`calc((1em - 1px) - (1px + 1em))`, `-2px`);
+      sum(`calc(1px + (min(1px,1em) + 1px))`, `calc(2px + min(1px,1em))`);
+      sum(`calc(32px + (min(1px,1em) - 38px))`, `calc(-6px + min(1px,1em))`);
+      sum(
+        `calc(min(1px,1em) + (max(1px,1em) + 1px) + (max(1px,1em) + 1px))`,
+        `calc(min(1px,1em) + max(1px,1em) + 2px + max(1px,1em))`,
+      );
+      sum(`calc(1vw + calc(1px - 2em) - 1px)`, `calc(1vw - 2em)`);
+      sum(`calc((1px - 2em + 3vh) * -1 + 1vh)`, `calc(2em - 1px - 2vh)`);
+      // A sum that is multiplied by zero has one value of zero, and the next value replaces it.
+      sum(`calc((1px + 1em) * 0)`, `0`);
+      sum(`calc((1px + 1em) * 0 + 1px)`, `1px`);
+      sum(`calc((1rem + 2px) * 0 + 4px)`, `4px`);
+      sum(`calc(1px + (1px + 1em) * 0)`, `1px`);
+      sum(`max(1px, (1px + 1em) * 0 + 1px)`, `1px`);
+    }
+    minify_test(`a { width: calc(100% - (1rem + 2px)) }`, `a{width:calc(100% - 1rem - 2px)}`);
+    // uikit.css
+    minify_test(`a { top: calc(50% - (calc(0.2px + 0.05em) / 2)) }`, `a{top:calc(50% - .1px - .025em)}`);
+    // Bootstrap 5
+    minify_test(`a { width: calc(3rem + calc(1.5em + 0.75rem)) }`, `a{width:calc(3.75rem + 1.5em)}`);
+    minify_test(`a { width: calc(1px - (2 + 1em)) }`, `a{width:calc(1px - 2 - 1em)}`);
+    // Two numbers add only when the first of them is all of the sum so far.
+    minify_test(`a { width: calc(2 + (3 + 1%)) }`, `a{width:calc(2 + 3 + 1%)}`);
+    minify_test(`a { width: calc(1% + (2 + 3)) }`, `a{width:calc(1% + 5)}`);
+    // Two sums with the same list of terms are equal.
+    minify_test(
+      `.a { width: calc(100% - (1rem + 2px)) } .b { width: calc(100% - 1rem - 2px) }`,
+      `.a,.b{width:calc(100% - 1rem - 2px)}`,
+    );
+    minify_test(`a { margin: calc(1px + (1em + 1px)) calc((1px + 1em) + 1px) }`, `a{margin:calc(2px + 1em)}`);
+    minify_test(
+      `@media (width > calc(1em + (2px + 1em))) { a { color: red } }`,
+      `@media (width>calc(2em + 2px)){a{color:red}}`,
+    );
+    prefix_test(
+      `@media (width > calc(1em + (2px + 1em))) { a { color: red } }`,
+      `@media (min-width: calc(2em + 2.001px)) { a { color: red; } }`,
+      { safari: 14 << 16 },
+    );
+    prefix_test(
+      `@media (width > calc(1px + 1em)) { a { color: red } }`,
+      `@media (min-width: calc(1.001px + 1em)) { a { color: red; } }`,
+      { safari: 14 << 16 },
     );
   });
   describe("border_spacing", () => {

@@ -185,11 +185,10 @@ impl Listing {
             names: self.names.into_vec(),
             entries: self.entries.into_vec(),
         };
-        for name in &more.files {
-            all.push(name, false, false);
-        }
-        for name in &more.directories {
-            all.push(name, true, false);
+        for (names, is_directory) in [(&more.files, false), (&more.directories, true)] {
+            for name in names {
+                all.push(name, is_directory, false);
+            }
         }
         all.finish()
     }
@@ -875,7 +874,7 @@ fn is_file_system_case_sensitive(path: &[u8]) -> bool {
     // system is mounted, like `/app` in a container.
     if let Directory::Listed(listing) = list(path) {
         let mut names = listing.entries.iter().map(|it| listing.name(it));
-        if let Some(other) = names.find_map(|name| swapped(name)) {
+        if let Some(other) = names.find_map(swapped) {
             return !bun_sys::exists(to_native(&inside(path, &other)));
         }
     }

@@ -213,8 +213,9 @@ pub(crate) fn are_all_in_repositories<'p>(
         known.extend(paths::ancestors(directory).take_while(|it| it.len() >= shortest));
         root.is_some()
     };
+    let is_for_oxc = true;
     let is_left_out =
-        |it: &[u8]| OfGit::above_and_in(it, true, true).is_directory_ignored_anywhere(it);
+        |it: &[u8]| OfGit::above_and_in(it, true, is_for_oxc).is_directory_ignored_anywhere(it);
     searched.all(|it| is_in_one(it) || is_left_out(it)) && named.all(is_in_one)
 }
 

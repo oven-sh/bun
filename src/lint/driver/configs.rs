@@ -1983,8 +1983,7 @@ impl<'l> Loader<'l> {
                 self.check_flags(Flavor::Eslint, None)?;
                 let named = self.named_plugins(Flavor::Eslint)?;
                 let for_eslint = self.for_eslint(None, base_path, &named);
-                let mut config =
-                    self.flat(base_path, Json::Array(Vec::new()), true, named.clone())?;
+                let mut config = self.flat(base_path, Json::Array(Vec::new()), true, named)?;
                 config.hand_over_to(for_eslint.clone());
                 Ok(Arc::new(Loaded {
                     config,

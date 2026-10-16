@@ -263,6 +263,14 @@ pub(crate) fn write_parameters_and_return_type<'a>(
     {
         return write!(f, [group(parameters), return_type]);
     }
+    match will_parameters_break || !can_depend_on_what_breaks(func, ty, f) {
+        true => write!(f, [parameters, return_type]),
+        false => group_parameters_if_object_type_breaks(parameters, return_type, f),
+    }
+}
+
+/// Whether something in the return type `ty` of `func` stays expanded once it is broken, and the parameters do not.
+fn can_depend_on_what_breaks<'a>(func: Func<'a>, ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
     // Everything that stays expanded has braces.
     let can_stay_expanded = strings::contains_char(f.source_text().text_for(&ty.span()), b'{');
     // `(/* comment */⏎a: A)`: once the line break after the comment is printed, the parameters will break.
@@ -271,10 +279,7 @@ pub(crate) fn write_parameters_and_return_type<'a>(
             .comments_in_span(FormatFormalParameters(func).span())
             .iter()
             .any(|comment| comment.has_newline_after());
-    match will_parameters_break || stay_expanded || !can_stay_expanded {
-        true => write!(f, [parameters, return_type]),
-        false => group_parameters_if_object_type_breaks(parameters, return_type, f),
-    }
+    can_stay_expanded && !stay_expanded
 }
 
 /// Apart, so that its variables are not on the stack while the return type is formatted.

@@ -663,7 +663,7 @@ impl JSMySQLConnection {
             .queue
             .clean(js_reason, self.get_queries_array());
         let socket = self.connection.get().socket();
-        socket.close(uws::CloseKind::Normal);
+        socket.close_now();
         self.connection_mut().discard_write_buffer();
     }
 

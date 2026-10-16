@@ -157,10 +157,13 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(kept) = self.recent_composed.get(first.0, second.0) {
             return MapperId(kept);
         }
-        if let Some(kept) = self.p.composed.get(&self.task, &(first, second)) {
-            self.recent_composed.put(first.0, second.0, kept.0);
-            return kept;
-        }
+        let spread = match self.p.composed.get_or_hash(&self.task, &(first, second)) {
+            Ok(kept) => {
+                self.recent_composed.put(first.0, second.0, kept.0);
+                return kept;
+            }
+            Err(spread) => spread,
+        };
         let scope = self.begin_scope();
         self.unresolved_members.push((second, scope.frames));
         let (hits, in_place) = (self.unresolved_members_hits, self.members_in_place_hits);
@@ -198,7 +201,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         match self.end_scope_as(scope, is_open) {
             Ok(stored) => {
-                let kept = (self.p.composed).insert(&self.task, (first, second), composed, stored);
+                let key = (first, second);
+                let kept =
+                    (self.p.composed).insert_absent(&self.task, spread, key, composed, stored);
                 // As for `recent_instantiations`.
                 if first.is_local() || second.is_local() || !kept.is_local() {
                     self.recent_composed.put(first.0, second.0, kept.0);
@@ -285,7 +290,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getRestrictiveInstantiation`, with `getRestrictiveTypeParameter`. Restrictive type
     /// parameters map to themselves, so the restrictive instantiation of a restrictive instantiation is itself.
     pub(super) fn restrictive_instantiation(&mut self, t: TypeId) -> TypeId {
+        if !self.restrictive_instantiations_kept.is_empty()
+            && let Some(&kept) = self.restrictive_instantiations_kept.get(&t)
+        {
+            return kept;
+        }
+        let around = self.kept_a_renamed_param.replace(false);
         let result = self.instantiate_type_parameters(t, |c, param| match c.data(param) {
+            // `tp.constraint == nil && getConstraintDeclaration(tp) == nil`
+            TypeData::TypeParam(..) if c.unresolved_renamed_params.contains(&param) => {
+                c.kept_a_renamed_param.set(true);
+                param
+            }
             TypeData::Marker(
                 Marker::Super | Marker::Other | Marker::SuperForCheck | Marker::Restrictive(_),
             ) => param,
@@ -302,6 +318,10 @@ impl<'p, 's> Checker<'p, 's> {
         // Only `getConstraintOfDistributiveConditionalType` asks.
         if matches!(self.data(result), TypeData::Cond { .. }) {
             self.restrictive_instantiations.insert(result);
+        }
+        if self.kept_a_renamed_param.replace(around) {
+            self.restrictive_instantiations_kept.insert(t, result);
+            self.restrictive_instantiations_kept.insert(result, result);
         }
         result
     }
@@ -337,8 +357,8 @@ impl<'p, 's> Checker<'p, 's> {
         if mapper == MapperId::IDENTITY {
             return ty;
         }
-        let (data, could_contain_type_variables) = self.types().get_for_instantiation(ty);
-        if !could_contain_type_variables {
+        let class = self.types().instantiation_class(ty);
+        if class == InstantiationClass::Unchanged {
             return ty;
         }
         // Before any cache: at the limit tsgo fails every instantiation, that of a type parameter
@@ -349,7 +369,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.instantiation_too_deep();
         }
         let active = self.active_mappers.find(mapper);
-        if let TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) = data {
+        if class == InstantiationClass::TypeParameter {
             match active.map(|at| &mut self.active_mappers.activations[at].params) {
                 Some(seen) if seen.contains(&ty) => {}
                 Some(seen) => {
@@ -361,7 +381,9 @@ impl<'p, 's> Checker<'p, 's> {
             return self.types().map(mapper, ty).unwrap_or(ty);
         }
         let serial = active.map_or(0, |at| self.active_mappers.activations[at].serial);
-        if let Some((known, tag)) = self.recent_instantiations.get_tagged(ty.0, mapper.0) {
+        if self.index_infos_in_instantiation.is_empty()
+            && let Some((known, tag)) = self.recent_instantiations.get_tagged(ty.0, mapper.0)
+        {
             if serial == 0 || *tag != serial {
                 *tag = serial;
                 self.instantiation_count += 1;
@@ -372,15 +394,153 @@ impl<'p, 's> Checker<'p, 's> {
         self.instantiate_cached(ty, mapper, serial)
     }
 
+    /// `instantiate(ty, mapper)`, if nothing has to be computed for it.
+    pub(super) fn instantiation_if_known(
+        &mut self,
+        ty: TypeId,
+        mapper: MapperId,
+    ) -> Option<TypeId> {
+        if mapper == MapperId::IDENTITY {
+            return Some(ty);
+        }
+        match self.types().instantiation_class(ty) {
+            InstantiationClass::Unchanged => Some(ty),
+            InstantiationClass::TypeParameter => Some(self.types().map(mapper, ty).unwrap_or(ty)),
+            _ if !self.index_infos_in_instantiation.is_empty() => None,
+            _ => match self.recent_instantiations.get_tagged(ty.0, mapper.0) {
+                Some((known, _)) => Some(TypeId(known)),
+                None => self.p.instantiations.get(&self.task, &(ty, mapper)),
+            },
+        }
+    }
+
+    /// `getTypeOfInstantiatedSymbol`: `links.resolvedType` keeps the result, so only the first request
+    /// for the type of a symbol gets to `instantiateType`, adds to `instantiationCount` and can fail
+    /// at a limit. There is no symbol here: a result that is known stands for one that has its type.
+    pub(super) fn type_of_instantiated_symbol(
+        &mut self,
+        declared: TypeId,
+        mapper: MapperId,
+    ) -> TypeId {
+        if self.index_infos_in_instantiation.is_empty()
+            && let Some((known, _)) = self.recent_instantiations.get_tagged(declared.0, mapper.0)
+        {
+            return TypeId(known);
+        }
+        let (count, computed) = (self.instantiation_count, self.instantiations_computed);
+        let ty = self.instantiate(declared, mapper);
+        if self.instantiations_computed == computed && self.instantiation_count < 5_000_000 {
+            self.instantiation_count = count;
+        }
+        ty
+    }
+
+    /// `links.resolvedType` of the symbol that `instantiateSymbol` makes of `sym` for `prop`, or with
+    /// `is_write_type` its `links.writeType`, if `assign_link_of_instantiated_symbol` has kept one.
+    pub(super) fn link_of_instantiated_symbol(
+        &mut self,
+        prop: &Prop,
+        sym: Sym,
+        outer: MapperId,
+        is_write_type: bool,
+    ) -> Option<TypeId> {
+        if !self.instantiated_symbol_links.contains_key(&sym) {
+            return None;
+        }
+        let mapper = self.compose(prop.mapper, outer);
+        let links = self.instantiated_symbol_links.get(&sym)?;
+        let kept = links
+            .iter()
+            .find(|link| (link.0, link.1) == (mapper, is_write_type));
+        kept.map(|link| link.2)
+    }
+
+    /// The assignment in `getTypeOfInstantiatedSymbol`, after a `getTypeOfSymbol(links.target)` that
+    /// made a query: `getTypeOfAccessors` returns `errorType` unassigned where `pushTypeResolution` fails.
+    #[inline(never)]
+    pub(super) fn assign_resolved_type_of_instantiated_symbol(
+        &mut self,
+        prop: &Prop,
+        sym: Sym,
+        outer: MapperId,
+        target_type: TypeId,
+    ) {
+        let is_unassigned = self.found_cycle
+            && self.is_resolving(Query::Symbol(sym))
+            && self.p.symbol_types.get(&self.task, &sym).is_none();
+        if !is_unassigned && !self.instantiated_symbol_links.contains_key(&sym) {
+            return;
+        }
+        if prop.flags.contains(PropFlags::THISLESS) {
+            return;
+        }
+        let mapper = self.compose(prop.mapper, outer);
+        if mapper == MapperId::IDENTITY || self.is_thisless_for_this_mapper(sym) {
+            return;
+        }
+        // Assigned, it is what the type of `sym` gives: that replaces what a nested request has kept.
+        let resolved_type = match is_unassigned {
+            true => Some(self.instantiate(target_type, mapper)),
+            false => None,
+        };
+        self.assign_link_of_instantiated_symbol(sym, mapper, false, resolved_type);
+    }
+
+    /// Keeps `ty` as `links.resolvedType`, or with `is_write_type` as `links.writeType`, of the
+    /// instantiated symbol with the target `sym` and `mapper`. `None`: nothing is kept for it.
+    pub(super) fn assign_link_of_instantiated_symbol(
+        &mut self,
+        sym: Sym,
+        mapper: MapperId,
+        is_write_type: bool,
+        ty: Option<TypeId>,
+    ) {
+        let links = self.instantiated_symbol_links.entry(sym).or_default();
+        links.retain(|link| (link.0, link.1) != (mapper, is_write_type));
+        links.extend(ty.map(|ty| (mapper, is_write_type, ty)));
+        if links.is_empty() {
+            self.instantiated_symbol_links.remove(&sym);
+        }
+    }
+
+    /// `getTypeAliasInstantiation` without an alias. `declared`: the declared type of the symbol.
+    /// `links.instantiations` is read whatever is in progress.
+    pub(super) fn type_alias_instantiation(
+        &mut self,
+        declared: TypeId,
+        mapper: MapperId,
+    ) -> TypeId {
+        if !self.index_infos_in_instantiation.is_empty()
+            && let Some(known) = self.p.instantiations.get(&self.task, &(declared, mapper))
+        {
+            return known;
+        }
+        self.instantiate(declared, mapper)
+    }
+
     /// `instantiate` for a type that mentions type parameters, is not one itself and is not in the
     /// cache of recent results.
     /// `serial`: of the activation of `mapper`, or 0 if it is not active.
     #[inline(never)]
     fn instantiate_cached(&mut self, ty: TypeId, mapper: MapperId, serial: u32) -> TypeId {
-        if let Some(known) = self.p.instantiations.get(&self.task, &(ty, mapper)) {
-            self.recent_instantiations
-                .put_tagged(ty.0, mapper.0, known.0, serial);
-            return known;
+        let mut absent = None;
+        if let Some(innermost) = self.index_infos_in_instantiation.last() {
+            if let Some(&(known, is_marked)) = innermost.instantiations.get(&(ty, mapper)) {
+                // A cache hit records the same marks as recomputing it would.
+                if is_marked {
+                    self.note_no_members_in_place();
+                }
+                return known;
+            }
+        } else {
+            match self.p.instantiations.get_or_hash(&self.task, &(ty, mapper)) {
+                Ok(known) => {
+                    self.recent_instantiations
+                        .put_tagged(ty.0, mapper.0, known.0, serial);
+                    return known;
+                }
+                Err(spread) => absent = Some(spread),
+            }
         }
         if self.instantiation_limit_hits != 0
             && let Some(&(under, known, is_tainted)) =
@@ -396,6 +556,7 @@ impl<'p, 's> Checker<'p, 's> {
             return known;
         }
         let (hits_before, limits_before) = (self.instantiation_limit_hits, self.limits);
+        let in_place_before = self.members_in_place_hits;
         if self.instantiation_depth == 0 && self.stack.is_empty() {
             self.reset_instantiation_count_if_idle();
         }
@@ -405,6 +566,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let cycles_before = self.cycles;
         let scope = self.begin_scope();
+        if self.hands_out_symbol_ids() {
+            self.get_symbol_id_of_object_type_alias(ty);
+        }
+        self.instantiations_computed += 1;
         let result = self.instantiate_uncached(ty, mapper);
         let result = self.with_new_alias(ty, mapper, result, None);
         if serial == 0 {
@@ -414,11 +579,25 @@ impl<'p, 's> Checker<'p, 's> {
         // tsgo has no cache of instantiations but that of the active mappers. So a result with the
         // error type of the limit in it is computed again by a caller that has more depth left.
         let hit_the_limit = self.instantiation_limit_hits != hits_before;
+        // See `IndexInfosInInstantiation::instantiations`: until the index signatures are
+        // instantiated, the results are kept there and nowhere else.
+        let marks = self.members_in_place_hits - in_place_before;
+        if !hit_the_limit
+            && self.non_cacheable_mark() == (scope.counters.0 + marks, scope.counters.1)
+            && let Some(innermost) = self.index_infos_in_instantiation.last_mut()
+        {
+            let kept = (result, marks != 0);
+            innermost.instantiations.insert((ty, mapper), kept);
+        }
         match self.end_scope_by_counters(scope) {
-            Ok(stored) if !hit_the_limit => {
+            Ok(stored) if !hit_the_limit && self.index_infos_in_instantiation.is_empty() => {
                 // `data.instantiations[key] = result`: of two instantiations with one key, one
                 // within the other, the outer one assigns last.
-                (self.p.instantiations).rewrite(&self.task, (ty, mapper), result, stored);
+                let (table, key) = (&self.p.instantiations, (ty, mapper));
+                match absent {
+                    Some(spread) => table.rewrite_absent(&self.task, spread, key, result, stored),
+                    None => table.rewrite(&self.task, key, result, stored),
+                }
                 // The table stores nothing task-local under a shared key.
                 if ty.is_local() || mapper.is_local() || !result.is_local() {
                     self.recent_instantiations
@@ -577,6 +756,24 @@ impl<'p, 's> Checker<'p, 's> {
                 self.intern_key(TypeKey::Fns { decls, mapper: new })
             }
             TypeData::Synth(shape) => {
+                // `getObjectTypeInstantiation`: `newMapper` maps `links.outerTypeParameters`, and
+                // `instantiateAnonymousType` instantiates the members of `target` with it, whatever
+                // else they mention. Where it maps them to what they are mapped to already, the
+                // type is its own instantiation. See `Shape::mapper`.
+                let (mut shape, mut mapper, mut target) = (shape, mapper, None);
+                if shape.instantiation_expression.is_some() || shape.mapper != MapperId::IDENTITY {
+                    let new_mapper = self.map_mapper(shape.mapper, mapper);
+                    if new_mapper == shape.mapper {
+                        return ty;
+                    }
+                    let created = shape.instantiation_target.unwrap_or(ty);
+                    if let TypeData::Synth(as_created) = self.data(created) {
+                        if new_mapper == as_created.mapper {
+                            return created;
+                        }
+                        (shape, mapper, target) = (as_created, new_mapper, Some(created));
+                    }
+                }
                 let scope = self.begin_scope();
                 let mut new = Shape {
                     literal: shape.literal,
@@ -616,8 +813,9 @@ impl<'p, 's> Checker<'p, 's> {
                         .map(|&s| self.instantiate_sig(s, mapper)),
                 );
                 new.symbol_declared_at = shape.symbol_declared_at;
+                new.symbol = shape.symbol;
                 new.spread_rank = shape.spread_rank;
-                new.spread_of = shape.spread_of.map(|(left, right)| {
+                new.created_from = shape.created_from.map(|(left, right)| {
                     (
                         self.instantiate(left, mapper),
                         self.instantiate(right, mapper),
@@ -625,7 +823,9 @@ impl<'p, 's> Checker<'p, 's> {
                 });
                 // `instantiateAnonymousType`
                 new.instantiation_expression = shape.instantiation_expression;
+                new.instantiation_target = target;
                 new.is_js_literal = shape.is_js_literal;
+                new.is_object_rest_type = shape.is_object_rest_type;
                 new.mapper = self.map_mapper(shape.mapper, mapper);
                 let stored = self.end_scope_by_counters(scope);
                 if let Some(arguments) = shape.single_signature_arguments {
@@ -1135,12 +1335,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getReturnTypeOfSignature`, `getTypePredicateOfSignature`: the value of `signature.target`,
     /// instantiated with `signature.mapper`. `ty`: the declared return type or predicate type of
-    /// `func`. A signature of `func` with type arguments is an instantiation of the signature whose
-    /// outer type parameters are mapped as `mapper` specifies, so `ty` is instantiated with that
-    /// mapping first and with the type arguments afterwards. By then `unknown | U` is `unknown` and
-    /// `any & U` is `any`, which only `any` and `never` for `U` would have overridden: with other
-    /// type arguments a single step yields the same result. The types of parameters are
-    /// instantiated with both at once (`instantiateSymbol`).
+    /// `func`. After the first step `unknown | F<U>` is `unknown` and `any & F<U>` is `any`,
+    /// whatever `F<U>` is with the type arguments.
     pub(super) fn instantiate_result_of_sig(
         &mut self,
         ty: TypeId,
@@ -1148,27 +1344,38 @@ impl<'p, 's> Checker<'p, 's> {
         func: FnId,
         mapper: MapperId,
     ) -> TypeId {
+        if self.types().instantiation_class(ty) == InstantiationClass::Unchanged {
+            return ty;
+        }
+        match self.steps_of_sig_mapper(file, func, mapper) {
+            Some((first, second)) => {
+                let open = self.instantiate(ty, first);
+                self.instantiate(open, second)
+            }
+            None => self.instantiate(ty, mapper),
+        }
+    }
+
+    /// `signature.target.mapper` and `signature.mapper` of the signature of `func` that is stored
+    /// with `mapper`. One with type arguments is an instantiation of the signature whose outer type
+    /// parameters are mapped as `mapper` specifies and whose own are cloned (`sig_mapper`). `None`:
+    /// it has no type arguments, or its target is the declared signature, which has no mapper.
+    pub(super) fn steps_of_sig_mapper(
+        &self,
+        file: FileId,
+        func: FnId,
+        mapper: MapperId,
+    ) -> Option<(MapperId, MapperId)> {
         let own = self.hir(file)[func].type_params;
-        let may_differ = !own.is_empty()
-            && self.types().mapping(mapper).iter().any(|pair| {
-                (self.has_any_flag(pair.1) || pair.1.is_never())
-                    && self.is_declared_among(pair.0, file, own)
-            });
-        if !may_differ {
-            return self.instantiate(ty, mapper);
+        if own.is_empty() {
+            return None;
         }
-        let mut first: smallvec::SmallVec<[(TypeId, TypeId); 8]> = self
-            .types()
-            .mapping(mapper)
-            .iter()
-            .copied()
-            .filter(|pair| !self.is_declared_among(pair.0, file, own))
-            .collect();
-        // No outer type parameter is instantiated: it is an instantiation of the declared
-        // signature.
-        if first.iter().all(|pair| pair.0 == pair.1) {
-            return self.instantiate(ty, mapper);
+        let outer = (self.types().mapping(mapper).iter().copied())
+            .filter(|pair| !self.is_declared_among(pair.0, file, own));
+        if outer.clone().all(|pair| pair.0 == pair.1) {
+            return None;
         }
+        let mut first: smallvec::SmallVec<[(TypeId, TypeId); 8]> = outer.collect();
         let around = self.types().mapper_of(&first);
         let mut second: smallvec::SmallVec<[(TypeId, TypeId); 4]> = smallvec::SmallVec::new();
         for tp in own.iter() {
@@ -1181,11 +1388,12 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        let (first, second) = (
+        if second.is_empty() {
+            return None;
+        }
+        Some((
             self.types().mapper_of(&first),
             self.types().mapper_of(&second),
-        );
-        let open = self.instantiate(ty, first);
-        self.instantiate(open, second)
+        ))
     }
 }

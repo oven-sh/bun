@@ -28,7 +28,7 @@ test("WebSocket should send Blob data", async () => {
 
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   const ws = new WebSocket(url);
-  ws.binaryType = "blob";
+  ws.binaryType = "blob" as any;
   let messageReceived = false;
 
   ws.onopen = () => {
@@ -39,7 +39,7 @@ test("WebSocket should send Blob data", async () => {
     const blob = new Blob([testData], { type: "application/octet-stream" });
 
     console.log("Sending blob with length:", blob.size);
-    ws.send(blob);
+    ws.send(blob as any);
   };
 
   ws.onmessage = async event => {
@@ -97,7 +97,7 @@ test("WebSocket should send empty Blob", async () => {
 
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   const ws = new WebSocket(url);
-  ws.binaryType = "blob";
+  ws.binaryType = "blob" as any;
   let messageReceived = false;
 
   ws.onopen = () => {
@@ -105,7 +105,7 @@ test("WebSocket should send empty Blob", async () => {
     const blob = new Blob([], { type: "application/octet-stream" });
 
     console.log("Sending empty blob with length:", blob.size);
-    ws.send(blob);
+    ws.send(blob as any);
   };
 
   ws.onmessage = async event => {
@@ -151,7 +151,7 @@ test("WebSocket should ping with Blob", async () => {
         // Respond with pong containing the same data
         ws.pong(data);
       },
-    },
+    } as Bun.WebSocketHandler<undefined>,
     fetch(req, server) {
       if (server.upgrade(req)) {
         return undefined;
@@ -164,7 +164,7 @@ test("WebSocket should ping with Blob", async () => {
 
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   const ws = new WebSocket(url);
-  ws.binaryType = "blob";
+  ws.binaryType = "blob" as any;
   let pongReceived = false;
 
   ws.onopen = () => {
@@ -175,7 +175,7 @@ test("WebSocket should ping with Blob", async () => {
     const blob = new Blob([pingData], { type: "application/octet-stream" });
 
     console.log("Sending ping with blob");
-    ws.ping(blob);
+    ws.ping(blob as any);
   };
 
   ws.addEventListener("pong", async (event: any) => {

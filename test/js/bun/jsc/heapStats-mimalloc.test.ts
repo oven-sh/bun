@@ -1,6 +1,7 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 
 describe("heapStats() mimalloc integration", () => {
   test("mimalloc aggregate stats are present", () => {
@@ -124,6 +125,140 @@ describe("heapStats() mimalloc integration", () => {
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout).toBe("object\n");
     expect(exitCode).toBe(0);
+  });
+
+  // JSC tries 8 sizes for the structure heap, each half of the one before. When the OS refused them all, or mimalloc
+  // refused the one that fit, an assertion in JSC aborted and bun printed a crash report. JSC now calls a function of
+  // bun, which prints an error and exits when a limit explains the failure.
+  describe("a structure heap that cannot be reserved", () => {
+    // A build without the fix aborts in these tests. It must not upload a crash report.
+    const env = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" };
+    const GB = 2 ** 30;
+    const MB = 2 ** 20;
+    const tooSmall =
+      "error: 32 MB of address space is too small for the JavaScript heap\n" +
+      "note: BUN_JSC_structureHeapSizeInKB must be at least 65536\n";
+
+    async function run(cmd: string[], vars: Record<string, string> = {}, cwd?: string) {
+      await using proc = Bun.spawn({ cmd, env: { ...env, ...vars }, cwd, stdout: "ignore", stderr: "pipe" });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { stderr, exitCode, signalCode: proc.signalCode };
+    }
+    const underLimits = (limits: string, ...argv: string[]) => [
+      "/bin/sh",
+      "-c",
+      `ulimit -c 0 && ${limits} && exec "$@"`,
+      "--",
+      bunExe(),
+      ...argv,
+    ];
+
+    // Release builds only: JSC's allocator is mimalloc there, and an ASAN build does not start under these limits.
+    describe.skipIf(isASAN || isDebug)("in JSC", () => {
+      // From 2048 GB the smallest size is 16 GB, which an 8 GB limit refuses on every architecture. Linux only: the
+      // kernel charges a reservation to both limits there.
+      for (const flags of [["v"], ["d"], ["v", "d"]]) {
+        test.concurrent.skipIf(!isLinux)(`under ulimit -${flags.join(" and -")}, names each limit`, async () => {
+          const limits = flags.map(flag => `ulimit -${flag} 8388608`).join(" && ");
+          expect(await run(underLimits(limits, "-e", "1"), { BUN_JSC_structureHeapSizeInKB: "2147483648" })).toEqual({
+            stderr:
+              "error: could not reserve 16 GB of address space for the JavaScript heap (tried 2048 GB down to 16 GB)\n" +
+              flags.map(flag => `note: 'ulimit -${flag}' is 8388608 KB, raise or remove that limit\n`).join(""),
+            exitCode: 1,
+            signalCode: null,
+          });
+        });
+      }
+
+      // The next three tests change with oven-sh/WebKit#586, which lets JSC use a range that mimalloc refuses.
+
+      // The default sizes. A reservation maps twice its size, so under 128 MB the 64 MB size never fits and the
+      // 32 MB size does, and mimalloc takes no range that small.
+      test.concurrent.skipIf(!isLinux)("under a ulimit -d that fits only the smallest size", async () => {
+        expect(await run(underLimits("ulimit -d 131072", "-e", "1"))).toEqual({
+          stderr:
+            "error: could not reserve 64 MB of address space for the JavaScript heap (tried 4 GB down to 32 MB, and 32 MB is too small to use)\n" +
+            "note: 'ulimit -d' is 131072 KB, raise or remove that limit\n",
+          exitCode: 1,
+          signalCode: null,
+        });
+      });
+
+      test.concurrent("with a size that mimalloc refuses", async () => {
+        expect(await run([bunExe(), "-e", "1"], { BUN_JSC_structureHeapSizeInKB: "32768" })).toEqual({
+          stderr: tooSmall,
+          exitCode: 1,
+          signalCode: null,
+        });
+      });
+
+      // A macro starts JSC on a thread of the bundler's pool.
+      test.concurrent("on a thread that is not the main thread", async () => {
+        using dir = tempDir("structure-heap-macro", {
+          "macro.ts": `export const answer = () => 42;`,
+          "entry.ts": `import { answer } from "./macro.ts" with { type: "macro" };\nconsole.log(answer());`,
+        });
+        const vars = { BUN_JSC_structureHeapSizeInKB: "32768" };
+        expect(await run([bunExe(), "build", "entry.ts"], vars, String(dir))).toEqual({
+          stderr: tooSmall,
+          exitCode: 1,
+          signalCode: null,
+        });
+      });
+    });
+
+    // What bun prints for each failure JSC can report, on every build. The child exits with 7 when the function returns.
+    const report = (largest: number, smallest: number, reserved: number) =>
+      run([
+        bunExe(),
+        "-e",
+        `require("bun:internal-for-testing").crash_handler.structureHeapReservationFailed(${largest}, ${smallest}, ${reserved}); process.exit(7);`,
+      ]);
+    // No limit is set on these children. Linux then names what else refuses a reservation.
+    const noLimit = !isLinux
+      ? ""
+      : readFileSync("/proc/sys/vm/overcommit_memory", "utf8").trim() === "2"
+        ? "note: vm.overcommit_memory is 2, which refuses a reservation over the commit limit: free memory, add swap or raise vm.overcommit_ratio\n"
+        : "note: 'ulimit -v' and 'ulimit -d' are unlimited, check the sandbox this process runs in\n";
+
+    test.concurrent("the OS refused every size", async () => {
+      expect(await report(4 * GB, 32 * MB, 0)).toEqual({
+        stderr:
+          "error: could not reserve 32 MB of address space for the JavaScript heap (tried 4 GB down to 32 MB)\n" +
+          noLimit,
+        exitCode: 1,
+        signalCode: null,
+      });
+    });
+
+    test.concurrent("only a size that mimalloc refuses fit", async () => {
+      expect(await report(4 * GB, 32 * MB, 32 * MB)).toEqual({
+        stderr:
+          "error: could not reserve 64 MB of address space for the JavaScript heap (tried 4 GB down to 32 MB, and 32 MB is too small to use)\n" +
+          noLimit,
+        exitCode: 1,
+        signalCode: null,
+      });
+    });
+
+    test.concurrent("the size that was asked for is one that mimalloc refuses", async () => {
+      expect(await report(32 * MB, 32 * MB, 32 * MB)).toEqual({ stderr: tooSmall, exitCode: 1, signalCode: null });
+    });
+
+    // Only Windows can refuse the commit of mimalloc's bookkeeping. Anywhere else this is a bug, and JSC crashes.
+    test.concurrent("mimalloc refused a size that is large enough", async () => {
+      expect(await report(4 * GB, 4 * GB, 4 * GB)).toEqual(
+        isWindows
+          ? {
+              stderr:
+                "error: could not commit memory for the JavaScript heap\n" +
+                "note: the system commit limit or the memory limit of a job object was reached: close other programs or enlarge the page file\n",
+              exitCode: 1,
+              signalCode: null,
+            }
+          : { stderr: "", exitCode: 7, signalCode: null },
+      );
+    });
   });
 
   // The allocator's purge thread takes back what was freed 100 ms after the free. What a thread freed while the purge thread

@@ -1,6 +1,6 @@
 #pragma once
-#include <BunIDLConvertBase.h>
-#include <ErrorCode.h>
+#include "BunIDLConvertBase.h"
+#include "ErrorCode.h"
 #include <wtf/text/MakeString.h>
 
 namespace Bun::Bindgen {
@@ -37,7 +37,7 @@ struct ElementOf : ContextBase<ElementOf<Parent>> {
     using ElementContext = ElementOf<ElementOf<Parent>>;
 
     explicit ElementOf(Parent parent)
-        : m_parent(std::move(parent))
+        : m_parent(WTF::move(parent))
     {
     }
 

@@ -207,6 +207,73 @@ describe("yarn berry migration", () => {
     await expectFrozenInstall(dir);
   });
 
+  // To yarn, `npm:` before a range, a version or a tag is the default protocol written out.
+  test.concurrent.each(["npm:^1.0.0", "npm:1.0.0", "npm:1", "npm:*", "npm:latest"])(
+    "a package.json range written as %s",
+    async range => {
+      const plain = range.slice("npm:".length);
+      const member = { name: "pkg-a", version: "1.0.0", devDependencies: { "no-deps": range } };
+      const { packageDir: dir } = await testRegistry.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "berry-npm-protocol",
+            workspaces: ["packages/*"],
+            dependencies: { "no-deps": range, "one-range-dep": "^1.0.0" },
+            resolutions: { "one-range-dep/no-deps": range },
+          }),
+          "packages/pkg-a/package.json": JSON.stringify(member),
+          "yarn.lock": yarnLock({
+            "berry-npm-protocol@workspace:.": [
+              `resolution: "berry-npm-protocol@workspace:."`,
+              `dependencies:`,
+              `  no-deps: "${range}"`,
+              `  one-range-dep: "npm:^1.0.0"`,
+            ],
+            [`no-deps@${range}`]: [`resolution: "no-deps@npm:1.0.0"`],
+            "one-range-dep@npm:^1.0.0": [
+              `resolution: "one-range-dep@npm:1.0.0"`,
+              `dependencies:`,
+              `  no-deps: "npm:^1.0.0"`,
+            ],
+            "pkg-a@workspace:packages/pkg-a": [
+              `resolution: "pkg-a@workspace:packages/pkg-a"`,
+              `dependencies:`,
+              `  no-deps: "${range}"`,
+            ],
+          }),
+        },
+      });
+
+      const { stderr, exitCode } = await run(dir, "install");
+      expect(stderr).not.toContain("error:");
+      expect(stderr).toContain("migrated lockfile from yarn.lock");
+      expect(nodeModulesPackages(dir)).toBe(
+        [
+          "node_modules/no-deps/no-deps@1.0.0",
+          "node_modules/one-range-dep/one-range-dep@1.0.0",
+          "packages/pkg-a/pkg-a@1.0.0",
+        ].join("\n"),
+      );
+      expect(lockedVersions(await bunLockOf(dir))).toEqual([
+        "no-deps@1.0.0",
+        "one-range-dep@1.0.0",
+        "pkg-a@workspace:packages/pkg-a",
+      ]);
+      expect(await Bun.file(join(dir, "package.json")).json()).toMatchObject({
+        dependencies: { "no-deps": plain, "one-range-dep": "^1.0.0" },
+        resolutions: { "one-range-dep/no-deps": plain },
+      });
+      expect(await Bun.file(join(dir, "packages", "pkg-a", "package.json")).json()).toEqual({
+        ...member,
+        devDependencies: { "no-deps": plain },
+      });
+      expect(exitCode).toBe(0);
+
+      await expectFrozenInstall(dir);
+    },
+  );
+
   // not concurrent: file snapshot matchers are unsupported in concurrent tests
   test("workspaces and workspace: ranges", async () => {
     const dir = await fixture("workspaces");
@@ -303,7 +370,7 @@ describe("yarn berry migration", () => {
   // The migration edits package.json in memory while the lockfile loads. The files are written just before
   // bun.lock, and only by a command that saves it.
   describe("package.json edits", () => {
-    const editedLine = "rewrote patch:/portal:/link: ranges, added patchedDependencies in package.json";
+    const editedLine = "rewrote patch:/portal:/link:/npm: ranges, added patchedDependencies in package.json";
     const frozenNote =
       "note: the lockfile is frozen, so the migration from yarn.lock was not written to bun.lock and package.json; run 'bun install' and commit the result";
     const migratedPackageJson = {
@@ -409,7 +476,9 @@ describe("yarn berry migration", () => {
       const { stderr, exitCode } = await run(dir, "pm", "migrate");
       expect(stderr).not.toContain("error:");
       expect(stderr).toContain("added patchedDependencies in package.json");
-      expect(stderr).toContain(`rewrote patch:/portal:/link: ranges in ${join("packages", "pkg-a", "package.json")}`);
+      expect(stderr).toContain(
+        `rewrote patch:/portal:/link:/npm: ranges in ${join("packages", "pkg-a", "package.json")}`,
+      );
       expect(await Bun.file(join(dir, "package.json")).json()).toEqual({
         name: "berry-member-patch",
         workspaces: ["packages/*"],
@@ -1655,7 +1724,7 @@ catalogs:
 
     const { stderr, exitCode } = await run(dir, "pm", "migrate");
     expect(stderr).toContain(
-      `error: yarn.lock has no entry for "direct@http://carol:******@localhost:1/direct-1.0.0.tgz", a dependency of "berry-reject"`,
+      `error: yarn.lock has no entry for "direct@http://***@localhost:1/direct-1.0.0.tgz", a dependency of "berry-reject"`,
     );
     expect(stderr).not.toContain("s3cret");
     expect(exitCode).toBe(1);

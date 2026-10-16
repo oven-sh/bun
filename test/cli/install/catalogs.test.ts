@@ -1123,6 +1123,51 @@ describe.concurrent("pack", () => {
       },
     });
   });
+
+  function appWithLibFromCatalog(catalogs: object) {
+    return tempDir("catalog-pack", {
+      "package.json": JSON.stringify({ name: "root", workspaces: { packages: ["packages/*"], ...catalogs } }),
+      "packages/lib/package.json": JSON.stringify({ name: "lib", version: "2.3.4" }),
+      "packages/app/package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { lib: "catalog:" } }),
+    });
+  }
+
+  test.each([
+    ["workspace:^", "^2.3.4"],
+    ["workspace:*", "2.3.4"],
+    ["workspace:../lib", "2.3.4"],
+  ])("publishes the catalog entry %s as %s", async (entry, published) => {
+    using dir = appWithLibFromCatalog({ catalog: { lib: entry } });
+    const appDir = join(String(dir), "packages", "app");
+
+    await pack(appDir, bunEnv);
+
+    const tarball = readTarball(join(appDir, "app-1.0.0.tgz"));
+    expect(JSON.parse(tarball.entries[0].contents)).toEqual({
+      name: "app",
+      version: "1.0.0",
+      dependencies: { lib: published },
+    });
+  });
+
+  test("fails on a catalog entry that refers to another catalog", async () => {
+    using dir = appWithLibFromCatalog({ catalog: { lib: "catalog:g" }, catalogs: { g: { lib: "^2" } } });
+    const appDir = join(String(dir), "packages", "app");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "pack"],
+      cwd: appDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(err, dir)).toBe(
+      'error: Failed to resolve catalog version for "lib" in `dependencies` (the catalog entry refers to another catalog).',
+    );
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(appDir, "app-1.0.0.tgz"))).toBeFalse();
+  });
 });
 
 describe.concurrent("errors", () => {
@@ -1788,7 +1833,7 @@ describe("peer dependencies", () => {
         bunfigOpts: { linker: "hoisted" },
         files: { "package.json": packageJson },
       });
-      const { err } = await install(packageDir, "hoisted");
+      const { err } = await install(packageDir, "hoisted", "--verbose");
       expect(peerWarnings(err)).toBe(0);
       expect((await Bun.file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe(
         "1.0.0",
@@ -1799,7 +1844,7 @@ describe("peer dependencies", () => {
     /** The version the peer moved to; no warning may be printed on the way. */
     async function reinstall(dir: string, packageJson: string) {
       await Bun.write(join(dir, "package.json"), packageJson);
-      const { err } = await install(dir, "hoisted");
+      const { err } = await install(dir, "hoisted", "--verbose");
       expect(err).toContain("Saved lockfile");
       expect(peerWarnings(err)).toBe(0);
       return (await Bun.file(join(dir, "node_modules", "no-deps", "package.json")).json()).version;
@@ -2340,21 +2385,6 @@ describe("bun add --catalog advice for a failed catalog: dependency", () => {
       },
     );
 
-    // https://github.com/oven-sh/bun/issues/20015: `bun link <pkg>` does not walk up to the workspace root.
-    test.concurrent("bun link in a workspace member names the member's package.json", async () => {
-      using dir = project({
-        "package.json": { name: "mono", workspaces: { packages: ["packages/*"], catalog: { "no-deps": "1.0.0" } } },
-        "packages/app/package.json": { name: "app", dependencies: { "no-deps": "catalog:" } },
-        "linked/package.json": { name: "linked-pkg", version: "1.0.0" },
-      });
-      const env = { ...bunEnv, BUN_INSTALL: join(String(dir), "global-install-dir") };
-      expect(await run(join(String(dir), "linked"), ["link"], env)).toEqual({ err: "", exitCode: 0 });
-
-      const { err, exitCode } = await run(join(String(dir), "packages", "app"), ["link", "linked-pkg"], env);
-      expect(err).toBe(`error: no-deps@catalog: failed to resolve\n${note}`);
-      expect(exitCode).toBe(1);
-    });
-
     test.concurrent("a failed file: dependency gets no catalogs note", async () => {
       using dir = soloRoot({ dependencies: { z: "file:./missing" } });
 
@@ -2421,6 +2451,29 @@ describe("bun add --catalog advice for a failed catalog: dependency", () => {
 
       const args = command.replace("./vendor", "../../vendor").split(" ");
       expect(await run(join(String(dir), "packages", "api"), args)).toEqual({ err: advice, exitCode: 1 });
+    });
+
+    // https://github.com/oven-sh/bun/issues/20015
+    test.concurrent("bun link <package> in a workspace member reads the root's catalog", async () => {
+      using dir = project({
+        "package.json": { name: "mono", workspaces: { packages: ["packages/*"], catalog: { "no-deps": "1.0.0" } } },
+        "packages/app/package.json": { name: "app", dependencies: { "no-deps": "catalog:" } },
+        "linked/package.json": { name: "linked-pkg", version: "1.0.0" },
+      });
+      const app = join(String(dir), "packages", "app");
+      const env = { ...bunEnv, BUN_INSTALL: join(String(dir), "global-install-dir") };
+      expect(await run(join(String(dir), "linked"), ["link"], env)).toEqual({ err: "", exitCode: 0 });
+
+      const { err, exitCode } = await run(app, ["link", "linked-pkg", "--linker=isolated"], env);
+      expect(err.split("\n").filter(line => /^(error|note):/.test(line))).toEqual([]);
+      expect(await file(join(app, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+        version: "1.0.0",
+      });
+      expect(await file(join(app, "node_modules", "linked-pkg", "package.json")).json()).toEqual({
+        name: "linked-pkg",
+        version: "1.0.0",
+      });
+      expect(exitCode).toBe(0);
     });
 
     // https://github.com/oven-sh/bun/issues/39784

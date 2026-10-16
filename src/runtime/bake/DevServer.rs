@@ -4748,9 +4748,7 @@ impl DevServer {
         self.emit_visualizer_message_if_needed();
 
         // If there were pending requests, begin another bundle.
-        if self.next_bundle.reload_event.is_some()
-            || !self.next_bundle.requests.first.is_null()
-        {
+        if self.next_bundle.reload_event.is_some() || !self.next_bundle.requests.first.is_null() {
             let mut entry_points = EntryPointList::empty();
 
             let (is_reload, timer) = if let Some(event) = self.next_bundle.reload_event.take() {

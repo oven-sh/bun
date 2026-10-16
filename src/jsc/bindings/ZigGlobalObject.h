@@ -320,7 +320,6 @@ public:
 
     v8::shim::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
 
-
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
     RefPtr<WebCore::Performance> performance();

@@ -59,10 +59,7 @@ function component(mod: any, params: Bake.RouteMetadata["params"], request?: Req
 
 // `server.tsx` exports a function to be used for handling user routes. It takes
 // in the Request object, the route's module, and extra route metadata.
-export async function render(
-  request: Bun.BunRequest,
-  meta: Bake.RouteMetadata,
-): Promise<Response> {
+export async function render(request: Bun.BunRequest, meta: Bake.RouteMetadata): Promise<Response> {
   // The framework generally has two rendering modes.
   // - Standard browser navigation
   // - Client-side navigation

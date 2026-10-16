@@ -103,6 +103,9 @@ async function relayTo(serverPort: number) {
  * side knows which ids arrived.
  */
 async function sessionThroughRelay() {
+  // Releases what is open when a step of the setup fails. The caller owns it
+  // after that.
+  await using setup = new AsyncDisposableStack();
   const received: number[] = [];
   let onReceived = () => {};
   // Each wait below races this, so a test that loses a session fails with
@@ -110,31 +113,34 @@ async function sessionThroughRelay() {
   const failed = Promise.withResolvers<never>();
   const serverSession = Promise.withResolvers<any>();
   const serverSessionClosed = Promise.withResolvers<void>();
-  const server = await listen(
-    session => {
-      serverSession.resolve(session);
-      session.onerror = failed.reject;
-      failWith(session, failed);
-      session.closed.then(serverSessionClosed.resolve, serverSessionClosed.resolve);
-      // The server echoes what the client writes to a stream.
-      session.onstream = async (stream: any) => {
-        stream.closed.catch(() => {});
-        try {
-          for await (const batch of stream) for (const chunk of [batch].flat()) stream.writer.writeSync(chunk);
-        } catch {}
-      };
-    },
-    {
-      sni,
-      alpn: ["quic-test"],
-      transportParams: { maxIdleTimeout: 10 },
-      ondatagram(datagram: Uint8Array) {
-        received.push(datagram[0]);
-        onReceived();
+  const server = setup.use(
+    await listen(
+      session => {
+        serverSession.resolve(session);
+        session.onerror = failed.reject;
+        failWith(session, failed);
+        session.closed.then(serverSessionClosed.resolve, serverSessionClosed.resolve);
+        // The server echoes what the client writes to a stream.
+        session.onstream = async (stream: any) => {
+          stream.closed.catch(() => {});
+          try {
+            for await (const batch of stream) for (const chunk of [batch].flat()) stream.writer.writeSync(chunk);
+          } catch {}
+        };
       },
-    },
+      {
+        sni,
+        alpn: ["quic-test"],
+        transportParams: { maxIdleTimeout: 10 },
+        ondatagram(datagram: Uint8Array) {
+          received.push(datagram[0]);
+          onReceived();
+        },
+      },
+    ),
   );
-  const relay = await relayTo(server.address.port);
+  setup.defer(() => void serverSession.promise.then(session => session.destroy()));
+  const relay = setup.use(await relayTo(server.address.port));
 
   const statuses = new Map<number, string[]>();
   let onStatus = () => {};
@@ -166,8 +172,10 @@ async function sessionThroughRelay() {
       },
     },
   );
+  setup.defer(() => client.destroy());
   failWith(client, failed);
   await client.opened;
+  const resources = setup.move();
 
   const ids: Promise<bigint>[] = [];
   /** Resolves once `done()` holds. `listen` installs the check at its source. Rejects when a session fails. */
@@ -328,8 +336,7 @@ async function sessionThroughRelay() {
       // A client that failed did not tell the server.
       (await serverSession.promise).destroy();
       await serverSessionClosed.promise;
-      relay[Symbol.dispose]();
-      await server[Symbol.asyncDispose]();
+      await resources.disposeAsync();
     },
   };
 }
@@ -540,22 +547,26 @@ describe("ondatagramstatus", () => {
   });
 
   test("skips a datagram of a rejected 0-RTT flight without moving the ids after it", async () => {
+    // Releases the endpoints and the sessions, also when a step below fails.
+    await using cleanup = new AsyncDisposableStack();
     const tokenSecret = randomBytes(16);
     const ticket = Promise.withResolvers<any>();
     const token = Promise.withResolvers<any>();
     const onSession = (session: any) => {
       session.onerror = () => {};
       session.closed.catch(() => {});
+      cleanup.defer(() => session.destroy());
     };
 
     // A first server hands out a session ticket and a token.
-    const first = await listen(onSession, { sni, alpn: ["quic-test"], endpoint: { tokenSecret } });
+    const first = cleanup.use(await listen(onSession, { sni, alpn: ["quic-test"], endpoint: { tokenSecret } }));
     const firstClient = await connect(first.address, {
       alpn: "quic-test",
       verifyPeer: "manual",
       onsessionticket: ticket.resolve,
       onnewtoken: token.resolve,
     });
+    cleanup.defer(() => firstClient.destroy());
     failWith(firstClient, ticket, token);
     await Promise.all([firstClient.opened, ticket.promise, token.promise]);
     await firstClient.close();
@@ -565,21 +576,23 @@ describe("ondatagramstatus", () => {
     const received: number[] = [];
     let onProgress = () => {};
     const serverSession = Promise.withResolvers<any>();
-    await using second = await listen(
-      (session: any) => {
-        onSession(session);
-        serverSession.resolve(session);
-      },
-      {
-        sni,
-        alpn: ["quic-test"],
-        endpoint: { tokenSecret },
-        enableEarlyData: false,
-        ondatagram(datagram: Uint8Array) {
-          received.push(datagram[0]);
-          onProgress();
+    const second = cleanup.use(
+      await listen(
+        (session: any) => {
+          onSession(session);
+          serverSession.resolve(session);
         },
-      },
+        {
+          sni,
+          alpn: ["quic-test"],
+          endpoint: { tokenSecret },
+          enableEarlyData: false,
+          ondatagram(datagram: Uint8Array) {
+            received.push(datagram[0]);
+            onProgress();
+          },
+        },
+      ),
     );
     const statuses = new Map<number, string[]>();
     const reported = Promise.withResolvers<void>();
@@ -595,6 +608,7 @@ describe("ondatagramstatus", () => {
         onProgress();
       },
     });
+    cleanup.defer(() => client.destroy());
     failWith(client, reported);
 
     // Datagram 1 leaves in the 0-RTT flight, datagrams 2 to 4 after the

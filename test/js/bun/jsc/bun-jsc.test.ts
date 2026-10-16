@@ -1,5 +1,6 @@
 import {
   callerSourceOrigin,
+  // @ts-expect-error deprecated alias
   describeArray,
   deserialize,
   drainMicrotasks,
@@ -11,6 +12,7 @@ import {
   heapSize,
   heapStats,
   isRope,
+  // @ts-expect-error deprecated alias
   describe as jscDescribe,
   memoryUsage,
   numberOfDFGCompiles,
@@ -96,7 +98,7 @@ describe("bun:jsc", () => {
     expect(releaseWeakRefs()).toBeUndefined();
   });
   it("totalCompileTime", () => {
-    expect(totalCompileTime(count)).toBeGreaterThanOrEqual(0);
+    expect((totalCompileTime as any)(count)).toBeGreaterThanOrEqual(0);
   });
   it("reoptimizationRetryCount", () => {
     expect(reoptimizationRetryCount(count)).toBeGreaterThanOrEqual(0);
@@ -241,7 +243,7 @@ describe("bun:jsc", () => {
   });
 
   it.todoIf(isBuildKite && isWindows)("profile async", async () => {
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve } = Promise.withResolvers<object>();
     const result = await profile(
       async function hey(arg1: number) {
         await Bun.sleep(10).then(() => resolve(arguments));

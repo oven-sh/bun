@@ -1,4 +1,3 @@
-#![allow(clippy::needless_return)]
 #![warn(unused_must_use)]
 
 use core::cell::Cell;
@@ -547,6 +546,13 @@ impl TranspilerJob {
                 let out = core::mem::take(&mut self.non_threadsafe_input_specifier);
                 debug_assert!(resolved_source.source_url.is_empty());
                 resolved_source.source_url = out.create_if_different(self.path.text);
+                // A job reads a file: `Bun__transpileFile` gives it no blob and no plugin's text.
+                // SAFETY: vm outlives the job, and this is its thread. One field: `self` is in `vm.transpiler_store`.
+                let in_standalone_executable = unsafe { (*vm).standalone_module_graph.is_some() };
+                resolved_source.is_static = VirtualMachine::is_file_on_disk_static(
+                    in_standalone_executable,
+                    self.path.text,
+                );
                 (out, Ok(resolved_source))
             }
         };
@@ -1040,9 +1046,7 @@ impl TranspilerJob {
 
         let source_code_printer = tls_get_or_leak(&SOURCE_CODE_PRINTER, || {
             let writer = BufferWriter::init();
-            let mut bp = Box::new(BufferPrinter::init(writer));
-            bp.ctx.append_null_byte = false;
-            bp
+            Box::new(BufferPrinter::init(writer))
         });
 
         // Swap the buffer out and write it back via the
@@ -1059,7 +1063,6 @@ impl TranspilerJob {
             // printer.ctx.buffer.deinit() → Drop
             let writer = BufferWriter::init();
             *source_code_printer = BufferPrinter::init(writer);
-            source_code_printer.ctx.append_null_byte = false;
             printer = core::mem::replace(
                 source_code_printer,
                 BufferPrinter::init(BufferWriter::init()),
@@ -1150,7 +1153,6 @@ impl TranspilerJob {
                 // printer.ctx.buffer.deinit() → Drop
                 let writer = BufferWriter::init();
                 *source_code_printer = BufferPrinter::init(writer);
-                source_code_printer.ctx.append_null_byte = false;
             }
             // else: writeback guard already restored `printer` into the thread-local.
 

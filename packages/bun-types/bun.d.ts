@@ -16,15 +16,13 @@
 declare module "bun" {
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
   type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
-    | NodeJS.TypedArray<TArrayBuffer>
-    | DataView<TArrayBuffer>;
+    NodeJS.TypedArray<TArrayBuffer> | DataView<TArrayBuffer>;
   type BufferSource = NodeJS.TypedArray<ArrayBufferLike> | DataView<ArrayBufferLike> | ArrayBufferLike;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
   type XMLHttpRequestBodyInit = Blob | BufferSource | FormData | URLSearchParams | string;
   type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
   type ReadableStreamDefaultReadResult<T> =
-    | ReadableStreamDefaultReadValueResult<T>
-    | ReadableStreamDefaultReadDoneResult;
+    ReadableStreamDefaultReadValueResult<T> | ReadableStreamDefaultReadDoneResult;
   type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
   type Transferable = ArrayBuffer | MessagePort;
   type MessageEventSource = Bun.__internal.UseLibDomIfAvailable<"MessageEventSource", undefined>;
@@ -571,9 +569,6 @@ declare module "bun" {
     cancel?: UnderlyingSourceCancelCallback;
     pull?: UnderlyingSourcePullCallback<R>;
     start?: UnderlyingSourceStartCallback<R>;
-    /**
-     * Mode "bytes" is not supported.
-     */
     type?: undefined;
   }
 
@@ -1084,7 +1079,8 @@ declare module "bun" {
      *
      * @category Utilities
      *
-     * @param input The TOML document to parse, as a string or UTF-8 bytes
+     * @param input The TOML document to parse, as a string or UTF-8 bytes. A `Blob` that is backed by a file, such
+     * as `Bun.file()`, throws: pass `await file.text()`.
      * @returns A JavaScript object
      * @throws {SyntaxError} If the input is not valid TOML
      */
@@ -1123,7 +1119,11 @@ declare module "bun" {
      * // 'name = "app"\n\n[server]\nport = 8080\n'
      * ```
      */
-    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
+    export function stringify<T>(
+      input: T,
+      replacer?: undefined | null,
+      space?: string | number,
+    ): T extends Function | symbol | undefined ? undefined : T extends object ? string : string | undefined;
   }
 
   /**
@@ -1496,7 +1496,8 @@ declare module "bun" {
      *
      * @category Utilities
      *
-     * @param input The YAML string to parse
+     * @param input The YAML document to parse, as a string or UTF-8 bytes. A `Blob` that is backed by a file, such
+     * as `Bun.file()`, throws: pass `await file.text()`.
      * @returns A JavaScript value, or an array of them for a multi-document stream
      *
      * @example
@@ -1511,7 +1512,9 @@ declare module "bun" {
      * console.log(YAML.parse("abc: def")) // { "abc": "def" }
      * ```
      */
-    export function parse(input: string): unknown;
+    export function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+    ): unknown;
 
     /**
      * Convert a JavaScript value into a YAML string. Strings are double quoted if they contain keywords, non-printable or
@@ -3210,6 +3213,7 @@ declare module "bun" {
      * that absorbs a folded chunk exports the symbols other chunks import
      * from it. Requires `splitting: true`. CLI: `--min-chunk-size`. For browser
      * builds, where every chunk is a request, 16384 is a good value.
+     * Nothing folds into an entry point without `[hash]` in its name.
      *
      * @default 0 (disabled)
      */
@@ -3246,10 +3250,11 @@ declare module "bun" {
      *
      * @default "esm"
      */
-    format?: /**
-     * ECMAScript Module format
-     */
-    | "esm"
+    format?:
+      /**
+       * ECMAScript Module format
+       */
+      | "esm"
       /**
        * CommonJS format
        * **Experimental**
@@ -3503,6 +3508,36 @@ declare module "bun" {
     optimizeImports?: string[];
 
     /**
+     * Type check the entrypoints and everything they import, like `bun check`.
+     * Equivalent to `--check` in the CLI.
+     *
+     * A type error fails the build like any other build error: nothing is
+     * written, and each error is a {@link BuildMessage} whose message starts
+     * with TypeScript's error code.
+     *
+     * The compiler options come from the `tsconfig.json` of the project, or
+     * from the file that `tsconfig` names. The check also uses the `conditions`
+     * and the `loader` of the build.
+     *
+     * @default false
+     *
+     * @example
+     * ```ts
+     * const result = await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   check: true,
+     *   throw: false,
+     * });
+     * for (const log of result.logs) {
+     *   // TS2322: Type 'string' is not assignable to type 'number'.
+     *   console.error(`${log.position?.file}:${log.position?.line}: ${log.message}`);
+     * }
+     * ```
+     */
+    check?: boolean;
+
+    /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
      * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
      *
@@ -3511,7 +3546,9 @@ declare module "bun" {
     throw?: boolean;
 
     /**
-     * Custom tsconfig.json file path to use for path resolution.
+     * Custom tsconfig.json file path. This build reads it in place of every
+     * `tsconfig.json` it would otherwise find, for `paths`, JSX and decorator
+     * settings, and for `check`. A directory means the `tsconfig.json` in it.
      * Equivalent to `--tsconfig-override` in the CLI.
      * @example
      * ```ts
@@ -3745,6 +3782,22 @@ declare module "bun" {
      * @default false
      */
     autoloadPackageJson?: boolean;
+    /**
+     * Profile-guided layout for the executable's bytecode. Requires `bytecode: true`.
+     *
+     * Run an executable built with `bytecode: true` with `BUN_BYTECODE_ORDER_OUT=<path>`
+     * to record which functions it uses, then build again with that file. Bun places
+     * the bytecode the run used together at the front, so the executable starts faster
+     * and uses less memory. A profile from an older build of the app still applies.
+     *
+     * With several files, list the most common way of starting the app first.
+     * `false` and `null` mean no profile, so `bytecodeOrder: haveProfile && path` works.
+     *
+     * Equivalent CLI flag: `--bytecode-order <file>[,<file>...]`
+     *
+     * @see https://bun.com/docs/bundler/executables#profile-guided-bytecode-layout
+     */
+    bytecodeOrder?: string | string[] | false | null;
     /**
      * The JIT policy the executable starts with (see {@link Bun.unsafe.setJITPolicy}).
      * `1` is the normal policy. A value `> 1` multiplies JavaScriptCore's tier-up
@@ -4220,6 +4273,27 @@ declare module "bun" {
        * @platform macOS - Only affects macOS keychain behavior. Ignored on other platforms.
        */
       allowUnrestrictedAccess?: boolean;
+
+      /**
+       * Which computers can see the credential on Windows. Bun passes it to
+       * Credential Manager as the `Persist` field of the entry.
+       *
+       * - `"enterprise"`: `CRED_PERSIST_ENTERPRISE`. The current user sees the
+       *   credential on this computer. When the user account has roaming state,
+       *   such as a roaming profile on a domain, the user also sees it on other
+       *   computers.
+       * - `"local"`: `CRED_PERSIST_LOCAL_MACHINE`. The current user sees the
+       *   credential on this computer only. Use it for a secret that belongs to
+       *   one device, such as a refresh token that rotates on use.
+       *
+       * Every `set()` replaces the whole entry, so the `persist` of the latest
+       * `set()` applies. A value other than these two strings throws
+       * `ERR_INVALID_ARG_VALUE` on every platform.
+       *
+       * @default "enterprise"
+       * @platform Windows - Only affects Windows Credential Manager. Ignored on other platforms.
+       */
+      persist?: "local" | "enterprise" | undefined;
     }): Promise<void>;
 
     /**
@@ -4693,6 +4767,11 @@ declare module "bun" {
     serverName?: string;
 
     /**
+     * Alias of {@link serverName}, the `node:tls` spelling. `serverName` wins if both are set.
+     */
+    servername?: string;
+
+    /**
      * Sets `OPENSSL_RELEASE_BUFFERS` to 1.
      * Reduces overall performance but saves some memory.
      * @default false
@@ -4701,12 +4780,16 @@ declare module "bun" {
 
     /**
      * If set to `false`, any certificate is accepted.
-     * Default is `$NODE_TLS_REJECT_UNAUTHORIZED` environment variable, or `true` if it is not set.
+     *
+     * For a server, the default is `true`. `$NODE_TLS_REJECT_UNAUTHORIZED` does not change it.
+     * For a client, the default is the `$NODE_TLS_REJECT_UNAUTHORIZED` environment variable, or `true` if it is not set.
      */
     rejectUnauthorized?: boolean;
 
     /**
-     * If set to `true`, the server requests a client certificate.
+     * If set to `true`, the server requests a client certificate, and refuses
+     * a client without a valid one unless `rejectUnauthorized` is `false`.
+     * This option alone decides it: `ca` does not request a certificate.
      *
      * Default is `false`.
      */
@@ -4716,8 +4799,17 @@ declare module "bun" {
      * Optionally override the trusted CA certificates. Default is to trust
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
+     *
+     * On a server these verify client certificates, which it requests only
+     * with `requestCert: true`.
      */
     ca?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
+    /**
+     * PEM formatted CRLs (Certificate Revocation Lists). A peer certificate
+     * listed in one of them fails verification: a client certificate when a
+     * server sets `requestCert`, or the server certificate when connecting.
+     */
+    crl?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
@@ -4924,7 +5016,24 @@ declare module "bun" {
      * });
      * ```
      */
-    tls?: TLSOptions;
+    tls?: TLSOptions & {
+      /**
+       * The Node.js spelling of `serverName`.
+       */
+      servername?: string;
+      /**
+       * Replaces the built-in hostname check, as in `fetch()` and `tls.connect()`.
+       * Any truthy return value rejects the server, including the Promise of an
+       * `async` function.
+       * Through an HTTPS proxy it runs for the target's certificate only.
+       * With `rejectUnauthorized: false` it still runs when the certificate
+       * chain verified, but its result is not enforced.
+       * @param hostname - The name the certificate is verified against: `serverName` if set, else the URL host
+       * @param cert - The leaf certificate of the server, as in `fetch()`. Unlike in `tls.connect()`, it has no `issuerCertificate`
+       * @returns An error if the server is unauthorized, otherwise undefined
+       */
+      checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]>;
+    };
   };
 
   type WebSocketOptionsHeaders = {
@@ -5051,10 +5160,7 @@ declare module "bun" {
      * The current state of the connection
      */
     readonly readyState:
-      | typeof WebSocket.CONNECTING
-      | typeof WebSocket.OPEN
-      | typeof WebSocket.CLOSING
-      | typeof WebSocket.CLOSED;
+      typeof WebSocket.CONNECTING | typeof WebSocket.OPEN | typeof WebSocket.CLOSING | typeof WebSocket.CLOSED;
 
     /**
      * The number of bytes of data that have been queued using send() but not yet transmitted to the network
@@ -5304,11 +5410,12 @@ declare module "bun" {
    */
   function color(
     input: ColorInput,
-    outputFormat?: /**
-     * True color ANSI color string, for use in terminals
-     * @example \x1b[38;2;100;200;200m
-     */
-    | "ansi"
+    outputFormat?:
+      /**
+       * True color ANSI color string, for use in terminals
+       * @example \x1b[38;2;100;200;200m
+       */
+      | "ansi"
       | "ansi-16"
       | "ansi-16m"
       /**
@@ -6063,27 +6170,7 @@ declare module "bun" {
      * The gzip header has no file name, no extra data, no comment, no modification time (set to zero) and no header CRC.
      */
     windowBits?:
-      | -9
-      | -10
-      | -11
-      | -12
-      | -13
-      | -14
-      | -15
-      | 9
-      | 10
-      | 11
-      | 12
-      | 13
-      | 14
-      | 15
-      | 25
-      | 26
-      | 27
-      | 28
-      | 29
-      | 30
-      | 31;
+      -9 | -10 | -11 | -12 | -13 | -14 | -15 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 25 | 26 | 27 | 28 | 29 | 30 | 31;
     /**
      * Tunes the compression algorithm.
      *
@@ -6351,6 +6438,15 @@ declare module "bun" {
   interface OnResolveResult {
     /**
      * The destination of the import
+     *
+     * In a runtime plugin, a path without a `namespace` is resolved from the
+     * importing module like any other import, without running `onResolve`
+     * callbacks on it. If nothing is found there, it is used as it is when an
+     * `onLoad` callback matches it.
+     *
+     * A bare name could also be a package in the registry, so `onResolve`
+     * callbacks run on it once more. If one of them returns a path, the name is
+     * the plugin's own and is never auto-installed.
      */
     path: string;
     /**
@@ -6730,6 +6826,9 @@ declare module "bun" {
      * It uses `SO_LINGER` with `l_onoff=1` and `l_linger=0` before calling `close(2)`.
      * Consider using {@link close close()} or {@link end end()} for graceful shutdowns.
      *
+     * In the `handshake` callback of a TLS 1.3 client, this refuses the server
+     * before the client certificate is sent.
+     *
      * @example
      * ```ts
      * socket.terminate();
@@ -6738,20 +6837,19 @@ declare module "bun" {
     terminate(): void;
 
     /**
-     * Shuts down the write-half or both halves of the connection.
-     * This allows the socket to enter a half-closed state where it can still receive data
-     * but can no longer send data (`halfClose = true`), or close both read and write
-     * (`halfClose = false`, similar to `end()` but potentially more immediate depending on OS).
+     * Shuts down one half of the connection.
+     * With no argument, sends a FIN: the socket can still receive data but can no longer send it.
+     * With `true`, stops receiving data.
      * Calls the `shutdown(2)` syscall internally.
      *
-     * @param halfClose If `true`, only shuts down the write side (allows receiving). If `false` or omitted, shuts down both read and write. Defaults to `false`.
+     * @param halfClose If `true`, shuts down the read side. If `false` or omitted, shuts down the write side. Defaults to `false`.
      * @example
      * ```ts
      * // Stop sending data, but allow receiving
-     * socket.shutdown(true);
-     *
-     * // Shutdown both reading and writing
      * socket.shutdown();
+     *
+     * // Stop receiving data
+     * socket.shutdown(true);
      * ```
      */
     shutdown(halfClose?: boolean): void;
@@ -7078,7 +7176,11 @@ declare module "bun" {
     getSession(): void;
 
     /**
-     * Sets the session of the socket.
+     * Sets the TLS session to offer for resumption.
+     *
+     * Only has an effect before the handshake starts: in `open`, before any
+     * `write()`, on a client socket that also has a `handshake` handler. A later
+     * call is ignored.
      *
      * @param session The session to set.
      */
@@ -7167,6 +7269,11 @@ declare module "bun" {
      */
     open?(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>, error?: Error): void | Promise<void>;
+    /**
+     * Called when a handler throws, and when an established TLS session fails
+     * (a record that does not decrypt, a fatal alert from the peer). After a
+     * TLS failure the socket closes, with or without this handler.
+     */
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
     data?(socket: Socket<Data>, data: BinaryTypeList[DataBinaryType]): void | Promise<void>;
     drain?(socket: Socket<Data>): void | Promise<void>;
@@ -7742,7 +7849,7 @@ declare module "bun" {
       onExit?(
         subprocess: Subprocess<In, Out, Err>,
         exitCode: number | null,
-        signalCode: number | null,
+        signalCode: NodeJS.Signals | number | null,
         /**
          * If an error occurred in the call to waitpid2, this is the error.
          */
@@ -7914,11 +8021,17 @@ declare module "bun" {
       maxBuffer?: number;
     }
 
-    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>
-      extends BaseOptions<In, Out, Err> {}
+    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
+      In,
+      Out,
+      Err
+    > {}
 
-    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable>
-      extends BaseOptions<In, Out, Err> {
+    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
+      In,
+      Out,
+      Err
+    > {
       /**
        * If true, the stdout and stderr pipes don't automatically start reading
        * data. Reading begins only when you access the `stdout` or `stderr`
@@ -8160,10 +8273,10 @@ declare module "bun" {
      *
      * To receive signal code changes, use the `onExit` callback.
      *
-     * If the signal code is unknown, this is the original signal code
-     * number, but that case should never happen in practice.
+     * If the signal has no name (for example a Linux real-time signal), this
+     * is its number.
      */
-    readonly signalCode: NodeJS.Signals | null;
+    readonly signalCode: NodeJS.Signals | number | null;
 
     /**
      * Whether the process has exited
@@ -8233,7 +8346,7 @@ declare module "bun" {
      */
     resourceUsage: ResourceUsage;
 
-    signalCode?: string;
+    signalCode?: NodeJS.Signals | number;
     exitedDueToTimeout?: boolean;
     exitedDueToMaxBuffer?: boolean;
     pid: number;
@@ -9184,10 +9297,14 @@ declare module "bun" {
    *     in the brackets.
    * - `{a,b}`
    *     Match one of the patterns contained in the braces.
-   *     The sub-patterns can use any of the other wildcards.
-   *     Braces may be nested up to 10 levels deep.
+   *     The sub-patterns can use any of the other wildcards, and braces can nest.
+   * - `{1..3}`, `{a..e}`, `{01..10}`, `{1..9..2}`
+   *     Matches any number or letter in the range. A third value is the step.
+   * - `?(a|b)`, `*(a|b)`, `+(a|b)`, `@(a|b)`, `!(a|b)`
+   *     Matches zero or one, zero or more, one or more, exactly one, or none
+   *     of the patterns. Parentheses without one of these prefixes are literal.
    * - `!`
-   *     Negates the result when at the start of the pattern.
+   *     Negates the result when at the start of the pattern, unless a "(" follows.
    *     Multiple "!" characters negate the pattern multiple times.
    * - `\`
    *     Escapes any of the special characters listed here.
@@ -9266,6 +9383,9 @@ declare module "bun" {
      * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
      *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
+     *   A damaged JPEG that libjpeg-turbo decodes with only a warning (stray
+     *   bytes, a missing end marker, truncated scan data) does not reject.
+     *   Blocks with no data come back flat grey.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
      * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
      *   construction and the terminal call.
@@ -10011,9 +10131,9 @@ declare module "bun" {
     resize(width: number, height: number): Promise<void>;
 
     /** Navigate back in session history. */
-    back(): Promise<void>;
+    goBack(): Promise<void>;
     /** Navigate forward in session history. */
-    forward(): Promise<void>;
+    goForward(): Promise<void>;
     /** Reload the current page. */
     reload(): Promise<void>;
 
@@ -10537,6 +10657,8 @@ declare module "bun" {
     optionalDependencies?: Record<string, string>;
     peerDependencies?: Record<string, string>;
     optionalPeers?: string[];
+    /** Names in `optionalDependencies` that did not resolve, listed when another package in the lockfile has the name */
+    unresolved?: string[];
     bin?: string | Record<string, string>;
     binDir?: string;
   };
@@ -10549,6 +10671,7 @@ declare module "bun" {
   type BunLockFilePackageInfo = BunLockFileBasePackageInfo & {
     os?: string | string[];
     cpu?: string | string[];
+    hasInstallScript?: true;
     bundled?: true;
   };
 

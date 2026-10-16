@@ -13,7 +13,7 @@ use crate::shell::states::r#if::If;
 use crate::shell::states::subshell::Subshell;
 use crate::shell::yield_::Yield;
 
-pub struct Pipeline {
+pub(crate) struct Pipeline {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Pipeline>,
     pub(crate) io: IO,
@@ -23,12 +23,12 @@ pub struct Pipeline {
     pub(crate) state: PipelineState,
 }
 
-pub enum CmdOrResult {
+pub(crate) enum CmdOrResult {
     Cmd(NodeId),
     Result(ExitCode),
 }
 
-pub enum PipelineState {
+pub(crate) enum PipelineState {
     /// `idx` is the next `cmds[]` slot to start.
     StartingCmds {
         idx: u32,

@@ -92,10 +92,9 @@ use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::{StringJsc as _, bun_string_jsc};
 
-/// Bindgen-generated option-structs for this module (`BunObject.bind.ts`).
-pub mod r#gen {
-    pub use bun_jsc::generated::bun_object::BracesOptions;
-}
+use crate::generated_bindgen::bun_object::BracesOptions;
+use crate::generated_bindgen::glob::GlobClass as _;
+use bun_jsc::bindgen::JsScope;
 
 // ─── wrap_static_method adapters ───────────────────────────────────────────
 // `#[bun_jsc::host_fn(static)]` is not yet emitted,
@@ -165,7 +164,7 @@ mod static_adapters {
 ///     - Getters use a generated wrapper function `BunObject_getter_wrap_<name>`
 /// - Update "BunObject+exports.h"
 /// - Run `bun run build`
-pub mod bun_object {
+pub(crate) mod bun_object {
     use super::*;
 
     // Each callback is exported under
@@ -387,19 +386,27 @@ fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult
     Ok(jsval)
 }
 
+/// `Bun.gc(force)`: heap size after the collection.
+pub(crate) fn gc_from_js(cx: &mut JsScope<'_>, force: bool) -> usize {
+    cx.global().bun_vm().as_mut().garbage_collect_from_js(force)
+}
+
+#[allow(clippy::needless_pass_by_value)] // the generated thunk hands over the string it owns
 pub(crate) fn braces(
-    global: &JSGlobalObject,
-    brace_str: &BunString,
-    opts: r#gen::BracesOptions,
+    cx: &mut JsScope<'_>,
+    brace_str: BunString,
+    opts: BracesOptions,
 ) -> JsResult<JSValue> {
-    let brace_slice = brace_str.to_utf8();
+    let global = cx.global();
+    let brace_utf8 = brace_str.to_utf8();
+    let brace_slice = brace_utf8.slice();
 
     let mut arena = bun_alloc::Arena::new();
     let _ = &mut arena;
 
     let mut lexer_output = 'lexer_output: {
-        if strings::is_all_ascii(brace_slice.slice()) {
-            break 'lexer_output match Braces::Lexer::tokenize(brace_slice.slice()) {
+        if strings::is_all_ascii(brace_slice) {
+            break 'lexer_output match Braces::Lexer::tokenize(brace_slice) {
                 Ok(v) => v,
                 Err(err) => {
                     return Err(
@@ -409,7 +416,7 @@ pub(crate) fn braces(
             };
         }
 
-        match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice.slice()) {
+        match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice) {
             Ok(v) => break 'lexer_output v,
             Err(err) => {
                 return Err(
@@ -444,7 +451,7 @@ pub(crate) fn braces(
     }
 
     if expansion_count == 0 {
-        return bun_string_jsc::to_js_array(global, core::slice::from_ref(brace_str));
+        return bun_string_jsc::to_js_array(global, core::slice::from_ref(&brace_str));
     }
 
     // Hard cap before preallocation: `calculate_expanded_amount` saturates to
@@ -670,7 +677,7 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
 }
 
 // HOST_EXPORT(Bun__inspect_singleline, c)
-pub fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> BunString {
+pub(crate) fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> BunString {
     let mut array: Vec<u8> = Vec::new();
     if ConsoleObject::format2(
         ConsoleObject::MessageLevel::Debug,
@@ -777,7 +784,7 @@ fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 // plain `JSValue` so the generated thunk is a bare deref+call (no
 // `ExceptionValidationScope`).
 // HOST_EXPORT(BunObject_getter_main, jsc)
-pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
+pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
     // SAFETY: bun_vm() returns the live singleton VirtualMachine for a Bun-owned global.
     let vm = global_this.bun_vm().as_mut();
     // If JS has set it to a custom value, use that one
@@ -851,7 +858,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
 }
 
 // HOST_EXPORT(BunObject_setter_main, jsc)
-pub fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
+pub(crate) fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
     // SAFETY: bun_vm() returns the live per-thread singleton.
     global_this
         .bun_vm()
@@ -1025,14 +1032,20 @@ fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult
         )));
     }
 
+    // mimalloc's scavenger sweeps this thread's heaps while it sleeps, as it does across the event loop's poll.
+    // SAFETY: nothing allocates or frees on this thread until `mi_on_thread_idle_end` below.
+    let handed_off = unsafe { bun_alloc::mimalloc::mi_on_thread_idle_start() };
     std::thread::sleep(core::time::Duration::from_millis(
         u64::try_from(milliseconds).expect("int cast"),
     ));
+    if handed_off {
+        bun_alloc::mimalloc::mi_on_thread_idle_end();
+    }
     Ok(JSValue::UNDEFINED)
 }
 
 // HOST_EXPORT(Bun__gc, c)
-pub fn gc(vm: &mut VirtualMachine, sync: bool) -> usize {
+pub(crate) fn gc(vm: &mut VirtualMachine, sync: bool) -> usize {
     vm.garbage_collect_from_js(sync)
 }
 
@@ -1162,7 +1175,7 @@ fn resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
 }
 
 // HOST_EXPORT(Bun__resolveSync, c)
-pub fn bun_resolve_sync(
+pub(crate) fn bun_resolve_sync(
     global: &JSGlobalObject,
     specifier: JSValue,
     source: JSValue,
@@ -1203,10 +1216,8 @@ pub fn bun_resolve_sync(
 /// that remain valid for the duration of this call.
 // FFI entry point exported via HOST_EXPORT and called only from C++
 // (ImportMetaObject.cpp / NodeModuleModule.cpp), which upholds the contract
-// above. clippy excludes `extern "C"` fns from this lint; the export wrapper
-// lives in generated code, so allow it here.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn bun_resolve_sync_with_paths(
+// above.
+pub(crate) fn bun_resolve_sync_with_paths(
     global: &JSGlobalObject,
     specifier: JSValue,
     source: JSValue,
@@ -1265,7 +1276,7 @@ pub fn bun_resolve_sync_with_paths(
 bun_output::declare_scope!(importMetaResolve, visible);
 
 // HOST_EXPORT(Bun__resolveSyncWithStrings, c)
-pub fn bun_resolve_sync_with_strings(
+pub(crate) fn bun_resolve_sync_with_strings(
     global: &JSGlobalObject,
     specifier: &BunString,
     source: &BunString,
@@ -1292,7 +1303,7 @@ pub fn bun_resolve_sync_with_strings(
 /// everything else — an `onResolve` plugin throwing or returning an invalid result, a specifier
 /// that is not a string — is thrown.
 // HOST_EXPORT(Bun__resolveSyncWithSourceIfExists, c)
-pub fn bun_resolve_sync_with_source_if_exists(
+pub(crate) fn bun_resolve_sync_with_source_if_exists(
     global: &JSGlobalObject,
     specifier: JSValue,
     source: &BunString,
@@ -1734,7 +1745,12 @@ fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValu
 }
 
 fn get_glob_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::api::glob::Glob>(global_this)
+    // SAFETY: a lazy property callback, entered from JSC with no `JsScope` borrowed.
+    unsafe {
+        JsScope::with(global_this.as_mut_ptr(), |cx| {
+            crate::api::glob::Glob::get_constructor(&cx.heap).to_js()
+        })
+    }
 }
 
 fn get_image_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -2149,7 +2165,7 @@ pub(crate) fn parse_compress_buffer_and_options(
 }
 
 #[allow(non_snake_case)]
-pub mod JSZlib {
+pub(crate) mod JSZlib {
     use super::*;
     use bun_jsc::ComptimeStringMapExt as _;
     use bun_libdeflate_sys::libdeflate as bun_libdeflate;
@@ -2574,7 +2590,7 @@ pub mod JSZlib {
 }
 
 #[allow(non_snake_case)]
-pub mod JSZstd {
+pub(crate) mod JSZstd {
     use super::*;
 
     fn get_level(global_this: &JSGlobalObject, options_val: Option<JSValue>) -> JsResult<i32> {
@@ -2917,16 +2933,16 @@ mod stdio_stores {
 }
 
 // HOST_EXPORT(BunObject__createBunStdin)
-pub fn create_bun_stdin(global_this: &JSGlobalObject) -> JSValue {
+pub(crate) fn create_bun_stdin(global_this: &JSGlobalObject) -> JSValue {
     stdio_stores::stdin(global_this)
 }
 
 // HOST_EXPORT(BunObject__createBunStderr)
-pub fn create_bun_stderr(global_this: &JSGlobalObject) -> JSValue {
+pub(crate) fn create_bun_stderr(global_this: &JSGlobalObject) -> JSValue {
     stdio_stores::stderr(global_this)
 }
 
 // HOST_EXPORT(BunObject__createBunStdout)
-pub fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
+pub(crate) fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
     stdio_stores::stdout(global_this)
 }

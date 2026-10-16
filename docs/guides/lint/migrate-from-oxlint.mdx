@@ -1,0 +1,162 @@
+---
+title: Migrate from oxlint to bun lint
+sidebarTitle: Migrate from oxlint
+mode: center
+---
+
+`bun lint` reads your `.oxlintrc.json` and reports the same problems as oxlint 1.87. In most projects you only change the command.
+
+```json package.json icon="file-json"
+{
+  "scripts": {
+    "lint": "oxlint --deny-warnings", // [!code --]
+    "lint": "bun lint --deny-warnings" // [!code ++]
+  }
+}
+```
+
+Flags and arguments stay the same: `oxlint -D no-console src` becomes `bun lint -D no-console src`. Change CI, lint-staged, and Git hooks too.
+
+Edit the script first. If `package.json` has a `lint` script, `bun lint` runs that script, so you'd still get oxlint.
+
+---
+
+Run it. The problems, messages, help texts, and exit code are oxlint's.
+
+```sh terminal icon="terminal"
+bun run lint
+```
+
+```txt
+$ bun lint --deny-warnings
+1 | export function label(value: unknown) {
+2 |   console.log(value);
+      ^
+warn: Unexpected console statement.  no-console
+   at src/index.ts:2:3
+
+note: Delete this console statement.
+
+1 | export function label(value: unknown) {
+2 |   console.log(value);
+3 |   return typeof value === "strng" ? value : "none";
+                              ^
+error: Invalid `typeof` comparison value.  valid-typeof
+    at src/index.ts:3:27
+
+note: Did you mean `"string"`?
+
+Linted 1 file [6.46ms]
+error: script "lint" exited with code 1
+```
+
+Only the default layout is Bun's. Every other format, such as `-f unix`, `-f json`, or `-f github`, prints exactly what oxlint prints.
+
+---
+
+Run `--doctor` to see what Bun does with your config. It doesn't lint or write anything.
+
+```sh terminal icon="terminal"
+bun lint --doctor
+```
+
+```txt
+Using .oxlintrc.json (oxlint config)
+
+    1 file to lint
+
+  116 rules run natively
+    0 rules run in JavaScript
+   25 rules do not run
+       25 need types, use --type-aware: @typescript-eslint/await-thenable, @typescript-eslint/consistent-return, @typescript-eslint/no-array-delete, ..
+
+You can remove: oxlint
+Not checked:    other tools' configs, CI files, Git hooks
+```
+
+oxlint also skips type-aware rules unless you pass `--type-aware`, so you lose nothing here.
+
+---
+
+Uninstall oxlint.
+
+```sh terminal icon="terminal"
+bun remove oxlint oxlint-tsgolint
+```
+
+`import { defineConfig } from "oxlint"` in an `oxlint.config.ts` keeps working without the package.
+
+No config file? Then Bun only uses oxlint's defaults while `package.json` depends on `oxlint`. To keep them, add an empty `.oxlintrc.json` before you uninstall. Without it you get [Bun's defaults](/lint#default-rules). Your `oxlint-disable` comments keep working either way.
+
+```json .oxlintrc.json icon="file-json"
+{}
+```
+
+Don't use `oxlint --init` for this. It sets the `correctness` category to `"error"`, but oxlint's default is `"warn"`, so warnings turn into errors and the exit code changes.
+
+---
+
+You can drop lint-staged. `--staged` lints only the staged files, and with `--fix` it stages the fixed files again.
+
+```sh .husky/pre-commit icon="terminal"
+npx lint-staged # [!code --]
+bun lint --staged --fix # [!code ++]
+```
+
+---
+
+`--type-aware` and `--type-check` work without `oxlint-tsgolint`. The types come from Bun's built-in type checker ([`bun check`](/runtime/check)).
+
+```sh terminal icon="terminal"
+oxlint --type-aware # [!code --]
+bun lint --type-aware # [!code ++]
+```
+
+---
+
+`jsPlugins` work. Bun runs them in JavaScript. See [ESLint plugins](/lint/plugins).
+
+```json .oxlintrc.json icon="file-json"
+{
+  "jsPlugins": ["./lint/plugin.js"],
+  "rules": { "local/no-todo": "warn" }
+}
+```
+
+---
+
+If the project also has an ESLint config, Bun uses the oxlint config. Pick the other one with `--config`.
+
+```json package.json icon="file-json"
+{
+  "scripts": {
+    "lint": "oxlint && eslint", // [!code --]
+    "lint": "bun lint && bun lint --config eslint.config.js" // [!code ++]
+  }
+}
+```
+
+---
+
+## Differences from oxlint
+
+If `bun lint` and oxlint 1.87 disagree about a rule, that's a bug. [Open an issue](https://github.com/oven-sh/bun/issues). These differences are intentional:
+
+- **The rules are oxlint 1.87's**, whatever version you had installed.
+- **No `jsdoc/*` or `vue/*` rules.** If you turn one on by name, the run exits with code `2`. If you only list the plugin, you get a note. To run `eslint-plugin-jsdoc` or `eslint-plugin-vue` instead, add it to [`jsPlugins`](/lint/plugins) under another name, as in oxlint: `{ "name": "jsdoc-js", "specifier": "eslint-plugin-jsdoc" }`.
+- **An unknown rule doesn't stop the run.** oxlint rejects the config. Bun runs the other rules, then exits with code `2`. `--allow-unsupported` turns that into a warning.
+- **Output is sorted** by file and line. oxlint prints files as its threads finish.
+- **Syntax errors can be worded differently.** oxlint also rejects a few programs that Bun lints, such as `let a; let a;`.
+- **Patterns in rule options are JavaScript regular expressions.** oxlint uses Rust's `regex` crate.
+- **Control flow rules follow ESLint** where oxlint differs: `no-unreachable`, `no-fallthrough`, `getter-return`, `array-callback-return`, `constructor-super`, `no-this-before-super`, `no-useless-assignment`.
+- **`--fix` never writes a file that no longer parses.** Bun leaves the file alone and warns.
+- **`--init` adds `[lint]` to `bunfig.toml`**, not an `.oxlintrc.json`. If you already have an oxlint config, it does nothing.
+- **No language server.** `--lsp` is an error. Keep `oxlint` if your editor's oxc extension uses it.
+
+---
+
+See also:
+
+- [`bun lint`](/lint)
+- [ESLint plugins](/lint/plugins)
+- [Migrate from oxfmt to bun fmt](/guides/format/migrate-from-oxfmt)

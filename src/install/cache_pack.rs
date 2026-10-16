@@ -335,7 +335,8 @@ impl Drop for TempOutput {
 }
 
 struct Writer<'a> {
-    file: &'a File,
+    /// `None` for `--dry-run`, which still reads and checks every package but writes no pack.
+    file: Option<&'a File>,
     buf: Box<[u8]>,
     len: usize,
     /// Bytes already in `file`. Writes name their offset: `patch_u64` must not move a position.
@@ -344,7 +345,7 @@ struct Writer<'a> {
 }
 
 impl<'a> Writer<'a> {
-    fn new(file: &'a File) -> Self {
+    fn new(file: Option<&'a File>) -> Self {
         Self {
             file,
             buf: vec![0u8; IO_BUFFER_LEN].into_boxed_slice(),
@@ -359,8 +360,9 @@ impl<'a> Writer<'a> {
     }
 
     fn flush(&mut self) -> sys::Maybe<()> {
-        self.file
-            .pwrite_all(&self.buf[..self.len], self.flushed as i64)?;
+        if let Some(file) = self.file {
+            file.pwrite_all(&self.buf[..self.len], self.flushed as i64)?;
+        }
         self.flushed += self.len as u64;
         self.len = 0;
         Ok(())
@@ -414,7 +416,8 @@ impl<'a> Writer<'a> {
             return Ok(());
         }
         self.flush()?;
-        self.file.pwrite_all(&bytes, at as i64)
+        self.file
+            .map_or(Ok(()), |file| file.pwrite_all(&bytes, at as i64))
     }
 }
 
@@ -459,7 +462,7 @@ fn pack_entry(
             &rel_buf[..len]
         };
         if rel.len() > MAX_PACK_PATH_LEN || !is_safe_relative_path(rel) {
-            return Err(refuse("cache entry has a path that cannot be packed", rel));
+            return Err(refuse("cache entry path cannot be packed", rel));
         }
         match entry.kind {
             sys::EntryKind::Directory => w.header(KIND_DIRECTORY, rel, 0o755, 0)?,
@@ -474,7 +477,7 @@ fn pack_entry(
                 let size = u64::try_from(stat.st_size).unwrap_or(0);
                 w.header(KIND_FILE, rel, stat.st_mode as u32 & 0o777, size)?;
                 if !w.copy_from(&file, size)? {
-                    return Err(refuse("file changed while it was being packed", rel));
+                    return Err(refuse("file changed while packing", rel));
                 }
                 summary.files += 1;
                 summary.bytes += size;
@@ -488,7 +491,7 @@ fn pack_entry(
                         || !bun_libarchive::is_symlink_target_safe(rel, target, &mut join_buf)
                     {
                         return Err(refuse(
-                            "cache entry has a symlink that may lead out of it",
+                            "cache entry has symlink that may point outside it",
                             rel,
                         ));
                     }
@@ -515,15 +518,19 @@ fn pack_entry(
 pub fn pack(pm: &mut PackageManager, destination: &[u8]) -> Result<PackSummary, Error> {
     let entries = lockfile_entries(pm);
     let cache_dir = pm.get_cache_directory();
-    let output = TempOutput::create(destination)?;
+    let output = if pm.options.dry_run {
+        None
+    } else {
+        Some(TempOutput::create(destination)?)
+    };
     let mut summary = PackSummary::default();
-    if let Some(file) = &output.file {
-        let mut w = Writer::new(file);
+    {
+        let mut w = Writer::new(output.as_ref().and_then(|output| output.file.as_ref()));
         w.write(MAGIC)?;
         for entry in &entries {
             if entry_tag(entry.name.as_bytes()).is_none() {
                 return Err(Error::Entry {
-                    reason: "cache entry has a name that cannot be packed",
+                    reason: "cache entry name cannot be packed",
                     path: entry.name.as_bytes().into(),
                 });
             }
@@ -536,7 +543,9 @@ pub fn pack(pm: &mut PackageManager, destination: &[u8]) -> Result<PackSummary, 
         w.header(KIND_END, b"", 0, 0)?;
         w.flush()?;
     }
-    output.commit(destination)?;
+    if let Some(output) = output {
+        output.commit(destination)?;
+    }
     Ok(summary)
 }
 
@@ -595,7 +604,7 @@ impl Reader {
         if self.start == self.end {
             let n = sys::pread(self.file.handle(), &mut self.buf, self.pos as i64)?;
             if n == 0 {
-                return Err(self.refuse("the pack is cut short", b""));
+                return Err(self.refuse("truncated pack file", b""));
             }
             self.start = 0;
             self.end = n;
@@ -662,7 +671,7 @@ impl Reader {
         self.read_exact(&mut size)?;
         let size = u64::from_le_bytes(size);
         if size > self.len.saturating_sub(self.pos) {
-            return Err(self.refuse("the pack is cut short", &path[..path_len]));
+            return Err(self.refuse("truncated pack file", &path[..path_len]));
         }
         Ok(Header {
             kind,
@@ -737,7 +746,7 @@ fn unpack_package(
         let header = r.header(&mut path)?;
         let rel = ZStr::from_slice_with_nul(&path);
         if r.pos > end || header.size > end - r.pos {
-            return Err(r.refuse("record runs past the end of its package", rel.as_bytes()));
+            return Err(r.refuse("record runs past end of package", rel.as_bytes()));
         }
         if header.kind == KIND_CHECKSUM {
             let computed = r.hasher.final_();
@@ -911,14 +920,14 @@ pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary
             _ if header.mode != 0 => return Err(r.refuse("malformed record", name.as_bytes())),
             KIND_PACKAGE => {}
             KIND_END if name.is_empty() && r.pos == r.len => break,
-            KIND_END => return Err(r.refuse("bytes after the end of the pack", b"")),
+            KIND_END => return Err(r.refuse("trailing bytes after pack", b"")),
             _ => return Err(r.refuse("record outside of a package", name.as_bytes())),
         }
         let Some(tag) = entry_tag(name.as_bytes()) else {
-            return Err(r.refuse("not the name of a cache entry", name.as_bytes()));
+            return Err(r.refuse("invalid cache entry name", name.as_bytes()));
         };
         if name.as_bytes() <= previous.as_slice() {
-            return Err(r.refuse("packages are not in order", name.as_bytes()));
+            return Err(r.refuse("packages out of order", name.as_bytes()));
         }
         previous.clear();
         previous.extend_from_slice(name.as_bytes());
@@ -939,6 +948,12 @@ pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary
             )?;
             staged.push((ZBox::from_bytes(name.as_bytes()), tag));
         }
+    }
+
+    // The whole pack is verified by now and the cache is untouched. Dropping `staging` deletes it.
+    if pm.options.dry_run {
+        summary.created = staged.len() as u32;
+        return Ok(summary);
     }
 
     let mut cache_dir_path_buf = bun_paths::path_buffer_pool::get();
@@ -1001,12 +1016,14 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
     };
 
     let quiet = pm.options.log_level == LogLevel::Silent;
+    let dry_run = pm.options.dry_run;
     let timer = bun_core::time::Timer::start();
     let result = if is_pack {
         pack(pm, abs_file).map(|summary| {
             if !quiet {
                 bun_core::prettyln!(
-                    "<green>Packed<r> {} package{} ({} file{}, {}) into <b>{}<r> <d>[{}]<r>",
+                    "<green>{}<r> {} package{} ({} file{}, {}) into <b>{}<r> <d>[{}]<r>",
+                    if dry_run { "Would pack" } else { "Packed" },
                     summary.packages,
                     plural(summary.packages.into()),
                     summary.files,
@@ -1018,7 +1035,7 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
             }
             if summary.missing > 0 {
                 bun_core::pretty_errorln!(
-                    "<r><yellow>warn<r>: left out {} package{} the cache does not have (run <b>bun install<r> first)",
+                    "<r><yellow>warn<r>: skipping {} package{} not in cache (run <b>bun install<r> first)",
                     summary.missing,
                     plural(summary.missing.into()),
                 );
@@ -1028,7 +1045,8 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
         unpack(pm, abs_file).map(|summary| {
             if !quiet {
                 bun_core::prettyln!(
-                    "<green>Unpacked<r> {} package{} ({} new, {} already cached, {}) <d>[{}]<r>",
+                    "<green>{}<r> {} package{} ({} new, {} already cached, {}) <d>[{}]<r>",
+                    if dry_run { "Would unpack" } else { "Unpacked" },
                     summary.packages,
                     plural(summary.packages.into()),
                     summary.created,
@@ -1039,7 +1057,7 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
             }
             if summary.incomplete > 0 {
                 bun_core::pretty_errorln!(
-                    "<r><yellow>warn<r>: left {} incomplete cache entr{} as found; <b>bun install<r> downloads {} again",
+                    "<r><yellow>warn<r>: ignoring {} incomplete cache entr{}, <b>bun install<r> will re-download {}",
                     summary.incomplete,
                     if summary.incomplete == 1 { "y" } else { "ies" },
                     if summary.incomplete == 1 { "it" } else { "them" },

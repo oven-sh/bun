@@ -1045,6 +1045,7 @@ mod tests {
             (">=v16.0.0", false),
             ("~>16", false),
             ("1.2.3-rc.1+build", false),
+            ("16+build", false),
             ("foo-bar", true),
             ("latest", true),
             ("lts/*", true),

@@ -9,7 +9,6 @@
     macro("bun:test"_s, BunTest) \
     macro("bun:test/vitest"_s, BunTestVitest) \
     macro("bun:jsc"_s, BunJSC) \
-    macro("bun:app"_s, BunApp) \
     macro("node:buffer"_s, NodeBuffer) \
     macro("node:constants"_s, NodeConstants) \
     macro("node:sqlite"_s, NodeSqlite) \

@@ -190,7 +190,6 @@
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
 #include "JSX509Certificate.h"
-#include "JSBakeResponse.h"
 #include "JSSign.h"
 #include "JSVerify.h"
 #include "JSHmac.h"
@@ -2227,7 +2226,6 @@ void GlobalObject::finishCreation(VM& vm)
     if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
         setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage);
 
-    m_bakeAdditions.initialize();
     m_bindgenAdditions.initialize();
     m_markdownTagStrings.initialize();
 

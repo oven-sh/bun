@@ -181,7 +181,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForJSPrivateKeyObject { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForServerRouteList { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForBunRequest { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForBakeResponse { nullptr };
 
     GCClient::IsoSubspace* m_clientSubspaceForJSConnectionsList { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSHTTPParser { nullptr };

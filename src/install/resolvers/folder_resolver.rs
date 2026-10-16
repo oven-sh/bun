@@ -15,6 +15,7 @@ use crate::lockfile_real::StringBuilder;
 use crate::lockfile_real::package::ResolverContext;
 use crate::npm;
 use crate::package_manager_real::PackageManager;
+use crate::package_manager_real::process_dependency_list::{ListedDependencies, OnlyDependencies};
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 
 #[derive(Copy, Clone)]
@@ -66,7 +67,8 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
             None => search_path,
         };
 
-        fmt::Display::fmt(&QuotedFormatter { text: rel }, f)
+        let quoted = QuotedFormatter { text: rel };
+        fmt::Display::fmt(&bun_core::fmt::EscapeControlChars(quoted), f)
     }
 }
 
@@ -345,6 +347,37 @@ fn read_package_json_from_disk(
 pub enum GlobalOrRelative<'a> {
     Global(&'a [u8]),
     Relative(dependency::version::Tag),
+}
+
+/// Reads what the package.json of a `file:` or `workspace:` folder depends on. The folder is not
+/// resolved by this, and what is wrong with the file is reported when it is.
+pub(crate) fn listed_dependencies(
+    tag: dependency::version::Tag,
+    non_normalized_path: &[u8],
+    manager: &mut PackageManager,
+) -> Option<ListedDependencies> {
+    let mut joined = bun_paths::path_buffer_pool::get();
+    let relative = GlobalOrRelative::Relative(tag);
+    let paths = normalize_package_json_path(relative, &mut joined, non_normalized_path)?;
+    let mut log = bun_ast::Log::init();
+    // `bun add` in a workspace edits the copy in this cache before it writes the file.
+    let entry = (manager.workspace_package_json_cache)
+        .get_with_path(&mut log, paths.abs.as_bytes(), Default::default())
+        .unwrap()
+        .ok()?;
+    let (source, json) = (entry.source.clone(), entry.root);
+    let mut listed = ListedDependencies::default();
+    // These features register no `npm:` alias, which would change how other rows are resolved.
+    let parsed = listed.package.parse_with_json(
+        &mut listed.lockfile,
+        manager,
+        &mut log,
+        &source,
+        json,
+        &mut OnlyDependencies,
+        Features::FOLDER,
+    );
+    parsed.ok().map(|()| listed)
 }
 
 pub(crate) fn get_or_put(

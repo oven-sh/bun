@@ -76,7 +76,7 @@ function capturingRegistry() {
   };
 }
 
-async function run(root: string, cmd: string[], env: Record<string, string | undefined> = {}) {
+async function run(root: string, cmd: string[], env: Record<string, string | undefined> = {}, cwd = "project") {
   const home = join(root, "home");
   const fullEnv: Record<string, string | undefined> = {
     ...bunEnv,
@@ -92,7 +92,7 @@ async function run(root: string, cmd: string[], env: Record<string, string | und
   for (const key in fullEnv) if (fullEnv[key] === undefined) delete fullEnv[key];
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...cmd],
-    cwd: join(root, "project"),
+    cwd: join(root, cwd),
     env: fullEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -942,6 +942,85 @@ describe.concurrent("bun install config precedence", () => {
     expect(installed(String(dir), "no-deps")).toBe(true);
     expect(exitCode).toBe(0);
   });
+
+  type Layer = (url: string) => Record<string, string>;
+  const lastLayers: [name: string, args: (url: string) => string[], env: Layer, files: Layer][] = [
+    ["BUN_CONFIG_REGISTRY", () => [], url => ({ BUN_CONFIG_REGISTRY: url }), () => ({})],
+    ["NPM_CONFIG_REGISTRY", () => [], url => ({ NPM_CONFIG_REGISTRY: url }), () => ({})],
+    ["BUN_CONFIG_REGISTRY in .env", () => [], () => ({}), url => ({ "project/.env": `BUN_CONFIG_REGISTRY=${url}\n` })],
+    ["--registry", url => [`--registry=${url}`], () => ({}), () => ({})],
+  ];
+
+  test.each(lastLayers)(
+    "a scope with an empty registry URL is at the default registry from %s",
+    async (_, args, env, files) => {
+      using dead = deadRegistry();
+      const url = registry.registryUrl();
+      using dir = tempDir("config-precedence", {
+        "project/.npmrc": `registry=${dead.url}\n@types:registry=\${EMPTY_URL}\n`,
+        "project/package.json": packageJson({ "@types/no-deps": "1.0.0" }),
+        ...files(url),
+      });
+      const { stderr, exitCode } = await install(String(dir), args(url), { ...env(url), EMPTY_URL: "" });
+      expect(stderr).not.toContain("error:");
+      expect(dead.hits).toBe(0);
+      expect(installed(String(dir), "@types", "no-deps")).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.each(lastLayers)(
+    "a scope with a token and no URL stays at the configured registry when %s names another host",
+    async (_, args, env, files) => {
+      using configured = capturingRegistry();
+      using other = capturingRegistry();
+      using dir = tempDir("config-precedence", {
+        "project/bunfig.toml": bunfig({ registry: configured.url, scopes: { "needs-auth": { token: authToken } } }),
+        "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0", "no-deps": "1.0.0" }),
+        ...files(other.url),
+      });
+      const { stderr, exitCode } = await install(String(dir), args(other.url), env(other.url));
+      expect(stderr).not.toContain("error:");
+      // The scope's package, with its token. The other host sees neither.
+      expect(new Set(configured.authorizations)).toStrictEqual(new Set([`Bearer ${authToken}`]));
+      expect(other.authorizations).not.toBeEmpty();
+      expect(new Set(other.authorizations)).toStrictEqual(new Set([null]));
+      expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
+      expect(installed(String(dir), "no-deps")).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.each(lastLayers)(
+    "a scope with a token and no URL keeps the token when %s names the configured registry",
+    async (_, args, env, files) => {
+      using capture = capturingRegistry();
+      using dir = tempDir("config-precedence", {
+        "project/bunfig.toml": bunfig({ registry: capture.url, scopes: { "needs-auth": { token: authToken } } }),
+        "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0", "no-deps": "1.0.0" }),
+        ...files(capture.url),
+      });
+      const { stderr, exitCode } = await install(String(dir), args(capture.url), env(capture.url));
+      expect(stderr).not.toContain("error:");
+      // The token is the scope's: the other package is asked for without it.
+      expect([...new Set(capture.authorizations)].sort()).toEqual([`Bearer ${authToken}`, null]);
+      expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
+      expect(installed(String(dir), "no-deps")).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("a scope with an empty registry URL gets the credentials of the default registry", async () => {
+    using dir = tempDir("config-precedence", {
+      "project/.npmrc": "@needs-auth:registry=\n",
+      "project/bunfig.toml": bunfig({ registry: { url: registry.registryUrl(), token: authToken } }),
+      "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0" }),
+    });
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe.concurrent("directories named by config files", () => {
@@ -963,7 +1042,7 @@ describe.concurrent("directories named by config files", () => {
   const globalDirs = (globalDir: string, globalBinDir: string) => bunfig({ globalDir, globalBinDir });
   const binNames = (dir: string) => readdirSync(dir).map(name => name.replace(/\.(exe|bunx)$/, ""));
   const ignored = (key: string, env: string) =>
-    `warn: "${key}" is ignored in a project's bunfig.toml. Set it in $HOME/.bunfig.toml or in $${env}\n`;
+    `warn: ignoring "${key}" in project bunfig.toml, set it in $HOME/.bunfig.toml or $${env}\n`;
 
   describe.each([
     ["$XDG_CONFIG_HOME/.bunfig.toml", "home/.bunfig.toml", [], {}],
@@ -981,6 +1060,7 @@ describe.concurrent("directories named by config files", () => {
     test.each([
       ["absolute paths", (root: string) => globalDirs(join(root, "home", "g"), join(root, "home", "b"))],
       ["~/ paths", () => globalDirs("~/g", "~/b")],
+      ["paths relative to the file", () => globalDirs("../home/g", "../home/b")],
     ])("%s: -g installs there", async (_, config) => {
       using dir = tempDir("config-global-dir", files);
       const root = String(dir);
@@ -1067,7 +1147,7 @@ describe.concurrent("directories named by config files", () => {
 
       const { stderr, exitCode } = await run(root, ["add", "-g", join(root, "dep")], noDirs);
       expect(stderr).not.toContain("error:");
-      expect(stderr).not.toContain("is ignored");
+      expect(stderr).not.toContain("ignoring");
       await expectVictimUntouched(root);
       expect(existsSync(join(root, "home", ".bun", "install", "global", "node_modules", "dep", "package.json"))).toBe(
         true,
@@ -1122,6 +1202,107 @@ describe.concurrent("directories named by config files", () => {
       // The HTTP thread prints this and exits; the main thread may get "Resolving dependencies" out first.
       // What follows the ~ is appended as written.
       expect(stderr).toContain(`HTTPThread: could not find CA file: '${join(String(dir), "home")}/missing.pem'\n`);
+      expect(exitCode).toBe(1);
+    });
+
+    test.each([
+      ["--cache-dir", ["--cache-dir=~/c"], {}, ["c"]],
+      ["$BUN_INSTALL_CACHE_DIR", [], { BUN_INSTALL_CACHE_DIR: "~/c" }, ["c"]],
+      ["$BUN_INSTALL", [], { BUN_INSTALL: "~/c" }, ["c", "install", "cache"]],
+      ["$XDG_CACHE_HOME", [], { XDG_CACHE_HOME: "~/c" }, ["c", ".bun", "install", "cache"]],
+    ])("%s", async (_, args, env, expected) => {
+      using dir = tempDir("config-tilde-typed", files);
+      expect(await run(String(dir), ["pm", "cache", ...args], { ...noDirs, ...env })).toEqual({
+        stdout: join(String(dir), "home", ...expected),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.each([
+      [{ BUN_INSTALL: "~/c" }, ["c"]],
+      [{ XDG_CACHE_HOME: "~/c" }, ["c", ".bun"]],
+    ])("-g installs below %j", async (env, expected) => {
+      using dir = tempDir("config-tilde-global", files);
+      const root = String(dir);
+      const { stderr, exitCode } = await run(root, ["add", "-g", join(root, "dep")], { ...noDirs, ...env });
+      expect(stderr).not.toContain("error:");
+      expect(await readdirSorted(join(root, "home", ...expected, "install", "global", "node_modules"))).toContain(
+        "dep",
+      );
+      expect(binNames(join(root, "home", ...expected, "bin"))).toContain("depbin");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // bun goes to the project's root before it reads most of these.
+  describe.each(["project/packages/app", "project/src"])("relative paths, with bun run in %s", cwd => {
+    const workspace = {
+      "home/.keep": "",
+      "project/package.json": JSON.stringify({ name: "project", version: "1.0.0", workspaces: ["packages/*"] }),
+      "project/packages/app/package.json": JSON.stringify({ name: "app", version: "1.0.0" }),
+      "project/src/.keep": "",
+    };
+    const unreachable = "https://localhost:1/";
+
+    test.each([
+      ["./bunfig.toml cache.dir", { "project/bunfig.toml": bunfig({ cache: { dir: "./c" } }) }, [], "project/c"],
+      ["./.npmrc cache", { "project/.npmrc": "cache=./c\n" }, [], "project/c"],
+      ["~/.bunfig.toml cache.dir", { "home/.bunfig.toml": bunfig({ cache: { dir: "c" } }) }, [], "home/c"],
+      ["~/.bunfig.toml cache", { "home/.bunfig.toml": bunfig({ cache: "c" }) }, [], "home/c"],
+      ["~/.npmrc cache", { "home/.npmrc": "cache=c\n" }, [], "home/c"],
+      ["--config cache.dir", { "ci/ci.toml": bunfig({ cache: { dir: "c" } }) }, ["--config=/ci/ci.toml"], "ci/c"],
+    ])("%s starts at the file", async (_, config, args, expected) => {
+      using dir = tempDir("config-relative-cache", { ...workspace, ...config });
+      const flags = args.map(arg => arg.replace("=/", `=${dir}/`));
+      expect(await run(String(dir), ["pm", "cache", ...flags], noDirs, cwd)).toEqual({
+        stdout: join(String(dir), expected),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.each([
+      ["--cache-dir", "--cache-dir=./c"],
+      ["--config", "--config=./ci.toml"],
+    ])("%s starts where bun is run", async (_, flag) => {
+      using dir = tempDir("config-relative-typed", {
+        ...workspace,
+        "project/ci.toml": bunfig({ cache: { dir: "the-file-at-the-root" } }),
+        [`${cwd}/ci.toml`]: bunfig({ cache: { dir: "c" } }),
+      });
+      expect(await run(String(dir), ["pm", "cache", flag], noDirs, cwd)).toEqual({
+        stdout: join(String(dir), cwd, "c"),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // CI sets it once for the whole repository, and saves that one folder.
+    test("$BUN_INSTALL_CACHE_DIR starts at the project's root", async () => {
+      using dir = tempDir("config-relative-env", workspace);
+      expect(await run(String(dir), ["pm", "cache"], { ...noDirs, BUN_INSTALL_CACHE_DIR: ".c" }, cwd)).toEqual({
+        stdout: join(String(dir), "project", ".c"),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.each([
+      [
+        "./bunfig.toml",
+        { "project/bunfig.toml": bunfig({ registry: unreachable, cafile: "ca/x.pem" }) },
+        [],
+        "project",
+      ],
+      ["./.npmrc", { "project/.npmrc": `registry=${unreachable}\ncafile=ca/x.pem\n` }, [], "project"],
+      ["~/.npmrc", { "home/.npmrc": `registry=${unreachable}\ncafile=ca/x.pem\n` }, [], "home"],
+      ["--cafile", {}, [`--registry=${unreachable}`, "--cafile=ca/x.pem"], cwd],
+      ["--cafile with -g", {}, ["-g", `--registry=${unreachable}`, "--cafile=ca/x.pem"], cwd],
+    ])("cafile: %s", async (_, config, args, base) => {
+      using dir = tempDir("config-relative-cafile", { ...workspace, ...config });
+      const { stderr, exitCode } = await run(String(dir), ["add", "no-deps", ...args], noDirs, cwd);
+      expect(stderr).toContain(`HTTPThread: could not find CA file: '${join(String(dir), base, "ca", "x.pem")}'\n`);
       expect(exitCode).toBe(1);
     });
   });

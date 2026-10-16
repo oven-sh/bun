@@ -63,14 +63,12 @@ pub struct Transpiler<'a> {
 }
 
 impl<'a> Transpiler<'a> {
-    /// Takes `*mut Log` (not `&'a mut`) because the same
-    /// `*Log` is aliased into `linker.log` / `resolver.log`; the struct
-    /// field is a raw pointer for that reason.
+    /// Takes `*mut Log` (not `&'a mut`) because the same `*Log` is aliased
+    /// into `options.log` / `linker.log` / `resolver.log`.
     pub fn set_log(&mut self, log: *mut bun_ast::Log) {
         self.log = log;
+        self.options.log = log;
         self.linker.log = log;
-        // SAFETY: caller (`ThreadPool::Worker::create`) passes the per-worker
-        // arena-allocated `Log`, which outlives this `Transpiler<'a>`.
         self.resolver.log = core::ptr::NonNull::new(log).expect("set_log: log is non-null");
     }
 

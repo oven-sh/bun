@@ -202,10 +202,10 @@ describe("path.resolve", () => {
     assert.ok(result.endsWith(expectedEnding));
   });
 
-  test.skipIf(isWindows)("a backslash at the end of the cwd is part of its name", () => {
+  test.skipIf(isWindows)("a backslash at the end of the cwd is part of its name", async () => {
     using dir = tempDir("resolve-backslash-cwd", { "e\\/z": "" });
 
-    const proc = Bun.spawnSync({
+    await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
@@ -214,10 +214,14 @@ describe("path.resolve", () => {
       ],
       env: bunEnv,
       cwd: path.join(String(dir), "e\\"),
+      stdout: "pipe",
+      stderr: "pipe",
     });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     const cwd = fs.realpathSync(String(dir)) + "/e\\";
-    expect(JSON.parse(proc.stdout.toString())).toEqual([cwd + "/z", cwd, "e\\/z"]);
-    expect(proc.exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([cwd + "/z", cwd, "e\\/z"]);
+    expect(exitCode).toBe(0);
   });
 });

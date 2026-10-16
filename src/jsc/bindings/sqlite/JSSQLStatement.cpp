@@ -376,13 +376,12 @@ JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes);
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetSafeIntegers);
 JSC_DECLARE_CUSTOM_SETTER(jsSqlStatementSetSafeIntegers);
 
-// sqlite3_error_offset counts from the pointer that sqlite3_prepare_v3 received.
-// `byteOffsetBase` is the distance of that pointer from the start of the caller's SQL text.
 static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db, int64_t byteOffsetBase = 0)
 {
     auto& vm = JSC::getVM(globalObject);
     int code = sqlite3_extended_errcode(db);
     int64_t byteOffset = sqlite3_error_offset(db);
+    // SQLite counts the offset from the pointer that sqlite3_prepare_v3 received.
     if (byteOffset >= 0)
         byteOffset += byteOffsetBase;
 

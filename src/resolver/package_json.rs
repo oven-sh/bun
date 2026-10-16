@@ -19,9 +19,9 @@ use bun_parsers::json_parser;
 // auto-install path is dormant until `bun_install` writes `r.package_manager`;
 // all install-tier value types are the canonical `bun_install_types` shapes.
 
+use ::bun_install_types::resolver_hooks::Behavior as DependencyBehavior;
 pub use ::bun_install_types::resolver_hooks::{
-    Architecture, Dependency, DependencyGroup, DependencyVersion, DependencyVersionTag,
-    OperatingSystem,
+    Dependency, DependencyGroup, DependencyVersion, DependencyVersionTag,
 };
 pub use ::bun_install_types::resolver_hooks::{INVALID_PACKAGE_ID, PackageID};
 // Deliberately a bare alias rather than `bun_collections::StringMap` (which
@@ -92,11 +92,12 @@ pub struct PackageJSON {
     // Values borrow the source buffer (lifetime-erased; owned by `source_contents`).
     pub config: Option<Box<StringArrayHashMap<&'static [u8]>>>,
 
-    pub(crate) arch: Architecture,
-    pub(crate) os: OperatingSystem,
-
     pub(crate) package_manager_package_id: PackageID,
     pub dependencies: DependencyMap,
+    /// Used instead of `dependencies` for a package in node_modules, so that auto-install only
+    /// parses the row it looks up. Each range is where a group's rows are in `json_tape`.
+    pub(crate) installed_dependency_rows:
+        [core::ops::Range<u32>; INSTALLED_DEPENDENCY_GROUPS.len()],
 
     pub(crate) side_effects: SideEffects,
 
@@ -148,10 +149,9 @@ impl Default for PackageJSON {
             version: Box::default(),
             scripts: None,
             config: None,
-            arch: Architecture::all(),
-            os: OperatingSystem::all(),
             package_manager_package_id: INVALID_PACKAGE_ID,
             dependencies: DependencyMap::default(),
+            installed_dependency_rows: Default::default(),
             side_effects: SideEffects::default(),
             browser_map: BrowserMap::default(),
             exports: None,
@@ -175,34 +175,39 @@ pub enum IncludeDependencies {
 
 const NODE_MODULES_PATH: &str = const_format::concatcp!(SEP_STR, "node_modules", SEP_STR);
 
-impl ::bun_install_types::resolver_hooks::PackageJsonView for PackageJSON {
-    fn name(&self) -> &[u8] {
-        &self.name
-    }
-    fn version(&self) -> &[u8] {
-        &self.version
-    }
-    fn dependency_source_buf(&self) -> &[u8] {
-        &self.dependencies.source_buf
-    }
-    fn arch(&self) -> Architecture {
-        self.arch
-    }
-    fn os(&self) -> OperatingSystem {
-        self.os
-    }
-    fn dependency_iter(&self) -> Box<dyn Iterator<Item = (&[u8], &Dependency)> + '_> {
-        let buf: &[u8] = &self.dependencies.source_buf;
-        Box::new(
-            self.dependencies
-                .map
-                .iter()
-                .map(move |(k, v)| (k.slice(buf), v)),
-        )
-    }
-}
+/// If a name is in several groups, the last group wins, as it does in `bun install`.
+const INSTALLED_DEPENDENCY_GROUPS: [DependencyGroup; 2] =
+    [DependencyGroup::DEPENDENCIES, DependencyGroup::OPTIONAL];
 
 impl PackageJSON {
+    /// Whether auto-install can look up the version of an imported package in this package.json.
+    pub(crate) fn lists_dependencies(&self) -> bool {
+        self.dependencies.map.count() > 0
+            || self.package_manager_package_id != INVALID_PACKAGE_ID
+            || self
+                .installed_dependency_rows
+                .iter()
+                .any(|rows| !rows.is_empty())
+    }
+
+    /// The versions that a package in node_modules declares for `name`, highest precedence first.
+    pub(crate) fn installed_dependency_versions<'a>(
+        &'a self,
+        name: &'a [u8],
+    ) -> impl Iterator<Item = (&'a [u8], DependencyBehavior)> {
+        let groups = INSTALLED_DEPENDENCY_GROUPS
+            .iter()
+            .zip(&self.installed_dependency_rows);
+        groups.rev().flat_map(move |(group, rows)| {
+            let tape = self.json_tape.as_deref().filter(|_| !rows.is_empty());
+            let rows = tape.map_or(&[][..], |tape| tape.properties(rows.clone()));
+            rows.iter()
+                .rev()
+                .filter(move |row| row.key.slice() == name)
+                .filter_map(move |row| Some((row.value.as_str()?, group.behavior)))
+        })
+    }
+
     /// Normalize path separators to forward slashes for glob matching
     /// This is needed because glob patterns use forward slashes but Windows uses backslashes
     fn normalize_path_for_glob(path: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError> {
@@ -517,10 +522,9 @@ impl PackageJSON {
             main_fields: MainFieldMap::default(),
             scripts: None,
             config: None,
-            arch: Architecture::all(),
-            os: OperatingSystem::all(),
             package_manager_package_id: INVALID_PACKAGE_ID,
             dependencies: DependencyMap::default(),
+            installed_dependency_rows: Default::default(),
             side_effects: SideEffects::Unspecified,
             exports: None,
             imports: None,
@@ -843,44 +847,38 @@ impl PackageJSON {
                         }
                     }
                 }
-                if let Some(os_field) = json.get(b"cpu") {
-                    if let Some(array_const) = os_field.as_array() {
-                        let mut array = array_const;
-                        let mut arch = Architecture::none().negatable();
-                        while let Some(item) = array.next() {
-                            if let Some(str) = item.as_utf8_string_literal() {
-                                arch.apply(str);
+                // If a name is in several groups, the last group wins, as it does in `bun install`.
+                let dependency_groups: &[DependencyGroup] =
+                    if INCLUDE_DEPENDENCIES == IncludeDependencies::Main {
+                        &[
+                            DependencyGroup::DEPENDENCIES,
+                            DependencyGroup::DEV,
+                            DependencyGroup::OPTIONAL,
+                        ]
+                    } else if !strings::contains(package_json_path, NODE_MODULES_PATH.as_bytes()) {
+                        // One of the project's own package.json files. A package.json in the cache
+                        // has a `package_id`, which is handled above.
+                        &[
+                            DependencyGroup::PEER,
+                            DependencyGroup::DEPENDENCIES,
+                            DependencyGroup::DEV,
+                            DependencyGroup::OPTIONAL,
+                        ]
+                    } else {
+                        // This runs for every package loaded from node_modules, so it only records
+                        // where the rows are and parses nothing.
+                        for (group, rows) in INSTALLED_DEPENDENCY_GROUPS
+                            .iter()
+                            .zip(&mut package_json.installed_dependency_rows)
+                        {
+                            if let Some(group_json) = json.get(group.prop)
+                                && let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data
+                            {
+                                *rows = group_obj.get().rows();
                             }
                         }
-
-                        package_json.arch = arch.combine();
-                    }
-                }
-
-                if let Some(os_field) = json.get(b"os") {
-                    let tmp = os_field.as_array();
-                    if let Some(mut array) = tmp {
-                        let mut os = OperatingSystem::none().negatable();
-                        while let Some(item) = array.next() {
-                            if let Some(str) = item.as_utf8_string_literal() {
-                                os.apply(str);
-                            }
-                        }
-
-                        package_json.os = os.combine();
-                    }
-                }
-
-                let dev_deps = INCLUDE_DEPENDENCIES == IncludeDependencies::Main;
-                let dependency_groups: &[DependencyGroup] = if dev_deps {
-                    &[
-                        DependencyGroup::DEPENDENCIES,
-                        DependencyGroup::DEV,
-                        DependencyGroup::OPTIONAL,
-                    ]
-                } else {
-                    &[DependencyGroup::DEPENDENCIES, DependencyGroup::OPTIONAL]
-                };
+                        break 'update_dependencies;
+                    };
 
                 let mut total_dependency_count: usize = 0;
                 for group in dependency_groups {
@@ -961,6 +959,10 @@ impl PackageJSON {
                                         version_str,
                                         &sliced_str,
                                         Some(&mut *r_log),
+                                        !strings::contains(
+                                            package_json_path,
+                                            NODE_MODULES_PATH.as_bytes(),
+                                        ),
                                     ) {
                                         let dependency = Dependency {
                                             name,
@@ -1415,7 +1417,7 @@ impl<'a> Package<'a> {
 
         self
     }
-    pub(crate) fn parse_name(specifier: &[u8]) -> Option<&[u8]> {
+    pub fn parse_name(specifier: &[u8]) -> Option<&[u8]> {
         let mut slash = strings::index_of_char_neg(specifier, b'/');
         if !strings::starts_with_char(specifier, b'@') {
             slash = if slash == -1 {

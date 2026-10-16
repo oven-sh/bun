@@ -158,7 +158,7 @@ public:
 
 private:
     GraphCommonJSSourceProvider(Ref<JSC::SourceProvider>&& source, unsigned overlayShape)
-        : JSC::SourceProvider(source->sourceOrigin(), String(source->sourceURL()), String(source->preRedirectURL()), source->sourceTaintedOrigin(), source->startPosition(), source->sourceType(), source->provenance())
+        : JSC::SourceProvider(source->sourceOrigin(), String(source->sourceURL()), String(source->preRedirectURL()), source->taintedness(), source->startPosition(), source->sourceType(), source->provenance())
         , m_source(WTF::move(source))
         , m_overlayShape(overlayShape)
     {

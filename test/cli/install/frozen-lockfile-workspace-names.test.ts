@@ -1,7 +1,8 @@
 // Who owns `node_modules/<name>` of the root, and the key `<name>` of "packages" in bun.lock, when a workspace has that
 // name: the root's own dependency of that name if it is a registry range the workspace does not satisfy, else the
-// workspace (also over a `file:` folder). An `npm:` alias installs under its alias, so it does not compete.
-// Whatever the answer, bun loads the lockfile it wrote, and `--frozen-lockfile` / `bun ci` accept it.
+// workspace (also over a `file:` folder or a tag). An `npm:` alias installs under its alias, so it does not compete.
+// Whatever the answer, the workspace stays installed, bun loads the lockfile it wrote, and `--frozen-lockfile` / `bun ci`
+// accept it.
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { exists, mkdir, realpath, rename, rm } from "fs/promises";
@@ -253,36 +254,151 @@ describe.each(linkers)("%s linker", linker => {
     });
   });
 
-  // Nobody depends on the workspace. Today a range drops it from bun.lock, so that nothing it depends on is installed,
-  // and after `catalog:` it takes the name back as soon as bun.lock is loaded.
+  // Nobody depends on the workspace, so nothing links it. It stays in bun.lock and what it depends on is installed. What
+  // cannot hoist to the root is in its own node_modules, printed below "./<name>".
   describe("a workspace stays installed when the root gives its name to a registry version written as", () => {
+    const member = { name: "no-deps", version: "3.0.0", dependencies: { "a-dep": "1.0.1", "what-bin": "1.0.0" } };
+    const unlinked = {
+      workspaces: ["", "packages/no-deps"],
+      packages: {
+        "a-dep": "a-dep@1.0.2",
+        "no-deps": "no-deps@1.0.0",
+        "what-bin": "what-bin@1.0.0",
+        "./no-deps/a-dep": "a-dep@1.0.1",
+      },
+    };
+    const check = async (dir: string) => {
+      expect(await seenFrom(dir, ".", "no-deps")).toBe("1.0.0");
+      expect(await seenFrom(dir, ".", "a-dep")).toBe("1.0.2");
+      expect(await seenFrom(dir, "packages/no-deps", "a-dep")).toBe("1.0.1");
+      expect(await seenFrom(dir, "packages/no-deps", "what-bin")).toBe("1.0.0");
+    };
+
     for (const [written, range, catalog] of [
       ["a range", "1.0.0", undefined],
       ["catalog:", "catalog:", { "no-deps": "1.0.0" }],
     ] as const) {
-      test.todo(written, async () => {
-        const dir = await project(linker, {
-          "": root({
-            workspaces: { packages: ["packages/*"], catalog },
-            dependencies: { "no-deps": range, "a-dep": "1.0.2" },
-          }),
-          "packages/no-deps": {
-            name: "no-deps",
-            version: "3.0.0",
-            dependencies: { "a-dep": "1.0.1", "what-bin": "1.0.0" },
-          },
+      const rootWith = (dependencies: PackageJson) =>
+        root({
+          workspaces: { packages: ["packages/*"], catalog },
+          dependencies: { ...dependencies, "a-dep": "1.0.2" },
         });
+
+      test.concurrent(written, async () => {
+        const dir = await project(linker, { "": rootWith({ "no-deps": range }), "packages/no-deps": member });
         await ok(dir, "install");
 
-        expect((await resolved(dir)).workspaces).toEqual(["", "packages/no-deps"]);
-        await expectRoundTrip(dir, async () => {
-          expect(await seenFrom(dir, ".", "no-deps")).toBe("1.0.0");
-          expect(await seenFrom(dir, ".", "a-dep")).toBe("1.0.2");
-          expect(await seenFrom(dir, "packages/no-deps", "a-dep")).toBe("1.0.1");
-          expect(await seenFrom(dir, "packages/no-deps", "what-bin")).toBe("1.0.0");
+        expect(await resolved(dir)).toEqual(unlinked);
+        await expectRoundTrip(dir, () => check(dir));
+      });
+
+      test.concurrent(`${written}, after an install without it`, async () => {
+        const dir = await project(linker, { "": rootWith({}), "packages/no-deps": member });
+        await ok(dir, "install");
+        expect((await resolved(dir)).packages).toMatchObject({
+          "no-deps": "no-deps@workspace:packages/no-deps",
+          "no-deps/a-dep": "a-dep@1.0.1",
         });
+
+        await write(join(dir, "package.json"), JSON.stringify(rootWith({ "no-deps": range })));
+        await ok(dir, "install");
+
+        expect(await resolved(dir)).toEqual(unlinked);
+        await check(dir);
+        await ok(dir, "install", "--frozen-lockfile");
+        await check(dir);
       });
     }
+
+    // Bun 1.4 and older left such a workspace out of bun.lock: the file they wrote is the one of a root without it.
+    test.concurrent("a range, in a bun.lock of Bun 1.4: it stays as it is until the dependencies change", async () => {
+      const dependencies = { "no-deps": "1.0.0" };
+      const dir = await project(linker, { "": { name: "sandbox", version: "1.0.0", dependencies } });
+      await ok(dir, "install", "--lockfile-only");
+      const older = await lockText(dir);
+      await Promise.all([
+        write(join(dir, "package.json"), JSON.stringify(root({ dependencies }))),
+        write(join(dir, "packages", "no-deps", "package.json"), JSON.stringify(member)),
+      ]);
+
+      await ok(dir, "install", "--frozen-lockfile");
+      await ok(dir, "ci");
+      await ok(dir, "install");
+      await ok(dir, "install", "--lockfile-only");
+      expect(await lockText(dir)).toBe(older);
+      expect(await seenFrom(dir, ".", "no-deps")).toBe("1.0.0");
+
+      await write(
+        join(dir, "package.json"),
+        JSON.stringify(root({ dependencies: { ...dependencies, "a-dep": "1.0.2" } })),
+      );
+      await ok(dir, "install");
+      expect(await resolved(dir)).toEqual(unlinked);
+      await expectRoundTrip(dir, () => check(dir));
+    });
+
+    test.concurrent("an alias under its own name, in a bun.lock of Bun 1.4: it stays as it is", async () => {
+      const dependencies = { "no-deps": "npm:no-deps@1.0.0" };
+      const dir = await project(linker, { "": { name: "sandbox", version: "1.0.0", dependencies } });
+      await ok(dir, "install", "--lockfile-only");
+      const older = await lockText(dir);
+      await Promise.all([
+        write(join(dir, "package.json"), JSON.stringify(root({ dependencies }))),
+        write(join(dir, "packages", "no-deps", "package.json"), JSON.stringify(member)),
+      ]);
+
+      await ok(dir, "install", "--frozen-lockfile");
+      await ok(dir, "install");
+      expect(await lockText(dir)).toBe(older);
+    });
+
+    // In Bun 1.4 only a registry range that the workspace's version does not satisfy took its entry. Next to anything
+    // else, a workspace that bun.lock does not have is a new one.
+    test.concurrent.each<[string, () => string, string?]>([
+      ["catalog:", () => "catalog:", "3.0.0"],
+      ["another package under its name", () => "npm:a-dep@1.0.1", "3.0.0"],
+      ["a tarball URL", () => `${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`, "3.0.0"],
+      ["a tarball file", () => "file:./no-deps.tgz", "3.0.0"],
+      ["link:", () => "link:./vendor/no-deps", "3.0.0"],
+      ["a range, without a version of its own", () => "1.0.0", undefined],
+    ])("a workspace that is new next to %s is a change", async (_, spec, version) => {
+      const dir = await project(linker, {
+        "": root({
+          workspaces: { packages: ["packages/*"], catalog: { "no-deps": "1.0.0" } },
+          dependencies: { "no-deps": spec() },
+        }),
+        "packages/use": { name: "use" },
+        "vendor/no-deps": { name: "no-deps", version: "7.0.0" },
+      });
+      const packed = { "package/package.json": JSON.stringify({ name: "no-deps", version: "5.0.0" }) };
+      await write(join(dir, "no-deps.tgz"), await new Bun.Archive(packed, { compress: "gzip" }).bytes());
+      await ok(dir, "install");
+      expect((await resolved(dir)).workspaces).toEqual(["", "packages/use"]);
+
+      await write(
+        join(dir, "packages", "no-deps", "package.json"),
+        JSON.stringify({ name: "no-deps", version, dependencies: { "what-bin": "1.0.0" } }),
+      );
+      const frozen = await bun(dir, "install", "--frozen-lockfile");
+      expect(frozen.stderr).toContain("error: lockfile had changes, but lockfile is frozen");
+      expect(frozen.exitCode).toBe(1);
+
+      await ok(dir, "install");
+      expect((await resolved(dir)).workspaces).toEqual(["", "packages/no-deps", "packages/use"]);
+      expect(await seenFrom(dir, "packages/no-deps", "what-bin")).toBe("1.0.0");
+    });
+
+    test.concurrent("a range, and the install fails on what the workspace cannot get", async () => {
+      const dir = await project(linker, {
+        "": root({ dependencies: { "no-deps": "1.0.0" } }),
+        "packages/no-deps": { ...member, dependencies: { "this-package-does-not-exist-in-the-registry": "1.0.0" } },
+      });
+
+      const { stderr, exitCode } = await bun(dir, "install");
+
+      expect(stderr).toContain("error: this-package-does-not-exist-in-the-registry@1.0.0 failed to resolve");
+      expect(exitCode).toBe(1);
+    });
   });
 
   test.concurrent("a * range still links a workspace without a version", async () => {
@@ -446,6 +562,85 @@ describe.each(linkers)("%s linker", linker => {
     });
   });
 
+  // Only the registry knows which version a tag names, so a tag never takes the name. no-deps@latest is 2.0.0.
+  describe("a root dependency on a tag that has the name of a workspace", () => {
+    const member = { name: "no-deps", version: "1.5.0" };
+    const expectWorkspace = async (dir: string) => {
+      expect((await resolved(dir)).packages).toEqual({ "no-deps": "no-deps@workspace:packages/no-deps" });
+      await expectRoundTrip(dir, async () => {
+        expect(await seenFrom(dir, ".", "no-deps")).toBe("1.5.0");
+      });
+    };
+
+    test.concurrent("resolves to the workspace", async () => {
+      const dir = await project(linker, {
+        "": root({ dependencies: { "no-deps": "latest" } }),
+        "packages/no-deps": member,
+      });
+      await ok(dir, "install");
+      await expectWorkspace(dir);
+    });
+
+    test.concurrent.each(["no-deps", "-d -E no-deps@latest"])("bun add %s saves workspace:*", async args => {
+      const dir = await project(linker, { "": root({}), "packages/no-deps": member });
+      await ok(dir, "install");
+
+      const { stdout } = await ok(dir, "add", ...args.split(" "));
+
+      const { dependencies, devDependencies } = await file(join(dir, "package.json")).json();
+      expect(dependencies ?? devDependencies).toEqual({ "no-deps": "workspace:*" });
+      expect(stdout).toContain("installed no-deps@workspace:packages/no-deps");
+      await expectWorkspace(dir);
+    });
+  });
+
+  // The range of the row accepts the workspace, or names it, and the row is bound to something else.
+  describe("a row that could link a workspace and does not", () => {
+    const published = { "no-deps": "^1.0.0" };
+    test.concurrent.each([
+      ["peerDependenciesMeta", { dependencies: published, peerDependenciesMeta: { "no-deps": { optional: true } } }],
+      ["peerDependencies", { dependencies: published, peerDependencies: { "no-deps": "*" } }],
+      ["a peer range", { devDependencies: published, peerDependencies: { "no-deps": ">=0.0.1" } }],
+    ])("%s on a name that the package's own dependency on the registry version serves", async (_, app) => {
+      const dir = await project(linker, {
+        "": root({}),
+        "packages/no-deps": { name: "no-deps", version: "0.0.1" },
+        "packages/app": { name: "app", version: "1.0.0", ...app },
+      });
+      await ok(dir, "install");
+
+      await expectRoundTrip(dir, async () => {
+        expect(await seenFrom(dir, "packages/app", "no-deps")).toBe("1.1.0");
+      });
+      await ok(dir, "prune");
+      await ok(dir, "dedupe");
+    });
+
+    test.concurrent("an optional peer on a workspace: name that overrides send to the registry", async () => {
+      const dir = await project(linker, {
+        "": root({ dependencies: { "no-deps": "workspace:~" }, overrides: { "no-deps": "latest" } }),
+        "packages/app": { name: "app", version: "1.0.0", peerDependenciesMeta: { "no-deps": { optional: true } } },
+      });
+      await ok(dir, "install");
+
+      await expectRoundTrip(dir, async () => {
+        expect(await seenFrom(dir, ".", "no-deps")).toBe("2.0.0");
+      });
+    });
+
+    test.concurrent("bun add of a name that overrides send to a workspace of another name", async () => {
+      const dir = await project(linker, {
+        "": root({ overrides: { "a-dep": "npm:no-deps@*" } }),
+        "packages/no-deps": { name: "no-deps", version: "1.5.0" },
+      });
+      await ok(dir, "add", "--optional", "a-dep");
+
+      await expectRoundTrip(dir, async () => {
+        expect(await seenFrom(dir, ".", "a-dep")).toBe("1.5.0");
+      });
+    });
+  });
+
   // peer-deps-fixed has a peer on no-deps@^1.0.0, which links a workspace named no-deps. A registry package's range links
   // a workspace through the root's edge to it. Once an install drops that edge, the peer resolves again, the way it does
   // with no lockfile. It used to stay linked, through an edge that bun.lock cannot record.
@@ -454,18 +649,19 @@ describe.each(linkers)("%s linker", linker => {
 
     test.concurrent.each([
       {
+        // The workspace stays installed, without a link: the peer finds the root's copy.
         history: "a root dependency takes the name of the workspace",
         root: { workspaces: ["packages/*"], devDependencies: { "no-deps": "1.0.0" } },
-        workspaces: ["", "packages/app"],
-        packages: { "no-deps": "no-deps@1.0.0" },
+        workspaces: ["", "packages/app", "packages/no-deps"],
+        packages: { "a-dep": "a-dep@1.0.1", "no-deps": "no-deps@1.0.0" },
         peer: "1.0.0",
       },
       {
         history: "a root dependency takes the name of the workspace and another workspace changes in the same edit",
         root: { workspaces: ["packages/*"], devDependencies: { "no-deps": "1.0.0" } },
         app: { ...app, dependencies: { ...app.dependencies, "what-bin": "1.0.0" } },
-        workspaces: ["", "packages/app"],
-        packages: { "no-deps": "no-deps@1.0.0", "what-bin": "what-bin@1.0.0" },
+        workspaces: ["", "packages/app", "packages/no-deps"],
+        packages: { "a-dep": "a-dep@1.0.1", "no-deps": "no-deps@1.0.0", "what-bin": "what-bin@1.0.0" },
         peer: "1.0.0",
       },
       {

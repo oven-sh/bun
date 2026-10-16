@@ -149,6 +149,8 @@ nativePluginRules = ["@typescript-eslint", "import"]
 
 ESLint's core rules are always native. Keep `@typescript-eslint` native if you use type-aware rules, because JavaScript rules don't get types.
 
+`nativePluginRules` picks which version of a plugin runs. It doesn't turn rules on or off. To do that, see [`lint.rules`](/runtime/bunfig#lint-rules).
+
 ## `prettier/prettier`
 
 `prettier/prettier` from [eslint-plugin-prettier](https://github.com/prettier/eslint-plugin-prettier) is native. It compares each file with the output of [`bun fmt`](/format) and never starts Prettier.

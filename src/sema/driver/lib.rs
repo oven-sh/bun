@@ -334,8 +334,9 @@ pub struct PlanOptions {
     /// `GetCurrentDirectory` of a program is the directory of its configuration file, as that of a
     /// `ConfiguredProject` of tsserver is. Without one it is `Request::cwd`, as always otherwise.
     pub current_directory_is_of_the_project: bool,
-    /// Nobody reads what is reported about the files that are checked, so no `Diagnostic` is made of it: each has a copy
-    /// of the lines around it, which in a bundle on one line is a copy of the file.
+    /// Nobody reads what is reported about the files that are checked. So no `Diagnostic` is made of it: each has a copy
+    /// of the lines around it, which in a bundle on one line is a copy of the file. And the files are not checked:
+    /// `Request::after_file` asks for the types that it needs. See `Requested::Types`.
     pub reports_nothing_about_files: bool,
     /// A file of `Request::paths` is checked only in a project that includes it: that of the nearest configuration
     /// file or one that it references, or else the same for the configuration files further up
@@ -1078,6 +1079,17 @@ pub struct Refused {
     pub files: Vec<Vec<u8>>,
 }
 
+/// A program of which only some files were asked for, and whose configuration file has neither `include` nor `files`, nor has
+/// one that it extends. So it includes every file below it.
+pub struct WithoutInclude {
+    pub config_path: Vec<u8>,
+    /// How many files it includes.
+    pub included: usize,
+    /// The files of `Request::paths` that were checked in it, each a `tspath.Path`. Sorted.
+    pub files: Vec<Vec<u8>>,
+    pub load_time: Duration,
+}
+
 /// `PlanOptions::only_the_globals`
 pub struct GlobalsOf {
     /// The files of `Request::paths` that are in the program, each a `tspath.Path`. Sorted.
@@ -1097,6 +1109,7 @@ pub struct Report {
     /// `Host::take_unreadable`: the source files that could not be read. Each was checked as an empty file.
     pub unreadable: Vec<Vec<u8>>,
     pub refused: Vec<Refused>,
+    pub without_include: Vec<WithoutInclude>,
     pub globals: Vec<GlobalsOf>,
     /// Whether `@types/bun` is installed where a checked project would resolve it.
     pub has_bun_types_installed: bool,
@@ -1161,6 +1174,7 @@ impl Report {
         self.incomplete.extend(other.incomplete);
         self.unreadable.extend(other.unreadable);
         self.refused.extend(other.refused);
+        self.without_include.extend(other.without_include);
         self.globals.extend(other.globals);
         self.listed_files.extend(other.listed_files);
         self.scripts_elsewhere.extend(other.scripts_elsewhere);
@@ -3642,6 +3656,10 @@ fn check_named_files(
         let mut is_kept = is_kept.iter();
         (project.files).retain(|_| is_kept.next().is_some_and(|it| it.load(Ordering::Relaxed)));
     }
+    let includes_everything = !config_path.is_empty()
+        && project.written.include.is_none()
+        && project.written.files.is_none();
+    let included = project.files.len();
     let written = std::mem::take(&mut project.raw_compiler_options);
     let is_true = |name: &[u8]| written.contains(&(name.to_vec(), Json::Bool(true)));
     project.options.drops_unreferenced = !request.retains_everything;
@@ -3692,6 +3710,14 @@ fn check_named_files(
     let program: &Program = root;
     report.files_loaded = program.files.modules.len();
     report.load_time = started.elapsed();
+    if let Some(named) = named.filter(|_| includes_everything) {
+        report.without_include.push(WithoutInclude {
+            config_path: config_path.clone(),
+            included,
+            files: named.to_vec(),
+            load_time: report.load_time,
+        });
+    }
     let after = host.times();
     for (i, phase) in report.load_phases.iter_mut().enumerate() {
         *phase = after[i] - before[i];
@@ -3915,6 +3941,11 @@ fn check_named_files(
         }
         found.lock().extend(shown);
     };
+    // What `Request::after_file` is called after.
+    let wanted = match request.plan_options.reports_nothing_about_files {
+        true => Requested::Types,
+        false => Requested::All,
+    };
     let new_checker = |expected: Requested| {
         let mut checker = program.checker();
         checker.set_requested(expected);
@@ -3965,7 +3996,7 @@ fn check_named_files(
             for &file in files {
                 checked.push((file, checker.check_file(file)));
                 if let Some(after_file) = request.after_file
-                    && expected == Requested::All
+                    && expected == wanted
                 {
                     after_file(&mut checker, file);
                 }
@@ -4404,7 +4435,7 @@ fn check_named_files(
         }
         let emits_first = options.emits_first && !options.no_emit_on_error;
         for type_checked in [!emits_first, emits_first] {
-            check_files(Requested::All, type_checked);
+            check_files(wanted, type_checked);
             report.diagnostics.append(&mut found.lock());
             // What a checker reports without a file after this is never asked for.
             if type_checked {

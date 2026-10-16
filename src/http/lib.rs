@@ -865,9 +865,11 @@ impl<'a> HTTPClient<'a> {
     /// are a compile-time fiction on raw pointers; consumers re-derive a
     /// short-lived `&mut` when accessing. Centralizing the cast keeps every
     /// such erasure auditable at one definition.
+    ///
+    /// Takes `&mut self` because holders later write through the pointer. A
+    /// pointer made from `&self` would only allow reads.
     #[inline(always)]
-    pub(crate) fn as_erased_ptr(&self) -> NonNull<HTTPClient<'static>> {
-        // SAFETY: `self` is a valid reference (non-null, aligned).
+    pub(crate) fn as_erased_ptr(&mut self) -> NonNull<HTTPClient<'static>> {
         NonNull::from(self).cast::<HTTPClient<'static>>()
     }
 

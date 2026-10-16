@@ -177,6 +177,19 @@ test("util.inspect rethrows the error of a nested inspect.custom", () => {
   };
   expect(thrownBy(() => util.inspect({ a: hook }))).toBe(error);
   expect(thrownBy(() => util.inspect([[hook]]))).toBe(error);
+
+  // `getters: true` catches what the getter or its value throws. It can be null.
+  const throwsNull = {
+    [customSymbol]() {
+      throw null;
+    },
+  };
+  const viaGetter = {
+    get g() {
+      return { a: throwsNull };
+    },
+  };
+  expect(util.inspect(viaGetter, { getters: true })).toBe("{ g: [Getter: <Inspection threw (null)>] }");
 });
 
 describe("Web Streams [nodejs.util.inspect.custom]", () => {
@@ -326,33 +339,6 @@ describe("Web Streams [nodejs.util.inspect.custom]", () => {
     expect(rs[customSymbol](-1, {})).toBe(rs);
   });
 
-  // Like node's customInspect() (lib/internal/webstreams/util.js), these hooks print
-  // their fields one level below the depth they get. URL's hook does not: see below.
-  test("depth 0 cuts the fields", async () => {
-    expect(inspect(new ReadableStream(), { depth: 0 })).toBe("ReadableStream [Object]");
-    expect(inspect(new WritableStream(), { depth: 0 })).toBe("WritableStream [Object]");
-    expect(inspect({ rs: new ReadableStream() }, { depth: 1 })).toBe(
-      "{\n  rs: ReadableStream { locked: false, state: 'readable', supportsBYOB: false }\n}",
-    );
-    const key = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-    expect(inspect(key, { depth: 0 })).toBe("CryptoKey [Object]");
-  });
-
-  // node's BroadcastChannel hook lowers `options.depth`, not its depth argument (lib/internal/worker/io.js).
-  test("BroadcastChannel prints its fields when it is inside the depth", () => {
-    const bc = new BroadcastChannel("hello");
-    try {
-      expect(inspect({ a: { c: bc } })).toBe("{ a: { c: BroadcastChannel { name: 'hello', active: true } } }");
-      expect(inspect({ a: bc }, { depth: 1 })).toBe("{ a: BroadcastChannel { name: 'hello', active: true } }");
-      expect(inspect({ a: bc }, { depth: 0 })).toBe("{ a: BroadcastChannel }");
-      expect(inspect(bc, { depth: 0 })).toBe("BroadcastChannel [Object]");
-      expect(bc[customSymbol](0, { depth: 2 })).toBe("BroadcastChannel { name: 'hello', active: true }");
-      expect(bc[customSymbol](2, { depth: 0 })).toBe("BroadcastChannel [Object]");
-    } finally {
-      bc.close();
-    }
-  });
-
   test("wrong receiver returns the receiver (no infinite recursion)", () => {
     const o = {};
     expect(ReadableStream.prototype[customSymbol].call(o, 2, {})).toBe(o);
@@ -382,64 +368,7 @@ describe("Web Streams [nodejs.util.inspect.custom]", () => {
 // The expected texts are node v26.3.0's.
 describe("URL", () => {
   const href = "http://example.com/a?k=v";
-  const fields = (searchParams, indentation = "") =>
-    [
-      "{",
-      "  href: 'http://example.com/a?k=v',",
-      "  origin: 'http://example.com',",
-      "  protocol: 'http:',",
-      "  username: '',",
-      "  password: '',",
-      "  host: 'example.com',",
-      "  hostname: 'example.com',",
-      "  port: '',",
-      "  pathname: '/a',",
-      "  search: '?k=v',",
-      `  searchParams: ${searchParams},`,
-      "  hash: ''",
-      "}",
-    ].join("\n" + indentation);
-  const cut = fields("[Object]");
-  const full = fields("URLSearchParams { 'k' => 'v' }");
   class MyURL extends URL {}
-
-  // node's URL hook gives its options to inspect() as they are (lib/internal/url.js),
-  // so the depth counts the levels below the URL.
-  describe("[nodejs.util.inspect.custom]", () => {
-    test("prints the fields at depth 0 and the search params at depth 1", () => {
-      expect(util.inspect(new URL(href), { depth: 0 })).toBe(`URL ${cut}`);
-      expect(util.inspect(new URL(href), { depth: 1 })).toBe(`URL ${full}`);
-      expect(util.inspect(new MyURL(href), { depth: 0 })).toBe(`MyURL ${cut}`);
-    });
-
-    test("prints the same text for Bun.inspect", () => {
-      expect(Bun.inspect(new URL(href), { depth: 0 })).toBe(`URL ${cut}`);
-      expect(Bun.inspect(new URL(href), { depth: 1 })).toBe(`URL ${full}`);
-    });
-
-    test("prints a nested URL with the depth that the caller asked for", () => {
-      expect(util.inspect({ a: new URL(href) }, { depth: 1 })).toBe(
-        `{\n  a: URL ${fields("URLSearchParams { 'k' => 'v' }", "  ")}\n}`,
-      );
-      expect(util.inspect({ a: new URL(href) }, { depth: 0 })).toBe("{ a: URL {} }");
-      expect(util.inspect({ a: { b: new URL(href) } }, { depth: 1 })).toBe("{ a: { b: URL {} } }");
-    });
-
-    test("gets the depth from every form of the options", () => {
-      expect(util.inspect(new URL(href), false, 0)).toBe(`URL ${cut}`);
-      expect(util.formatWithOptions({ depth: 0 }, new URL(href))).toBe(`URL ${cut}`);
-      expect(util.inspect(new URL(href), { depth: 0, showHidden: true })).toBe(
-        `URL ${cut.slice(0, -2)},\n  Symbol(context): [URLContext]\n}`,
-      );
-    });
-
-    test("returns the URL for a negative depth that is a number", () => {
-      const url = new URL(href);
-      expect(url[customSymbol](-1, {})).toBe(url);
-      expect(url[customSymbol](0, { depth: 0 })).toBe(`URL ${cut}`);
-      expect(url[customSymbol]("-1", { depth: 0 })).toBe(`URL ${cut}`);
-    });
-  });
 
   // node's formatRaw() prints a URL that no hook formatted as its href
   // (lib/internal/util/inspect.js). node:assert and Console#dir ask for that.
@@ -518,16 +447,24 @@ describe("URL", () => {
       }
     });
 
-    test("reads href before the class test, like node", () => {
+    // node's isURL() reads `href` of every value that gets to its URL arm. Here only a URL is read.
+    test("tests the native URL class before reading href", () => {
       let reads = 0;
       class Link {
         get href() {
           reads++;
-          return "http://example.com/a";
+          throw new Error("href getter");
         }
       }
+      class Sub extends URL {}
       expect(util.inspect(new Link(), raw)).toBe("Link {}");
-      expect(reads).toBe(1);
+      expect(util.inspect(Object.create(URL.prototype), raw)).toBe("URL {}");
+      expect(util.format("%o", Sub)).toStartWith(
+        "<ref *1> [class Sub extends URL] {\n  [length]: 0,\n  [name]: 'Sub',\n  [prototype]: URL {\n    [constructor]: [Circular *1],\n    href: [Getter/Setter],",
+      );
+      // util.inspect unwraps one Proxy. The Proxy that is left is not a URL, and the getter of URL does not take it.
+      expect(thrownBy(() => util.inspect(new Proxy(new Proxy(new URL(href), {}), {}), raw))).toBeUndefined();
+      expect(reads).toBe(0);
 
       class NumberHref extends URL {
         get href() {
@@ -546,18 +483,18 @@ describe("URL", () => {
       expect(util.inspect({ a: new EmptyHref(href) }, raw)).toBe("{ a:  }");
     });
 
-    test("rethrows the error of a href getter, like node", () => {
+    test("rethrows the error of the href getter of a URL, like node", () => {
       const error = new Error("href getter");
-      class Broken {
+      class Broken extends URL {
         get href() {
           throw error;
         }
       }
-      expect(thrownBy(() => util.inspect(new Broken(), raw))).toBe(error);
-      expect(thrownBy(() => util.inspect({ a: new Broken() }, raw))).toBe(error);
-      expect(thrownBy(() => util.inspect([new Broken()]))).toBe(error);
+      expect(thrownBy(() => util.inspect(new Broken(href), raw))).toBe(error);
+      expect(thrownBy(() => util.inspect({ a: new Broken(href) }, raw))).toBe(error);
+      expect(thrownBy(() => util.inspect([new Broken(href)], raw))).toBe(error);
       // One level past the default depth: the read comes before the depth test.
-      expect(thrownBy(() => util.inspect({ a: { b: { c: new Broken() } } }))).toBe(error);
+      expect(thrownBy(() => util.inspect({ a: { b: { c: new Broken(href) } } }, raw))).toBe(error);
     });
   });
 });

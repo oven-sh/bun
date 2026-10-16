@@ -53,21 +53,13 @@ EncodedJSValue customInspect(JSGlobalObject* lexicalGlobalObject, CallFrame* cal
     }
     opts->putDirect(vm, Identifier::fromString(vm, "depth"_s), childDepth, 0);
 
-    RELEASE_AND_RETURN(scope, inspectWithName(lexicalGlobalObject, name, data, opts));
-}
-
-EncodedJSValue inspectWithName(JSGlobalObject* lexicalGlobalObject, const WTF::String& name, JSObject* data, JSValue options)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSFunction* utilInspect = globalObject->utilInspectFunction();
     RETURN_IF_EXCEPTION(scope, {});
     auto callData = JSC::getCallData(utilInspect);
     MarkedArgumentBuffer arguments;
     arguments.append(data);
-    arguments.append(options);
+    arguments.append(opts);
     ASSERT(!arguments.hasOverflowed());
 
     JSValue inspected = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, utilInspect, callData, jsUndefined(), arguments);

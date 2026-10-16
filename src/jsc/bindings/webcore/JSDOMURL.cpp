@@ -755,11 +755,6 @@ JSC_DEFINE_HOST_FUNCTION(jsDOMURLPrototypeFunction_inspectCustom, (JSGlobalObjec
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);
 
-    // node: `if (typeof depth === 'number' && depth < 0) return this;`
-    JSValue depthValue = callFrame->argument(0);
-    if (depthValue.isNumber() && depthValue.asNumber() < 0)
-        return JSValue::encode(thisValue);
-
     auto& impl = thisObject->wrapped();
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
     Bun::putDirectNamed(vm, data, "href"_s, jsString(vm, impl.href().string()));
@@ -791,8 +786,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDOMURLPrototypeFunction_inspectCustom, (JSGlobalObjec
 
     auto name = Bun::WebStreams::constructorNameOf(lexicalGlobalObject, thisValue, "URL"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    // node's URL hook gives `opts` to inspect() as it is. The hooks that go through customInspect() lower the depth by one.
-    RELEASE_AND_RETURN(scope, Bun::WebStreams::inspectWithName(lexicalGlobalObject, name, data, optionsValue));
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, name, data));
 }
 
 static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_parseBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)

@@ -189,21 +189,39 @@ describe("AssertionError diff rendering", () => {
       expect(messageOf(() => assert.strictEqual([], []))).toBe(sameStructure("[]"));
     });
 
-    // node's util.inspect reads `href` of every class instance it prints, and rethrows what the getter throws.
-    test("a href getter that throws gives its own error, not an AssertionError", () => {
+    const thrownBy = fn => {
+      try {
+        fn();
+      } catch (e) {
+        return e;
+      }
+    };
+
+    // util.inspect reads `href` of a URL only (node reads it of every class instance). So a value that
+    // is not a URL still gives the AssertionError, and a URL whose getter throws gives that error, as on node.
+    test("only the href getter of a URL can replace the AssertionError", () => {
       const error = new Error("href getter");
       class Broken {
         get href() {
           throw error;
         }
       }
-      let thrown;
-      try {
-        assert.deepStrictEqual({ a: new Broken() }, { a: 1 });
-      } catch (e) {
-        thrown = e;
+      class BrokenURL extends URL {
+        get href() {
+          throw error;
+        }
       }
-      expect(thrown).toBe(error);
+      const twoProxies = new Proxy(new Proxy(new URL(a.href), {}), {});
+      const limit = Error.stackTraceLimit;
+      try {
+        expect(messageOf(() => assert.deepStrictEqual({ a: new Broken() }, { a: 1 }))).toBe(
+          "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   a: Broken {}\n-   a: 1\n  }\n",
+        );
+        expect(thrownBy(() => assert.deepStrictEqual({ a: twoProxies }, { a: 1 })).code).toBe("ERR_ASSERTION");
+        expect(thrownBy(() => assert.deepStrictEqual({ a: new BrokenURL(a.href) }, { a: 1 }))).toBe(error);
+      } finally {
+        Error.stackTraceLimit = limit;
+      }
     });
 
     // util.inspect loads on the first use. The child replaces the global before that, as a preload or

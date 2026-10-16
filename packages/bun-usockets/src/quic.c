@@ -1111,8 +1111,8 @@ int us_quic_stream_write(us_quic_stream_t *s, const char *data, unsigned int len
     return (int) w;
 }
 
-void us_quic_stream_want_read(us_quic_stream_t *s, int want) {
-    if (s->stream) lsquic_stream_wantread(s->stream, want);
+void us_quic_stream_hold_window(us_quic_stream_t *s, int hold) {
+    if (s->stream) lsquic_stream_hold_window(s->stream, hold);
 }
 
 void us_quic_stream_want_write(us_quic_stream_t *s, int want) {

@@ -7,8 +7,10 @@
 
 use bun_ast::{Expr, ExprData, G, Indentation, IndentationCharacter, Source};
 use bun_collections::index_sort;
-use bun_core::{StackCheck, strings};
+use bun_core::{MutableString, StackCheck, strings};
 use bun_js_printer as js_printer;
+
+use std::borrow::Cow;
 
 use crate::bun_json::scan;
 
@@ -20,10 +22,10 @@ pub fn print(old: &[u8], root: Expr, indentation: Indentation) -> js_printer::Re
     match text.document(&root) {
         Ok(()) => {
             debug_assert!(
-                is_written(&text.out, &root),
+                is_written(&text.out.list, &root),
                 "package.json text does not say what its tree says"
             );
-            Ok(text.out)
+            Ok(text.out.list)
         }
         Err(Stop::Printer(err)) => Err(err),
         Err(Stop::NotTheText) => print_new_file(old, root, indentation),
@@ -220,12 +222,11 @@ fn has_line_break(text: &[u8]) -> bool {
 
 struct Text<'a> {
     text: &'a [u8],
-    out: Vec<u8>,
+    out: MutableString,
     indentation: Indentation,
-    /// One level of indentation.
-    unit: Vec<u8>,
     line_break: &'static [u8],
     /// `(opening bracket, closing bracket)` of every object and array, in the order of the first.
+    /// Until a container is closed, the second is the index of the container around it.
     brackets: Vec<(usize, usize)>,
     /// The members of the containers that are being written, innermost last.
     members: Vec<Member>,
@@ -238,28 +239,37 @@ struct Text<'a> {
 
 impl<'a> Text<'a> {
     fn new(text: &'a [u8], indentation: Indentation) -> Self {
-        let unit = match indentation.character {
-            IndentationCharacter::Space => b' ',
-            IndentationCharacter::Tab => b'\t',
-        };
         let crlf = strings::index_of_char_usize(text, b'\n')
             .is_some_and(|line_end| line_end > 0 && text[line_end - 1] == b'\r');
         Text {
             text,
-            out: Vec::with_capacity(text.len() + 64),
+            out: MutableString {
+                list: Vec::with_capacity(text.len() + 64),
+            },
             indentation: Indentation {
                 count: 0,
                 ..indentation
             },
-            unit: vec![unit; indentation.scalar],
             line_break: if crlf { b"\r\n" } else { b"\n" },
-            brackets: Vec::new(),
-            members: Vec::new(),
+            brackets: Vec::with_capacity(16),
+            members: Vec::with_capacity(32),
             scratch: Vec::new(),
             in_line_comment: false,
             stack: StackCheck::init(),
             no_source: Source::init_empty_file(b"package.json"),
         }
+    }
+
+    /// `indent` and one level of indentation more.
+    fn indented(&self, indent: &[u8]) -> Vec<u8> {
+        let unit = match self.indentation.character {
+            IndentationCharacter::Space => b' ',
+            IndentationCharacter::Tab => b'\t',
+        };
+        let mut indented = Vec::with_capacity(indent.len() + self.indentation.scalar);
+        indented.extend_from_slice(indent);
+        indented.resize(indent.len() + self.indentation.scalar, unit);
+        indented
     }
 
     fn document(&mut self, root: &Expr) -> Step {
@@ -272,7 +282,7 @@ impl<'a> Text<'a> {
         self.put(&text[..start]);
         let end = self.value(root, start)?;
         self.put(&text[end..]);
-        if self.out == text {
+        if self.out.list == text {
             return Ok(());
         }
         // A root that is written on one line has no layout to keep: it gets the printer's.
@@ -282,7 +292,7 @@ impl<'a> Text<'a> {
         if has_lines {
             return Ok(());
         }
-        self.out.clear();
+        self.out.list.clear();
         self.in_line_comment = false;
         self.put(&text[..start]);
         self.lay_out_value(root, start, self.line_indent(start))?;
@@ -298,24 +308,29 @@ impl<'a> Text<'a> {
 
     /// Fills `self.brackets` for the container that opens at `root`, in one pass over it.
     fn find_brackets(&mut self, root: usize) -> Step {
+        const NONE: usize = usize::MAX;
         let text = self.text;
-        let mut open: Vec<usize> = Vec::new();
+        let mut innermost = NONE;
         let mut at = root;
         loop {
             match *text.get(at).ok_or(Stop::NotTheText)? {
                 b'{' | b'[' => {
-                    open.push(self.brackets.len());
-                    self.brackets.push((at, at));
+                    self.brackets.push((at, innermost));
+                    innermost = self.brackets.len() - 1;
                     at += 1;
                 }
                 closing @ (b'}' | b']') => {
-                    let index = open.pop().ok_or(Stop::NotTheText)?;
-                    if (text[self.brackets[index].0] == b'{') != (closing == b'}') {
+                    if innermost == NONE {
                         return Err(Stop::NotTheText);
                     }
-                    self.brackets[index].1 = at;
+                    let (open, around) = self.brackets[innermost];
+                    if (text[open] == b'{') != (closing == b'}') {
+                        return Err(Stop::NotTheText);
+                    }
+                    self.brackets[innermost].1 = at;
+                    innermost = around;
                     at += 1;
-                    if open.is_empty() {
+                    if innermost == NONE {
                         return Ok(());
                     }
                 }
@@ -511,11 +526,16 @@ impl<'a> Text<'a> {
         names
     }
 
-    /// For each entry of the tree, the member of the text that it is, if it is one.
+    /// For each entry of the tree, the member of the text that it is, if it is one, and for each
+    /// member of the text, whether the tree still has it.
     ///
     /// A member is paired by its key and a string item by its text, the first with the first.
     /// Other items are paired in order with an item of their kind.
-    fn pair(&mut self, container: &Container, entries: Entries<'_>) -> Step<Vec<Option<usize>>> {
+    fn pair(
+        &mut self,
+        container: &Container,
+        entries: Entries<'_>,
+    ) -> Step<(Vec<Option<usize>>, Vec<bool>)> {
         let text = self.text;
         let old_len = container.len;
         let mut pairs: Vec<Option<usize>> = Vec::with_capacity(entries.len());
@@ -575,7 +595,7 @@ impl<'a> Text<'a> {
                 }
             }
         }
-        Ok(pairs)
+        Ok((pairs, taken))
     }
 
     // ───── the new text ─────
@@ -584,13 +604,18 @@ impl<'a> Text<'a> {
         if bytes.is_empty() {
             return;
         }
+        self.end_line_comment(bytes[0]);
+        self.out.list.extend_from_slice(bytes);
+    }
+
+    /// Ends the line of a `//` comment before `next` is written after it.
+    fn end_line_comment(&mut self, next: u8) {
         if self.in_line_comment {
             self.in_line_comment = false;
-            if !matches!(bytes[0], b'\n' | b'\r') {
-                self.out.extend_from_slice(self.line_break);
+            if !matches!(next, b'\n' | b'\r') {
+                self.out.list.extend_from_slice(self.line_break);
             }
         }
-        self.out.extend_from_slice(bytes);
     }
 
     fn break_line(&mut self) {
@@ -623,6 +648,12 @@ impl<'a> Text<'a> {
 
     /// Prints `value`, which the old text does not have. Its lines after the first start with `indent`.
     fn print(&mut self, value: &Expr, indent: &[u8]) -> Step {
+        if let Some(string) = string_of(value) {
+            // What the printer writes for a string, without a printer.
+            self.end_line_comment(b'"');
+            js_printer::quote_for_json(string, &mut self.out, false)?;
+            return Ok(());
+        }
         let mut writer = js_printer::BufferPrinter::init(js_printer::BufferWriter::init());
         js_printer::print_json(
             &mut writer,
@@ -678,9 +709,9 @@ impl<'a> Text<'a> {
             }
             self.put(&text[copied..=container.close]);
         } else {
-            let pairs = self.pair(&container, entries)?;
+            let (pairs, stays) = self.pair(&container, entries)?;
             if self.has_lines(&container) {
-                self.lines(&container, entries, &pairs)?;
+                self.lines(&container, entries, &pairs, &stays)?;
             } else {
                 self.lay_out(&container, entries, &pairs, self.line_indent(at))?;
             }
@@ -696,13 +727,10 @@ impl<'a> Text<'a> {
         container: &Container,
         entries: Entries<'_>,
         pairs: &[Option<usize>],
+        stays: &[bool],
     ) -> Step {
         let text = self.text;
         let old_len = container.len;
-        let mut stays = vec![false; old_len];
-        for &old in pairs.iter().flatten() {
-            stays[old] = true;
-        }
         let tail = if old_len == 0 {
             container.head_end
         } else {
@@ -711,29 +739,27 @@ impl<'a> Text<'a> {
 
         if pairs.is_empty() {
             // Nothing is left but the comments that were on lines of their own.
-            let mark = self.out.len();
+            let mark = self.out.list.len();
             self.put(&text[container.open..container.head_end]);
             for old in 0..old_len {
                 self.comment_lines_above(&self.member(container, old));
             }
             self.put(&text[tail..=container.close]);
-            if !strings::contains_char(&self.out[mark..], b'/') {
-                self.out.truncate(mark);
+            if !strings::contains_char(&self.out.list[mark..], b'/') {
+                self.out.list.truncate(mark);
                 self.put(&[text[container.open], text[container.close]]);
             }
             return Ok(());
         }
 
-        let mut indent = None;
-        for old in 0..old_len {
-            let member = self.member(container, old);
-            if member.starts_line {
-                indent = Some(self.line_indent(member.key).to_vec());
-                break;
-            }
-        }
-        let indent = indent
-            .unwrap_or_else(|| [self.line_indent(container.open), self.unit.as_slice()].concat());
+        // A new member is indented like the first member that starts a line.
+        let indent: Cow<'a, [u8]> = (0..old_len)
+            .map(|old| self.member(container, old))
+            .find(|member| member.starts_line)
+            .map_or_else(
+                || Cow::Owned(self.indented(self.line_indent(container.open))),
+                |member| Cow::Borrowed(self.line_indent(member.key)),
+            );
         let (has_trailing_comma, close_has_line) = if old_len == 0 {
             (false, container.head_ends_line)
         } else {
@@ -845,7 +871,7 @@ impl<'a> Text<'a> {
             return self.print(value, indent);
         };
         let container = self.scan(at)?;
-        let pairs = self.pair(&container, entries)?;
+        let (pairs, _) = self.pair(&container, entries)?;
         self.lay_out(&container, entries, &pairs, indent)?;
         self.members.truncate(container.first);
         Ok(())
@@ -868,15 +894,15 @@ impl<'a> Text<'a> {
                 ..
             }
         );
-        let inner = if on_one_line {
-            indent.to_vec()
+        let inner: Cow<'_, [u8]> = if on_one_line {
+            Cow::Borrowed(indent)
         } else {
-            [indent, self.unit.as_slice()].concat()
+            Cow::Owned(self.indented(indent))
         };
         self.put(&text[container.open..=container.open]);
         if pairs.is_empty() {
             self.comments(container.open + 1, container.close, Blank::Before);
-            if self.out.last() != Some(&text[container.open]) {
+            if self.out.list.last() != Some(&text[container.open]) {
                 self.put(b" ");
             }
             self.put(&text[container.close..=container.close]);

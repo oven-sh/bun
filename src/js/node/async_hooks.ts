@@ -234,9 +234,21 @@ class AsyncLocalStorage<T = any> {
     }
   }
 
-  static bind(fn, ...args: any) {
+  // Node's bind() is AsyncResource.bind(fn): fn gets the caller's `this`. Bun's
+  // AsyncResource carries no hooks or async ids, so the wrapper holds the frame itself.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/async_hooks.js#L250-L277
+  static bind(fn) {
     validateFunction(fn, "fn");
-    return this.snapshot().bind(null, fn, ...args);
+    var context = get();
+    return function bound(this: unknown, ...args) {
+      var prev = get();
+      set(context);
+      try {
+        return fn.$apply(this, args);
+      } finally {
+        set(prev);
+      }
+    };
   }
 
   static snapshot() {

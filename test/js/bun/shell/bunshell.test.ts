@@ -3633,7 +3633,7 @@ describe("a NUL byte in a string given to the shell", () => {
     );
   });
 
-  test("a rejected value leaves the earlier cwd and env of the command in place", async () => {
+  test.concurrent("a rejected value leaves the earlier cwd and env of the command in place", async () => {
     using dir = tempDir("shell-nul-kept", { "inner": {} });
     const cwd = String(dir).replaceAll("\\", "/");
     const command = $`echo $X > out.txt`.cwd(`${cwd}/inner`).env({ ...bunEnv, X: "kept" });
@@ -3652,7 +3652,7 @@ describe("a NUL byte in a string given to the shell", () => {
     expect(await Bun.file(join(cwd, "inner", "out.txt")).text()).toBe("kept\n");
   });
 
-  test("a default with a NUL is rejected by each command until the default is replaced", async () => {
+  test.concurrent("a default with a NUL is rejected by each command until the default is replaced", async () => {
     using dir = tempDir("shell-nul-default", {});
     const cwd = String(dir).replaceAll("\\", "/");
     const sh = new $.Shell().cwd("a\0b").env({ X: "a\0b" });
@@ -3667,7 +3667,7 @@ describe("a NUL byte in a string given to the shell", () => {
     expect(await Bun.file(join(cwd, "out.txt")).text()).toBe("replaced\n");
   });
 
-  test("a command named by an env value that ends in a NUL does not run", async () => {
+  test.concurrent("a command named by an env value that ends in a NUL does not run", async () => {
     using dir = tempDir("shell-nul-command", {});
     const cwd = String(dir).replaceAll("\\", "/");
 
@@ -3680,7 +3680,7 @@ describe("a NUL byte in a string given to the shell", () => {
     });
   });
 
-  test("an env value with a NUL does not reach a child process as the bytes before the NUL", async () => {
+  test.concurrent("an env value with a NUL does not reach a child process as the bytes before the NUL", async () => {
     const print = "process.stdout.write(JSON.stringify(process.env.X))";
 
     expect({
@@ -3692,7 +3692,7 @@ describe("a NUL byte in a string given to the shell", () => {
     });
   });
 
-  test("values without a NUL and keys without a value are accepted", async () => {
+  test.concurrent("values without a NUL and keys without a value are accepted", async () => {
     const { stdout, stderr, exitCode } = await $`echo $EMPTY.$LATIN1.$UTF16.$NUMBER`
       .env({ ...bunEnv, EMPTY: "", LATIN1: "caf\xe9", UTF16: "\u4e2d", NUMBER: 5 as any, "NO\0VALUE": undefined })
       .quiet()
@@ -3706,7 +3706,7 @@ describe("a NUL byte in a string given to the shell", () => {
   });
 
   // `process.env` and the defaults of `$` are process-wide, so this runs in its own process.
-  test("process.env and the defaults of `$` are checked by each command", async () => {
+  test.concurrent("process.env and the defaults of `$` are checked by each command", async () => {
     // The `.env` file puts the value in `process.env` when the process starts.
     using dir = tempDir("shell-nul-process-env", { ".env": "SHELL_NUL=a\0b\n" });
     const fixture = /* js */ `

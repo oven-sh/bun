@@ -263,6 +263,7 @@ pub(crate) mod test {
 // ───────────────────────────── JS bridge ─────────────────────────────
 
 /// The JS string that [`throw_if_nul`] checks, named in its error message.
+#[derive(Clone, Copy)]
 pub(crate) enum NulSubject<'a> {
     Argument,
     Cwd,

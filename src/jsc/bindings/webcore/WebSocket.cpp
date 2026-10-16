@@ -577,7 +577,13 @@ ExceptionOr<void> WebSocket::sendFrame(Opcode opcode, const Payload& payload, ui
     const String* text = std::get_if<String>(&payload);
     auto bytes = text ? std::span<const uint8_t> {} : std::get<std::span<const uint8_t>>(payload);
 
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+
     if (opcode == Opcode::Ping || opcode == Opcode::Pong) {
+        // A socket that is closing or closed ignores the call, whatever the payload is.
+        if (m_state != OPEN)
+            return {};
         UTF8CString utf8;
         if (text) {
             utf8 = text->utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
@@ -585,15 +591,10 @@ ExceptionOr<void> WebSocket::sendFrame(Opcode opcode, const Payload& payload, ui
         }
         if (bytes.size() > maxControlFramePayloadSize)
             return controlFramePayloadTooLargeException(bytes.size());
-        if (m_state == CONNECTING)
-            return Exception { InvalidStateError };
-        if (m_state == OPEN)
-            sendWebSocketData(bytes, opcode, flags);
+        sendWebSocketData(bytes, opcode, flags);
         return {};
     }
 
-    if (m_state == CONNECTING)
-        return Exception { InvalidStateError };
     // No exception is raised if the connection was once established but has subsequently been closed.
     if (m_state != OPEN) {
         m_bufferedAmount = saturateAdd(m_bufferedAmount, text ? text->utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD).length() : bytes.size());

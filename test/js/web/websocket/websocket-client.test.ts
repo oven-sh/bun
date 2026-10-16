@@ -403,31 +403,31 @@ describe.concurrent("WebSocket send(), ping() and pong() payloads", () => {
     });
   });
 
-  // The argument is validated before readyState is checked, so an oversized payload throws in every state.
-  it("ping() and pong() throw RangeError over 125 bytes in every readyState", async () => {
+  // readyState is checked first, so only an open socket looks at the size.
+  it("ping() and pong() over 125 bytes: InvalidStateError while connecting, ignored once closing", async () => {
     const silent = createServer(() => {}).listen(0, "127.0.0.1");
     await once(silent, "listening");
     const connecting = new WebSocket(`ws://127.0.0.1:${(silent.address() as AddressInfo).port}/`);
     connecting.onerror = () => {};
     try {
       expect(connecting.readyState).toBe(WebSocket.CONNECTING);
-      expect(() => connecting.ping(new Uint8Array(126))).toThrow(RangeError);
-      expect(() => connecting.pong(Buffer.alloc(126, "a").toString())).toThrow(RangeError);
-      expect(() => connecting.ping(new Uint8Array(125))).toThrow(
-        expect.objectContaining({ name: "InvalidStateError" }),
-      );
+      const invalidState = expect.objectContaining({ name: "InvalidStateError" });
+      expect(() => connecting.ping(new Uint8Array(126))).toThrow(invalidState);
+      expect(() => connecting.pong(Buffer.alloc(126, "a").toString())).toThrow(invalidState);
+      expect(() => connecting.ping(new Uint8Array(125))).toThrow(invalidState);
     } finally {
       connecting.terminate();
       silent.close();
     }
 
     await withOpenSocket(async ws => {
+      expect(() => ws.ping(new Uint8Array(126))).toThrow(RangeError);
       const closed = new Promise(resolve => (ws.onclose = resolve));
       ws.close();
       for (const state of [WebSocket.CLOSING, WebSocket.CLOSED]) {
         expect(ws.readyState).toBe(state);
-        expect(() => ws.ping(new Uint8Array(126))).toThrow(RangeError);
-        expect(() => ws.pong(new Blob([new Uint8Array(126)]) as never)).toThrow(RangeError);
+        ws.ping(new Uint8Array(126));
+        ws.pong(new Blob([new Uint8Array(126)]) as never);
         ws.ping(new Uint8Array(125));
         expect(ws.bufferedAmount).toBe(0);
         await closed;

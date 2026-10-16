@@ -3574,6 +3574,162 @@ describe("bundler", () => {
       `,
     },
   });
+
+  // A function in the parameter list of a component or hook is part of that
+  // component. It took the candidate name that the statement set for the
+  // component, so it was compiled in place of the component. One that returns
+  // JSX then read a memo cache on each call, also outside a render, and the
+  // component stayed as written.
+  //
+  // The fake `c` counts its calls in a render and throws outside of one, as
+  // the cache hook of React does. Each form passes its function to `onClick`,
+  // and the run calls it after the render.
+  itBundled("react-compiler/FunctionInAParameterList", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { memo, useState } from "react";
+        import { render } from "react/compiler-runtime";
+
+        const noop = () => {};
+        function NoFunction({ label, onClick = noop }) {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        }
+
+        // The compiler moves these defaults into the body.
+        function DefaultInAPattern({ label, onClick = () => {} }) {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        }
+        function DefaultOfAParameter(onClick = () => {}) {
+          const style = { color: "a" };
+          return <button style={style} onClick={onClick} />;
+        }
+        const ArrowComponent = ({ label, onClick = () => {} }) => {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        };
+        const FunctionExpression = function ({ label, onClick = () => {} }) {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        };
+        const MemoCallback = memo(({ label, onClick = () => {} }) => {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        });
+        function useHook(onClick = () => {}) {
+          const [label] = useState("a");
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        }
+
+        // The compiler does not move these defaults, so it leaves the
+        // component as written.
+        function JsxInAnArrow({ label, onClick = text => <b>{text}</b> }) {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        }
+        function JsxInAnArrowCalledInTheRender({ items, onClick = text => <b>{text}</b> }) {
+          return <button onClick={onClick}>{items.map(onClick)}</button>;
+        }
+        function JsxInAFunctionExpression({ label, onClick = function (text) { return <b>{text}</b>; } }) {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        }
+        function JsxInAnObjectMethod({ label, handlers = { onClick(text) { return <b>{text}</b>; } } }) {
+          const style = { color: label };
+          return <button style={style} onClick={handlers.onClick}>{label}</button>;
+        }
+        function JsxInAClassMethod({ label, Handlers = class { static onClick(text) { return <b>{text}</b>; } } }) {
+          const style = { color: label };
+          return <button style={style} onClick={Handlers.onClick}>{label}</button>;
+        }
+        const JsxInAnArrowOfAMemoCallback = memo(({ label, onClick = text => <b>{text}</b> }) => {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        });
+
+        const forms = {
+          NoFunction,
+          DefaultInAPattern,
+          DefaultOfAParameter,
+          ArrowComponent,
+          FunctionExpression,
+          MemoCallback,
+          useHook,
+          JsxInAnArrow,
+          JsxInAnArrowCalledInTheRender,
+          JsxInAFunctionExpression,
+          JsxInAnObjectMethod,
+          JsxInAClassMethod,
+          JsxInAnArrowOfAMemoCallback,
+        };
+        // These two take the function as their first parameter.
+        const withoutProps = [DefaultOfAParameter, useHook];
+        for (const [name, form] of Object.entries(forms)) {
+          const props = withoutProps.includes(form) ? undefined : { label: "a", items: [1, 2, 3] };
+          const { element, cacheHooks } = render(form, props);
+          let returned;
+          try {
+            returned = JSON.stringify(element.props.onClick("x") ?? null);
+          } catch (e) {
+            returned = "an error: " + e.message;
+          }
+          console.log(name + ": " + cacheHooks + " cache hooks in a render, the function returns " + returned);
+        }
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": /* js */ `
+        export const memo = component => component;
+        export const useState = initial => [initial, () => {}];
+      `,
+      "/node_modules/react/jsx-runtime.js": /* js */ `
+        export const jsx = (type, props) => ({ type, props });
+        export const jsxs = jsx;
+      `,
+      "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+        export const jsxDEV = (type, props) => ({ type, props });
+      `,
+      "/node_modules/react/compiler-runtime.js": /* js */ `
+        let rendering = false;
+        let cacheHooks = 0;
+        export function c(size) {
+          if (!rendering) throw new Error("Invalid hook call");
+          cacheHooks++;
+          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+        }
+        export function render(component, props) {
+          rendering = true;
+          cacheHooks = 0;
+          try {
+            return { element: component(props), cacheHooks };
+          } finally {
+            rendering = false;
+          }
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    target: "browser",
+    run: {
+      stdout: `
+        NoFunction: 1 cache hooks in a render, the function returns null
+        DefaultInAPattern: 1 cache hooks in a render, the function returns null
+        DefaultOfAParameter: 1 cache hooks in a render, the function returns null
+        ArrowComponent: 1 cache hooks in a render, the function returns null
+        FunctionExpression: 1 cache hooks in a render, the function returns null
+        MemoCallback: 1 cache hooks in a render, the function returns null
+        useHook: 1 cache hooks in a render, the function returns null
+        JsxInAnArrow: 0 cache hooks in a render, the function returns {"type":"b","props":{"children":"x"}}
+        JsxInAnArrowCalledInTheRender: 0 cache hooks in a render, the function returns {"type":"b","props":{"children":"x"}}
+        JsxInAFunctionExpression: 0 cache hooks in a render, the function returns {"type":"b","props":{"children":"x"}}
+        JsxInAnObjectMethod: 0 cache hooks in a render, the function returns {"type":"b","props":{"children":"x"}}
+        JsxInAClassMethod: 0 cache hooks in a render, the function returns {"type":"b","props":{"children":"x"}}
+        JsxInAnArrowOfAMemoCallback: 0 cache hooks in a render, the function returns {"type":"b","props":{"children":"x"}}
+      `,
+    },
+  });
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

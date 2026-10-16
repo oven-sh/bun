@@ -457,8 +457,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// hook site so a `ReactCompilerHost(&mut P)` can borrow alongside it.
     pub(crate) react_compiler: Option<Box<bun_react_compiler::ReactCompilerState>>,
     /// Binding name from the `S::Function` / `S::Local` / `S::ExportDefault`
-    /// statement currently being visited. Set in `visit_stmt`, consumed by
-    /// `visit_func` / arrow-visit one frame down.
+    /// statement currently being visited. Set in `visit_stmt`, taken by
+    /// `enter_react_compiler_candidate` when the visit of that function starts.
     pub(crate) react_compiler_candidate_name: Option<js_ast::Ref>,
     /// Set alongside `react_compiler_candidate_name` when the candidate
     /// expression is a `memo(...)` / `forwardRef(...)` call.

@@ -164,6 +164,44 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     }
 }
 
+/// What `enter_react_compiler_candidate` returns for one function visit.
+#[derive(Clone, Copy)]
+pub(crate) struct ReactCompilerCandidate {
+    /// `react_compiler_candidate_name` as the statement set it, taken by this
+    /// function. `None` when this function is not the candidate.
+    statement_binding: Option<js_ast::Ref>,
+    /// The function's own name when it has one, else `statement_binding`.
+    binding: Option<js_ast::Ref>,
+    in_react_hoc: bool,
+    prev_may_replace_body: bool,
+}
+
+impl ReactCompilerCandidate {
+    pub(crate) fn is_candidate(&self) -> bool {
+        self.statement_binding.is_some()
+    }
+
+    /// The value for `react_compiler_pending`. Set it after the parameters are
+    /// visited, right before the body is: the first function body visited takes it.
+    pub(crate) fn pending(
+        &self,
+        args: js_ast::StoreSlice<js_ast::G::Arg>,
+        flags: js_ast::flags::FunctionSet,
+        body_loc: bun_ast::Loc,
+        args_loc: bun_ast::Loc,
+    ) -> bun_react_compiler::PendingCompile {
+        debug_assert!(self.is_candidate());
+        bun_react_compiler::PendingCompile {
+            args,
+            flags,
+            body_loc,
+            args_loc,
+            binding: self.binding,
+            in_react_hoc: self.in_react_hoc,
+        }
+    }
+}
+
 impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
     /// Drops the replaced body's symbols, or the renamer prints a new local `count` as `count2`.
     pub(crate) fn drop_symbols_of_replaced_function(&mut self, name: Option<js_ast::Ref>) {
@@ -189,31 +227,56 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         }
     }
 
-    /// Sets `react_compiler_may_replace_body` for the visit of the pending candidate. Returns the old value.
+    /// Starts the visit of a function. The candidate takes
+    /// `react_compiler_candidate_name` here, before its parameters are visited,
+    /// so a function in its parameter list finds no name to take. Also sets
+    /// `react_compiler_may_replace_body` for the visit of the candidate.
     pub(crate) fn enter_react_compiler_candidate(
         &mut self,
         name: Option<js_ast::Ref>,
         has_react_hooks_suppression: bool,
         body: &[js_ast::Stmt],
-    ) -> bool {
-        let prev = self.react_compiler_may_replace_body;
-        if !prev
-            && let Some(candidate) = self.react_compiler_candidate_name
+    ) -> ReactCompilerCandidate {
+        let prev_may_replace_body = self.react_compiler_may_replace_body;
+        let statement_binding = self.react_compiler_candidate_name.take();
+        let in_react_hoc =
+            statement_binding.is_some() && core::mem::take(&mut self.react_compiler_in_react_hoc);
+        let binding =
+            statement_binding.map(|candidate| name.filter(|r| r.is_valid()).unwrap_or(candidate));
+        if !prev_may_replace_body
+            && let Some(binding) = binding
             && let Some(rc) = self.react_compiler.as_deref()
         {
-            let name = name
-                .filter(|r| r.is_valid())
-                .or(Some(candidate))
+            let name = Some(binding)
                 .filter(|r| *r != js_ast::Ref::NONE)
                 .map(|r| self.load_name_from_ref(r));
-            self.react_compiler_may_replace_body = rc.may_compile(
-                name,
-                self.react_compiler_in_react_hoc,
-                has_react_hooks_suppression,
-                body,
-            );
+            self.react_compiler_may_replace_body =
+                rc.may_compile(name, in_react_hoc, has_react_hooks_suppression, body);
         }
-        prev
+        ReactCompilerCandidate {
+            statement_binding,
+            binding,
+            in_react_hoc,
+            prev_may_replace_body,
+        }
+    }
+
+    /// Ends the visit that `enter_react_compiler_candidate` started. Returns the
+    /// compiled parameters and flags when the compiler replaced the body.
+    pub(crate) fn leave_react_compiler_candidate(
+        &mut self,
+        candidate: ReactCompilerCandidate,
+    ) -> Option<bun_react_compiler::CompileResult> {
+        self.react_compiler_pending = None;
+        self.react_compiler_may_replace_body = candidate.prev_may_replace_body;
+        let result = self.react_compiler_result.take()?;
+        if let Some(binding) = candidate
+            .statement_binding
+            .filter(|r| *r != js_ast::Ref::NONE)
+        {
+            self.record_usage(binding);
+        }
+        Some(result)
     }
 
     /// Port of upstream `findFunctionDeclarationOrExpression` for the

@@ -26,6 +26,15 @@ describe.concurrent("node-module-module", () => {
     expect(isBuiltin("test")).toBe(false); // "test" does not alias to "node:test"
   });
 
+  test("_stat() says what is at a path", () => {
+    expect(Module._stat(import.meta.path)).toBe(0);
+    expect(Module._stat(import.meta.dir)).toBe(1);
+    expect(Module._stat(path.join(import.meta.dir, "does-not-exist"))).toBe(-1);
+    // The path is converted to a string, an argument that was not passed included.
+    expect(Module._stat()).toBe(-1);
+    expect(Module._stat(undefined)).toBe(-1);
+  });
+
   test("module.globalPaths exists", () => {
     expect(Array.isArray(require("module").globalPaths)).toBe(true);
   });
@@ -268,6 +277,29 @@ console.log("survived", require("./late.js"));`,
       expect(stderr).not.toContain("writing cache");
       expect(exitCode).toBe(0);
     }
+  });
+
+  test("compile cache writes do not run the bytecode optimizer", async () => {
+    // The optimizer is for `bun build --bytecode`, where it runs once. A compile cache
+    // write runs on every cold start, after `exit`, so it must skip the optimizer.
+    // `BUN_JSC_reportBytecodeOptimizer=1` prints one line per code block the optimizer touches.
+    using dir = tempDir("compile-cache-no-optimizer", {
+      "main.mjs": `import { f } from "./dep.mjs"; console.log(f(1));`,
+      "dep.mjs": `export function f(a) { let x = a + 1; return x; }`,
+    });
+    const cacheDir = path.join(String(dir), "cc");
+    const env = {
+      ...bunEnv,
+      NODE_COMPILE_CACHE: cacheDir,
+      NODE_DEBUG_NATIVE: "COMPILE_CACHE",
+      BUN_JSC_reportBytecodeOptimizer: "1",
+    };
+    await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], env, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("2");
+    expect(stderr).toMatch(/writing cache for ESM .*dep\.mjs.*success/);
+    expect(stderr).not.toContain("BytecodeOptimizer:");
+    expect(exitCode).toBe(0);
   });
 
   test.skipIf(isWindows)("compile cache entries are created 0600 like Node", async () => {

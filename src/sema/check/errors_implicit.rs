@@ -24,14 +24,14 @@ impl Checker<'_, '_> {
                 return;
             };
             let (code, is_the_one_to_be_told) = if decl.kind == FnKind::Setter {
-                let getter = self.sibling_accessor(file, func, FnKind::Getter);
+                let getter = self.sibling_accessor_at_this_moment(file, func, FnKind::Getter);
                 (
                     7032,
                     getter.is_none_or(|(of, g)| self.accessor_has_no_type_source(of, g)),
                 )
             } else {
                 // The error is reported on the setter, if possible.
-                let setter = self.sibling_accessor(file, func, FnKind::Setter);
+                let setter = self.sibling_accessor_at_this_moment(file, func, FnKind::Setter);
                 (
                     7033,
                     setter.is_none_or(|(of, s)| {
@@ -134,8 +134,30 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `(string) => void` was meant to be `(arg0: string) => void`. `IsTypeNodeKind`
-    pub(super) fn is_name_of_a_type(&self, file: FileId, func: FnId, name: Atom) -> bool {
+    /// `reportImplicitAny`, `case KindParameter`: the name of the parameter `p`, if it is an
+    /// identifier and `p.Parent` is a call signature, a method signature or a function type.
+    pub(super) fn identifier_of_signature_parameter(
+        &self,
+        file: FileId,
+        p: ParamId,
+    ) -> Option<Atom> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let func = bound.param_fn[p.idx()];
+        let PatKind::Ident(name) = hir[hir[p].pat].kind else {
+            return None;
+        };
+        let is_signature = func.is_some()
+            && match hir[func].kind {
+                FnKind::CallSignature | FnKind::FunctionType => true,
+                FnKind::Method => matches!(bound.fns[func.idx()].owner, FnOwner::Member(m)
+                    if !matches!(bound.member_owner[m.idx()], MemberOwner::Class(_))),
+                _ => false,
+            };
+        is_signature.then_some(name)
+    }
+
+    /// `IsTypeNodeKind(IdentifierToKeywordKind(name))`
+    pub(super) fn is_type_node_keyword(&self, name: Atom) -> bool {
         const KEYWORDS: [&[u8]; 12] = [
             b"any",
             b"unknown",
@@ -150,7 +172,12 @@ impl Checker<'_, '_> {
             b"never",
             b"intrinsic",
         ];
-        if KEYWORDS.contains(&self.atoms().bytes(name)) {
+        KEYWORDS.contains(&self.atoms().bytes(name))
+    }
+
+    /// `(string) => void` was meant to be `(arg0: string) => void`. `check_unused` notes the use.
+    pub(super) fn is_name_of_a_type(&self, file: FileId, func: FnId, name: Atom) -> bool {
+        if self.is_type_node_keyword(name) {
             return true;
         }
         let scope = self.bound(file).fns[func.idx()].scope;
@@ -159,25 +186,5 @@ impl Checker<'_, '_> {
                 .files()
                 .resolve_name(file, scope, name, SymFlags::TYPE)
                 .is_some()
-    }
-
-    /// `checkVariableLikeDeclaration` returns before it requests the type of a renamed element in a
-    /// function without a body. 7031 comes from `getTypeFromBindingPattern`, which only runs once
-    /// the type of the parameter is requested: by another element of the pattern, by a call, or by
-    /// a comparison with another signature.
-    pub(super) fn is_parameter_type_never_requested(
-        &self,
-        file: FileId,
-        func: FnId,
-        p: ParamId,
-    ) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let (f, symbol) = (&hir[func], bound.fn_symbol[func.idx()]);
-        f.kind == FnKind::Decl
-            && matches!(f.body, FnBody::None)
-            && matches!(hir[hir[p].pat].kind, PatKind::Object(props) if props.iter().all(|q| self.is_renamed_binding_element(file, q)))
-            && symbol.is_some()
-            && bound.symbols[symbol.idx()].decls.len() == 1
-            && !bound.expr_symbol.contains(&symbol)
     }
 }

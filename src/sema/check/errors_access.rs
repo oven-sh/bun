@@ -219,11 +219,15 @@ impl<'p> Checker<'p, '_> {
             });
         let members = (hir.members.iter().zip(bound.member_owner.iter()))
             .map(|(member, owner)| (member.name_pos, !matches!(owner, MemberOwner::None)));
-        // The name of `{ a }` is an expression, and `{ ...a }` has none.
+        // The name of `{ a }` is an expression, and `{ ...a }` has none. `parseIdentifierName` makes
+        // an `Identifier` of any token that names a `JsxAttribute` or an `ImportAttribute`.
         let properties =
-            (hir.props.iter().zip(bound.prop_owner.iter())).map(|(property, owner)| {
+            (hir.props.iter().zip(bound.prop_owner.iter())).map(|(property, &owner)| {
                 let has_name = !matches!(property.kind, PropKind::Shorthand | PropKind::Spread);
-                (property.pos, has_name && owner.is_some())
+                let is_in_object_literal = owner.is_some()
+                    && matches!(hir[owner].kind, ExprKind::Object(_))
+                    && !hir.import_attributes.iter().any(|kept| kept.1 == owner);
+                (property.pos, has_name && is_in_object_literal)
             });
         let elements = hir.pat_props.iter().map(|element| {
             let is_bound = !matches!(bound.pat_parent[element.value.idx()], PatParent::None);
@@ -501,11 +505,7 @@ impl<'p> Checker<'p, '_> {
         let ExprKind::Ident(name) = hir[index].kind else {
             return false;
         };
-        // `getResolvedSymbol`
-        let symbol = self
-            .symbol_of_identifier(file, index, name)
-            .and_then(|found| self.value_symbol_of_identifier(file, index, name, found));
-        let Some(symbol) = symbol else {
+        let Some(symbol) = self.symbol_of_identifier(file, index, name) else {
             return false;
         };
         if !self.files().flags(symbol).intersects(SymFlags::VARIABLE) {
@@ -549,9 +549,7 @@ impl<'p> Checker<'p, '_> {
                 let ExprKind::Ident(name) = hir[e].kind else {
                     return None;
                 };
-                // `getResolvedSymbol`
                 self.symbol_of_identifier(file, e, name)
-                    .and_then(|found| self.value_symbol_of_identifier(file, e, name, found))
             }
             _ => None,
         }
@@ -653,7 +651,7 @@ impl<'p> Checker<'p, '_> {
                 // `compareSymbols` breaks ties between equally close candidates.
                 candidates.push(((self.order_of_property(prop), candidate), prop.name));
             }
-            if members.shape().index.is_empty() {
+            if self.structured(members).index_infos().is_empty() {
                 break;
             }
         }
@@ -720,8 +718,17 @@ impl<'p> Checker<'p, '_> {
         file: FileId,
         written: PropId,
     ) -> u32 {
+        let hir = self.hir(file);
+        // `bindThisPropertyAssignment`: `this.name = value` in a member of the literal declares `name` among its members.
+        if hir.is_js
+            && let Some(&(_, Decl::ThisProperty(first))) = self
+                .declarations_of_member(file, Decl::Property(written))
+                .first()
+        {
+            return hir[first].pos;
+        }
         let first = self.first_declaration_of_literal_member(file, written);
-        self.hir(file)[first].pos
+        hir[first].pos
     }
 
     /// `declareSymbol`: the type parameters of a class or an interface are among its `members`, so
@@ -842,9 +849,9 @@ impl<'p> Checker<'p, '_> {
             _ => None,
         };
         let name = match bound.pat_parent[element.idx()] {
-            PatParent::Prop(_, p) if !hir[p].is_rest => self
-                .literal_type_from_property_name(file, hir[p].key, hir[p].name_kind)
-                .map(|key| (key, hir[p].pos)),
+            PatParent::Prop(_, p) if hir[p].key_pos != hir[element].pos => self
+                .literal_type_from_property_name(file, hir[p].key, hir[p].name_kind, hir[p].key_pos)
+                .map(|key| (key, hir[p].key_pos)),
             _ => own_name,
         };
         let Some((expr_type, at_name)) = name else {
@@ -984,7 +991,14 @@ impl<'p> Checker<'p, '_> {
         for (frame, dropped) in self.frames.iter_mut().zip(dropped) {
             frame.drops_reported = dropped;
         }
+        let reported = self.reported.len();
         self.add_error_or_suggestion(!is_unchecked_js || diagnostic.code != 2568, diagnostic);
+        // `NodeCheckFlagsTypeChecked`: tsgo reports for a node once. What it reports while a loop is analysed, with the
+        // types collected so far, is the report: the walk does not make another with the final type.
+        if self.is_in_flow_loop() {
+            self.log_reported_in_flow_loop(reported, file, e);
+            self.non_existent_properties.insert((file, e), true);
+        }
     }
 
     /// `getSuggestedSymbolForNonexistentProperty` for the name in `e` and the apparent type that
@@ -1286,9 +1300,8 @@ impl<'p> Checker<'p, '_> {
                     flags
                 }
             }
-            (None, PropSource::Intersected(..)) => {
-                let mut parts: SmallVec<[&Prop; 4]> = SmallVec::new();
-                super::relate::for_each_property(prop, &mut |p| parts.push(p));
+            (None, PropSource::Intersected(_, parts)) => {
+                let parts: SmallVec<[&Prop; 4]> = parts.iter().collect();
                 self.modifier_flags_of_synthetic_property(&parts)
             }
             _ => Flags::empty(),
@@ -1337,7 +1350,7 @@ impl<'p> Checker<'p, '_> {
         name_pos: u32,
     ) {
         let (at, writing) = (Parent::Expr(e), self.is_write_access(file, e));
-        let error_node = |c: &Self| c.place_of_token(file, name_pos);
+        let error_node = |c: &Self| c.place_of_right(file, name, name_pos);
         self.check_property_accessibility_at_location(
             file,
             self.hir(file).node(e),
@@ -1366,11 +1379,14 @@ impl<'p> Checker<'p, '_> {
         // `forEachProperty`: a property of a union or of an intersection is composed of the
         // properties of the members.
         let mut parts: SmallVec<[&Prop; 4]> = SmallVec::new();
+        // Those of the members themselves: that of an intersection in a union is one of them.
+        let mut constituents: SmallVec<[&Prop; 4]> = SmallVec::new();
         for &member in self.parts(containing) {
             let member = self.apparent_type(member);
             let Some((prop, _)) = self.prop_ref(member, name) else {
                 return true;
             };
+            constituents.push(prop);
             super::relate::for_each_property(prop, &mut |p| parts.push(p));
         }
         let Some(&first) = parts.first() else {
@@ -1382,14 +1398,27 @@ impl<'p> Checker<'p, '_> {
         {
             return true;
         }
+        // `markPropertyAsReferenced` comes before every `checkPropertyAccessibility`. Only an `a.b`
+        // can be a write-only access.
+        if error_node.is_some()
+            && first.flags.contains(PropFlags::PRIVATE)
+            && matches!(first.source, PropSource::Symbol(symbol) if symbol.file != file)
+        {
+            let node_for_check_write_only = match self.hir(file).data(location) {
+                NodeData::Expr(e) => Some(e),
+                _ => None,
+            };
+            self.mark_property_as_referenced(file, containing, name, node_for_check_write_only);
+        }
         let hidden = Flags::PRIVATE | Flags::PROTECTED;
-        // If all of them share one declaration, its modifiers are used
-        // (`createUnionOrIntersectionProperty`).
-        let is_declared_once = parts.len() == 1 || parts.iter().all(|p| p.source == first.source);
+        // With one declaration for all of them, its modifiers and its parent are used.
+        let declared = Self::with_value_declaration_of_all(constituents.iter().copied());
+        let is_declared_once = parts.len() == 1 || declared.is_some();
+        let first = declared.unwrap_or(first);
         let flags = if is_declared_once {
             self.get_declaration_modifier_flags_from_symbol_ex(first, writing)
         } else {
-            self.modifier_flags_of_synthetic_property(&parts)
+            self.modifier_flags_of_synthetic_property(&constituents)
         };
         let is_static = flags.contains(Flags::STATIC);
         if is_super {

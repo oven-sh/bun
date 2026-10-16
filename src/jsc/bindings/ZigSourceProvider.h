@@ -56,7 +56,7 @@ private:
         JSC::SourceTaintedOrigin taintedness,
         const SourceOrigin& sourceOrigin, WTF::String&& sourceURL,
         const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
-        : Base(sourceOrigin, WTF::move(sourceURL), String(), taintedness, startPosition, sourceType)
+        : Base(sourceOrigin, WTF::move(sourceURL), String(), taintedness, startPosition, sourceType, resolvedSource.is_static ? JSC::SourceProvenance::Static : JSC::SourceProvenance::GeneratedAtRuntime)
         , m_moduleInfo(std::exchange(resolvedSource.module_info, nullptr))
         , m_tag(resolvedSource.tag)
         , m_alreadyBundled(resolvedSource.already_bundled)

@@ -1153,7 +1153,7 @@ void kept;
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
 
-    const expected = [];
+    const expected: unknown[] = [];
     for (const gc of gcs)
       for (const firstRead of ["before", "after"])
         for (const reader of ["origin", "other", "host"]) {

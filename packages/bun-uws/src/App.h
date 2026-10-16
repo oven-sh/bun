@@ -156,48 +156,15 @@ public:
                 us_ssl_ctx_enable_http2_alpn(domainCtx, httpContext->getSocketContextData()->allowHttp1);
             }
             auto *domainRouter = new HttpRouter<typename HttpContextData<SSL>::RouterData>();
-            int result = 0;
             forEachListenSocket([&](us_listen_socket_t *ls) {
-                result |= us_listen_socket_add_server_name(ls, hostname_pattern.c_str(), domainCtx, domainRouter);
+                us_listen_socket_add_server_name(ls, hostname_pattern.c_str(), domainCtx, domainRouter);
             });
-            if (result != 0) {
-                /* At least one listener rejected the entry (duplicate hostname).
-                 * Roll back any that succeeded so we don't leave the SNI tree
-                 * pointing at a router we're about to delete. */
-                forEachListenSocket([&](us_listen_socket_t *ls) {
-                    us_listen_socket_remove_server_name(ls, hostname_pattern.c_str());
-                });
-                us_internal_ssl_ctx_unref(domainCtx);
-                delete domainRouter;
-                if (success) *success = false;
-                return std::move(*this);
-            }
             /* Queue for any listeners not yet created. We hold one SSL_CTX ref;
              * each listen socket took its own via SSL_CTX_up_ref. */
             pendingServerNames.push_back({hostname_pattern, domainCtx, domainRouter});
             if (success) *success = true;
         }
 
-        return std::move(*this);
-    }
-
-    TemplatedApp &&removeServerName(const std::string &hostname_pattern) {
-        if constexpr (SSL) {
-            /* The SNI tree on each listener stores a *borrowed* router pointer
-             * (and its own SSL_CTX_up_ref). pendingServerNames is the single
-             * owner — drop the borrowers first, then free the owner exactly
-             * once. The old loop deleted the router once per listener. */
-            forEachListenSocket([&](us_listen_socket_t *ls) {
-                us_listen_socket_remove_server_name(ls, hostname_pattern.c_str());
-            });
-            for (auto it = pendingServerNames.begin(); it != pendingServerNames.end(); ) {
-                if (it->hostname == hostname_pattern) {
-                    us_internal_ssl_ctx_unref(it->ctx);
-                    delete it->router;
-                    it = pendingServerNames.erase(it);
-                } else ++it;
-            }
-        }
         return std::move(*this);
     }
 
@@ -325,6 +292,7 @@ private:
          * default serve the request - it never aborts or suspends the handshake. */
         (void) abort_handshake;
         (void) socket;
+        if (!ls) return nullptr;
         auto *httpContext = (HttpContext<SSL> *) us_socket_group_ext(us_listen_socket_group(ls));
         httpContext->getSocketContextData()->missingServerNameHandler(hostname);
         /* The handler is expected to have registered the name via
@@ -433,6 +401,15 @@ public:
                 data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
             }
             s = next;
+        }
+        /* A handshake parked in the loop's low-priority queue is unlinked from head_sockets. Never idle: it only needs the mark. */
+        if (closeWhenIdle && group->low_prio_count) {
+            for (s = group->loop->data.low_prio_head; s; s = s->next) {
+                if (s->group == group) {
+                    auto *data = (HttpResponseData<SSL> *) ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
+                    data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
+                }
+            }
         }
         if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
             closed += h2->closeIdle(closeWhenIdle);
@@ -616,9 +593,10 @@ public:
     TemplatedApp &&domain(const std::string &serverName) {
         HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
 
+        /* The last registration of a name is the one the SNI tree points at */
         void *domainRouter = nullptr;
-        for (auto &p : pendingServerNames) {
-            if (p.hostname == serverName) { domainRouter = p.router; break; }
+        for (auto p = pendingServerNames.rbegin(); p != pendingServerNames.rend(); ++p) {
+            if (p->hostname == serverName) { domainRouter = p->router; break; }
         }
         if (domainRouter) {
             httpContextData->currentRouter = (decltype(httpContextData->currentRouter)) domainRouter;

@@ -1,0 +1,25 @@
+------------------
+{ printWidth: 40 }
+------------------
+<script>
+// Line Comment
+//
+</script>
+
+------------------
+{ printWidth: 80 }
+------------------
+<script>
+// Line Comment
+//
+</script>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<script>
+// Line Comment
+//
+</script>
+
+===================== End =====================

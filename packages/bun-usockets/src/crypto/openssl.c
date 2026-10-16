@@ -3519,12 +3519,11 @@ void us_socket_on_server_name(struct us_socket_t *s) {
 }
 
 /* us_socket_on_server_name for the SSL of an SSLWrapper: us_dispatch_wrapper_server_name answers its ClientHello.
- * The install goes on the SSL_CTX the SSL has now, so call it again after SSL_set_SSL_CTX. A wrapper whose
- * handshake waits for an answer keeps waiting. */
+ * Call it before the handshake starts. The install goes on the SSL_CTX that the SSL has now. */
 void us_ssl_wrapper_arm_server_name(SSL *ssl) {
   void *wrapper = us_ssl_wrapper(ssl);
   if (!wrapper) return;
-  if (us_ssl_wrapper_sni_state(wrapper) == US_SNI_NONE) us_ssl_wrapper_set_sni_state(wrapper, US_SNI_ARMED);
+  us_ssl_wrapper_set_sni_state(wrapper, US_SNI_ARMED);
   SSL_CTX_set_select_certificate_cb(SSL_get_SSL_CTX(ssl), us_select_cert_cb);
 }
 

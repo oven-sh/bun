@@ -20,7 +20,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const PKG = "av-test-pkg";
@@ -34,6 +34,38 @@ const patch = `diff --git a/index.js b/index.js
 -module.exports = "unpatched";
 +module.exports = "patched";
 `;
+
+const expectedFiles = Array.from({ length: 300 }, (_, i) => `${i}.txt`);
+
+/** Counts `dir`'s files in three independent ways, and names the ones each way does not find. */
+function diag(label: string, dir: string) {
+  const without = (found: string[]) => {
+    const set = new Set(found);
+    return expectedFiles.filter(name => !set.has(name)).join(",");
+  };
+  let listed: string[] = [];
+  try {
+    listed = readdirSync(dir);
+  } catch (e) {
+    console.log(`DIAG ${label}: readdirSync threw ${(e as Error).message}`);
+  }
+  const present = expectedFiles.filter(name => existsSync(join(dir, name)));
+  const cmd = Bun.spawnSync({ cmd: ["cmd", "/c", "dir", "/b", dir], stderr: "pipe" });
+  const cmdListed = cmd.stdout.toString().split(/\r?\n/).filter(Boolean);
+  console.log(
+    `DIAG ${label}: readdirSync=${listed.length} [${without(listed)}] existsSync=${present.length} [${without(present)}] cmd=${cmdListed.length} [${without(cmdListed)}]`,
+  );
+}
+
+/** The same for every directory named `files` at most `depth` levels below `root`. */
+function diagBelow(label: string, root: string, depth = 4) {
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const path = join(root, entry.name);
+    if (entry.name === "files") diag(`${label} ${path}`, path);
+    else if (depth > 0) diagBelow(label, path, depth - 1);
+  }
+}
 
 let pkgDir: ReturnType<typeof tempDir> | undefined;
 let tgzBytes: Buffer;
@@ -55,7 +87,39 @@ beforeAll(async () => {
   await Bun.$`tar -czf ${tgz} -C ${String(pkgDir)} package`.quiet();
   tgzBytes = readFileSync(tgz);
   tgzSha1 = createHash("sha1").update(tgzBytes).digest("hex");
-});
+
+  diag("source directory", join(String(pkgDir), "package", "files"));
+  const inTarball = (await Bun.$`tar -tzf ${tgz}`.text())
+    .split(/\r?\n/)
+    .filter(line => /^package\/files\/\d+\.txt$/.test(line))
+    .map(line => line.slice("package/files/".length));
+  const inTarballSet = new Set(inTarball);
+  console.log(
+    `DIAG tarball: ${inTarball.length} [${expectedFiles.filter(name => !inTarballSet.has(name)).join(",")}] first=${inTarball[0]} last=${inTarball.at(-1)} bytes=${tgzBytes.length}`,
+  );
+  console.log(`DIAG tar: ${Bun.which("tar")} ${(await Bun.$`tar --version`.text()).trim()}`);
+  const machine = Bun.spawnSync({
+    cmd: [
+      "pwsh",
+      "-NoProfile",
+      "-Command",
+      [
+        `"boot: " + (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString("o")`,
+        `"now: " + (Get-Date).ToUniversalTime().ToString("o")`,
+        `"cpu: " + (Get-CimInstance Win32_Processor | Select-Object -First 1).Name`,
+        `Get-Content C:\\bun-image.txt -TotalCount 3`,
+        `Get-MpComputerStatus | Select-Object AMRunningMode,AMServiceEnabled,RealTimeProtectionEnabled,OnAccessProtectionEnabled,AMProductVersion,AMEngineVersion,AntivirusSignatureVersion,AntivirusSignatureLastUpdated | Format-List | Out-String`,
+        `fsutil 8dot3name query C:`,
+        `Get-Volume -DriveLetter C | Select-Object FileSystemType,SizeRemaining | Format-List | Out-String`,
+        `Get-Process | Sort-Object CPU -Descending | Select-Object -First 20 Name,Id,CPU,StartTime | Format-Table -AutoSize | Out-String -Width 160`,
+      ].join("; "),
+    ],
+    stderr: "pipe",
+  });
+  for (const line of (machine.stdout.toString() + machine.stderr.toString()).split(/\r?\n/)) {
+    if (line.trim()) console.log(`DIAG machine: ${line}`);
+  }
+}, 120_000);
 
 afterAll(() => {
   pkgDir?.[Symbol.dispose]();
@@ -291,7 +355,12 @@ describe.skipIf(!isWindows).concurrent("bun install renames into the cache while
     using s = scaffold("rename-retry-local-store", registryBunfig(server.port) + `linker = "isolated"\n`, {});
     const installed = join(s.project, "node_modules", ".bun", `${PKG}@1.0.0`, "node_modules", PKG);
 
-    expect(await runInstall(s.project, s.env)).toMatchObject({ exitCode: 0 });
+    const first = await runInstall(s.project, s.env);
+    console.log(`DIAG [${budget}] first install: ${JSON.stringify(first)}`);
+    diagBelow(`[${budget}] cache after the first install`, s.cache);
+    diag(`[${budget}] installed after the first install`, join(installed, "files"));
+    console.log(`DIAG [${budget}] nlink of files/0.txt: ${statSync(join(installed, "files", "0.txt")).nlink}`);
+    expect(first).toMatchObject({ exitCode: 0 });
     mkdirSync(join(installed, "held"));
     writeFileSync(join(installed, "held", "file.txt"), "");
 
@@ -300,7 +369,13 @@ describe.skipIf(!isWindows).concurrent("bun install renames into the cache while
     await blocker.held;
 
     const result = await runInstall(s.project, { ...s.env, [ENV]: budget }, ["--force"]);
-    expect(await blocker.finish()).toContain("HELD");
+    const blockerOutput = await blocker.finish();
+    console.log(`DIAG [${budget}] --force install: ${JSON.stringify(result)} blocker: ${JSON.stringify(blockerOutput)}`);
+    diagBelow(`[${budget}] cache after --force`, s.cache);
+    diag(`[${budget}] installed after --force`, join(installed, "files"));
+    console.log(`DIAG [${budget}] next to the package: ${readdirSync(join(installed, "..")).join(",")}`);
+    console.log(`DIAG [${budget}] in the package: ${readdirSync(installed).join(",")}`);
+    expect(blockerOutput).toContain("HELD");
 
     expect(result).toMatchObject({ exitCode: 0 });
     expect({

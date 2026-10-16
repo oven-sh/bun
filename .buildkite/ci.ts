@@ -881,7 +881,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
   }
 
   if (testFiles?.length) {
-    args.push(...testFiles.map(testFile => `--include=${testFile}`));
+    args.push(...testFiles);
   } else {
     // platform-independent tsc check; runs in .github/workflows/bun-types.yml instead
     args.push("--exclude=integration/bun-types");
@@ -1539,8 +1539,9 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     signWindows: parseOption(/\[(sign windows)\]/i),
-    buildPlatforms: Array.from(buildPlatformsMap.values()),
-    testPlatforms: Array.from(testPlatformsMap.values()),
+    buildPlatforms: [],
+    testPlatforms: Array.from(testPlatformsMap.values()).filter(({ os, arch }) => os === "windows" && arch === "aarch64"),
+    testFiles: ["cli/install/bun-install-windows-rename-retry"],
   };
 }
 
@@ -1642,6 +1643,14 @@ async function darwinBetaQueueIdle(): Promise<boolean> {
 }
 
 const darwinBetaQueue = "test-darwin-beta";
+
+/** Builds of main whose Windows aarch64 binary the test runs with. */
+const diagnosedBuilds = [
+  { number: 126460, id: "01a14358-7531-4c4c-b707-8103ff505bb2", result: "failed" },
+  { number: 126437, id: "01a14339-7e2d-4bba-824f-f27f4fe6019c", result: "failed" },
+  { number: 126396, id: "01a142f6-41d5-42aa-90e0-c81c4eeda789", result: "passed" },
+  { number: 126506, id: "01a143b4-7dee-4205-8fd5-1b5d18e489eb", result: "passed" },
+];
 
 async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | undefined> {
   const priority = getPriority();
@@ -1833,30 +1842,31 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   // Never on the merge queue: a step that cannot start (box offline) would
   // hold the required check open and stall the queue.
   const betaDarwinTestPlatforms: Platform[] =
-    !darwinTestsEnabled && !isMergeQueue() && (await darwinBetaQueueIdle())
-      ? [{ os: "darwin", arch: "aarch64", release: "27", tier: "beta" }]
-      : [];
+    [];
   const relevantTestPlatforms = (
     includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan")
   )
     .filter(({ os }) => os !== "darwin" || darwinTestsEnabled)
-    .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms)
-    .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms);
+    .filter(({ os }) => os === "windows");
+  void prDarwinTestPlatforms, betaDarwinTestPlatforms;
   const testStepKeys: string[] = [];
   {
     const { skipTests, testFiles } = options;
     if (!skipTests) {
       steps.push(
-        ...relevantTestPlatforms.map(target => {
-          const step = getTestBunStep(target, options, { testFiles, buildId });
+        ...relevantTestPlatforms.flatMap(target => diagnosedBuilds.map(build => ({ target, build }))).map(({ target, build }) => {
+          const step = getTestBunStep(target, options, { testFiles, buildId: build.id });
+          step.key += `-${build.number}`;
+          step.label += ` (binary of main #${build.number}, where the test ${build.result})`;
+          step.parallelism = 4;
           testStepKeys.push(step.key);
           // Test shards run on their native platform image; when this build
           // bakes it, they wait for it.
           const dependsOn = getImageDependsOn(target, baking);
           return getStepWithDependsOn(
             {
-              key: getPlatformKey(target),
-              group: getPlatformLabel(target),
+              key: `${getPlatformKey(target)}-${build.number}`,
+              group: `${getPlatformLabel(target)} #${build.number}`,
               steps: [step],
             },
             ...dependsOn,

@@ -73,28 +73,12 @@ pub(crate) fn url_is_under_registry(url: &[u8], registry: &[u8]) -> bool {
 }
 
 /// Decides which npm tarball URLs the writer replaces with `""`. The parser
-/// rebuilds `""` with `ExtractTarball::build_url` against the *reader's*
-/// registry for the package (see the `registry_str.is_empty()` branch in
-/// `parse_into_binary_lockfile`), so a URL may only be dropped when that
-/// rebuild gives back the same tarball on the machine that wrote it:
-///
-/// - a URL under the default registry (the rule before registries were
-///   normalized at all; kept so existing lockfiles do not change)
-/// - a URL that is byte-for-byte the canonical tarball URL under the
-///   writer's top-level `registry=`, for an entry that has a supported
-///   integrity hash. The hash is what pins the package once the URL is
-///   gone, so an entry without one keeps its URL. A registry that serves
-///   tarballs off a different path (GitHub Packages, Artifactory) is kept
-///   verbatim since `build_url` cannot reproduce it. Userinfo is stripped
-///   from the registry before the comparison so `user:pass@` never reaches
-///   `bun.lock`.
-///
-/// A package whose name has a `@scope:registry=` entry naming another
-/// registry keeps its URL verbatim. Its `""` would be rebuilt against
-/// whatever registry the reader has for that scope, and a reader without
-/// the entry would fetch a private package from the public registry. A
-/// scope entry that only adds a token to the top-level registry counts as
-/// the top-level registry.
+/// rebuilds `""` against the *reader's* registry for the package, so a URL
+/// is dropped only when that rebuild gives the same tarball: under the
+/// default registry, or the exact `build_url` of the writer's top-level
+/// `registry=` for an entry with an integrity hash. A `@scope:registry=`
+/// that names another registry keeps its URL, so a reader without that
+/// scope does not fetch the package from the public registry.
 struct NpmUrlWriter<'a> {
     options: &'a PackageManagerOptions,
     registry: Vec<u8>,
@@ -135,10 +119,8 @@ impl<'a> NpmUrlWriter<'a> {
         if url_is_under_registry(url, &self.registry) {
             return self.is_canonical(url, name, version, buf);
         }
-        // The registry href is the WHATWG serialization (`Scope::set_url`),
-        // the tarball URL is the manifest's `dist.tarball` verbatim. A
-        // `:443` or an upper-case host only lines up after the same
-        // normalization. Parse only once the verbatim bytes did not match.
+        // The registry href is WHATWG-normalized (`Scope::set_url`), the
+        // manifest's `dist.tarball` is not (`:443`, upper-case host).
         let normalized = bun_url::whatwg::href_from_string(&bun_core::String::borrow_utf8(url));
         if normalized.tag() == bun_core::string::Tag::Dead {
             return false;
@@ -314,11 +296,8 @@ impl Stringifier {
     /// loaded. Without scoped rules a lockfile keeps its loaded v1/v2, and a fresh
     /// or v3-loaded one is walked down to v2, or to v1 on a v2-invariant violation
     /// (npm tarball without a supported integrity that is not written as `""`,
-    /// unsafe git `.bun-tag`). The `""` decision is `NpmUrlWriter::writes_empty`,
-    /// shared with the writer: the walk asks what the writer emits, and `""`
-    /// loads on any reader. Without an integrity hash the writer only blanks a
-    /// default-registry URL, so the stamp does not depend on the writer's
-    /// `registry=`.
+    /// unsafe git `.bun-tag`); that decision must not depend on the writer's
+    /// `~/.npmrc`.
     ///
     /// Walks the package tree the same way the writer does — only packages that
     /// are actually serialized are considered, not every entry in the in-memory
@@ -364,17 +343,11 @@ impl Stringifier {
                             continue;
                         }
                         // No supported integrity: only v2-clean if the writer
-                        // serializes the tarball URL as `""` (see the npm URL
-                        // serialization in `save_from_binary`), which it does
-                        // only for the default registry here. An empty URL
-                        // never sets the parser's `npm_url_needs_integrity`, so
-                        // that round-trips for any reader. Any other URL is
-                        // written verbatim, and the parser's integrity check is
-                        // evaluated against the *reader's* scope config, so it
-                        // is not config-independent: a writer with a private
-                        // `@scope` registry could stamp v2 on a lockfile a
-                        // teammate without that scope then fails to parse. Stay
-                        // at v1 for those so the file keeps loading everywhere.
+                        // serializes the tarball URL as `""`, which never sets
+                        // the parser's `npm_url_needs_integrity`. A verbatim URL
+                        // is checked against the *reader's* scope config, so a
+                        // v2 stamp could fail to parse for a teammate. Stay at
+                        // v1 for those.
                         let npm = res.npm();
                         let url = npm.url.slice(buf);
                         if !npm_url.writes_empty(

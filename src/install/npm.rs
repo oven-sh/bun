@@ -353,9 +353,7 @@ pub mod registry {
                 // If it became "$ENV_VAR/", then we need to remove the trailing slash
                 if let Some(replaced_url) = env.get(strings::trim(&registry.url[1..], b"/")) {
                     if replaced_url.len() > 1 {
-                        // The expanded value can carry `user:pass@` or `:token@`
-                        // like a literal `registry=` does. Split them off the
-                        // same way, so the href never holds credentials.
+                        // Split `user:pass@` off like a literal `registry=`.
                         let expanded = api::NpmRegistry::from_url(replaced_url);
                         registry.url = expanded.url;
                         if !registry.has_credentials() {

@@ -271,8 +271,7 @@ impl Options {
             .unwrap_or(&self.scope)
     }
 
-    /// The `@scope:registry=` scope configured for a scoped package name, or
-    /// `None` when the package resolves against the top-level `registry=`.
+    /// The `@scope:registry=` entry for a scoped package name, if any.
     pub fn named_scope_for_package_name(&self, name: &[u8]) -> Option<&Npm::registry::Scope> {
         if name.is_empty() || name[0] != b'@' {
             return None;

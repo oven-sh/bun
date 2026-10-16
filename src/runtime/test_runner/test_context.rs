@@ -197,6 +197,7 @@ impl TestContext {
         })
     }
 
+    #[optimize(size)]
     pub(crate) fn sync_result(
         this_value: JSValue,
         global: &JSGlobalObject,
@@ -344,6 +345,7 @@ impl TestContext {
         bound(global, this_value, "annotate", 3, __jsc_host_annotate)
     }
 
+    #[optimize(size)]
     fn defer_call(
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -404,6 +406,7 @@ fn set_state(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
 /// `skip(note?)` or `skip(condition, note?)`. As in Vitest, only a literal `false` condition doesn't skip.
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn skip(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [condition, note] = frame.arguments_as_array::<2>();
     if condition == JSValue::FALSE {
@@ -437,6 +440,7 @@ fn on_test_failed(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn annotate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [message, kind, attachment] = frame.arguments_as_array::<3>();
     let this_value = frame.this();
@@ -515,6 +519,7 @@ fn file_name(buntest: &BunTest) -> Vec<u8> {
     name
 }
 
+#[optimize(size)]
 fn put_full_names(
     global: &JSGlobalObject,
     task: JSValue,
@@ -537,6 +542,7 @@ fn put_full_names(
 }
 
 /// Vitest's `Suite` for a describe block, or its `File` for the root scope. Cached in `DescribeScope::task`.
+#[optimize(size)]
 pub(crate) fn suite_task(
     global: &JSGlobalObject,
     buntest: &mut BunTest,

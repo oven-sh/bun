@@ -2327,77 +2327,7 @@ impl<'a> Parser<'a> {
             );
 
             if i > 0 && wrap_mode == WrapMode::BunCommonjs {
-                // An import statement can't stand in the function that wraps a CommonJS module.
-                let import_record_id = p.add_import_record(
-                    bun_ast::ImportKind::Require,
-                    bun_ast::Loc::EMPTY,
-                    RuntimeImports::NAME,
-                );
-                {
-                    let record = &mut p.import_records.items_mut()[import_record_id as usize];
-                    record.path.namespace = b"runtime";
-                    record.flags.insert(ImportRecordFlags::IS_INTERNAL);
-                }
-                let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
-                declared_symbols.ensure_total_capacity(i)?;
-                let mut properties = BumpVec::<B::Property>::with_capacity_in(i, p.arena);
-                for &import in &runtime_imports[0..i] {
-                    let r = p.runtime_imports.get(import as usize).expect("unreachable");
-                    let key = p.new_expr(
-                        E::String {
-                            data: RuntimeImports::ALL[import as usize].into(),
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    );
-                    let value = p.b(B::Identifier { r#ref: r }, bun_ast::Loc::EMPTY);
-                    properties.push(B::Property {
-                        flags: bun_ast::flags::PROPERTY_NONE,
-                        key,
-                        value,
-                        default_value: None,
-                    });
-                    declared_symbols.append_assume_capacity(DeclaredSymbol {
-                        ref_: r,
-                        is_top_level: true,
-                    });
-                }
-                let binding = p.b(
-                    B::Object {
-                        properties: bun_ast::StoreSlice::from_bump(properties),
-                        is_single_line: true,
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-                let value = p.new_expr(
-                    E::RequireString {
-                        import_record_index: import_record_id,
-                        ..Default::default()
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-                let mut decls = G::DeclList::init_capacity(1);
-                decls.append_assume_capacity(G::Decl {
-                    binding,
-                    value: Some(value),
-                });
-                let local_stmt = p.s(
-                    S::Local {
-                        kind: js_ast::LocalKind::KVar,
-                        decls,
-                        ..Default::default()
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-                before.push(js_ast::Part {
-                    stmts: p.arena.alloc_slice_fill_with(1, |_| local_stmt).into(),
-                    declared_symbols,
-                    import_record_indices: js_ast::PartImportRecordIndices::init_one(
-                        import_record_id,
-                    ),
-                    tag: js_ast::PartTag::Runtime,
-                    ..Default::default()
-                });
+                p.generate_runtime_require_stmt(&runtime_imports[0..i], &mut before)?;
             } else if i > 0 {
                 // snapshot to break the `&mut self` ↔ `&self.runtime_imports`
                 // borrow overlap in `generate_import_stmt(symbols: &Sym)`; the callee

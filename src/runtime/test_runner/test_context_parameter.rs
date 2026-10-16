@@ -27,6 +27,7 @@ unsafe extern "C" {
 }
 
 impl ContextParameter {
+    #[optimize(size)]
     pub(crate) fn of(function: JSValue, index: usize) -> ContextParameter {
         let mut is_arrow_function = false;
         let from_parameters = Bun__JSFunction__sourceFromParameters(function, &mut is_arrow_function);
@@ -101,6 +102,7 @@ impl ContextParameter {
             .ok()
     }
 
+    #[optimize(size)]
     fn properties(properties: &[bun_ast::b::Property], arena: &bun_alloc::Arena) -> ContextParameter {
         let mut names = Vec::with_capacity(properties.len());
         for property in properties {

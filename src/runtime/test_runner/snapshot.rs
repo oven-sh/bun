@@ -194,6 +194,7 @@ impl core::ops::DerefMut for ReportedLog<'_> {
 }
 
 impl Drop for ReportedLog<'_> {
+    #[optimize(size)]
     fn drop(&mut self) {
         if self.log.errors > 0 {
             let _ = self.log.print(std::ptr::from_mut::<bun_core::io::Writer>(bun_output::error_writer()));
@@ -206,6 +207,7 @@ impl Drop for ReportedLog<'_> {
 struct InitializedParser<'a>(core::mem::MaybeUninit<js_parser::TSXParser<'a>>);
 
 impl Drop for InitializedParser<'_> {
+    #[optimize(size)]
     fn drop(&mut self) {
         // SAFETY: only constructed from an initialized slot.
         unsafe { self.0.assume_init_drop() };
@@ -246,6 +248,7 @@ fn snapshot_file_path(file_id: FileId, buf: &mut [u8]) -> (&'static [u8], usize,
 }
 
 /// jest-snapshot's `printBacktickString`.
+#[optimize(size)]
 fn write_backtick_string(out: &mut Vec<u8>, text: &[u8]) {
     out.push(b'`');
     let mut rest = text;
@@ -278,6 +281,7 @@ impl Snapshots {
         }
     }
 
+    #[optimize(size)]
     pub(crate) fn add_count(&mut self, expect: &Expect, format: Format, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
         self.total += 1;
         let snapshot_name = Self::name_of(expect, format, hint)?;
@@ -303,6 +307,7 @@ impl Snapshots {
         Ok((snapshot_name, count))
     }
 
+    #[optimize(size)]
     fn name_of(expect: &Expect, format: Format, hint: &[u8]) -> Result<Vec<u8>, Error> {
         let parent = expect.parent.as_ref().ok_or(Error::NoTest)?;
         let buntest_strong = parent.bun_test().ok_or(Error::TestNotActive)?;
@@ -661,6 +666,7 @@ impl Snapshots {
         }
     }
 
+    #[optimize(size)]
     pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
         if let Some(file) = self._current_file.take() {
             let result = if file.dirty { self.write_sorted(&file) } else { Ok(()) };
@@ -682,6 +688,7 @@ impl Snapshots {
 
     /// jest-snapshot's `saveSnapshotFile`.
     #[cold]
+    #[optimize(size)]
     fn write_sorted(&self, file: &File) -> Result<(), Error> {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let (_, _, len) = snapshot_file_path(file.id, path_buf.0.as_mut_slice());

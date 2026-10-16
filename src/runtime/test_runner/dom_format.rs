@@ -12,6 +12,7 @@ use bun_jsc::{
 use super::pretty_format;
 
 /// Mirrors jest-matcher-utils' `stringify`.
+#[optimize(size)]
 pub(crate) fn print_in_message(
     formatter: &mut console_object::Formatter<'_>,
     writer: &mut dyn bun_io::Write,
@@ -62,6 +63,7 @@ pub(crate) fn print_in_message(
     }
 }
 
+#[optimize(size)]
 pub(crate) fn print_in_snapshot(
     formatter: &mut pretty_format::Formatter<'_>,
     writer: &mut dyn bun_io::Write,
@@ -167,6 +169,7 @@ fn is_dom(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
     }
 }
 
+#[optimize(size)]
 fn classify(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Dom>> {
     if !matches!(
         value.js_type(),
@@ -228,6 +231,7 @@ fn string_property(
     }
 }
 
+#[optimize(size)]
 fn has_is_attribute(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
     match value.get(global, "hasAttribute")? {
         Some(has_attribute) if has_attribute.is_callable() => Ok(has_attribute
@@ -276,6 +280,7 @@ fn length_of(global: &JSGlobalObject, list: JSValue) -> JsResult<u32> {
     })
 }
 
+#[optimize(size)]
 fn for_each_item(
     global: &JSGlobalObject,
     list: JSValue,
@@ -343,6 +348,7 @@ struct Printer<'a> {
 }
 
 impl Printer<'_> {
+    #[optimize(size)]
     fn print_dom(&mut self, value: JSValue, indent: u32, depth: u32) -> JsResult<bool> {
         if indent > pretty_format::MAX_INDENT || !StackCheck::init().is_safe_to_recurse() {
             return Err(self.global.throw_stack_overflow());
@@ -520,6 +526,7 @@ impl Printer<'_> {
         Ok(())
     }
 
+    #[optimize(size)]
     fn open_collection(&mut self, name: &String, bracket: u8, depth: u32, keeps_name: bool) -> bool {
         let name = name.to_utf8();
         if depth >= self.max_depth {
@@ -564,6 +571,7 @@ impl Printer<'_> {
         let _ = write!(self.out, "({count})");
     }
 
+    #[optimize(size)]
     fn print_entries(&mut self, entries: &Entries, indent: u32) {
         for (i, same_key) in entries.chunk_by(|a, b| a.0.eql(&b.0)).enumerate() {
             self.separate(i == 0, indent + 1);
@@ -589,6 +597,7 @@ impl Printer<'_> {
         }
     }
 
+    #[optimize(size)]
     fn read_attributes(
         &mut self,
         attributes: JSValue,
@@ -615,6 +624,7 @@ impl Printer<'_> {
         Ok(entries)
     }
 
+    #[optimize(size)]
     fn read_properties(&mut self, object: JSValue, indent: u32, depth: u32) -> JsResult<Entries> {
         let mut entries = Entries::new();
         let Some(cell) = object.get_object() else {
@@ -687,6 +697,7 @@ impl Printer<'_> {
     }
 
     /// pretty-format's `escapeString` is on in a message (`min`) and off in a snapshot.
+    #[optimize(size)]
     fn write_quoted(&mut self, text: &String) {
         if self.is_inline {
             self.out.push(b'\'');
@@ -699,6 +710,7 @@ impl Printer<'_> {
         self.out.push(b'"');
     }
 
+    #[optimize(size)]
     fn write_replacing(&mut self, text: &String, special: &[u8]) {
         let utf8 = text.to_utf8();
         let mut rest = utf8.slice();

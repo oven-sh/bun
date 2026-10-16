@@ -117,6 +117,7 @@ fn commit(global: &JSGlobalObject, config: Config) {
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn set_config(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let config = frame.argument(0);
     if !config.is_object() {

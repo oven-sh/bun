@@ -3,6 +3,7 @@ use super::DiffFormatter;
 use super::Expect;
 use super::throw;
 
+#[optimize(size)]
 pub(crate) fn to_have_been_nth_called_with(
     this: &Expect,
     global: &JSGlobalObject,

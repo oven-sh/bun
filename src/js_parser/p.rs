@@ -2390,6 +2390,88 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// `var { a, b } = require("bun:wrap")`. An import statement can't stand in the function that wraps a CommonJS module.
+    #[optimize(size)]
+    #[inline(never)]
+    pub(crate) fn generate_runtime_require_stmt(
+        &mut self,
+        imports: &[u8],
+        parts: &mut ListManaged<'a, js_ast::Part>,
+    ) -> Result<(), crate::Error> {
+        let import_record_id = self.add_import_record(
+            ImportKind::Require,
+            bun_ast::Loc::EMPTY,
+            RuntimeImports::NAME,
+        );
+        {
+            let record = &mut self.import_records.items_mut()[import_record_id as usize];
+            record.path.namespace = b"runtime";
+            record.flags.insert(bun_ast::ImportRecordFlags::IS_INTERNAL);
+        }
+        let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+        declared_symbols.ensure_total_capacity(imports.len())?;
+        let mut properties = BumpVec::<B::Property>::with_capacity_in(imports.len(), self.arena);
+        for &import in imports {
+            let r = self
+                .runtime_imports
+                .get(import as usize)
+                .expect("unreachable");
+            let key = self.new_expr(
+                E::String {
+                    data: RuntimeImports::ALL[import as usize].into(),
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            );
+            let value = self.b(B::Identifier { r#ref: r }, bun_ast::Loc::EMPTY);
+            properties.push(B::Property {
+                flags: bun_ast::flags::PROPERTY_NONE,
+                key,
+                value,
+                default_value: None,
+            });
+            declared_symbols.append_assume_capacity(DeclaredSymbol {
+                ref_: r,
+                is_top_level: true,
+            });
+        }
+        let binding = self.b(
+            B::Object {
+                properties: bun_ast::StoreSlice::from_bump(properties),
+                is_single_line: true,
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        let value = self.new_expr(
+            E::RequireString {
+                import_record_index: import_record_id,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        let mut decls = G::DeclList::init_capacity(1);
+        decls.append_assume_capacity(G::Decl {
+            binding,
+            value: Some(value),
+        });
+        let stmt = self.s(
+            S::Local {
+                kind: js_ast::LocalKind::KVar,
+                decls,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        parts.push(js_ast::Part {
+            stmts: self.arena.alloc_slice_fill_with(1, |_| stmt).into(),
+            declared_symbols,
+            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_id),
+            tag: bun_ast::PartTag::Runtime,
+            ..Default::default()
+        });
+        Ok(())
+    }
+
     pub(crate) fn generate_import_stmt<I, Sym>(
         &mut self,
         import_path: &'a [u8],

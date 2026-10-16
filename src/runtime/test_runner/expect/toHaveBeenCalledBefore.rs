@@ -61,6 +61,7 @@ impl fmt::Display for FirstInvocation {
     }
 }
 
+#[optimize(size)]
 fn to_have_been_called_in_order(
     this: &Expect,
     global: &JSGlobalObject,

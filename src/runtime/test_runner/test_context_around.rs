@@ -184,6 +184,7 @@ impl AroundHook {
     }
 
     /// The hook returned or threw, or the promise it returned settled.
+    #[optimize(size)]
     fn on_settled(
         &self,
         this_value: JSValue,
@@ -230,6 +231,7 @@ impl AroundHook {
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn set_up(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [this_value, hook, context, suite] = frame.arguments_as_array::<4>();
     let Some(this) = AroundHook::of(this_value) else {
@@ -259,6 +261,7 @@ fn on_rejected(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> 
 
 /// `runTest()` or `runSuite()`
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn run(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let this_value = frame.this();
     let this = AroundHook::of_call(global, frame)?;

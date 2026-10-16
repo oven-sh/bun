@@ -103,6 +103,7 @@ fn thrown_value(global: &JSGlobalObject, err: JsError) -> JsResult<JSValue> {
 }
 
 impl ViWait {
+    #[optimize(size)]
     fn start(global: &JSGlobalObject, frame: &CallFrame, kind: Kind) -> JsResult<JSValue> {
         let [callback, options] = frame.arguments_as_array::<2>();
         if !callback.is_callable() {
@@ -238,6 +239,7 @@ impl ViWait {
         self.root.set(None);
     }
 
+    #[optimize(size)]
     fn settle(
         &self,
         global: &JSGlobalObject,
@@ -324,6 +326,7 @@ impl ViWait {
         Ok(None)
     }
 
+    #[optimize(size)]
     fn poll(&self, global: &JSGlobalObject, this_value: JSValue) -> JsResult<()> {
         match fake_timers::advance_by_ms(global, f64::from(self.interval_ms)) {
             Ok(thrown) if thrown.is_empty() => {}

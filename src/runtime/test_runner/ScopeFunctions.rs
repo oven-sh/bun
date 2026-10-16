@@ -301,6 +301,7 @@ fn template_rows(global: &JSGlobalObject, arguments: &[JSValue], flavor: Flavor)
     table_rows(global, &headings, values).map(Some)
 }
 
+#[optimize(size)]
 fn table_rows(global: &JSGlobalObject, headings: &[&[u8]], values: &[JSValue]) -> JsResult<JSValue> {
     let rows = JSValue::create_empty_array(global, 0)?;
     for row_values in values.chunks_exact(headings.len()) {
@@ -334,6 +335,7 @@ fn vitest_template_rows(global: &JSGlobalObject, strings: JSValue, values: &[JSV
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let _g = group_log::begin();
 
@@ -529,6 +531,7 @@ fn filter_names<R: WriteEnd>(rem: &mut R, description: Option<&[u8]>, parent_in:
 }
 
 impl ScopeFunctions {
+    #[optimize(size)]
     fn enqueue_describe_or_test_callback(
         &self,
         bun_test: &mut BunTest,
@@ -739,6 +742,7 @@ impl ScopeFunctions {
         }
     }
 
+    #[optimize(size)]
     fn generic_extend(
         &self,
         global: &JSGlobalObject,
@@ -910,6 +914,7 @@ fn get_description(
     )))
 }
 
+#[optimize(size)]
 pub(crate) fn parse_arguments(
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -1200,6 +1205,7 @@ fn set_prototype_direct(value: JSValue, prototype: JSValue, global: &JSGlobalObj
     bun_jsc::cpp::Bun__JSValue__setPrototypeDirect(value, prototype, global)
 }
 
+#[optimize(size)]
 pub(crate) fn create_bound(
     global: &JSGlobalObject,
     scope_functions: ScopeFunctions,

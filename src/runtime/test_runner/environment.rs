@@ -141,6 +141,7 @@ impl Environment {
     }
 
     /// An unsupported pragma only warns, so files with pragmas that older `bun test` versions ignored keep running.
+    #[optimize(size)]
     fn enter(
         &mut self,
         vm: &mut VirtualMachine,
@@ -194,6 +195,7 @@ impl Environment {
         Ok(None)
     }
 
+    #[optimize(size)]
     pub(crate) fn teardown(&mut self, vm: &mut VirtualMachine) {
         if let Some(function) = self.teardown.take() {
             teardown(vm, &function);
@@ -218,6 +220,7 @@ fn print_file_name() {
     }
 }
 
+#[optimize(size)]
 fn setup(
     vm: &VirtualMachine,
     kind: TestEnvironment,
@@ -257,6 +260,7 @@ fn setup(
         .then(|| Strong::create(teardown, global)))
 }
 
+#[optimize(size)]
 fn teardown(vm: &mut VirtualMachine, function: &Strong) {
     let global = vm.global();
     let error = match function

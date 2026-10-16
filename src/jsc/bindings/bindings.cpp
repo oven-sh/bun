@@ -315,7 +315,7 @@ extern "C" int8_t AsymmetricMatcherConstructorType__fromJS(JSC::JSGlobalObject* 
 }
 
 // `new RegExp(source)`, including what it throws for an invalid source.
-extern "C" JSC::EncodedJSValue ExpectStringMatching__compile(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedSource)
+extern "C" __attribute__((minsize)) JSC::EncodedJSValue ExpectStringMatching__compile(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedSource)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

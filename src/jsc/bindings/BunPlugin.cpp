@@ -954,7 +954,7 @@ static bool patchesModuleBeingEvaluated(Zig::GlobalObject* globalObject, JSModul
 }
 
 // Returns a promise for `next` to settle. `next` is called once `loading` has settled, either way, with (mock, that promise) as its context.
-static JSC::JSPromise* originalModuleAfter(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::JSPromise* loading, JSC::NativeFunction next)
+__attribute__((minsize)) static JSC::JSPromise* originalModuleAfter(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::JSPromise* loading, JSC::NativeFunction next)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* original = JSC::JSPromise::create(vm, globalObject->promiseStructure());
@@ -977,7 +977,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockDidLoadBeforeOriginal, (JSC::JSGlob
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockDidLoadImportsOfOriginal, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionModuleMockDidLoadImportsOfOriginal, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2450,7 +2450,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDisposeModuleMock, (JSC::JSGlobalObject * lex
 }
 
 // Whether a module outside node_modules is linked to `record` and has yet to run. `running` is the one that asks.
-static bool isImportedByModuleYetToRun(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record, const String& running)
+__attribute__((minsize)) static bool isImportedByModuleYetToRun(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record, const String& running)
 {
     for (auto& [mapKey, entry] : Bun::testFileModuleLoader(globalObject)->moduleMap()) {
         auto* importer = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());

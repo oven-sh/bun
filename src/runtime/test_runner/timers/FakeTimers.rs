@@ -123,6 +123,7 @@ impl ApiSet {
         self.0 & (1 << api as u16) != 0
     }
 
+    #[optimize(size)]
     fn from_js(global: &JSGlobalObject, option: &str, value: JSValue) -> JsResult<Option<ApiSet>> {
         if !value.is_array() {
             return Err(global
@@ -200,6 +201,7 @@ struct Options {
 }
 
 impl Options {
+    #[optimize(size)]
     fn from_js(global: &JSGlobalObject, value: JSValue, flavor: Flavor, faked: ApiSet) -> JsResult<Options> {
         let mut options = Options {
             now: None,
@@ -398,6 +400,7 @@ impl AsyncDrive {
         }
     }
 
+    #[optimize(size)]
     fn settle_all(global: &JSGlobalObject, drives: Vec<AsyncDrive>) -> JsResult<()> {
         for drive in drives {
             drive.settle(global)?;
@@ -932,6 +935,7 @@ impl FakeTimers {
     }
 
     /// On `Err`, the callbacks it didn't get to stay queued.
+    #[optimize(size)]
     fn run_ticks(global: &JSGlobalObject) -> Result<(), Stop> {
         let all = timer_all();
         // SAFETY: per-thread `timer::All`; each borrow lasts one statement and none spans a callback.
@@ -1564,6 +1568,7 @@ fn milliseconds_argument(
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn advance_timers_to_next_timer(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
     let steps = steps_argument(global, frame, "advanceTimersToNextTimer")?;
@@ -1571,6 +1576,7 @@ fn advance_timers_to_next_timer(global: &JSGlobalObject, frame: &CallFrame) -> J
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
     let ms = milliseconds_argument(global, frame, "advanceTimersByTime")?;
@@ -1614,6 +1620,7 @@ pub(crate) fn advance_by_ms(global: &JSGlobalObject, ms: f64) -> Result<JSValue,
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn advance_timers_to_next_frame(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
     // SAFETY: per-thread `timer::All`, live for the VM lifetime.
@@ -1649,6 +1656,7 @@ fn run_all_immediates(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 }
 
 /// The `…Async` functions are `async` in vitest and Jest, so they reject where the sync ones throw.
+#[optimize(size)]
 fn drive_async(
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -1668,6 +1676,7 @@ fn drive_async(
     }
 }
 
+#[optimize(size)]
 fn advance_timers_by_time_async(
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -1733,6 +1742,7 @@ both_flavors! {
 /// vitest: `setTimerTickMode("manual" | "nextTimerAsync" | "interval", interval?)`.
 /// Jest: `setTimerTickMode({ mode: "manual" | "nextAsync" | "interval", delta? })`.
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn set_timer_tick_mode(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [mut mode, mut interval] = frame.arguments_as_array::<2>();
     if mode.is_object() {

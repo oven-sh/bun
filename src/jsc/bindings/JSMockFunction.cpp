@@ -1792,7 +1792,7 @@ void JSMockFunctionPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* g
     this->putDirect(vm, vm.propertyNames->disposeSymbol, restoreFn, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetMockImplementation, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsMockFunctionGetMockImplementation, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     JSValue thisValue = callframe->thisValue();
     JSMockFunction* thisObject = dynamicDowncast<JSMockFunction>(thisValue);

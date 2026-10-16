@@ -12,6 +12,7 @@ use super::expect_any_js;
 use super::get_signature;
 use super::throw;
 
+#[optimize(size)]
 pub(crate) fn to_throw(
     this: &Expect,
     global: &JSGlobalObject,

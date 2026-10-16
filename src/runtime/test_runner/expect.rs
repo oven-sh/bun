@@ -238,6 +238,7 @@ impl Expect {
         parent.bun_test()
     }
 
+    #[optimize(size)]
     pub(crate) fn get_signature(
         matcher_name: &'static str,
         args: &'static str,
@@ -1133,6 +1134,7 @@ impl Expect {
         }
     }
 
+    #[optimize(size)]
     pub(crate) fn inline_snapshot(
         &self,
         global_this: &JSGlobalObject,
@@ -1333,6 +1335,7 @@ impl Expect {
         Ok((shown, same_as_older_bun))
     }
 
+    #[optimize(size)]
     pub(crate) fn snapshot(
         &self,
         global_this: &JSGlobalObject,
@@ -3276,6 +3279,7 @@ impl ExpectMatcherUtils {
     }
 
     /// Like `diff` in jest-matcher-utils, returns `null` when a diff would add nothing to printing the two values.
+    #[optimize(size)]
     fn diff(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let [expected, received] = callframe.arguments_as_array::<2>();
         if (expected.is_number() && received.is_number())

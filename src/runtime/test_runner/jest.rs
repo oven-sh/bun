@@ -67,6 +67,7 @@ impl CurrentFile {
         Self::print(title, prefix, repeat_count, repeat_index);
     }
 
+    #[optimize(size)]
     fn print(title: &[u8], prefix: &[u8], repeat_count: u32, repeat_index: u32) {
         let _enable_buffering = Output::enable_buffering_scope();
 
@@ -673,6 +674,7 @@ pub(crate) fn js_node_test_mark_result(
 pub(crate) mod on_unhandled_rejection {
     use super::*;
 
+    #[optimize(size)]
     pub(crate) fn on_unhandled_rejection(
         jsc_vm: &mut VirtualMachine,
         global_object: &JSGlobalObject,
@@ -732,6 +734,7 @@ pub(crate) mod on_unhandled_rejection {
     }
 }
 
+#[optimize(size)]
 fn write_to_string(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>) -> JsResult<()> {
     title.extend_from_slice(value.to_utf8(global)?.slice());
     Ok(())
@@ -938,6 +941,7 @@ pub(crate) fn format_label(
 }
 
 /// `String(value)`
+#[optimize(size)]
 fn write_as_string(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>) -> JsResult<()> {
     if !value.is_symbol() {
         return write_to_string(global, value, title);

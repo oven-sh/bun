@@ -785,6 +785,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// `` tag`é${x}` `` to `` tag(__rawTemplate(["é", ""])`\u00E9${0}`, x) ``. Escaped text would reach the tag in `strings.raw`.
+    #[optimize(size)]
+    #[inline(never)]
     fn call_tag_with_raw_strings(&mut self, expr: Expr) -> Option<Expr> {
         if !self.options.features.ascii_only || !self.options.features.allow_runtime {
             return None;

@@ -89,6 +89,7 @@ impl Order {
         Ok(AllOrderResult { start, end })
     }
 
+    #[optimize(size)]
     pub(crate) fn generate_order_describe(&mut self, current: &mut DescribeScope) -> JsResult<()> {
         if current.failed {
             return Ok(()); // do not schedule any tests in a failed describe scope

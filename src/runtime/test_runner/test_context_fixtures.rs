@@ -133,6 +133,7 @@ impl TestFixtures {
     }
 
     /// Drops state left by an earlier file, since several files can share a helper module's fixtures.
+    #[optimize(size)]
     fn enter_file(&self, this_value: JSValue, global: &JSGlobalObject) -> JsResult<()> {
         let generation = Jest::file_generation(global);
         if self.generation.replace(generation) == generation {
@@ -569,6 +570,7 @@ impl TestFixtures {
         Ok(active_fixture)
     }
 
+    #[optimize(size)]
     fn scoped_context(&self, this_value: JSValue, global: &JSGlobalObject, scope: Scope) -> JsResult<JSValue> {
         let context = JSValue::create_empty_object(global, 0);
         let Some(cells) = js::scoped_get_cached(this_value).filter(|cells| cells.is_array()) else {
@@ -630,6 +632,7 @@ impl ActiveFixture {
             .ok_or_else(|| global.throw_type_error(format_args!("Expected this to be a fixture")))
     }
 
+    #[optimize(size)]
     fn provide(&self, this_value: JSValue, global: &JSGlobalObject, definition: &Definition, value: JSValue) -> JsResult<()> {
         let tear_down = bound(global, this_value, "tearDown", __jsc_host_tear_down)?;
         let context = active::context_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
@@ -667,6 +670,7 @@ impl ActiveFixture {
         Err(global.throw_value(error))
     }
 
+    #[optimize(size)]
     fn tear_down(&self, this_value: JSValue, global: &JSGlobalObject, kind: Kind) -> JsResult<JSValue> {
         self.state.set(State::TornDown);
         if let Some(test_context) = active::context_get_cached(this_value).and_then(TestContext::from_js) {
@@ -724,6 +728,7 @@ impl ActiveFixture {
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn set_up(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let this_value = frame.this();
     let (this, definition) = ActiveFixture::of_call(global, frame)?;
@@ -756,6 +761,7 @@ fn on_rejected(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> 
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn use_fixture(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let this_value = frame.this();
     let (this, definition) = ActiveFixture::of_call(global, frame)?;
@@ -784,6 +790,7 @@ fn on_cleanup(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn tear_down(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let (this, definition) = ActiveFixture::of_call(global, frame)?;
     this.tear_down(frame.this(), global, definition.kind)

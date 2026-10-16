@@ -11,6 +11,7 @@ fn is_zig_whitespace(b: u8) -> bool {
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
 // `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
+#[optimize(size)]
 pub(crate) fn to_equal_ignoring_whitespace(
     this: &Expect,
     global: &JSGlobalObject,

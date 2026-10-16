@@ -59,6 +59,7 @@ impl Expect {
     }
 }
 
+#[optimize(size)]
 fn to_have_resolved_times_fn(
     this: &Expect,
     global: &JSGlobalObject,

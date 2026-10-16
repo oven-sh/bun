@@ -1008,6 +1008,7 @@ impl Expect {
         })
     }
 
+    #[optimize(size)]
     fn poll_matcher(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         self.increment_expect_call_counter();
         let question = Question {

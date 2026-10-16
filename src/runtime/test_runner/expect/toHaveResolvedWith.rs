@@ -75,6 +75,7 @@ impl fmt::Display for Call {
     }
 }
 
+#[optimize(size)]
 fn one_call_resolved_with(
     this: &PostMatchGuard<'_>,
     global: &JSGlobalObject,

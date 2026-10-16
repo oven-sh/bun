@@ -3832,87 +3832,137 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
     expect(exitCode).toBe(0);
   });
 
-  // Hoisted, the workspace `b` is there as `b` and as `bb`. The trees of both are one folder, and
-  // each has a row for `dep`: one of them places it again, and the record of the other one goes too.
+  // Hoisted, `dep` of the workspace `b` is in `packages/b/node_modules`, behind the link to `b`. Its
+  // record has that path, and not one through a link: `b` can be there under two names, and a
+  // link can be gone.
+  const nested = join("packages", "b", "node_modules", "dep");
+  async function setupNested(root: object, members: Record<string, object>) {
+    const ctx = await setupScriptPackages(linker, {
+      held: { scripts: { postinstall: "echo ran > ran.txt" } },
+      other: {},
+    });
+    const dependencies = { dep: "npm:other@1.0.0" };
+    const manifest = { name: "foo", workspaces: ["packages/*"], dependencies, trustedDependencies: ["held"], ...root };
+    await writeFile(ctx.packageJson, JSON.stringify(manifest));
+    for (const [name, fields] of Object.entries({ b: { dependencies: { dep: "npm:held@1.0.0" } }, ...members })) {
+      const member = join(ctx.packageDir, "packages", name, "package.json");
+      await write(member, JSON.stringify({ name, version: "1.0.0", ...fields }));
+    }
+    expect((await ctx.bun("install")).exitCode).toBe(0);
+    await rm(join(ctx.packageDir, nested, "ran.txt"));
+    const state = () => ({
+      ran: existsSync(join(ctx.packageDir, nested, "ran.txt")),
+      list: existsSync(ctx.installed(record)),
+    });
+    return Object.assign(ctx, { state });
+  }
+
   test.skipIf(linker === "isolated")(
     "a package under a workspace that has two names is installed again once",
     async () => {
-      using ctx = await setupScriptPackages(linker, {
-        held: { scripts: { postinstall: "echo ran > ran.txt" } },
-        other: {},
-      });
-      await writeFile(
-        ctx.packageJson,
-        JSON.stringify({
-          name: "foo",
-          workspaces: ["packages/*"],
-          dependencies: { bb: "workspace:packages/b", dep: "npm:other@1.0.0" },
-          trustedDependencies: ["held"],
-        }),
-      );
-      await write(
-        join(ctx.packageDir, "packages", "b", "package.json"),
-        JSON.stringify({ name: "b", version: "1.0.0", dependencies: { dep: "npm:held@1.0.0" } }),
-      );
-      expect((await ctx.bun("install")).exitCode).toBe(0);
-      const dep = join(ctx.packageDir, "packages", "b", "node_modules", "dep");
-      await rm(join(dep, "ran.txt"));
-      const rows = ["b", "bb"].map(name => `+${join("node_modules", name, "node_modules", "dep")}\n`);
-      await writeFile(ctx.installed(record), rows.join(""));
+      using ctx = await setupNested({ dependencies: { bb: "workspace:packages/b", dep: "npm:other@1.0.0" } }, {});
+      await writeFile(ctx.installed(record), `+${nested}\n`);
 
       expect((await ctx.bun("install")).exitCode).toBe(0);
-      expect({ ran: existsSync(join(dep, "ran.txt")), list: existsSync(ctx.installed(record)) }).toEqual({
-        ran: true,
-        list: false,
-      });
-      await writeFile(join(dep, "kept.txt"), "kept");
+      expect(ctx.state()).toEqual({ ran: true, list: false });
+      await writeFile(join(ctx.packageDir, nested, "kept.txt"), "kept");
       expect((await ctx.bun("install")).exitCode).toBe(0);
-      expect(existsSync(join(dep, "kept.txt"))).toBe(true);
+      expect(existsSync(join(ctx.packageDir, nested, "kept.txt"))).toBe(true);
     },
   );
 
+  // The install of `a` does not come to `b`. The next one makes the link again, and then `dep` can go.
+  test.skipIf(linker === "isolated")("a package behind the link of a workspace, after the link is gone", async () => {
+    using ctx = await setupNested({}, { a: {} });
+    await writeFile(ctx.installed(record), `+${nested}\n`);
+    await rm(ctx.installed("b"));
+
+    expect((await ctx.bun("install", "--filter", "a")).exitCode).toBe(0);
+    expect(ctx.state()).toEqual({ ran: false, list: true });
+    for (const exitCode of [0, 0]) expect((await ctx.bun("install")).exitCode).toBe(exitCode);
+    expect(ctx.state()).toEqual({ ran: true, list: false });
+  });
+
+  // `b` stops to depend on `dep` before a bun.lock is there, so no install comes to its folder any
+  // more. Its record stays with the folder. It does not keep `b`, whose script did not finish
+  // either, from being built.
+  test.skipIf(isWindows)("a package that left the project does not hold the workspace that had it", async () => {
+    const member = (dependencies: object) =>
+      JSON.stringify({ name: "b", version: "1.0.0", dependencies, scripts: { postinstall: "echo ran > ran.txt" } });
+    await whileInstalling(
+      async ({ ctx, kill, bun }) => {
+        await kill("SIGKILL");
+
+        await writeFile(join(ctx.packageDir, "packages", "b", "package.json"), member({}));
+        expect(await bun("install")).toMatchObject({ errors: [], ran: false, exitCode: 0 });
+        expect({
+          b: existsSync(join(ctx.packageDir, "packages", "b", "ran.txt")),
+          list: existsSync(ctx.installed(record)),
+        }).toEqual({ b: true, list: true });
+        const left = linker === "hoisted" ? nested : join("node_modules", ".bun", "held@1.0.0");
+        await rm(join(ctx.packageDir, left), { recursive: true });
+        expect(await bun("install")).toMatchObject({ errors: [], ran: false, exitCode: 0 });
+        expect(existsSync(ctx.installed(record))).toBe(false);
+      },
+      {
+        packages: { other: {} },
+        manifest: {
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: { dep: "npm:other@1.0.0" },
+          trustedDependencies: ["held"],
+        },
+        files: { "packages/b/package.json": member({ dep: "npm:held@1.0.0" }) },
+        // One script at a time: the script of `b` has not started.
+        args: ["--concurrent-scripts=1"],
+      },
+    );
+  });
+
   // Hoisted, no script of these runs: a member outside the project, and a folder inside the package
-  // that declares it. The project is in `project`, so that `../out` is in the directory of the test.
+  // that declares it (`host` ships `x`). They are not listed when they are placed, and a line that
+  // names one ends without a removal. The project is in `project`, so that `../out` is in the
+  // directory of the test.
   test.skipIf(linker === "isolated")(
     "a member outside the project and a folder inside its declarer are not listed",
     async () => {
-      using ctx = await setupScriptPackages(linker, {});
+      const scripted = (name: string) =>
+        JSON.stringify({ name, version: "1.0.0", scripts: { postinstall: "echo ran > ran.txt" } });
+      using ctx = await setupScriptPackages(linker, {
+        host: { dependencies: { x: "file:x" }, files: { "x/package.json": scripted("x") } },
+      });
       const project = join(ctx.packageDir, "project");
-      const scripted = (name: string, more: object = {}) =>
-        JSON.stringify({ name, version: "1.0.0", scripts: { postinstall: "echo ran > ran.txt" }, ...more });
+      const root = { name: "foo", workspaces: ["../out"], dependencies: { host: "1.0.0", x: "file:x" } };
       await Promise.all([
         write(join(project, "bunfig.toml"), readFileSync(join(ctx.packageDir, "bunfig.toml"), "utf8")),
-        write(
-          join(project, "package.json"),
-          JSON.stringify({
-            name: "foo",
-            workspaces: ["../out"],
-            dependencies: { outer: "file:./outer" },
-            trustedDependencies: ["inner", "outer"],
-          }),
-        ),
+        write(join(project, "package.json"), JSON.stringify({ ...root, trustedDependencies: ["x"] })),
+        write(join(project, "x", "package.json"), scripted("x")),
         write(join(ctx.packageDir, "out", "package.json"), scripted("out")),
-        write(join(project, "outer", "package.json"), scripted("outer", { dependencies: { inner: "file:./inner" } })),
-        write(join(project, "outer", "inner", "package.json"), scripted("inner")),
       ]);
+      const inside = join("node_modules", "host", "node_modules", "x");
+      async function install() {
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: project,
+          env: ctx.env,
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect({
+          list: existsSync(join(project, "node_modules", record)),
+          own: existsSync(join(project, "node_modules", "x", "ran.txt")),
+          inside: existsSync(join(project, inside, "ran.txt")),
+          out: existsSync(join(ctx.packageDir, "out", "ran.txt")),
+        }).toEqual({ list: false, own: true, inside: false, out: false });
+        expect(exitCode).toBe(0);
+      }
 
-      await using proc = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: project,
-        env: ctx.env,
-        stdin: "ignore",
-        stdout: "ignore",
-        stderr: "pipe",
-      });
-      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(err).not.toContain("error:");
-      expect({
-        list: existsSync(join(project, "node_modules", record)),
-        outer: existsSync(join(project, "node_modules", "outer", "ran.txt")),
-        out: existsSync(join(ctx.packageDir, "out", "ran.txt")),
-        inner: existsSync(join(project, "node_modules", "outer", "node_modules", "inner", "ran.txt")),
-      }).toEqual({ list: false, outer: true, out: false, inner: false });
-      expect(exitCode).toBe(0);
+      await install();
+      await writeFile(join(project, "node_modules", record), `+${join("node_modules", "out")}\n+${inside}\n`);
+      await install();
     },
   );
 

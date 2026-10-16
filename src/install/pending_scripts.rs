@@ -95,23 +95,11 @@ impl PendingScripts {
         self.stale.iter().any(|stale| **stale == *key)
     }
 
-    /// A stale package is in place behind the link at `key`.
-    pub(crate) fn has_stale_behind(&self, key: &[u8]) -> bool {
-        (self.stale.iter()).any(|stale| is_behind(stale, key) && is_in_place(stale))
-    }
-
     /// Ends what a dead install left at `key`: its package runs no script any more, or is gone.
     pub(crate) fn forget_stale(&mut self, key: &[u8]) {
         if let Some(index) = self.stale.iter().position(|stale| **stale == *key) {
             self.stale.swap_remove(index);
             self.append(b'-', key);
-        }
-    }
-
-    /// The package at a stale `key` was removed from a `node_modules` that is there. Two trees can be one folder.
-    pub(crate) fn forget_removed(&mut self, key: &[u8]) {
-        if !is_in_place(key) {
-            self.forget_stale(key);
         }
     }
 
@@ -147,25 +135,23 @@ impl PendingScripts {
     pub(crate) fn done(&mut self, id: u32, folder: &[u8]) {
         if let Some(index) = self.position(id, folder) {
             let unfinished = self.unfinished.swap_remove(index);
-            self.append(b'-', &unfinished.key);
+            // Two hoisted trees can be one folder: its record ends with the last of them.
+            if !(self.unfinished.iter()).any(|other| other.key == unfinished.key) {
+                self.append(b'-', &unfinished.key);
+            }
         }
     }
 
     /// A script failed: `remove` takes each listed package out of `node_modules`. Ends the pass.
     pub(crate) fn discard(&mut self, mut remove: impl FnMut(u32, &[u8])) {
-        let stale = core::mem::take(&mut self.stale);
-        let in_place: Vec<_> = stale.iter().filter(|key| is_in_place(key)).collect();
         let mut unfinished = core::mem::take(&mut self.unfinished);
         // A nested tree has the higher id, and is behind the link of a workspace in its parent.
         unfinished.sort_by_key(|unfinished| core::cmp::Reverse(unfinished.id));
         for unfinished in unfinished {
-            // A link stays, and stays listed, while it leads to a stale package.
-            if !(in_place.iter()).any(|stale| is_behind(stale, &unfinished.key)) {
-                remove(unfinished.id, &unfinished.folder);
-                self.append(b'-', &unfinished.key);
-            }
+            remove(unfinished.id, &unfinished.folder);
+            self.append(b'-', &unfinished.key);
         }
-        self.close(!in_place.is_empty());
+        self.finish();
     }
 
     /// After the last script of a pass: deletes the file unless something is still listed.
@@ -247,13 +233,6 @@ impl PendingScripts {
 /// An error is not "gone": a record stays while nothing says that its package is gone.
 fn is_in_place(key: &[u8]) -> bool {
     sys::directory_exists_at(Fd::cwd(), &ZBox::from_bytes(key)).unwrap_or(true)
-}
-
-fn is_behind(path: &[u8], link: &[u8]) -> bool {
-    !link.is_empty()
-        && path.len() > link.len()
-        && path.starts_with(link)
-        && matches!(path[link.len()], b'/' | b'\\')
 }
 
 /// On Windows a write is at the cursor, which `O::APPEND` moved to the end once.

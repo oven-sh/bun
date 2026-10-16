@@ -510,14 +510,13 @@ fn abs_node_modules_path(
     abs
 }
 
-/// `node_modules/<folder_name>` of a tree, from the project's root: its path in `PendingScripts`.
-pub(crate) fn pending_scripts_key(
+/// The `node_modules` of a tree, from the project's root and through the links of workspaces.
+fn tree_path<'b>(
     lockfile: &Lockfile,
     tree_id: lockfile::tree::Id,
-    folder_name: &[u8],
-) -> Vec<u8> {
-    let mut rel_buf = bun_paths::path_buffer_pool::get();
-    rel_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
+    buf: &'b mut bun_paths::PathBuffer,
+) -> &'b [u8] {
+    buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
     let mut depth_buf = lockfile::tree::depth_buf_uninit();
     let (rel, _) = lockfile::tree::relative_path_and_depth::<
         { lockfile::tree::IteratorPathStyle::NodeModules },
@@ -527,25 +526,64 @@ pub(crate) fn pending_scripts_key(
         lockfile.buffers.dependencies.as_slice(),
         lockfile.buffers.string_bytes.as_slice(),
         tree_id,
-        &mut rel_buf,
+        buf,
         &mut depth_buf,
     );
-    let mut key = Vec::with_capacity(rel.len() + 1 + folder_name.len());
-    key.extend_from_slice(rel.as_bytes());
+    rel.as_bytes()
+}
+
+/// `node_modules/<folder_name>` of a tree, from the project's root: its path in `PendingScripts`.
+pub(crate) fn pending_scripts_key(
+    lockfile: &Lockfile,
+    tree_id: lockfile::tree::Id,
+    folder_name: &[u8],
+) -> Vec<u8> {
+    let trees = lockfile.buffers.trees.as_slice();
+    let package_ids = lockfile.buffers.resolutions.as_slice();
+    let resolutions = lockfile.packages.items_resolution();
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let path = tree_path(lockfile, tree_id, &mut buf);
+    let mut key = Vec::with_capacity(path.len() + 1 + folder_name.len());
+    // The tree of a workspace is in its folder, whatever links lead to it: a path through one would go with the link.
+    let mut member = None;
+    let mut id = tree_id;
+    for _ in 0..trees.len() {
+        let Some(tree) = trees.get(id as usize).filter(|_| id != 0) else {
+            break;
+        };
+        let resolution = (package_ids.get(tree.dependency_id as usize))
+            .and_then(|&package_id| resolutions.get(package_id as usize));
+        if let Some(resolution) = resolution.filter(|res| res.tag == resolution::Tag::Workspace) {
+            member = Some((id, resolution.workspace()));
+            break;
+        }
+        id = tree.parent;
+    }
+    if let Some((member_tree, folder)) = member {
+        let mut member_buf = bun_paths::path_buffer_pool::get();
+        let through_link = tree_path(lockfile, member_tree, &mut member_buf).len();
+        let folder = folder.slice(lockfile.buffers.string_bytes.as_slice());
+        key.extend_from_slice(strings::without_trailing_slash(folder));
+        key.push(SEP);
+        key.extend_from_slice(b"node_modules");
+        key.extend_from_slice(path.get(through_link..).unwrap_or_default());
+    } else {
+        key.extend_from_slice(path);
+    }
     key.push(SEP);
     key.extend_from_slice(folder_name);
     key
 }
 
-/// Of a workspace or `link:` package only the link goes. False: the `node_modules` of the tree is not there.
+/// Of a workspace or `link:` package only the link goes.
 pub(crate) fn remove_placed_package(
     lockfile: &Lockfile,
     tree_id: lockfile::tree::Id,
     alias: &[u8],
-) -> bool {
+) {
     let path = abs_node_modules_path(lockfile, lockfile.buffers.string_bytes.as_slice(), tree_id);
     let Ok(node_modules) = Dir::open(path.slice()) else {
-        return false;
+        return;
     };
     // Rename first: a delete can stop midway, and a half-deleted package must not pass `verify`.
     let moved = package_install::move_aside(
@@ -564,7 +602,6 @@ pub(crate) fn remove_placed_package(
         let _ = node_modules.delete_tree(alias);
     }
     crate::prune::prune_bins(&node_modules);
-    true
 }
 
 /// The path rules alone, for the own name of the project, a workspace or a folder.
@@ -731,11 +768,8 @@ impl<'a> PackageInstaller<'a> {
                     && !self.never_runs_scripts(dependency_id, package_id, resolution);
                 if resolution.tag == resolution::Tag::Root || !runs_scripts {
                     pending.borrow_mut().forget_stale(&key);
-                } else if !(is_workspace && pending.borrow().has_stale_behind(&key)) {
-                    // A link stays while it leads to a stale package that this pass does not come to.
-                    if remove_placed_package(lockfile, tree.id, alias) {
-                        pending.borrow_mut().forget_removed(&key);
-                    }
+                } else {
+                    remove_placed_package(lockfile, tree.id, alias);
                 }
             }
         }

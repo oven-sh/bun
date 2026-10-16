@@ -3,14 +3,15 @@
 use super::Difference;
 use bun_core::strings;
 use bun_lint::ast::File;
-use bun_lint::tokens::{Token, skip_trivia};
+use bun_lint::tokens::Token;
+use bun_sema::hir::Comment;
 
 /// The text of a program, and where its comments are.
-type Comments<'a> = (&'a [u8], &'a [(u32, u32)]);
+type Comments<'a> = (&'a [u8], &'a [Comment]);
 
 #[optimize(size)]
-fn text_of<'a>(text: &'a [u8], comment: (u32, u32)) -> &'a [u8] {
-    text.get(comment.0 as usize..comment.1 as usize)
+fn text_of<'a>(text: &'a [u8], comment: Comment) -> &'a [u8] {
+    text.get(comment.pos as usize..comment.end as usize)
         .unwrap_or_default()
 }
 
@@ -32,7 +33,7 @@ fn compare_in_any_order(before: Comments<'_>, after: Comments<'_>) -> Result<(),
     let sorted = |(text, comments): Comments<'_>| {
         let mut all: Vec<(Vec<u8>, u32)> = comments
             .iter()
-            .map(|&it| (bstr::join(b"\n", lines(text_of(text, it))), it.0))
+            .map(|&it| (bstr::join(b"\n", lines(text_of(text, it))), it.pos))
             .collect();
         crate::sort::sort(&mut all[..]);
         all
@@ -137,9 +138,9 @@ fn says_something(inner: &[u8]) -> bool {
 
 /// The name or the keyword that follows the comment, if it is one that follows.
 #[optimize(size)]
-fn word_after(text: &[u8], comment: (u32, u32)) -> &[u8] {
+fn word_after(text: &[u8], comment: Comment) -> &[u8] {
     let rest = text
-        .get(skip_trivia(text, comment.1) as usize..)
+        .get(comment.next_token_start as usize..)
         .unwrap_or_default();
     let len = rest
         .iter()
@@ -152,7 +153,7 @@ fn word_after(text: &[u8], comment: (u32, u32)) -> &[u8] {
 /// each is before the same word.
 #[optimize(size)]
 fn compare_without_jsdoc(before: Comments<'_>, after: Comments<'_>) -> Result<(), Difference> {
-    type Lists = (Vec<(u32, u32)>, Vec<(u32, u32)>);
+    type Lists = (Vec<Comment>, Vec<Comment>);
     // Those that are not JSDoc comments, and those that are.
     let split = |(text, comments): Comments<'_>| -> Lists {
         comments
@@ -177,8 +178,8 @@ fn compare_without_jsdoc(before: Comments<'_>, after: Comments<'_>) -> Result<()
         if word != word2 && !word.is_empty() && !word2.is_empty() {
             return Err(Difference::new(
                 "what follows a JSDoc comment",
-                (before.0, p.0),
-                (after.0, q.0),
+                (before.0, p.pos),
+                (after.0, q.pos),
             ));
         }
     }

@@ -44,6 +44,8 @@ pub struct ContextData {
 
     pub preloads: Vec<Box<[u8]>>,
     pub has_loaded_global_config: bool,
+    /// The path of the first bunfig.toml or .npmrc that exists but could not be read.
+    pub unreadable_config: Option<Box<[u8]>>,
 }
 
 impl Default for ContextData {
@@ -84,6 +86,7 @@ impl Default for ContextData {
             no_exit_on_error: false,
             preloads: Vec::new(),
             has_loaded_global_config: false,
+            unreadable_config: None,
         }
     }
 }
@@ -193,7 +196,6 @@ pub struct BundlerOptions {
     pub entry_naming: Box<[u8]>,
     pub chunk_naming: Box<[u8]>,
     pub asset_naming: Box<[u8]>,
-    pub server_components: bool,
     pub react_fast_refresh: bool,
     /// `--check`: type check the entry points and what they import, and do not bundle if there are errors.
     pub check: bool,
@@ -260,7 +262,6 @@ impl Default for BundlerOptions {
             entry_naming: Box::from(&b"[dir]/[name].[ext]"[..]),
             chunk_naming: Box::from(&b"./[name]-[hash].[ext]"[..]),
             asset_naming: Box::from(&b"./[name]-[hash].[ext]"[..]),
-            server_components: false,
             react_fast_refresh: false,
             check: false,
             react_compiler: false,

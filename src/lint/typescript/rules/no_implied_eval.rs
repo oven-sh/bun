@@ -23,6 +23,7 @@ fn is_global_candidate(object: Expr) -> bool {
 }
 
 fn get_callee_name(node: Expr<'_>, is_oxlint: bool) -> Option<Name<'_>> {
+    let node = node.with_jsdoc_cast();
     match node.kind() {
         ExprKind::Ident(name) => Some(name),
         // A `ChainExpression` for ESLint.
@@ -61,6 +62,7 @@ fn is_bind(node: Expr, is_oxlint: bool) -> bool {
 }
 
 fn is_function(node: Expr, is_oxlint: bool) -> bool {
+    let node = node.with_jsdoc_cast();
     match node.kind() {
         ExprKind::Fn(_) => true,
         ExprKind::String(_)
@@ -128,10 +130,11 @@ impl Rule for NoImpliedEval {
                 .ts_symbol()
                 .is_some_and(|symbol| symbol.declarations().any(|declaration| declaration.is_in_linted_file()));
             if !is_declared_in_file {
-                match handler.is_parenthesized() {
+                let report = match handler.is_parenthesized() {
                     true => cx.report(handler.outer_span(), NO_IMPLIED_EVAL_ERROR),
                     false => cx.report(handler, NO_IMPLIED_EVAL_ERROR),
                 };
+                report.claims(node);
             }
             return;
         }

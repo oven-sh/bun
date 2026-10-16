@@ -51,6 +51,7 @@ fn is_arrayish(ty: Type) -> bool {
 /// several where it is a ternary. False if it can have another value.
 fn parse_array_filter_expressions(mut node: Expr, found: &mut FilterExpressions) -> bool {
     loop {
+        node = node.with_jsdoc_cast();
         match node.kind() {
             // Only the last expression of `(a, b, [1, 2, 3].filter(condition))[0]` matters.
             ExprKind::Binary {
@@ -234,7 +235,8 @@ impl PreferFind {
         filter_expressions: &FilterExpressions,
     ) {
         let is_oxlint = cx.language().is_oxlint;
-        cx.report(whole, PREFER_FIND).suggest(PREFER_FIND_SUGGESTION, |fixer| {
+        // Where unicorn's rule reports too, `object` is the call of `filter`.
+        cx.report(whole, PREFER_FIND).claims(object).suggest(PREFER_FIND_SUGGESTION, |fixer| {
             // tsgolint also suggests `a.find(f) = 1` and `a.find(f)++`, which do not parse.
             if is_oxlint && (is_assignee(whole) || is_assignment_target(whole)) {
                 return None;

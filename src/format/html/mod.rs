@@ -431,7 +431,8 @@ fn format_angular_expression(
     if strings::trim_js_whitespace(&text).is_empty() {
         return Ok(());
     }
-    let mut context = JsFormatContext::without_file(&text, options.clone(), &[]);
+    let mut context =
+        JsFormatContext::without_file(options.clone(), &crate::js::comments::NO_COMMENTS);
     context.parse_javascript = parse_javascript;
     let mut is_written = false;
     let document = crate::ir::run::write_with(context, &text, &mut scratch.document, |f| {
@@ -571,7 +572,8 @@ pub fn format_with(
     };
     let path = Some(path).filter(|path| !path.is_empty());
     let mut result = Ok(None);
-    let mut context = JsFormatContext::without_file(&text, options.clone(), &[]);
+    let mut context =
+        JsFormatContext::without_file(options.clone(), &crate::js::comments::NO_COMMENTS);
     context.parse_javascript = parse_javascript;
     let root = crate::ir::run::write_with(context, &text, &mut scratch.document, |f| {
         result = write_document_with_cursor(

@@ -22,8 +22,10 @@ fn is_thenable_expression(node: Expr) -> bool {
     is_thenable(node, node.ty())
 }
 
+/// Upstream asks about the `expression` of the `ts.ReturnStatement`, which has the parentheses.
 fn is_thenable_return(statement: Stmt) -> bool {
-    matches!(statement.kind(), StmtKind::Return(Some(argument)) if is_thenable_expression(argument))
+    matches!(statement.kind(), StmtKind::Return(Some(argument))
+        if is_thenable(argument, argument.ts_node_with_parentheses().get_type_at_location()))
 }
 
 /// Whether `func` returns something thenable.
@@ -166,6 +168,7 @@ impl Rule for RequireAwait {
                 false => get_function_head_loc(func),
             };
             cx.report(place, MISSING_AWAIT)
+                .claims(func)
                 .data("name", upper_case_first(&name).into_owned())
                 .suggest_change_of_behavior(REMOVE_ASYNC, &[], |fixer| remove_async(fixer, func));
         }

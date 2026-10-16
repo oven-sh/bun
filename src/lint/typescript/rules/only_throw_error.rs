@@ -144,7 +144,7 @@ impl OnlyThrowError {
         if ty.has_flags(TypeFlags::UNDEFINED) {
             // tsgolint points at the statement.
             let place = if is_oxlint { statement.span() } else { node.span() };
-            cx.report(place, UNDEF);
+            cx.report(place, UNDEF).claims(node);
             return;
         }
         if self.allow_throwing_any && is_type_any_type(ty) {
@@ -162,7 +162,7 @@ impl OnlyThrowError {
         }
         if is_oxlint {
             // tsgolint reports the `ParenthesizedExpression`.
-            cx.report(node.outer_span(), OBJECT);
+            cx.report(node.outer_span(), OBJECT).claims(node);
         } else {
             cx.report(node, OBJECT);
         }

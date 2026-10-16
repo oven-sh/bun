@@ -361,7 +361,7 @@ pub(crate) fn write_template<'a>(
     let indent_level = indent_level_in_source(e, &options, f) + u32::from(line.is_some());
     let slot = f.start_capture();
     // The code in the text is written with the options of the formatter.
-    let context = JsFormatContext::without_file(&text, options.clone(), &[]);
+    let context = JsFormatContext::without_file(options.clone(), &crate::js::comments::NO_COMMENTS);
     // Of the name of the file, no more than this is asked.
     let path = options.is_in_html_file.then_some(&b".html"[..]);
     let written = f.write_embedded(context, &text, |f| {

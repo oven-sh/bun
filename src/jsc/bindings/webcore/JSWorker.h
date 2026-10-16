@@ -30,7 +30,6 @@ namespace WebCore {
 class JSWorker : public JSEventTarget {
 public:
     using Base = JSEventTarget;
-    using DOMWrapped = Worker;
     static JSWorker* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<Worker>&& impl)
     {
         JSWorker* ptr = new (NotNull, JSC::allocateCell<JSWorker>(globalObject->vm())) JSWorker(structure, *globalObject, WTF::move(impl));

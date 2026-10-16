@@ -47,7 +47,7 @@ public:
         JSC::VM& vm,
         JSC::Structure* structure,
         std::span<EncodedJSValue> callbacks,
-        std::span<ZigString> paths)
+        std::span<EncodedSlice> paths)
     {
         auto* routeList = new (NotNull, JSC::allocateCell<ServerRouteList>(vm)) ServerRouteList(vm, structure, callbacks, paths);
         routeList->finishCreation(vm, callbacks, paths);
@@ -91,7 +91,7 @@ private:
     template<typename Req>
     JSObject* paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, Req* req);
 
-    ServerRouteList(JSC::VM& vm, JSC::Structure* structure, std::span<EncodedJSValue> callbacks, std::span<ZigString> paths)
+    ServerRouteList(JSC::VM& vm, JSC::Structure* structure, std::span<EncodedJSValue> callbacks, std::span<EncodedSlice> paths)
         : Base(vm, structure)
         , m_routes(callbacks.size())
         , m_paramsObjectStructures(paths.size())
@@ -105,7 +105,7 @@ private:
     WTF::FixedVector<IdentifierRange> m_pathIdentifierRanges;
     WTF::Vector<Identifier> m_pathIdentifiers;
 
-    void finishCreation(JSC::VM& vm, std::span<EncodedJSValue> callbacks, std::span<ZigString> paths)
+    void finishCreation(JSC::VM& vm, std::span<EncodedJSValue> callbacks, std::span<EncodedSlice> paths)
     {
         Base::finishCreation(vm);
         ASSERT(callbacks.size() == paths.size());
@@ -118,7 +118,7 @@ private:
         std::span<IdentifierRange> pathIdentifierRanges = m_pathIdentifierRanges.mutableSpan();
 
         for (size_t i = 0; i < paths.size(); i++) {
-            ZigString rawPath = paths[i];
+            EncodedSlice rawPath = paths[i];
             WTF::String path = Zig::toString(rawPath);
             uint32_t originalIdentifierIndex = m_pathIdentifiers.size();
             size_t startOfIdentifier = 0;
@@ -288,10 +288,10 @@ extern "C" JSC::EncodedJSValue Bun__ServerRouteList__callRouteH3(
     return JSValue::encode(routeList->callRoute(globalObject, index, requestPtr, serverObject, requestObject, req));
 }
 
-extern "C" JSC::EncodedJSValue Bun__ServerRouteList__create(Zig::GlobalObject* globalObject, EncodedJSValue* callbacks, ZigString* paths, size_t pathsLength)
+extern "C" JSC::EncodedJSValue Bun__ServerRouteList__create(Zig::GlobalObject* globalObject, EncodedJSValue* callbacks, EncodedSlice* paths, size_t pathsLength)
 {
     auto* structure = globalObject->m_ServerRouteListStructure.get(globalObject);
-    auto* routeList = ServerRouteList::create(globalObject->vm(), structure, std::span<EncodedJSValue>(callbacks, pathsLength), std::span<ZigString>(paths, pathsLength));
+    auto* routeList = ServerRouteList::create(globalObject->vm(), structure, std::span<EncodedJSValue>(callbacks, pathsLength), std::span<EncodedSlice>(paths, pathsLength));
     return JSValue::encode(routeList);
 }
 

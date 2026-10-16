@@ -2,7 +2,6 @@
 //! `src/crash_handler/` free of JSC types.
 
 use bun_analytics as analytics;
-use bun_collections::BoundedArray;
 use bun_core::String as BunString;
 use bun_core::{Environment, Global};
 use bun_crash_handler as crash_handler;
@@ -19,7 +18,6 @@ pub(crate) mod js_bindings {
                 "getMachOImageZeroOffset",
                 __jsc_host_js_get_mach_o_image_zero_offset,
             ),
-            ("getFeaturesAsVLQ", __jsc_host_js_get_features_as_vlq),
             ("getFeatureData", __jsc_host_js_get_feature_data),
             ("segfault", __jsc_host_js_segfault),
             ("segfaultInDll", __jsc_host_js_segfault_in_dll),
@@ -129,7 +127,7 @@ pub(crate) mod js_bindings {
     #[bun_jsc::host_fn]
     fn js_panic(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
-        crash_handler::panic_impl(b"invoked crashByPanic() handler", None, None);
+        crash_handler::panic_impl(b"invoked crashByPanic() handler", None);
     }
 
     #[bun_jsc::host_fn]
@@ -199,7 +197,7 @@ pub(crate) mod js_bindings {
 
     #[bun_jsc::host_fn]
     fn js_root_error(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        crash_handler::handle_root_error("Unexpected", None);
+        crash_handler::handle_root_error("Unexpected");
     }
 
     #[bun_jsc::host_fn]
@@ -218,29 +216,18 @@ pub(crate) mod js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    fn js_get_features_as_vlq(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        let bits = analytics::packed_features();
-        let mut buf = BoundedArray::<u8, 16>::default();
-        // PackedFeatures is repr(transparent) u64; `.bits()` exposes the raw value.
-        crash_handler::write_u64_as_two_vlqs(buf.writer(), bits.bits() as usize)
-            // there is definitely enough space in the bounded array
-            .expect("unreachable");
-        let mut str = BunString::clone_latin1(buf.slice());
-        str.transfer_to_js(global)
-    }
-
-    #[bun_jsc::host_fn]
     fn js_get_feature_data(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         let obj = JSValue::create_empty_object(global, 5);
         let list = analytics::PACKED_FEATURES_LIST;
+        // Not `static_`: a feature can be named like a common string ("s3").
         let array = JSValue::create_array_from_iter(global, list.iter(), |feature| {
-            BunString::static_(feature).to_js(global)
+            BunString::clone_latin1(feature.as_ref()).into_js(global)
         })?;
         obj.put(global, "features", array);
         obj.put(
             global,
             "version",
-            BunString::init(Global::package_json_version).to_js(global)?,
+            BunString::static_(Global::package_json_version).to_js(global)?,
         );
         obj.put(
             global,
@@ -253,7 +240,7 @@ pub(crate) mod js_bindings {
         obj.put(
             global,
             "revision",
-            BunString::init(Environment::GIT_SHA).to_js(global)?,
+            BunString::static_(Environment::GIT_SHA).to_js(global)?,
         );
 
         obj.put(

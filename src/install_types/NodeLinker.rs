@@ -73,6 +73,7 @@ pub mod npm {
 // (`__bun_regex_*`) defined `#[no_mangle]` in `bun_jsc::regular_expression`.
 // ══════════════════════════════════════════════════════════════════════════
 
+use core::cell::OnceCell;
 use core::ptr::NonNull;
 
 use bun_alloc::Arena;
@@ -85,42 +86,59 @@ use bun_core::{String as BunString, strings};
 // `bun_jsc::regular_expression`; declared here as `extern "Rust"` and
 // resolved at link time.
 unsafe extern "Rust" {
-    /// Compile `pattern` with no flags. `None` ⇔ `error.InvalidRegExp`.
-    /// Performs `jsc::initialize` lazily on first call.
-    fn __bun_regex_compile(pattern: BunString) -> Option<NonNull<()>>;
+    /// Compile `pattern` with no flags. `None` ⇔ the pattern does not compile.
+    /// Initializes JSC first (idempotent), so it must only run from
+    /// [`RegularExpression::matches`]; see the type's docs.
+    fn __bun_regex_compile(pattern: &BunString) -> Option<NonNull<()>>;
     fn __bun_regex_matches(regex: NonNull<()>, input: &BunString) -> bool;
     fn __bun_regex_drop(regex: NonNull<()>);
 }
 
-/// Owned, type-erased JSC regex; drops through the vtable.
+/// Owned, type-erased compiled JSC regex; drops through the vtable.
 // FORWARD_DECL(b0): bun_jsc::RegularExpression — stored as raw NonNull<()>
 // (NOT Box<ZST>: a zero-sized opaque Box is a dangling sentinel that would
 // leak the real JSC allocation and skip its destructor).
-pub struct RegularExpression(NonNull<()>);
+struct CompiledRegularExpression(NonNull<()>);
 
-impl RegularExpression {
-    #[inline]
-    fn matches(&self, input: &BunString) -> bool {
-        // SAFETY: self.0 was produced by `__bun_regex_compile`.
-        unsafe { __bun_regex_matches(self.0, input) }
-    }
-}
-
-impl Drop for RegularExpression {
+impl Drop for CompiledRegularExpression {
     fn drop(&mut self) {
         // SAFETY: self.0 was produced by `__bun_regex_compile`; runs JSC destructor + free.
         unsafe { __bun_regex_drop(self.0) }
     }
 }
 
-/// Compile `pattern` into a Yarr regex via the link-time extern. `pub` so
-/// higher-tier callers re-use this single declaration site instead of
-/// duplicating the `__bun_regex_*` extern block (one declarer per upward call,
-/// per PORTING.md §extern-Rust-ban).
-#[inline]
-fn compile_regex(pattern: BunString) -> Option<RegularExpression> {
-    // SAFETY: link-time extern; pattern ownership transfers.
-    unsafe { __bun_regex_compile(pattern) }.map(RegularExpression)
+/// A package-name pattern, compiled on first use.
+///
+/// Matchers are built while bunfig.toml / .npmrc load, before the command
+/// initializes JSC. `__bun_regex_compile` initializes JSC, and the first
+/// `jsc::initialize` of the process fixes JSC's options, so compiling here
+/// would drop the options the command passes later (`bun -p` needs eval mode
+/// to keep the script's completion value, `bun test --isolate` its JIT
+/// thresholds). Only the install linker matches, so compiling there leaves
+/// the first call to the command.
+pub struct RegularExpression {
+    /// The anchored pattern built by [`create_matcher`].
+    source: Box<[u8]>,
+    /// `None` if the pattern failed to compile; it then never matches. The
+    /// escaping in [`create_matcher`] leaves Yarr's pattern size limit as the
+    /// only way to fail.
+    compiled: OnceCell<Option<CompiledRegularExpression>>,
+}
+
+impl RegularExpression {
+    fn matches(&self, input: &BunString) -> bool {
+        let compiled = self.compiled.get_or_init(|| {
+            // SAFETY: link-time extern; Yarr compiles the pattern and does not retain it.
+            unsafe { __bun_regex_compile(&BunString::borrow_utf8(&self.source)) }
+                .map(CompiledRegularExpression)
+        });
+        match compiled {
+            // SAFETY: `regex.0` was produced by `__bun_regex_compile` and stays
+            // live until `regex` drops.
+            Some(regex) => unsafe { __bun_regex_matches(regex.0, input) },
+            None => false,
+        }
+    }
 }
 
 pub struct PnpmMatcher {
@@ -148,7 +166,6 @@ pub enum Behavior {
 #[derive(Debug, strum::IntoStaticStr)]
 pub enum FromExprError {
     OutOfMemory,
-    InvalidRegExp,
     UnexpectedExpr,
 }
 bun_core::impl_tag_error!(FromExprError);
@@ -166,10 +183,8 @@ impl PnpmMatcher {
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
     ) -> Result<PnpmMatcher, FromExprError> {
-        let mut buf: Vec<u8> = Vec::new();
         // Scratch arena for `E::String::slice` / `as_string_cloned`.
-        // Freed on return; the patterns are consumed by
-        // `create_matcher` before then.
+        // Freed on return; `create_matcher` copies the patterns before then.
         let arena = Arena::new();
 
         let mut matchers: Vec<Matcher> = Vec::new();
@@ -178,23 +193,7 @@ impl PnpmMatcher {
 
         match expr.data {
             ast::ExprData::EString(mut s) => {
-                let pattern = s.slice(&arena);
-                let matcher = match create_matcher(pattern, &mut buf) {
-                    Ok(m) => m,
-                    Err(CreateMatcherError::OutOfMemory) => return Err(FromExprError::OutOfMemory),
-                    Err(CreateMatcherError::InvalidRegExp) => {
-                        log.add_error_fmt_opts(
-                            format_args!("Invalid regex: {}", bstr::BStr::new(pattern)),
-                            bun_ast::AddErrorOptions {
-                                loc: expr.loc,
-                                redact_sensitive_information: true,
-                                source: Some(source),
-                                ..Default::default()
-                            },
-                        );
-                        return Err(FromExprError::InvalidRegExp);
-                    }
-                };
+                let matcher = create_matcher(s.slice(&arena));
                 has_include = has_include || !matcher.is_exclude;
                 has_exclude = has_exclude || matcher.is_exclude;
                 matchers.push(matcher);
@@ -202,24 +201,7 @@ impl PnpmMatcher {
             ast::ExprData::EArray(patterns) => {
                 for pattern_expr in patterns.slice() {
                     if let Some(pattern) = pattern_expr.as_string_cloned(&arena)? {
-                        let matcher = match create_matcher(pattern, &mut buf) {
-                            Ok(m) => m,
-                            Err(CreateMatcherError::OutOfMemory) => {
-                                return Err(FromExprError::OutOfMemory);
-                            }
-                            Err(CreateMatcherError::InvalidRegExp) => {
-                                log.add_error_fmt_opts(
-                                    format_args!("Invalid regex: {}", bstr::BStr::new(pattern)),
-                                    bun_ast::AddErrorOptions {
-                                        loc: pattern_expr.loc,
-                                        redact_sensitive_information: true,
-                                        source: Some(source),
-                                        ..Default::default()
-                                    },
-                                );
-                                return Err(FromExprError::InvalidRegExp);
-                            }
-                        };
+                        let matcher = create_matcher(pattern);
                         has_include = has_include || !matcher.is_exclude;
                         has_exclude = has_exclude || matcher.is_exclude;
                         matchers.push(matcher);
@@ -321,18 +303,7 @@ impl PnpmMatcher {
     }
 }
 
-#[derive(Debug, strum::IntoStaticStr)]
-pub enum CreateMatcherError {
-    OutOfMemory,
-    InvalidRegExp,
-}
-bun_core::impl_tag_error!(CreateMatcherError);
-
-bun_core::oom_from_alloc!(CreateMatcherError);
-
-pub fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMatcherError> {
-    buf.clear();
-
+pub fn create_matcher(raw: &[u8]) -> Matcher {
     let mut trimmed = strings::trim(raw, &strings::WHITESPACE_CHARS);
 
     let mut is_exclude = false;
@@ -342,27 +313,24 @@ pub fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMa
     }
 
     if trimmed == b"*" {
-        return Ok(Matcher {
+        return Matcher {
             pattern: Pattern::MatchAll,
             is_exclude,
-        });
+        };
     }
 
-    // Vec::push aborts on
-    // OOM under the global mimalloc allocator, so no error mapping is needed.
-    // `escape_reg_exp_*` writes through
-    // `io::Write` for `Vec<u8>`, which is infallible.
-    buf.push(b'^');
-    let _ = escape_reg_exp_for_package_name_matching(trimmed, buf);
-    buf.push(b'$');
+    // `escape_reg_exp_*` writes through `io::Write` for `Vec<u8>`, which is
+    // infallible.
+    let mut source: Vec<u8> = Vec::with_capacity(trimmed.len() + 2);
+    source.push(b'^');
+    let _ = escape_reg_exp_for_package_name_matching(trimmed, &mut source);
+    source.push(b'$');
 
-    // `__bun_regex_compile` is a link-time extern (cold path) and performs
-    // `jsc::initialize` before compiling.
-    let regex = compile_regex(BunString::clone_utf8(buf.as_slice()))
-        .ok_or(CreateMatcherError::InvalidRegExp)?;
-
-    Ok(Matcher {
-        pattern: Pattern::Regex(regex),
+    Matcher {
+        pattern: Pattern::Regex(RegularExpression {
+            source: source.into_boxed_slice(),
+            compiled: OnceCell::new(),
+        }),
         is_exclude,
-    })
+    }
 }

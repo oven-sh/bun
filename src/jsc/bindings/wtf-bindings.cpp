@@ -7,6 +7,7 @@
 #include <wtf/dtoa.h>
 #include <wtf/DateMath.h>
 #include <wtf/NumberOfCores.h>
+#include <JavaScriptCore/JSDateMath-v8.h>
 #include <atomic>
 #include <cassert>
 
@@ -237,10 +238,11 @@ extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, s
     return simdutf::binary_to_base64(inputDataBuffer, inputDataBufferSize, destinationDataBuffer, simdutf::base64_url);
 }
 
-extern "C" double WTF__parseES5Date(const Latin1Character* string, size_t length)
+// JS `Date.parse` with no VM, except that a date-time with no time zone reads as UTC.
+extern "C" double Bun__parseDateTimeString(const Latin1Character* string, size_t length)
 {
-    bool isLocalTime;
-    return WTF::parseES5Date({ string, length }, isLocalTime);
+    bool isLocalTime = false;
+    return v8::TimeClip(v8::ParseDateTimeString(byteCast<uint8_t>(string), length, isLocalTime));
 }
 
 namespace Bun {
@@ -267,8 +269,7 @@ size_t toISOString(JSC::VM& vm, double date, char in[64])
     if (!std::isfinite(date))
         return 0;
 
-    GregorianDateTime gregorianDateTime;
-    vm.dateCache.msToGregorianDateTime(date, WTF::TimeType::UTCTime, gregorianDateTime);
+    auto gregorianDateTime = vm.dateCache.msToGregorianDateTime(date, WTF::TimeType::UTCTime);
 
     // Maximum amount of space we need in buffer: 8 (max. digits in year) + 2 * 5 (2 characters each for month, day, hour, minute, second) + 4 (. + 3 digits for milliseconds)
     // 6 for formatting and one for null termination = 29.
@@ -297,6 +298,9 @@ static thread_local WTF::StackBounds stackBoundsForCurrentThread = WTF::StackBou
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__StackCheck__initialize()
 {
+    // A thread's bounds are fixed. On Windows they are the reserved range, and the stack grows inside it.
+    if (!stackBoundsForCurrentThread.isEmpty())
+        return;
     stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBoundsForEmbedder();
 }
 

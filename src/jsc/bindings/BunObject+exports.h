@@ -4,9 +4,9 @@
 // --- Getters ---
 #define FOR_EACH_GETTER(macro) \
     macro(Archive) \
-    macro(CSRF) \
     macro(CryptoHasher) \
     macro(FFI) \
+    macro(FetchSession) \
     macro(FileSystemRouter) \
     macro(Glob) \
     macro(Image) \
@@ -38,13 +38,10 @@
     macro(isStandaloneExecutable) \
     macro(origin) \
     macro(s3) \
-    macro(semver) \
-    macro(unsafe) \
     macro(valkey) \
 
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \
-    macro(allocUnsafe) \
     macro(build) \
     macro(color) \
     macro(connect) \
@@ -54,24 +51,17 @@
     macro(file) \
     macro(gunzipSync) \
     macro(gzipSync) \
-    macro(indexOfLine) \
     macro(inflateSync) \
     macro(jest) \
     macro(listen) \
-    macro(mmap) \
-    macro(openInEditor) \
     macro(registerMacro) \
     macro(resolve) \
     macro(resolveSync) \
     macro(serve) \
     macro(sha) \
-    macro(shellEscape) \
-    macro(shrink) \
-    macro(sleepSync) \
     macro(spawn) \
     macro(spawnSync) \
     macro(udpSocket) \
-    macro(which) \
     macro(write) \
     macro(zstdCompressSync) \
     macro(zstdDecompressSync) \

@@ -82,6 +82,7 @@ static JSObject* objectForEventTargetListeners(VM& vm, JSGlobalObject* exec, Eve
             Bun::putDirectNamed(vm, propertiesForListener, "passive"_s, jsBoolean(eventListener->isPassive()));
             Bun::putDirectNamed(vm, propertiesForListener, "once"_s, jsBoolean(eventListener->isOnce()));
             listenersForEvent->putDirectIndex(exec, listenersForEventIndex++, propertiesForListener);
+            RETURN_IF_EXCEPTION(scope, {});
         }
 
         if (listenersForEventIndex) {
@@ -129,12 +130,17 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
         RETURN_IF_EXCEPTION(scope, {});
 
         String name = worker->name();
-        if (!name.isEmpty())
+        if (!name.isEmpty()) {
             array->putDirectIndex(exec, index++, constructInternalProperty(vm, exec, "name"_s, jsString(vm, WTF::move(name))));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
 
         array->putDirectIndex(exec, index++, constructInternalProperty(vm, exec, "terminated"_s, jsBoolean(worker->wasTerminated())));
+        RETURN_IF_EXCEPTION(scope, {});
 
-        if (auto* listeners = objectForEventTargetListeners(vm, exec, worker))
+        auto* listeners = objectForEventTargetListeners(vm, exec, worker);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (listeners)
             array->putDirectIndex(exec, index++, constructInternalProperty(vm, exec, "listeners"_s, listeners));
 
         RETURN_IF_EXCEPTION(scope, {});
@@ -149,7 +155,9 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
             if (auto* headers = dynamicDowncast<JSFetchHeaders>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});
-                constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, headers));
+                JSValue internalProperties = WebCore::getInternalProperties(vm, exec, headers);
+                RETURN_IF_EXCEPTION(scope, {});
+                constructDataProperties(vm, exec, array, internalProperties);
                 RETURN_IF_EXCEPTION(scope, {});
                 return array;
             }
@@ -157,7 +165,9 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
             if (auto* formData = dynamicDowncast<JSDOMFormData>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});
-                constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, formData));
+                JSValue internalProperties = WebCore::getInternalProperties(vm, exec, formData);
+                RETURN_IF_EXCEPTION(scope, {});
+                constructDataProperties(vm, exec, array, internalProperties);
                 RETURN_IF_EXCEPTION(scope, {});
                 return array;
             }
@@ -166,7 +176,9 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
             if (auto* params = dynamicDowncast<JSURLSearchParams>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});
-                constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, params));
+                JSValue internalProperties = WebCore::getInternalProperties(vm, exec, params);
+                RETURN_IF_EXCEPTION(scope, {});
+                constructDataProperties(vm, exec, array, internalProperties);
                 RETURN_IF_EXCEPTION(scope, {});
                 return array;
             }
@@ -174,7 +186,9 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
             if (auto* cookie = dynamicDowncast<JSCookie>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});
-                constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, cookie));
+                JSValue internalProperties = WebCore::getInternalProperties(vm, exec, cookie);
+                RETURN_IF_EXCEPTION(scope, {});
+                constructDataProperties(vm, exec, array, internalProperties);
                 RETURN_IF_EXCEPTION(scope, {});
                 return array;
             }
@@ -182,7 +196,9 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
             if (auto* cookieMap = dynamicDowncast<JSCookieMap>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});
-                constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, cookieMap));
+                JSValue internalProperties = WebCore::getInternalProperties(vm, exec, cookieMap);
+                RETURN_IF_EXCEPTION(scope, {});
+                constructDataProperties(vm, exec, array, internalProperties);
                 RETURN_IF_EXCEPTION(scope, {});
                 return array;
             }
@@ -194,7 +210,9 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
         auto* array = constructEmptyArray(exec, nullptr);
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (auto* listeners = objectForEventTargetListeners(vm, exec, eventTarget)) {
+        auto* listeners = objectForEventTargetListeners(vm, exec, eventTarget);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (listeners) {
             array->putDirectIndex(exec, index++, constructInternalProperty(vm, exec, "listeners"_s, listeners));
             RETURN_IF_EXCEPTION(scope, {});
         }

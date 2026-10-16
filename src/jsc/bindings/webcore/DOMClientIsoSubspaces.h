@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "GeneratedBindings+Counts.h"
 
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
@@ -18,7 +19,6 @@ public:
 
     /* --- bun --- */
     GCClient::IsoSubspace* m_clientSubspaceForBunClassConstructor { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForBufferList { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForFFIFunction { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForWrappingFunction { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNapiClass { nullptr };
@@ -55,6 +55,7 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForErrorCodeCache { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForBunInspectorConnection { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSNextTickQueue { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForJSModuleGraph { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSSocketHandlers { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSDiffieHellman { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSDiffieHellmanGroup { nullptr };
@@ -79,6 +80,7 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForJSWebView { nullptr };
 
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
+    GCClient::IsoSubspace* m_clientSubspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClasses] {};
     /* --- bun --- */
 
     GCClient::IsoSubspace* m_clientSubspaceForDOMException { nullptr };
@@ -119,8 +121,8 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForCrossRealmTransformState { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForStreamFromIterableContext { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForDirectStreamController { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForDirectStreamSource { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNativeStreamSourceAdapter { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForDirectSinkCloseState { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForAsyncIteratorSourceOperation { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForReadStreamIntoSinkOperation { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForBunStandaloneTextSink { nullptr };
@@ -180,7 +182,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForJSPrivateKeyObject { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForServerRouteList { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForBunRequest { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForBakeResponse { nullptr };
 
     GCClient::IsoSubspace* m_clientSubspaceForJSConnectionsList { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSHTTPParser { nullptr };

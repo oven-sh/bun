@@ -3,7 +3,10 @@
 // simple/text path must decode the same wall-clock as UTC too — otherwise it
 // goes through JS Date.parse and is read as local time, making the two
 // protocols disagree on non-UTC hosts. `timestamptz` (explicit offset) and
-// `date` (UTC midnight) must keep decoding correctly.
+// `date` (UTC midnight) must keep decoding correctly, including the
+// `±HH:MM:SS` offsets the server prints for historical (local mean time)
+// instants and the `timestamptz[]` / `timestamp[]` arrays that are sent as
+// text on both protocols.
 //
 // The driving test spawns this fixture under several TZ values against a real
 // Postgres server and asserts binary and text decode to the same instant.
@@ -63,16 +66,21 @@ const expected = [
 
 const failures: string[] = [];
 
-function checkRows(protocol: string, rows: Array<{ ts: Date; tstz: Date; d: Date }>) {
-  for (let i = 0; i < expected.length; i++) {
-    for (const col of ["ts", "tstz", "d"] as const) {
-      const got: Date = rows[i][col];
-      if (!(got instanceof Date)) {
-        failures.push(`${protocol} id=${i} ${col}: expected Date, got ${Object.prototype.toString.call(got)}`);
-        continue;
-      }
-      if (got.toISOString() !== expected[i][col]) {
-        failures.push(`${protocol} id=${i} ${col}: want ${expected[i][col]} got ${got.toISOString()}`);
+// Renders a decoded cell (Date, array of Dates, or text) for comparison with
+// the expected strings; anything else is reported as its type tag.
+function render(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return `[${value.map(render).join(",")}]`;
+  if (!(value instanceof Date)) return Object.prototype.toString.call(value);
+  return Number.isNaN(value.getTime()) ? "Invalid Date" : value.toISOString();
+}
+
+function checkRows(protocol: string, rows: Array<Record<string, unknown>>, want: Array<Record<string, string>>) {
+  for (let i = 0; i < want.length; i++) {
+    for (const col of Object.keys(want[i])) {
+      const got = render(rows[i]?.[col]);
+      if (got !== want[i][col]) {
+        failures.push(`${protocol} row=${i} ${col}: want ${want[i][col]} got ${got}`);
       }
     }
   }
@@ -95,22 +103,22 @@ const binaryRows = await sql`SELECT ts, tstz, d, 0.1::real AS fmt FROM ${sql(t)}
 const textRows = await sql`SELECT ts, tstz, d, 0.1::real AS fmt FROM ${sql(t)} ORDER BY id`.simple();
 checkFormat("binary", binaryRows, Math.fround(0.1));
 checkFormat("text", textRows, 0.1);
-checkRows("binary", binaryRows);
-checkRows("text", textRows);
+checkRows("binary", binaryRows, expected);
+checkRows("text", textRows, expected);
 
 // Sub-millisecond sweep, checked against the server's own arithmetic:
 // floor(extract(epoch) * 1000) is numeric (exact) on PostgreSQL 14+, and,
 // unlike the text path, is also an oracle where the text decoders are known to
-// differ and are not this decoder's business: BC dates, 5+ digit years and,
-// for timestamptz, years 1-99 fall back to Date.parse, which yields Invalid
-// Date for BC, reads a 5+ digit year `timestamp` as local time, and windows
-// years 1-99 into 19xx/20xx. Those literals are checked on the binary path
-// only. Values beyond JS Date's +/-8.64e15 ms decode to Invalid Date.
+// differ and are not this decoder's business: BC dates and 5+ digit years fall
+// back to Date.parse, which yields Invalid Date for BC and reads a 5+ digit
+// year `timestamp` as local time. Those literals are checked on the binary
+// path only. Values beyond JS Date's +/-8.64e15 ms decode to Invalid Date.
 const subMsLiterals: Array<[literal: string, textToo: boolean]> = [
   ["4714-11-24 00:00:00.000001 BC", false], // the Postgres minimum
   ["0001-12-31 23:59:59.999999 BC", false],
-  ["0001-01-01 00:00:00.123456", false],
-  ["0099-12-31 23:59:59.999999", false],
+  // Years 1-99 used to be windowed into 19xx/20xx by the timestamptz text path.
+  ["0001-01-01 00:00:00.123456", true],
+  ["0099-12-31 23:59:59.999999", true],
   ["0100-01-01 00:00:00.000999", true],
   // More than 2^53 µs from 2000-01-01: the old f64 conversion was lossy here
   // on top of truncating toward zero, on both sides of 1970.
@@ -169,6 +177,43 @@ for (const type of ["timestamp", "timestamptz"] as const) {
     }
   }
 }
+
+// Historical instants: for a date this old the session zone's rule is local
+// mean time, so the server prints the offset with a seconds field
+// (`1883-11-18 07:03:58-04:56:02` for America/New_York), which only the
+// component decoder understands. Arrays are sent as text on both protocols,
+// so they exercise the text decoder even in the "binary" query.
+await sql.unsafe("SET TIME ZONE 'America/New_York'");
+const lmt = "1883-11-18 12:00:00+00";
+const historicalExpected = [
+  {
+    // The server's own rendering, so this block is known to be exercising the
+    // seconds-resolution offset and not a plain `-05`.
+    tstz_text: "1883-11-18 07:03:58-04:56:02",
+    tstz: "1883-11-18T12:00:00.000Z",
+    tstz_arr: "[1883-11-18T12:00:00.000Z,2024-06-15T12:00:00.000Z]",
+    ts_arr: "[2024-06-15T12:00:00.000Z]",
+  },
+];
+// The same query on both protocols: a bound parameter makes it an extended
+// query (scalar tstz arrives binary); unsafe() without parameters is a simple
+// query (every cell arrives as text).
+const historicalBinary = await sql`
+    SELECT ${lmt}::timestamptz::text AS tstz_text,
+           ${lmt}::timestamptz AS tstz,
+           ARRAY[${lmt}::timestamptz, '2024-06-15 12:00:00+00'::timestamptz] AS tstz_arr,
+           ARRAY['2024-06-15 12:00:00'::timestamp] AS ts_arr,
+           0.1::real AS fmt`;
+const historicalText = await sql.unsafe(`
+    SELECT '${lmt}'::timestamptz::text AS tstz_text,
+           '${lmt}'::timestamptz AS tstz,
+           ARRAY['${lmt}'::timestamptz, '2024-06-15 12:00:00+00'::timestamptz] AS tstz_arr,
+           ARRAY['2024-06-15 12:00:00'::timestamp] AS ts_arr,
+           0.1::real AS fmt`);
+checkFormat("binary historical", historicalBinary, Math.fround(0.1));
+checkFormat("text historical", historicalText, 0.1);
+checkRows("binary historical", historicalBinary, historicalExpected);
+checkRows("text historical", historicalText, historicalExpected);
 
 if (failures.length) {
   console.error(`FAIL TZ=${process.env.TZ} offsetMin=${new Date().getTimezoneOffset()}`);

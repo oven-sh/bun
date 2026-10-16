@@ -25,7 +25,6 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 
 namespace Bun {
 namespace WebStreams {
@@ -43,45 +42,17 @@ static JSReadableStreamDefaultController* transformReadableController(JSTransfor
     return uncheckedDowncast<JSReadableStreamDefaultController>(readable->m_controller.get());
 }
 
-// WebIDL callback invoke returning Promise<undefined>: an abrupt completion becomes a
-// rejected promise (a sanctioned completion-record catch). Returns nullptr on VM termination.
-static JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* method, JSValue thisValue, const MarkedArgumentBuffer& args)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue result;
-    JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        auto callData = getCallData(method);
-        ASSERT(callData.type != CallData::Type::None);
-        result = call(globalObject, method, callData, thisValue, args);
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-    }
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    if (result.isEmpty())
-        return nullptr;
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
-}
-
-// The default [[transformAlgorithm]]: enqueue the chunk unchanged; the enqueue's abrupt
-// completion becomes a rejected promise (a sanctioned completion-record catch).
+// The default [[transformAlgorithm]] (SetUpTransformStreamDefaultControllerFromTransformer step 2):
+// "Let result be TransformStreamDefaultControllerEnqueue(controller, chunk). If result is an abrupt
+// completion, return a promise rejected with result.[[Value]]. Otherwise a promise resolved with undefined."
 static JSPromise* defaultTransformAlgorithm(JSC::VM& vm, JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller, JSValue chunk)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(vm);
         transformStreamDefaultControllerEnqueue(globalObject, controller, chunk);
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-    }
-    // takeAbruptCompletion leaves a VM termination pending and returns the empty value.
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    });
 }
 
 // The [[transformAlgorithm]] dispatch; the switch is total over TransformerKind.
@@ -98,7 +69,7 @@ static JSPromise* performTransformAlgorithm(JSC::VM& vm, JSGlobalObject* globalO
                 throwOutOfMemoryError(globalObject, scope);
                 return nullptr;
             }
-            RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, transformMethod, controller->m_transformer.get(), args));
+            RELEASE_AND_RETURN(scope, invokeCallbackReturningPromise(globalObject, transformMethod, controller->m_transformer.get(), args));
         }
         break;
     case TransformerKind::Identity:
@@ -432,20 +403,13 @@ void transformStreamDefaultControllerEnqueue(JSGlobalObject* globalObject, JSTra
         throwTypeError(globalObject, scope, "Cannot enqueue a chunk into a TransformStream whose readable side is closed or has already requested close"_s);
         return;
     }
-    JSValue thrown;
-    {
-        // The readable-side enqueue interpreted as a completion record (a sanctioned
-        // completion-record catch): an abrupt completion errors the WRITABLE side and
-        // rethrows the readable's stored error.
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        readableStreamDefaultControllerEnqueue(globalObject, readableController, chunk);
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-    }
-    // takeAbruptCompletion leaves a VM termination pending and returns the empty value.
-    RETURN_IF_EXCEPTION(scope, void());
-    if (!thrown.isEmpty()) [[unlikely]] {
-        transformStreamErrorWritableAndUnblockWrite(globalObject, stream, thrown);
+    readableStreamDefaultControllerEnqueue(globalObject, readableController, chunk);
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+        // Spec steps 4-5: "If enqueueResult is an abrupt completion, perform
+        // ! TransformStreamErrorWritableAndUnblockWrite(stream, enqueueResult.[[Value]]) and throw
+        // stream.[[readable]].[[storedError]]."
+        TRY_CLEAR_EXCEPTION(scope, );
+        transformStreamErrorWritableAndUnblockWrite(globalObject, stream, exception->value());
         RETURN_IF_EXCEPTION(scope, void());
         // The readable is not necessarily Errored here: the user size() callback may have
         // closed it before throwing, leaving [[storedError]] unset — then we throw undefined.

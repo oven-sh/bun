@@ -3104,7 +3104,7 @@ impl<'a> Resolver<'a> {
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 format_args!(
-                                    "\"{}@{}\" names the folder \"{}\", which does not exist",
+                                    "\"{}@{}\": folder \"{}\" does not exist",
                                     bstr::BStr::new(esm.name),
                                     bstr::BStr::new(dependency_version.literal.slice(string_buf)),
                                     bstr::BStr::new(folder),

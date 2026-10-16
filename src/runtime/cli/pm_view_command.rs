@@ -79,7 +79,7 @@ pub(crate) fn view(
                     manager.root_dir.has_comptime_query(b"package.json")
                 };
                 if !has_package_json {
-                    const NO_NAME: &str = "No package name was given and no package.json was found";
+                    const NO_NAME: &str = "no package name given and no package.json found";
                     if json_output {
                         print_json_error(NO_NAME, spec_, None);
                     } else {

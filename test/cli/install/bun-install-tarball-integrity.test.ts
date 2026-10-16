@@ -1471,7 +1471,7 @@ describe.concurrent("tarball integrity metadata forms", () => {
     });
     const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
     expect(stderr).toContain(
-      "warn: Unsupported or malformed integrity hash in registry metadata for pkg@1.0.0; its tarball will not be verified",
+      "warn: Unsupported or malformed integrity hash in registry metadata for pkg@1.0.0, tarball will not be verified",
     );
     expect(stdout).toContain("1 package installed");
     // Nothing usable was advertised, so the lockfile carries no pin for it.

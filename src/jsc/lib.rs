@@ -798,7 +798,6 @@ pub struct IntegerRange {
     pub min: i128,
     pub max: i128,
     pub field_name: &'static [u8],
-    pub always_allow_zero: bool,
 }
 impl Default for IntegerRange {
     fn default() -> Self {
@@ -806,7 +805,6 @@ impl Default for IntegerRange {
             min: i128::from(MIN_SAFE_INTEGER),
             max: i128::from(MAX_SAFE_INTEGER),
             field_name: b"",
-            always_allow_zero: false,
         }
     }
 }

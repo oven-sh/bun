@@ -422,7 +422,7 @@ impl OverrideMap {
                 Some(source),
                 source.range_of_string(rule_loc(root, name)),
                 format_args!(
-                    "{}@{} is not in the catalog{}",
+                    "{}@{} not in catalog{}",
                     bun_core::fmt::escape_control_chars(name),
                     bun_core::fmt::escape_control_chars(dep.version.literal.slice(buf)),
                     if has_workspaces {
@@ -1101,7 +1101,7 @@ fn warn_selector_error(
             source,
             key_loc,
             format_args!(
-                "Invalid package name \"{}\"",
+                "invalid package name \"{}\"",
                 bun_core::fmt::escape_control_chars(key)
             ),
         ),

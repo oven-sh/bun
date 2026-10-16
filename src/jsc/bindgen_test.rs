@@ -365,3 +365,23 @@ impl TestTokenClass for TestToken {
 pub(crate) fn make_token<'a>(heap: &JsHeap<'a>, id: u32) -> JsWrapper<'a, TestToken> {
     TestToken { id }.into_js(heap)
 }
+
+pub(crate) fn integer_or_big_int(value: u32) -> u32 {
+    value
+}
+
+pub(crate) fn loose_integer(value: u16) -> u16 {
+    value
+}
+
+pub(crate) fn loose_integer_or_big_int(value: u16) -> u16 {
+    value
+}
+
+pub(crate) fn loose_double_or_big_int(value: f64) -> f64 {
+    value
+}
+
+pub(crate) fn wide_integer_or_big_int(value: u64) -> String {
+    value.to_string()
+}

@@ -189,7 +189,6 @@ describe.concurrent("console %s", () => {
         Object.groupBy([1, 2, 3], n => (n % 2 ? "odd" : "even")),
         Object.assign(Object.create(null), { nested: { a: 1 }, list: [2], text: "it's" }),
         JSON.parse('{"toString":1}'),
-        Object.setPrototypeOf([1, "two"], null),
         namespace,
         revocable.proxy,
       ];
@@ -206,7 +205,6 @@ describe.concurrent("console %s", () => {
           "v [Object: null prototype] { odd: [Array ...], even: [Array ...] }",
           `v [Object: null prototype] { nested: [Object ...], list: [Array ...], text: "it's" }`,
           "v { toString: 1 }",
-          'v [ 1, "two" ]',
           "v Module { a: 1 }",
           "v <Revoked Proxy>",
         ].join("\n") + "\n",

@@ -3556,10 +3556,8 @@ pub mod formatter {
                 return self.print_as::<false>(Tag::RevokedProxy, writer_, value, js_type);
             }
             // Other kinds (arguments, a Map) print through `length` or `size` of the object.
-            let is_inspected = matches!(
-                js_type,
-                T::FinalObject | T::Object | T::Array | T::DerivedArray | T::ModuleNamespaceObject
-            ) && Bun__hasNoStringConversion(value, global);
+            let is_inspected = matches!(js_type, T::FinalObject | T::ModuleNamespaceObject)
+                && Bun__hasNoStringConversion(value, global);
             if !is_inspected {
                 return self.print_as::<C>(Tag::String, writer_, value, js_type);
             }

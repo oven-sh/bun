@@ -126,6 +126,11 @@ extern "C" bool Bun__hasNoStringConversion(JSC::EncodedJSValue encodedValue, JSC
     JSObject* object = JSValue::decode(encodedValue).getObject();
     ASSERT(object);
 
+    // A conversion to a string caches the toString that it called on the Structure.
+    JSValue cachedToString = object->structure()->cachedSpecialProperty(CachedSpecialPropertyKey::ToString);
+    if (cachedToString && cachedToString.isCallable())
+        return false;
+
     enum class Method : uint8_t {
         None,
         Callable,

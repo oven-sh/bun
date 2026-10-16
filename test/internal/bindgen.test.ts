@@ -952,7 +952,7 @@ describe("classes", () => {
         expect.objectContaining({
           name: "TypeError",
           code: "ERR_INVALID_THIS",
-          message: expect.stringStartingWith("Expected this to be instanceof TestCounter"),
+          message: expect.stringMatching(/^Expected this to be instanceof TestCounter/),
         }),
       );
       expect(() => count.call(receiver)).toThrow(

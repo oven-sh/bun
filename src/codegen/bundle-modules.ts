@@ -421,7 +421,8 @@ writeIfNotChanged(
 //
 // A debug build's runtime reads the module sources from disk instead (BUN_DYNAMIC_JS_LOAD_PATH), but they are still
 // here so that a debug bun works as a `--compile` target like any other.
-const BUILTINS_FORMAT_VERSION = 1;
+// Bump for a layout change, and when the sources gain a private @name: an older bun cannot parse it to make bytecode.
+const BUILTINS_FORMAT_VERSION = 2;
 const BUILTINS_HEADER_SIZE = 48;
 
 // Identifies these module sources to bytecode generated from them ahead of time (bun build --compile embeds bytecode for

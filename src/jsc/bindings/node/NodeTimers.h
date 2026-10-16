@@ -18,4 +18,6 @@ JSC::JSValue createSetTimeoutFunction(JSC::VM&, JSC::JSObject* globalObject);
 JSC::JSValue createSetIntervalFunction(JSC::VM&, JSC::JSObject* globalObject);
 JSC::JSValue createSetImmediateFunction(JSC::VM&, JSC::JSObject* globalObject);
 
+JSC::JSValue createClearImmediateFunction(JSC::VM&, JSC::JSObject* globalObject);
+
 } // namespace Bun

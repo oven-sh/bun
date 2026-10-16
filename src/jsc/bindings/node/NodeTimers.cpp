@@ -288,4 +288,9 @@ JSValue createSetImmediateFunction(VM& vm, JSObject* globalObject)
     return createTimerFunction(vm, globalObject, "setImmediate"_s, functionSetImmediate, setImmediatePromisifyCustomGetter);
 }
 
+JSValue createClearImmediateFunction(VM& vm, JSObject* globalObject)
+{
+    return JSFunction::create(vm, globalObject->globalObject(), 1, "clearImmediate"_s, functionClearImmediate, ImplementationVisibility::Public);
+}
+
 } // namespace Bun

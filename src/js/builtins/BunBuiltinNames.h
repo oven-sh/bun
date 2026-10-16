@@ -52,6 +52,7 @@ using namespace JSC;
     macro(bytes) \
     macro(cancel) \
     macro(checks) \
+    macro(clearImmediate) \
     macro(close) \
     macro(cmd) \
     macro(code) \
@@ -147,6 +148,7 @@ using namespace JSC;
     macro(preventClose) \
     macro(processBindingConstants) \
     macro(pull) \
+    macro(queueMicrotask) \
     macro(rawHeaders) \
     macro(read) \
     macro(readable) \
@@ -162,6 +164,7 @@ using namespace JSC;
     macro(sameSite) \
     macro(secure) \
     macro(self) \
+    macro(setImmediate) \
     macro(sharedFd) \
     macro(signal) \
     macro(size) \

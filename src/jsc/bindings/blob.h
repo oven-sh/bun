@@ -94,6 +94,10 @@ private:
     String m_fileName;
 };
 
+// What `Blob::create(JSC::JSValue)` accepts: a Blob, or an output of `Bun.build()`, which wraps
+// one (`JSValue::as(Blob)` in Rust). An overload that takes a Blob dispatches on this.
+bool isBlobOrBuildArtifact(JSC::JSValue);
+
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, Blob&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Blob* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<Blob>&&);

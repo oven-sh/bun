@@ -298,7 +298,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
 
     RefPtr<Blob> blobValue = nullptr;
-    if (argument1.value().inherits<JSBlob>()) {
+    if (isBlobOrBuildArtifact(argument1.value())) {
         blobValue = Blob::create(argument1.value());
     }
 
@@ -323,7 +323,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_appendOverloadD
     size_t argsCount = std::min<size_t>(3, callFrame->argumentCount());
     if (argsCount == 2) {
         JSValue distinguishingArg = callFrame->uncheckedArgument(1);
-        if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSBlob>())
+        if (distinguishingArg.isObject() && isBlobOrBuildArtifact(distinguishingArg))
             RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_append2Body(lexicalGlobalObject, callFrame, castedThis)));
         RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_append1Body(lexicalGlobalObject, callFrame, castedThis)));
     }
@@ -462,7 +462,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
     EnsureStillAliveScope argument2 = callFrame->argument(2);
 
     RefPtr<Blob> blobValue = nullptr;
-    if (argument1.value().inherits<JSBlob>()) {
+    if (isBlobOrBuildArtifact(argument1.value())) {
         blobValue = Blob::create(argument1.value());
     }
 
@@ -486,7 +486,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_setOverloadDisp
     size_t argsCount = std::min<size_t>(3, callFrame->argumentCount());
     if (argsCount == 2) {
         JSValue distinguishingArg = callFrame->uncheckedArgument(1);
-        if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSBlob>())
+        if (distinguishingArg.isObject() && isBlobOrBuildArtifact(distinguishingArg))
             RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_set2Body(lexicalGlobalObject, callFrame, castedThis)));
         RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_set1Body(lexicalGlobalObject, callFrame, castedThis)));
     }

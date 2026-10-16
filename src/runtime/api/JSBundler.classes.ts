@@ -41,11 +41,16 @@ export default [
     // receiver's slot; it must never reach through JSBlob's layout here.
     values: ["stream"],
     proto: {
+      // bun-types declares `BuildArtifact extends Blob`, and this prototype does
+      // not inherit from `Blob.prototype`: list every member of the `Blob` type.
       text: { fn: "getText" },
       json: { fn: "getJSON" },
       arrayBuffer: { fn: "getArrayBuffer" },
       slice: { fn: "getSlice", length: 2 },
       stream: { fn: "getStream", length: 1 },
+      bytes: { fn: "getBytes", async: true },
+      formData: { fn: "getFormData", async: true },
+      image: { fn: "doImage", length: 0 },
 
       path: { getter: "getPath", cache: true },
       size: { getter: "getSize" },

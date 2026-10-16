@@ -10,8 +10,8 @@ use bun_core::{Global, Output, ZStr, env_var};
 use bun_sema_driver::format::{self, Layout, Style};
 use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided};
 use bun_sema_driver::{
-    Category, CommandLine, CompilerOption, Diagnostic, FlagError, Progress, RejectedFlag, Report,
-    Request, ScriptKind,
+    CommandLine, CompilerOption, Diagnostic, FlagError, Progress, RejectedFlag, Report, Request,
+    ScriptKind,
 };
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
@@ -548,8 +548,8 @@ impl<'a> EntryPoint<'a> {
     }
 }
 
-/// Type checks `entry_points` and everything they import before they are run. Returns whether they
-/// have no errors. Reports the errors on stderr, which leaves stdout to the program.
+/// Type checks `entry_points` and everything they import before they are run. Returns
+/// `Report::is_ok`. Reports the diagnostics on stderr, which leaves stdout to the program.
 pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<BeforeRead>) -> bool {
     let cwd = working_directory();
     // `--loader`, `--conditions`
@@ -689,18 +689,11 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         true => run(cwd, tsconfig, &paths, &[], 0, provided, then),
         false => run_quietly(cwd, tsconfig, &paths, &[], 0, None, provided, then),
     };
-    for reported in &report.diagnostics {
-        let kind = match reported.category {
-            Category::Error => bun_ast::Kind::Err,
-            Category::Warning => bun_ast::Kind::Warn,
-            Category::Suggestion | Category::Message => continue,
-        };
-        match kind {
-            bun_ast::Kind::Err => log.errors += 1,
-            _ => log.warnings += 1,
-        }
+    // Whatever fails the build is one of its errors.
+    for reported in report.failing() {
+        log.errors += 1;
         log.add_msg(bun_ast::Msg {
-            kind,
+            kind: bun_ast::Kind::Err,
             data: log_data_of(reported),
             metadata: format::metadata_of(reported),
             notes: reported.related.iter().map(log_data_of).collect(),
@@ -852,7 +845,7 @@ fn tsconfig_override() -> Option<&'static [u8]> {
         .as_deref()
 }
 
-/// Returns whether there are no errors.
+/// Returns `Report::is_ok`.
 fn check_and_report(paths: &Paths, provided: Provided) -> bool {
     let cwd = working_directory();
     let then = |report| report;

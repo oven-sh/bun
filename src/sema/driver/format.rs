@@ -695,9 +695,9 @@ pub(crate) fn is_about_bun_types(d: &Diagnostic) -> bool {
 
 /// Warnings, notes, the error count, then a per-file error count for every file.
 pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
-    let in_files =
-        (report.diagnostics.iter()).filter(|d| d.category == Category::Error && !d.path.is_empty());
-    let mut by_file = count_by_file(in_files);
+    // `getErrorSummary` counts these: the N of `Found N errors`. `Diagnostic::fails` decides the run.
+    let counted = || (report.diagnostics.iter()).filter(|d| d.category == Category::Error);
+    let mut by_file = count_by_file(counted().filter(|d| !d.path.is_empty()));
     let files_with_errors = by_file.len();
     for file in &report.incomplete {
         pretty!(
@@ -777,7 +777,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
             plural(report.files_not_checked, b"file", b"files")
         );
     }
-    let errors = report.error_count();
+    let errors = counted().count();
     let took = bun_core::output::Elapsed {
         colors: style.color,
         ms: (report.load_time + report.check_time).as_secs_f64() * 1000.0,
@@ -800,11 +800,24 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
         );
         return;
     }
-    if errors == 0 {
+    if report.is_ok() {
         pretty!(
             out,
             style.color,
             "<green>\u{2713}<r> No type errors<d> in {}{}{}<r>\n",
+            checked,
+            projects,
+            took
+        );
+        return;
+    }
+    // `message TS1450` and nothing else: tsc prints no summary, and fails.
+    if errors == 0 {
+        pretty!(
+            out,
+            style.color,
+            "<b><red>Found {}<r><d>, checked {}{}{}<r>\n",
+            plural(report.failing().count(), b"message", b"messages"),
             checked,
             projects,
             took

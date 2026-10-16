@@ -27,7 +27,7 @@ test("request can receive undefined signal", async () => {
   const clone = new Request(request);
   expect(clone.method).toBe("POST");
   expect(clone.headers.get("content-type")).toBe("text/bun;charset=utf-8");
-  expect(await request.text()).toBe("bun");
+  expect(request.bodyUsed).toBe(true);
   expect(await clone.text()).toBe("bun");
 });
 
@@ -45,7 +45,7 @@ test("request can receive null signal", async () => {
   const clone = new Request(request);
   expect(clone.method).toBe("POST");
   expect(clone.headers.get("content-type")).toBe("text/bun;charset=utf-8");
-  expect(await request.text()).toBe("bun");
+  expect(request.bodyUsed).toBe(true);
   expect(await clone.text()).toBe("bun");
 });
 

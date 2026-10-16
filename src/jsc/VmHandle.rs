@@ -175,8 +175,10 @@ impl Shared {
 
     /// Push + wake; while draining, also wake the waiting teardown (it sleeps
     /// on the condvar, not on the loop).
-    fn deliver(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) {
+    fn deliver(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>, holds_loop: bool) {
         let el = self.loop_of(kind);
+        // SAFETY: the poster owns `task` until the push below.
+        unsafe { (*task.as_ptr()).holds_loop = holds_loop };
         el.concurrent_tasks.push(task);
         if self.state() >= State::Draining {
             self.notify();
@@ -239,7 +241,7 @@ impl Ticket {
             self.shared.state() != State::Closed,
             "ticket post after its VM closed (a ticket was created after the wait)"
         );
-        self.shared.deliver(self.kind, task);
+        self.shared.deliver(self.kind, task, false);
     }
 
     /// Release a keep-alive taken on the VM's loop (any thread).
@@ -335,11 +337,25 @@ impl VmHandle {
     /// the VM is closed. For posters that hold no ticket (their payload is
     /// their own to free on refusal).
     pub fn post(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted {
+        self.post_with(kind, task, false)
+    }
+
+    /// `post` that holds the loop while queued. A flag: the macro loop shares keep-alives.
+    pub fn post_holding_loop(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted {
+        self.post_with(kind, task, true)
+    }
+
+    fn post_with(
+        &self,
+        kind: LoopKind,
+        task: NonNull<ConcurrentTaskItem>,
+        holds_loop: bool,
+    ) -> Posted {
         test_gate::weak_post(&self.0, task, |task| {
             let Some(_a) = self.enter() else {
                 return Posted::Refused(task);
             };
-            self.0.deliver(kind, task);
+            self.0.deliver(kind, task, holds_loop);
             Posted::Queued
         })
     }
@@ -350,12 +366,17 @@ impl VmHandle {
     ///
     /// # Safety
     /// `task` is a live heap `WebCore::EventLoopTask` the caller hands over.
-    pub unsafe fn post_cpp_task(&self, kind: LoopKind, task: *mut crate::cpp_task::CppTask) {
+    pub unsafe fn post_cpp_task(
+        &self,
+        kind: LoopKind,
+        task: *mut crate::cpp_task::CppTask,
+        holds_loop: bool,
+    ) {
         unsafe extern "C" {
             fn Bun__deleteEventLoopTask(task: *mut crate::cpp_task::CppTask);
         }
         let ct = ConcurrentTaskItem::create(bun_event_loop::Task::init(task));
-        if let Posted::Refused(ct) = self.post(kind, ct) {
+        if let Posted::Refused(ct) = self.post_with(kind, ct, holds_loop) {
             // SAFETY: refused ⇒ we own both boxes.
             unsafe {
                 drop(bun_core::heap::take(ct.as_ptr()));
@@ -715,11 +736,12 @@ pub unsafe extern "C" fn Bun__VmHandle__postAndRelease(
     r: *const Shared,
     task: *mut crate::cpp_task::CppTask,
     kind: LoopKind,
+    holds_loop: bool,
 ) {
     // SAFETY: fn contract.
     let handle = unsafe { VmHandle::from_ref(r) };
     // SAFETY: fn contract.
-    unsafe { handle.post_cpp_task(kind, task) };
+    unsafe { handle.post_cpp_task(kind, task, holds_loop) };
 }
 
 /// JS thread: adjust this VM's keep-alive directly.

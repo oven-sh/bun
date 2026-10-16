@@ -121,6 +121,15 @@ impl FSWatcher {
         self.handle.post(self.loop_kind, task)
     }
 
+    /// JS thread: [`post`](Self::post), and the batch holds the loop until the loop takes it.
+    #[cfg(not(windows))]
+    fn post_holding_loop(
+        &self,
+        task: core::ptr::NonNull<ConcurrentTask>,
+    ) -> bun_jsc::vm_handle::Posted {
+        self.handle.post_holding_loop(self.loop_kind, task)
+    }
+
     /// `self`'s address as `*mut Self` for path-watcher / abort-signal /
     /// rare-data ctx slots. Callbacks deref it as `&*const` (shared) — all
     /// mutation goes through `Cell`/`JsCell` — so no write provenance is
@@ -243,12 +252,17 @@ impl FSWatchTaskPosix {
         Ok(())
     }
 
+    /// JS thread (`init_js`). The abort holds the loop: a watcher that is not persistent does not.
     pub(crate) fn append_abort(&mut self) {
         self.append(Event::Abort, false);
-        self.enqueue();
+        self.enqueue_batch(true);
     }
 
     pub(crate) fn enqueue(&mut self) {
+        self.enqueue_batch(false);
+    }
+
+    fn enqueue_batch(&mut self, holds_loop: bool) {
         if self.count == 0 {
             return;
         }
@@ -274,7 +288,12 @@ impl FSWatchTaskPosix {
                 let node = core::ptr::NonNull::new_unchecked(core::ptr::addr_of_mut!(
                     (*that).concurrent_task
                 ));
-                if let bun_jsc::vm_handle::Posted::Refused(_) = self.ctx().post(node) {
+                let posted = if holds_loop {
+                    self.ctx().post_holding_loop(node)
+                } else {
+                    self.ctx().post(node)
+                };
+                if let bun_jsc::vm_handle::Posted::Refused(_) = posted {
                     // VM torn down: nobody will emit these events. Free the batch
                     // (its entries own their paths) and drop the activity ref.
                     let mut task = bun_core::heap::take(that);

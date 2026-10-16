@@ -1784,19 +1784,26 @@ impl VirtualMachine {
         }
     }
 
-    pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
+    /// The terms that `is_event_loop_alive()` and `is_event_loop_held()` share.
+    #[inline(always)]
+    fn event_loop_holds(&self) -> usize {
         let el = self.event_loop_shared();
         let active = self
             .platform_loop_opt()
             .map(|h| h.is_active())
             .unwrap_or(false);
+        (active as usize)
+            + self.active_tasks
+            + el.tasks.readable_length()
+            + (el.has_pending_refs() as usize)
+    }
+
+    pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
+        let el = self.event_loop_shared();
         self.unhandled_error_counter == 0
-            && ((active as usize)
-                + self.active_tasks
-                + el.tasks.readable_length()
+            && (self.event_loop_holds()
                 + el.yield_tasks.len()
                 + (el.has_concurrent_tasks() as usize)
-                + (el.has_pending_refs() as usize)
                 > 0)
     }
 
@@ -1805,6 +1812,12 @@ impl VirtualMachine {
         self.is_event_loop_alive_excluding_immediates()
             || !el.immediate_tasks.is_empty()
             || !el.next_immediate_tasks.is_empty()
+    }
+
+    /// As `uv_loop_alive()` less closing handles: a queued task counts only if it holds the loop.
+    fn is_event_loop_held(&self) -> bool {
+        self.unhandled_error_counter == 0
+            && (self.event_loop_holds() > 0 || self.event_loop_shared().has_held_concurrent_tasks())
     }
 
     pub fn wakeup(&mut self) {
@@ -2212,8 +2225,8 @@ impl VirtualMachine {
             return;
         }
         ExitHandler::dispatch_on_before_exit(self);
-        let mut dispatch = false;
-        loop {
+        // As Node (`SpinEventLoopInternal`): work that is only queued does not emit again.
+        while self.is_event_loop_held() {
             while self.is_event_loop_alive() {
                 // A stop requested meanwhile (worker.terminate(), or process.exit()
                 // from a listener) ends the drain, as it ends the worker's main
@@ -2227,22 +2240,15 @@ impl VirtualMachine {
                     return;
                 }
                 self.auto_tick_active();
-                dispatch = true;
             }
 
             // Same guards as on entry: a fatal throw or a stop requested during
             // the inner drain must not re-dispatch. The main-thread case already
             // hard-exits via `exit_on_uncaught_exception`; this covers workers.
-            if dispatch && self.unhandled_error_counter == 0 && self.script_allowed() {
-                ExitHandler::dispatch_on_before_exit(self);
-                dispatch = false;
-
-                if self.is_event_loop_alive() {
-                    continue;
-                }
+            if self.unhandled_error_counter != 0 || !self.script_allowed() {
+                return;
             }
-
-            break;
+            ExitHandler::dispatch_on_before_exit(self);
         }
     }
 

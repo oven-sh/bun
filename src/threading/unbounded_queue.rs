@@ -332,4 +332,37 @@ impl<T: Node> UnboundedQueue<T> {
     pub fn is_empty(&self) -> bool {
         self.back.0.load(Ordering::Acquire).is_null()
     }
+
+    /// Consumer thread only: whether `predicate` holds for a node that `pop_batch` would take now.
+    pub fn any(&self, mut predicate: impl FnMut(NonNull<T>) -> bool) -> bool {
+        let last = self.back.0.load(Ordering::Acquire);
+        if last.is_null() {
+            return false;
+        }
+        // A push into an empty queue swaps `back`, then stores `front`.
+        let mut item = loop {
+            let first = self.front.0.load(Ordering::Acquire);
+            if !first.is_null() {
+                break first;
+            }
+            hint::spin_loop();
+        };
+        loop {
+            // SAFETY: `item` is `front` or the `next` of a node before `last`, both non-null.
+            if predicate(unsafe { NonNull::new_unchecked(item) }) {
+                return true;
+            }
+            if item == last {
+                return false;
+            }
+            item = loop {
+                // SAFETY: `item` is before `last` on the chain that only this thread pops.
+                let next = unsafe { T::atomic_load_next(item, Ordering::Acquire) };
+                if !next.is_null() {
+                    break next;
+                }
+                hint::spin_loop();
+            };
+        }
+    }
 }

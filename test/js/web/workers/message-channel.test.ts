@@ -1,3 +1,5 @@
+import { bunEnv, bunExe } from "harness";
+
 test("simple usage", done => {
   const channel = new MessageChannel();
   const port1 = channel.port1;
@@ -456,4 +458,57 @@ test("transferring a port from inside peerClosed()'s flush preserves the remaini
   await done.promise;
   // m1 delivered to the old owner; m2/m3 buffered for the new owner.
   expect(seen).toEqual(["old:m1", "new:m2", "new:m3"]);
+});
+
+// After 'beforeExit', the event loop runs again only if something holds it. A message for an
+// unref'd port holds nothing: it is not delivered and the event is emitted once, as in Node
+// v26.3.0. A port that the listener ref'd holds the loop: its message is delivered and the
+// event is emitted again.
+//
+// Only that turn follows Node's rule. A message that is already in the queue when the loop
+// first runs dry is still delivered to an unref'd port. Node does not deliver it.
+test.each([
+  ["an unref'd port does not run the event loop again", "", `port1.postMessage("late");`, "beforeExit 1\nexit\n"],
+  [
+    "a port that the listener ref'd runs the event loop again",
+    "",
+    `port2.ref(); port1.postMessage("late");`,
+    "beforeExit 1\nmessage late\nbeforeExit 2\nexit\n",
+  ],
+  [
+    "a message posted before the loop first runs dry is delivered to an unref'd port",
+    `port1.postMessage("early");`,
+    "",
+    "message early\nbeforeExit 1\nexit\n",
+  ],
+])("'beforeExit' and a MessagePort: %s", async (_, atTopLevel, inListener, expected) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { port1, port2 } = new (require("node:worker_threads").MessageChannel)();
+        port2.on("message", message => {
+          console.log("message", message);
+          port2.unref();
+        });
+        port2.unref();
+        ${atTopLevel}
+        let emitted = 0;
+        process.on("beforeExit", () => {
+          console.log("beforeExit", ++emitted);
+          // A third time would be a loop.
+          if (emitted > 2) process.exit(1);
+          if (emitted > 1) return;
+          ${inListener}
+        });
+        process.on("exit", () => console.log("exit"));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
 });

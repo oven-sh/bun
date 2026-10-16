@@ -3025,9 +3025,14 @@ impl H2FrameParser {
 
     /// The close code for JS when the loop closed the socket with `code`. An error of the
     /// loop's own read is the report already.
-    pub(crate) fn close_code_after_rejected_send(&self, code: core::ffi::c_int) -> core::ffi::c_int {
+    pub(crate) fn close_code_after_rejected_send(
+        &self,
+        code: core::ffi::c_int,
+    ) -> core::ffi::c_int {
         match self.rejected_send.get() {
-            RejectedSend::Errno(errno) if code == 0 => crate::socket::rejected_send_close_code(errno),
+            RejectedSend::Errno(errno) if code == 0 => {
+                crate::socket::rejected_send_close_code(errno)
+            }
             _ => code,
         }
     }

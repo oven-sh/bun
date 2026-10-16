@@ -299,7 +299,13 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         return Ok(ChunkRenamer::Minify(minify_renamer));
     }
 
-    let mut r = NumberRenamer::init(make_symbols_view(symbols), &reserved_names)?;
+    let mut r = NumberRenamer::init(
+        make_symbols_view(symbols),
+        &reserved_names,
+        files_in_order,
+        c.renamer_rows.as_deref(),
+        &c.cross_chunk_names,
+    )?;
     // Bindings that cross chunks carry one bundle-wide name
     // (`assign_cross_chunk_names`); everything else is numbered around them.
     if let Content::Javascript(js) = &chunk.content {
@@ -310,14 +316,11 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         }
     }
     for stable_ref in &sorted_imports_from_other_chunks {
+        // `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
         let ref_ = { stable_ref.r#ref };
         if let Some(name) = c.cross_chunk_names.get(&ref_) {
             r.pin_top_level_symbol(ref_, name);
         }
-    }
-    for stable_ref in &sorted_imports_from_other_chunks {
-        // `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
-        r.add_top_level_symbol(stable_ref.r#ref);
     }
 
     // Renamed in a second pass, once every top-level symbol in the chunk is
@@ -458,6 +461,45 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
 
     chunk.nested_scopes_to_rename = nested_scopes;
     Ok(ChunkRenamer::Number(r))
+}
+
+bun_core::declare_scope!(ChunkRenamer, hidden);
+
+/// Source index -> the file's row in its chunk's renamer. `None`: a file is in several chunks.
+pub(crate) fn renamer_rows(file_count: usize, chunks: &[Chunk]) -> Option<Box<[u32]>> {
+    let mut rows = vec![u32::MAX; file_count];
+    let mut next_row: u32 = 0;
+    for chunk in chunks {
+        let Content::Javascript(js) = &chunk.content else {
+            continue;
+        };
+        for &source_index in js.files_in_chunk_order.iter() {
+            let row = &mut rows[source_index as usize];
+            if *row != u32::MAX {
+                return None;
+            }
+            *row = next_row;
+            next_row += 1;
+        }
+    }
+    Some(rows.into_boxed_slice())
+}
+
+/// What each chunk's renamer holds, on `BUN_DEBUG_ChunkRenamer=1`.
+pub(crate) fn log_renamer_tables(chunks: &[Chunk]) {
+    for chunk in chunks {
+        if let (Content::Javascript(js), ChunkRenamer::Number(r)) = (&chunk.content, &chunk.renamer)
+        {
+            let (rows, name_slots) = r.table_size();
+            bun_core::scoped_log!(
+                ChunkRenamer,
+                "{} files, {} rows, {} name slots",
+                js.files_in_chunk_order.len(),
+                rows,
+                name_slots
+            );
+        }
+    }
 }
 
 /// One `NestedRenamer` task: the nested scopes of one file of one chunk.

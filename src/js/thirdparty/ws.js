@@ -30,47 +30,18 @@ function sendAfterClose(state, cb) {
   }
 }
 
+const ObjectHasOwn = Object.hasOwn;
+
 /**
- * Extracts TLS and proxy options from an agent object.
+ * Extracts connection and proxy options from an agent object.
  * @param {Object} agent The agent object to extract options from
- * @returns {{ tls: Object|null, proxy: string|Object|null }}
+ * @returns {{ connectOpts: Object|undefined, proxy: string|Object|null }}
  */
 function extractAgentOptions(agent) {
-  const connectOpts = agent?.connectOpts || agent?.options;
-  let tls = null;
+  let connectOpts = ObjectHasOwn(agent, "connectOpts") ? agent.connectOpts : undefined;
+  connectOpts ||= ObjectHasOwn(agent, "options") ? agent.options : undefined;
+  if (!$isObject(connectOpts)) connectOpts = undefined;
   let proxy = null;
-
-  if ($isObject(connectOpts)) {
-    // Build TLS options
-    const newTlsOptions = {};
-    let hasTlsOptions = false;
-
-    const { rejectUnauthorized, ca, cert, key, passphrase } = connectOpts;
-    if (rejectUnauthorized !== undefined) {
-      newTlsOptions.rejectUnauthorized = rejectUnauthorized;
-      hasTlsOptions = true;
-    }
-    if (ca) {
-      newTlsOptions.ca = ca;
-      hasTlsOptions = true;
-    }
-    if (cert) {
-      newTlsOptions.cert = cert;
-      hasTlsOptions = true;
-    }
-    if (key) {
-      newTlsOptions.key = key;
-      hasTlsOptions = true;
-    }
-    if (passphrase) {
-      newTlsOptions.passphrase = passphrase;
-      hasTlsOptions = true;
-    }
-
-    if (hasTlsOptions) {
-      tls = newTlsOptions;
-    }
-  }
 
   // Build proxy - check connectOpts.proxy first, then agent.proxy
   const agentProxy = connectOpts?.proxy || agent?.proxy;
@@ -85,7 +56,7 @@ function extractAgentOptions(agent) {
     }
   }
 
-  return { tls, proxy };
+  return { connectOpts, proxy };
 }
 
 const eventIds = {
@@ -202,22 +173,29 @@ class BunWebSocket extends EventEmitter {
     if ($isObject(options)) {
       headers = options?.headers;
       proxy = options?.proxy;
-      tlsOptions = options?.tls;
       if ("perMessageDeflate" in options && !options.perMessageDeflate) {
         disableDeflate = true;
       }
 
       // Extract from agent if provided (like HttpsProxyAgent)
-      agent = options?.agent;
+      const ownOptions = { __proto__: null, ...options };
+      agent = ownOptions.agent;
+      let connectOpts;
       if ($isObject(agent)) {
         const agentOpts = extractAgentOptions(agent);
-        const { proxy: agentProxy, tls: agentTls } = agentOpts;
+        const agentProxy = agentOpts.proxy;
+        connectOpts = agentOpts.connectOpts;
         if (!proxy && agentProxy) {
           proxy = agentProxy;
         }
-        if (!tlsOptions && agentTls) {
-          tlsOptions = agentTls;
-        }
+      }
+
+      tlsOptions = ownOptions.tls;
+      if ($isObject(tlsOptions)) {
+        tlsOptions = require("internal/tls").unsealPfxForNative(tlsOptions);
+      } else if (!tlsOptions) {
+        // The agent wins: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_agent.js#L305
+        tlsOptions = require("internal/tls").nodeClientTlsToNative({ __proto__: null, ...ownOptions, ...connectOpts });
       }
     }
 

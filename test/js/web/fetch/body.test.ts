@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
 import net from "net";
 import { join } from "node:path";
+// @ts-expect-error missing in @types/node
 import { isDisturbed, isErrored, isReadable, Readable } from "node:stream";
 import { finished } from "node:stream/promises";
 
@@ -11,7 +12,7 @@ const exampleServer = exampleSite("http");
 const bodyTypes = [
   {
     body: Request,
-    fn: (body?: BodyInit | null, headers?: HeadersInit) =>
+    fn: (body?: Bun.BodyInit | null, headers?: Bun.HeadersInit) =>
       new Request("http://example.com/", {
         method: "POST",
         body,
@@ -20,7 +21,7 @@ const bodyTypes = [
   },
   {
     body: Response,
-    fn: (body?: BodyInit | null, headers?: HeadersInit) => new Response(body, { headers }),
+    fn: (body?: Bun.BodyInit | null, headers?: Bun.HeadersInit) => new Response(body, { headers } as ResponseInit),
   },
 ];
 
@@ -192,7 +193,7 @@ for (const { body, fn } of bodyTypes) {
             const actual = new FormData();
             formData(actual);
             expect(() => fn(actual)).not.toThrow();
-            expect(await fn(actual).formData()).toStrictEqual(actual);
+            expect((await fn(actual).formData()) as FormData).toStrictEqual(actual);
           });
         }
       });
@@ -215,11 +216,9 @@ for (const { body, fn } of bodyTypes) {
             label: "Bun.file() stream",
             stream: () => {
               const url = new URL("resources/index.html", import.meta.url);
-              const { readable } = file(url);
-              return readable;
+              return file(url).stream();
             },
             content: /Example Domain/,
-            skip: true, // fails, text is empty
           },
           {
             label: "Bun.spawn() stream",
@@ -845,7 +844,7 @@ for (const { body, fn } of bodyTypes) {
             },
           });
           const connected = Promise.withResolvers<void>();
-          const sock = net.connect(server.port, "127.0.0.1", () => connected.resolve());
+          const sock = net.connect(server.port!, "127.0.0.1", () => connected.resolve());
           sock.on("error", () => {});
           await connected.promise;
           try {
@@ -877,7 +876,7 @@ for (const { body, fn } of bodyTypes) {
             },
           });
           const connected = Promise.withResolvers<void>();
-          const sock = net.connect(server.port, "127.0.0.1", () => connected.resolve());
+          const sock = net.connect(server.port!, "127.0.0.1", () => connected.resolve());
           sock.on("error", () => {});
           await connected.promise;
           sock.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\nhello");
@@ -934,7 +933,7 @@ for (const { body, fn } of bodyTypes) {
           expect(async () => await fn(actual).json()).toThrow(SyntaxError);
           // An empty body is rejected before the parser runs, with its own message.
           if (actual !== "") {
-            const error = await fn(actual)
+            const error: any = await fn(actual)
               .json()
               .catch(error => error);
             expect(error.message).toBe(jsonParseError(actual).message);
@@ -1062,7 +1061,7 @@ for (const { body, fn } of bodyTypes) {
         test(label, async () => {
           const expected = new FormData();
           formData(expected);
-          expect(await fn(body.join("\r\n"), headers).formData()).toStrictEqual(expected);
+          expect((await fn(body.join("\r\n"), headers).formData()) as FormData).toStrictEqual(expected);
         });
       }
       const invalidTests = [
@@ -1150,7 +1149,7 @@ for (const { body, fn } of bodyTypes) {
       }
     });
     describe("bodyUsed", () => {
-      const tests: Record<string, { label?: string; body?: BodyInit | null; bodyUsed: boolean }[]> = {
+      const tests: Record<string, { label?: string; body?: Bun.BodyInit | null; bodyUsed: boolean }[]> = {
         "text": [
           {
             body: undefined,
@@ -1233,7 +1232,6 @@ for (const { body, fn } of bodyTypes) {
             test(label || `${body}`, () => {
               const result = fn(body);
               expect(result).toHaveProperty("bodyUsed", false);
-              // @ts-expect-error
               expect(() => result[property]()).not.toThrow();
               expect(result).toHaveProperty("bodyUsed", bodyUsed);
             });
@@ -1248,7 +1246,6 @@ for (const { body, fn } of bodyTypes) {
           const result = new Response();
           expect(result).toHaveProperty("bodyUsed", false);
 
-          // @ts-expect-error
           await result[method]();
           expect(result).toHaveProperty("bodyUsed", false);
         });
@@ -1261,7 +1258,6 @@ for (const { body, fn } of bodyTypes) {
           const result = new Request("https://example.com", { method: "POST" });
           expect(result).toHaveProperty("bodyUsed", false);
 
-          // @ts-expect-error
           await result[method]();
           expect(result).toHaveProperty("bodyUsed", false);
         });
@@ -1274,7 +1270,6 @@ for (const { body, fn } of bodyTypes) {
           const result = new Request("https://example.com");
           expect(result).toHaveProperty("bodyUsed", false);
 
-          // @ts-expect-error
           await result[method]();
           expect(result).toHaveProperty("bodyUsed", false);
         });
@@ -1283,14 +1278,14 @@ for (const { body, fn } of bodyTypes) {
   });
 }
 
-function arrayBuffer(buffer: BufferSource) {
+function arrayBuffer(buffer: Bun.BufferSource) {
   if (buffer instanceof ArrayBuffer) {
     return buffer;
   }
   if (buffer instanceof SharedArrayBuffer) {
     return new Uint8Array(new Uint8Array(buffer)).buffer;
   }
-  return buffer.buffer;
+  return buffer.buffer as ArrayBuffer;
 }
 
 // Consuming a string body via .text()/.json()/.arrayBuffer()/.bytes() used to
@@ -1550,7 +1545,7 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
         c.close();
       },
     });
-  const sources: [string, () => BodyInit, string][] = [
+  const sources: [string, () => Bun.BodyInit, string][] = [
     ["string", () => "payload", "payload"],
     ["Blob", () => new Blob(["payload"]), "payload"],
     ["Uint8Array", () => new TextEncoder().encode("payload"), "payload"],
@@ -1560,13 +1555,13 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     ["Uint8Array(0)", () => new Uint8Array(0), ""],
     ["Blob([])", () => new Blob([]), ""],
   ];
-  const owners: [string, (body: BodyInit, headers?: HeadersInit) => Request | Response][] = [
+  const owners: [string, (body: Bun.BodyInit, headers?: Bun.HeadersInit) => Request | Response][] = [
     // `duplex` is what undici wants for a stream body; Bun accepts and ignores it.
     [
       "Request",
       (body, headers) => new Request("http://a/", { method: "POST", body, headers, duplex: "half" } as RequestInit),
     ],
-    ["Response", (body, headers) => new Response(body, { headers })],
+    ["Response", (body, headers) => new Response(body, { headers } as ResponseInit)],
   ];
   const errorName = (fn: () => unknown) => {
     try {
@@ -1716,6 +1711,75 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
         });
       });
 
+      // Bun.serve(), fetch() and Bun.write() read a body in native code. They consume it like a
+      // mixin method does: the stream ends up used, closed and locked, whatever backs the body.
+      describe("a native consumer leaves a body's stream consumed and locked", () => {
+        const consumers: [string, (owner: Request | Response) => Promise<string>][] = [
+          ownerName === "Response"
+            ? [
+                "Bun.serve() sends it",
+                async owner => {
+                  await using server = Bun.serve({ port: 0, fetch: () => owner as Response });
+                  return await (await fetch(server.url)).text();
+                },
+              ]
+            : [
+                "fetch(url, request) uploads it",
+                async owner => {
+                  await using echo = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
+                  return await (await fetch(echo.url, owner as RequestInit)).text();
+                },
+              ],
+          [
+            "Bun.write() writes it",
+            async owner => {
+              using dir = tempDir("body-native-consumer", {});
+              await Bun.write(join(String(dir), "out"), owner);
+              return await file(join(String(dir), "out")).text();
+            },
+          ],
+        ];
+        // An async iterable body is a type: "direct" stream underneath, which the consumer's sink pumps itself.
+        const iterables: typeof sources = [
+          [
+            "async generator",
+            () =>
+              (async function* () {
+                yield new TextEncoder().encode("payload");
+              })() as unknown as Bun.BodyInit,
+            "payload",
+          ],
+          ["node:stream Readable", () => Readable.from([Buffer.from("payload")]) as unknown as Bun.BodyInit, "payload"],
+        ];
+        for (const [name, init, content] of [...sources, ...iterables]) {
+          for (const [consumer, consume] of consumers) {
+            test(`${name} .body then ${consumer}`, async () => {
+              const owner = make(init());
+              const stream = owner.body!;
+              expect(await consume(owner)).toBe(content);
+              expect({
+                same: owner.body === stream,
+                ...streamState(stream),
+                bodyUsed: owner.bodyUsed,
+                getReader: errorName(() => stream.getReader()),
+                rewrap: errorName(() => make(stream)),
+                again: await settled(owner.text()),
+                clone: errorName(() => owner.clone()),
+              }).toEqual({
+                same: true,
+                ...consumedState,
+                bodyUsed: true,
+                getReader: "TypeError",
+                rewrap: "TypeError",
+                again: "TypeError",
+                clone: "TypeError",
+              });
+              await finished(stream);
+            });
+          }
+        }
+      });
+
       // A zero-length body is a body: reading it, through a mixin method or
       // through its stream, uses it up.
       describe("a zero-length body is used up like any other", () => {
@@ -1820,8 +1884,8 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     await listening;
     try {
       const url = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}/`;
-      const post = (body: BodyInit) => ({ method: "POST", body, duplex: "half" }) as RequestInit;
-      const touched = (body: BodyInit) => {
+      const post = (body: Bun.BodyInit) => ({ method: "POST", body, duplex: "half" }) as RequestInit;
+      const touched = (body: Bun.BodyInit) => {
         const request = new Request(url, post(body));
         request.body;
         return request;
@@ -1868,7 +1932,7 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     for (const path of ["/string", "/blob", "/empty"]) {
       const { promise, resolve, reject } = Promise.withResolvers<string>();
       let raw = "";
-      const socket = net.connect(server.port, "127.0.0.1", () =>
+      const socket = net.connect(server.port!, "127.0.0.1", () =>
         socket.write(`GET ${path} HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n`),
       );
       socket.setEncoding("latin1");

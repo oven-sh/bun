@@ -1,0 +1,15 @@
+<script lang="ts">
+export default {};
+</script>
+<template>
+  <a :x="{ bar(/* a */) {} }" />
+  <a :x="{ bar /* b */ () {} }" />
+  <a :x="{ bar() /* c */ {} }" />
+  <a :x="class { d(/* e */) {} }" />
+  <a :x="f(/* g */)" />
+  <a :x="h?.i /* j */ .k" />
+  <a :x="l as /* m */ N" />
+  <a @click="(/* o */) => p" />
+  <a v-slot="{ q /* r */ }" />
+  <a>{{ { bar(/* s */) {} } }}</a>
+</template>

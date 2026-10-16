@@ -7,7 +7,7 @@ use bun_uws as uws;
 
 use crate::webcore::CookieMap;
 
-pub use super::request_context::AdditionalOnAbortCallback;
+pub(crate) use super::request_context::AdditionalOnAbortCallback;
 use super::request_context::RequestContext;
 use super::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
 
@@ -220,31 +220,6 @@ impl AnyRequestContext {
 
     pub(crate) fn set_signal_aborted(self, reason: crate::server::jsc::CommonAbortReason) {
         dispatch!(self, (), |_T, ctx| ctx.set_signal_aborted(reason))
-    }
-
-    pub(crate) fn dev_server(self) -> Option<&'static crate::bake::DevServer::DevServer> {
-        dispatch!(self, None, |_T, ctx| ctx.dev_server().map(|r| {
-            // SAFETY: the server backref outlives any AnyRequestContext (held only
-            // for the duration of a request callback); `self` is a by-value tagged
-            // pointer, so there is no input lifetime to tie the borrow to.
-            unsafe { bun_ptr::detach_lifetime_ref(r) }
-        }))
-    }
-
-    /// Mutable access to the attached DevServer. The accessor above hands out
-    /// `&` only. The `Box` slot
-    /// inside `NewServer` has a stable address, so deriving `&mut` here is
-    /// sound as long as the caller upholds the usual single-writer rule on the
-    /// JS thread.
-    pub(crate) fn dev_server_mut(self) -> Option<*mut crate::bake::DevServer::DevServer> {
-        dispatch!(self, None, |_T, ctx| {
-            let server = ctx.server.get()?.as_ptr();
-            // SAFETY: `ctx.server` is a non-null backref that outlives this context
-            // and `dev_server` is a `Box` field never moved while requests are in
-            // flight, so dereferencing for exclusive access on the JS thread is sound.
-            let ds = unsafe { (*server).dev_server.as_deref_mut()? };
-            Some(core::ptr::from_mut(ds))
-        })
     }
 
     pub fn deref(self) {

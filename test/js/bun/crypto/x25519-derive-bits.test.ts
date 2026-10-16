@@ -141,3 +141,40 @@ test("X25519 deriveKey produces an AES-GCM key from the shared secret", async ()
   const raw = await crypto.subtle.exportKey("raw", key);
   expect(Buffer.from(raw).toString("hex")).toBe(x25519Vector.result);
 });
+
+test("X25519 keys survive structuredClone and remain usable", async () => {
+  const { privateKey, publicKey } = await importX25519Keys();
+
+  const clonedPrivate = structuredClone(privateKey);
+  const clonedPublic = structuredClone(publicKey);
+
+  expect(clonedPrivate.algorithm.name).toBe("X25519");
+  expect(clonedPrivate.type).toBe("private");
+  expect(clonedPublic.algorithm.name).toBe("X25519");
+  expect(clonedPublic.type).toBe("public");
+
+  const bits = await crypto.subtle.deriveBits({ name: "X25519", public: clonedPublic }, clonedPrivate, 256);
+  expect(Buffer.from(bits).toString("hex")).toBe(x25519Vector.result);
+});
+
+test("a non-extractable X25519 private key stays non-extractable and usable after structuredClone", async () => {
+  const { publicKey } = await importX25519Keys();
+  const privateKey = await crypto.subtle.importKey(
+    "pkcs8",
+    Buffer.from(x25519Vector.pkcs8, "hex"),
+    { name: "X25519" },
+    false,
+    ["deriveBits"],
+  );
+
+  const cloned = structuredClone(privateKey);
+
+  expect({ type: cloned.type, extractable: cloned.extractable, usages: cloned.usages }).toEqual({
+    type: "private",
+    extractable: false,
+    usages: ["deriveBits"],
+  });
+  await expect(crypto.subtle.exportKey("pkcs8", cloned)).rejects.toThrow("key is not extractable");
+  const bits = await crypto.subtle.deriveBits({ name: "X25519", public: publicKey }, cloned, 256);
+  expect(Buffer.from(bits).toString("hex")).toBe(x25519Vector.result);
+});

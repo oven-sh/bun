@@ -1,10 +1,19 @@
 import { deserialize, serialize } from "bun:jsc";
 import { openSync } from "fs";
 import { bunEnv, bunExe, tls } from "harness";
-import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
+import {
+  createPrivateKey,
+  createPublicKey,
+  createSecretKey,
+  KeyObject,
+  X509Certificate,
+  type webcrypto,
+} from "node:crypto";
+import { once } from "node:events";
 import { BlockList } from "node:net";
 import type { ReadableStreamDefaultReader } from "node:stream/web";
 import { deserialize as v8Deserialize } from "node:v8";
+import { Worker } from "node:worker_threads";
 import { deflate } from "node:zlib";
 import { join } from "path";
 
@@ -853,6 +862,243 @@ describe("deserializing a version 13 payload", () => {
     expect(+cloned[0]).toBe(5);
     expect(+cloned[1]).toBe(5);
     expect(cloned[0]).not.toBe(cloned[1]);
+  });
+});
+
+async function describeKey(key: CryptoKey) {
+  return {
+    type: key.type,
+    algorithm: key.algorithm,
+    usages: key.usages,
+    extractable: key.extractable,
+    material: Buffer.from(await crypto.subtle.exportKey(key.type === "public" ? "spki" : "pkcs8", key)).toString("hex"),
+  };
+}
+
+for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSerializeRoundtripCrossProcess]) {
+  describe(`${structuredCloneFn.name}: OKP CryptoKey`, () => {
+    test.each([
+      ["X25519", ["deriveBits"]],
+      ["X25519", ["deriveKey"]],
+      ["X25519", ["deriveKey", "deriveBits"]],
+      ["Ed25519", ["sign", "verify"]],
+    ] as [string, webcrypto.KeyUsage[]][])("%s %p key pair clones to the same keys", async (name, usages) => {
+      const pair = (await crypto.subtle.generateKey(name, true, usages)) as CryptoKeyPair;
+      for (const key of [pair.publicKey, pair.privateKey]) {
+        expect(await describeKey(await structuredCloneFn(key))).toEqual(await describeKey(key));
+      }
+    });
+  });
+}
+
+describe("X25519 CryptoKey through every clone route", () => {
+  const routes: [string, (keys: CryptoKey[]) => Promise<CryptoKey[][]>][] = [
+    [
+      "MessageChannel",
+      async keys => {
+        const { port1, port2 } = new MessageChannel();
+        const { promise, resolve, reject } = Promise.withResolvers<CryptoKey[]>();
+        port2.onmessage = event => resolve(event.data);
+        port2.onmessageerror = () => reject(new Error("messageerror"));
+        port1.postMessage(keys);
+        try {
+          return [await promise];
+        } finally {
+          port1.close();
+          port2.close();
+        }
+      },
+    ],
+    [
+      "BroadcastChannel",
+      async keys => {
+        const sender = new BroadcastChannel("structured-clone-x25519");
+        const receiver = new BroadcastChannel("structured-clone-x25519");
+        const { promise, resolve, reject } = Promise.withResolvers<CryptoKey[]>();
+        receiver.onmessage = event => resolve(event.data);
+        receiver.onmessageerror = () => reject(new Error("messageerror"));
+        sender.postMessage(keys);
+        try {
+          return [await promise];
+        } finally {
+          sender.close();
+          receiver.close();
+        }
+      },
+    ],
+    [
+      "performance.mark detail",
+      async keys => {
+        const mark = performance.mark("structured-clone-x25519", { detail: keys });
+        performance.clearMarks("structured-clone-x25519");
+        return [mark.detail];
+      },
+    ],
+    [
+      "Worker workerData and postMessage in both directions",
+      async keys => {
+        const worker = new Worker(
+          `const { parentPort, workerData } = require("node:worker_threads");
+           parentPort.once("message", message => parentPort.postMessage({ workerData, message }));
+           parentPort.once("messageerror", () => parentPort.postMessage({ workerData, message: "messageerror" }));`,
+          { eval: true, workerData: keys },
+        );
+        try {
+          worker.postMessage(keys);
+          const [reply] = await once(worker, "message");
+          return [reply.workerData, reply.message];
+        } finally {
+          await worker.terminate();
+        }
+      },
+    ],
+    [
+      "advanced IPC",
+      async keys => {
+        const { promise, resolve, reject } = Promise.withResolvers<CryptoKey[]>();
+        await using child = Bun.spawn({
+          cmd: [bunExe(), "-e", `process.on("message", keys => process.send(keys));`],
+          env: bunEnv,
+          stdio: ["ignore", "inherit", "inherit"],
+          serialization: "advanced",
+          ipc: resolve,
+          onExit(_subprocess, exitCode, signalCode) {
+            reject(new Error(`child exited (${exitCode}, ${signalCode}) before it sent the keys back`));
+          },
+        });
+        child.send(keys);
+        return [await promise];
+      },
+    ],
+  ];
+
+  test.each(routes)("%s", async (_route, send) => {
+    const { publicKey, privateKey } = (await crypto.subtle.generateKey("X25519", true, [
+      "deriveKey",
+      "deriveBits",
+    ])) as CryptoKeyPair;
+    const expected = await Promise.all([publicKey, privateKey].map(describeKey));
+    for (const copy of await send([publicKey, privateKey])) {
+      expect(await Promise.all(copy.map(describeKey))).toEqual(expected);
+    }
+  });
+
+  test("a clone clones again, and a duplicated key keeps its identity", async () => {
+    const { privateKey } = (await crypto.subtle.generateKey("X25519", true, ["deriveBits"])) as CryptoKeyPair;
+    const [first, second] = structuredClone([privateKey, privateKey]);
+    expect(first).not.toBe(privateKey);
+    expect(first).toBe(second);
+    expect(await describeKey(structuredClone({ nested: first }).nested)).toEqual(await describeKey(privateKey));
+  });
+});
+
+// The fields of an OKP CryptoKey record, in order:
+//   format version, CryptoKeyTag, record length, format version, key format, extractable,
+//   usage count, usage tags, OKP, algorithm, curve, [key type], key size, key bytes.
+// X25519 public and private keys are both 32 bytes, so an X25519 record has the key type.
+// An Ed25519 record has none.
+describe("OKP CryptoKey records", () => {
+  const compact = (spaced: string) => spaced.replaceAll(" ", "");
+  const read = (spaced: string) => deserialize(Buffer.from(compact(spaced), "hex"));
+  const written = (key: CryptoKey) => Buffer.from(serialize(key)).toString("hex");
+
+  // The X25519 key pair of Node's test-webcrypto-derivebits-cfrg.js.
+  const x25519Private = "c8838e76d057dfb7d8c95a69e138160add6373fd71a4d276bb56e3a81b64ff61";
+  const x25519Public = "1cf2b1e6022ec537371ed7f53e54fa1154d83e98eb64ea51fae5b3307cfe9706";
+  const importX25519 = () =>
+    Promise.all([
+      crypto.subtle.importKey(
+        "pkcs8",
+        Buffer.from(`302e020100300506032b656e04220420${x25519Private}`, "hex"),
+        "X25519",
+        true,
+        ["deriveBits"],
+      ),
+      crypto.subtle.importKey(
+        "spki",
+        Buffer.from(`302a300506032b656e032100${x25519Public}`, "hex"),
+        "X25519",
+        true,
+        [],
+      ),
+    ]);
+
+  // RFC 8037 appendix A.1.
+  const ed25519Seed = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
+  const ed25519Public = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+  const importEd25519 = () => {
+    const publicJwk = { kty: "OKP", crv: "Ed25519", x: Buffer.from(ed25519Public, "hex").toString("base64url") };
+    const privateJwk = { ...publicJwk, d: Buffer.from(ed25519Seed, "hex").toString("base64url") };
+    return Promise.all([
+      crypto.subtle.importKey("jwk", privateJwk, "Ed25519", true, ["sign"]),
+      crypto.subtle.importKey("jwk", publicJwk, "Ed25519", true, ["verify"]),
+    ]);
+  };
+
+  test("an X25519 record carries the key type", async () => {
+    const [privateKey, publicKey] = await importX25519();
+    const privateRecord = `0e000000 21 39000000 0e000000 02000000 01000000 01000000 05 05 17 00 01 20000000 ${x25519Private}`;
+    const publicRecord = `0e000000 21 38000000 0e000000 02000000 01000000 00000000 05 17 00 00 20000000 ${x25519Public}`;
+
+    expect(written(privateKey)).toBe(compact(privateRecord));
+    expect(written(publicKey)).toBe(compact(publicRecord));
+    expect(await describeKey(read(privateRecord))).toEqual(await describeKey(privateKey));
+    expect(await describeKey(read(publicRecord))).toEqual(await describeKey(publicKey));
+  });
+
+  // No release could read an X25519 record. The form without the key type is left unread on purpose.
+  test("the X25519 records that Bun 1.4.3 wrote, without the key type, stay rejected", () => {
+    const privateRecord = `0e000000 21 38000000 0e000000 02000000 01000000 01000000 05 05 17 00 20000000 ${x25519Private}`;
+    const publicRecord = `0e000000 21 37000000 0e000000 02000000 01000000 00000000 05 17 00 20000000 ${x25519Public}`;
+
+    expect(() => read(privateRecord)).toThrow(new TypeError("Unable to deserialize data."));
+    expect(() => read(publicRecord)).toThrow(new TypeError("Unable to deserialize data."));
+  });
+
+  test.each([
+    ["Bun 1.3.13", "0d000000", "01000000"],
+    ["Bun 1.4.3", "0e000000", "02000000"],
+  ])("the Ed25519 records that %s wrote still read", async (_release, version, keyFormat) => {
+    const [privateKey, publicKey] = await importEd25519();
+    const privateRecord = `${version} 21 58000000 ${version} ${keyFormat} 01000000 01000000 02 05 16 01 40000000 ${ed25519Seed} ${ed25519Public}`;
+    const publicRecord = `${version} 21 38000000 ${version} ${keyFormat} 01000000 01000000 03 05 16 01 20000000 ${ed25519Public}`;
+
+    expect(await describeKey(read(privateRecord))).toEqual(await describeKey(privateKey));
+    expect(await describeKey(read(publicRecord))).toEqual(await describeKey(publicKey));
+  });
+
+  test("an Ed25519 record has the bytes that Bun 1.4.3 wrote", async () => {
+    const [privateKey, publicKey] = await importEd25519();
+    const privateRecord = `0e000000 21 58000000 0e000000 02000000 01000000 01000000 02 05 16 01 40000000 ${ed25519Seed} ${ed25519Public}`;
+    const publicRecord = `0e000000 21 38000000 0e000000 02000000 01000000 01000000 03 05 16 01 20000000 ${ed25519Public}`;
+
+    expect(written(privateKey)).toBe(compact(privateRecord));
+    expect(written(publicKey)).toBe(compact(publicRecord));
+  });
+
+  test.each([
+    [
+      "an X25519 key type that is not public or private",
+      `0e000000 21 38000000 0e000000 02000000 01000000 00000000 05 17 00 02 20000000 ${x25519Public}`,
+    ],
+    [
+      "an X25519 key of 31 bytes",
+      `0e000000 21 37000000 0e000000 02000000 01000000 00000000 05 17 00 00 1f000000 ${x25519Public.slice(2)}`,
+    ],
+    [
+      "the X25519 algorithm with the Ed25519 curve",
+      `0e000000 21 37000000 0e000000 02000000 01000000 00000000 05 17 01 20000000 ${x25519Public}`,
+    ],
+    [
+      "the Ed25519 algorithm with the X25519 curve",
+      `0e000000 21 38000000 0e000000 02000000 01000000 00000000 05 16 00 00 20000000 ${x25519Public}`,
+    ],
+    [
+      "the AES-GCM algorithm in an OKP record",
+      `0e000000 21 38000000 0e000000 02000000 01000000 00000000 05 09 00 00 20000000 ${x25519Public}`,
+    ],
+  ])("%s is rejected", (_what, malformed) => {
+    expect(() => read(malformed)).toThrow(new TypeError("Unable to deserialize data."));
   });
 });
 

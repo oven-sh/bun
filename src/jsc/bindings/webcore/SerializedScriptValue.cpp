@@ -574,6 +574,9 @@ static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
  * CryptoKeyRaw :-
  *    CryptoAlgorithmIdentifierTag <keySize:uint32_t> <keyData:byte{keySize}>
  *
+ * CryptoKeyOKP :-
+ *    CryptoAlgorithmIdentifierTag CryptoKeyOKPOpNameTag CryptoKeyAsymmetricTypeSubtag? <keySize:uint32_t> <keyData:byte{keySize}> // The type subtag is present for X25519 only.
+ *
  * DOMPoint :-
  *        DOMPointReadOnlyTag DOMPointData
  *      | DOMPointTag DOMPointData
@@ -1971,12 +1974,17 @@ private:
             write(*downcast<CryptoKeyRSA>(*key).exportData());
             break;
         }
-        case CryptoKeyClass::OKP:
+        case CryptoKeyClass::OKP: {
+            auto& okpKey = downcast<CryptoKeyOKP>(*key);
             write(CryptoKeyClassSubtag::OKP);
             write(key->algorithmIdentifier());
-            write(downcast<CryptoKeyOKP>(*key).namedCurve());
-            write(downcast<CryptoKeyOKP>(*key).platformKey());
+            write(okpKey.namedCurve());
+            // X25519 public and private keys are both 32 bytes, so the record says which one it holds.
+            if (okpKey.namedCurve() == CryptoKeyOKP::NamedCurve::X25519)
+                write(key->type() == CryptoKey::Type::Public ? CryptoKeyAsymmetricTypeSubtag::Public : CryptoKeyAsymmetricTypeSubtag::Private);
+            write(okpKey.platformKey());
             break;
+        }
         }
     }
 #endif
@@ -3201,8 +3209,6 @@ private:
         CryptoAlgorithmIdentifier algorithm;
         if (!read(algorithm))
             return false;
-        if (!CryptoKeyOKP::isValidOKPAlgorithm(algorithm))
-            return false;
         CryptoKeyOKP::NamedCurve namedCurve;
         if (!read(namedCurve))
             return false;
@@ -3211,10 +3217,19 @@ private:
             if (algorithm != CryptoAlgorithmIdentifier::Ed25519)
                 return false;
             break;
-        case CryptoKeyOKP::NamedCurve::X25519:
+        case CryptoKeyOKP::NamedCurve::X25519: {
             if (algorithm != CryptoAlgorithmIdentifier::X25519)
                 return false;
-            break;
+            // Records from Bun <= 1.4.3 have no type subtag and fail its range check. No release could read them.
+            CryptoKeyAsymmetricTypeSubtag type;
+            if (!read(type))
+                return false;
+            Vector<uint8_t> keyData;
+            if (!read(keyData))
+                return false;
+            result = CryptoKeyOKP::create(algorithm, namedCurve, type == CryptoKeyAsymmetricTypeSubtag::Public ? CryptoKeyType::Public : CryptoKeyType::Private, WTF::move(keyData), extractable, usages);
+            return !!result;
+        }
         }
         Vector<uint8_t> keyData;
         if (!read(keyData))

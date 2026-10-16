@@ -4267,11 +4267,9 @@ where
                     let _ =
                         Body::Value::resolve(&mut old, body, &global_this.js_thread(context), None); // TODO: properly propagate exception upwards
                 }
-                // The slot is the JS `Request`'s alone now, as in the streaming
-                // arm: a context parked on a promise must not pin the bytes, and
-                // `end_request_streaming` must not reject a `Locked` value that
-                // `request.body` creates over them. This may free the slot, so
-                // `body` is dead past this point.
+                // The body is complete: only the JS `Request` owns the slot now, so
+                // `end_request_streaming` cannot error a `Locked` value that
+                // `request.body` makes over it. May free the slot: `body` is dead.
                 this.request_body_take_unref();
                 return;
             }

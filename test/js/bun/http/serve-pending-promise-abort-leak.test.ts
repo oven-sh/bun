@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN } from "harness";
 import { connect } from "node:net";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 
 // The teardown condition, with no timers and no GC: server.stop() resolves
 // only once pendingRequests reaches 0 and every connection is gone. On an
@@ -369,6 +370,166 @@ test.each(bodyConsumers)(
     expect((err as Error).name).toBe("AbortError");
     await stopAndAssertDrained(server);
     pumpHold = undefined;
+  },
+);
+
+// The counterpart of the cut-off upload above: an upload that arrived whole
+// stays readable after the request ended. Each entry takes the body while the
+// request is live and returns how to read it afterwards. The server used to
+// error the stream that req.body makes over the stored bytes when the request
+// ended: Readable.fromWeb() ended after 0 bytes, the reader and text() rejected.
+const completeBodyReaders: Array<[string, (req: Request) => () => Promise<number>]> = [
+  [
+    "Readable.fromWeb(req.body)",
+    req => {
+      const body = Readable.fromWeb(req.body as any);
+      return async () => {
+        let received = 0;
+        for await (const chunk of body) received += chunk.length;
+        return received;
+      };
+    },
+  ],
+  [
+    "req.body.getReader()",
+    req => {
+      const reader = req.body!.getReader();
+      return async () => {
+        let received = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) return received;
+          received += value.length;
+        }
+      };
+    },
+  ],
+  [
+    "req.text() after a look at req.body",
+    req => {
+      expect(req.body).not.toBeNull();
+      return async () => (await req.text()).length;
+    },
+  ],
+];
+
+test.concurrent.each(
+  (["the handler answered", "the client disconnected"] as const).flatMap(ending =>
+    completeBodyReaders.map(([name, take]) => [name, ending, take] as const),
+  ),
+)("%s reads the whole of a complete upload after %s", async (_name, ending, take) => {
+  const upload = Buffer.alloc(1000, "x");
+  const taken = Promise.withResolvers<void>();
+  const requestEnded = Promise.withResolvers<void>();
+  const received = Promise.withResolvers<number>();
+
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(req) {
+      try {
+        // The upload came in the same packet as the head, so the server has
+        // stored all of it by the next turn of the event loop.
+        await new Promise(resolve => setImmediate(resolve));
+        const read = take(req);
+        if (ending === "the handler answered") {
+          requestEnded.promise.then(read).then(received.resolve, received.reject);
+          return new Response("accepted", { status: 202 });
+        }
+        req.signal.addEventListener("abort", () => requestEnded.resolve());
+        taken.resolve();
+        await requestEnded.promise;
+        received.resolve(await read());
+        return new Response("too late for the client");
+      } catch (e) {
+        received.reject(e);
+        throw e;
+      }
+    },
+  });
+
+  const socket = connect(Number(server.port), "127.0.0.1");
+  socket.on("error", received.reject);
+  // The client has the response, so the server has ended the request.
+  socket.on("data", data => data.includes("accepted") && requestEnded.resolve());
+  socket.write(
+    Buffer.concat([Buffer.from(`POST / HTTP/1.1\r\nHost: x\r\nContent-Length: ${upload.length}\r\n\r\n`), upload]),
+  );
+  try {
+    if (ending === "the client disconnected") {
+      await Promise.race([taken.promise, received.promise]);
+      socket.destroy();
+    }
+    expect(await received.promise).toBe(upload.length);
+  } finally {
+    socket.destroy();
+  }
+});
+
+// The server lets go of the stored upload when its last chunk arrives. If the
+// Request was collected by then, that frees the storage, so the pending read
+// has to be resolved from it first. This pins that order: ASAN reports a read
+// of the freed storage.
+test.skipIf(!isASAN)(
+  "a pending req.text() is resolved before the last chunk frees a collected Request's upload",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const handlerRan = Promise.withResolvers();
+        let collected = false;
+        const registry = new FinalizationRegistry(() => (collected = true));
+        let text;
+        // Stays reachable, so the collections below take the Request and leave the request parked.
+        let parked;
+        const server = Bun.serve({
+          hostname: "127.0.0.1",
+          port: 0,
+          fetch(req) {
+            registry.register(req, "request");
+            text = req.text();
+            handlerRan.resolve();
+            return (parked = new Promise(() => {}));
+          },
+        });
+        const socket = await Bun.connect({
+          hostname: server.hostname,
+          port: server.port,
+          socket: {
+            data() {},
+            error(_socket, error) {
+              console.error(error);
+              process.exit(1);
+            },
+          },
+        });
+        const write = bytes => {
+          const written = socket.write(bytes);
+          if (written !== bytes.length) throw new Error("wrote " + written + " of " + bytes.length + " bytes");
+          socket.flush();
+        };
+        const upload = Buffer.alloc(4096, "x");
+        write(Buffer.from("POST / HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: " + upload.length + "\\r\\n\\r\\n"));
+        write(upload.subarray(0, 16));
+        await handlerRan.promise;
+        for (let i = 0; i < 200 && !collected; i++) {
+          Bun.gc(true);
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        if (!collected) throw new Error("the Request was not collected");
+        write(upload.subarray(16));
+        console.log((await text).length);
+        server.stop(true);
+      `,
+      ],
+      env: { ...bunEnv, ASAN_OPTIONS: asanOptionsWithoutSymbolizer },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "4096\n", stderr: "", exitCode: 0 });
   },
 );
 

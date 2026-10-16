@@ -1752,6 +1752,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.is_control_flow_dead = old_is_control_flow_dead;
         }
 
+        // Before the statements below move or merge: an alias is then still a statement of its own.
+        if TYPESCRIPT && kind == StmtsKind::WholeModule && p.has_ts_import_equals {
+            let mut live = js_ast::StoreSlice::new_mut(stmts.as_mut_slice());
+            p.remove_unused_ts_import_equals(core::slice::from_mut(&mut live), |live| live);
+            // The statements that stay are now the tail of the list.
+            let removed = stmts.len() - live.len();
+            stmts.copy_within(removed.., 0);
+            stmts.truncate(live.len());
+            p.has_ts_import_equals = false;
+        }
+
         // Lower using declarations
         if kind != StmtsKind::SwitchStmt && p.should_lower_using_declarations(stmts.as_slice()) {
             let mut ctx = LowerUsingDeclarationsContext::init(p)?;

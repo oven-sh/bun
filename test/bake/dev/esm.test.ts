@@ -233,6 +233,35 @@ devTest("export * as namespace", {
     await c.expectMessage("PASS");
   },
 });
+devTest("TypeScript import-equals aliases that no value reads are removed", {
+  framework: minimalFramework,
+  files: {
+    "types.ts": `
+      export namespace NS { export namespace Inner { export type Baz = string } }
+      export const real = 1;
+    `,
+    "lib.ts": `
+      import { NS, real } from './types';
+      import Inner = NS.Inner;
+      import Baz = Inner.Baz;
+      namespace Local { export const kept = 2; export type T = string }
+      export import kept = Local.kept;
+      import T = Local.T;
+      export const text: Baz = 'ok';
+      export const t: T = 'y';
+      export { real };
+    `,
+    "routes/index.ts": `
+      import { text, t, real, kept } from '../lib';
+      export default function (req, meta) {
+        return new Response(text + t + real + kept);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("oky12");
+  },
+});
 devTest("ESM <-> CJS sync", {
   files: {
     "index.html": emptyHtmlFile({

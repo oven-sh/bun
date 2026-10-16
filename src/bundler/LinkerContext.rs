@@ -4096,8 +4096,11 @@ impl<'a> LinkerContext<'a> {
                         symbol.import_item_status = ImportItemStatus::Missing;
 
                         // A name read off `import()` / `require()` is `undefined`
-                        // at run time too, so there is nothing to say.
-                        if self.is_call_record(prev_source_index, named_import.import_record_index)
+                        // at run time too, so there is nothing to say. Nor for a name that
+                        // nothing reads, like the root of a removed `import x = ns.name`.
+                        if symbol.use_count_estimate == 0
+                            || self
+                                .is_call_record(prev_source_index, named_import.import_record_index)
                         {
                         } else if self.resolver().opts.target == Target::Browser
                             && bun_resolve_builtins::Alias::has(

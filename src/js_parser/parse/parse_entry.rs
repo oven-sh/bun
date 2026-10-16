@@ -16,7 +16,7 @@ use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
     Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
-    WrapMode,
+    StmtsKind, WrapMode,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -1062,7 +1062,7 @@ impl<'a> Parser<'a> {
         // nested scope.
         if !p.options.tree_shaking || p.will_wrap_module_in_try_catch_for_using {
             // When tree shaking is disabled, everything comes in a single part
-            p.append_part(&mut parts, stmts)?;
+            p.append_part(&mut parts, stmts, StmtsKind::WholeModule)?;
         } else {
             // Preprocess TypeScript enums to improve code generation. Otherwise
             // uses of an enum before that enum has been declared won't be inlined:
@@ -1098,7 +1098,7 @@ impl<'a> Parser<'a> {
 
                         let mut enum_parts = BumpVec::<js_ast::Part>::new_in(arena);
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut enum_parts, sliced)?;
+                        p.append_part(&mut enum_parts, sliced, StmtsKind::None)?;
                         preprocessed_enums.push(enum_parts);
 
                         p.scope_order_to_visit = old_scopes_in_order;
@@ -1125,11 +1125,11 @@ impl<'a> Parser<'a> {
                                 };
                                 let new_stmt = p.s(_local, stmt.loc);
                                 let sliced = arena.alloc_slice_copy(&[new_stmt]);
-                                p.append_part(&mut parts, sliced)?;
+                                p.append_part(&mut parts, sliced, StmtsKind::None)?;
                             }
                         } else {
                             let sliced = arena.alloc_slice_copy(&[*stmt]);
-                            p.append_part(&mut parts, sliced)?;
+                            p.append_part(&mut parts, sliced, StmtsKind::None)?;
                         }
                     }
                     js_ast::StmtData::SImport(_)
@@ -1153,7 +1153,7 @@ impl<'a> Parser<'a> {
                         };
 
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(parts_list, sliced)?;
+                        p.append_part(parts_list, sliced, StmtsKind::None)?;
                     }
 
                     js_ast::StmtData::SClass(class) => {
@@ -1163,7 +1163,7 @@ impl<'a> Parser<'a> {
                         let should_move = !p.options.bundle && class.class.can_be_moved();
 
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut parts, sliced)?;
+                        p.append_part(&mut parts, sliced, StmtsKind::None)?;
 
                         if should_move {
                             // `Part` isn't `Copy`; pop+push instead of last+truncate.
@@ -1176,7 +1176,7 @@ impl<'a> Parser<'a> {
                         // https://github.com/oven-sh/bun/issues/1961
                         let should_move = !p.options.bundle && value.can_be_moved();
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut parts, sliced)?;
+                        p.append_part(&mut parts, sliced, StmtsKind::None)?;
 
                         if should_move {
                             before.push(parts.pop().expect("unreachable"));
@@ -1206,7 +1206,7 @@ impl<'a> Parser<'a> {
                     }
                     _ => {
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut parts, sliced)?;
+                        p.append_part(&mut parts, sliced, StmtsKind::None)?;
                     }
                 }
             }

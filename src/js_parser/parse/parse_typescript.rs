@@ -562,6 +562,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             binding,
             value: Some(value),
         });
+        // `export import a = b.c` and `import a = require("b")` always stay.
+        if !opts.is_export && !matches!(value.data, js_ast::ExprData::ECall(_)) {
+            p.has_ts_import_equals = true;
+        }
         Ok(p.s(
             S::Local {
                 kind,

@@ -13,8 +13,6 @@ use bun_crash_handler::handle_oom::handle_oom;
 #[derive(Default)]
 pub(crate) struct ImportScanner<'a> {
     pub stmts: &'a mut [Stmt],
-    pub kept_import_equals: bool,
-    pub removed_import_equals: bool,
 }
 
 // `StoreStr` literal helper — keeps `Some(raw_str(b"…"))` ergonomic at the
@@ -641,42 +639,6 @@ impl<'a> ImportScanner<'a> {
                             p.record_exported_binding(decl.binding);
                         }
                     }
-
-                    // Remove unused import-equals statements, since those likely
-                    // correspond to types instead of values
-                    if st.origin.is_ts_import_equals() && !st.is_export && st.decls.len_u32() > 0 {
-                        let decl = &st.decls.slice()[0];
-
-                        // Skip to the underlying reference
-                        let mut value: Option<Expr> = decl.value;
-                        if decl.value.is_some() {
-                            while let js_ast::ExprData::EDot(dot) = value.unwrap().data {
-                                value = Some(dot.target);
-                            }
-                        }
-
-                        // Is this an identifier reference and not a require() call?
-                        if let Some(val) = value {
-                            if let js_ast::ExprData::EIdentifier(id) = val.data {
-                                // Is this import statement unused?
-                                if let js_ast::b::B::BIdentifier(b_id) = decl.binding.data {
-                                    let b_id_ref = b_id.r#ref;
-                                    if p.symbols[b_id_ref.inner_index() as usize].use_count_estimate
-                                        == 0
-                                    {
-                                        p.ignore_usage(id.ref_);
-
-                                        scanner.removed_import_equals = true;
-                                        continue;
-                                    } else {
-                                        scanner.kept_import_equals = true;
-                                    }
-                                } else {
-                                    scanner.kept_import_equals = true;
-                                }
-                            }
-                        }
-                    }
                 }
                 js_ast::StmtData::SExportDefault(mut st) => {
                     // Capture default_name now and record the export after the body below.
@@ -831,5 +793,78 @@ impl<'a> ImportScanner<'a> {
         }
 
         Ok(scanner)
+    }
+}
+
+/// For `import a = b.c` that is not exported: the symbols of `a` and of `b`.
+fn ts_import_equals_alias_and_root(local: &S::Local) -> Option<(Ref, Ref)> {
+    if !local.origin.is_ts_import_equals() || local.is_export {
+        return None;
+    }
+    // Adjacent declarations merge after the aliases are removed, so an alias is alone in its statement.
+    let [decl] = local.decls.slice() else {
+        debug_assert!(false, "import-equals statement merged before its removal");
+        return None;
+    };
+    let js_ast::b::B::BIdentifier(alias) = decl.binding.data else {
+        return None;
+    };
+
+    // Skip to the underlying reference
+    let mut value = decl.value?;
+    while let js_ast::ExprData::EDot(dot) = value.data {
+        value = dot.target;
+    }
+
+    // Is this an identifier reference and not a require() call?
+    match value.data {
+        js_ast::ExprData::EIdentifier(root) => Some((alias.r#ref, root.ref_)),
+        // An import binding, or a property of `import * as ns` that the bundler made an import item.
+        js_ast::ExprData::EImportIdentifier(root) => Some((alias.r#ref, root.ref_)),
+        _ => None,
+    }
+}
+
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+    /// Removes each unused `import a = b.c`, to a fixed point, because that can leave `b` unused too.
+    /// This runs before the import scan reads use counts. esbuild runs it during the scan, where
+    /// `import { NS }` above `import T = NS.T` is already kept and then fails to bind. tsc drops both.
+    pub(crate) fn remove_unused_ts_import_equals<T>(
+        &mut self,
+        lists: &mut [T],
+        stmts_of: impl Fn(&mut T) -> &mut js_ast::StoreSlice<Stmt>,
+    ) {
+        loop {
+            let mut kept = false;
+            let mut removed = false;
+            // Last to first, so a chain that is declared root first is gone after one walk.
+            for list in lists.iter_mut().rev() {
+                let list = stmts_of(list);
+                let stmts = list.slice_mut();
+                let mut start = stmts.len();
+                for i in (0..stmts.len()).rev() {
+                    let stmt = stmts[i];
+                    if let js_ast::StmtData::SLocal(local) = stmt.data {
+                        if let Some((alias, root)) = ts_import_equals_alias_and_root(&local) {
+                            if self.symbols[alias.inner_index() as usize].use_count_estimate == 0 {
+                                self.ignore_usage(root);
+                                // tsc does not count a removed alias as a use of `b`. `ignore_usage` keeps this count.
+                                let ts_uses = &mut self.ts_use_counts[root.inner_index() as usize];
+                                *ts_uses = ts_uses.saturating_sub(1);
+                                removed = true;
+                                continue;
+                            }
+                            kept = true;
+                        }
+                    }
+                    start -= 1;
+                    stmts[start] = stmt;
+                }
+                *list = js_ast::StoreSlice::new_mut(&mut stmts[start..]);
+            }
+            if !kept || !removed {
+                break;
+            }
+        }
     }
 }

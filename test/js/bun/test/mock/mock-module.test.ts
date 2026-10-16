@@ -794,6 +794,158 @@ describe.concurrent("the original of a mocked module", () => {
       3,
     );
   });
+
+  const report = {
+    "report.ts": `export const title = "real report";`,
+    "report.cjs": `exports.title = "real report";`,
+    "opens-report.ts": `export const open = () => import("./report");`,
+  };
+  // Long enough for an import() that waits for nothing to settle.
+  const turns = `for (let i = 0; i < 3; i++) await new Promise(done => setImmediate(done));`;
+
+  test.each([[[]], [["--isolate"]]])("vi.importActual() neither calls the factory nor waits for it %j", async args => {
+    await expectFixturesToPass(
+      {
+        ...report,
+        "while-loading.test.ts": `
+          import { expect, test, vi } from "bun:test";
+
+          const { order, gate } = vi.hoisted(() => ({ order: [], gate: Promise.withResolvers() }));
+          vi.mock("./report", async importOriginal => {
+            order.push("factory called");
+            const original = await importOriginal();
+            await gate.promise;
+            return original;
+          });
+          const actual = await vi.importActual("./report");
+          order.push("vi.importActual() gave " + actual.title);
+
+          test("only an import of the mocked module does", async () => {
+            const imported = import("./report").then(report => void order.push("import() gave " + report.title));
+            ${turns}
+            order.push("gate opened");
+            gate.resolve();
+            await imported;
+            expect(order).toEqual(["vi.importActual() gave real report", "factory called", "gate opened", "import() gave real report"]);
+          });
+        `,
+        "in-a-test.test.ts": `
+          import { expect, test, vi } from "bun:test";
+
+          test("before and after the factory is called", async () => {
+            let calls = 0;
+            vi.doMock("./report", async importOriginal => (calls++, { ...(await importOriginal()), title: "mock" }));
+            const actual = await vi.importActual("./report");
+            expect([actual.title, calls]).toEqual(["real report", 0]);
+            expect(await vi.importActual("./report")).toBe(actual);
+            expect([(await import("./report")).title, calls]).toEqual(["mock", 1]);
+            expect(await vi.importActual("./report")).toBe(actual);
+          });
+        `,
+      },
+      2,
+      args,
+    );
+  });
+
+  test.each([[[]], [["--isolate"]]])("what vi.importActual() loaded before the module was mocked %j", async args => {
+    await expectFixturesToPass(
+      {
+        ...report,
+        "stays.test.ts": `
+          import { expect, mock, test, vi } from "bun:test";
+
+          test.each([
+            ["an ES module", "./report"],
+            ["a CommonJS module", "./report.cjs"],
+            ["a module that was mocked before", "./report"],
+          ])("stays the original, and the next import calls the factory: %s", async (_, path) => {
+            const actual = await vi.importActual(path);
+            const factory = vi.fn(() => ({ title: "mock" }));
+            vi.doMock(path, factory);
+            expect(factory).not.toHaveBeenCalled();
+            expect([(await import(path)).title, actual.title, factory.mock.calls.length]).toEqual(["mock", "real report", 1]);
+            expect(await vi.importActual(path)).toBe(actual);
+            vi.doUnmock(path);
+          });
+
+          test("is patched by mock.module()", async () => {
+            vi.resetModules();
+            const actual = await vi.importActual("./report");
+            mock.module("./report", () => ({ title: "mock" }));
+            expect(actual.title).toBe("mock");
+            vi.doUnmock("./report");
+          });
+
+          test("is forgotten by vi.resetModules()", async () => {
+            vi.resetModules();
+            await vi.importActual("./report");
+            vi.resetModules();
+            const imported = await import("./report");
+            vi.doMock("./report", () => ({ title: "mock" }));
+            expect(imported.title).toBe("mock");
+          });
+        `,
+        "shared.ts": `export const title = "real";`,
+        "shared-1.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("a file loads it", async () => expect((await vi.importActual("./shared")).title).toBe("real"));
+        `,
+        "shared-2.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import * as shared from "./shared";
+          test("and the next file, which imports it, patches it", () => {
+            vi.doMock("./shared", () => ({ title: "mock" }));
+            expect(shared.title).toBe("mock");
+          });
+        `,
+        "preloaded.ts": `export const title = "real";`,
+        "preload.ts": `
+          import { vi } from "bun:test";
+          globalThis.preloaded = await vi.importActual("./preloaded");
+        `,
+        "preloaded-1.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("a file mocks what a preload loaded", async () => {
+            vi.doMock("./preloaded", () => ({ title: "mock" }));
+            expect([(await import("./preloaded")).title, preloaded.title]).toEqual(["mock", "real"]);
+          });
+        `,
+        "preloaded-2.test.ts": `
+          import { expect, test } from "bun:test";
+          test("and the next file gets it back", async () => expect(await import("./preloaded")).toBe(preloaded));
+        `,
+        "held.test.ts": `
+          import { expect, test, vi } from "bun:test";
+
+          async function mockReport() {
+            vi.resetModules();
+            const actual = await vi.importActual("./report");
+            const gate = Promise.withResolvers();
+            const factory = vi.fn(async () => (await gate.promise, actual));
+            vi.doMock("./report", factory);
+            return { factory, gate, ...(await import("./opens-report")) };
+          }
+          await mockReport();
+
+          test("a factory that nothing lets go doesn't keep the file from loading", async () => {
+            const { factory, gate, open } = await mockReport();
+            expect(factory).not.toHaveBeenCalled();
+            const order = [];
+            const opened = open().then(report => void order.push("import() gave " + report.title));
+            ${turns}
+            expect(factory).toHaveBeenCalledTimes(1);
+            order.push("gate opened");
+            gate.resolve();
+            await opened;
+            expect(order).toEqual(["gate opened", "import() gave real report"]);
+          });
+        `,
+      },
+      10,
+      ["--preload", "./preload.ts", ...args],
+    );
+  });
 });
 
 describe.concurrent("a module mocked without a factory", () => {
@@ -1251,6 +1403,35 @@ describe.concurrent("a module mocked without a factory", () => {
         `,
       },
       2,
+    );
+  });
+
+  test("what vi.importMock() gives inherits from Object.prototype, the exports of a mocked module from nothing", async () => {
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "prototype.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import * as dep from "./dep";
+
+          vi.mock("./dep");
+
+          test.each(["./sub/thing", "cjs-pkg"])("vi.importMock(%j)", async path => {
+            const mocked = await vi.importMock(path);
+            expect(Object.getPrototypeOf(mocked)).toBe(Object.prototype);
+            expect(mocked.hasOwnProperty("toString")).toBe(false);
+          });
+
+          test("an ES module is still tagged as one", async () => {
+            expect(Object.prototype.toString.call(await vi.importMock("./sub/thing"))).toBe("[object Module]");
+          });
+
+          test("import * as", () => {
+            expect([vi.isMockFunction(dep.dep), dep.toString, "toString" in dep]).toEqual([true, undefined, false]);
+          });
+        `,
+      },
+      4,
     );
   });
 });
@@ -5656,6 +5837,131 @@ describe.concurrent("vi.doMock() of a module that a preload has loaded and the f
       },
       2,
       ["--preload", "./preload.js"],
+    );
+  });
+});
+
+describe.concurrent("a module that is linked, but not evaluated yet, when it is mocked", () => {
+  // linked.test.ts hoists nothing, so all its imports are linked before the first of them is evaluated, which mocks the last.
+  function linked(name: string, mocksTax: string, expected: string, startOfTax = "") {
+    return {
+      [`${name}/tax.ts`]: `
+        const evaluations = (globalThis.evaluations ??= {});
+        evaluations[import.meta.dir] = (evaluations[import.meta.dir] ?? 0) + 1;
+        ${startOfTax}
+        export const rate = 0.2;
+        export let currency = "EUR";
+        export function withTax(net) { return net * (1 + rate); }
+      `,
+      [`${name}/cart.ts`]: `import { currency, withTax } from "./tax"; export const price = net => withTax(net) + " " + currency;`,
+      [`${name}/mocks-tax.ts`]: `
+        import { jest, mock, vi } from "bun:test";
+        ${mocksTax}
+        export const price = net => priceOfCart(net);
+      `,
+      [`${name}/linked.test.ts`]: `
+        import { price } from "./mocks-tax";
+        import { expect, test } from "bun:test";
+        import * as tax from "./tax";
+        test(${JSON.stringify(name)}, () => {
+          expect([tax.rate, tax.currency, tax.withTax(10), price(10), globalThis.evaluations[import.meta.dir]]).toEqual(${expected});
+        });
+      `,
+    };
+  }
+  const statement = `import { price as priceOfCart } from "./cart";`;
+  const expression = `const { price: priceOfCart } = await import("./cart");`;
+  const spreadsOriginal = `vi.mock("./tax", async importOriginal => ({ ...(await importOriginal()), currency: "USD" }));`;
+  const whole = `({ rate: 0.5, currency: "USD", withTax: net => net * 2 })`;
+  const partlyMocked = `[0.2, "USD", 12, "12 USD", 1]`;
+  const whollyMocked = `[0.5, "USD", 20, "20 USD", 1]`;
+
+  test.each([[[]], [["--isolate"]]])("is evaluated first, so the mock isn't assigned over %j", async args => {
+    await expectFixturesToPass(
+      {
+        ...linked("importOriginal, import statement", spreadsOriginal + statement, partlyMocked),
+        ...linked("importOriginal, import expression", spreadsOriginal + expression, partlyMocked),
+        ...linked(
+          "importOriginal, top-level await in the module",
+          spreadsOriginal + statement,
+          partlyMocked,
+          "await 0;",
+        ),
+        ...linked(
+          "importActual",
+          `vi.mock("./tax", async () => ({ ...(await vi.importActual("./tax")), currency: "USD" }));` + statement,
+          partlyMocked,
+        ),
+        ...linked(
+          "requireActual",
+          `jest.mock("./tax", () => ({ ...jest.requireActual("./tax"), currency: "USD" }));` + statement,
+          `[0.2, "USD", 12, "12 USD", expect.any(Number)]`,
+        ),
+        ...linked("nothing of the original", `vi.mock("./tax", () => ${whole});` + statement, whollyMocked),
+        ...linked("mock.module", `mock.module("./tax", () => ${whole});` + expression, whollyMocked),
+      },
+      7,
+      args,
+    );
+  });
+
+  test("isn't evaluated ahead of an import that is being evaluated, or if it is the module of an earlier mock", async () => {
+    await expectFixturesToPass(
+      {
+        "imports-back/tax.ts": `import { defaultRate } from "./mocks-tax"; export const rate = defaultRate; export let currency = "EUR";`,
+        "imports-back/mocks-tax.ts": `
+          import { vi } from "bun:test";
+          vi.mock("./tax", async importOriginal => ({ ...(await importOriginal()), currency: "USD" }));
+          export const defaultRate = 0.2;
+        `,
+        "imports-back/linked.test.ts": `
+          import "./mocks-tax";
+          import { expect, test } from "bun:test";
+          import * as tax from "./tax";
+          test("it imports the module that mocks it", () => expect([tax.rate, tax.currency]).toEqual([0.2, "USD"]));
+        `,
+        "preload.ts": `
+          import { vi } from "bun:test";
+          globalThis.callsOfReplacedFactory = 0;
+          vi.mock("./mocked-twice/tax", async importOriginal => (globalThis.callsOfReplacedFactory++, { ...(await importOriginal()), currency: "GBP" }));
+        `,
+        "mocked-twice/tax.ts": `export const rate = 0.2; export let currency = "EUR";`,
+        "mocked-twice/mocks-tax.ts": `
+          import { vi } from "bun:test";
+          vi.mock("./tax", () => ({ rate: 0.5, currency: "USD" }));
+        `,
+        "mocked-twice/linked.test.ts": `
+          import "./mocks-tax";
+          import { expect, test } from "bun:test";
+          import * as tax from "./tax";
+          test("the factory that was replaced isn't called", () => {
+            expect([tax.rate, tax.currency, globalThis.callsOfReplacedFactory]).toEqual([0.5, "USD", 0]);
+          });
+        `,
+      },
+      2,
+      ["--preload", "./preload.ts"],
+    );
+  });
+
+  test("because the module imported before it threw", async () => {
+    await expectFixturesToPass(
+      {
+        "throws.ts": `throw new Error("throws.ts threw");`,
+        "tax.ts": `export const rate = 0.2;`,
+        "throws-too.ts": `export const rate = 0.2; throw new Error("throws-too.ts threw");`,
+        "all.ts": `import "./throws"; import "./tax"; import "./throws-too";`,
+        "left.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("the mock is what the next import gets, and an error of the module is thrown", async () => {
+            await expect(import("./all")).rejects.toThrow("throws.ts threw");
+            vi.doMock("./tax", () => ({ rate: 0.5 }));
+            expect((await import("./tax")).rate).toBe(0.5);
+            expect(() => vi.doMock("./throws-too", async importOriginal => ({ ...(await importOriginal()) }))).toThrow("throws-too.ts threw");
+          });
+        `,
+      },
+      1,
     );
   });
 });

@@ -111,6 +111,8 @@ public:
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};
         // The mock a fetch in flight keeps resolving to, even if the mock is replaced or removed meanwhile (keepModuleMockOfLoadInFlight).
         VirtualModuleMap moduleMocksBeingLoaded = {};
+        // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
+        WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
 
         struct Matches {
             JSC::JSString* path { nullptr };
@@ -137,6 +139,7 @@ public:
             displacedPreloadModuleMocks.clear();
             runningModuleMocks.clear();
             moduleMocksBeingLoaded.clear();
+            loadedByImportActual.clear();
         }
 
         ~OnLoad()

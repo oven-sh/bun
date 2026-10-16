@@ -920,8 +920,47 @@ static String dependencyKeyOfModuleMock(JSC::JSGlobalObject* globalObject, JSMod
 }
 
 static JSC::JSPromise* thenWithContext(Zig::GlobalObject*, JSC::JSPromise*, JSC::NativeFunction onFulfilled, JSC::NativeFunction onRejected, JSValue context);
-static JSC::JSPromise* importOriginalModule(Zig::GlobalObject*, JSModuleMock*, bool mayLoadMock, const String& from);
+static JSC::JSPromise* importOriginalModule(Zig::GlobalObject*, JSModuleMock*, bool mayLoadOthersFirst, const String& from);
 static String keyOfModuleThatDoesNotWait(Zig::GlobalObject*, BunPlugin::OnLoad::RunningModuleMock&, const String& key, const String& mocked);
+
+// Asks `functor` about the modules that evaluating `start` would evaluate too, or find in the middle of it, until it returns true.
+template<typename Functor>
+static bool anyUnevaluatedImport(JSC::AbstractModuleRecord* start, const Functor& functor)
+{
+    UncheckedKeyHashSet<JSC::AbstractModuleRecord*> seen;
+    Vector<JSC::AbstractModuleRecord*> work { start };
+    while (!work.isEmpty()) {
+        for (auto& loaded : work.takeLast()->loadedModules().values()) {
+            auto* imported = dynamicDowncast<JSC::CyclicModuleRecord>(loaded.m_module.get());
+            if (!imported || imported->isSCCEvaluated() || !seen.add(imported).isNewEntry)
+                continue;
+            if (functor(imported))
+                return true;
+            work.append(imported);
+        }
+    }
+    return false;
+}
+
+// Whether the module that `mock` patches in place hasn't run its body to the end, so some of its exports have no value yet.
+static bool patchesModuleBeingEvaluated(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& specifier)
+{
+    if (!mock->originalExports)
+        return false;
+    auto* entry = Bun::testFileModuleLoader(globalObject)->getRegisteredMayBeNull(JSC::Identifier::fromString(globalObject->vm(), specifier), JSC::ScriptFetchParameters::Type::JavaScript);
+    auto* record = entry ? dynamicDowncast<JSC::CyclicModuleRecord>(entry->record()) : nullptr;
+    return record && !record->hasLiveExports() && record->status() >= JSC::CyclicModuleRecord::Status::Linked && !record->isSCCEvaluated();
+}
+
+// Returns a promise for `next` to settle. `next` is called once `loading` has settled, either way, with (mock, that promise) as its context.
+static JSC::JSPromise* originalModuleAfter(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::JSPromise* loading, JSC::NativeFunction next)
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSC::JSPromise* original = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    JSC::JSFunction* didLoad = JSC::JSFunction::create(vm, globalObject, 2, String(), next, ImplementationVisibility::Private);
+    loading->performPromiseThenWithContext(vm, globalObject, didLoad, didLoad, jsUndefined(), moduleMockWith(globalObject, mock, original));
+    return original;
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockDidLoadBeforeOriginal, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
@@ -937,12 +976,42 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockDidLoadBeforeOriginal, (JSC::JSGlob
     return JSValue::encode(jsUndefined());
 }
 
-static JSC::JSPromise* importOriginalModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, bool mayLoadMock = true, const String& from = String())
+JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockDidLoadImportsOfOriginal, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto [mock, original] = toModuleMockWith<JSC::JSPromise>(globalObject, scope, callframe->argument(1));
+    RETURN_IF_EXCEPTION(scope, {});
+    String specifier = mock->specifier->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Enter an import cycle through the mock module: entering it through the original would evaluate the mock module before the original.
+    auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, originalModuleKey(specifier)));
+    bool importsMock = mock->state == JSModuleMock::State::NotCalled && entry && entry->record()
+        && anyUnevaluatedImport(entry->record(), [&](JSC::CyclicModuleRecord* imported) { return imported->moduleKey().string() == specifier; });
+    JSC::JSPromise* loading = importsMock ? importModuleKey(globalObject, specifier) : importOriginalModule(globalObject, mock, false, String());
+    if (scope.exception()) [[unlikely]]
+        original->rejectWithCaughtException(vm, scope);
+    else
+        original->pipeFrom(vm, importsMock ? originalModuleAfter(globalObject, mock, loading, jsFunctionModuleMockDidLoadBeforeOriginal) : loading);
+    return JSValue::encode(jsUndefined());
+}
+
+static JSC::JSPromise* importOriginalModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, bool mayLoadOthersFirst = true, const String& from = String())
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    String specifier = mock->specifier->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
     JSObject* exports = mock->originalNamespace.get();
+    if (!exports && mayLoadOthersFirst && patchesModuleBeingEvaluated(globalObject, mock, specifier)) {
+        JSC::JSPromise* evaluating = importModuleKey(globalObject, specifier);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return originalModuleAfter(globalObject, mock, evaluating, jsFunctionModuleMockDidLoadBeforeOriginal);
+    }
     if (exports)
         exports = withoutUninitializedExports(globalObject, exports);
     else
@@ -955,24 +1024,19 @@ static JSC::JSPromise* importOriginalModule(Zig::GlobalObject* globalObject, JSM
     if (exports)
         RELEASE_AND_RETURN(scope, JSC::JSPromise::resolvedPromise(globalObject, exports));
 
-    String specifier = mock->specifier->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, nullptr);
     String key = originalModuleKey(specifier);
 
     auto* running = findRunningModuleMock(globalObject, mock);
     bool mayBeAnotherFactory = !running && !from.isNull() && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty();
 
-    // Enter through the mock module: entering an import cycle through the original would evaluate the mock module before the original.
-    if (mayLoadMock && !mayBeAnotherFactory && mock->importsOriginal && mock->state == JSModuleMock::State::NotCalled) {
+    // Only an import of the mocked module calls the factory, so find out whether the original has one before evaluating anything.
+    if (mayLoadOthersFirst && !mayBeAnotherFactory && mock->importsOriginal && mock->state == JSModuleMock::State::NotCalled) {
         String dependency = dependencyKeyOfModuleMock(globalObject, mock);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (dependency == key) {
-            JSC::JSPromise* loading = importModuleKey(globalObject, specifier);
+            JSC::JSPromise* loading = Bun::testFileModuleLoader(globalObject)->loadModule(globalObject, JSC::Identifier::fromString(vm, key), nullptr, nullptr, {});
             RETURN_IF_EXCEPTION(scope, nullptr);
-            JSC::JSPromise* original = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-            JSC::JSFunction* didLoad = JSC::JSFunction::create(vm, globalObject, 2, String(), jsFunctionModuleMockDidLoadBeforeOriginal, ImplementationVisibility::Private);
-            loading->performPromiseThenWithContext(vm, globalObject, didLoad, didLoad, jsUndefined(), moduleMockWith(globalObject, mock, original));
-            return original;
+            return originalModuleAfter(globalObject, mock, loading, jsFunctionModuleMockDidLoadImportsOfOriginal);
         }
     }
 
@@ -1787,7 +1851,7 @@ struct ModulesToEvict {
     bool all { false };
     // With `all`: modules in node_modules stay, as in Vitest, which doesn't load packages through the registry it resets.
     bool exceptPackages { false };
-    // Packages that vi.mock() no longer mocks. See setLoadedPackageAside().
+    // Packages that vi.mock() no longer mocks. See setLoadedModuleAside().
     Vector<String> packagesToBringBack;
     bool onlyImportersFromEarlierTestFiles { false };
     // Forces a pass even with nothing listed, to sweep the modules that failed to load or threw.
@@ -1861,11 +1925,19 @@ __attribute__((minsize)) static void moveLoadedModule(Zig::GlobalObject* globalO
     }
 }
 
-// As in Vitest, a real package is one instance however often it's mocked and unmocked. While vi.mock() mocks it, the loaded
-// instance is registered under the key that vi.importActual() and the modules in node_modules import.
-static void setLoadedPackageAside(Zig::GlobalObject* globalObject, const String& specifier)
+// As in Vitest, a real package is one instance however often it's mocked and unmocked, and so is what vi.importActual() returned.
+// While vi.mock() mocks it, the loaded instance is registered under the key that vi.importActual() and the modules in node_modules import.
+static void setLoadedModuleAside(Zig::GlobalObject* globalObject, const String& specifier)
 {
-    moveLoadedModule(globalObject, specifier, originalModuleKey(specifier));
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String original = originalModuleKey(specifier);
+    // An earlier mock of the module may have left the instance it loaded there.
+    if (Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, original))) {
+        evictModulesAndTheirImporters(globalObject, Vector<String> { original });
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    RELEASE_AND_RETURN(scope, moveLoadedModule(globalObject, specifier, original));
 }
 
 // Importers stay linked to the record they imported, so they're evicted too, except preload modules, which nothing would load again.
@@ -2057,8 +2129,10 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             keepPreloadModule(key, loader->getRegisteredMayBeNull(identifier, JSC::ScriptFetchParameters::Type::JavaScript));
             loader->removeEntry(identifier);
         }
-        if (leavesRegistry)
+        if (leavesRegistry) {
             plugins.moduleMocksBeingLoaded.remove(key);
+            plugins.loadedByImportActual.remove(key);
+        }
         if (leavesRequireCache) {
             JSString* keyString = jsString(vm, key);
             // Only keep real CommonJS modules. require()'s wrapper for an ES module or a mock gets rebuilt, and may wrap the test file's own mock.
@@ -2459,8 +2533,9 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
 
     // Like Vitest, vi.mock() in a test file doesn't patch a module that a preload loaded. The file loads its own mocked copy,
     // and the preload's module is restored when the file ends. mock.module() and jest.mock() patch it in place.
-    // Nor does it patch a package, which vi.resetModules() leaves loaded: the factory has to stay lazy.
-    bool leavesLoadedModuleAlone = (function == ModuleMockFunction::ViMock || function == ModuleMockFunction::ViDoMock) && Bun::isBunTest && !mock->isFromPreload && !isBuiltinModuleKey(specifier) && (!globalObject->onLoadPlugins.testFileOfModule.get(specifier) || isInNodeModules(specifier));
+    // Nor does it patch a package, which vi.resetModules() leaves loaded, or what vi.importActual() returned: the factory has to stay lazy.
+    bool staysTheOriginal = globalObject->onLoadPlugins.loadedByImportActual.remove(specifier) || isInNodeModules(specifier);
+    bool leavesLoadedModuleAlone = (function == ModuleMockFunction::ViMock || function == ModuleMockFunction::ViDoMock) && Bun::isBunTest && !mock->isFromPreload && !isBuiltinModuleKey(specifier) && (!globalObject->onLoadPlugins.testFileOfModule.get(specifier) || staysTheOriginal);
     if (leavesLoadedModuleAlone && previous && !previous->isFromPreload) {
         unmockModule(globalObject, previous, specifier);
         RETURN_IF_EXCEPTION(scope, {});
@@ -2469,8 +2544,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         RETURN_IF_EXCEPTION(scope, {});
     }
     bool isLoadInFlight = loaded.staleESMEntry;
-    if (leavesLoadedModuleAlone && isInNodeModules(specifier) && (loaded.esmNamespace || loaded.commonJSModule)) {
-        setLoadedPackageAside(globalObject, specifier);
+    if (leavesLoadedModuleAlone && staysTheOriginal && (loaded.esmNamespace || loaded.commonJSModule)) {
+        setLoadedModuleAside(globalObject, specifier);
         RETURN_IF_EXCEPTION(scope, {});
         loaded = findLoadedModule(globalObject, specifierString);
         RETURN_IF_EXCEPTION(scope, {});
@@ -2478,6 +2553,22 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     if (leavesLoadedModuleAlone) {
         loaded.staleESMEntry |= !!std::exchange(loaded.esmNamespace, nullptr);
         loaded.staleCommonJSEntry |= !!std::exchange(loaded.commonJSModule, nullptr);
+    }
+
+    // Left for later, the body of a linked module would assign over the patch. It can't run ahead of an import whose own body is up the stack, though.
+    using Status = JSC::CyclicModuleRecord::Status;
+    auto* linked = loaded.esmNamespace ? dynamicDowncast<JSC::CyclicModuleRecord>(loaded.esmNamespace->moduleRecord()) : nullptr;
+    if (linked && linked->status() == Status::Linked && !linked->hasLiveExports() && !anyUnevaluatedImport(linked, [](JSC::CyclicModuleRecord* imported) { return imported->status() == Status::Evaluating; })) {
+        JSC::JSPromise* evaluating = linked->evaluate(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        evaluating->markAsHandled();
+        if (evaluating->status() == JSC::JSPromise::Status::Rejected) {
+            scope.throwException(globalObject, evaluating->result());
+            return {};
+        }
+        loaded = findLoadedModule(globalObject, specifierString);
+        RETURN_IF_EXCEPTION(scope, {});
+        previous = registeredModuleMock(globalObject, specifier);
     }
 
     // With an earlier mock in place, what's loaded isn't the original any more, so inherit what that mock saved.
@@ -2642,6 +2733,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportActualModule, (JSC::JSGlobalObject * le
 
     if (JSModuleMock* mock = registeredModuleMock(globalObject, specifier.key))
         RELEASE_AND_RETURN(scope, JSValue::encode(importOriginalModule(globalObject, mock, true, callerPath(vm, callframe))));
+
+    LoadedModule loaded = findLoadedModule(globalObject, specifier.keyString);
+    RETURN_IF_EXCEPTION(scope, {});
+    // What a preload loads is given back to the next test file under its own key.
+    if (!loaded.esmNamespace && !loaded.commonJSModule && !loaded.staleESMEntry && !loaded.staleCommonJSEntry && !JSMock__isInPreload(globalObject))
+        globalObject->onLoadPlugins.loadedByImportActual.add(specifier.key);
     RELEASE_AND_RETURN(scope, JSValue::encode(importModuleFrom(globalObject, callerPath(vm, callframe), specifier.key)));
 }
 
@@ -2672,6 +2769,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportMockDidLoad, (JSC::JSGlobalObject * lex
     RETURN_IF_EXCEPTION(scope, {});
     if (isCommonJS)
         RELEASE_AND_RETURN(scope, JSValue::encode(esmExportsOfCommonJSExports(globalObject, mocked)));
+    // As in Vitest. The exports of a module mocked without a factory have no prototype, so that importers find only exports in them.
+    if (JSObject* object = mocked.getObject(); object && object->getPrototypeDirect().isNull())
+        object->setPrototypeDirect(vm, globalObject->objectPrototype());
     return JSValue::encode(mocked);
 }
 
@@ -2921,6 +3021,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__undoModuleMocksOfTestFile(Zig::G
 {
     auto& plugins = globalObject->onLoadPlugins;
     plugins.testFile++;
+    plugins.loadedByImportActual.clear();
     ModulesToEvict evict;
     while (!plugins.runningModuleMocks.isEmpty()) {
         auto* mock = uncheckedDowncast<JSModuleMock>(plugins.runningModuleMocks.last().mock.get());

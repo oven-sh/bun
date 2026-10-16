@@ -1,0 +1,29 @@
+{
+  "_id": "bun",
+  "name": "bun",
+  "dist-tags": {
+    "latest": "1.1.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bun",
+      "version": "1.0.0",
+      "_id": "bun@1.0.0",
+      "dist": {
+        "integrity": "sha512-3VNhhAGhbsTKgZPaVDiegkf9P4SxsiVBiv2Z7IY5boYZh0l7J1u8ry+O5LcyYwy+djBTf34pbAHrGYSPOQ9mYA==",
+        "shasum": "8d3144fc1fa9f9f73b586e9b24e955e651cf5a4d",
+        "tarball": "http://localhost:4873/bun/-/bun-1.0.0.tgz"
+      }
+    },
+    "1.1.0": {
+      "name": "bun",
+      "version": "1.1.0",
+      "_id": "bun@1.1.0",
+      "dist": {
+        "integrity": "sha512-/iVApoHt3UStLynyDTB8jZhItmHeFfWSGqPJurllfrdxAZvL/RbXgPMUrpaiZFidQ+/77u61zSgzqVWSN8ghGw==",
+        "shasum": "60db82c6fbc62da41963bf18562053bde4168d43",
+        "tarball": "http://localhost:4873/bun/-/bun-1.1.0.tgz"
+      }
+    }
+  }
+}

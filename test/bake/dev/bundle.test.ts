@@ -941,13 +941,14 @@ devTest("a render() that does not return a Response is reported as that", {
   },
 });
 // A "use client" module without a separate SSR graph exports `registerClientReference(value, ...)`.
-// The statements that decorator lowering puts after a class assign to the class by name, so the
-// class has to stay a declaration: as the wrapped value it left `Df = ...` with no binding
+// The statements that decorator lowering puts after a class use the class by name, so the class
+// has to stay a declaration: as the wrapped value it left them with no binding
 // ("ReferenceError: Df is not defined").
 for (const spelling of [
   "@dec export default class Df {}",
   "export default @dec class Df {}",
   "export default @dec class {}",
+  "export default class Df { @dec method() {} }",
 ]) {
   devTest(`a "use client" module keeps the binding of \`${spelling}\` (experimentalDecorators)`, {
     framework: minimalFramework,

@@ -858,7 +858,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if p.options.features.server_components.wraps_exports()
                             && !after_class.is_empty()
                         {
-                            // Statements after the class assign to its name: keep the declaration.
+                            // Statements after the class use its name: keep the declaration.
                             let name = class
                                 .class
                                 .class_name
@@ -867,7 +867,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             stmts.extend_from_slice(after_class);
                             // The export gets its own symbol: a bundle declares it with `var`.
                             p.record_declared_symbol(name.ref_);
-                            data.default_name = p.create_default_name(stmt.loc);
+                            data.default_name = p.create_default_name(data.default_name.loc);
                             p.record_usage(name.ref_);
                             data.value = js_ast::StmtOrExpr::Expr(
                                 p.wrap_value_for_server_component_reference(

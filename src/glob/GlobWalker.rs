@@ -2007,7 +2007,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     }
 
     /// `Tail::eval` for the entry `name`. Only a `SyntaxHint::Tail` component asks.
-    #[inline]
+    #[inline(never)]
     fn eval_below_tail(&self, name: &[u8], is_dir: bool) -> (bool, bool) {
         let dots = if self.dot { Dots::Match } else { Dots::Hide };
         match self.tail.as_deref() {
@@ -2809,14 +2809,7 @@ fn absolute_roots(tokens: &Tokens) -> (Box<[Box<[u8]>]>, bool) {
             roots.push(&alternative[..cut + usize::from(is_root)]);
         }
     }
-    // A `/` sorts first, so what is inside a directory comes right after it. The walk of the directory goes there too.
-    let key = |path: &&[u8]| {
-        (path
-            .iter()
-            .map(|byte| if *byte == b'/' { 0 } else { *byte }))
-        .collect::<Vec<u8>>()
-    };
-    roots.sort_by_cached_key(key);
+    // The walk of a directory goes into a directory inside it. Other walks that read a directory again list nothing twice.
     roots.dedup_by(|next, kept| {
         (next.strip_prefix(&**kept))
             .is_some_and(|rest| rest.first().is_none_or(|it| *it == b'/') || kept.ends_with(b"/"))

@@ -227,8 +227,9 @@ describe("getTimerCount", () => {
       // the recursion above ends at the real end of the stack.
       cmd: ["sh", "-c", 'ulimit -s 4096 && exec "$0" -e "$1"', bunExe(), script],
       // The environment is on that stack too, and JavaScriptCore does not count
-      // it. A 65 KB commit message in the CI environment would take half of the 128 KB.
-      env: { BUN_DEBUG_QUIET_LOGS: "1" },
+      // it. The 64 KB commit message of a CI build would take half of the 128 KB,
+      // so the child gets only the settings for bun and the sanitizers.
+      env: Object.fromEntries(Object.entries(bunEnv).filter(([name]) => /^BUN_|SAN_OPTIONS$/.test(name))),
       stdout: "pipe",
       stderr: "pipe",
     });

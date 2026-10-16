@@ -92,6 +92,7 @@ describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
         `"Expected value to be a string or buffer or number for 'set'."`,
       );
 
+      // @ts-expect-error: Testing runtime behavior with invalid types
       expect(async () => await client.set("valid-key", null)).toThrowErrorMatchingInlineSnapshot(
         `"Expected value to be a string or buffer or number for 'set'."`,
       );
@@ -212,7 +213,7 @@ describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
 
       // Create a large number of parallel commands
       const parallelCount = 1000;
-      const commands = [];
+      const commands: Promise<"OK">[] = [];
 
       for (let i = 0; i < parallelCount; i++) {
         const key = `parallel-key-${i}`;

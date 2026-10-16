@@ -67,7 +67,6 @@
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
-#include "BunIDLConvert.h"
 #include "BunObject.h"
 #include "GeneratedBunObject.h"
 #include "BunPlugin.h"
@@ -284,6 +283,11 @@ extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 // bun_icu_default_locale.cpp
 extern "C" void Bun__ensureICUDefaultLocale();
 
+// LintHost.cpp
+namespace Bun {
+JSC::JSObject* createLintHost(JSC::VM&, JSC::JSGlobalObject*);
+}
+
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals)
 {
     static std::once_flag jsc_init_flag;
@@ -303,7 +307,11 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // useWasmFaultSignalHandler/FastMemory when ASAN_OPTIONS lacks
         // allow_user_segv_handler=1, so we don't force it off here.
         JSC::initialize([&] {
+#if defined(BUN_DISABLE_WEBASSEMBLY)
+            JSC::Options::useWasm() = false;
+#else
             JSC::Options::useWasm() = true;
+#endif
             JSC::Options::useJIT() = true;
             JSC::Options::useBBQJIT() = true;
             JSC::Options::useConcurrentJIT() = true;
@@ -385,6 +393,13 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // that are not Bun's, where eval is on. After the loop: BUN_JSC_useDollarVM does not bring it back.
             if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
                 JSC::Options::useDollarVM() = false;
+            // The boundary of "=strict": see JSC::SourceProvenance.
+            if (Bun::isCodeGenerationFromStringsStrict()) [[unlikely]]
+                JSC::Options::disallowNonStaticCode() = true;
+#if defined(BUN_DISABLE_WEBASSEMBLY)
+            // After the loop: BUN_JSC_useWasm=1 does not bring it back, and BUN_JSC_useWasm=0 stays a valid name.
+            JSC::Options::useWasm() = false;
+#endif
             JSC::Options::assertOptionsAreCoherent();
         }); // end JSC::initialize lambda
 
@@ -399,6 +414,20 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
     }); // end std::call_once lambda
 
     // NOLINTEND
+}
+
+// As many VMs as cores, each busy on its own thread: there is no core left for threads that compile beside them. With 16 VMs on
+// 16 cores these took 10 % more time and 2.3 times the memory.
+// After JSCInitialize and before the first VM: nothing reads the option before it, and its constructor freezes the options.
+extern "C" void JSC__useOptionsForVMPerThread(const char* envp[], size_t envc)
+{
+    RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());
+    JSC::Options::useConcurrentJIT() = false;
+    // BUN_JSC_useConcurrentJIT wins, as in JSCInitialize.
+    for (size_t i = 0; i < envc; i++) {
+        if (WTF::StringView::fromLatin1(envp[i]).startsWithIgnoringASCIICase("BUN_JSC_useConcurrentJIT="_s))
+            JSC::Options::setOption(envp[i] + 8, false);
+    }
 }
 
 extern "C" void* Bun__getVM();
@@ -1462,7 +1491,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     RELEASE_AND_RETURN(
         throwScope,
         Bun__encoding__toString(
-            encodedString.span8().data(),
+            byteCast<uint8_t>(encodedString.span8().data()),
             length,
             globalObject,
             static_cast<uint8_t>(WebCore::BufferEncodingType::base64)));
@@ -2117,6 +2146,7 @@ void GlobalObject::finishCreation(VM& vm)
         setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage);
 
     m_bakeAdditions.initialize();
+    m_bindgenAdditions.initialize();
     m_markdownTagStrings.initialize();
 
     static const LazyClassStructureInit lazyClassStructureInits[] = {
@@ -2522,6 +2552,9 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_testMatcherUtilsObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              JSValue result = JSValue::decode(ExpectMatcherUtils_createSigleton(init.owner));
              init.set(result.toObject(init.owner));
+         } },
+        { OBJECT_OFFSETOF(GlobalObject, m_lintHost), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+             init.set(Bun::createLintHost(init.vm, init.owner));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_nodeErrorCache), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              auto* structure = ErrorCodeCache::createStructure(

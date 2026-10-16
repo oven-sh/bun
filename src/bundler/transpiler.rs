@@ -1464,6 +1464,7 @@ impl<'a> Transpiler<'a> {
                     jsx: to_parser_jsx_pragma(jsx),
                     keep_names: true,
                     ignore_dce_annotations: self.options.ignore_dce_annotations,
+                    keep_directives: false,
                     preserve_unused_imports_ts: false,
                     use_define_for_class_fields: this_parse.use_define_for_class_fields,
                     suppress_warnings_about_weird_code: true,
@@ -1485,8 +1486,6 @@ impl<'a> Transpiler<'a> {
                     repl_mode: self.options.repl_mode,
                     lower_toml_datetimes: false,
                     is_entry_point: false,
-                    tolerant: false,
-                    is_javascript: false,
                 };
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;

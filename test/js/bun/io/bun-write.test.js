@@ -577,14 +577,16 @@ const IS_UV_FS_COPYFILE_DISABLED =
   describe.skipIf(isWindows)("Bun.write(dest, Bun.file(src), { mode }) does not chmod a FIFO or a device", () => {
     const modeOf = p => fs.statSync(p).mode.toString(8);
 
-    // A source, an existing regular file and a FIFO with a reader. Both destinations start at 0644.
-    function fixture() {
-      const dir = tempDir("bun-write-mode-fifo", { "src.txt": "hello\n", "existing.txt": "old contents" });
-      const src = join(String(dir), "src.txt");
-      const existing = join(String(dir), "existing.txt");
-      const fifo = join(String(dir), "dest.fifo");
+    const files = { "src.txt": "hello\n", "existing.txt": "old contents" };
+
+    // In `dir`: the source, an existing regular file and a FIFO with a reader. Both destinations start at 0644.
+    async function fixture(dir) {
+      const src = join(dir, "src.txt");
+      const existing = join(dir, "existing.txt");
+      const fifo = join(dir, "dest.fifo");
       fs.chmodSync(existing, 0o644);
-      expect(Bun.spawnSync({ cmd: ["mkfifo", "-m", "644", fifo] }).exitCode).toBe(0);
+      await using mkfifo = Bun.spawn({ cmd: ["mkfifo", "-m", "644", fifo] });
+      expect(await mkfifo.exited).toBe(0);
       // Without a reader, open(O_WRONLY) on a FIFO blocks.
       const reader = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
       return {
@@ -598,13 +600,12 @@ const IS_UV_FS_COPYFILE_DISABLED =
         },
         [Symbol.dispose]() {
           fs.closeSync(reader);
-          dir[Symbol.dispose]();
         },
       };
     }
     const expected = { fifoData: "hello\n", fifoMode: "10644", fileMode: "100600" };
 
-    for (const [label, destination] of [
+    it.each([
       ["a path", async path => path],
       // Linux copies to a BunFile that knows it is a FIFO with sendfile, not copy_file_range.
       [
@@ -615,19 +616,19 @@ const IS_UV_FS_COPYFILE_DISABLED =
           return file;
         },
       ],
-    ]) {
-      it(label, async () => {
-        using f = fixture();
-        const written = [
-          await Bun.write(await destination(f.fifo), Bun.file(f.src), { mode: 0o600 }),
-          await Bun.write(await destination(f.existing), Bun.file(f.src), { mode: 0o600 }),
-        ];
-        expect({ written, ...f.after() }).toEqual({ written: [6, 6], ...expected });
-      });
-    }
+    ])("%s", async (_, destination) => {
+      using dir = tempDir("bun-write-mode-fifo", files);
+      using f = await fixture(String(dir));
+      const written = [
+        await Bun.write(await destination(f.fifo), Bun.file(f.src), { mode: 0o600 }),
+        await Bun.write(await destination(f.existing), Bun.file(f.src), { mode: 0o600 }),
+      ];
+      expect({ written, ...f.after() }).toEqual({ written: [6, 6], ...expected });
+    });
 
     it("a file descriptor", async () => {
-      using f = fixture();
+      using dir = tempDir("bun-write-mode-fifo", files);
+      using f = await fixture(String(dir));
       const fd = fs.openSync(f.fifo, fs.constants.O_WRONLY);
       const written = [];
       try {

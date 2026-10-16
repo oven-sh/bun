@@ -2603,6 +2603,9 @@ pub mod ffi {
     unsafe impl Zeroable for libc::sigset_t {}
     // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
+    unsafe impl Zeroable for libc::siginfo_t {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
     unsafe impl Zeroable for libc::utsname {}
     // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]

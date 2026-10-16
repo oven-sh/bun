@@ -1832,6 +1832,8 @@ fn spawn_maybe_sync(
 
         let has_user_timespec = !user_timespec.eql(&Timespec::EPOCH);
         let mut bun_test_fired = false;
+        // When the child is sent SIGKILL after a bun:test deadline asked it to exit. `EPOCH`: not due.
+        let mut force_kill_at = Timespec::EPOCH;
 
         while subprocess.compute_has_pending_activity() {
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
@@ -1844,17 +1846,14 @@ fn spawn_maybe_sync(
             };
             let has_bun_test_timeout = !bun_test_timeout.eql(&Timespec::EPOCH);
 
-            if has_bun_test_timeout {
-                match Timespec::order_ignore_epoch(bun_test_timeout, user_timespec) {
-                    core::cmp::Ordering::Less => absolute_timespec = bun_test_timeout,
-                    core::cmp::Ordering::Equal => {}
-                    core::cmp::Ordering::Greater => absolute_timespec = user_timespec,
-                }
-            } else if has_user_timespec {
-                absolute_timespec = user_timespec;
-            } else {
-                absolute_timespec = Timespec::EPOCH;
-            }
+            // The earliest deadline that has not fired yet.
+            absolute_timespec = bun_test_timeout
+                .min_ignore_epoch(if did_timeout {
+                    Timespec::EPOCH
+                } else {
+                    user_timespec
+                })
+                .min_ignore_epoch(force_kill_at);
             let has_timespec = !absolute_timespec.eql(&Timespec::EPOCH);
 
             if let Writable::Buffer(buffer) = subprocess.stdin.get() {
@@ -1871,7 +1870,7 @@ fn spawn_maybe_sync(
 
             // Tick the isolated event loop without passing timeout to avoid blocking
             // The timeout check is done at the top of the loop
-            match sync_loop.tick_with_timeout(if has_timespec && !did_timeout {
+            match sync_loop.tick_with_timeout(if has_timespec {
                 Some(&absolute_timespec)
             } else {
                 None
@@ -1879,7 +1878,8 @@ fn spawn_maybe_sync(
                 TickState::Completed => {}
                 TickState::Timeout => {
                     now = Timespec::now(TimespecMockMode::ForceRealTime);
-                    let did_user_timeout = has_user_timespec
+                    let did_user_timeout = !did_timeout
+                        && has_user_timespec
                         && (absolute_timespec.eql(&user_timespec)
                             || user_timespec.order(&now) == core::cmp::Ordering::Less);
 
@@ -1897,6 +1897,10 @@ fn spawn_maybe_sync(
                     {
                         bun_test_fired = true;
                         *bun_test_deadline = Some(absolute_timespec);
+                        // First: the auto-killer waits for this child too, and ends one that `kill_signal` would have let exit.
+                        let _ = subprocess.try_kill(subprocess.kill_signal);
+                        force_kill_at =
+                            now.add_ms(bun_jsc::process_auto_killer::ProcessAutoKiller::GRACE_MS);
                         if let Some(active_file) = crate::test_runner::jest::Jest::runner()
                             .unwrap()
                             .bun_test_root
@@ -1908,7 +1912,14 @@ fn spawn_maybe_sync(
                                 .execution
                                 .kill_dangling_processes_on_timeout(cx.global());
                         }
-                        let _ = subprocess.try_kill(subprocess.kill_signal);
+                    }
+
+                    if !force_kill_at.eql(&Timespec::EPOCH)
+                        && force_kill_at.order(&now) != core::cmp::Ordering::Greater
+                    {
+                        force_kill_at = Timespec::EPOCH;
+                        // Not `kill_signal`, which the child may ignore: nothing else bounds the wait.
+                        let _ = subprocess.try_kill(SignalCode::SIGKILL);
                     }
                 }
             }

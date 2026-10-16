@@ -699,6 +699,37 @@ pub mod posix_spawn {
             }
         }
     }
+
+    /// Whether child `pid` has ended, without reaping it: a later `wait4` still returns its status.
+    /// `ECHILD` when it was reaped already.
+    pub fn has_ended_unreaped(pid: pid_t) -> sys::Result<bool> {
+        loop {
+            // `waitid` leaves this untouched for a child that has not ended.
+            let mut info: system::siginfo_t = bun_core::ffi::zeroed();
+            // SAFETY: `info` is a valid out-pointer.
+            let rc = unsafe {
+                system::waitid(
+                    system::P_PID,
+                    pid as system::id_t,
+                    &raw mut info,
+                    system::WEXITED | system::WNOHANG | system::WNOWAIT,
+                )
+            };
+            match errno(rc) {
+                // Not any filled `info`: macOS reports a stopped child as well (golang/go#19314).
+                Errno::SUCCESS => {
+                    return sys::Result::Ok(matches!(
+                        info.si_code,
+                        system::CLD_EXITED | system::CLD_KILLED | system::CLD_DUMPED
+                    ));
+                }
+                Errno::INTR => continue,
+                e => {
+                    return sys::Result::Err(sys::Error::from_code_int(e.0, SYSCALL_WAITPID));
+                }
+            }
+        }
+    }
 }
 
 use crate::spawn_process as process;

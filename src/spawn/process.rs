@@ -771,6 +771,103 @@ impl Process {
         }
     }
 
+    /// Whether the child has ended, as the OS knows it: `status` says so only once the event loop has reaped it.
+    /// This reaps nothing, so that wait still finds the child. Also true of a child that a waiter thread has
+    /// reaped, whose pid may be another process's by now.
+    #[cfg(unix)]
+    pub fn has_ended(&self) -> bool {
+        self.has_exited() || !matches!(posix_spawn::has_ended_unreaped(self.pid), Ok(false))
+    }
+
+    /// Blocks until the child has ended or `deadline` passes. Like [`Self::has_ended`] it reaps nothing and runs
+    /// no exit handler: the exit is still the event loop's to report.
+    #[cfg(unix)]
+    #[cold]
+    pub fn wait_until_ended(&self, deadline: &bun_core::Timespec) {
+        use bun_core::{Timespec, TimespecMockMode};
+        // `kill` sends nothing to a child that is not watched, so there is no exit to wait for.
+        if self.has_exited() || matches!(self.poller, Poller::Detached) {
+            return;
+        }
+        let remaining_ms = || {
+            deadline
+                .duration(&Timespec::now(TimespecMockMode::ForceRealTime))
+                .ms()
+        };
+
+        // The kernel wakes this wait for a child that the event loop watches itself.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if matches!(self.poller, Poller::Fd(_)) {
+            // A pidfd is readable once its process has ended.
+            let mut pidfd = [libc::pollfd {
+                fd: self.pidfd,
+                events: libc::POLLIN,
+                revents: 0,
+            }];
+            loop {
+                let ms = remaining_ms();
+                if ms <= 0 {
+                    return;
+                }
+                let ms = c_int::try_from(ms).unwrap_or(c_int::MAX);
+                // SAFETY: valid pollfd array.
+                let rc = unsafe { libc::poll(pidfd.as_mut_ptr(), 1, ms) };
+                if rc >= 0 {
+                    return;
+                }
+                if bun_sys::get_errno(rc as isize) != bun_sys::E::EINTR {
+                    break;
+                }
+            }
+        }
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        if matches!(self.poller, Poller::Fd(_)) {
+            let ms = remaining_ms();
+            if ms <= 0 {
+                return;
+            }
+            if let Ok(kq) = bun_sys::kqueue() {
+                use bun_sys::FdExt as _;
+                let mut change: libc::kevent = bun_core::ffi::zeroed();
+                change.ident = usize::try_from(self.pid).expect("int cast");
+                change.filter = libc::EVFILT_PROC;
+                change.flags = libc::EV_ADD | libc::EV_ONESHOT;
+                change.fflags = libc::NOTE_EXIT;
+                let mut event: [libc::kevent; 1] = bun_core::ffi::zeroed();
+                let timeout = libc::timespec {
+                    tv_sec: ms / 1000,
+                    tv_nsec: (ms % 1000) * 1_000_000,
+                };
+                let result = bun_sys::kevent(kq, &[change], &mut event, Some(&timeout));
+                kq.close();
+                match result {
+                    Ok(0) => return,
+                    // The exit, or `ESRCH` for a child that had begun to exit before it could be watched.
+                    Ok(_)
+                        if event[0].flags & libc::EV_ERROR == 0
+                            || c_int::try_from(event[0].data) == Ok(libc::ESRCH) =>
+                    {
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Nothing to be woken by: the exit goes to a waiter thread, or the child could not be watched.
+        let mut step_ms: i64 = 1;
+        while !self.has_ended() {
+            let ms = remaining_ms();
+            if ms <= 0 {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(
+                step_ms.min(ms).unsigned_abs(),
+            ));
+            step_ms = (step_ms * 2).min(16);
+        }
+    }
+
     pub fn kill(&mut self, signal: u8) -> Maybe<()> {
         #[cfg(unix)]
         {

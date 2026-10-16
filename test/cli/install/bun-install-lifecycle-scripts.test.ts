@@ -3374,6 +3374,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
 
   test.skipIf(isWindows).each([
     { title: "a file: folder", manifest: { ...trusted, dependencies: { held: "file:./held" } }, dir: "held" },
+    { title: "a link: folder", manifest: { ...trusted, dependencies: { held: "link:./held" } }, dir: "held" },
     {
       title: "a workspace",
       manifest: { name: "foo", workspaces: ["packages/*"], dependencies: { held: "workspace:*" } },
@@ -3525,14 +3526,24 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
     );
   });
 
-  test.skipIf(isWindows)("a package that is not trusted any more is not built", async () => {
-    await whileInstalling(async ({ ctx, kill, bun }) => {
-      await kill("SIGKILL");
+  test.skipIf(isWindows).each([
+    { title: "a package", dependencies: { held: "1.0.0" }, files: {} },
+    {
+      title: "a link: folder",
+      dependencies: { held: "link:./held" },
+      files: { [join("held", "package.json")]: JSON.stringify(held) },
+    },
+  ])("$title that is not trusted any more is not built", async ({ dependencies, files }) => {
+    await whileInstalling(
+      async ({ ctx, kill, bun }) => {
+        await kill("SIGKILL");
 
-      await writeFile(ctx.packageJson, JSON.stringify({ name: "foo", dependencies: { held: "1.0.0" } }));
-      expect(await bun("install")).toEqual({ errors: [], ran: false, built: false, exitCode: 0 });
-      expect(await readdirSorted(ctx.installed())).toEqual(installed);
-    });
+        await writeFile(ctx.packageJson, JSON.stringify({ name: "foo", dependencies }));
+        expect(await bun("install")).toEqual({ errors: [], ran: false, built: false, exitCode: 0 });
+        expect(await readdirSorted(ctx.installed())).toEqual(installed);
+      },
+      { manifest: { ...trusted, dependencies }, files },
+    );
   });
 
   // `bun patch` puts a copy to edit in place of the package. No script runs before `--commit`.

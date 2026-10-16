@@ -190,7 +190,10 @@ impl<'a> Installer<'a> {
     /// Like the hoisted linker, runs a `link:` dependency's scripts if no dependent links to
     /// `target` yet. Call this before the dependents' tasks start, because they create those links.
     pub(crate) fn start_link_task(&mut self, entry_id: StoreEntryId, target: &ZStr) {
+        let left_pending =
+            self.manager().retries_pending_scripts() && self.is_left_pending(entry_id);
         let linked = !self.manager().options.enable.force_install()
+            && !left_pending
             && self.has_link_from_dependent(entry_id, target);
         if linked && !self.is_newly_trusted(entry_id) {
             self.set_step(entry_id, Step::Done);
@@ -200,6 +203,7 @@ impl<'a> Installer<'a> {
         if linked {
             self.tasks[entry_id.get() as usize].relink = Relink::Unchanged;
         }
+        self.list_pending_scripts(entry_id);
         self.set_step(entry_id, Step::RunPreinstall);
         self.start_task(entry_id);
     }
@@ -208,24 +212,50 @@ impl<'a> Installer<'a> {
         let Ok(target) = sys::stat(target) else {
             return false;
         };
+        (self.links_from_dependents(entry_id, AutoPath::init_top_level_dir)).any(|mut link| {
+            sys::stat(link.slice_z())
+                .is_ok_and(|st| st.st_ino == target.st_ino && st.st_dev == target.st_dev)
+        })
+    }
+
+    /// The paths of the links to the entry in the `node_modules` of its dependents, each from `base()`.
+    fn links_from_dependents(
+        &self,
+        entry_id: StoreEntryId,
+        base: fn() -> AutoPath,
+    ) -> impl Iterator<Item = AutoPath> + '_ {
         let lockfile = self.lockfile();
         let entry_dependencies = self.store.entries.items_dependencies();
         let dependents = &self.store.entries.items_parents()[entry_id.get() as usize];
-        dependents.iter().any(|&dependent| {
+        dependents.iter().flat_map(move |&dependent| {
             (entry_dependencies[dependent.get() as usize].slice().iter())
-                .filter(|dep| dep.entry_id == entry_id)
-                .any(|dep| {
-                    let mut link = AutoPath::init_top_level_dir();
+                .filter(move |dep| dep.entry_id == entry_id)
+                .map(move |dep| {
+                    let mut link = base();
                     self.append_store_node_modules_path(&mut link, dependent);
                     append_dependency_link_name(
                         &mut link,
                         lockfile.str(&lockfile.buffers.dependencies[dep.dep_id as usize].name),
                         self.entry_store_node_modules_package_name(dependent),
                     );
-                    sys::stat(link.slice_z())
-                        .is_ok_and(|st| st.st_ino == target.st_ino && st.st_dev == target.st_dev)
+                    link
                 })
         })
+    }
+
+    /// A dead install listed the `link:` entry: the links to it do not say that its scripts ran.
+    #[cold]
+    fn is_left_pending(&self, entry_id: StoreEntryId) -> bool {
+        let key = self.pending_scripts_key(entry_id);
+        let pending = &self.manager().pending_scripts;
+        if !pending.borrow().is_stale(&key) {
+            return false;
+        }
+        if !self.is_trusted(entry_id) {
+            pending.borrow_mut().forget_stale(&key);
+            return false;
+        }
+        true
     }
 
     /// The scripts an earlier install blocked run now, if `Step::RunPreinstall` finds it trusted.
@@ -647,8 +677,13 @@ impl<'a> Installer<'a> {
         None
     }
 
-    /// The entry's package directory from the project's root: its path in `PendingScripts`.
+    /// The entry's path in `PendingScripts`, from the project's root: its package directory.
     fn pending_scripts_key(&self, entry_id: StoreEntryId) -> Vec<u8> {
+        if self.resolution(entry_id).tag == ResolutionTag::Symlink {
+            // It has no directory in `node_modules`. A link to it is what says that its scripts ran.
+            let link = self.links_from_dependents(entry_id, AutoPath::init).next();
+            return link.map_or_else(Vec::new, |link| link.slice().to_vec());
+        }
         let mut path = AutoRelPath::init();
         self.append_store_path(&mut path, entry_id);
         path.slice().to_vec()

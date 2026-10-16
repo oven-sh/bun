@@ -321,6 +321,9 @@ int us_nq_stream_send_headers(lsquic_stream_t *s, const char *buf, size_t len,
          * which would otherwise splice extra headers out of one user value
          * (node/src/node_http_common-inl.h bails the same way on n >= count_). */
         if (count >= expected) return -1;
+        /* A name starts with neither flags byte (0 or 1). Where one does, such
+         * a NUL moved the split and left the count as it was. */
+        if ((unsigned char) buf[i] <= 1) return -1;
         size_t name_off = i;
         while (i < len && buf[i]) i++;
         size_t name_len = i - name_off;

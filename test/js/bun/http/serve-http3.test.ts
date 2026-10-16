@@ -1,4 +1,5 @@
 import type { ServerWebSocket } from "bun";
+import { quicSendRawHeaders } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { createHash, createPrivateKey, randomBytes, X509Certificate } from "crypto";
 import { readFileSync } from "fs";
@@ -1766,6 +1767,8 @@ async function h3Exchange(
   port: number,
   headers: Record<string, string>,
   options: Record<string, unknown> = {},
+  // Puts the block on the wire as it is: node:quic refuses to send a field value that holds CR or LF.
+  raw = false,
 ): Promise<string> {
   await using endpoint = new QuicEndpoint();
   const client = await connect(`127.0.0.1:${port}`, {
@@ -1786,11 +1789,13 @@ async function h3Exchange(
     .then(async () => {
       let status = "";
       const stream = await client.createBidirectionalStream({
-        headers,
+        headers: raw ? undefined : headers,
         onheaders(received) {
           status = received[":status"] as string;
         },
       });
+      // Kind 1 is the initial block. Flag 1 ends the stream, as `headers` with no body does.
+      if (raw) quicSendRawHeaders(stream, Object.entries(headers).flat(), 1, 1);
       stream.closed.catch(() => {});
       let body = "";
       for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
@@ -1827,7 +1832,12 @@ describe("Bun.serve HTTP/3 request validation", () => {
 
     const results: Record<string, string> = {};
     for (const value of ["a\r\nb: c", "a\nb", "a\rb"]) {
-      results[JSON.stringify(value)] = await h3Exchange(server.port!, requestHeaders("/", { "x-probe": value }));
+      results[JSON.stringify(value)] = await h3Exchange(
+        server.port!,
+        requestHeaders("/", { "x-probe": value }),
+        {},
+        true,
+      );
     }
     results.wellFormed = await h3Exchange(server.port!, requestHeaders("/", { "x-probe": "plain" }));
     results.after = await h3Exchange(server.port!, requestHeaders("/"));

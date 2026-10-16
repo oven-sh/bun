@@ -17,6 +17,26 @@ const QUIC_STREAM_HEADERS_KIND_HINTS: u32 = 0;
 const QUIC_STREAM_HEADERS_KIND_INITIAL: u32 = 1;
 const QUIC_STREAM_HEADERS_KIND_TRAILING: u32 = 2;
 const QUIC_STREAM_HEADERS_FLAGS_TERMINAL: u32 = 1;
+/// Bun only: `send_headers` skips its CR / LF check. The raw sender of bun:internal-for-testing sets it.
+const QUIC_STREAM_HEADERS_FLAGS_UNCHECKED: u32 = 1 << 30;
+
+/// Where the name of the field at unit `at` is. `block` is `name NUL value NUL flag ...` before the Latin-1 encode.
+#[cold]
+fn field_name_range<T: Copy + Into<u32>>(block: &[T], at: usize) -> core::ops::Range<usize> {
+    let len = block.len();
+    let next_nul = |from: usize| (from..len).find(|&i| block[i].into() == 0).unwrap_or(len);
+    let mut start = 0;
+    loop {
+        let name_end = next_nul(start);
+        let value_end = next_nul((name_end + 1).min(len));
+        // The NUL that ends the value, then the flag.
+        let next = value_end + 2;
+        if at < next || next >= len {
+            return start..name_end;
+        }
+        start = next;
+    }
+}
 
 /// Mirrors Node's `Stream::State` (see `node_quic_binding.rs` for the
 /// `IDX_STATE_STREAM_*` offsets the JS layer reads).
@@ -945,12 +965,31 @@ impl QuicStream {
         let header_count = header_tuple.get_index(global, 1)?.coerce_to_i32(global)?;
         // Latin-1 on the wire, as node does (`StringBytes::Write(.., LATIN1)`).
         use crate::webcore::encoding::BunStringEncode as _;
-        let bytes = bun_core::String::from_js(header_string, global)?
-            .encode(crate::node::types::Encoding::Latin1);
+        let header_string = bun_core::String::from_js(header_string, global)?;
+        let bytes = header_string.encode(crate::node::types::Encoding::Latin1);
         let is_trailing =
             kind_arg.coerce_to_i32(global)? as u32 == QUIC_STREAM_HEADERS_KIND_TRAILING;
-        let eos = is_trailing
-            || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
+        let flags = flags.coerce_to_i32(global)? as u32;
+        let unchecked = flags & QUIC_STREAM_HEADERS_FLAGS_UNCHECKED != 0
+            && bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis();
+        // Node sends CR and LF. Checked on the wire bytes, where U+560D is a CR. NUL: buildNgHeaderString and the shim's pair count.
+        if !unchecked && let Some(at) = bun_core::strings::index_of_any(&bytes, b"\r\n") {
+            let name = if header_string.is_utf16() {
+                field_name_range(header_string.utf16(), at)
+            } else {
+                field_name_range(&bytes, at)
+            };
+            return Err(global
+                .err(
+                    bun_jsc::ErrorCode::INVALID_CHAR,
+                    format_args!(
+                        "Invalid character in header content [\"{}\"]",
+                        bstr::BStr::new(bytes.get(name).unwrap_or_default()),
+                    ),
+                )
+                .throw());
+        }
+        let eos = is_trailing || flags & QUIC_STREAM_HEADERS_FLAGS_TERMINAL != 0;
         let Some(s) = self.ls() else {
             self.pending_headers
                 .with_mut(|q| q.push((bytes, header_count, eos)));

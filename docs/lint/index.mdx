@@ -38,7 +38,7 @@ warn: 'tax' is never reassigned. Use 'const' instead.  prefer-const
 Linted 1 file [5.17ms]
 ```
 
-`bun lint` checks every `.js`, `.jsx`, `.ts`, and `.tsx` file in the current directory (plus the `.mjs`, `.cjs`, `.mts`, `.cts` variants). It skips `node_modules` and anything in your `.gitignore`.
+`bun lint` checks every `.js`, `.jsx`, `.ts`, and `.tsx` file in the current directory (plus the `.mjs`, `.cjs`, `.mts`, `.cts` variants). It skips `node_modules` and anything in your `.gitignore` or `.git/info/exclude`.
 
 To lint specific files, pass paths or globs.
 
@@ -219,10 +219,12 @@ bun lint --type-aware --tsconfig tsconfig.lint.json
 A `tsconfig.json` without `"include"` covers every file below it. At the root of a monorepo, that can mean loading the whole repository to lint one package. Bun warns you when that happens.
 
 ```txt
-warn: Loaded 10,114 files in 1.4s to lint 1 file: vite.config.ts
-  ../../tsconfig.json has no "include", so every file below it is part of its project.
-  To lint faster, add "include" to it, or pass --tsconfig.
+warn: Loaded 10,114 files in 1.4s to lint vite.config.ts
+  ../../tsconfig.json has no "include", so it covers every file under it.
+  To speed this up, add "include" to it or pass --tsconfig.
 ```
+
+With an oxlint config, `--tsconfig` does what it does in oxlint. It sets the `tsconfig.json` that the `import` rules resolve imports with, for its `paths`. It doesn't change which `tsconfig.json` a file is type checked with, so the warning only suggests `"include"`.
 
 ## Git hooks
 
@@ -267,6 +269,8 @@ Already have an `eslint.config.js`, `.eslintrc`, or `.oxlintrc.json`? `bun lint`
 ```
 
 If `package.json` has a `lint` script, `bun lint` runs that script. Inside the script, `bun lint` is the linter.
+
+Writing a tool that calls Bun in projects you don't control? Pass `--no-script`: `bun lint --no-script` is always the linter.
 
 Rules from built-in plugins run natively. Any other ESLint plugin still runs, in JavaScript. To see which is which, and which packages you can uninstall:
 

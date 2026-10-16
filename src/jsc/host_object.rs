@@ -24,7 +24,7 @@ pub type HostFnEntry = (&'static str, JSHostFn, u32);
 /// `{ name₀: fn₀, name₁: fn₁, … }` — fresh object pre-sized to `fns.len()`
 /// inline-capacity slots, then [`JSValue::put_host_functions`].
 ///
-/// Use when the *whole* object is a fn table (TOML/YAML/JSONC/semver/…). When
+/// Use when the *whole* object is a fn table (TOML/YAML/JSONC/…). When
 /// the receiver is something else — a callable, a null-prototype binding bag
 /// with non-fn props mixed in — build it yourself and call
 /// [`JSValue::put_host_functions`] directly.

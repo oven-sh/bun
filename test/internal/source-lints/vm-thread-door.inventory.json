@@ -89,7 +89,7 @@
       "JSBundleCompletionTask"
     ]
   },
-  "src/runtime/bake/production.rs": {
+  "src/runtime/bake/production/mod.rs": {
     "unsafe impl Sync": [
       "DotenvSingleton"
     ]

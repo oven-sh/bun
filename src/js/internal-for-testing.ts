@@ -270,6 +270,11 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   TestCounter: $bindgen("bindgen_test.bind.ts", "TestCounter"),
   TestHolder: $bindgen("bindgen_test.bind.ts", "TestHolder"),
   makeToken: $bindgen("bindgen_test.bind.ts", "makeToken"),
+  integerOrBigInt: $bindgen("bindgen_test.bind.ts", "integerOrBigInt"),
+  looseInteger: $bindgen("bindgen_test.bind.ts", "looseInteger"),
+  looseIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "looseIntegerOrBigInt"),
+  looseDoubleOrBigInt: $bindgen("bindgen_test.bind.ts", "looseDoubleOrBigInt"),
+  wideIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "wideIntegerOrBigInt"),
 };
 
 export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");

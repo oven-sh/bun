@@ -1,14 +1,11 @@
-import { type CodeStyle, Type } from "./base.ts";
+import { type RustType, trivialRust, Type, unsupportedInRust } from "./base.ts";
 
 export const RawAny = new (class extends Type {
   get idlType() {
     return "::Bun::IDLRawAny";
   }
-  get bindgenType() {
-    return "bindgen.BindgenRawAny";
-  }
-  zigType(style?: CodeStyle) {
-    return "bun.bun_js.jsc.JSValue";
+  get rust() {
+    return trivialRust("JSValue", 8);
   }
   toCpp(value: any): string {
     throw RangeError("`RawAny` cannot have a default value");
@@ -19,14 +16,8 @@ export const StrongAny = new (class extends Type {
   get idlType() {
     return "::Bun::Bindgen::IDLStrongAny";
   }
-  get bindgenType() {
-    return "bindgen.BindgenStrongAny";
-  }
-  zigType(style?: CodeStyle) {
-    return "bun.bun_js.jsc.Strong";
-  }
-  optionalZigType(style?: CodeStyle) {
-    return this.zigType(style) + ".Optional";
+  get rust(): RustType {
+    return unsupportedInRust("`StrongAny`");
   }
   toCpp(value: any): string {
     throw RangeError("`StrongAny` cannot have a default value");

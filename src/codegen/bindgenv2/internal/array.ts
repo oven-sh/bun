@@ -1,5 +1,5 @@
 import { hasRawAny } from "./any.ts";
-import { type CodeStyle, Type } from "./base.ts";
+import { type RustType, Type } from "./base.ts";
 
 export abstract class ArrayType extends Type {}
 
@@ -11,11 +11,17 @@ export function Array(elemType: Type): ArrayType {
     get idlType() {
       return `::Bun::IDLArray<${elemType.idlType}>`;
     }
-    get bindgenType() {
-      return `bindgen.BindgenArray(${elemType.bindgenType})`;
-    }
-    zigType(style?: CodeStyle) {
-      return `bun.collections.ArrayListDefault(${elemType.zigType(style)})`;
+    get rust(): RustType {
+      const elem = elemType.rust;
+      const convert = elem.fromExtern("v");
+      const call = /^([\w:]+)\(v\)$/.exec(convert);
+      return {
+        extern: `ExternArrayList<${elem.extern}>`,
+        size: 16,
+        align: 8,
+        member: `GenList<${elem.member}>`,
+        fromExtern: e => `adopt_array(${e}, ${call ? call[1] : `|v| ${convert}`})`,
+      };
     }
     toCpp(value: any[]): string {
       const args = `${value.map(elem => elemType.toCpp(elem)).join(", ")}`;

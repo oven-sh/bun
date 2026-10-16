@@ -1,5 +1,7 @@
 import assert from "node:assert";
-import { type CodeStyle, Type, toASCIILiteral } from "./base.ts";
+import { type RustType, Type, toASCIILiteral } from "./base.ts";
+
+const pointer = { extern: "RawWTFStringImpl", size: 8, align: 8 };
 
 export const String = new (class extends Type {
   /** Converts to a string, as if by calling `String`. */
@@ -10,14 +12,18 @@ export const String = new (class extends Type {
   get idlType() {
     return "::Bun::IDLStrictString";
   }
-  get bindgenType() {
-    return "bindgen.BindgenString";
-  }
-  zigType(style?: CodeStyle) {
-    return "bun.string.WTFString";
-  }
-  optionalZigType(style?: CodeStyle) {
-    return this.zigType(style) + ".Optional";
+  get rust(): RustType {
+    return {
+      ...pointer,
+      member: "GenString",
+      fromExtern: e => `adopt_string(${e})`,
+      arm: { type: "GenVal<GenString>", fromExtern: e => `GenVal(adopt_string(${e}))` },
+      optional: {
+        ...pointer,
+        member: "GenOpt<GenString>",
+        fromExtern: e => `adopt_opt_string(${e})`,
+      },
+    };
   }
   toCpp(value: string): string {
     assert(typeof value === "string");
@@ -29,14 +35,8 @@ export const LooseString = new (class extends Type {
   get idlType() {
     return "::Bun::IDLDOMString";
   }
-  get bindgenType() {
-    return String.bindgenType;
-  }
-  zigType(style?: CodeStyle) {
-    return String.zigType(style);
-  }
-  optionalZigType(style?: CodeStyle) {
-    return String.optionalZigType(style);
+  get rust() {
+    return String.rust;
   }
   toCpp(value: string): string {
     return String.toCpp(value);

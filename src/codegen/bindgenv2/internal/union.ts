@@ -1,13 +1,19 @@
 import assert from "node:assert";
 import {
-  type CodeStyle,
-  dedent,
+  borrowed,
   headersForTypes,
   joinIndented,
   NamedType,
+  pascalCase,
   reindent,
+  type RustArm,
+  type RustLayout,
+  type RustType,
+  rustVariants,
   Type,
+  unsupportedInRust,
   validateName,
+  variantLayout,
 } from "./base.ts";
 
 export interface NamedAlternatives {
@@ -66,19 +72,8 @@ export function union(
       get idlType() {
         return getUnionType();
       }
-      get bindgenType() {
-        return `bindgen.BindgenUnion(&.{ ${alternatives.map(a => a.bindgenType).join(", ")} })`;
-      }
-      zigType(style?: CodeStyle) {
-        if (style !== "pretty") {
-          return `bun.meta.TaggedUnion(&.{ ${alternatives.map(a => a.zigType()).join(", ")} })`;
-        }
-        return dedent(`bun.meta.TaggedUnion(&.{
-          ${joinIndented(
-            10,
-            alternatives.map(a => a.zigType("pretty") + ","),
-          )}
-        })`);
+      get rust(): RustType {
+        return unsupportedInRust("a union with no name");
       }
       get dependencies() {
         return Object.freeze(alternatives);
@@ -103,11 +98,113 @@ export function union(
     get idlType() {
       return `::Bun::Bindgen::Generated::IDL${name}`;
     }
-    get bindgenType() {
-      return `bindgen_generated.internal.${name}`;
+    get rust(): RustType {
+      const { size, align } = variantLayout(alternatives.map(a => a.rust));
+      return {
+        extern: `Extern${name}`,
+        size,
+        align,
+        member: name,
+        fromExtern: e => `${name}::from_extern(${borrowed(size)}${e})`,
+      };
     }
-    zigType(style?: CodeStyle) {
-      return `bindgen_generated.${name}`;
+    get rustLayout(): RustLayout {
+      const { size, align, tag } = variantLayout(alternatives.map(a => a.rust));
+      return {
+        cpp: `::Bun::Bindgen::ExternTraits<::Bun::Bindgen::Generated::${name}>::ExternType`,
+        rust: `Extern${name}`,
+        size,
+        align,
+        fields: [
+          { cpp: "data", rust: "data", offset: 0 },
+          { cpp: "tag", rust: "tag", offset: tag },
+        ],
+      };
+    }
+    get rustSource() {
+      const arms = Object.entries(namedAlternatives).map(([key, alt], tag) => {
+        const rust = alt.rust;
+        const payload: RustArm | null =
+          rust.arm === undefined ? { type: rust.member, fromExtern: rust.fromExtern } : rust.arm;
+        return { variant: pascalCase(key), extern: rust.extern, payload, tag };
+      });
+      rustVariants(
+        name,
+        arms.map(arm => arm.variant),
+      );
+      const released = arms.filter(arm => arm.payload?.release);
+      return reindent(`
+        pub enum ${name} {
+          ${joinIndented(
+            10,
+            arms.map(arm =>
+              arm.payload ? `${arm.variant}(${arm.payload.type}),` : `${arm.variant},`,
+            ),
+          )}
+        }
+
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        union Extern${name}Data {
+          ${joinIndented(
+            10,
+            arms.map(arm => `_${arm.tag}: ${arm.extern},`),
+          )}
+        }
+
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct Extern${name} {
+          data: Extern${name}Data,
+          tag: u8,
+        }
+
+        impl ${name} {
+          fn from_extern(ext: ${borrowed(this.rust.size)}Extern${name}) -> Self {${
+            arms.some(arm => arm.payload)
+              ? `
+            // SAFETY: C++ wrote the arm that \`tag\` names.
+            unsafe {
+              match ext.tag {
+                ${joinIndented(
+                  16,
+                  arms.map(arm => {
+                    const value = arm.payload
+                      ? `(${arm.payload.fromExtern(`ext.data._${arm.tag}`)})`
+                      : "";
+                    return `${arm.tag} => Self::${arm.variant}${value},`;
+                  }),
+                )}
+                _ => unreachable!(),
+              }
+            }`
+              : `
+            match ext.tag {
+              ${joinIndented(
+                14,
+                arms.map(arm => `${arm.tag} => Self::${arm.variant},`),
+              )}
+              _ => unreachable!(),
+            }`
+          }
+          }
+        }${
+          released.length === 0
+            ? ""
+            : `
+
+        impl Drop for ${name} {
+          fn drop(&mut self) {
+            match self {
+              ${joinIndented(
+                14,
+                released.map(arm => `Self::${arm.variant}(v) => ${arm.payload!.release}(v),`),
+              )}${released.length < arms.length ? "\n              _ => {}" : ""}
+            }
+          }
+        }`
+        }
+      `);
     }
     get dependencies() {
       return Object.freeze(alternatives);

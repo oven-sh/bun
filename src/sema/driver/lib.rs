@@ -31,10 +31,10 @@ use bun_sema::program::{
 };
 pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
-    Host, ModuleDetection, Options, Phase, PluginImported, PluginImports, ancestors, contains_path,
+    Host, ModuleDetection, Options, Phase, PluginImport, PluginImported, ancestors, contains_path,
     displayed_path, get_relative_path_from_directory, inside, is_declaration_file_name,
     is_javascript, is_javascript_file, is_relative, is_same_path, join,
-    output_declaration_file_name, to_path, to_path_in, typescript_path,
+    output_declaration_file_name, plugin_imports_of, to_path, to_path_in, typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::types::LinkCounts;
@@ -1434,23 +1434,9 @@ pub fn check_provided_then<R>(
     });
     disk.script_kinds = script_kinds.collect();
     disk.script_kinds_by_extension = request.script_kinds_by_extension.to_vec();
-    // By `tspath.Path` too. Only a file has a path.
-    let written = |name: &[u8]| match name.starts_with(b"/") {
-        true => disk.as_written(name),
-        false => name.to_vec(),
-    };
-    let key = |name: &[u8]| to_path(&written(name), disk.is_case_sensitive()).into_owned();
-    let plugin_imports = provided.plugin_imports.into_iter();
-    let plugin_imports = plugin_imports.map(|(importer, mut imports)| {
-        for import in &mut imports {
-            import.path = match import.is {
-                PluginImported::Source => written(&import.path),
-                PluginImported::Loaded | PluginImported::Virtual => key(&import.path),
-            };
-        }
-        (key(&importer), imports)
-    });
-    disk.plugin_imports = plugin_imports.collect();
+    if !provided.plugin_imports.is_empty() {
+        disk.take_plugin_imports(provided.plugin_imports);
+    }
     // Work outside a parallel region runs on this thread.
     let lent = disk.caches.lend();
     let mut report = check_request(&disk, request);
@@ -2816,7 +2802,7 @@ impl Host for WithOutputs<'_> {
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
         self.disk.scripts_of_page(page)
     }
-    fn plugin_imports(&self) -> Option<&PluginImports> {
+    fn plugin_imports(&self) -> &[(Vec<u8>, Vec<PluginImport>)] {
         self.disk.plugin_imports()
     }
     fn parse<'s>(
@@ -3855,12 +3841,12 @@ fn check_named_files(
                 }
             }
             // What only a plugin can read, like `App.svelte`, stands for what it imports.
-            let Some(plugin_imports) = plugin_imports else {
+            if plugin_imports.is_empty() {
                 continue;
-            };
+            }
             through.push(modules[i].path.text);
             while let Some(importer) = through.pop() {
-                for import in plugin_imports.get(importer).map_or(&[][..], Vec::as_slice) {
+                for import in plugin_imports_of(plugin_imports, importer) {
                     let here = match import.is {
                         PluginImported::Virtual => None,
                         _ => program.files.by_path.get(&import.path),

@@ -2564,33 +2564,42 @@ pub mod bv2_impl {
             };
             let is_of_the_project = |index: usize| !sources[index].path.is_node_module();
             let end = |index: usize| (sources[index].path.namespace, sources[index].path.text);
-            let plugin_imports = self.plugins.is_some().then(|| {
-                let importers = (0..sources.len())
-                    .filter(|&index| is_of_the_project(index) && !is_named_for_its_imports(index));
-                importers.flat_map(|importer| {
-                    let records = import_records[importer].as_slice().iter();
-                    let imported = (records.map(|record| record.source_index))
-                        .filter(|imported| imported.is_valid())
-                        .map(|imported| imported.get() as usize);
-                    let imported = imported.filter(move |&imported| {
-                        let is_code = loaders[imported].is_javascript_like();
-                        match is_loaded_by_plugin(imported) {
-                            true => is_of_the_project(imported),
-                            false => {
-                                is_loaded_by_plugin(importer)
-                                    && is_code
-                                    && is_of_the_project(imported)
-                            }
-                        }
-                    });
-                    imported.map(move |imported| options::PluginImport {
-                        importer: end(importer),
-                        imported: end(imported),
-                        is_loaded_by_plugin: is_loaded_by_plugin(imported),
-                    })
-                })
+            // The next import to look at: of which file, and which one of it.
+            let mut next = match self.plugins {
+                Some(_) => (0, 0),
+                None => (sources.len(), 0),
+            };
+            let mut plugin_imports = core::iter::from_fn(move || {
+                loop {
+                    let (importer, at) = next;
+                    if importer >= sources.len() {
+                        return None;
+                    }
+                    let is_asked =
+                        is_of_the_project(importer) && !is_named_for_its_imports(importer);
+                    let records = import_records[importer].as_slice();
+                    let Some(record) = records.get(at).filter(|_| is_asked) else {
+                        next = (importer + 1, 0);
+                        continue;
+                    };
+                    next.1 += 1;
+                    if !record.source_index.is_valid() {
+                        continue;
+                    }
+                    let imported = record.source_index.get() as usize;
+                    // Into what a plugin has loaded, or out of it to code.
+                    let is_loaded = is_loaded_by_plugin(imported);
+                    let is_followed = is_loaded
+                        || is_loaded_by_plugin(importer) && loaders[imported].is_javascript_like();
+                    if is_followed && is_of_the_project(imported) {
+                        return Some(options::PluginImport {
+                            importer: end(importer),
+                            imported: end(imported),
+                            is_loaded_by_plugin: is_loaded,
+                        });
+                    }
+                }
             });
-            let mut plugin_imports = plugin_imports.into_iter().flatten();
             // The types are those of what is written, as in `bun check`, not of what a plugin makes
             // of it. What only a plugin provides is written nowhere else.
             let mut sources = (sources.iter().zip(loaders).zip(flags))

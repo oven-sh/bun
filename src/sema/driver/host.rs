@@ -329,7 +329,8 @@ pub struct Provided {
     pub already_read: AlreadyRead,
     pub before_read: Option<BeforeRead>,
     pub scripts_of_page: Option<ScriptsOfPage>,
-    /// `Host::plugin_imports`. The paths are in the checker's format, as the caller has them.
+    /// `Host::plugin_imports`, in any order. The paths are in the checker's format, as the caller
+    /// has them.
     pub plugin_imports: PluginImports,
     /// The text of a script keeps the UTF-8 byte order mark that the file starts with, which TypeScript drops. The parser
     /// takes it for a blank. `bun lint` has a rule about it, and writes the text back.
@@ -717,6 +718,34 @@ impl Disk {
         let (mut name, mut real) = (path_buffer_pool::get(), path_buffer_pool::get());
         bun_sys::realpath(z(native, &mut name), &mut real)
             .map_or_else(|_| path.to_vec(), from_native)
+    }
+
+    /// `Provided::plugin_imports`, by `tspath.Path` like `script_kinds`. Only a file has a path.
+    pub(crate) fn take_plugin_imports(&mut self, mut imports: PluginImports) {
+        let written = |name: &[u8]| match name.starts_with(b"/") {
+            true => self.as_written(name),
+            false => name.to_vec(),
+        };
+        let key = |name: &[u8]| to_path(&written(name), self.case_sensitive).into_owned();
+        for (importer, imported) in &mut imports {
+            *importer = key(importer);
+            for import in imported {
+                import.path = match import.is {
+                    PluginImported::Source => written(&import.path),
+                    PluginImported::Loaded | PluginImported::Virtual => key(&import.path),
+                };
+            }
+        }
+        imports.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        // One file under two names.
+        imports.dedup_by(|again, first| {
+            let is_same = again.0 == first.0;
+            if is_same {
+                first.1.append(&mut again.1);
+            }
+            is_same
+        });
+        self.plugin_imports = imports;
     }
 
     /// `path`, with every name in it spelled as its directory has it. Links are not followed.
@@ -1552,8 +1581,8 @@ impl Host for Disk {
         let scripts = self.scripts_of_page.as_ref().map(|of| of(page));
         scripts.unwrap_or_default()
     }
-    fn plugin_imports(&self) -> Option<&PluginImports> {
-        (!self.plugin_imports.is_empty()).then_some(&self.plugin_imports)
+    fn plugin_imports(&self) -> &[(Vec<u8>, Vec<PluginImport>)] {
+        &self.plugin_imports
     }
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
         &self.script_kinds_by_extension

@@ -626,6 +626,15 @@ fn from_bundler(cwd: &[u8], path: &[u8]) -> Vec<u8> {
     bun_sema_driver::host::from_native(join_abs_string::<Auto>(cwd, &[path]))
 }
 
+/// What `PluginImports` has a module of the bundler by: its path in the checker's format, which
+/// begins with `/`. A module that is in no file goes by a name that no path is.
+fn name_of_module(cwd: &[u8], (namespace, path): (&[u8], &[u8])) -> Vec<u8> {
+    match namespace {
+        b"" | b"file" => from_bundler(cwd, path),
+        _ => [b"\0", namespace, b":", path].concat(),
+    }
+}
+
 /// `sources` of `bun_bundler::options::TypeCheck`. The value of a key of `files` of `Bun.build` may
 /// start with a byte order mark.
 fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -> AlreadyRead {
@@ -672,14 +681,11 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
     let is_source = |path: &&[u8]| {
         has_types_with(&by_extension, path) || script_kinds.iter().any(|it| it.0 == **path)
     };
-    // A module that is in no file goes by a name that no path is: a path begins with `/`.
-    let name_of = |(namespace, path): (&[u8], &[u8])| match namespace {
-        b"" | b"file" => from_bundler(cwd, path),
-        _ => [b"\0", namespace, b":", path].concat(),
-    };
-    let mut imports = PluginImports::default();
+    // The imports of a file follow each other.
+    let mut imports = PluginImports::new();
+    let mut importer = None;
     for import in plugin_imports {
-        let path = name_of(import.imported);
+        let path = name_of_module(cwd, import.imported);
         let is = match import.is_loaded_by_plugin {
             // The text of a file that a plugin has loaded is read from the disk, if it is there.
             true if already_read.contains_key(&path) => PluginImported::Virtual,
@@ -687,8 +693,13 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
             false if is_source(&import.imported.1) => PluginImported::Source,
             false => continue,
         };
-        let of_importer = imports.entry(name_of(import.importer)).or_default();
-        of_importer.push(PluginImport { path, is });
+        if importer != Some(import.importer) {
+            importer = Some(import.importer);
+            imports.push((name_of_module(cwd, import.importer), Vec::new()));
+        }
+        if let Some((_, of_importer)) = imports.last_mut() {
+            of_importer.push(PluginImport { path, is });
+        }
     }
     let provided = Provided {
         already_read,

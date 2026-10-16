@@ -18,9 +18,18 @@ use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::time::{Duration, Instant};
 
-/// `Host::plugin_imports`, by the `tspath.Path` of the file that imports. A module of a plugin
-/// that is in no file goes by a name that no file has.
-pub type PluginImports = FxHashMap<Vec<u8>, Vec<PluginImport>>;
+/// `Host::plugin_imports`: the `tspath.Path` of a file that imports, and what it imports. Sorted
+/// by that path. A module of a plugin that is in no file goes by a name that no file has.
+pub type PluginImports = Vec<(Vec<u8>, Vec<PluginImport>)>;
+
+/// What the file at `path` imports, in `Host::plugin_imports`.
+pub fn plugin_imports_of<'a>(
+    imports: &'a [(Vec<u8>, Vec<PluginImport>)],
+    path: &[u8],
+) -> &'a [PluginImport] {
+    let found = imports.binary_search_by(|it| it.0.as_slice().cmp(path));
+    found.map_or(&[], |at| &imports[at].1)
+}
 
 /// What the bundler has found for an import.
 pub struct PluginImport {
@@ -145,9 +154,9 @@ pub trait Host: Sync {
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;
     /// The imports that only the bundler can follow, because a plugin of it has loaded the file
     /// that imports or the file that is imported: `main.ts` imports `App.svelte`, which imports
-    /// `lib.ts`. A file refers to what such a file imports. `None`: there is no such import.
-    fn plugin_imports(&self) -> Option<&PluginImports> {
-        None
+    /// `lib.ts`. A file refers to what such a file imports. See `plugin_imports_of`.
+    fn plugin_imports(&self) -> &[(Vec<u8>, Vec<PluginImport>)] {
+        &[]
     }
     /// Several programs are about to be loaded: from here on there is a `shared_file` for a
     /// declaration file. `variants`: a bit for each `variant_of_files` that more than one of them

@@ -3537,7 +3537,10 @@ impl<'a> Resolver<'a> {
             let dir_entries_ptr = match in_place {
                 Some(p) => {
                     // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
-                    unsafe { *p = new_entry };
+                    unsafe {
+                        new_entry.inherit_case_verdict(&*p);
+                        *p = new_entry;
+                    }
                     p
                 }
                 None => bun_core::heap::into_raw(Box::new(new_entry)),
@@ -4732,7 +4735,10 @@ impl<'a> Resolver<'a> {
                 let dir_entries_ptr = match in_place {
                     Some(p) => {
                         // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
-                        unsafe { *p = new_entry };
+                        unsafe {
+                            new_entry.inherit_case_verdict(&*p);
+                            *p = new_entry;
+                        }
                         p
                     }
                     None => bun_core::heap::into_raw(Box::new(new_entry)),

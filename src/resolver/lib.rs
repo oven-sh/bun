@@ -1496,10 +1496,12 @@ pub mod fs {
                     let prev = Some(unsafe { &mut (*e_ptr).data });
                     match self.readdir(false, prev, dir, generation, handle, ()) {
                         Ok(new_entry) => {
-                            // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
                             // SAFETY: see above — slot is exclusively owned here.
-                            unsafe { *e_ptr = new_entry };
+                            unsafe {
+                                new_entry.inherit_case_verdict(&*e_ptr);
+                                (*e_ptr).data.clear();
+                                *e_ptr = new_entry;
+                            }
                         }
                         Err(err) => {
                             // SAFETY: see above.
@@ -2325,17 +2327,17 @@ pub fn case_near_miss(specifier: &[u8], source_dir: &[u8]) -> Option<Vec<u8>> {
         || specifier.starts_with(b"../")
         || bun_paths::Platform::AUTO.is_absolute(specifier))
         || bun_paths::Platform::AUTO.is_separator(*specifier.last()?)
+        || !bun_paths::Platform::AUTO.is_absolute(source_dir)
         || !fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Acquire)
-        || source_dir.len().saturating_add(specifier.len()) >= bun_paths::MAX_PATH_BYTES
     {
         return None;
     }
     let mut buf = bun_paths::path_buffer_pool::get();
-    let target = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+    let target = bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
         source_dir,
         &mut buf[..],
         &[specifier],
-    );
+    )?;
     let target_dir =
         bun_paths::strings::paths::without_trailing_slash_windows_path(bun_paths::dirname(target)?);
     let target_base = bun_paths::basename(target);

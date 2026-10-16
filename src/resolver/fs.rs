@@ -788,21 +788,31 @@ impl DirEntry {
 
     #[cfg(not(windows))]
     fn probe_case_verdict(&self, query: &[u8], candidate: *mut Entry) -> CaseVerdict {
-        let queried = match self.lstat_in_dir(query) {
-            Ok(st) => st,
-            Err(bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => return CaseVerdict::Exact,
-            Err(_) => return CaseVerdict::Unknown,
-        };
         // SAFETY: as in `pick_case`.
-        match self.lstat_in_dir(unsafe { (*candidate).base() }) {
-            Ok(st) if st.st_dev == queried.st_dev && st.st_ino == queried.st_ino => {
-                CaseVerdict::Folds
-            }
+        let Ok(listed) = self.lstat_in_dir(unsafe { (*candidate).base() }) else {
+            // The listing is stale; nothing can be learned from it.
+            return CaseVerdict::Unknown;
+        };
+        match self.lstat_in_dir(query) {
+            Ok(queried) if Self::same_file(&listed, &queried) => CaseVerdict::Folds,
             // A distinct file under `query`: the listing is stale, and the
             // filesystem provably tells the two spellings apart.
             Ok(_) => CaseVerdict::Exact,
+            Err(bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => CaseVerdict::Exact,
             Err(_) => CaseVerdict::Unknown,
         }
+    }
+
+    /// Some folding mounts hand every name its own inode (cifs `noserverino`,
+    /// FUSE without `use_ino`), so the metadata is compared too.
+    #[cfg(not(windows))]
+    fn same_file(a: &bun_sys::Stat, b: &bun_sys::Stat) -> bool {
+        a.st_dev == b.st_dev
+            && (a.st_ino == b.st_ino
+                || (a.st_size == b.st_size
+                    && a.st_mode == b.st_mode
+                    && a.st_mtime == b.st_mtime
+                    && a.st_mtime_nsec == b.st_mtime_nsec))
     }
 
     #[cfg(not(windows))]

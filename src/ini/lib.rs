@@ -1129,7 +1129,7 @@ mod draft {
                     // Frees the file before the next one is read.
                     sources.pop();
                     if warns && let Some(reason) = log.msgs.first() {
-                        warn_ignored(bstr::BStr::new(&reason.data.text), npmrc_path);
+                        warn_ignored(&bstr::BStr::new(&reason.data.text), npmrc_path);
                     }
                     log.reset();
                     unreadable.get_or_insert(npmrc_path);
@@ -1145,7 +1145,8 @@ mod draft {
     }
 
     /// For a `.npmrc` that is there and supplies nothing.
-    fn warn_ignored(reason: impl fmt::Display, npmrc_path: &ZStr) {
+    #[cold]
+    fn warn_ignored(reason: &dyn fmt::Display, npmrc_path: &ZStr) {
         bun_core::warn!(
             "{}\nignoring registry and auth settings in <b>{}<r>",
             reason,

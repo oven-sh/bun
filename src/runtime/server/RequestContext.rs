@@ -4355,9 +4355,12 @@ where
             });
 
             // Pre-stream backpressure; resumed by `on_stream_drained` / `on_start_buffering`.
-            if !this.flags.request_body_buffer_all()
-                && this.request_body_buf.get().len() >= REQUEST_BODY_HIGH_WATER_MARK
-            {
+            let mark = if MUX {
+                MUX_REQUEST_BODY_HIGH_WATER_MARK
+            } else {
+                REQUEST_BODY_HIGH_WATER_MARK
+            };
+            if !this.flags.request_body_buffer_all() && this.request_body_buf.get().len() >= mark {
                 this.pause_request_body_socket();
             }
         }
@@ -4560,6 +4563,10 @@ const MUX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 64 * 1024;
 
 /// Pause socket reads at this many unconsumed request-body bytes (two 512 KB uWS recv buffers).
 const REQUEST_BODY_HIGH_WATER_MARK: usize = 1024 * 1024;
+/// The same, before a handler asks for the body on a multiplexed connection. An HTTP/3 pause
+/// stops the stream's flow-control limit where it is, and lsquic first moves that limit when
+/// half of the 1 MiB window is read. Under that half, an unread upload parks one window at most.
+const MUX_REQUEST_BODY_HIGH_WATER_MARK: usize = 256 * 1024;
 
 // ─── per-monomorphization C-ABI exports ──────────────────────────────────────
 // The exported symbol name is "Bun__HTTPRequestContext" + (debug ? "Debug" : "")

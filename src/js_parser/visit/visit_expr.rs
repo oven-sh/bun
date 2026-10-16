@@ -1869,6 +1869,79 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.should_fold_typescript_constant_expressions =
             prev_should_fold_typescript_constant_expressions;
     }
+    /// `console.log.bind(console)` does not call the dropped function. It makes a function that
+    /// the program calls later, so it becomes `() => {}` where a dropped call becomes `undefined`.
+    #[cold]
+    #[inline(never)]
+    fn replace_bind_of_dropped_function(p: &mut Self, e: &mut Expr) -> bool {
+        let Data::ECall(mut call) = e.data else {
+            return false;
+        };
+        if !Self::is_bind_of_dropped_function(p, call.target) {
+            return false;
+        }
+        // The arguments go away with the call. They are still visited, because the visit has to
+        // enter every scope in the order the parser made them.
+        let old_is_control_flow_dead = p.is_control_flow_dead;
+        p.is_control_flow_dead = true;
+        for arg in call.args.slice_mut() {
+            p.visit_expr(arg);
+        }
+        p.is_control_flow_dead = old_is_control_flow_dead;
+        *e = p.new_expr(E::Arrow::NOOP_RETURN_UNDEFINED, e.loc);
+        true
+    }
+    /// Whether the visited `callee` is `<dropped>.method.bind`. Read from the drop list and not
+    /// from the flag alone: `import.meta.hot` raises the same flag with no drop list.
+    fn is_bind_of_dropped_function(p: &mut Self, callee: Expr) -> bool {
+        let Data::EDot(bind) = callee.data else {
+            return false;
+        };
+        // `Mousetrap.bind(key, fn)` calls a dropped method: under `--drop=Mousetrap` the receiver
+        // is the dropped name, and under `--drop=Mousetrap.bind` the callee is.
+        if bind.name != b"bind"
+            || !matches!(bind.target.data, Data::EDot(..))
+            || Self::is_dropped_dot(p, callee)
+        {
+            return false;
+        }
+        let mut receiver = bind.target;
+        loop {
+            match receiver.data {
+                Data::EDot(dot) => {
+                    if Self::is_dropped_dot(p, receiver) {
+                        return true;
+                    }
+                    receiver = dot.target;
+                }
+                Data::EIdentifier(id) => {
+                    let name = p.load_name_from_ref(id.ref_);
+                    return p.symbols[id.ref_.inner_index() as usize].kind
+                        == js_ast::symbol::Kind::Unbound
+                        && !id.must_keep_due_to_with_stmt()
+                        && p.define.for_identifier(name).is_some_and(|define| {
+                            define.method_call_must_be_replaced_with_undefined()
+                        });
+                }
+                _ => return false,
+            }
+        }
+    }
+    fn is_dropped_dot(p: &mut Self, expr: Expr) -> bool {
+        let Data::EDot(dot) = expr.data else {
+            return false;
+        };
+        let defines = p.define;
+        let Some(candidates) = defines.dots_for(dot.name.slice()) else {
+            return false;
+        };
+        for define in candidates.as_slice() {
+            if p.is_dot_define_match(expr, &define.parts) {
+                return define.data.method_call_must_be_replaced_with_undefined();
+            }
+        }
+        false
+    }
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
@@ -2117,6 +2190,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if method_call_should_be_replaced_with_undefined {
                 p.method_call_must_be_replaced_with_undefined = false;
                 match &e_.target.data {
+                    Data::EDot(dot)
+                        if dot.name == b"bind" && Self::replace_bind_of_dropped_function(p, e) =>
+                    {
+                        p.options.ignore_dce_annotations = old_ce;
+                        p.should_fold_typescript_constant_expressions =
+                            old_should_fold_typescript_constant_expressions;
+                        return;
+                    }
                     // If we're removing this call, don't count any arguments as symbol uses
                     Data::EIndex(..) | Data::EDot(..) | Data::EIdentifier(..) => {
                         p.is_control_flow_dead = true;

@@ -119,3 +119,32 @@ test.concurrent("Bun.serve({ app }) frees the bundler plugin when the config is 
   expect(stdout).toBe("leaked plugins: 0\n");
   expect(exitCode).toBe(0);
 });
+
+test.concurrent("Bun.serve({ app }) skips the directories in fileSystemRouterTypes[].ignoreDirs", async () => {
+  using dir = tempDir("bake-app-ignore-dirs", {
+    "server.ts": `export function render() { return new Response("ok"); }`,
+    "routes/index.ts": `export default 1;`,
+    // Both routes are invalid. Only the one outside ignoreDirs is scanned and reported.
+    "routes/skipped/[].ts": `export default 1;`,
+    "routes/scanned/[].ts": `export default 1;`,
+    "fixture.ts": `
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", ignoreDirs: ["skipped"] };
+      Bun.serve({ port: 0, development: true, app: { framework: { fileSystemRouterTypes: [fsr] } } }).stop(true);
+      console.log("started");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("scanned/[].ts");
+  expect(stderr).not.toContain("skipped/[].ts");
+  expect(stdout).toBe("started\n");
+  expect(exitCode).toBe(0);
+});

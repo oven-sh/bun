@@ -188,8 +188,7 @@ new!(pub NODE_DISABLE_COMPILE_CACHE: string, "NODE_DISABLE_COMPILE_CACHE", {});
 // Set by `bunx` for the `bun add` it spawns, to the directory that `bun add` installs into.
 // A command that inherits it but runs in any other directory ignores it.
 new!(pub BUN_INTERNAL_BUNX_INSTALL: string, "BUN_INTERNAL_BUNX_INSTALL", {});
-// Set by `bunx` with `BUN_INTERNAL_BUNX_INSTALL`: the directory of the project that `bunx` runs in.
-// The `bun add` takes the registries of that project's bunfig.toml and .npmrc.
+// Set by `bunx` with the one above: the project whose registries that `bun add` also reads.
 new!(pub BUN_INTERNAL_BUNX_PROJECT: string, "BUN_INTERNAL_BUNX_PROJECT", {});
 // Set by `bun run` for a script named `check`, `lint` or `format`: the packages whose script of that
 // name is running. In those, `bun check` is the type checker and not the script again.

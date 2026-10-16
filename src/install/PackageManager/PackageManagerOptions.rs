@@ -693,8 +693,7 @@ impl Options {
         // Runtime auto-install only: the bunfig.toml files of the project's other folders. The first
         // has the ones that `bun_install_ref` overrides, the second the ones that override it.
         runtime_bunfigs: [Option<&Api::BunInstall>; 2],
-        // What expands `$VAR` in the registries of the config files, if not `env`. For the install
-        // that `bunx` spawns: `env` and the `.env` files of the project, which set nothing else.
+        // `bunx`: expands `$VAR` in config registries, as `env` plus the project's `.env` files.
         mut config_env: Option<&mut DotEnvLoader>,
         subcommand: Subcommand,
     ) -> crate::Result<()> {

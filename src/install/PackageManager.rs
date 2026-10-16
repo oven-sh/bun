@@ -1939,9 +1939,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     );
 }
 
-/// What the install of a `bunx` tool takes from the bunfig.toml or the .npmrc of the project that
-/// `bunx` runs in: where packages come from, and what checks them. The other settings of `project`
-/// are about the project's own `node_modules`, so they are `user`'s.
+/// For a `bunx` install: `project`'s registries and package checks. The rest is `user`'s.
 fn of_project_for_bunx(project: Api::BunInstall, user: Api::BunInstall) -> Api::BunInstall {
     let Api::BunInstall {
         default_registry,
@@ -1994,10 +1992,7 @@ fn of_project_for_bunx(project: Api::BunInstall, user: Api::BunInstall) -> Api::
     }
 }
 
-/// For `bunx`, which names the directory that it installs a tool into after what decides the
-/// packages in it. Returns a hash of the registries, the minimum release age and the security
-/// scanner that the bunfig.toml and the .npmrc of `project` set, or `None` if they set none of
-/// them. `Err` holds the path of the file that cannot be read or parsed.
+/// Hashes what `project`'s config decides about a `bunx` tree's packages. `Err`: an unusable file.
 pub fn bunx_project_key(env: &dot_env::Loader, project: &[u8]) -> Result<Option<u64>, Box<[u8]>> {
     let bunfig = ::bun_bunfig::arguments::load_install_section(project)?
         .map_or_else(Api::BunInstall::default, |bunfig| *bunfig);
@@ -2016,8 +2011,7 @@ pub fn bunx_project_key(env: &dot_env::Loader, project: &[u8]) -> Result<Option<
         return Err(unreadable.as_bytes().into());
     }
 
-    // The two files are kept apart: the user's bunfig.toml overrides the project's .npmrc, but not
-    // the project's bunfig.toml.
+    // Per file: the user's bunfig.toml overrides the project's .npmrc, not its bunfig.toml.
     let mut settings: Vec<u8> = Vec::new();
     for (file, config) in [(b'n', npmrc), (b'b', bunfig)] {
         let config = of_project_for_bunx(config, Api::BunInstall::default());
@@ -2049,8 +2043,7 @@ pub fn bunx_project_key(env: &dot_env::Loader, project: &[u8]) -> Result<Option<
     Ok((!settings.is_empty()).then(|| bun_wyhash::hash(&settings)))
 }
 
-/// The .npmrc of `project`, the project that `bunx` runs in. `None` in the home directory: the
-/// .npmrc there is the user's own, which every install reads.
+/// `project`'s .npmrc. `None` in the home directory, where that file is the user's own.
 fn npmrc_of_bunx_project<'a>(project: &[u8], buf: &'a mut PathBuffer) -> Option<&'a ZStr> {
     let home = bun_core::env_var::HOME
         .get()
@@ -2065,8 +2058,7 @@ fn npmrc_of_bunx_project<'a>(project: &[u8], buf: &'a mut PathBuffer) -> Option<
     )
 }
 
-/// The set of default `.env` files that an install reads. It follows `BUN_ENV` / `NODE_ENV` like
-/// `bun run`, but defaults to the production set.
+/// Follows `BUN_ENV` / `NODE_ENV` like `bun run`, but defaults to the production set.
 fn env_file_suffix(env: &dot_env::Loader) -> dot_env::DotEnvFileSuffix {
     match env.get_node_env() {
         Some(b"development") => dot_env::DotEnvFileSuffix::Development,
@@ -2946,8 +2938,7 @@ pub fn init(
 
     initialize_store();
 
-    // `bunx` installs a tool for the project that it runs in: the registries of that project's
-    // bunfig.toml and .npmrc apply. The project's `.env` files only expand `$VAR` in the two.
+    // For `bunx`: the project's registries apply, and its `.env` files only expand `$VAR` in them.
     let bunx_project = run_tasks::bunx_project();
     let mut bunx_project_env: Option<dot_env::Loader> = None;
 
@@ -2996,8 +2987,7 @@ pub fn init(
             &mut ctx.unreadable_config,
         );
         if npmrc_of_project.is_some() {
-            // The lines of every .npmrc collapse into one map, so the project's file is read with
-            // the user's. What it must not set is read again without it.
+            // Every .npmrc collapses into one map: what the project may not set is read again.
             let user = load_npmrc_files(
                 &bunfig_install,
                 env,

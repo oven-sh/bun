@@ -625,8 +625,7 @@ impl Loader {
         Ok(())
     }
 
-    /// Loads the default `.env` files of the directory `dir_handle`, which `dir` lists. It is for
-    /// a directory that is not the working directory, and it prints nothing.
+    /// The default files of [`Self::load`], for a directory that is not the working directory.
     pub fn load_default_files_of<D: DirEntryProbe + ?Sized>(
         &mut self,
         dir_handle: bun_sys::Fd,

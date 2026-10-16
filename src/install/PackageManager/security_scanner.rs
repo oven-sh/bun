@@ -674,8 +674,7 @@ fn build_package_json(
 // scanner-entry.d.ts is NOT included in the build (type definitions only)
 const SCANNER_ENTRY_SOURCE: &[u8] = include_bytes!("./scanner-entry.ts");
 
-/// Where the scanner runs, and where its module is looked up from: the project. For the install
-/// that `bunx` spawns, that is the project `bunx` runs in, not the directory of the tool.
+/// The project directory. For `bunx`, the project that it runs in, not the tool's directory.
 fn scanner_cwd() -> &'static [u8] {
     crate::package_manager_real::run_tasks::bunx_project()
         .unwrap_or_else(|| FileSystem::instance().top_level_dir())
@@ -718,8 +717,7 @@ fn attempt_security_scan(
 
     // After a partial install, the package might exist but not be in the lockfile yet
     // In that case, we'll get null here but should still try to run the scanner
-    // `bunx <scanner>`: the scanner that checks the install is the project's, not the copy that is
-    // being installed.
+    // `bunx <scanner>` is not checked by the copy that it installs.
     let security_scanner_pkg_id = finder
         .find_in_root_dependencies()
         .filter(|_| crate::package_manager_real::run_tasks::bunx_project().is_none());

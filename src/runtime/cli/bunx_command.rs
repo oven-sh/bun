@@ -553,8 +553,7 @@ impl BunxCommand {
         Some([RealFS::platform_temp_dir(), prefix.as_bytes(), package_fmt].concat())
     }
 
-    /// Whether `dir` has a bunfig.toml or an .npmrc, by its listing. The resolver has the listing of
-    /// the working directory and of every directory above it, so this reads nothing for them.
+    /// Whether `dir` lists a bunfig.toml or an .npmrc. The resolver has read the cwd's ancestors.
     fn has_install_config(transpiler: &mut Transpiler, dir: &[u8]) -> bool {
         let Ok(Some(info)) = transpiler.resolver.read_dir_info(dir) else {
             return true;
@@ -939,9 +938,7 @@ impl BunxCommand {
             }
         }
 
-        // The install takes the registries of the project's bunfig.toml and .npmrc. A package's own
-        // script in `node_modules`, or the node-gyp that `bun install` runs for one, is not a
-        // command of the project.
+        // Not the project's command: a script in `node_modules`, the node-gyp of `bun install`.
         let project_of_install = (ignore_cwd.is_empty()
             && !strings::contains(top_level_dir, bun_paths::NODE_MODULES_NEEDLE))
         .then_some(project);

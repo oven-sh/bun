@@ -50,7 +50,7 @@ static void setUpWritableStreamDefaultControllerBeforeStart(JSC::VM& vm, JSGloba
     }
 
     auto* domGlobalObject = defaultGlobalObject(globalObject);
-    JSValue abortController = WebCore::toJSNewlyCreated(globalObject, domGlobalObject, WebCore::AbortController::create(*domGlobalObject->scriptExecutionContext()));
+    JSValue abortController = WebCore::toJSNewlyCreated(globalObject, domGlobalObject, WebCore::AbortController::create(*domGlobalObject->currentScriptExecutionContext()));
     RETURN_IF_EXCEPTION(scope, );
     controller->m_abortController.set(vm, controller, asObject(abortController));
 

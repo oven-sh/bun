@@ -20,6 +20,7 @@
 #include "JSReadableStreamDefaultReader.h"
 #include "JSStreamsRuntime.h"
 #include "ObjectBindings.h"
+#include "VectorSizeLimit.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
@@ -359,6 +360,11 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
     // the write pass below never re-reads the array or re-encodes.
     MarkedArgumentBuffer values;
     WTF::Vector<std::pair<WTF::String, size_t>, 16> stringChunks;
+    // Script picks the chunk count here and the byte total below, so both reserves are fallible.
+    if (length > Bun::maxVectorSize<std::pair<WTF::String, size_t>>() || !stringChunks.tryReserveCapacity(length)) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
     bool anyString = false;
     WTF::CheckedSize total = 0;
     for (unsigned i = 0; i < length; i++) {
@@ -399,13 +405,15 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
         return {};
     }
     WTF::Vector<uint8_t> bytes;
-    bytes.reserveInitialCapacity(total.value());
-    for (unsigned i = 0; i < length; i++) {
+    bool appended = bytes.tryReserveInitialCapacity(total.value());
+    for (unsigned i = 0; appended && i < length; i++) {
         auto& [string, stringByteLength] = stringChunks[i];
         if (!string.isNull()) {
             if (stringByteLength) {
                 size_t oldSize = bytes.size();
-                bytes.grow(oldSize + stringByteLength);
+                appended = bytes.tryGrow(oldSize + stringByteLength);
+                if (!appended) [[unlikely]]
+                    break;
                 size_t written = writeUTF8WithReplacement(string, bytes.mutableSpan().subspan(oldSize));
                 // The sizer and writer must agree; never expose ungrown (uninitialized) bytes.
                 ASSERT(written == stringByteLength);
@@ -417,11 +425,15 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
         JSValue chunk = values.at(i);
         if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
             if (!view->isDetached())
-                bytes.append(view->span());
+                appended = bytes.tryAppend(view->span());
         } else if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
             if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached())
-                bytes.append(impl->span());
+                appended = bytes.tryAppend(impl->span());
         }
+    }
+    if (!appended) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
     }
     if (asUint8Array) {
         // Buffer-backed from birth: a later `.buffer` access never has to change modes.
@@ -632,6 +644,18 @@ static JSObject* createAlreadyUsedError(JSGlobalObject* globalObject)
     return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: ReadableStream has already been used"_s);
 }
 
+// nullptr when usable. A stream a Body drained is locked too, but "already used" is what happened to it.
+static JSObject* unusableStreamError(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream)
+{
+    if (stream->m_consumedAsBody)
+        return createAlreadyUsedError(globalObject);
+    if (isReadableStreamLocked(stream))
+        return createLockedError(globalObject);
+    if (stream->m_disturbed)
+        return createAlreadyUsedError(globalObject);
+    return nullptr;
+}
+
 // The one shared `BunTextAccumulator` write arm (createTextStream.write, RSI:1411-1441).
 static JSValue textAccumulatorWrite(JSC::VM& vm, JSGlobalObject* globalObject, JSC::JSObject* owner, BunTextAccumulator& accumulator, JSValue chunk)
 {
@@ -667,12 +691,16 @@ static JSValue textAccumulatorWrite(JSC::VM& vm, JSGlobalObject* globalObject, J
         if (accumulator.rope.length()) {
             flushedRope = jsString(vm, accumulator.rope.toString());
             RETURN_IF_EXCEPTION(scope, {});
-            accumulator.rope.clear();
         }
-        WTF::Locker locker { owner->cellLock() };
-        if (flushedRope)
-            accumulator.pieces.append(JSC::WriteBarrier<JSC::Unknown>(vm, owner, flushedRope));
-        accumulator.pieces.append(JSC::WriteBarrier<JSC::Unknown>(vm, owner, chunk));
+        bool appended;
+        {
+            WTF::Locker locker { owner->cellLock() };
+            appended = accumulator.tryAppendPieces(locker, vm, owner, flushedRope, chunk);
+        }
+        if (!appended) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
     }
     accumulator.estimatedLength += byteLength;
     return jsNumber(static_cast<double>(byteLength));
@@ -1072,7 +1100,9 @@ JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::
     // The boundary into the direct source's pull(): its completion is converted here — a synchronous
     // throw errors the stream and rejects the returned promise; a returned promise's rejection is
     // handled by its reaction.
+    sink->m_insidePullCall = true;
     JSValue firstPull = oneShotCallPull(vm, globalObject, source, sink);
+    sink->m_insidePullCall = false;
     if (JSC::Exception* exception = scope.exception()) {
         TRY_CLEAR_EXCEPTION(scope, {});
         stream->m_lockedWithoutReader = false;
@@ -1081,14 +1111,17 @@ JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::
             readableStreamError(globalObject, stream, exception->value());
             RETURN_IF_EXCEPTION(scope, {});
         }
+        // The throw is the result. A close(error) before it rejected the capability, which nobody gets now.
+        markPromiseAsHandled(vm, capability);
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, exception->value()));
     }
     if (auto* pullPromise = dynamicDowncast<JSPromise>(firstPull)) {
-        auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
-        pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onConsumeDirectToArrayBufferPullFulfilled(), runtime->onConsumeDirectToArrayBufferPullRejected(), derived, sink);
-        return derived;
+        // The caller holds the capability that close()/end() settle, so it does not wait for a pull() that outlives them. The reactions settle it only when pull() settles first.
+        pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onConsumeDirectToArrayBufferPullFulfilled(), runtime->onConsumeDirectToArrayBufferPullRejected(), jsUndefined(), sink);
+        if (capability->status() == JSPromise::Status::Pending)
+            return capability;
     }
-    // A synchronous (non-promise) producer: close the stream and return the capability.
+    // A synchronous (non-promise) producer, or a result that close()/end() settled inside the pull() call: close the stream and return the capability.
     stream->m_lockedWithoutReader = false;
     readableStreamCloseIfPossible(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1103,10 +1136,8 @@ JSValue readableStreamToText(JSGlobalObject* globalObject, WebCore::JSReadableSt
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (stream->m_bunMode == BunStreamMode::DirectPending)
         RELEASE_AND_RETURN(scope, readableStreamToTextDirect(globalObject, stream));
-    if (isReadableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
-    if (stream->m_disturbed)
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createAlreadyUsedError(globalObject)));
+    if (auto* error = unusableStreamError(globalObject, stream))
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
     JSValue fastPath = tryUseReadableStreamBufferedFastPath(globalObject, stream, builtinNames(vm).textPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     if (fastPath)
@@ -1120,10 +1151,8 @@ JSValue readableStreamToArray(JSGlobalObject* globalObject, WebCore::JSReadableS
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (stream->m_bunMode == BunStreamMode::DirectPending)
         RELEASE_AND_RETURN(scope, readableStreamToArrayDirect(globalObject, stream));
-    if (isReadableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
-    if (stream->m_disturbed)
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createAlreadyUsedError(globalObject)));
+    if (auto* error = unusableStreamError(globalObject, stream))
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
     RELEASE_AND_RETURN(scope, readableStreamIntoArray(globalObject, stream));
 }
 
@@ -1197,10 +1226,8 @@ JSValue readableStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::JSRea
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (stream->m_bunMode == BunStreamMode::DirectPending)
         RELEASE_AND_RETURN(scope, consumeDirectStreamToArrayBuffer(globalObject, stream, /* asUint8Array */ false));
-    if (isReadableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
-    if (stream->m_disturbed)
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createAlreadyUsedError(globalObject)));
+    if (auto* error = unusableStreamError(globalObject, stream))
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
     JSValue fastPath = tryUseReadableStreamBufferedFastPath(globalObject, stream, builtinNames(vm).arrayBufferPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     if (fastPath)
@@ -1216,10 +1243,8 @@ JSValue readableStreamToBytes(JSGlobalObject* globalObject, WebCore::JSReadableS
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (stream->m_bunMode == BunStreamMode::DirectPending)
         RELEASE_AND_RETURN(scope, consumeDirectStreamToArrayBuffer(globalObject, stream, /* asUint8Array */ true));
-    if (isReadableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
-    if (stream->m_disturbed)
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createAlreadyUsedError(globalObject)));
+    if (auto* error = unusableStreamError(globalObject, stream))
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
     JSValue fastPath = tryUseReadableStreamBufferedFastPath(globalObject, stream, builtinNames(vm).bytesPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     if (fastPath)
@@ -1233,10 +1258,8 @@ JSValue readableStreamToJSON(JSGlobalObject* globalObject, WebCore::JSReadableSt
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (isReadableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
-    if (stream->m_disturbed)
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createAlreadyUsedError(globalObject)));
+    if (auto* error = unusableStreamError(globalObject, stream))
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
     JSValue fastPath = tryUseReadableStreamBufferedFastPath(globalObject, stream, builtinNames(vm).jsonPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     if (fastPath)
@@ -1269,10 +1292,8 @@ JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableSt
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (isReadableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
-    if (stream->m_disturbed)
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createAlreadyUsedError(globalObject)));
+    if (auto* error = unusableStreamError(globalObject, stream))
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
     JSValue fastPath = tryUseReadableStreamBufferedFastPath(globalObject, stream, builtinNames(vm).blobPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     if (fastPath)
@@ -1294,10 +1315,8 @@ JSValue readableStreamToFormData(JSGlobalObject* globalObject, WebCore::JSReadab
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (isReadableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
-    if (stream->m_disturbed)
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createAlreadyUsedError(globalObject)));
+    if (auto* error = unusableStreamError(globalObject, stream))
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
     JSValue blobResult = readableStreamToBlob(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
     auto* blobPromise = dynamicDowncast<JSPromise>(blobResult);
@@ -1660,56 +1679,55 @@ static void oneShotDirectClose(JSC::VM& vm, JSGlobalObject* globalObject, JSOneS
         capability->reject(vm, reason);
         return;
     }
+    // The stream is over here, not when pull() settles.
+    if (auto* stream = sink->stream(); stream && !sink->m_insidePullCall) {
+        stream->m_lockedWithoutReader = false;
+        Bun::WebStreams::readableStreamCloseIfPossible(globalObject, stream);
+        RETURN_IF_EXCEPTION(scope, );
+    }
     capability->fulfill(vm, endResult);
+}
+
+// pull() failed: the stream errors and the consumer rejects, unless close()/end() already settled the result.
+static void oneShotDirectFail(JSC::VM& vm, JSGlobalObject* globalObject, JSOneShotDirectSink* sink, JSValue error)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* capability = sink->capabilityPromise();
+    if (!capability || capability->status() != JSPromise::Status::Pending)
+        return;
+    if (auto* stream = sink->stream()) {
+        stream->m_lockedWithoutReader = false;
+        if (stream->m_state == ReadableStreamState::Readable) {
+            Bun::WebStreams::readableStreamError(globalObject, stream, error);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+    }
+    capability->reject(vm, error);
 }
 
 // pull() runs once here: its promise resolving without close()/end() is the end of the body.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onConsumeDirectToArrayBufferPullFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* sink = uncheckedDowncast<JSOneShotDirectSink>(callFrame->uncheckedArgument(1));
-    auto* stream = sink->stream();
-    oneShotDirectClose(vm, globalObject, sink, jsUndefined());
-    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
-        TRY_CLEAR_EXCEPTION(scope, {});
-        if (stream) {
+    return enterStreams(globalObject, [&] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        oneShotDirectClose(vm, globalObject, sink, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, );
+        if (auto* stream = sink->stream()) {
             stream->m_lockedWithoutReader = false;
-            if (stream->m_state == ReadableStreamState::Readable) {
-                Bun::WebStreams::readableStreamError(globalObject, stream, exception->value());
-                RETURN_IF_EXCEPTION(scope, {});
-            }
-        }
-        throwException(globalObject, scope, exception->value());
-        return {};
-    }
-    if (stream) {
-        stream->m_lockedWithoutReader = false;
-        Bun::WebStreams::readableStreamCloseIfPossible(globalObject, stream);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-    return JSValue::encode(sink->capabilityPromise());
+            RELEASE_AND_RETURN(scope, readableStreamCloseIfPossible(globalObject, stream));
+        } }, [&](JSValue error) { oneShotDirectFail(vm, globalObject, sink, error); });
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onConsumeDirectToArrayBufferPullRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    const auto* sink = uncheckedDowncast<JSOneShotDirectSink>(callFrame->uncheckedArgument(1));
-    JSValue error = callFrame->argument(0);
-    // close()/end() already settled the result; a rejection after that has nothing left to fail.
-    if (sink->m_closed)
-        return JSValue::encode(sink->capabilityPromise());
-    auto* stream = sink->stream();
-    if (stream) {
-        stream->m_lockedWithoutReader = false;
-        if (stream->m_state == ReadableStreamState::Readable) {
-            Bun::WebStreams::readableStreamError(globalObject, stream, error);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-    }
-    throwException(globalObject, scope, error);
-    return {};
+    auto* sink = uncheckedDowncast<JSOneShotDirectSink>(callFrame->uncheckedArgument(1));
+    oneShotDirectFail(vm, globalObject, sink, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
 }
 
 // [bound-convention] targets (FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_ONE_SHOT).

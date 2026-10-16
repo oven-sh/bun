@@ -1,13 +1,14 @@
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import http from "node:http";
+import type { AddressInfo } from "node:net";
 const { expect } = createTest(import.meta.path);
 
 await using server = http.createServer((req, res) => {
   res.end(JSON.stringify(req.headers));
 });
 await once(server.listen(0), "listening");
-const url = `http://localhost:${server.address().port}`;
+const url = `http://localhost:${(server.address() as AddressInfo).port}`;
 for (let method of ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]) {
   const { promise, resolve, reject } = Promise.withResolvers();
   http

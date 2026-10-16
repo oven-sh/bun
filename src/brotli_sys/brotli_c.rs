@@ -1,6 +1,6 @@
 // TODO: prefer generating this file via bindgen
 
-#![allow(non_camel_case_types, non_snake_case)]
+#![allow(non_camel_case_types)]
 
 use core::ffi::{c_char, c_int, c_uint, c_void};
 
@@ -271,4 +271,6 @@ impl BrotliEncoder {
 
 pub const BROTLI_MIN_QUALITY: c_int = 0;
 pub const BROTLI_MAX_QUALITY: c_int = 11;
+/// `BrotliEncoderParameter::BROTLI_PARAM_QUALITY` (encode.h).
+pub const BROTLI_PARAM_QUALITY: c_uint = 1;
 pub const BROTLI_DEFAULT_WINDOW: c_int = 22;

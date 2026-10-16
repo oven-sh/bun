@@ -1,0 +1,27 @@
+{
+  "_id": "react",
+  "name": "react",
+  "dist-tags": {
+    "latest": "18.3.1"
+  },
+  "versions": {
+    "18.3.1": {
+      "name": "react",
+      "version": "18.3.1",
+      "main": "index.js",
+      "exports": {
+        ".": {
+          "react-server": "./react.shared-subset.js",
+          "default": "./index.js"
+        },
+        "./package.json": "./package.json"
+      },
+      "_id": "react@18.3.1",
+      "dist": {
+        "integrity": "sha512-hl9pUSXYSE/wN/ph2p0fR6cRS4aV7r9M05b9zJ+rF57bo0OidjEi2YfZ/DUminMYuygSVJzbkT7q0Z01xBcPoA==",
+        "shasum": "4ef9efdbb2f4625a23a5290f04966d675a2be548",
+        "tarball": "http://localhost:4873/react/-/react-18.3.1.tgz"
+      }
+    }
+  }
+}

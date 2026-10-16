@@ -612,6 +612,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         });
                     }
 
+                    // Bun writes a split `require()` as `import.meta.require("./chunk.js")`.
+                    if name == b"require"
+                        && identifier_opts.is_call_target()
+                        && p.options.bundle
+                        && !p.is_source_runtime()
+                    {
+                        return Some(Expr {
+                            data: js_ast::ExprData::ESpecial(E::Special::ImportMetaRequire(
+                                name_loc,
+                            )),
+                            loc: target.loc,
+                        });
+                    }
+
                     // Inline import.meta properties for Bake
                     if p.options.framework.is_some()
                         || (p.options.bundle

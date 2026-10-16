@@ -262,6 +262,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_top_level_return: bool,
     pub(crate) latest_return_had_semicolon: bool,
     pub(crate) has_import_meta: bool,
+    /// Set by `absorb_require_aliases`. Such a `require` does not make the file CommonJS.
+    pub(crate) require_is_from_import_meta: bool,
     pub(crate) has_es_module_syntax: bool,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
@@ -4924,7 +4926,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ///   argument). Returns the user's existing ref.
     /// - Otherwise: returns a fresh ref appended to `module_scope.generated`
     ///   (so generated code referencing it still gets a renamer-unique name)
-    ///   and leaves the user's member entry untouched.
+    ///   and leaves the user's member entry untouched ([`Self::absorb_require_aliases`] is the exception).
     ///
     /// Callers that only want to emit when the ambient was actually reached check
     /// `symbols[ref].use_count_estimate > 0` after visit: a fresh shadowed ref
@@ -4995,6 +4997,167 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // generated code may still reference the symbol).
         VecExt::append(&mut self.module_scope_mut().generated, ref_);
         Ok(ref_)
+    }
+
+    /// Reads Bun's `var {require}=import.meta;` and `var __require = import.meta.require;` as `require`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn absorb_require_aliases(&mut self, stmts: &mut [Stmt]) {
+        use js_ast::ExprData;
+        use js_ast::b::B as BindingData;
+
+        // A define of `import.meta` or `import.meta.require` replaces the initializer in the visit pass.
+        let defines = self.define;
+        let is_defined = |last: &[u8], parts: usize| {
+            defines.dots_for(last).is_some_and(|dots| {
+                dots.iter().any(|dot| {
+                    dot.parts.len() == parts
+                        && &*dot.parts[0] == b"import"
+                        && &*dot.parts[1] == b"meta"
+                })
+            })
+        };
+        if is_defined(b"meta", 2) || is_defined(b"require", 3) {
+            return;
+        }
+
+        for index in 0..stmts.len() {
+            let js_ast::StmtData::SLocal(mut local) = stmts[index].data else {
+                continue;
+            };
+            if local.kind.is_using() {
+                continue;
+            }
+            let may_absorb = !local.is_export && local.kind != js_ast::s::Kind::KLet;
+
+            let mut at = 0;
+            while at < local.decls.len() {
+                let decl = &local.decls[at];
+                // (alias, its loc, the index of `require` in the pattern of `{ require: alias } = import.meta`)
+                let found = match (decl.binding.data, decl.value.map(|value| value.data)) {
+                    (BindingData::BIdentifier(id), Some(ExprData::EDot(dot)))
+                        if dot.name == b"require"
+                            && dot.optional_chain.is_none()
+                            && matches!(dot.target.data, ExprData::EImportMeta(_)) =>
+                    {
+                        Some((id.r#ref, decl.binding.loc, None))
+                    }
+                    (BindingData::BObject(object), Some(ExprData::EImportMeta(_))) => {
+                        let properties = object.properties();
+                        // `...rest` takes `require` once it is out of the pattern.
+                        if properties
+                            .iter()
+                            .any(|property| property.flags.contains(Flags::Property::IsSpread))
+                        {
+                            None
+                        } else {
+                            properties.iter().enumerate().find_map(|(i, property)| {
+                                match (property.key.data, property.value.data) {
+                                    (ExprData::EString(key), BindingData::BIdentifier(id))
+                                        if property.flags.is_empty()
+                                            && property.default_value.is_none()
+                                            && key.eql_comptime(b"require") =>
+                                    {
+                                        Some((id.r#ref, property.value.loc, Some(i)))
+                                    }
+                                    _ => None,
+                                }
+                            })
+                        }
+                    }
+                    _ => None,
+                };
+                let Some((alias, loc, property)) = found else {
+                    at += 1;
+                    continue;
+                };
+
+                let name = self.load_name_from_ref(alias);
+                if may_absorb
+                    && self.is_only_declaration(alias, loc)
+                    && !self.is_in_export_clause(stmts, name)
+                {
+                    let mut remove_decl = true;
+                    if let (Some(i), BindingData::BObject(mut object)) =
+                        (property, local.decls[at].binding.data)
+                    {
+                        let properties = object.properties_mut();
+                        let rest = properties.len() - 1;
+                        if rest > 0 {
+                            properties[i..].rotate_left(1);
+                            let kept = js_ast::StoreSlice::new_mut(&mut properties[..rest]);
+                            object.properties = kept;
+                            remove_decl = false;
+                        }
+                    }
+                    if remove_decl {
+                        local.decls.remove(at);
+                    } else {
+                        at += 1;
+                    }
+                    let require = js_ast::scope::Member {
+                        ref_: self.require_ref,
+                        loc,
+                    };
+                    // SAFETY: `name` is the `original_name` of a symbol, which lives as long as the scope.
+                    unsafe { self.module_scope_mut().members.put(name, require) };
+                    self.require_is_from_import_meta = true;
+                    continue;
+                }
+
+                // A binding that stays still needs a value in CommonJS output, which has no `import.meta`.
+                if property.is_none()
+                    && self.options.output_format == options::Format::Cjs
+                    && self
+                        .module_scope()
+                        .members
+                        .get(b"require")
+                        .is_some_and(|member| member.ref_.eql(self.require_ref))
+                {
+                    let value_loc = local.decls[at].value.map_or(loc, |value| value.loc);
+                    let require = self.store_name_in_ref(b"require");
+                    local.decls[at].value = Some(Expr::init_identifier(require, value_loc));
+                    self.require_is_from_import_meta = true;
+                }
+                at += 1;
+            }
+
+            if local.decls.is_empty() {
+                stmts[index].data = js_ast::StmtData::SEmpty(S::Empty {});
+            }
+        }
+    }
+
+    /// Whether the binding at `loc` is the only declaration of its symbol in the module scope.
+    fn is_only_declaration(&self, r#ref: Ref, loc: bun_ast::Loc) -> bool {
+        let symbol = &self.symbols[r#ref.inner_index() as usize];
+        let name = symbol.original_name.slice();
+        // A `var` after another declaration of the name reuses that symbol, named by the source text there.
+        let made_the_symbol = usize::try_from(loc.start)
+            .ok()
+            .and_then(|start| self.source.contents.get(start..))
+            .is_some_and(|text| core::ptr::eq(text.as_ptr(), name.as_ptr()));
+        made_the_symbol
+            && !symbol.has_link()
+            // Each declaration of the name writes its own `loc` here.
+            && self
+                .module_scope()
+                .members
+                .get(name)
+                .is_some_and(|member| member.ref_.eql(r#ref) && member.loc == loc)
+            // A `var` of a nested block is hoisted by a link to this symbol.
+            && !self.symbols.iter().any(|other| other.link.get().eql(r#ref))
+    }
+
+    fn is_in_export_clause(&self, stmts: &[Stmt], name: &[u8]) -> bool {
+        stmts.iter().any(|stmt| match stmt.data {
+            js_ast::StmtData::SExportClause(clause) => clause
+                .items
+                .slice()
+                .iter()
+                .any(|item| self.load_name_from_ref(item.name.ref_) == name),
+            _ => false,
+        })
     }
 
     /// Hashed generated-symbol name; arena-owned for symbol lifetime.
@@ -9710,6 +9873,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_top_level_return: false,
             latest_return_had_semicolon: false,
             has_import_meta: false,
+            require_is_from_import_meta: false,
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,

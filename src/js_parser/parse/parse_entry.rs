@@ -1000,6 +1000,10 @@ impl<'a> Parser<'a> {
             // The bundler requires a part for generated module wrappers. This
             // part must be at the start as it is referred to by index.
             before.push(js_ast::Part::default());
+
+            if p.has_import_meta && !p.is_source_runtime() {
+                p.absorb_require_aliases(stmts);
+            }
         }
 
         // --inspect-brk
@@ -1924,9 +1928,10 @@ impl<'a> Parser<'a> {
                     }
                     // Otherwise, if they use CommonJS features its CommonJS.
                     // If you add a 'use strict'; at the top, you probably meant CommonJS because "use strict"; does nothing in ESM.
-                    else if p.symbols.as_slice()[p.require_ref.inner_index() as usize]
+                    else if (p.symbols.as_slice()[p.require_ref.inner_index() as usize]
                         .use_count_estimate
                         > 0
+                        && !p.require_is_from_import_meta)
                         || uses_dirname
                         || uses_filename
                         || (!p.options.bundle

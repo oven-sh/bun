@@ -2268,6 +2268,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return;
                     }
                 }
+                E::Special::ImportMetaRequire(name_loc) => {
+                    if Self::import_meta_require_call(p, e, name_loc) {
+                        return;
+                    }
+                }
                 _ => {}
             }
         }
@@ -2458,6 +2463,44 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
         }
+    }
+
+    /// Makes `import.meta.require("x")` a `require("x")`. Any other call gets its target back.
+    #[cold]
+    #[inline(never)] // PERF(port:frame): an `Expr` result or an `ExprIn` parameter costs every `e_call`.
+    fn import_meta_require_call(p: &mut Self, e: &mut Expr, name_loc: bun_ast::Loc) -> bool {
+        let mut call = e.data.e_call().expect("infallible: variant checked");
+        if call.optional_chain.is_none() && call.args.len_u32() == 1 {
+            let first = call.args.slice()[0];
+            let state = TransposeState::default();
+            match first.data {
+                Data::EString(..) => {
+                    *e = p.transpose_require(first, &state);
+                    return true;
+                }
+                Data::EIf(..) => {
+                    *e = p.transpose_known_to_be_if_require(first, &state);
+                    return true;
+                }
+                _ => {}
+            }
+        }
+
+        let loc = call.target.loc;
+        call.target = p.new_expr(
+            E::Dot {
+                target: Expr {
+                    data: Data::EImportMeta(E::ImportMeta {}),
+                    loc,
+                },
+                name: E::Str::new(b"require"),
+                name_loc,
+                can_be_removed_if_unused: true,
+                ..Default::default()
+            },
+            loc,
+        );
+        false
     }
 
     #[inline(never)] // PERF(port:frame): see e_jsx_element.

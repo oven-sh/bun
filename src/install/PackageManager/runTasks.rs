@@ -2260,9 +2260,9 @@ impl PackageManager {
         let committish = repository.committish.slice(buf);
         let commit = repository.resolved_commit(buf);
         let git_ref = if commit.is_empty()
-            // A package-lock.json migration has no other name for the commit.
+            // A package-lock.json migration puts the committish itself in `resolved`.
             || repository.resolved.eql(repository.committish, buf, buf)
-            // GitHub cannot resolve every 7-digit commit that it names a tarball after.
+            // The 7 digits in `resolved` can be ambiguous on GitHub (404): keep a longer sha.
             || (committish.len() > commit.len()
                 && committish.iter().all(u8::is_ascii_hexdigit)
                 && committish[..commit.len()].eq_ignore_ascii_case(commit))

@@ -1230,9 +1230,7 @@ describe.concurrent("errors", () => {
     });
 
     const { err, exitCode } = await failingInstall(packageDir);
-    expect(err).toContain(
-      'error: no-deps@catalog:tools not in catalog "tools"\n  bun add --catalog=tools no-deps\n',
-    );
+    expect(err).toContain('error: no-deps@catalog:tools not in catalog "tools"\n  bun add --catalog=tools no-deps\n');
     expect(err).toContain("error: left-pad@catalog:default not in catalog\n  bun add --catalog left-pad\n");
     expect(err).not.toContain("there is no catalog named");
     expect(exitCode).not.toBe(0);

@@ -423,7 +423,11 @@ const hostile: Hostile[] = [
     pack: Buffer.concat([packOf(pkg(evil)), Buffer.from([0])]),
     error: "trailing bytes after pack",
   },
-  { title: "a package after the end", pack: Buffer.concat([packOf(), pkg(evil), end()]), error: "trailing bytes after pack" },
+  {
+    title: "a package after the end",
+    pack: Buffer.concat([packOf(), pkg(evil), end()]),
+    error: "trailing bytes after pack",
+  },
   {
     title: "an end record with a path",
     pack: Buffer.concat([MAGIC, pkg(evil), record(END, "a")]),

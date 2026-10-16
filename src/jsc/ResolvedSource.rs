@@ -39,6 +39,8 @@ pub struct ResolvedSource {
     /// `JSC::SourceProvenance::Static`: `source_code` comes from where the program is stored or from Bun itself, not from
     /// a JavaScript value. `--disallow-code-generation-from-strings=strict` runs nothing else.
     pub is_static: bool,
+    /// Meaningful when `is_commonjs_module`.
+    pub cjs_bindings: CommonJSBindings,
 
     pub bytecode_cache: Bytecode,
     /// `Zig::SourceProvider` takes it (nulling the field).
@@ -46,6 +48,19 @@ pub struct ResolvedSource {
     /// The file path whose `file://` URL is this module's source origin (what `import()` resolves against and what a
     /// bytecode cache is validated against). Empty: derived from `source_url` (a builtin gets a `builtin://` origin).
     pub origin_path: BunString,
+}
+
+/// Where CommonJS text reads `exports`, `require`, `module`, `__filename` and `__dirname` from. C++ `CommonJSBindings`.
+#[repr(u8)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CommonJSBindings {
+    /// The text is a function expression that takes them as parameters. `import.meta` is a sixth parameter.
+    #[default]
+    WrapperParameters = 0,
+    /// The text is the `-e` / stdin program: a script that reads them as globals.
+    ScriptGlobals = 1,
+    /// `ScriptGlobals`, and the text also reads `import.meta` from a global.
+    ScriptGlobalsWithImportMeta = 2,
 }
 
 /// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; bool persistent; uint32_t entry_offset; }`
@@ -129,5 +144,5 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
     unsafe { bun_alloc::default_alloc::free(bytecode.cast()) };
 }
 
-bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, is_static @ 78, bytecode_cache @ 80, module_info @ 104);
+bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, is_static @ 78, cjs_bindings @ 79, bytecode_cache @ 80, module_info @ 104);
 bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17, entry_offset @ 20);

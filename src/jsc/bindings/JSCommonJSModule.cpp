@@ -109,7 +109,6 @@ static bool canPerformFastEnumeration(Structure* s)
     return true;
 }
 
-extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
 extern "C" void Bun__VM__noteCommonJSEvaluation(void*, EncodedJSValue);
 
@@ -172,6 +171,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     SourceCode code = WTF::move(moduleObject->sourceCode);
+    const CommonJSBindings bindings = std::exchange(moduleObject->sourceBindings, CommonJSBindings::WrapperParameters);
     if (JSModuleGraph* graph = moduleObject->moduleGraph(); graph && code.provider()) {
         RefPtr<JSC::SourceProvider> provider = GraphCommonJSSourceProvider::create(*code.provider(), graph->overlayShape());
         Zig::addCodeCoverageSourceID(vm, *provider);
@@ -220,7 +220,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         moduleObject->hasEvaluated = true;
     };
 
-    if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename))) [[unlikely]] {
+    if (bindings != CommonJSBindings::WrapperParameters) [[unlikely]] {
         initializeModuleObject();
         scope.assertNoExceptionExceptTermination();
 
@@ -233,6 +233,13 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         Bun::putDirectNamed(vm, globalObject, "module"_s, moduleObject);
         Bun::putDirectNamed(vm, globalObject, "__filename"_s, filename);
         Bun::putDirectNamed(vm, globalObject, "__dirname"_s, dirname);
+        if (bindings == CommonJSBindings::ScriptGlobalsWithImportMeta) {
+            // Node runs such a program as an ES module (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/execution.js#L438-L442). Here it keeps `require` and `module`, like a file with no module type.
+            auto* importMeta = Zig::ImportMetaObject::create(globalObject, filename);
+            RETURN_IF_EXCEPTION(scope, false);
+            importMeta->setModuleGraph(vm, moduleObject->moduleGraph());
+            globalObject->putDirect(vm, Identifier::fromString(vm, "$Bun_eval_import_meta"_s), importMeta, static_cast<unsigned>(PropertyAttribute::DontEnum));
+        }
 
         // The 3-arg JSC::evaluate overload catches the exception into a
         // discarded NakedPtr (Completion.h), so a require() failure or any
@@ -1515,7 +1522,8 @@ void JSCommonJSModule::evaluate(
 {
     auto& vm = JSC::getVM(globalObject);
 
-    if (globalObject->hasOverriddenModuleWrapper) [[unlikely]] {
+    // A script has no wrapper to replace.
+    if (globalObject->hasOverriddenModuleWrapper && source.cjs_bindings == CommonJSBindings::WrapperParameters) [[unlikely]] {
         auto string = source.source_code.transferToWTFString();
         auto trimStart = string.find('\n');
         if (trimStart != WTF::notFound) {
@@ -1538,6 +1546,7 @@ void JSCommonJSModule::evaluate(
         return;
 
     this->sourceCode = JSC::SourceCode(WTF::move(sourceProvider));
+    this->sourceBindings = source.cjs_bindings;
 
     evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
 }
@@ -1636,7 +1645,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 
-        if (globalObject->hasOverriddenModuleWrapper) [[unlikely]] {
+        // A script has no wrapper to replace.
+        if (globalObject->hasOverriddenModuleWrapper && source.cjs_bindings == CommonJSBindings::WrapperParameters) [[unlikely]] {
             auto concat = makeString(
                 globalObject->m_moduleWrapperStart,
                 source.source_code.transferToWTFString(),
@@ -1655,6 +1665,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             vm,
             globalObject->CommonJSModuleObjectStructure(),
             requireMapKey, filename, dirname, JSC::SourceCode(WTF::move(sourceProvider)), graph);
+        moduleObject->sourceBindings = source.cjs_bindings;
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),

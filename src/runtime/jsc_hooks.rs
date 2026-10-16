@@ -25,7 +25,7 @@ use core::ptr;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::module_loader::{ArenaResetGuard, FetchFlags, TranspileArgs, TranspileExtra};
-use bun_jsc::resolved_source::Bytecode;
+use bun_jsc::resolved_source::{Bytecode, CommonJSBindings};
 use bun_jsc::virtual_machine::{
     InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, SweepResult, VirtualMachine,
     WorkerExecArgvFlags,
@@ -2148,7 +2148,39 @@ fn transpile_source_code_inner(
 ) -> crate::Result<ResolvedSource> {
     let mut resolved_source = transpile_source_code_of_any_provenance(jsc_vm, args)?;
     resolved_source.is_static |= is_input_static(jsc_vm, args);
+    // SAFETY: `jsc_vm` is the live per-thread VM, per the contract of `__bun_transpile_source_code`.
+    if unsafe { (*jsc_vm).module_loader.eval_source.is_some() } {
+        set_eval_entry_point_bindings(jsc_vm, args, &mut resolved_source);
+    }
     Ok(resolved_source)
+}
+
+/// Whether the main module is the `-e` / stdin program, whose CommonJS form is printed with no wrapper function.
+fn is_eval_entry_point(vm: &VirtualMachine, is_main: bool) -> bool {
+    is_main && vm.module_loader.eval_source.is_some()
+}
+
+/// Out of line, so that a process that runs a file pays one load and one branch per transpile for it.
+#[cold]
+#[inline(never)]
+fn set_eval_entry_point_bindings(
+    jsc_vm: *mut VirtualMachine,
+    args: &TranspileArgs<'_>,
+    resolved_source: &mut ResolvedSource,
+) {
+    // SAFETY: as for `transpile_source_code_inner`: `jsc_vm` is the live per-thread VM and `extra` is live for the call.
+    let (vm, path) = unsafe { (&*jsc_vm, &(*args.extra).path) };
+    // `// @bun` text keeps the wrapper it was built with.
+    if resolved_source.is_commonjs_module
+        && !resolved_source.already_bundled
+        && is_eval_entry_point(vm, vm.main() == path.text)
+    {
+        resolved_source.cjs_bindings = if vm.module_loader.eval_entry_reads_import_meta_global {
+            CommonJSBindings::ScriptGlobalsWithImportMeta
+        } else {
+            CommonJSBindings::ScriptGlobals
+        };
+    }
 }
 
 /// Whether what is transpiled is static code (`ResolvedSource::is_static`), so that what is made of it is.
@@ -2626,11 +2658,8 @@ fn transpile_source_code_of_any_provenance(
                     } else {
                         None
                     },
-                    // Strip the CJS wrapper for the eval/stdin
-                    // entry point.
                     // SAFETY: `jsc_vm` is the live per-thread VM.
-                    remove_cjs_module_wrapper: is_main
-                        && unsafe { &*jsc_vm }.module_loader.eval_source.is_some(),
+                    remove_cjs_module_wrapper: is_eval_entry_point(unsafe { &*jsc_vm }, is_main),
                     macro_js_ctx: bun_bundler::transpiler::default_macro_js_value(),
                     replace_exports: Default::default(),
                 };
@@ -2732,6 +2761,20 @@ fn transpile_source_code_of_any_provenance(
                 if is_main && !disable_transpilying {
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     unsafe { (*jsc_vm).has_loaded = true };
+
+                    // Also before those returns: `set_eval_entry_point_bindings` reads it after any of them.
+                    let reads_import_meta_global = parse_result.ast.import_meta_ref.is_valid()
+                        // SAFETY: per fn contract, `jsc_vm` is the live per-thread VM.
+                        && is_eval_entry_point(unsafe { &*jsc_vm }, is_main);
+                    if reads_import_meta_global {
+                        // A cache hit has no AST to say this, so such text is never cached.
+                        cache.input_hash = None;
+                    }
+                    // SAFETY: per fn contract, `jsc_vm` is the live per-thread VM.
+                    unsafe {
+                        (*jsc_vm).module_loader.eval_entry_reads_import_meta_global =
+                            reads_import_meta_global;
+                    }
                 }
 
                 let source = &parse_result.source;

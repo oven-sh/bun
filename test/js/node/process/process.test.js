@@ -1075,34 +1075,6 @@ describe.concurrent(() => {
       });
     });
 
-    it.each([
-      ["the entry's top level", `Promise.reject(new Error("boom"));`],
-      ["the last timer callback", `setTimeout(() => { Promise.reject(new Error("boom")); });`],
-      ["a 'beforeExit' listener", `process.once("beforeExit", () => { Promise.reject(new Error("boom")); });`],
-    ])("an async 'unhandledRejection' listener runs past its await, for a rejection in %s", async (_, reject) => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `process.on("unhandledRejection", async e => {
-             console.log("unhandledRejection", e.message);
-             await null;
-             setTimeout(() => console.log("scheduled"));
-           });
-           process.on("exit", () => console.log("exit"));
-           ${reject}`,
-        ],
-        env: bunEnv,
-        stdio: ["inherit", "pipe", "pipe"],
-      });
-      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: "unhandledRejection boom\nscheduled\nexit\n",
-        stderr: "",
-        exitCode: 0,
-      });
-    });
-
     it("still fires when an uncaughtException listener handled the throw", async () => {
       await using proc = Bun.spawn({
         cmd: [

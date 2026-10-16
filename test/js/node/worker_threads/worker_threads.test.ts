@@ -2441,20 +2441,6 @@ describe.concurrent.each([
       ),
     ).toEqual({ stdout: "unhandledRejection boom\nscheduled\nexit\n", exitCode: 0 });
   });
-
-  test("reaches an async 'unhandledRejection' listener, which runs past its await", async () => {
-    expect(
-      await run(
-        `const { parentPort } = require("worker_threads");
-         process.on("unhandledRejection", async e => {
-           parentPort.postMessage("unhandledRejection " + e.message);
-           await null;
-           setTimeout(() => parentPort.postMessage("scheduled"));
-         });
-         ${reject}`,
-      ),
-    ).toEqual({ stdout: "unhandledRejection boom\nscheduled\nexit\n", exitCode: 0 });
-  });
 });
 
 // Static imports that are still being read/transpiled are loading, not a

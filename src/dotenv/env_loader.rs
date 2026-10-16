@@ -1289,16 +1289,30 @@ pub struct Map {
     pub map: HashTable,
 }
 
+/// A child that inherits `NODE_UNIQUE_ID` from a node:cluster worker takes itself for a worker.
+static OMIT_CLUSTER_UNIQUE_ID_FROM_CHILD_ENV: AtomicBool = AtomicBool::new(false);
+
+pub fn omit_cluster_unique_id_from_child_env() {
+    OMIT_CLUSTER_UNIQUE_ID_FROM_CHILD_ENV.store(true, Ordering::SeqCst);
+}
+
 impl Map {
     /// Builds a NULL-terminated `K=V\0` envp array. Returns an owning struct so
     /// dropping it frees the joined buffers (PORTING.md §Forbidden: no Box::leak).
     pub fn create_null_delimited_env_map(&mut self) -> Result<NullDelimitedEnvMap, AllocError> {
-        let envp_count = self.map.count();
+        let omitted = if OMIT_CLUSTER_UNIQUE_ID_FROM_CHILD_ENV.load(Ordering::SeqCst) {
+            self.map.get_index(b"NODE_UNIQUE_ID")
+        } else {
+            None
+        };
+        let envp_count = self.map.count() - usize::from(omitted.is_some());
         let mut storage: Vec<Box<[u8]>> = Vec::with_capacity(envp_count);
         let mut envp_buf: Vec<*const c_char> = Vec::with_capacity(envp_count + 1);
         {
-            let mut it = self.map.iterator();
-            while let Some(pair) = it.next() {
+            for (index, pair) in self.map.iterator().enumerate() {
+                if omitted == Some(index) {
+                    continue;
+                }
                 let klen = pair.key_ptr.len();
                 let vlen = pair.value_ptr.value.len();
                 let mut env_buf = vec![0u8; klen + vlen + 2].into_boxed_slice();

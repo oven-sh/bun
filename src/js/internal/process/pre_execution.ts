@@ -1,5 +1,5 @@
 // Pre-user-code bootstrap. Required natively from
-// VirtualMachine::reload_entry_point (via Bun__preExecutionBootstrap) when
+// VirtualMachine::reload_entry_point (via Bun__preExecutionBootstrap) for a node:cluster worker and when
 // argv contains a Node.js `--trace-*` flag, before the entry module — main
 // file, worker, or `-e` eval — is evaluated. Must stay cheap: one execArgv
 // scan, bail early when nothing applies.
@@ -222,7 +222,6 @@ function readStartupEnvVars(): void {
     "NODE_V8_COVERAGE",
     "NODE_DEBUG",
     "NODE_CHANNEL_FD",
-    "NODE_UNIQUE_ID",
     process.platform === "win32" ? "USERPROFILE" : "HOME",
     "NODE_PATH",
     "WATCH_REPORT_DEPENDENCIES",
@@ -334,5 +333,17 @@ function installExitTracing(): void {
     installEnvTracing();
   }
 }
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/pre_execution.js#L638-L645
+function initializeClusterIPC(): void {
+  if (process.argv[1] && process.env.NODE_UNIQUE_ID) {
+    const cluster = require("node:cluster") as typeof import("internal/cluster/child").default;
+    cluster._setupWorker();
+    // Make sure it's not accidentally inherited by child processes.
+    delete process.env.NODE_UNIQUE_ID;
+  }
+}
+
+if (Bun.isMainThread) initializeClusterIPC();
 
 export default {};

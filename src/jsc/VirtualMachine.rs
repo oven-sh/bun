@@ -332,6 +332,8 @@ pub struct VirtualMachine {
     /// that leaves it are taken here, and `teardown` waits on it.
     handle: core::mem::ManuallyDrop<crate::VmHandle>,
     pub pending_ipc: Option<PendingIpc>,
+    /// The process started as a `node:cluster` worker. Each entry-point funnel sets the worker up before user code.
+    pub(crate) is_cluster_worker: bool,
     pub hot_reload_counter: u32,
 
     pub debugger: Option<Box<crate::debugger::Debugger>>,
@@ -2780,6 +2782,10 @@ pub struct RuntimeHooks {
     /// (resolver failures / `ModuleNotFound`).
     pub load_preloads:
         unsafe fn(vm: *mut VirtualMachine) -> crate::CrateResult<*mut JSInternalPromise>,
+    /// Stops (`true`) or restarts the reads of the process's inherited IPC
+    /// channel, which lives in `bun_runtime::ipc_host`. See
+    /// `RuntimeTranspilerStore::has_ipc_channel`.
+    pub hold_ipc_reads: fn(hold: bool),
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
@@ -3447,7 +3453,7 @@ impl VirtualMachine {
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
 
-        // Node.js `--trace-*` and `--stack-trace-limit` flags need
+        // A `node:cluster` worker and the Node.js `--trace-*` and `--stack-trace-limit` flags need
         // `internal/process/pre_execution` to run before any user code.
         // `reload_entry_point` is the single funnel for the main entry,
         // workers, and `-e` evals, so this covers them all. Gated on a cheap
@@ -3463,7 +3469,8 @@ impl VirtualMachine {
         fn is_bootstrap_flag(arg: &[u8]) -> bool {
             arg.starts_with(b"--trace-") || arg.starts_with(b"--stack-trace-limit")
         }
-        let needs_pre_execution = bun_core::argv().into_iter().any(is_bootstrap_flag)
+        let needs_pre_execution = self.is_cluster_worker
+            || bun_core::argv().into_iter().any(is_bootstrap_flag)
             || self
                 .worker_ref()
                 .and_then(crate::web_worker::WebWorker::exec_argv)
@@ -4301,7 +4308,8 @@ impl VirtualMachine {
                         self.pending_ipc = Some(PendingIpc {
                             fd: bun_sys::Fd::from_uv(fd),
                             advanced,
-                        })
+                        });
+                        self.transpiler_store.has_ipc_channel = true;
                     }
                     None => bun_core::warn!(
                         "Failed to parse IPC channel number '{}'",
@@ -4309,6 +4317,13 @@ impl VirtualMachine {
                     ),
                 }
             }
+        }
+
+        // Not removed from the map: `process.env` and `Bun.serve` read it there.
+        if let Some(unique_id) = map.get(b"NODE_UNIQUE_ID") {
+            bun_dotenv::omit_cluster_unique_id_from_child_env();
+            // Node.js sets a worker up for a non-empty value, with or without a channel.
+            self.is_cluster_worker = self.is_main_thread() && !unique_id.is_empty();
         }
 
         // Node.js checks if this is set to "1" and no other value
@@ -5667,6 +5682,11 @@ impl VirtualMachine {
         self.event_loop_mut().ensure_waker();
 
         let _ = self.ensure_debugger(true);
+
+        // Under `--isolate` each file has a new global, so this runs once per file.
+        if self.is_cluster_worker {
+            crate::cpp::Bun__preExecutionBootstrap(self.global());
+        }
 
         if !self.transpiler.options.disable_transpilation {
             if let Some(hooks) = runtime_hooks() {

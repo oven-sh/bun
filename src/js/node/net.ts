@@ -4257,10 +4257,6 @@ function listenInCluster(
 ) {
   exclusive = !!exclusive;
 
-  // A worker's first require of node:cluster runs its bootstrap (IPC handlers, 'online'); listen() has always been one
-  // of the places that happens, exclusive or not.
-  if (!isPrimary && cluster === undefined) cluster = require("node:cluster");
-
   if (
     !isPrimary &&
     !exclusive &&
@@ -4334,6 +4330,7 @@ function listenInCluster(
     sharedOnly: tls ? true : undefined,
   };
   const listeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
+  cluster ??= require("node:cluster");
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2080-L2102
   cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle, _reply) {
     if (listeningId !== server[kClusterListeningId]) {

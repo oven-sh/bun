@@ -1033,6 +1033,10 @@ pub mod fs {
                     &iterator,
                 )?;
             }
+            // A directory that was removed is not found, as when its open fails.
+            if iter.dir_was_removed() {
+                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
+            }
 
             // debug("readdir({}, {}) = {}", handle, dir_, dir.data.count());
 

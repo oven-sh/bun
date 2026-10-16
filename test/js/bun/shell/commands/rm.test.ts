@@ -492,7 +492,7 @@ test("operands longer than the path scratch buffers are reported, not a crash", 
 // deterministic, so `removedDirReaddir` preloads a shim that plays the other
 // one from inside getdents64.
 test.skipIf(!removedDirReaddir.available)(
-  "a directory that is removed while rm reads it ends its listing",
+  "a directory that is removed while the shell reads it ends its listing",
   async () => {
     using dir = tempDir("rm-vanishing-dir", {});
     const log = path.join(String(dir), "shim.log");
@@ -522,11 +522,24 @@ test.skipIf(!removedDirReaddir.available)(
     }
     const ls = await $\`ls otherError/read-fails-eio\`.quiet();
     out.ls = { exitCode: ls.exitCode, stderr: ls.stderr.toString() };
+
+    // Glob expansion lists every directory that a pattern can match in.
+    for (const sub of ["a", "b", "c", "d"]) {
+      fs.mkdirSync(path.join("glob", sub), { recursive: true });
+      for (const name of ["1", "2"]) fs.writeFileSync(path.join("glob", sub, name), "");
+    }
+    fs.mkdirSync(path.join("glob", "vanish-before-read"));
+    const echo = await $\`echo glob/*/*\`.quiet();
+    out.glob = {
+      exitCode: echo.exitCode,
+      stderr: echo.stderr.toString(),
+      matches: echo.stdout.toString().trim().split(" ").sort(),
+    };
     console.log(JSON.stringify(out));
   `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: await removedDirReaddir.env(log),
+      env: removedDirReaddir.env(log),
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -539,6 +552,7 @@ test.skipIf(!removedDirReaddir.available)(
       "read-fails-eio otherError/read-fails-eio",
       "read-fails-enoent stillThere/read-fails-enoent",
       "vanish-before-read force/vanish-before-read",
+      "vanish-before-read glob/vanish-before-read",
       "vanish-before-read noForce/vanish-before-read",
       "vanish-mid-read forceMidRead/vanish-mid-read",
     ]);
@@ -553,6 +567,12 @@ test.skipIf(!removedDirReaddir.available)(
       ls: { exitCode: 1, stderr: "ls: otherError/read-fails-eio: Input/output error\n" },
       // A filesystem that answers ENOENT for a directory that is still there: rmdir tells the truth.
       stillThere: { exitCode: 1, stderr: "rm: stillThere/read-fails-enoent: Directory not empty\n", left: true },
+      // The walk goes on to the other directories: it used to stop there, with the matches it had and no error.
+      glob: {
+        exitCode: 0,
+        stderr: "",
+        matches: ["a", "b", "c", "d"].flatMap(sub => [`glob/${sub}/1`, `glob/${sub}/2`]),
+      },
     });
     expect(exitCode).toBe(0);
   },
@@ -562,7 +582,9 @@ test.skipIf(!removedDirReaddir.available)(
 // operands that cover each other race over every directory. A stress probe,
 // not a deterministic repro: on one core the workers do not race. Linux only:
 // on macOS and Windows the unlink-then-rmdir retry of a directory has an
-// ENOENT arm of its own, which does not ask -f.
+// ENOENT arm of its own, which does not ask -f. The race itself stays: -f
+// makes it harmless, and without -f a worker still reports an operand that
+// another worker removed first.
 test.skipIf(!isLinux)("rm -rf of operands that cover each other removes the tree", async () => {
   for (let iteration = 0; iteration < 10; iteration++) {
     const files: Record<string, string> = {};

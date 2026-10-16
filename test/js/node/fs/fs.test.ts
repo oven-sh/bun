@@ -6260,47 +6260,10 @@ int statfs64(const char *path, struct statfs64 *buf) { (void)path; FILL(buf); re
 // `removedDirReaddir` preloads a shim that plays one from inside getdents64:
 // the marked directories are really removed and the kernel itself produces
 // the ENOENT.
-it.skipIf(!removedDirReaddir.available)("a directory that is removed while it is read ends its listing", async () => {
-  using dir = tempDir("readdir-vanishing-subdir", {
-    "child.js": `
+describe.skipIf(!removedDirReaddir.available)("a directory that is removed while it is read", () => {
+  const helpers = `
 const fs = require("node:fs");
 const path = require("node:path");
-
-function makeTree(root) {
-  fs.mkdirSync(path.join(root, "keep", "deeper"), { recursive: true });
-  fs.writeFileSync(path.join(root, "keep", "deeper", "file.txt"), "x");
-  fs.mkdirSync(path.join(root, "vanish-before-read"));
-  fs.mkdirSync(path.join(root, "vanish-mid-read"));
-  fs.writeFileSync(path.join(root, "vanish-mid-read", "inner.txt"), "x");
-  return root;
-}
-function makeDoomedRoot(parent) {
-  const root = path.join(parent, "vanish-before-read");
-  fs.mkdirSync(root, { recursive: true });
-  return root;
-}
-// The doomed directory is empty here: "vanish-mid-read" also removes a file
-// the walk has listed, and rm reports that from its unlink, not from the read.
-function makeRmTree(root, depth = 0) {
-  let dir = root;
-  for (let i = 0; i < depth; i++) dir = path.join(dir, "level" + i);
-  fs.mkdirSync(path.join(dir, "keep"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "keep", "file.txt"), "x");
-  fs.mkdirSync(path.join(dir, "vanish-before-read"));
-  return root;
-}
-// A filesystem can answer the read of a directory that is still there with
-// ENOENT; the shim plays one for "read-fails-enoent".
-function makeStillThereTree(root, depth = 0) {
-  let dir = root;
-  for (let i = 0; i < depth; i++) dir = path.join(dir, "level" + i);
-  fs.mkdirSync(path.join(dir, "read-fails-enoent"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "read-fails-enoent", "inner.txt"), "x");
-  return root;
-}
-const names = entries => entries.map(String).sort();
-const direntNames = (root, entries) =>
-  entries.map(d => path.relative(root, path.join(d.parentPath, d.name))).sort();
 const outcome = async fn => {
   try {
     return await fn();
@@ -6308,10 +6271,48 @@ const outcome = async fn => {
     return { code: e.code, path: e.path };
   }
 };
-const removed = async (root, fn) => ({ error: (await outcome(fn)) ?? null, left: fs.existsSync(root) });
+const out = {};
+`;
+  /** Runs `body` in a child beside the shim: what the child put in `out`, and what the shim did. */
+  async function run(name: string, body: string) {
+    using dir = tempDir(name, {
+      "child.js": `${helpers}(async () => {${body}\n  console.log(JSON.stringify(out));\n})();\n`,
+    });
+    const log = path.join(String(dir), "shim.log");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "child.js"],
+      env: removedDirReaddir.env(log),
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    return { out: JSON.parse(stdout), actions: removedDirReaddir.actions(log, String(dir)), exitCode };
+  }
+  const deep = (root: string, depth = 20) => path.join(root, ...Array.from({ length: depth }, (_, i) => "level" + i));
 
-(async () => {
-  const out = {};
+  it("ends its listing", async () => {
+    const { out, actions, exitCode } = await run(
+      "readdir-vanishing-subdir",
+      `
+  function makeTree(root) {
+    fs.mkdirSync(path.join(root, "keep", "deeper"), { recursive: true });
+    fs.writeFileSync(path.join(root, "keep", "deeper", "file.txt"), "x");
+    fs.mkdirSync(path.join(root, "vanish-before-read"));
+    fs.mkdirSync(path.join(root, "vanish-mid-read"));
+    fs.writeFileSync(path.join(root, "vanish-mid-read", "inner.txt"), "x");
+    return root;
+  }
+  function makeDoomedRoot(parent) {
+    const root = path.join(parent, "vanish-before-read");
+    fs.mkdirSync(root, { recursive: true });
+    return root;
+  }
+  const names = entries => entries.map(String).sort();
+  const direntNames = (root, entries) =>
+    entries.map(d => path.relative(root, path.join(d.parentPath, d.name))).sort();
+
   let root = makeTree("sync");
   out.sync = await outcome(() => names(fs.readdirSync(root, { recursive: true })));
   out.syncLeft = fs.readdirSync(root);
@@ -6341,8 +6342,71 @@ const removed = async (root, fn) => ({ error: (await outcome(fn)) ?? null, left:
   root = path.join("root-eio", "read-fails-eio");
   fs.mkdirSync(root, { recursive: true });
   out.rootEio = await outcome(() => fs.readdirSync(root));
+`,
+    );
 
-  // Recursive rm removes the rest of the tree, with and without force.
+    const walked = [
+      "keep",
+      "keep/deeper",
+      "keep/deeper/file.txt",
+      "vanish-before-read",
+      "vanish-mid-read",
+      "vanish-mid-read/inner.txt",
+    ];
+    const trees = ["async", "async-types", "sync", "sync-types"];
+    // What the shim did: if it did not interpose, nothing here was removed.
+    expect(actions).toEqual(
+      [
+        "read-fails-eio root-eio/read-fails-eio",
+        ...[...trees, "root-async", "root-plain", "root-sync"].map(
+          root => `vanish-before-read ${root}/vanish-before-read`,
+        ),
+        ...trees.map(root => `vanish-mid-read ${root}/vanish-mid-read`),
+      ].sort(),
+    );
+    expect(out).toEqual({
+      sync: walked,
+      syncLeft: ["keep"],
+      syncTypes: walked,
+      syncTypesLeft: ["keep"],
+      async: walked,
+      asyncLeft: ["keep"],
+      asyncTypes: walked,
+      asyncTypesLeft: ["keep"],
+      rootSync: [],
+      rootAsync: [],
+      rootPlain: [],
+      rootEio: { code: "EIO", path: path.join("root-eio", "read-fails-eio") },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("does not stop a recursive rm, which removes the rest of the tree", async () => {
+    const { out, actions, exitCode } = await run(
+      "rm-vanishing-subdir",
+      `
+  // The doomed directory is empty here: "vanish-mid-read" also removes a file
+  // the walk has listed, and rm reports that from its unlink, not from the read.
+  function makeRmTree(root, depth = 0) {
+    let dir = root;
+    for (let i = 0; i < depth; i++) dir = path.join(dir, "level" + i);
+    fs.mkdirSync(path.join(dir, "keep"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "keep", "file.txt"), "x");
+    fs.mkdirSync(path.join(dir, "vanish-before-read"));
+    return root;
+  }
+  // A filesystem can answer the read of a directory that is still there with
+  // ENOENT; the shim plays one for "read-fails-enoent".
+  function makeStillThereTree(root, depth = 0) {
+    let dir = root;
+    for (let i = 0; i < depth; i++) dir = path.join(dir, "level" + i);
+    fs.mkdirSync(path.join(dir, "read-fails-enoent"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "read-fails-enoent", "inner.txt"), "x");
+    return root;
+  }
+  const removed = async (root, fn) => ({ error: (await outcome(fn)) ?? null, left: fs.existsSync(root) });
+
+  let root;
   for (const force of [true, false]) {
     const key = force ? "Force" : "";
     root = makeRmTree("rm-sync" + key);
@@ -6362,73 +6426,37 @@ const removed = async (root, fn) => ({ error: (await outcome(fn)) ?? null, left:
   out.rmStillThereAsync = await removed(root, () => fs.promises.rm(root, { recursive: true, force: true }));
   root = makeStillThereTree("rm-still-there-deep", 20);
   out.rmStillThereDeep = await removed(root, () => fs.rmSync(root, { recursive: true, force: true }));
-  console.log(JSON.stringify(out));
-})();
+  // 15 directories above it: the walk keeps 16 open and hands exactly this one to its other loop.
+  root = makeStillThereTree("rm-still-there-edge", 15);
+  out.rmStillThereEdge = await removed(root, () => fs.rmSync(root, { recursive: true, force: true }));
 `,
-  });
+    );
 
-  const log = path.join(String(dir), "shim.log");
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "child.js"],
-    env: await removedDirReaddir.env(log),
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
+    const gone = { error: null, left: false };
+    expect(actions).toEqual(
+      [
+        ...["rm-still-there", "rm-still-there-async", deep("rm-still-there-deep"), deep("rm-still-there-edge", 15)].map(
+          root => `read-fails-enoent ${root}/read-fails-enoent`,
+        ),
+        ...["rm-async", "rm-asyncForce", "rm-sync", "rm-syncForce", deep("rm-deep"), deep("rm-deepForce")].map(
+          root => `vanish-before-read ${root}/vanish-before-read`,
+        ),
+      ].sort(),
+    );
+    expect(out).toEqual({
+      rmSyncForce: gone,
+      rmAsyncForce: gone,
+      rmDeepForce: gone,
+      rmSync: gone,
+      rmAsync: gone,
+      rmDeep: gone,
+      rmStillThere: { error: { code: "ENOTEMPTY", path: "rm-still-there" }, left: true },
+      rmStillThereAsync: { error: { code: "ENOTEMPTY", path: "rm-still-there-async" }, left: true },
+      rmStillThereDeep: { error: { code: "ENOTEMPTY", path: "rm-still-there-deep" }, left: true },
+      rmStillThereEdge: { error: { code: "ENOTEMPTY", path: "rm-still-there-edge" }, left: true },
+    });
+    expect(exitCode).toBe(0);
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-
-  const walked = [
-    "keep",
-    "keep/deeper",
-    "keep/deeper/file.txt",
-    "vanish-before-read",
-    "vanish-mid-read",
-    "vanish-mid-read/inner.txt",
-  ];
-  const gone = { error: null, left: false };
-  const deep = (root: string) => path.join(root, ...Array.from({ length: 20 }, (_, i) => "level" + i));
-  const trees = ["async", "async-types", "sync", "sync-types"];
-  // What the shim did: if it did not interpose, nothing here was removed.
-  expect(removedDirReaddir.actions(log, String(dir))).toEqual(
-    [
-      "read-fails-eio root-eio/read-fails-eio",
-      ...["rm-still-there", "rm-still-there-async", deep("rm-still-there-deep")].map(
-        root => `read-fails-enoent ${root}/read-fails-enoent`,
-      ),
-      ...[
-        ...trees,
-        ...["root-async", "root-plain", "root-sync"],
-        ...["rm-async", "rm-asyncForce", "rm-sync", "rm-syncForce"],
-        ...[deep("rm-deep"), deep("rm-deepForce")],
-      ].map(root => `vanish-before-read ${root}/vanish-before-read`),
-      ...trees.map(root => `vanish-mid-read ${root}/vanish-mid-read`),
-    ].sort(),
-  );
-  expect(JSON.parse(stdout)).toEqual({
-    sync: walked,
-    syncLeft: ["keep"],
-    syncTypes: walked,
-    syncTypesLeft: ["keep"],
-    async: walked,
-    asyncLeft: ["keep"],
-    asyncTypes: walked,
-    asyncTypesLeft: ["keep"],
-    rootSync: [],
-    rootAsync: [],
-    rootPlain: [],
-    rootEio: { code: "EIO", path: path.join("root-eio", "read-fails-eio") },
-    rmSyncForce: gone,
-    rmAsyncForce: gone,
-    rmDeepForce: gone,
-    rmSync: gone,
-    rmAsync: gone,
-    rmDeep: gone,
-    rmStillThere: { error: { code: "ENOTEMPTY", path: "rm-still-there" }, left: true },
-    rmStillThereAsync: { error: { code: "ENOTEMPTY", path: "rm-still-there-async" }, left: true },
-    rmStillThereDeep: { error: { code: "ENOTEMPTY", path: "rm-still-there-deep" }, left: true },
-  });
-  expect(exitCode).toBe(0);
 });
 
 // /proc/self/fd/<n> names a directory that was removed after it was opened,
@@ -6444,32 +6472,69 @@ it.skipIf(!isLinux)("a directory that was removed after it was opened reads as e
     fs.rmdirSync(p);
     return `/proc/self/fd/${fd}`;
   };
-  let opened: fs.Dir | undefined;
   try {
-    opened = fs.opendirSync(removed("opendir"));
-    const copy = path.join(String(dir), "copy");
-    fs.cpSync(removed("cp") + "/", copy, { recursive: true });
+    const copy = (name: string) => path.join(String(dir), "copy-" + name);
+    fs.cpSync(removed("cp") + "/", copy("sync"), { recursive: true });
+    await fs.promises.cp(removed("cp-promise") + "/", copy("promise"), { recursive: true });
+    await promisify(fs.cp)(removed("cp-callback") + "/", copy("callback"), { recursive: true });
     expect({
       readdirSync: fs.readdirSync(removed("sync")),
       withFileTypes: fs.readdirSync(removed("types"), { withFileTypes: true }),
       promise: await fs.promises.readdir(removed("promise")),
       recursiveSync: fs.readdirSync(removed("recursive-sync"), { recursive: true }),
       recursivePromise: await fs.promises.readdir(removed("recursive-promise"), { recursive: true }),
-      opendir: opened.readSync(),
-      cpSync: fs.readdirSync(copy),
+      cpSync: fs.readdirSync(copy("sync")),
+      cpPromise: fs.readdirSync(copy("promise")),
+      cpCallback: fs.readdirSync(copy("callback")),
     }).toEqual({
       readdirSync: [],
       withFileTypes: [],
       promise: [],
       recursiveSync: [],
       recursivePromise: [],
-      opendir: null,
       cpSync: [],
+      cpPromise: [],
+      cpCallback: [],
     });
   } finally {
-    opened?.closeSync();
     for (const fd of fds) fs.closeSync(fd);
   }
+});
+
+// The same with no /proc: a process keeps its working directory open, so it
+// still reads "." after something removed that directory.
+it.skipIf(!isLinux)("a working directory that was removed reads as empty", async () => {
+  using dir = tempDir("readdir-removed-cwd", {
+    "fixture.js": `
+const fs = require("node:fs");
+fs.rmdirSync(process.cwd());
+(async () => {
+  console.log(
+    JSON.stringify({
+      readdirSync: fs.readdirSync("."),
+      withFileTypes: fs.readdirSync(".", { withFileTypes: true }),
+      recursiveSync: fs.readdirSync(".", { recursive: true }),
+      promise: await fs.promises.readdir("."),
+    }),
+  );
+})();
+`,
+  });
+  const cwd = path.join(String(dir), "cwd");
+  fs.mkdirSync(cwd);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(String(dir), "fixture.js")],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ readdirSync: [], withFileTypes: [], recursiveSync: [], promise: [] }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("fs.Stat constructor", () => {

@@ -499,6 +499,18 @@ describe.concurrent("bunshell ls", () => {
         closeSync(fd);
       }
     });
+
+    // The same with no /proc: the shell keeps its working directory open.
+    test.skipIf(!isLinux)("a working directory that was removed lists as empty", async () => {
+      using tempdir = tempDir("ls-removed-cwd", { "cwd/file.txt": "" });
+      const cwd = join(String(tempdir), "cwd");
+      const { stdout, stderr, exitCode } = await $`cd ${cwd} && rm -rf ${cwd} && ls`.quiet().nothrow();
+      expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 });
 

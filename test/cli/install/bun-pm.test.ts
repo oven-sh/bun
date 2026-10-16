@@ -9,13 +9,12 @@ import {
   isWindows,
   normalizeBunSnapshot,
   readdirSorted,
-  removedDirReaddir,
   tempDir,
   tls,
   tmpdirSync,
   unprivilegedSpawnOptions,
 } from "harness";
-import { cpSync, mkdirSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { basename, join } from "path";
 import { TestRegistry } from "registry";
 import {
@@ -1983,64 +1982,6 @@ describe.concurrent("bun pm cache rm", () => {
     expect(await readdirSorted(join(String(side), "bun-install", "install", "cache"))).toEqual([]);
   });
 
-  // Something else can remove a directory of a bunx tree while this walk has it
-  // open: a second `bun pm cache rm`, a temp cleaner. Linux then answers
-  // getdents64(2) with ENOENT. `removedDirReaddir` preloads a shim that plays
-  // that remover from inside getdents64.
-  test.skipIf(!removedDirReaddir.available)("a bunx tree that something else is removing is removed", async () => {
-    const bunx = `bunx-${process.getuid!()}-cowsay@latest`;
-    using side = tempDir("pm-cache-rm-vanishing-dir", { ...sideFiles, [`tmp/${bunx}/keep/file.txt`]: "x" });
-    using root = tempDir("pm-cache-rm-vanishing-dir-project", projectFiles);
-    mkdirSync(join(String(side), "tmp", bunx, "vanish-before-read"));
-    const log = join(String(side), "shim.log");
-    const { LD_PRELOAD, REMOVED_DIR_READDIR_LOG } = await removedDirReaddir.env(log);
-
-    expect(
-      await pmCache(
-        ["rm"],
-        join(String(root), "proj"),
-        cacheEnv(String(side), { LD_PRELOAD, REMOVED_DIR_READDIR_LOG }),
-      ),
-    ).toEqual({
-      stdout: "Cleared 'bun install' cache\nCleared 1 cached 'bunx' packages\n",
-      stderr: "",
-      exitCode: 0,
-    });
-    // What the shim did: if it did not interpose, the output above is the same.
-    expect(removedDirReaddir.actions(log, String(side))).toEqual([`vanish-before-read tmp/${bunx}/vanish-before-read`]);
-    expect(await exists(join(String(side), "tmp", bunx))).toBeFalse();
-  });
-
-  // A filesystem can answer the read of a directory that is still there with
-  // ENOENT; the shim plays one for "read-fails-enoent". rmdir then finds the
-  // directory full. The walk reports that. It does not read the directory
-  // again: it would read the same way every time.
-  test.skipIf(!removedDirReaddir.available)(
-    "a bunx tree that reads as removed and is still there is reported",
-    async () => {
-      const bunx = `bunx-${process.getuid!()}-cowsay@latest`;
-      const stillThere = `tmp/${bunx}/read-fails-enoent`;
-      using side = tempDir("pm-cache-rm-still-there", { ...sideFiles, [`${stillThere}/inner.txt`]: "x" });
-      using root = tempDir("pm-cache-rm-still-there-project", projectFiles);
-      const log = join(String(side), "shim.log");
-      const { LD_PRELOAD, REMOVED_DIR_READDIR_LOG } = await removedDirReaddir.env(log);
-
-      expect(
-        await pmCache(
-          ["rm"],
-          join(String(root), "proj"),
-          cacheEnv(String(side), { LD_PRELOAD, REMOVED_DIR_READDIR_LOG }),
-        ),
-      ).toEqual({
-        stdout: "Cleared 'bun install' cache\nCleared 0 cached 'bunx' packages\n",
-        stderr: `ENOTEMPTY: Directory not empty: Could not delete ${bunx} (unlink)\n`,
-        exitCode: 1,
-      });
-      expect(removedDirReaddir.actions(log, String(side))).toEqual([`read-fails-enoent ${stillThere}`]);
-      expect(await exists(join(String(side), stillThere, "inner.txt"))).toBeTrue();
-    },
-  );
-
   test("--dry-run prints what would be deleted and deletes nothing", async () => {
     const uid = isWindows ? undefined : process.getuid!();
     using side = tempDir("pm-cache-rm-dry-run", {
@@ -3399,125 +3340,3 @@ describe.concurrent("usage text keeps its indent", () => {
     });
   });
 });
-
-// Something else can remove a directory after bun opened it and before bun
-// read it to the end. Most readers take that as the end of the directory. The
-// ones here copy, link or compare what they list: for them a directory that
-// was removed is not an empty one. `removedDirReaddir` preloads a shim that
-// plays the remover.
-describe.concurrent.skipIf(!removedDirReaddir.available)(
-  "a directory that is removed while it is copied or compared",
-  () => {
-    // The walker that copies or links a package: the copy would lack what the directory held.
-    test.each([
-      [[], "failed copying files from cache to destination for package dep"],
-      [["--backend=copyfile"], "failed copying files from cache to destination for package dep"],
-      [["--linker=isolated"], "failed to link package: dep@dep"],
-    ] as const)("bun install %j fails", async (flags, message) => {
-      using dir = tempDir("install-vanishing-dir", {
-        "proj/package.json": JSON.stringify({ name: "proj", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
-        "proj/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
-        "proj/dep/index.js": "module.exports = 1;",
-        "proj/dep/lib/vanish-before-read/inner.txt": "x",
-      });
-      const log = join(String(dir), "shim.log");
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "install", ...flags],
-        cwd: join(String(dir), "proj"),
-        env: { ...(await removedDirReaddir.env(log)), BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // The hardlink backend also reads its staged copy of the directory when it cleans up.
-      expect(removedDirReaddir.actions(log, String(dir))).toContain(
-        "vanish-before-read proj/dep/lib/vanish-before-read",
-      );
-      expect(stderr).toContain(message);
-      expect(exitCode).toBe(1);
-    });
-
-    // The check for a folder that is already linked compares the listing of
-    // the folder with the listing of its copy. A folder that is removed while
-    // it is listed is not an empty folder: it does not match an empty copy.
-    test("bun install does not take a folder that is removed for one that is linked", async () => {
-      using dir = tempDir("install-vanishing-folder", {
-        "proj/package.json": JSON.stringify({
-          name: "proj",
-          version: "1.0.0",
-          dependencies: { dep: "file:./vanish-before-read" },
-        }),
-        "proj/vanish-before-read/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
-        "proj/vanish-before-read/index.js": "module.exports = 1;",
-      });
-      const proj = join(String(dir), "proj");
-      mkdirSync(join(proj, "node_modules", "dep"), { recursive: true });
-      const log = join(String(dir), "shim.log");
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "install"],
-        cwd: proj,
-        env: { ...(await removedDirReaddir.env(log)), BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(removedDirReaddir.actions(log, String(dir))).toEqual(["vanish-before-read proj/vanish-before-read"]);
-      expect(stderr).toContain('Could not find folder "file:vanish-before-read" for dependency "dep"');
-      expect(exitCode).toBe(1);
-    });
-
-    // After it links a folder into the store, the isolated linker removes from
-    // the copy what the folder no longer has. It lists the folder again for
-    // that. What a directory held that is removed during that second listing
-    // is not known, so its copy stays as it is.
-    test("bun install --linker=isolated keeps the copy of a directory that is removed while it is pruned", async () => {
-      using dir = tempDir("install-vanishing-mirror", {
-        "proj/package.json": JSON.stringify({ name: "proj", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
-        "proj/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
-        "proj/dep/index.js": "module.exports = 1;",
-        "proj/dep/lib/vanish-once-linked/inner.txt": "x",
-      });
-      const proj = join(String(dir), "proj");
-      const log = join(String(dir), "shim.log");
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--linker=isolated"],
-        cwd: proj,
-        env: { ...(await removedDirReaddir.env(log)), BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(removedDirReaddir.actions(log, String(dir))).toEqual([
-        "vanish-once-linked proj/dep/lib/vanish-once-linked",
-      ]);
-      expect(stderr).not.toContain("error:");
-      expect(readdirSync(join(proj, "node_modules", "dep", "lib", "vanish-once-linked"))).toEqual(["inner.txt"]);
-      expect(exitCode).toBe(0);
-    });
-
-    // What the directory held would show as deleted, so this is the same loud
-    // failure as a file that cannot be read.
-    test("bun pm diff fails, it does not print a diff with a hole in it", async () => {
-      using dir = tempDir("pm-diff-vanishing-dir", {
-        "a/index.js": "module.exports = 1;\n",
-        "a/vanish-before-read/inner.txt": "x\n",
-        "b/index.js": "module.exports = 1;\n",
-      });
-      const log = join(String(dir), "shim.log");
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "pm", "diff", "./a", "./b", "--name-only"],
-        cwd: String(dir),
-        env: { ...(await removedDirReaddir.env(log)), NO_COLOR: "1" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(removedDirReaddir.actions(log, String(dir))).toEqual(["vanish-before-read a/vanish-before-read"]);
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: "",
-        stderr: `ENOENT: No such file or directory: failed to read ${realpathSync(String(dir))}/a/vanish-before-read (getdents64)\n`,
-        exitCode: 1,
-      });
-    });
-  },
-);

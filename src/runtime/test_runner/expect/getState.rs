@@ -10,6 +10,7 @@ use super::expect_matcher_utils_js as js;
 use super::{Expect, ExpectMatcherContext, ExpectMatcherUtils};
 
 /// `with_empty_names` keeps `describe("")` blocks in the name, which only Jest's snapshot format does.
+#[optimize(size)]
 pub(crate) fn full_test_name(entry: &ExecutionEntry, separator: &[u8], with_empty_names: bool) -> Vec<u8> {
     let mut names: Vec<&[u8]> = vec![entry.base.name.as_deref().unwrap_or(b"(unnamed)")];
     let mut parent = entry.base.parent;
@@ -37,10 +38,12 @@ fn with_sequence<R>(test: Test, f: impl FnOnce(&mut ExecutionSequence) -> R) -> 
     test.unwrap_or_else(|| buntest.get_current_state_data()).sequence(buntest).map(f)
 }
 
+#[optimize(size)]
 fn assertion_calls(test: Test) -> JSValue {
     JSValue::js_number(f64::from(with_sequence(test, |sequence| sequence.expect_call_count).unwrap_or(0)))
 }
 
+#[optimize(size)]
 fn expected_assertions_number(test: Test) -> JSValue {
     match with_sequence(test, |sequence| sequence.expect_assertions) {
         Some(ExpectAssertions::Exact(count)) => JSValue::js_number(f64::from(count)),
@@ -48,10 +51,12 @@ fn expected_assertions_number(test: Test) -> JSValue {
     }
 }
 
+#[optimize(size)]
 fn is_expecting_assertions(test: Test) -> JSValue {
     JSValue::from(with_sequence(test, |sequence| sequence.expect_assertions) == Some(ExpectAssertions::AtLeastOne))
 }
 
+#[optimize(size)]
 fn current_test_name(global: &JSGlobalObject, test: Test) -> JsResult<JSValue> {
     let name = with_sequence(test, |sequence| {
         // SAFETY: the `BunTest` kept alive by `with_sequence` owns the entry.
@@ -65,6 +70,7 @@ fn current_test_name(global: &JSGlobalObject, test: Test) -> JsResult<JSValue> {
     }
 }
 
+#[optimize(size)]
 fn test_path(global: &JSGlobalObject) -> JsResult<JSValue> {
     let (Some(buntest), Some(runner)) = (bun_test::clone_active_strong(), Jest::runner()) else {
         return Ok(JSValue::UNDEFINED);
@@ -90,6 +96,7 @@ impl Expect {
         })
     }
 
+    #[optimize(size)]
     pub(crate) fn get_state(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         Self::get_state_in(global, None)
     }
@@ -105,6 +112,7 @@ impl Expect {
         Ok(state)
     }
 
+    #[optimize(size)]
     pub(crate) fn set_state(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         Self::set_state_in(global, frame, None)
     }

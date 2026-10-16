@@ -4,6 +4,7 @@ use super::throw;
 use super::Expect;
 use super::Received;
 
+#[optimize(size)]
 pub(crate) fn to_throw_error_matching_inline_snapshot(
     this: &Expect,
     global: &JSGlobalObject,

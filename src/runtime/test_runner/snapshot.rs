@@ -225,6 +225,7 @@ pub(crate) struct File {
 }
 
 /// Fills `buf` with the `.snap` path. Returns (test file's directory, length through `__snapshots__/`, full length).
+#[optimize(size)]
 fn snapshot_file_path(file_id: FileId, buf: &mut [u8]) -> (&'static [u8], usize, usize) {
     // `Jest::runner()` would alias the caller's `&mut Snapshots`, which is a field of the runner.
     // SAFETY: the runner is set before any `Snapshots` method runs; only its `.files` is read.

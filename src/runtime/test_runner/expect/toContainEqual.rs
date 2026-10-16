@@ -21,6 +21,7 @@ extern "C" fn collect_item(_: *mut VM, global: &JSGlobalObject, items: *mut c_vo
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
 // `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
+#[optimize(size)]
 pub(crate) fn to_contain_equal(
     this: &Expect,
     global: &JSGlobalObject,

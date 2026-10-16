@@ -368,6 +368,7 @@ impl Pass {
 
     /// Runs `ask()` (user code) on the first pass and records what it returned or threw. Replays get the recording.
     #[inline(never)]
+    #[optimize(size)]
     pub(crate) fn once(
         global: &JSGlobalObject,
         question: Question,
@@ -433,6 +434,7 @@ impl Pass {
     }
 
     #[cold]
+    #[optimize(size)]
     fn journal(&self, global: &JSGlobalObject, recorded: u32) -> JsResult<JSValue> {
         if self.journal.get().is_empty() {
             let mut elements = [JSValue::UNDEFINED; Self::RECENT * Self::STRIDE as usize];
@@ -722,6 +724,7 @@ impl ExpectDeferred {
     }
 
     /// Abandons the calls still held by the group (or by the file, if `group_index` is `None`) and reports the unhandled ones.
+    #[optimize(size)]
     fn give_up(
         buntest: &BunTestPtr,
         global: &JSGlobalObject,
@@ -887,6 +890,7 @@ fn on_settled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn poll_once(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [function, check] = frame.arguments_as_array::<2>();
     let value = function.call(global, JSValue::UNDEFINED, &[])?;
@@ -897,6 +901,7 @@ fn poll_once(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn check_polled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [expect, call, value] = frame.arguments_as_array::<3>();
     expect_js::captured_value_set_cached(expect, global, value);

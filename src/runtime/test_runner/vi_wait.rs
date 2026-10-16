@@ -422,11 +422,13 @@ fn wait_until(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn on_fulfilled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     ViWait::callback_settled(global, frame, ViWait::on_value)
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn on_rejected(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     ViWait::callback_settled(global, frame, ViWait::on_error)
 }

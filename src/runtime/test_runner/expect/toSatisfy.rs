@@ -4,6 +4,7 @@ use super::Expect;
 use super::get_signature;
 use super::throw;
 
+#[optimize(size)]
 pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let _guard = this.post_match_guard(global);
 

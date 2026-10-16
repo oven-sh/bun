@@ -11,6 +11,7 @@ pub(super) enum Settled {
 }
 
 impl Settled {
+    #[optimize(size)]
     pub(super) fn at(global: &JSGlobalObject, settled_results: JSValue, index: u32) -> JsResult<Settled> {
         let result = settled_results.get_index(global, index)?;
         if !result.is_object() {
@@ -33,6 +34,7 @@ impl Settled {
 }
 
 impl Expect {
+    #[optimize(size)]
     pub(super) fn settled_results_prologue<'a>(
         &'a self,
         global: &'a JSGlobalObject,

@@ -615,6 +615,7 @@ impl FakeTimers {
         self.date_now_offset + self.now.ms() as f64
     }
 
+    #[optimize(size)]
     fn publish_clock(&self, global: &JSGlobalObject) {
         if self.faked.contains(Api::SetTimeout) {
             // Read by `Timespec::now(AllowMockedTime)` and `Bun.cron()`'s calendar.
@@ -702,6 +703,7 @@ impl FakeTimers {
 
     /// Pop every fake timer. Popping only unlinks the nodes; the owners that
     /// need to hear about it are returned for the caller to release.
+    #[optimize(size)]
     fn clear(&mut self) -> ClearedTimers {
         self.ticks.clear();
         let mut cleared = ClearedTimers::default();
@@ -752,6 +754,7 @@ impl FakeTimers {
         self.timers.peek().is_none() && self.ticks.is_empty()
     }
 
+    #[optimize(size)]
     fn first_immediate(&self) -> Option<*mut EventLoopTimer> {
         let next = self.timers.peek()?;
         // SAFETY: `next` is the heap root; live while linked.
@@ -978,6 +981,7 @@ impl FakeTimers {
     }
 
     /// sinon's `tick()`. Keeps going when a timer throws and returns the first exception.
+    #[optimize(size)]
     fn run_until(global: &JSGlobalObject, until: Timespec) -> Result<JSValue, Stop> {
         let all = timer_all();
         // SAFETY: per-thread `timer::All`; each borrow lasts one statement and none spans a callback.
@@ -1049,6 +1053,7 @@ impl FakeTimers {
         Ok(JSValue::ZERO)
     }
 
+    #[optimize(size)]
     fn run_all_immediates(global: &JSGlobalObject) -> JsResult<JSValue> {
         let all = timer_all();
         // SAFETY: per-thread `timer::All`; each borrow lasts one statement and none spans a callback.
@@ -1283,6 +1288,7 @@ impl FakeTimers {
         Ok(())
     }
 
+    #[optimize(size)]
     fn set_tick_mode(mode: TickMode) {
         let all = timer_all();
         // SAFETY: per-thread `timer::All`; nothing in this block re-enters it.
@@ -1649,6 +1655,7 @@ fn run_all_ticks(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn run_all_immediates(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
     let ran = FakeTimers::run_all_immediates(global).map_err(Stop::Vm);
@@ -1688,6 +1695,7 @@ fn advance_timers_by_time_async(
     drive_async(global, frame, flavor, drive)
 }
 
+#[optimize(size)]
 fn advance_timers_to_next_timer_async(
     global: &JSGlobalObject,
     frame: &CallFrame,

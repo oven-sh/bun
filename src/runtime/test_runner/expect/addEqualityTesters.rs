@@ -39,6 +39,7 @@ impl Expect {
         Ok(Some(kept))
     }
 
+    #[optimize(size)]
     pub(crate) fn is_called_by_test_file(global: &JSGlobalObject, frame: &CallFrame) -> bool {
         let Some(runner) = Jest::runner() else { return false };
         let Some(buntest) = runner.bun_test_root.clone_active_file() else { return false };

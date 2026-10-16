@@ -189,6 +189,7 @@ pub(crate) mod js_fns {
     // `adt_const_params` is unstable, so the body takes `tag` at runtime and
     // thin `#[host_fn]` wrappers below supply the per-tag entry points
     // (one fn per JS function so JSFunction::create gets a distinct address).
+    #[optimize(size)]
     pub(crate) fn generic_hook_impl(
         tag: GenericHookTag,
         flavor: Flavor,
@@ -1506,6 +1507,7 @@ impl BunTest {
     }
 
     /// called from the uncaught exception handler, or if a test callback rejects or throws an error
+    #[optimize(size)]
     pub(crate) fn on_uncaught_exception(
         &mut self,
         global_this: &JSGlobalObject,
@@ -2093,6 +2095,7 @@ pub(crate) struct DescribeScope {
 }
 
 impl DescribeScope {
+    #[optimize(size)]
     pub(crate) fn create(base: BaseScope) -> Box<DescribeScope> {
         Box::new(DescribeScope {
             base,
@@ -2306,6 +2309,7 @@ pub(crate) struct ExecutionEntry {
 }
 
 impl ExecutionEntry {
+    #[optimize(size)]
     fn create(
         name_not_owned: Option<&[u8]>,
         cb: Option<JSValue>,

@@ -5,6 +5,7 @@ use super::Received;
 use super::get_signature;
 use super::throw;
 
+#[optimize(size)]
 pub(crate) fn to_throw_error_matching_snapshot(
     this: &Expect,
     global: &JSGlobalObject,

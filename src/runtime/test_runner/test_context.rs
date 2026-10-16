@@ -375,30 +375,35 @@ impl TestContext {
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn expect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let state = TestContext::of_call(global, frame)?.state_data(frame.this());
     Expect::call_in(global, frame.arguments(), state)
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn assertions(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let state = TestContext::of_call(global, frame)?.state_data(frame.this());
     Expect::assertions_in(global, frame, state)
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn has_assertions(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let state = TestContext::of_call(global, frame)?.state_data(frame.this());
     Expect::has_assertions_in(global, state)
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn get_state(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let state = TestContext::of_call(global, frame)?.state_data(frame.this());
     Expect::get_state_in(global, state)
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn set_state(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let state = TestContext::of_call(global, frame)?.state_data(frame.this());
     Expect::set_state_in(global, frame, state)
@@ -460,6 +465,7 @@ fn annotate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
 /// `TestRunner.getCurrentTest()`: the running test's `task`. In a concurrent group, only while the test's callback is on the stack.
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn get_current_test(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(strong) = super::bun_test::clone_active_strong() else {
         return Ok(JSValue::UNDEFINED);

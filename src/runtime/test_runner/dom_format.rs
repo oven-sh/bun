@@ -404,6 +404,7 @@ impl Printer<'_> {
         Ok(true)
     }
 
+    #[optimize(size)]
     fn print_value(&mut self, value: JSValue, indent: u32, depth: u32) -> JsResult<()> {
         if value.is_string() {
             self.write_quoted(&value.to_bun_string(self.global)?);
@@ -647,6 +648,7 @@ impl Printer<'_> {
         Ok(entries)
     }
 
+    #[optimize(size)]
     fn capture(&mut self, value: JSValue, indent: u32, depth: u32) -> JsResult<Printed> {
         if value.is_string() {
             return Ok(Printed::String(value.to_bun_string(self.global)?));
@@ -676,6 +678,7 @@ impl Printer<'_> {
         }
     }
 
+    #[optimize(size)]
     fn separate(&mut self, is_first: bool, indent: u32) {
         if is_first {
             self.line(indent);

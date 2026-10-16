@@ -392,6 +392,7 @@ impl TestFixtures {
     }
 
     /// As in Vitest, `[value, options]` is a tuple only if `options` has a known key. Otherwise the array is the value.
+    #[optimize(size)]
     fn is_options(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
         if !value.is_object() || value.is_array() || value.is_callable() {
             return Ok(false);
@@ -661,6 +662,7 @@ impl ActiveFixture {
         Ok(())
     }
 
+    #[optimize(size)]
     fn fail(&self, this_value: JSValue, global: &JSGlobalObject, error: JSValue) -> JsResult<()> {
         let had_no_value = self.state.replace(State::Failed) == State::SettingUp;
         active::value_set_cached(this_value, global, error);
@@ -714,6 +716,7 @@ impl ActiveFixture {
         }
     }
 
+    #[optimize(size)]
     fn on_returned(&self, this_value: JSValue, global: &JSGlobalObject, returned: JSValue) -> JsResult<()> {
         if self.state.get() != State::SettingUp {
             return Ok(());
@@ -744,6 +747,7 @@ fn set_up(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn on_fulfilled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let (this, _) = ActiveFixture::of_call(global, frame)?;
     this.on_returned(frame.this(), global, frame.argument(0))?;
@@ -752,6 +756,7 @@ fn on_fulfilled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
 
 /// The teardown entry awaits the same promise, so it reports a rejection that comes after `use()`.
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn on_rejected(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let (this, _) = ActiveFixture::of_call(global, frame)?;
     if this.state.get() == State::SettingUp {
@@ -775,6 +780,7 @@ fn use_fixture(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> 
 }
 
 #[bun_jsc::host_fn]
+#[optimize(size)]
 fn on_cleanup(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let this_value = frame.this();
     let (_, definition) = ActiveFixture::of_call(global, frame)?;

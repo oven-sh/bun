@@ -212,6 +212,7 @@ impl Expect {
         self.add_to_expect_call_counter(1);
     }
 
+    #[optimize(size)]
     fn add_to_expect_call_counter(&self, count: i32) {
         let Some(parent) = self.parent.as_ref() else { return }; // not in bun:test
         let Some(buntest_strong) = parent.bun_test() else { return }; // the test file this expect() call was for is no longer
@@ -315,6 +316,7 @@ impl Expect {
         unsafe { &*ptr }
     }
 
+    #[optimize(size)]
     pub(crate) fn throw_pretty_matcher_error(
         global_this: &JSGlobalObject,
         custom_label: &bun_core::String,
@@ -516,6 +518,7 @@ impl Expect {
     }
 
     /// A promise that settles the way `await value` would, or `None` if `value` isn't thenable.
+    #[optimize(size)]
     fn promise_to_await(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun_jsc::AnyPromise>> {
         if let Some(promise) = value.as_any_promise() {
             promise.set_handled(global_this.vm());
@@ -752,6 +755,7 @@ impl Expect {
         Ok(expect_js_value)
     }
 
+    #[optimize(size)]
     fn call_with_flags(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -838,6 +842,7 @@ impl Expect {
     }
 
     #[bun_jsc::host_fn(method)]
+    #[optimize(size)]
     pub(crate) fn pass(
         &self,
         global_this: &JSGlobalObject,
@@ -879,6 +884,7 @@ impl Expect {
     }
 
     #[bun_jsc::host_fn(method)]
+    #[optimize(size)]
     pub(crate) fn fail(
         &self,
         global_this: &JSGlobalObject,
@@ -928,6 +934,7 @@ pub(crate) struct TrimResult<'a> {
 }
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn get_value_as_to_throw(
         &self,
         global_this: &JSGlobalObject,
@@ -1004,6 +1011,7 @@ impl Expect {
 
     /// Mirrors `_toThrowErrorMatchingSnapshot` in jest-snapshot.
     #[cold]
+    #[optimize(size)]
     fn message_with_causes(global_this: &JSGlobalObject, thrown: JSValue) -> JsResult<JSValue> {
         if !thrown.is_object() {
             return Ok(JSValue::UNDEFINED);
@@ -1266,6 +1274,7 @@ impl Expect {
     }
 
     #[cold]
+    #[optimize(size)]
     fn was_written_by_another(
         formats: &[SnapshotFormat],
         or_older_bun: bool,
@@ -1298,6 +1307,7 @@ impl Expect {
     }
 
     /// Returns `value` with `property_matchers` substituted in, and `print_snapshot`'s result.
+    #[optimize(size)]
     pub(crate) fn match_and_fmt_snapshot(
         &self,
         global_this: &JSGlobalObject,
@@ -1381,6 +1391,7 @@ impl Expect {
     }
 
     #[cold]
+    #[optimize(size)]
     pub(crate) fn throw_snapshot_error(&self, global_this: &JSGlobalObject, err: &crate::Error, pretty_value: &[u8]) -> JsError {
         let runner = Jest::runner().expect("unreachable");
         let Some(buntest_strong) = self.bun_test() else {
@@ -1497,6 +1508,7 @@ impl Expect {
     }
 
     /// `expect.toSatisfy(predicate, message?)`. As in Vitest, it's what `expect.extend({ toSatisfy })` would add.
+    #[optimize(size)]
     pub(crate) fn static_to_satisfy(
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
@@ -1631,6 +1643,7 @@ impl Expect {
     }
 
     #[cold]
+    #[optimize(size)]
     fn throw_invalid_matcher_error(
         global_this: &JSGlobalObject,
         matcher_name: &bun_core::String,
@@ -1860,10 +1873,12 @@ impl Expect {
     }
 
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    #[optimize(size)]
     pub(crate) fn has_assertions(global_this: &JSGlobalObject, _call_frame: &CallFrame) -> JsResult<JSValue> {
         Self::has_assertions_in(global_this, None)
     }
 
+    #[optimize(size)]
     pub(crate) fn has_assertions_in(global_this: &JSGlobalObject, state: Option<bun_test::RefDataValue>) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns the live VM pointer for this global.
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
@@ -1884,6 +1899,7 @@ impl Expect {
     }
 
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    #[optimize(size)]
     pub(crate) fn assertions(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         Self::assertions_in(global_this, call_frame, None)
     }
@@ -2187,6 +2203,7 @@ impl ExpectStatic {
     }
 
     #[bun_jsc::host_fn(method)]
+    #[optimize(size)]
     pub(crate) fn to_satisfy(
         &self,
         global_this: &JSGlobalObject,
@@ -2287,6 +2304,7 @@ impl Expect {
     /// to `get_value`'s `matcher_params` while the other two passed
     /// `"<green>expected<r>"` — all three now use the latter (matches the
     /// signature already used in their failure messages).
+    #[optimize(size)]
     pub(crate) fn run_string_affix_matcher(
         &self,
         global: &JSGlobalObject,
@@ -2907,6 +2925,7 @@ impl ExpectCustomAsymmetricMatcher {
     }
 
     /// Calls a custom implementation (if provided) to stringify this asymmetric matcher, and returns true if it was provided and it succeed
+    #[optimize(size)]
     pub(crate) fn custom_print(
         &self,
         this_value: JSValue,
@@ -3076,6 +3095,7 @@ enum HintColor {
 }
 
 impl HintColor {
+    #[optimize(size)]
     fn paint(self, out: &mut Vec<u8>, text: &[u8]) {
         if text.is_empty() {
             return;
@@ -3161,6 +3181,7 @@ impl ExpectMatcherUtils {
         unsafe { ExpectMatcherUtils__getSingleton(global_this) }
     }
 
+    #[optimize(size)]
     fn print_value(
         global_this: &JSGlobalObject,
         value: JSValue,
@@ -3211,6 +3232,7 @@ impl ExpectMatcherUtils {
         Self::print_value(global_this, value, Some("<red>"))
     }
 
+    #[optimize(size)]
     fn color_text(global_this: &JSGlobalObject, callframe: &CallFrame, color: HintColor) -> JsResult<JSValue> {
         let mut text: Vec<u8> = Vec::new();
         for (i, argument) in callframe.arguments().iter().enumerate() {
@@ -3233,6 +3255,7 @@ impl ExpectMatcherUtils {
     }
 
     /// Mirrors `getType` in @jest/get-type.
+    #[optimize(size)]
     fn type_name(value: JSValue) -> &'static str {
         if value.is_undefined() {
             "undefined"
@@ -3314,6 +3337,7 @@ impl ExpectMatcherUtils {
         Self::diff_text(global_this, &DiffFormatter::from_strings(received.slice(), expected.slice(), false))
     }
 
+    #[optimize(size)]
     fn diff_text(global_this: &JSGlobalObject, formatter: &DiffFormatter<'_>) -> JsResult<JSValue> {
         if formatter.received_string == formatter.expected_string {
             let mut out: Vec<u8> = Vec::new();
@@ -3323,6 +3347,7 @@ impl ExpectMatcherUtils {
         bun_string_jsc::create_utf8_for_js(global_this, format!("{formatter}").as_bytes())
     }
 
+    #[optimize(size)]
     fn paint_label(
         global_this: &JSGlobalObject,
         out: &mut Vec<u8>,

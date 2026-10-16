@@ -17,6 +17,7 @@ pub(crate) struct DiffFormatter<'a> {
 }
 
 impl<'a> DiffFormatter<'a> {
+    #[optimize(size)]
     pub(crate) fn new(
         global_this: &JSGlobalObject,
         received: JSValue,

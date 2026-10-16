@@ -35,6 +35,7 @@ impl fmt::Display for SettledResultsFormatter<'_, '_> {
     }
 }
 
+#[optimize(size)]
 fn throw_mismatch(
     this: &PostMatchGuard<'_>,
     global: &JSGlobalObject,
@@ -145,6 +146,7 @@ fn one_call_resolved_with(
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
+    #[optimize(size)]
     pub(crate) fn to_have_resolved_with(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let [expected] = frame.arguments_as_array::<1>();
         let (this, settled_results) =
@@ -237,6 +239,7 @@ impl Expect {
     }
 
     #[bun_jsc::host_fn(method)]
+    #[optimize(size)]
     pub(crate) fn to_have_nth_resolved_with(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let [nth_arg, expected] = frame.arguments_as_array::<2>();
         let (this, settled_results) = self.settled_results_prologue(

@@ -344,6 +344,7 @@ pub(crate) struct Formatter<'a> {
 }
 
 impl<'a> Formatter<'a> {
+    #[optimize(size)]
     pub(crate) fn new(global: &'a JSGlobalObject) -> Self {
         Self {
             remaining_values: &[],
@@ -720,6 +721,7 @@ pub(crate) struct WrappedWriter<'w, W: bun_io::Write> {
 }
 
 impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
+    #[optimize(size)]
     pub(crate) fn new(ctx: &'w mut W) -> Self {
         Self { ctx, failed: false }
     }
@@ -2825,6 +2827,7 @@ impl JestPrettyFormat {
         }
     }
 
+    #[optimize(size)]
     pub(crate) fn print_asymmetric_matcher<M, W, const ENABLE_ANSI_COLORS: bool>(
         // the Formatter instance
         this: &mut M,
@@ -3580,6 +3583,7 @@ impl JestPrettyFormat {
 
     #[cold]
     #[inline(never)]
+    #[optimize(size)]
     pub(crate) fn inspect(global: &JSGlobalObject, value: JSValue, out: &mut Vec<u8>) -> JsResult<()> {
         unsafe extern "C" {
             safe fn SnapshotFormat__isShortenedByWidth(global: &JSGlobalObject, value: JSValue) -> bool;

@@ -327,6 +327,7 @@ pub(crate) struct Config {
 /// Forward Fisher-Yates: `i` from 0 to len-2, `j = intRangeLessThan(usize, i, len)`.
 /// Must produce the identical permutation for the same xoshiro256++ state across Bun
 /// versions so that `bun test --randomize --seed=N` stays reproducible.
+#[optimize(size)]
 fn shuffle_with_index<T>(r: &mut bun_core::rand::DefaultPrng, buf: &mut [T]) {
     if buf.len() < 2 {
         return;

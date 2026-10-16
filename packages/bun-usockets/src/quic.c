@@ -680,6 +680,14 @@ static int us_quic_deliver_hset(lsquic_stream_t *stream, us_quic_stream_t *s) {
     return s->stream ? 1 : -1;
 }
 
+int us_quic_stream_read_error(void) {
+    switch (errno) {
+    case ECONNRESET: return US_QUIC_READ_RESET;
+    case EBADMSG: return US_QUIC_READ_INCOMPLETE;
+    default: return US_QUIC_READ_WAIT;
+    }
+}
+
 static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     us_quic_socket_context_t *ctx = s->ctx;
@@ -706,6 +714,14 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
         lsquic_stream_wantread(stream, 0);
         lsquic_stream_shutdown(stream, 0);
         if (ctx->on_stream_data) ctx->on_stream_data(s, ctx->read_buf, 0, 1);
+    } else if (r < 0 && !s->hset && us_quic_stream_read_error() != US_QUIC_READ_WAIT) {
+        /* A dead stream that no other callback reports: on_reset runs before
+         * on_new_stream for a RESET_STREAM that opens the stream, and never
+         * for a GOAWAY rejection or a FIN before HEADERS. lsquic dispatches
+         * on_read for it on every tick until it is closed. `!s->hset`: only a
+         * stream with no header block gets here, and only then does every
+         * failed read set errno. */
+        us_quic_stream_reset(s);
     }
 }
 

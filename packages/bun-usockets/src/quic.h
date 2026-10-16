@@ -129,6 +129,20 @@ void us_quic_socket_context_on_stream_writable(us_quic_socket_context_t *ctx,
 void us_quic_socket_context_on_stream_close(us_quic_socket_context_t *ctx,
     void (*on_close)(us_quic_stream_t *));
 
+/* Why lsquic_stream_read returned a negative value. Call this only right
+ * after that read: it classifies the C runtime's errno, which any later call
+ * can overwrite. The node:quic reader calls lsquic_stream_read through its
+ * own binding and shares this. */
+enum us_quic_read_error {
+    /* Nothing to read yet, or this side has closed its read half. */
+    US_QUIC_READ_WAIT = 0,
+    /* The stream is reset. */
+    US_QUIC_READ_RESET = 1,
+    /* The stream ended, or its HTTP/3 framing broke, before a header block. */
+    US_QUIC_READ_INCOMPLETE = 2,
+};
+int us_quic_stream_read_error(void);
+
 /* Stream I/O. Read happens via on_stream_data; write returns bytes accepted
  * (may be < len under flow-control backpressure). */
 int us_quic_stream_write(us_quic_stream_t *s, const char *data, unsigned int len);

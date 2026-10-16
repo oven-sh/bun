@@ -1,5 +1,5 @@
 import type { ServerWebSocket } from "bun";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, onTestFinished, test } from "bun:test";
 import { createHash, createPrivateKey, randomBytes, X509Certificate } from "crypto";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
@@ -2253,5 +2253,125 @@ describe("Bun.serve HTTP/3 SNI", () => {
     );
     expect(outcomes).toEqual(spellings.map(name => [name, "closed", "closed", "200 served"]));
     expect(await exchange("other.example")).toBe("200 served");
+  });
+});
+
+// A client can open a request stream and reset it before it sends the HEADERS
+// frame. RESET_STREAM is then the first frame the server gets for that stream,
+// and lsquic makes its reset callback before the stream has an application
+// context. A failed read is the only report the server gets.
+describe("Bun.serve HTTP/3 request streams that are reset before their HEADERS", () => {
+  /** RFC 9114 section 8.1. */
+  const H3_REQUEST_CANCELLED = 0x10cn;
+  type Client = Awaited<ReturnType<typeof connect>>;
+
+  async function connectTo(port: number): Promise<Client> {
+    const endpoint = new QuicEndpoint();
+    // Not `await using`: a graceful close waits for every stream, and a server
+    // that keeps a reset stream open never lets the last one go.
+    onTestFinished(() => endpoint.destroy());
+    const client = await connect(`127.0.0.1:${port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+      onerror() {},
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    await client.opened;
+    return client;
+  }
+
+  /** Resolves with the RESET_STREAM that the server sends in return. */
+  async function resetBeforeHeaders(client: Client) {
+    const stream = await client.createBidirectionalStream();
+    stream.closed.catch(() => {});
+    const resetByServer = Promise.withResolvers<{ code?: string; errorCode?: bigint }>();
+    stream.onreset = resetByServer.resolve;
+    stream.resetStream(H3_REQUEST_CANCELLED);
+    return resetByServer.promise;
+  }
+
+  async function request(client: Client, path: string) {
+    let status = "";
+    const stream = await client.createBidirectionalStream({
+      headers: requestHeaders(path),
+      onheaders(received) {
+        status = received[":status"] as string;
+      },
+    });
+    stream.closed.catch(() => {});
+    let body = "";
+    for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+      for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+    }
+    return { status, body };
+  }
+
+  const serve = () => {
+    let handled = 0;
+    const server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: () => new Response("request " + ++handled),
+    });
+    onTestFinished(() => void server.stop(true));
+    return server;
+  };
+
+  test("are reset by the server in return", async () => {
+    const client = await connectTo(serve().port!);
+    const { code, errorCode } = await resetBeforeHeaders(client);
+    expect({ code, errorCode }).toEqual({ code: "ERR_QUIC_APPLICATION_ERROR", errorCode: H3_REQUEST_CANCELLED });
+  });
+
+  // A client can have 100 request streams open on one connection
+  // (es_init_max_streams_bidi in quic.c). lsquic raises that limit only as
+  // request streams close.
+  test("give their share of the connection's stream limit back", async () => {
+    const client = await connectTo(serve().port!);
+    for (let i = 0; i < 100; i++) void resetBeforeHeaders(client);
+    // The limit is used up, so this stream opens only when the server raises it.
+    expect(await request(client, "/")).toEqual({ status: "200", body: "request 1" });
+  });
+
+  test("leave the server idle", async () => {
+    // The server measures itself: the CPU time of the process over 250 ms in
+    // which it has nothing to do. One quiet window is enough, and a thread that
+    // spins never has one.
+    const script = `
+      const server = Bun.serve({
+        port: 0,
+        ...${JSON.stringify({ tls, http3: true, http1: false })},
+        async fetch(req) {
+          if (new URL(req.url).pathname !== "/idle") return new Response("ok");
+          let report;
+          for (let window = 0; window < 4; window++) {
+            const cpu = process.cpuUsage(), start = performance.now();
+            await Bun.sleep(250);
+            const { user, system } = process.cpuUsage(cpu);
+            report = { cpuMs: (user + system) / 1000, wallMs: performance.now() - start };
+            if (report.cpuMs < report.wallMs / 2) break;
+          }
+          return Response.json(report);
+        },
+      });
+      console.error("PORT=" + server.port);
+      process.stdin.on("data", () => {});
+      ${STOP_ON_STDIN_END}
+    `;
+    await withCustomServer(script, async port => {
+      const client = await connectTo(port);
+      // Not part of the measurement: the handshake and the server's lazy setup.
+      expect(await request(client, "/")).toEqual({ status: "200", body: "ok" });
+      void resetBeforeHeaders(client);
+      const { status, body } = await request(client, "/idle");
+      expect(status).toBe("200");
+      const { cpuMs, wallMs }: { cpuMs: number; wallMs: number } = JSON.parse(body);
+      // A spinning thread uses as much CPU time as wall time. An idle one uses close to none.
+      expect(cpuMs).toBeLessThan(wallMs / 2);
+    });
   });
 });

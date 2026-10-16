@@ -1042,9 +1042,11 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     }
     // SAFETY: `ctx` is the live QuicStream we returned from on_new_stream.
     let qs = unsafe { &*ctx.cast::<QuicStream>() };
-    // Returns false if a malformed header block reset the stream.
-    let claim_header_sets = || -> bool {
+    // Returns false if a malformed header block reset the stream. `claimed`
+    // records that this dispatch took a block.
+    let claim_header_sets = |claimed: &mut bool| -> bool {
         while let Some(hset) = stream.take_header_set() {
+            *claimed = true;
             let pairs = hset.pairs();
             /// RFC 9114 §8.1 H3_MESSAGE_ERROR — malformed message (a request
             /// carrying :status). Matches lsquic's `HEC_MESSAGE_ERROR`
@@ -1090,7 +1092,8 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
         }
         true
     };
-    if !claim_header_sets() {
+    let mut claimed = false;
+    if !claim_header_sets(&mut claimed) {
         return;
     }
     if stream.received_early_data() {
@@ -1109,7 +1112,7 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
             }
             0 => {
                 // lsquic returns 0 even if this read decoded one more header block.
-                if !claim_header_sets() {
+                if !claim_header_sets(&mut claimed) {
                     break;
                 }
                 qs.push_inbound(&[], true);
@@ -1123,7 +1126,56 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
                 got_any = true;
                 break;
             }
-            _ => break,
+            // After bytes or a header block, a failed read is "no more for
+            // now". It also keeps errno out of the one lsquic failure that
+            // sets none: a header block that is queued and not yet claimed.
+            _ if got_any || claimed => break,
+            // Otherwise the read can be final. lsquic dispatches on_read for
+            // such a stream on every tick until the stream is closed.
+            _ => {
+                match stream.read_error() {
+                    lsquic::ReadError::Wait => {}
+                    // A stream that a GOAWAY rejected: lsquic marks it reset
+                    // and makes no callback (a peer RESET_STREAM goes through
+                    // on_stream_reset or `bind_raw` instead). Node destroys
+                    // such a stream with H3_REQUEST_REJECTED, which is what
+                    // `closed` then rejects with:
+                    // https://github.com/nodejs/node/blob/6d5e30987117e072bb4638c0535946464a314b7e/src/quic/http3.cc#L1054-L1062
+                    lsquic::ReadError::Reset => {
+                        /// RFC 9114 §8.1, lsquic's `HEC_REQUEST_REJECTED`.
+                        const H3_REQUEST_REJECTED: u64 = 0x10b;
+                        qs.with_state(|s| {
+                            if s.reset_code == 0 {
+                                s.reset_code = H3_REQUEST_REJECTED;
+                            }
+                        });
+                        stream.close();
+                    }
+                    // The message ended, or its framing broke, before a
+                    // HEADERS frame. RFC 9114 §4.1 ends that one stream. Node
+                    // ends the whole session instead, because nghttp3 fails
+                    // the read and Node reports a failed read as a failed
+                    // ngtcp2 callback:
+                    // https://github.com/nodejs/node/blob/6d5e30987117e072bb4638c0535946464a314b7e/src/quic/http3.cc#L320-L328
+                    lsquic::ReadError::Incomplete => {
+                        /// RFC 9114 §8.1, lsquic's `HEC_REQUEST_INCOMPLETE`:
+                        /// a request stream that ended without a request.
+                        const H3_REQUEST_INCOMPLETE: u64 = 0x10d;
+                        /// RFC 9114 §8.1, lsquic's `HEC_MESSAGE_ERROR`: here,
+                        /// a response that ended without a header section.
+                        const H3_MESSAGE_ERROR: u64 = 0x10e;
+                        let code = if qs.session_ref().is_some_and(|s| s.is_server()) {
+                            H3_REQUEST_INCOMPLETE
+                        } else {
+                            H3_MESSAGE_ERROR
+                        };
+                        stream.reset(code);
+                        stream.stop_sending(code);
+                        qs.mark_reset(code);
+                    }
+                }
+                break;
+            }
         }
     }
     if got_any {

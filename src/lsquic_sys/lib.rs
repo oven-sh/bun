@@ -484,6 +484,18 @@ impl Conn {
     }
 }
 
+/// Why a [`Stream::read`] returned a negative value. Mirrors
+/// `enum us_quic_read_error` in `packages/bun-usockets/src/quic.h`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ReadError {
+    /// Nothing to read yet, or this side has closed its read half.
+    Wait,
+    /// The stream is reset.
+    Reset,
+    /// The stream ended, or its HTTP/3 framing broke, before a header block.
+    Incomplete,
+}
+
 /// Borrowed `lsquic_stream_t`. Same lifetime contract as [`Conn`] — invalid
 /// after `on_close` returns for it.
 #[derive(Copy, Clone)]
@@ -514,6 +526,22 @@ impl Stream {
     pub fn read(&self, buf: &mut [u8]) -> isize {
         // SAFETY: as above; `buf` is a live slice.
         unsafe { lsquic_stream_read(self.0, buf.as_mut_ptr().cast(), buf.len()) }
+    }
+    /// Why the [`read`](Self::read) that just returned a negative value
+    /// failed. Call it only there: it classifies the C runtime's errno, which
+    /// any later call can overwrite. The classification is in C because the
+    /// CRT's `EBADMSG` and `ECONNRESET` numbers on Windows are not the ones
+    /// `bun_errno::SystemErrno` carries.
+    pub fn read_error(&self) -> ReadError {
+        unsafe extern "C" {
+            fn us_quic_stream_read_error() -> c_int;
+        }
+        // SAFETY: reads errno through the C macros; takes no argument.
+        match unsafe { us_quic_stream_read_error() } {
+            1 => ReadError::Reset,
+            2 => ReadError::Incomplete,
+            _ => ReadError::Wait,
+        }
     }
     pub fn write(&self, buf: &[u8]) -> isize {
         // SAFETY: as above.

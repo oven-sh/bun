@@ -1,7 +1,7 @@
 // `destroy()` after the app committed AND ended a response (which, under
 // `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
 // must deliver it with a FIN, never retract it with a RESET_STREAM.
-import { describe, expect, test } from "bun:test";
+import { describe, expect, onTestFinished, test } from "bun:test";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -372,5 +372,84 @@ describe("headers queued before the handshake", () => {
     );
     expect(await Promise.race([gotHeaders.promise, closed])).toBe("/queued");
     client.close();
+  });
+});
+
+// A GOAWAY rejects every request above the stream id it names (RFC 9114 section
+// 5.2). lsquic marks the stream of a rejected request as reset and makes no
+// callback for it, so a failed read is the only report the client gets.
+describe("a request that a GOAWAY rejects", () => {
+  const request = (path: string) => ({
+    ":method": "GET",
+    ":path": path,
+    ":scheme": "https",
+    ":authority": "localhost",
+  });
+
+  test("rejects `closed` with H3_REQUEST_REJECTED while the session stays open", async () => {
+    const paths: string[] = [];
+    const goawaySent = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 5 },
+        async onheaders(this: any, headers: Record<string, any>) {
+          paths.push(headers[":path"]);
+          // Sends the GOAWAY. The session then stays open for this stream.
+          this.session.close().catch(() => {});
+          goawaySent.resolve();
+          await release.promise;
+          this.sendHeaders({ ":status": "200" });
+          this.writer.writeSync(new TextEncoder().encode("held"));
+          this.writer.endSync();
+        },
+      },
+    );
+    // destroy(), not `await using`: a close() waits for the sessions to end.
+    onTestFinished(() => server.destroy());
+
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+      onerror() {},
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    await client.opened;
+
+    const held = await client.createBidirectionalStream({ headers: request("/held") });
+    held.closed.catch(() => {});
+    await goawaySent.promise;
+    // The server has sent the GOAWAY and the client does not have it yet.
+    const rejected = await client.createBidirectionalStream({ headers: request("/rejected") });
+    const rejection = await rejected.closed.then(
+      () => "closed without an error",
+      (err: Error & { code?: string; errorCode?: bigint }) => `${err.code} ${err.errorCode}`,
+    );
+
+    // The request that the GOAWAY covers still gets its response.
+    release.resolve();
+    let body = "";
+    try {
+      for await (const batch of held) {
+        for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+      }
+    } catch (err: any) {
+      body = "read failed: " + err?.code;
+    }
+    client.close().catch(() => {});
+
+    expect({ rejection, body, paths }).toEqual({
+      rejection: `ERR_QUIC_APPLICATION_ERROR ${0x10b}`,
+      body: "held",
+      paths: ["/held"],
+    });
   });
 });

@@ -1,6 +1,6 @@
 import { gunzipSync, gzipSync, type Server } from "bun";
 import { fetchH3Internals } from "bun:internal-for-testing";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, onTestFinished, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir, tls } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { join } from "node:path";
@@ -939,6 +939,76 @@ test("retries on a fresh session when a pooled session is stale (port reuse)", a
   } finally {
     void b.stop(true);
   }
+});
+
+// A GOAWAY rejects every request above the stream id it names, and such a
+// request is safe to send again (RFC 9114 section 5.2). lsquic marks the stream
+// of a rejected request as reset and makes no callback for it, so a failed read
+// is the only report the client gets.
+test("a request that a GOAWAY rejects is sent again at once, on a fresh connection", async () => {
+  const encoder = new TextEncoder();
+  const respond = (stream: any, body: string) => {
+    stream.sendHeaders({ ":status": "200" });
+    stream.writer.writeSync(encoder.encode(body));
+    stream.writer.endSync();
+  };
+  let connections = 0;
+  let late: Promise<string> | undefined;
+  let lateWasSent = false;
+  const lateArrived = Promise.withResolvers<void>();
+  const origin = await listen(
+    async (session: any) => {
+      const connection = ++connections;
+      session.onstream = (stream: any) => {
+        stream.connection = connection;
+        stream.closed.catch(() => {});
+      };
+      await session.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+      transportParams: { maxIdleTimeout: 5 },
+      async onheaders(this: any, received: NodeJS.Dict<string | string[]>) {
+        const path = received[":path"];
+        if (path === "/late") {
+          lateArrived.resolve();
+          return respond(this, "late on connection " + this.connection);
+        }
+        if (path !== "/stop") return respond(this, "ok");
+        // fetch() opens the stream of /late on its own thread while this thread
+        // stays in this handler. So the origin has not seen that stream when it
+        // sends the GOAWAY, and the GOAWAY does not cover it.
+        const withLate = liveCounts().streams + 1;
+        late = fetch(`${url}/late`, h3).then(res => res.text());
+        late.catch(() => {});
+        const giveUpAt = performance.now() + 3000;
+        while (liveCounts().streams < withLate && performance.now() < giveUpAt);
+        lateWasSent = liveCounts().streams >= withLate;
+        this.session.close().catch(() => {});
+        // The connection of /stop stays open until this response. It is sent
+        // only when /late has arrived again.
+        await lateArrived.promise;
+        respond(this, "stop on connection " + this.connection);
+      },
+    },
+  );
+  // Also after a timeout. Not close(): it waits for the session that fetch() keeps in its pool.
+  onTestFinished(() => origin.destroy());
+  const url = `https://127.0.0.1:${origin.address!.port}`;
+
+  const idle = liveCounts().streams;
+  const warm = await fetch(`${url}/warm`, h3).then(res => res.text());
+  // The handler of /stop counts streams, so the stream of /warm has to be gone first.
+  while (liveCounts().streams !== idle) await new Promise(resolve => setImmediate(resolve));
+  const stop = fetch(`${url}/stop`, h3).then(res => res.text());
+  stop.catch(() => {});
+
+  expect({ warm, stop: await stop, lateWasSent, late: await late }).toEqual({
+    warm: "ok",
+    stop: "stop on connection 1",
+    lateWasSent: true,
+    late: "late on connection 2",
+  });
 });
 
 // Same retry, but the reconnect fails inside `connect()` itself. A QUIC

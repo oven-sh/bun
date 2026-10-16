@@ -2,10 +2,12 @@
 // against truecolour png(), with and without dither.
 //
 // Fixtures are generated in-process so nothing binary is committed: a
-// screenshot-like image (flat areas, antialiased text, a gradient banner) and
-// a photo-like one (gradients with noise). Pass PNG/JPEG paths to measure
-// real files instead. Run with --sharp to add a sharp column (requires
-// `bun install` in this dir first).
+// screenshot-like image (flat areas, antialiased text, a gradient banner), the
+// same with a banner of one colour per column (under 256 colours, so it fits
+// the default palette), a photo-like one (gradients with noise) and a
+// thumbnail of it. Pass PNG/JPEG paths to measure real files instead. Run
+// with --sharp to add a sharp column (requires `bun install` in this dir
+// first).
 
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -61,13 +63,16 @@ const hash = (x, y) => (Math.imul(x, 0x9e3779b1) ^ Math.imul(y, 0x85ebca6b)) >>>
 const set = (px, r, g, b) => ((px[0] = r), (px[1] = g), (px[2] = b));
 
 // 1920×1080: header, sidebar, text lines with 16 levels of edge coverage,
-// three flat buttons, one gradient banner.
-function screenshot(x, y, px) {
+// three flat buttons, one gradient banner. `bannerRows` is 1 for a banner
+// that also changes down its rows (thousands of colours) and 0 for one colour
+// per column.
+const screenshot = bannerRows => (x, y, px) => {
   if (y < 64) return set(px, 32, 34, 37);
   if (x < 240) return set(px, 241, 243, 245);
   if (y >= 80 && y < 200 && x >= 280) {
     const t = (x - 280) / 1640;
-    return set(px, 40 + 100 * t, 80 - 20 * t, 200);
+    const s = (bannerRows * (y - 80)) / 120;
+    return set(px, 40 + 100 * t, 80 - 20 * t + 60 * s, 200 - 40 * s);
   }
   if (y >= 980 && y < 1020 && x >= 280 && x < 640) {
     const which = ((x - 280) / 120) | 0;
@@ -79,28 +84,31 @@ function screenshot(x, y, px) {
     return set(px, v, v + (cover >> 2), v + (cover >> 1));
   }
   return set(px, 250, 250, 250);
-}
-// 1024×768: smooth gradients plus ±6 of noise per channel.
-function photo(x, y, px) {
+};
+// Smooth gradients plus ±6 of noise per channel, `step` source pixels apart.
+const photo = step => (x, y, px) => {
   const n = hash(x, y);
   const wave = (v, k) => Math.sin(v * k) * 0.5 + 0.5;
-  const fx = x / 1024;
-  const fy = y / 768;
+  const fx = (x * step) / 1024;
+  const fy = (y * step) / 768;
   set(
     px,
     10 + 235 * wave(fx, 6.3) + (n % 13) - 6,
     10 + 235 * wave(fy + fx * 0.5, 4.1) + ((n >>> 8) % 13) - 6,
     10 + 235 * wave(fx + fy, 3.0) + ((n >>> 16) % 13) - 6,
   );
-}
+};
 
 const args = process.argv.slice(2);
 const paths = args.filter(a => !a.startsWith("--"));
+// [name, PNG, calls per sample]
 const fixtures = paths.length
-  ? paths.map(p => [basename(p), readFileSync(p)])
+  ? paths.map(p => [basename(p), readFileSync(p), 1])
   : [
-      ["screenshot 1920×1080", makePng(1920, 1080, screenshot)],
-      ["photo 1024×768", makePng(1024, 768, photo)],
+      ["screenshot 1920×1080", makePng(1920, 1080, screenshot(1)), 1],
+      ["screenshot 1920×1080, under 256 colours", makePng(1920, 1080, screenshot(0)), 1],
+      ["photo 1024×768", makePng(1024, 768, photo(1)), 1],
+      ["photo 64×48", makePng(64, 48, photo(16)), 50],
     ];
 
 let sharp = null;
@@ -116,13 +124,13 @@ if (args.includes("--sharp")) {
 }
 
 const ROUNDS = 7;
-async function measure(fn) {
+async function measure(fn, calls) {
   const times = [];
   let bytes = 0;
   for (let i = 0; i < ROUNDS; i++) {
     const t0 = performance.now();
-    bytes = (await fn()).length;
-    times.push(performance.now() - t0);
+    for (let call = 0; call < calls; call++) bytes = (await fn()).length;
+    times.push((performance.now() - t0) / calls);
   }
   times.sort((a, b) => a - b);
   return { min: times[0], median: times[ROUNDS >> 1], bytes };
@@ -133,20 +141,22 @@ console.log(
   `| input | output | min ms | median ms | bytes | vs truecolour |${sharp ? " sharp ms | sharp bytes |" : ""}`,
 );
 console.log(`|---|---|---:|---:|---:|---:|${sharp ? "---:|---:|" : ""}`);
-for (const [name, buf] of fixtures) {
-  const truecolour = await measure(() => new Bun.Image(buf).png().bytes());
+for (const [name, buf, calls] of fixtures) {
+  const truecolour = await measure(() => new Bun.Image(buf).png().bytes(), calls);
   const rows = [["png()", truecolour, null]];
-  for (const colors of [16, 64, 256]) {
+  for (const colors of [2, 16, 64, 256]) {
     for (const dither of [false, true]) {
       const label = `palette, colors ${colors}${dither ? ", dither" : ""}`;
-      const bun = await measure(() => new Bun.Image(buf).png({ palette: true, colors, dither }).bytes());
+      const bun = await measure(() => new Bun.Image(buf).png({ palette: true, colors, dither }).bytes(), calls);
       // sharp rounds colours up to 2, 4, 16 or 256.
       const other =
         sharp && colors !== 64
-          ? await measure(() =>
-              sharp(buf)
-                .png({ palette: true, colours: colors, dither: dither ? 1 : 0 })
-                .toBuffer(),
+          ? await measure(
+              () =>
+                sharp(buf)
+                  .png({ palette: true, colours: colors, dither: dither ? 1 : 0 })
+                  .toBuffer(),
+              calls,
             )
           : null;
       rows.push([label, bun, other]);
@@ -155,14 +165,14 @@ for (const [name, buf] of fixtures) {
   // A Response body is encoded on the JS thread.
   rows.push([
     "palette, colors 256, as Response body",
-    await measure(() => new Response(new Bun.Image(buf).png({ palette: true })).bytes()),
+    await measure(() => new Response(new Bun.Image(buf).png({ palette: true })).bytes(), calls),
     null,
   ]);
   for (const [label, r, other] of rows) {
     const ratio = `${(truecolour.bytes / r.bytes).toFixed(2)}×`;
     const extra = sharp ? ` ${other ? other.min.toFixed(1) : ""} | ${other ? other.bytes : ""} |` : "";
     console.log(
-      `| ${name} | ${label} | ${r.min.toFixed(1)} | ${r.median.toFixed(1)} | ${r.bytes} | ${ratio} |${extra}`,
+      `| ${name} | ${label} | ${r.min.toFixed(2)} | ${r.median.toFixed(2)} | ${r.bytes} | ${ratio} |${extra}`,
     );
   }
 }

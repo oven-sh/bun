@@ -277,6 +277,35 @@ pub const fn num_masks_for(bit_length: usize) -> usize {
     bit_length.div_ceil(usize::BITS as usize)
 }
 
+/// A set of byte values that takes 32 bytes. Works as a `const` or a `static`.
+pub type ByteSet = ArrayBitSet<256, { num_masks_for(256) }>;
+
+impl ByteSet {
+    pub const fn of(bytes: &[u8]) -> ByteSet {
+        let (mut set, mut i) = (ByteSet::init_empty(), 0);
+        while i < bytes.len() {
+            set.set(bytes[i] as usize);
+            i += 1;
+        }
+        set
+    }
+
+    /// Also adds `first..=last`.
+    pub const fn with_range(mut self, first: u8, last: u8) -> ByteSet {
+        let mut byte = first as usize;
+        while byte <= last as usize {
+            self.set(byte);
+            byte += 1;
+        }
+        self
+    }
+
+    #[inline]
+    pub const fn has(&self, byte: u8) -> bool {
+        self.is_set(byte as usize)
+    }
+}
+
 /// A bit set with static size, which is backed by an array of usize.
 /// This set is good for sets with a larger size, but may use
 /// more bytes than necessary if your set is small.
@@ -321,7 +350,7 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
 
     /// Returns true if the bit at the specified index
     /// is present in the set, false otherwise.
-    pub fn is_set(&self, index: usize) -> bool {
+    pub const fn is_set(&self, index: usize) -> bool {
         debug_assert!(index < Self::BIT_LENGTH);
         if NUM_MASKS == 0 {
             return false; // doesn't compile in this case
@@ -339,12 +368,21 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
     }
 
     /// Adds a specific bit to the bit set
-    pub fn set(&mut self, index: usize) {
+    pub const fn set(&mut self, index: usize) {
         debug_assert!(index < Self::BIT_LENGTH);
         if NUM_MASKS == 0 {
             return; // doesn't compile in this case
         }
         self.masks[word_mask_index(index)] |= word_mask_bit(index);
+    }
+
+    /// Removes a specific bit from the bit set
+    pub fn unset(&mut self, index: usize) {
+        debug_assert!(index < Self::BIT_LENGTH);
+        if NUM_MASKS == 0 {
+            return; // doesn't compile in this case
+        }
+        self.masks[word_mask_index(index)] &= !word_mask_bit(index);
     }
 
     /// Sets all bits
@@ -365,6 +403,14 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
         for (mask, alt) in self.masks.iter_mut().zip(other.masks.iter()) {
             *mask |= *alt;
         }
+    }
+
+    /// Returns true iff the first bit set is the subset of the second one.
+    pub(crate) fn subset_of(&self, other: &Self) -> bool {
+        self.masks
+            .iter()
+            .zip(other.masks.iter())
+            .all(|(a, b)| a & b == *a)
     }
 
     /// Finds the index of the first set bit.
@@ -516,6 +562,7 @@ impl DynamicBitSetUnmanaged {
 
     /// Creates a bit set with no elements present.
     /// If bit_length is not zero, deinit must eventually be called.
+    #[inline(never)]
     pub fn init_empty(bit_length: usize) -> Result<Self, AllocError> {
         let mut this = Self::default();
         this.resize(bit_length, false)?;
@@ -617,6 +664,7 @@ impl DynamicBitSetUnmanaged {
     /// deinitializes the array and releases its memory.
     /// The passed allocator must be the same one used for
     /// init* or resize in the past. Idempotent.
+    #[inline(never)]
     pub fn deinit(&mut self) {
         self.resize(0, false).expect("unreachable");
     }
@@ -653,6 +701,25 @@ impl DynamicBitSetUnmanaged {
         // `masks_slice()` already encapsulates the `(ptr, num_masks)` invariant;
         // reinterpreting `&[usize]` as `&[u8]` is a safe POD cast.
         bun_core::cast_slice::<usize, u8>(self.masks_slice())
+    }
+
+    /// Inverse of `bytes()`: `bytes` must be exactly the mask words for
+    /// `bit_length`. Padding bits past `bit_length` are cleared, so untrusted
+    /// input cannot make `count()` exceed `bit_length`.
+    pub fn from_bytes(bit_length: usize, bytes: &[u8]) -> Result<Option<Self>, AllocError> {
+        let mut set = Self::init_empty(bit_length)?;
+        let words = set.masks_slice_mut();
+        if bytes.len() != core::mem::size_of_val(words) {
+            return Ok(None);
+        }
+        bun_core::cast_slice_mut::<usize, u8>(words).copy_from_slice(bytes);
+        let n = words.len();
+        if let Some(last) = words.last_mut() {
+            let padding_bits =
+                u32::try_from(n * DYN_MASK_BITS as usize - bit_length).expect("int cast");
+            *last &= usize::MAX >> padding_bits;
+        }
+        Ok(Some(set))
     }
 
     /// Returns the total number of set bits in this bit set.
@@ -1045,6 +1112,28 @@ impl AutoBitSet {
         auto_forward!(self, |b| b.set(index))
     }
 
+    pub fn unset(&mut self, index: usize) {
+        auto_forward!(self, |b| b.unset(index))
+    }
+
+    /// `self |= other`. Both sets must have the same arm (same bit length).
+    pub fn set_union(&mut self, other: &AutoBitSet) {
+        match (self, other) {
+            (AutoBitSet::Static(a), AutoBitSet::Static(b)) => a.set_union(b),
+            (AutoBitSet::Dynamic(a), AutoBitSet::Dynamic(b)) => a.set_union(b),
+            _ => unreachable!("AutoBitSet::set_union: mismatched bit lengths"),
+        }
+    }
+
+    /// Is every bit of `self` also set in `other`?
+    pub fn subset_of(&self, other: &AutoBitSet) -> bool {
+        match (self, other) {
+            (AutoBitSet::Static(a), AutoBitSet::Static(b)) => a.subset_of(b),
+            (AutoBitSet::Dynamic(a), AutoBitSet::Dynamic(b)) => a.subset_of(b),
+            _ => unreachable!("AutoBitSet::subset_of: mismatched bit lengths"),
+        }
+    }
+
     pub(crate) fn raw_bytes(&self) -> &[u8] {
         match self {
             AutoBitSet::Static(s) => bun_core::cast_slice::<usize, u8>(&s.masks),
@@ -1054,6 +1143,15 @@ impl AutoBitSet {
 
     pub fn bytes(&self, _: usize) -> &[u8] {
         self.raw_bytes()
+    }
+
+    /// The backing words (bit `i` is `words()[i / usize::BITS] >> (i % usize::BITS) & 1`);
+    /// bits past the length are zero.
+    pub fn words(&self) -> &[usize] {
+        match self {
+            AutoBitSet::Static(s) => &s.masks,
+            AutoBitSet::Dynamic(d) => d.masks_slice(),
+        }
     }
 
     pub fn eql(&self, b: &AutoBitSet) -> bool {
@@ -1202,6 +1300,23 @@ impl DynamicBitSet {
     /// The two sets must both be the same bit_length.
     pub fn set_intersection(&mut self, other: &Self) {
         self.unmanaged.set_intersection(&other.unmanaged);
+    }
+
+    /// Performs a union of two bit sets, and stores the result in the
+    /// first one. The two sets must both be the same bit_length.
+    pub fn set_union(&mut self, other: &Self) {
+        self.unmanaged.set_union(&other.unmanaged);
+    }
+
+    /// The mask words as raw bytes (native layout).
+    pub fn bytes(&self) -> &[u8] {
+        self.unmanaged.bytes()
+    }
+
+    /// See `DynamicBitSetUnmanaged::from_bytes`.
+    pub fn from_bytes(bit_length: usize, bytes: &[u8]) -> Result<Option<Self>, AllocError> {
+        Ok(DynamicBitSetUnmanaged::from_bytes(bit_length, bytes)?
+            .map(|unmanaged| Self { unmanaged }))
     }
 
     /// Iterates through the items in the set, according to the options.

@@ -25,7 +25,6 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 
 namespace Bun {
 namespace WebStreams {
@@ -43,45 +42,17 @@ static JSReadableStreamDefaultController* transformReadableController(JSTransfor
     return uncheckedDowncast<JSReadableStreamDefaultController>(readable->m_controller.get());
 }
 
-// WebIDL callback invoke returning Promise<undefined>: an abrupt completion becomes a
-// rejected promise (a sanctioned completion-record catch). Returns nullptr on VM termination.
-static JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* method, JSValue thisValue, const MarkedArgumentBuffer& args)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue result;
-    JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        auto callData = getCallData(method);
-        ASSERT(callData.type != CallData::Type::None);
-        result = call(globalObject, method, callData, thisValue, args);
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-    }
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    if (result.isEmpty())
-        return nullptr;
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
-}
-
-// The default [[transformAlgorithm]]: enqueue the chunk unchanged; the enqueue's abrupt
-// completion becomes a rejected promise (a sanctioned completion-record catch).
+// The default [[transformAlgorithm]] (SetUpTransformStreamDefaultControllerFromTransformer step 2):
+// "Let result be TransformStreamDefaultControllerEnqueue(controller, chunk). If result is an abrupt
+// completion, return a promise rejected with result.[[Value]]. Otherwise a promise resolved with undefined."
 static JSPromise* defaultTransformAlgorithm(JSC::VM& vm, JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller, JSValue chunk)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(vm);
         transformStreamDefaultControllerEnqueue(globalObject, controller, chunk);
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-    }
-    // takeAbruptCompletion leaves a VM termination pending and returns the empty value.
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    });
 }
 
 // The [[transformAlgorithm]] dispatch; the switch is total over TransformerKind.
@@ -98,7 +69,7 @@ static JSPromise* performTransformAlgorithm(JSC::VM& vm, JSGlobalObject* globalO
                 throwOutOfMemoryError(globalObject, scope);
                 return nullptr;
             }
-            RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, transformMethod, controller->m_transformer.get(), args));
+            RELEASE_AND_RETURN(scope, invokeCallbackReturningPromise(globalObject, transformMethod, controller->m_transformer.get(), args));
         }
         break;
     case TransformerKind::Identity:
@@ -135,7 +106,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSTransformStreamDefaultControllerPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSTransformStreamDefaultControllerPrototype* ptr = new (NotNull, JSC::allocateCell<JSTransformStreamDefaultControllerPrototype>(vm)) JSTransformStreamDefaultControllerPrototype(vm, globalObject, structure);
+        JSTransformStreamDefaultControllerPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSTransformStreamDefaultControllerPrototype))) JSTransformStreamDefaultControllerPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -149,7 +120,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -188,9 +159,9 @@ JSC_DEFINE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototype_inspectCust
 void JSTransformStreamDefaultControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSTransformStreamDefaultController::info(), JSTransformStreamDefaultControllerPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSTransformStreamDefaultController::info(), JSTransformStreamDefaultControllerPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsTransformStreamDefaultControllerPrototype_inspectCustom);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 template<> const ClassInfo JSTransformStreamDefaultControllerConstructor::s_info = { "TransformStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultControllerConstructor) };
@@ -203,11 +174,7 @@ template<> JSValue JSTransformStreamDefaultControllerConstructor::prototypeForSt
 
 template<> void JSTransformStreamDefaultControllerConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "TransformStreamDefaultController"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSTransformStreamDefaultController::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "TransformStreamDefaultController"_s, JSTransformStreamDefaultController::prototype(vm, globalObject));
 }
 
 const ClassInfo JSTransformStreamDefaultController::s_info = { "TransformStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultController) };
@@ -232,7 +199,7 @@ JSTransformStreamDefaultController* JSTransformStreamDefaultController::create(V
 
 Structure* JSTransformStreamDefaultController::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSTransformStreamDefaultController::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -254,12 +221,7 @@ JSValue JSTransformStreamDefaultController::getConstructor(VM& vm, const JSGloba
 
 GCClient::IsoSubspace* JSTransformStreamDefaultController::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSTransformStreamDefaultController, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTransformStreamDefaultController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStreamDefaultController = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTransformStreamDefaultController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTransformStreamDefaultController = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSTransformStreamDefaultController, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTransformStreamDefaultController, m_subspaceForTransformStreamDefaultController));
 }
 
 template<typename Visitor>
@@ -441,20 +403,13 @@ void transformStreamDefaultControllerEnqueue(JSGlobalObject* globalObject, JSTra
         throwTypeError(globalObject, scope, "Cannot enqueue a chunk into a TransformStream whose readable side is closed or has already requested close"_s);
         return;
     }
-    JSValue thrown;
-    {
-        // The readable-side enqueue interpreted as a completion record (a sanctioned
-        // completion-record catch): an abrupt completion errors the WRITABLE side and
-        // rethrows the readable's stored error.
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        readableStreamDefaultControllerEnqueue(globalObject, readableController, chunk);
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-    }
-    // takeAbruptCompletion leaves a VM termination pending and returns the empty value.
-    RETURN_IF_EXCEPTION(scope, void());
-    if (!thrown.isEmpty()) [[unlikely]] {
-        transformStreamErrorWritableAndUnblockWrite(globalObject, stream, thrown);
+    readableStreamDefaultControllerEnqueue(globalObject, readableController, chunk);
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+        // Spec steps 4-5: "If enqueueResult is an abrupt completion, perform
+        // ! TransformStreamErrorWritableAndUnblockWrite(stream, enqueueResult.[[Value]]) and throw
+        // stream.[[readable]].[[storedError]]."
+        TRY_CLEAR_EXCEPTION(scope, );
+        transformStreamErrorWritableAndUnblockWrite(globalObject, stream, exception->value());
         RETURN_IF_EXCEPTION(scope, void());
         // The readable is not necessarily Errored here: the user size() callback may have
         // closed it before throwing, leaving [[storedError]] unset — then we throw undefined.

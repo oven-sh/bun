@@ -44,9 +44,7 @@ impl GlobalObjectRef for crate::JSGlobalObject {
 
 type ErrorCodeInt = u16;
 
-/// `Bun::ErrorCode` in C++. Modelled as a newtype-over-`u16` so the same type
-/// can also carry the legacy sentinels (`PARSER_ERROR` / `JS_ERROR_OBJECT`)
-/// without an exhaustive-match obligation.
+/// `Bun::ErrorCode` in C++.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct ErrorCode(pub ErrorCodeInt);
@@ -62,14 +60,6 @@ include!(concat!(env!("BUN_CODEGEN_DIR"), "/ErrorCode.generated.rs"));
 // `ERR_SYSTEM_ERROR`): `Bun__createErrorWithCode` indexes `errors[COUNT]`
 // unchecked. Codes outside ErrorCode.ts go on `SystemError.code` as a literal.
 
-// ──────────────────────────────────────────────────────────────────────────
-// Legacy anyerror-wrapper sentinels.
-// ──────────────────────────────────────────────────────────────────────────
-impl ErrorCode {
-    pub(crate) const PARSER_ERROR: ErrorCodeInt = 0xFFFE;
-    pub const JS_ERROR_OBJECT: ErrorCodeInt = 0xFFFD;
-}
-
 impl ErrorCode {
     /// Node `error.code` string (e.g. `"ERR_INVALID_ARG_TYPE"`).
     #[inline]
@@ -84,15 +74,12 @@ impl ErrorCode {
     /// `Bun__createErrorWithCode`, and returns the constructed Error JSValue.
     /// The C++ side picks the ctor / `.name` / `.code` from `errors[self.0]`.
     pub fn fmt<G: GlobalObjectRef + ?Sized>(self, global: &G, args: Arguments<'_>) -> JSValue {
-        let mut message = bun_core::String::create_format(args);
+        let message = bun_core::String::create_format(args);
         // `G` is one of the two `#[repr(C)]` opaque ZST `JSGlobalObject`
         // handles (see `GlobalObjectRef` doc); `opaque_ref` is the safe
-        // ZST-handle deref proof (panics on null). C++ clones the impl into a
-        // JSString; `message` is deref'd below after the call.
+        // ZST-handle deref proof (panics on null).
         let global = JSGlobalObject::opaque_ref(global.as_global_ptr().cast::<JSGlobalObject>());
-        let v = Bun__createErrorWithCode(global, self, &mut message);
-        message.deref();
-        v
+        Bun__createErrorWithCode(global, self, &message)
     }
 
     /// `Error.throw(this, globalThis, fmt, args)` — `.fmt` then
@@ -124,7 +111,7 @@ unsafe extern "C" {
     safe fn Bun__createErrorWithCode(
         global: &JSGlobalObject,
         code: ErrorCode,
-        message: &mut bun_core::String,
+        message: &bun_core::String,
     ) -> JSValue;
 }
 
@@ -164,14 +151,5 @@ impl<'a, G: GlobalObjectRef + ?Sized> ErrorBuilder<'a, G> {
         JSPromise::rejected_promise(global, v).to_js()
     }
 }
-
-// C++ compares parser-error sentinels against these exported statics
-// (`extern "C" ZigErrorCode Zig_ErrorCodeParserError;`, headers-handwritten.h).
-
-#[unsafe(no_mangle)]
-static Zig_ErrorCodeParserError: ErrorCodeInt = ErrorCode::PARSER_ERROR;
-
-#[unsafe(no_mangle)]
-static Zig_ErrorCodeJSErrorObject: ErrorCodeInt = ErrorCode::JS_ERROR_OBJECT;
 
 // ported from: src/jsc/bindings/ErrorCode.ts

@@ -172,6 +172,7 @@ const ffiFixtures = [
   "ffi-non-int32-int-args.js",
   "ffi-osr-and-exceptions.js",
   "ffi-pointers-and-buffers.js",
+  "ffi-ptr-non-view-cell-arg.js",
   "ffi-ptr-object-arg.js",
   "ffi-signature-errors.js",
   "ffi-subword-and-returns.js",

@@ -535,28 +535,6 @@ pub mod c {
             compress: bool,
             fin: bool,
         ) -> SendStatus;
-        pub fn uws_ws_send_fragment(
-            ssl: i32,
-            ws: *mut RawWebSocket,
-            message: *const u8,
-            length: usize,
-            compress: bool,
-        ) -> SendStatus;
-        pub fn uws_ws_send_first_fragment(
-            ssl: i32,
-            ws: *mut RawWebSocket,
-            message: *const u8,
-            length: usize,
-            compress: bool,
-        ) -> SendStatus;
-        pub fn uws_ws_send_first_fragment_with_opcode(
-            ssl: i32,
-            ws: *mut RawWebSocket,
-            message: *const u8,
-            length: usize,
-            opcode: Opcode,
-            compress: bool,
-        ) -> SendStatus;
         pub(crate) fn uws_ws_end(
             ssl: i32,
             ws: *mut RawWebSocket,
@@ -608,11 +586,6 @@ pub mod c {
         // shim only stores a pointer into socket-owned storage and returns its
         // length — no read-through precondition, so `safe fn`.
         pub(crate) safe fn uws_ws_get_remote_address(
-            ssl: i32,
-            ws: &mut RawWebSocket,
-            dest: &mut *mut u8,
-        ) -> usize;
-        pub safe fn uws_ws_get_remote_address_as_text(
             ssl: i32,
             ws: &mut RawWebSocket,
             dest: &mut *mut u8,

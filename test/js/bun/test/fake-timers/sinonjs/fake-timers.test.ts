@@ -27,8 +27,6 @@ import * as timersPromisesModule from "timers/promises";
 const before = beforeEach;
 const after = afterEach;
 
-let timersModule, timersPromisesModule;
-
 /* eslint-disable no-underscore-dangle */
 globalObject.__runs = globalObject.__runs || 0;
 
@@ -228,7 +226,7 @@ describe.todo("FakeTimers", function () {
     });
 
     it("handles Infinity and negative Infinity correctly", function () {
-      const calls = [];
+      const calls: string[] = [];
       this.clock.setTimeout(function () {
         calls.push("NaN");
       }, NaN);
@@ -3168,8 +3166,8 @@ describe.todo("FakeTimers", function () {
 
     it("creates real Date objects when Date constructor is gone", function () {
       const realDate = new Date();
-      Date = NOOP; // eslint-disable-line no-global-assign
-      global.Date = NOOP;
+      Date = NOOP as any; // eslint-disable-line no-global-assign
+      global.Date = NOOP as any;
 
       const date = new this.clock.Date();
 
@@ -3179,8 +3177,8 @@ describe.todo("FakeTimers", function () {
     // issue #510
     it("creates Date objects where the constructor prop matches the original", function () {
       const realDate = new Date();
-      Date = NOOP; // eslint-disable-line no-global-assign
-      global.Date = NOOP;
+      Date = NOOP as any; // eslint-disable-line no-global-assign
+      global.Date = NOOP as any;
 
       const date = new this.clock.Date();
 
@@ -3319,7 +3317,7 @@ describe.todo("FakeTimers", function () {
       });
 
       it("is undefined", function () {
-        if (Date.now) {
+        if (Date.now as any) {
           return this.skip();
         }
 
@@ -3341,13 +3339,13 @@ describe.todo("FakeTimers", function () {
 
     describe("toSource", function () {
       before(function () {
-        if (!Date.toSource) {
+        if (!(Date as any).toSource) {
           this.skip();
         }
       });
 
       it("is mirrored", function () {
-        assert.same(this.clock.Date.toSource(), Date.toSource());
+        assert.same(this.clock.Date.toSource(), (Date as any).toSource());
       });
 
       it("is undefined", function () {
@@ -3377,7 +3375,7 @@ describe.todo("FakeTimers", function () {
 
       clearTimeout(this.timer);
       if (this.dateNow === undefined) {
-        delete global.Date.now;
+        delete (global.Date as any).now;
       } else {
         global.Date.now = this.dateNow;
       }
@@ -3393,11 +3391,11 @@ describe.todo("FakeTimers", function () {
     it("has clock property", function () {
       this.clock = FakeTimers.install();
 
-      assert.same(setTimeout.clock, this.clock);
-      assert.same(clearTimeout.clock, this.clock);
-      assert.same(setInterval.clock, this.clock);
-      assert.same(clearInterval.clock, this.clock);
-      assert.same(Date.clock, this.clock);
+      assert.same((setTimeout as any).clock, this.clock);
+      assert.same((clearTimeout as any).clock, this.clock);
+      assert.same((setInterval as any).clock, this.clock);
+      assert.same((clearInterval as any).clock, this.clock);
+      assert.same((Date as any).clock, this.clock);
     });
 
     it("takes an object parameter", function () {
@@ -3406,7 +3404,7 @@ describe.todo("FakeTimers", function () {
 
     it("throws a TypeError on a number parameter", function () {
       assert.exception(function () {
-        this.clock = FakeTimers.install(0);
+        this.clock = FakeTimers.install(0 as any);
       });
     });
 
@@ -3603,21 +3601,21 @@ describe.todo("FakeTimers", function () {
           return this.skip();
         }
 
-        Performance.prototype.someFunc1 = function () {};
-        Performance.prototype.someFunc2 = function () {};
-        Performance.prototype.someFunc3 = function () {};
+        (Performance.prototype as any).someFunc1 = function () {};
+        (Performance.prototype as any).someFunc2 = function () {};
+        (Performance.prototype as any).someFunc3 = function () {};
 
         this.clock = FakeTimers.install();
 
-        assert.isFunction(performance.someFunc1);
-        assert.isFunction(performance.someFunc2);
-        assert.isFunction(performance.someFunc3);
+        assert.isFunction((performance as any).someFunc1);
+        assert.isFunction((performance as any).someFunc2);
+        assert.isFunction((performance as any).someFunc3);
 
         this.clock.uninstall();
 
-        delete Performance.prototype.someFunc1;
-        delete Performance.prototype.someFunc2;
-        delete Performance.prototype.someFunc3;
+        delete (Performance.prototype as any).someFunc1;
+        delete (Performance.prototype as any).someFunc2;
+        delete (Performance.prototype as any).someFunc3;
       });
 
       it("should mock performance on Node 16+", function () {
@@ -3677,21 +3675,21 @@ describe.todo("FakeTimers", function () {
           });
         }
 
-        Performance.prototype.getEntries = noop;
-        Performance.prototype.getEntriesByName = noop;
-        Performance.prototype.getEntriesByType = noop;
+        Performance.prototype.getEntries = noop as any;
+        Performance.prototype.getEntriesByName = noop as any;
+        Performance.prototype.getEntriesByType = noop as any;
 
         this.clock = FakeTimers.install();
 
         assert.equals(performance.getEntries(), []);
-        assert.equals(performance.getEntriesByName(), []);
-        assert.equals(performance.getEntriesByType(), []);
+        assert.equals((performance as any).getEntriesByName(), []);
+        assert.equals((performance as any).getEntriesByType(), []);
 
         this.clock.uninstall();
 
         assert.equals(performance.getEntries(), ["foo"]);
-        assert.equals(performance.getEntriesByName(), ["foo"]);
-        assert.equals(performance.getEntriesByType(), ["foo"]);
+        assert.equals((performance as any).getEntriesByName(), ["foo"]);
+        assert.equals((performance as any).getEntriesByType(), ["foo"]);
 
         Object.keys(backupDescriptors).forEach(key => {
           Object.defineProperty(Performance.prototype, key, backupDescriptors[key]);
@@ -3745,14 +3743,14 @@ describe.todo("FakeTimers", function () {
     });
 
     it("decide on Date.now support at call-time when supported", function () {
-      global.Date.now = NOOP;
+      global.Date.now = NOOP as any;
       this.clock = FakeTimers.install({ now: 0 });
 
       assert.equals(typeof Date.now, "function");
     });
 
     it("decide on Date.now support at call-time when unsupported", function () {
-      global.Date.now = undefined;
+      global.Date.now = undefined as any;
       this.clock = FakeTimers.install({ now: 0 });
 
       assert.isUndefined(Date.now);
@@ -3762,10 +3760,10 @@ describe.todo("FakeTimers", function () {
       const f = function () {
         return "";
       };
-      global.Date.format = f;
+      (global.Date as any).format = f;
       this.clock = FakeTimers.install();
 
-      assert.equals(Date.format, f);
+      assert.equals((Date as any).format, f);
     });
 
     it("uninstalls Date constructor", function () {
@@ -3839,7 +3837,7 @@ describe.todo("FakeTimers", function () {
       assert.same(Date.now(), 1443139200000);
       const timeoutStarted = Date.now();
 
-      await new Promise(resolve => {
+      await new Promise<void>(resolve => {
         setTimeout(() => {
           const timeDifference = Date.now() - timeoutStarted;
           assert.same(timeDifference, testDelay);
@@ -3860,7 +3858,7 @@ describe.todo("FakeTimers", function () {
       clock.setTickMode({ mode: "manual" });
       const timeoutStarted = Date.now();
 
-      await new Promise(resolve => {
+      await new Promise<void>(resolve => {
         originalSetTimeout(() => {
           assert.same(timeoutStarted, Date.now());
           clock.uninstall();
@@ -3991,7 +3989,7 @@ describe.todo("FakeTimers", function () {
       });
 
       it("can mix promises inside timers", async function () {
-        await new Promise(resolve => {
+        await new Promise<void>(resolve => {
           setTimeout(async function () {
             await Promise.resolve();
             setTimeout(() => {
@@ -4019,7 +4017,7 @@ describe.todo("FakeTimers", function () {
         const p1 = new Promise(resolve => {
           setTimeout(resolve, 1);
         });
-        const p2 = new Promise(resolve => {
+        const p2 = new Promise<void>(resolve => {
           setTimeout(() => {
             p2Resolved = true;
             resolve();
@@ -4057,7 +4055,7 @@ describe.todo("FakeTimers", function () {
 
         beforeEach(function () {
           timerLog = [];
-          allTimersDone = new Promise(resolve => {
+          allTimersDone = new Promise<void>(resolve => {
             setTimeout(() => timerLog.push(1), 1);
             setTimeout(() => timerLog.push(2), 2);
             setTimeout(() => timerLog.push(3), 3);
@@ -4758,7 +4756,7 @@ describe.todo("FakeTimers", function () {
 
     it("runs between timers", function () {
       const clock = FakeTimers.createClock();
-      const order = [];
+      const order: string[] = [];
       clock.setTimeout(function () {
         order.push("timer-1");
         clock.nextTick(function () {
@@ -4790,7 +4788,7 @@ describe.todo("FakeTimers", function () {
       const clock = FakeTimers.install({
         toFake: ["nextTick", "setTimeout"],
       });
-      const order = [];
+      const order: string[] = [];
       setTimeout(function () {
         order.push("timer-1");
         process.nextTick(function () {
@@ -4827,7 +4825,7 @@ describe.todo("FakeTimers", function () {
     it("returns a timer if uninstalling before it's called", function () {
       const clock = FakeTimers.install();
       clock.setTimeout(function () {}, 100);
-      const timers = clock.uninstall();
+      const timers: any = clock.uninstall();
       assert.equals(timers.length, 1);
       assert.equals(timers[0].createdAt, clock.now);
       assert.equals(timers[0].callAt, clock.now + 100);
@@ -4839,7 +4837,7 @@ describe.todo("FakeTimers", function () {
       clock.setTimeout(function () {}, 100);
       clock.setTimeout(function () {}, 200);
       clock.tick(100);
-      const timers = clock.uninstall();
+      const timers: any = clock.uninstall();
       assert.equals(timers.length, 1);
       assert.equals(timers[0].createdAt, clock.now - 100);
       assert.equals(timers[0].callAt, clock.now + 100);
@@ -4854,7 +4852,7 @@ describe.todo("FakeTimers", function () {
         // yes, it's silly to create a function in a loop. This is a test, we can live with it
         clock.setTimeout(function () {}, 100 * i);
       }
-      const timers = clock.uninstall();
+      const timers: any = clock.uninstall();
       assert.equals(timers.length, 5);
       for (i = 0; i < 5; i++) {
         assert.equals(timers[i].createdAt, clock.now);
@@ -5230,7 +5228,7 @@ describe.todo("FakeTimers", function () {
         clock.tick(100);
         await promise;
 
-        assert.equals(abortController.signal.removeEventListener.called, true);
+        assert.equals((abortController.signal.removeEventListener as any).called, true);
       });
 
       it("should remove abort listener when aborting", async function () {
@@ -5244,7 +5242,7 @@ describe.todo("FakeTimers", function () {
         abortController.abort();
         await promise.catch(() => {});
 
-        assert.equals(abortController.signal.removeEventListener.called, true);
+        assert.equals((abortController.signal.removeEventListener as any).called, true);
       });
 
       it("should remove abort listener when uninstalling", function () {
@@ -5258,7 +5256,7 @@ describe.todo("FakeTimers", function () {
         clock.uninstall();
         clock = undefined;
 
-        assert.equals(abortController.signal.removeEventListener.called, true);
+        assert.equals((abortController.signal.removeEventListener as any).called, true);
       });
 
       it("should remove listener from abort listener map when aborting", async function () {
@@ -5335,7 +5333,7 @@ describe.todo("FakeTimers", function () {
         clock.tick(0);
         await promise;
 
-        assert.equals(abortController.signal.removeEventListener.called, true);
+        assert.equals((abortController.signal.removeEventListener as any).called, true);
       });
 
       it("should remove abort listener when aborting", async function () {
@@ -5349,7 +5347,7 @@ describe.todo("FakeTimers", function () {
         abortController.abort();
         await promise.catch(() => {});
 
-        assert.equals(abortController.signal.removeEventListener.called, true);
+        assert.equals((abortController.signal.removeEventListener as any).called, true);
       });
 
       it("should remove abort listener when uninstalling", function () {
@@ -5363,7 +5361,7 @@ describe.todo("FakeTimers", function () {
         clock.uninstall();
         clock = undefined;
 
-        assert.equals(abortController.signal.removeEventListener.called, true);
+        assert.equals((abortController.signal.removeEventListener as any).called, true);
       });
 
       it("should remove listener from abort listener map when aborting", async function () {
@@ -5529,7 +5527,7 @@ describe.todo("FakeTimers", function () {
         const iterable = timersPromisesModule.setInterval(100);
         const iter = iterable[Symbol.asyncIterator]();
 
-        const returnResult = await iter.return();
+        const returnResult = await iter.return!();
         const nextResult = await iter.next();
 
         assert.equals(returnResult.done, true);
@@ -5553,7 +5551,7 @@ describe.todo("FakeTimers", function () {
         });
 
         let returned;
-        iter.return().then(it => {
+        iter.return!().then(it => {
           returned = it;
         });
 
@@ -5615,9 +5613,9 @@ describe.todo("FakeTimers", function () {
         });
         const iter = iterable[Symbol.asyncIterator]();
 
-        await iter.return();
+        await iter.return!();
 
-        assert.equals(abortController.signal.removeEventListener.called, true);
+        assert.equals((abortController.signal.removeEventListener as any).called, true);
       });
 
       it("should remove abort listener when aborting", function () {
@@ -5631,7 +5629,7 @@ describe.todo("FakeTimers", function () {
 
         abortController.abort();
 
-        assert.equals(abortController.signal.removeEventListener.called, true);
+        assert.equals((abortController.signal.removeEventListener as any).called, true);
       });
 
       it("should remove abort listener when uninstalling", function () {
@@ -5646,7 +5644,7 @@ describe.todo("FakeTimers", function () {
         clock.uninstall();
         clock = undefined;
 
-        assert.equals(abortController.signal.removeEventListener.called, true);
+        assert.equals((abortController.signal.removeEventListener as any).called, true);
       });
 
       it("should remove listener from abort listener map when aborting", function () {
@@ -5672,7 +5670,7 @@ describe.todo("FakeTimers", function () {
         });
         const iter = iterable[Symbol.asyncIterator]();
 
-        await iter.return();
+        await iter.return!();
 
         assert.equals(clock.abortListenerMap.size, 0);
       });
@@ -5707,7 +5705,7 @@ describe.todo("loop limit stack trace", function () {
 
       try {
         test.clock.runMicrotasks();
-      } catch (err) {
+      } catch (err: any) {
         caughtError = true;
         assert.equals(err.message, expectedMessage);
         assert.match(err.stack, new RegExp(`Error: ${expectedMessage}\\s+Microtask - recursiveQueueMicroTask`));
@@ -5730,7 +5728,7 @@ describe.todo("loop limit stack trace", function () {
 
       try {
         test.clock.runMicrotasks();
-      } catch (err) {
+      } catch (err: any) {
         caughtError = true;
         assert.equals(err.message, expectedMessage);
         assert.match(err.stack, new RegExp(`Error: ${expectedMessage}\\s+Microtask - recursiveQueueMicroTask`));
@@ -5769,7 +5767,7 @@ describe.todo("loop limit stack trace", function () {
 
       try {
         test.clock.runAll();
-      } catch (err) {
+      } catch (err: any) {
         caughtError = true;
         assert.equals(err.message, expectedMessage);
         assert.match(err.stack, new RegExp(`Error: ${expectedMessage}\\s+Timeout - recursiveCreateTimerTimeout`));
@@ -5811,7 +5809,7 @@ describe.todo("loop limit stack trace", function () {
 
       try {
         test.clock.runAll();
-      } catch (err) {
+      } catch (err: any) {
         caughtError = true;
         assert.equals(err.message, expectedMessage);
         assert.match(err.stack, new RegExp(`Error: ${expectedMessage}\\s+IdleCallback - recursiveCreateTimerTimeout`));
@@ -5850,7 +5848,7 @@ describe.todo("loop limit stack trace", function () {
 
       try {
         test.clock.runAll();
-      } catch (err) {
+      } catch (err: any) {
         caughtError = true;
         assert.equals(err.message, expectedMessage);
         assert.match(err.stack, new RegExp(`Error: ${expectedMessage}\\s+Interval - recursiveCreateTimerTimeout`));
@@ -5900,7 +5898,7 @@ describe.todo("loop limit stack trace", function () {
 
       try {
         test.clock.runAll();
-      } catch (err) {
+      } catch (err: any) {
         caughtError = true;
         assert.equals(err.message, expectedMessage);
         assert.equals(
@@ -5949,7 +5947,7 @@ describe.todo("loop limit stack trace", function () {
 
       try {
         test.clock.runAll();
-      } catch (err) {
+      } catch (err: any) {
         caughtError = true;
         assert.equals(err.message, expectedMessage);
         assert.equals(
@@ -6013,11 +6011,11 @@ describe.todo("Intl API", function () {
    * @param {number} timestamp - UNIX timestamp
    * @returns {boolean}
    */
-  function isFirstOfMonth(ianaTimeZone, timestamp) {
+  function isFirstOfMonth(ianaTimeZone: string, timestamp?: number) {
     return (
       new Intl.DateTimeFormat(undefined, { timeZone: ianaTimeZone })
         .formatToParts(timestamp)
-        .find(part => part.type === "day").value === "1"
+        .find(part => part.type === "day")!.value === "1"
     );
   }
 
@@ -6034,7 +6032,7 @@ describe.todo("Intl API", function () {
   it("Executes formatRange like normal", function () {
     const start = new Date(Date.UTC(2020, 0, 1, 0, 0));
     const end = new Date(Date.UTC(2020, 0, 1, 0, 1));
-    const options = {
+    const options: Intl.DateTimeFormatOptions = {
       timeZone: "UTC",
       hour12: false,
       hour: "numeric",
@@ -6046,7 +6044,7 @@ describe.todo("Intl API", function () {
   it("Executes formatRangeToParts like normal", function () {
     const start = new Date(Date.UTC(2020, 0, 1, 0, 0));
     const end = new Date(Date.UTC(2020, 0, 1, 0, 1));
-    const options = {
+    const options: Intl.DateTimeFormatOptions = {
       timeZone: "UTC",
       hour12: false,
       hour: "numeric",
@@ -6064,7 +6062,7 @@ describe.todo("Intl API", function () {
   });
 
   it("Executes resolvedOptions like normal", function () {
-    const options = {
+    const options: Intl.DateTimeFormatOptions = {
       timeZone: "UTC",
       hour12: false,
       hour: "2-digit",
@@ -6106,7 +6104,7 @@ describe.todo("Intl API", function () {
 
   it("Executes supportedLocalesOf like normal", function () {
     assert.equals(
-      Intl.DateTimeFormat.supportedLocalesOf(),
+      (Intl.DateTimeFormat as any).supportedLocalesOf(),
       //eslint-disable-next-line no-underscore-dangle
       clock._Intl.DateTimeFormat.supportedLocalesOf(),
     );

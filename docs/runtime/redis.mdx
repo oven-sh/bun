@@ -409,6 +409,7 @@ const client = new RedisClient("redis://localhost:6379", {
   //   ca: "path/to/ca.pem",
   //   cert: "path/to/cert.pem",
   //   key: "path/to/key.pem",
+  //   serverName: "redis.example.com", // SNI and the name the certificate must match (default: the URL host)
   // }
 });
 ```
@@ -481,6 +482,7 @@ Common error codes:
 - `ERR_REDIS_CONNECTION_CLOSED` - Connection to the server was closed
 - `ERR_REDIS_AUTHENTICATION_FAILED` - Failed to authenticate with the server
 - `ERR_REDIS_INVALID_RESPONSE` - Received an invalid response from the server
+- `ERR_REDIS_SERVER_ERROR` - The server sent an error reply, either rejecting one command or, in subscriber mode, closing the connection
 
 ---
 

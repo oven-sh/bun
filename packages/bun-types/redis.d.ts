@@ -35,7 +35,8 @@ declare module "bun" {
     enableOfflineQueue?: boolean;
 
     /**
-     * TLS options
+     * TLS options. `serverName` sets the SNI and the name the certificate is
+     * verified against, which default to the URL host.
      */
     tls?: boolean | Bun.TLSOptions;
 
@@ -122,7 +123,7 @@ declare module "bun" {
      * - An array becomes an array.
      * - A set becomes an array.
      * - A map becomes a plain object with a null prototype.
-     * - An error reply (`-` or `!`) rejects the promise with code ERR_REDIS_INVALID_RESPONSE.
+     * - An error reply (`-` or `!`) rejects the promise with code ERR_REDIS_SERVER_ERROR.
      */
     send(command: string, args: string[]): Promise<any>;
 

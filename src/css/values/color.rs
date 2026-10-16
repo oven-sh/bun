@@ -401,7 +401,7 @@ impl CssColor {
     /// Parse a CSS `<color>` from the parser cursor.
     pub fn parse(input: &mut css::Parser) -> CssResult<CssColor> {
         let location = input.current_source_location();
-        let token = input.next()?.clone();
+        let token = *input.next()?;
 
         match token {
             css::Token::UnrestrictedHash(v) | css::Token::IdHash(v) => {

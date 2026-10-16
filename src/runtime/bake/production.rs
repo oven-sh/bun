@@ -16,20 +16,20 @@ use crate::bake::framework_router::{self, FrameworkRouter, OpaqueFileId};
 use bun_alloc::Arena;
 use bun_bundler::BundleV2;
 use bun_bundler::Transpiler;
-use bun_bundler::options::{self as bundler_options, OutputFile, SourceMapOption};
+use bun_bundler::options::{self as bundler_options, OutputFile};
 use bun_bundler::output_file::Index as OutputFileIndex;
 
 use bun_collections::{AutoBitSet, StringArrayHashMap};
 use bun_core::String as BunString;
 use bun_core::{Global, Output};
 use bun_dotenv as dotenv;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult,
     StringJsc as _,
 };
-use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
 use bun_resolver as resolver;
 
@@ -70,7 +70,7 @@ struct DotenvSingleton {
 unsafe impl Sync for DotenvSingleton {}
 static DOTENV_SINGLETON: OnceLock<DotenvSingleton> = OnceLock::new();
 
-pub fn build_command(ctx: Context) -> crate::Result<()> {
+pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     bake::print_warning();
 
     if ctx.args.entry_points.len() > 1 {
@@ -83,7 +83,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         Global::crash();
     }
 
-    let mut cwd_buf = PathBuffer::uninit();
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let cwd = match bun_core::getcwd(&mut cwd_buf) {
         Ok(cwd) => cwd.as_bytes(),
         Err(err) => {
@@ -97,7 +97,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
 
     // Create a VM + global for loading the config file, plugins, and
     // performing build time prerendering.
-    jsc::initialize(false);
+    jsc::initialize(jsc::InitializeOptions::default());
     bun_ast::initialize_store();
 
     let mut arena = Arena::new();
@@ -112,7 +112,6 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // SAFETY: `init_bake` returns a freshly-allocated VM owned by this thread;
     // unique access for the rest of this function.
     let vm = unsafe { &mut *vm_ptr };
-    // defer vm.deinit() — handled by `vm.destroy()` on the unwind path below.
     // Note: pass `vm_ptr` by value into the guard so the drop closure does
     // not borrow the local (`defer!` would capture `&vm_ptr`, which under
     // edition-2024 disjoint-capture rules collides with the `&mut *vm_ptr`
@@ -336,7 +335,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         BunString::clone_utf8(config_entry_point.path_const().unwrap().text);
 
     let Some(config_promise) =
-        JSModuleLoader::load_and_evaluate_module_ptr(vm.global, Some(&config_entry_point_string))
+        JSModuleLoader::load_and_evaluate_module_ptr(vm.global, &config_entry_point_string)
     else {
         debug_assert!(global.has_exception());
         return Err(crate::Error::JSError);
@@ -419,7 +418,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     loader.map.put(b"NODE_ENV", b"production")?;
     dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader>(loader));
 
-    // In-place init via `MaybeUninit` (`init_transpiler_with_options`
+    // In-place init via `MaybeUninit` (`init_transpiler`
     // keeps the out-param shape shared with the dev-server path).
     let mut client_transpiler = MaybeUninit::<Transpiler>::uninit();
     let mut server_transpiler = MaybeUninit::<Transpiler>::uninit();
@@ -427,47 +426,35 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // `vm.log` is set from `ctx.log` (non-null, process-lifetime);
     // `log_mut()` is the safe accessor encapsulating the NonNull deref.
     let vm_log = vm.log_mut().unwrap();
-    framework.init_transpiler_with_options(
+    framework.init_transpiler(
         &options.arena,
         vm_log,
         bake_body::Mode::ProductionStatic,
         bake_body::Graph::Server,
         &mut server_transpiler,
         &options.bundler_options.server,
-        SourceMapOption::from_api(Some(options.bundler_options.server.source_map)),
-        options.bundler_options.server.minify_whitespace,
-        options.bundler_options.server.minify_syntax,
-        options.bundler_options.server.minify_identifiers,
     )?;
-    framework.init_transpiler_with_options(
+    framework.init_transpiler(
         &options.arena,
         vm_log,
         bake_body::Mode::ProductionStatic,
         bake_body::Graph::Client,
         &mut client_transpiler,
         &options.bundler_options.client,
-        SourceMapOption::from_api(Some(options.bundler_options.client.source_map)),
-        options.bundler_options.client.minify_whitespace,
-        options.bundler_options.client.minify_syntax,
-        options.bundler_options.client.minify_identifiers,
     )?;
     if separate_ssr_graph {
-        framework.init_transpiler_with_options(
+        framework.init_transpiler(
             &options.arena,
             vm_log,
             bake_body::Mode::ProductionStatic,
             bake_body::Graph::Ssr,
             &mut ssr_transpiler,
             &options.bundler_options.ssr,
-            SourceMapOption::from_api(Some(options.bundler_options.ssr.source_map)),
-            options.bundler_options.ssr.minify_whitespace,
-            options.bundler_options.ssr.minify_syntax,
-            options.bundler_options.ssr.minify_identifiers,
         )?;
     }
-    // SAFETY: written above by init_transpiler_with_options.
+    // SAFETY: written above by init_transpiler.
     let server_transpiler = unsafe { server_transpiler.assume_init_mut() };
-    // SAFETY: written above by init_transpiler_with_options.
+    // SAFETY: written above by init_transpiler.
     let client_transpiler = unsafe { client_transpiler.assume_init_mut() };
     // `ssr_transpiler` stays `MaybeUninit` and is only `assume_init_mut()`'d
     // inside `if separate_ssr_graph` blocks below — Rust forbids forming
@@ -477,7 +464,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         let mut targets: Vec<&mut Transpiler> =
             vec![&mut *client_transpiler, &mut *server_transpiler];
         if separate_ssr_graph {
-            // SAFETY: written above by init_transpiler_with_options when separate_ssr_graph.
+            // SAFETY: written above by init_transpiler when separate_ssr_graph.
             targets.push(unsafe { ssr_transpiler.assume_init_mut() });
         }
         for transpiler in targets {
@@ -499,27 +486,24 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // these share pointers right now, so setting NODE_ENV == production on one should affect all
     debug_assert!(core::ptr::eq(server_transpiler.env, client_transpiler.env));
 
-    *framework = match framework.resolve(
-        &mut server_transpiler.resolver,
-        &mut client_transpiler.resolver,
-        &options.arena,
-    ) {
-        Ok(f) => f,
-        Err(_) => {
-            if framework.is_built_in_react {
-                // SAFETY: `server_transpiler.log` is the process-lifetime ctx.log.
-                bake_body::Framework::add_react_install_command_note(unsafe {
-                    &mut *server_transpiler.log
-                })?;
-            }
-            bun_core::err_generic!("Failed to resolve all imports required by the framework");
-            Output::flush();
-            let _ = server_transpiler
-                .log()
-                .print(std::ptr::from_mut(Output::error_writer()));
-            Global::crash();
+    if framework
+        .resolve(
+            &mut server_transpiler.resolver,
+            &mut client_transpiler.resolver,
+        )
+        .is_err()
+    {
+        if framework.is_built_in_react {
+            // SAFETY: `server_transpiler.log` is the process-lifetime ctx.log.
+            bake::Framework::add_react_install_command_note(unsafe { &mut *server_transpiler.log });
         }
-    };
+        bun_core::err_generic!("Failed to resolve all imports required by the framework");
+        Output::flush();
+        let _ = server_transpiler
+            .log()
+            .print(std::ptr::from_mut(Output::error_writer()));
+        Global::crash();
+    }
 
     bun_core::pretty_errorln!("Bundling routes");
     Output::flush();
@@ -527,7 +511,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // trailing slash
     let public_path: &[u8] = b"/";
 
-    let mut root_dir_buf = PathBuffer::uninit();
+    let mut root_dir_buf = bun_paths::path_buffer_pool::get();
     let root_dir_path =
         resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut root_dir_buf.0, &[b"dist"]);
     // Note: reshaped for borrowck — copy out so root_dir_buf can drop.
@@ -545,7 +529,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     };
 
     for fsr in &framework.file_system_router_types {
-        let joined_root = resolve_path::join_abs::<platform::Auto>(cwd, fsr.root);
+        let joined_root = resolve_path::join_abs::<platform::Auto>(cwd, &fsr.root);
         let Some(entry) = server_transpiler
             .resolver
             .read_dir_info_ignore_error(joined_root)
@@ -553,8 +537,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             continue;
         };
         let server_file =
-            entry_points.get_or_put_entry_point(fsr.entry_server, bake::Side::Server)?;
-        let client_file = if let Some(client) = fsr.entry_client {
+            entry_points.get_or_put_entry_point(&fsr.entry_server, bake::Side::Server)?;
+        let client_file = if let Some(client) = &fsr.entry_client {
             Some(entry_points.get_or_put_entry_point(client, bake::Side::Client)?)
         } else {
             None
@@ -567,16 +551,14 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             ignore_dirs: fsr
                 .ignore_dirs
                 .iter()
-                .map(|s| Box::<[u8]>::from(*s))
+                .map(|s| Box::<[u8]>::from(&**s))
                 .collect(),
             extensions: fsr
                 .extensions
                 .iter()
-                .map(|s| Box::<[u8]>::from(*s))
+                .map(|s| Box::<[u8]>::from(&**s))
                 .collect(),
-            // `Style` is `Clone` (the `JavascriptDefined` arm panics inside
-            // `clone()`).
-            style: fsr.style.clone(),
+            style: fsr.style,
             allow_layouts: fsr.allow_layouts,
             server_file: OpaqueFileId::init(server_file.get()),
             client_file: client_file.map(|f| OpaqueFileId::init(f.get())),
@@ -590,11 +572,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         framework_router::InsertionContext::wrap(&mut entry_points),
     )?;
 
-    // `bake_body::Framework` is the runtime-side superset; the bundler reads only
+    // `bake::Framework` is the runtime-side superset; the bundler reads only
     // `built_in_modules` / `server_components` / `react_fast_refresh` /
     // `is_built_in_react` via its lower-tier `bake_types::Framework` view.
-    // Project once here via the shared helper so the field-shape (e.g.
-    // `BuiltInModule` `&'static [u8]` → `Box<[u8]>`) stays in one place.
     // (The two Framework types could only merge if `FileSystemRouterType` /
     // `framework_router::Style` moved down to bun_bundler.)
     let bundler_framework = framework.as_bundler_view();
@@ -607,7 +587,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         let server_ptr: *mut Transpiler = &raw mut *server_transpiler;
         let client_ptr: *mut Transpiler = &raw mut *client_transpiler;
         let ssr_ptr: *mut Transpiler = if separate_ssr_graph {
-            // SAFETY: written above by init_transpiler_with_options when separate_ssr_graph.
+            // SAFETY: written above by init_transpiler when separate_ssr_graph.
             core::ptr::from_mut(unsafe { ssr_transpiler.assume_init_mut() })
         } else {
             server_ptr
@@ -657,7 +637,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // Client files go to disk.
     // Server files get loaded in memory.
     // Populate indexes in `entry_points` to be looked up during prerendering
-    let mut module_keys: Vec<BunString> = vec![BunString::dead(); entry_points.files.count()];
+    let mut module_keys: Vec<BunString> = vec![BunString::DEAD; entry_points.files.count()];
     let mut output_module_map: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     let mut source_maps: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     {
@@ -743,12 +723,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
                             if let Some(entry_point_index) = file.entry_point_index {
                                 if (entry_point_index as usize) < module_keys.len() {
-                                    let mut str = BunString::create_format(format_args!(
+                                    let str = BunString::create_format(format_args!(
                                         "bake:/{}",
                                         BStr::new(without_prefix)
                                     ));
-                                    str.to_thread_safe();
-                                    module_keys[entry_point_index as usize] = str;
+                                    module_keys[entry_point_index as usize] =
+                                        str.thread_isolated_copy();
                                 }
                             }
 
@@ -769,7 +749,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                         OutputKind::Asset => {}
                         OutputKind::Bytecode => {}
                         OutputKind::Sourcemap => {}
-                        OutputKind::ModuleInfo => {}
+                        OutputKind::ModuleInfo
+                        | OutputKind::BuiltinBytecode
+                        | OutputKind::BytecodeStringTable
+                        | OutputKind::BytecodePayload
+                        | OutputKind::ModuleInfoStringTable
+                        | OutputKind::PrelinkedModuleGraph => {}
                         OutputKind::MetafileJson | OutputKind::MetafileMarkdown => {}
                     }
                 }
@@ -830,7 +815,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 BStr::new(public_path),
                 BStr::new(&pt.output_file(client_file).dest_path),
             ))
-            .to_js(global)
+            .into_js(global)
             .map_err(js_err)?;
             client_entry_urls
                 .put_index(global, u32::try_from(i).expect("int cast"), str)
@@ -934,7 +919,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 BStr::new(public_path),
                 BStr::new(&output_file.dest_path),
             ))
-            .to_js(global)
+            .into_js(global)
             .map_err(js_err)?
             .protected(),
         );
@@ -972,7 +957,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
     let mut params_buf: Vec<&[u8]> = Vec::new();
     for (nav_index, &route_index) in navigatable_routes.iter().enumerate() {
-        // defer params_buf.clearRetainingCapacity()
         let mut params_guard = scopeguard::guard(&mut params_buf, |b| b.clear());
         let params_buf = &mut **params_guard;
 
@@ -1088,11 +1072,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             .put_index(
                 global,
                 u32::try_from(nav_index).expect("int cast"),
-                pattern_string.to_js(global).map_err(js_err)?,
+                pattern_string.into_js(global).map_err(js_err)?,
             )
             .map_err(js_err)?;
 
-        let mut src_path = BunString::clone_utf8(resolve_path::relative(
+        let src_path = BunString::clone_utf8(resolve_path::relative(
             cwd,
             pt.input_file(main_file_route_index).abs_path(),
         ));
@@ -1100,7 +1084,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             .put_index(
                 global,
                 u32::try_from(nav_index).expect("int cast"),
-                jsc::bun_string_jsc::transfer_to_js(&mut src_path, global).map_err(js_err)?,
+                src_path.into_js(global).map_err(js_err)?,
             )
             .map_err(js_err)?;
 
@@ -1133,7 +1117,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             // (slice iterators are ExactSize + DoubleEnded).
             let param_info_array =
                 JSValue::create_array_from_iter(global, params_buf.iter().rev(), |param| {
-                    jsc::bun_string_jsc::create_utf8_for_js(global, param)
+                    bun_string_jsc::create_utf8_for_js(global, param)
                 })
                 .map_err(js_err)?;
             route_param_info
@@ -1162,7 +1146,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let render_promise = unsafe {
         &mut *BakeRenderRoutesForProdStatic(
             global,
-            BunString::init(&*root_dir_path),
+            &BunString::from_bytes(&root_dir_path),
             pt.all_server_files.as_ref().unwrap().get(),
             server_render_funcs,
             server_param_funcs,
@@ -1266,14 +1250,14 @@ fn bake_get_on_module_namespace(
 }
 
 // Renders all routes for static site generation by calling the JavaScript implementation.
-// All args are by-value `JSValue`/`BunString` plus a live `&JSGlobalObject`
+// All args are by-value `JSValue` / borrowed `&BunString` plus a live `&JSGlobalObject`
 // (UnsafeCell-backed); C++ allocates and returns a non-null `JSPromise*`.
 // No caller-side precondition for the call itself — declare `safe fn`.
 unsafe extern "C" {
     safe fn BakeRenderRoutesForProdStatic(
         global: &JSGlobalObject,
         // Output directory path (e.g., "./dist")
-        out_base: BunString,
+        out_base: &BunString,
         // Server module paths (e.g., ["bake://page.js", "bake://layout.js"])
         all_server_files: JSValue,
         // Framework prerender functions by router type
@@ -1298,7 +1282,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
+extern "C" fn BakeToWindowsPath(input: &BunString) -> BunString {
     #[cfg(unix)]
     {
         let _ = input;
@@ -1317,8 +1301,8 @@ extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
 #[unsafe(no_mangle)]
 extern "C" fn BakeProdResolve(
     global: &JSGlobalObject,
-    a_str: BunString,
-    specifier_str: BunString,
+    a_str: &BunString,
+    specifier_str: &BunString,
 ) -> BunString {
     let specifier = specifier_str.to_utf8();
 
@@ -1338,7 +1322,7 @@ extern "C" fn BakeProdResolve(
             bun_core::fmt::quote(specifier.slice()),
             bun_core::fmt::quote(referrer.slice()),
         ));
-        return BunString::dead();
+        return BunString::DEAD;
     }
 
     debug_assert!(strings::has_prefix(referrer.slice(), b"bake:"));
@@ -1363,9 +1347,8 @@ extern "C" fn BakeProdResolve(
 /// to enqueue the entry points.
 ///
 /// Canonical definition lives in `bun_bundler::bake_types::production` (lower
-/// tier) so the bundler and runtime share ONE nominal type. Re-exported here
-/// for `bake::production::EntryPointMap` callers.
-pub use bun_bundler::bake_types::production::EntryPointMap;
+/// tier) so the bundler and runtime share ONE nominal type.
+pub(crate) use bun_bundler::bake_types::production::EntryPointMap;
 use bun_bundler::bake_types::production::{EntryPointHashMap, InputFile};
 
 impl framework_router::InsertionHandler for EntryPointMap {
@@ -1418,7 +1401,7 @@ impl framework_router::InsertionHandler for EntryPointMap {
 ///
 /// Owns the backing storage so the value can outlive `build_with_vm` in the
 /// caller's frame without dangling references.
-pub struct PerThread {
+pub(crate) struct PerThread {
     // Shared Data (owned)
     /// Owns `input_files` (keys) and `output_indexes` (values).
     pub(crate) entry_points: EntryPointMap,
@@ -1463,7 +1446,7 @@ impl PerThread {
 
     /// Safe `&'static JSGlobalObject` accessor — `self.vm().global()`.
     #[inline]
-    pub fn global(&self) -> &'static JSGlobalObject {
+    pub(crate) fn global(&self) -> &'static JSGlobalObject {
         self.vm().global()
     }
 
@@ -1590,7 +1573,7 @@ impl Drop for PerThread {
 
 /// Given a key, returns the source code to load.
 #[unsafe(no_mangle)]
-extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString {
+extern "C" fn BakeProdLoad(pt: *mut PerThread, key: &BunString) -> BunString {
     // SAFETY: `pt` is the non-null pointer previously attached via
     // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.
     let pt = unsafe { &*pt };
@@ -1604,27 +1587,13 @@ extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString {
             .value
             .to_bun_string_ref();
     }
-    BunString::dead()
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunString {
-    // SAFETY: `pt` is the non-null pointer previously attached via
-    // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.
-    let pt = unsafe { &*pt };
-    let utf8 = key.to_utf8();
-    if let Some(value) = pt.source_maps.get(utf8.slice()) {
-        return pt.bundled_outputs[value.get() as usize]
-            .value
-            .to_bun_string_ref();
-    }
-    BunString::dead()
+    BunString::DEAD
 }
 
 /// Packed: type (u8) | no_client (bool, 1 bit) | unused (u23)
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub struct TypeAndFlags(i32);
+pub(crate) struct TypeAndFlags(i32);
 
 impl TypeAndFlags {
     pub(crate) const fn new(ty: u8, no_client: bool) -> Self {

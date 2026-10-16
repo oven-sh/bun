@@ -129,6 +129,8 @@ pub mod api {
 
         /// from `--no-addons`. `None` == `true`.
         pub allow_addons: Option<bool>,
+        /// from `--no-ffi-cc`. `None` == `true`.
+        pub allow_ffi_cc: Option<bool>,
         /// from `--unhandled-rejections`; default is `Bun`.
         pub unhandled_rejections: Option<UnhandledRejections>,
 
@@ -148,32 +150,63 @@ pub mod api {
         pub password: Box<[u8]>,
         /// token
         pub token: Box<[u8]>,
-        /// email
-        pub email: Box<[u8]>,
+        /// `.npmrc`'s `_auth`, sent verbatim as npm sends it. `bunfig.toml` has no key for it.
+        pub auth: Box<[u8]>,
+        /// By a `registry=` line: a credential inside that URL yields to any `.npmrc` line for it.
+        pub declared_in_npmrc: bool,
     }
 
     impl NpmRegistry {
+        /// Credentials in a URL are percent-encoded (RFC 3986 section 3.2.1); config keys are not.
         pub fn from_url(str: &[u8]) -> NpmRegistry {
+            use bun_url::PercentEncoding;
+
             let url = bun_url::URL::parse(str);
             let mut registry = NpmRegistry::default();
 
-            if url.username.is_empty() && !url.password.is_empty() {
-                registry.token = Box::from(url.password);
-                registry.url = url.href_without_auth();
-            } else if !url.username.is_empty() && !url.password.is_empty() {
-                registry.username = Box::from(url.username);
-                registry.password = Box::from(url.password);
-                registry.url = url.href_without_auth();
+            if !url.username.is_empty() && !url.password.is_empty() {
+                registry.username = PercentEncoding::decode_lenient_alloc(url.username);
+                registry.password = PercentEncoding::decode_lenient_alloc(url.password);
+            } else if !url.username.is_empty() {
+                let username = PercentEncoding::decode_lenient_alloc(url.username);
+                if bun_core::strings::contains_any(&username, b"\r\n\0") {
+                    // What `Scope::from_api` refuses, left where it looks.
+                    registry.username = username;
+                } else {
+                    // `http://user@host/` is `user` with an empty password, as in npm; a `username` key on its own sends nothing.
+                    let user = [&*username, b":"].concat();
+                    let mut auth = vec![0u8; bun_core::base64::encode_len(&user)];
+                    let len = bun_core::base64::encode(&mut auth, &user);
+                    auth.truncate(len);
+                    registry.auth = auth.into_boxed_slice();
+                }
+            } else if !url.password.is_empty() {
+                // `http://:token@host/`
+                registry.token = PercentEncoding::decode_lenient_alloc(url.password);
             } else {
                 // Do not include a trailing slash. There might be parameters at the end.
                 registry.url = Box::from(url.href);
+                return registry;
             }
 
+            registry.url = Self::href_without_auth(&url);
             registry
         }
 
+        /// Without the `http://` that `URL::href_without_auth` invents: cleartext credentials.
+        pub fn href_without_auth(url: &bun_url::URL) -> Box<[u8]> {
+            let href = url.href_without_auth();
+            if !url.protocol.is_empty() {
+                return href;
+            }
+            href[url.display_protocol().len() + b"://".len()..].into()
+        }
+
         pub fn has_credentials(&self) -> bool {
-            !self.token.is_empty() || !self.username.is_empty() || !self.password.is_empty()
+            !self.token.is_empty()
+                || !self.auth.is_empty()
+                || !self.username.is_empty()
+                || !self.password.is_empty()
         }
     }
 
@@ -181,6 +214,15 @@ pub mod api {
     #[derive(Default)]
     pub struct NpmRegistryMap {
         pub scopes: bun_collections::StringArrayHashMap<NpmRegistry>,
+    }
+
+    /// The credential of one `.npmrc` key, to match against URLs learned after config loading.
+    #[derive(Clone, Debug, Default)]
+    pub struct NpmUrlAuth {
+        /// npm's config key as written between `//` and `:<opt>=`, e.g. `host/path/`.
+        pub key: Box<[u8]>,
+        /// Only `token`, `auth`, `username` and `password` are set; `url` stays empty.
+        pub credentials: NpmRegistry,
     }
 
     /// Value of `BunInstall.ca`; hoisted to a named type so callers can
@@ -208,6 +250,8 @@ pub mod api {
         pub default_registry: Option<NpmRegistry>,
         /// scoped
         pub scoped: Option<NpmRegistryMap>,
+        /// One entry per `.npmrc` key that carries a complete credential, after every file was collapsed into one map.
+        pub url_auth: Vec<NpmUrlAuth>,
         /// lockfile_path
         pub lockfile_path: Option<Box<[u8]>>,
         /// save_lockfile_path
@@ -249,6 +293,7 @@ pub mod api {
         pub save_text_lockfile: Option<bool>,
         pub ca: Option<Ca>,
         pub ignore_scripts: Option<bool>,
+        pub provenance: Option<bool>,
         pub link_workspace_packages: Option<bool>,
         pub node_linker: Option<NodeLinker>,
         pub global_store: Option<bool>,
@@ -258,6 +303,34 @@ pub mod api {
         pub public_hoist_pattern: Option<PnpmMatcher>,
         pub hoist_pattern: Option<PnpmMatcher>,
         pub hoist: Option<bool>,
+        /// `offline = true`: `bun install` never touches the network.
+        pub offline: Option<bool>,
+    }
+
+    impl BunInstall {
+        /// Resolves `path` against `dir`, the directory of the config file that sets it or the
+        /// directory it was typed in. As in npm, `~` and `~/<rest>` expand to the home directory.
+        pub fn resolve_path(dir: &[u8], path: &[u8]) -> Box<[u8]> {
+            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+
+            let home = bun_core::env_var::HOME.get_not_empty();
+            if let ([b'~', rest @ ..], Some(home)) = (path, home)
+                && rest
+                    .first()
+                    .is_none_or(|&c| bun_core::path_sep::is_sep_any(c))
+            {
+                return [home, rest].concat().into();
+            }
+            // An empty path means the option is unset, so it must stay empty.
+            if path.is_empty() || bun_paths::is_absolute(path) || !bun_paths::is_absolute(dir) {
+                return path.into();
+            }
+            let mut buf = bun_paths::path_buffer_pool::get();
+            // A joined path that does not fit in `buf` could not be opened anyway, so keep `path`.
+            join_abs_string_buf_checked::<platform::Auto>(dir, &mut buf[..], &[path])
+                .unwrap_or(path)
+                .into()
+        }
     }
 
     #[repr(u8)]
@@ -361,7 +434,6 @@ pub mod api {
         _none = 0,
         Automatic = 1,
         Classic = 2,
-        Solid = 3,
     }
 
     /// JSX transform configuration (factory, fragment, runtime, …).

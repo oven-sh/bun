@@ -186,15 +186,12 @@ pub(crate) struct Decoded {
 pub enum DecodeError {
     #[error("DecodeFailed")]
     DecodeFailed,
-    #[error("OutOfMemory")]
-    OutOfMemory,
 }
 
 impl From<DecodeError> for super::codecs::Error {
     fn from(e: DecodeError) -> Self {
         match e {
             DecodeError::DecodeFailed => super::codecs::Error::DecodeFailed,
-            DecodeError::OutOfMemory => super::codecs::Error::OutOfMemory,
         }
     }
 }

@@ -116,8 +116,6 @@ void Event::setTarget(RefPtr<EventTarget>&& target)
         return;
 
     m_target = WTF::move(target);
-    if (m_target)
-        receivedTarget();
 }
 
 void Event::setCurrentTarget(EventTarget* currentTarget, std::optional<bool> isInShadowTree)

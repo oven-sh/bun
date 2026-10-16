@@ -907,7 +907,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
                 JSValue value = slot.getValue(globalObject, vm.propertyNames->toStringTagSymbol);
                 if (value.isString()) {
                     String tag = asString(value)->value(globalObject);
-                    CLEAR_IF_EXCEPTION(scope);
+                    RETURN_IF_EXCEPTION(scope, {});
                     if (tag == "Error"_s)
                         return JSValue::encode(jsBoolean(true));
                 }

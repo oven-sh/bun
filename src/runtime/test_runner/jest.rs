@@ -753,7 +753,7 @@ pub(crate) fn format_label(
                 b's' => {
                     consume_arg(
                         global_this,
-                        !current_arg.is_empty() && current_arg.js_type().is_string(),
+                        !current_arg.is_empty(),
                         &mut idx,
                         &mut args_idx,
                         &mut list,

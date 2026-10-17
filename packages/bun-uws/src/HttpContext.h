@@ -175,9 +175,14 @@ private:
 
             /* Call filter */
             httpResponseData->filteredOpen = true;
-            httpResponseData->isIdle = fromSocket(s)->isNodeHttp();
+            const bool isNodeHttp = fromSocket(s)->isNodeHttp();
+            httpResponseData->isIdle = isNodeHttp;
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
+            }
+            /* Behind the filters: the listeners of 'connection' and 'secureConnection' can set the limit of this connection. */
+            if (isNodeHttp && !us_socket_is_closed(s)) {
+                ((HttpResponseData<SSL, true> *) us_socket_ext(s))->maxHeadersCount = httpContextData->maxHeadersCount;
             }
 
             if (httpContextData->onHttp2 && !us_socket_is_closed(s) && us_socket_alpn_is_h2(s)) {
@@ -236,6 +241,12 @@ private:
             ((AsyncSocketData<SSL> *) us_socket_ext(s))->isIdle = IsNodeHttp;
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
+            }
+            if constexpr (IsNodeHttp) {
+                /* Behind the filters: a listener of 'connection' can set the limit of this connection. */
+                if (!us_socket_is_closed(s)) {
+                    ((HttpResponseData<SSL, true> *) us_socket_ext(s))->maxHeadersCount = httpContextData->maxHeadersCount;
+                }
             }
         }
 
@@ -429,12 +440,15 @@ private:
          * block; the Bun.serve instantiation passes nullptr (and its parser
          * instantiation contains no use of it). */
         std::string *nodeHttpRequestTrailers = nullptr;
+        /* node:http server.maxHeadersCount, as the connection took it when it opened. */
+        uint32_t maxHeadersCount = 0;
         if constexpr (IsNodeHttp) {
             auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
             nodeHttpRequestTrailers = &nodeHttpResponseData->nodeHttpRequestTrailers;
+            maxHeadersCount = nodeHttpResponseData->maxHeadersCount;
         }
 
-        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpContextData->maxHeadersCount, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, maxHeadersCount, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
 

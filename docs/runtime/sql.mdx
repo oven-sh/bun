@@ -418,7 +418,7 @@ console.log(rows); // [[Buffer, Buffer], [Buffer, Buffer], [Buffer, Buffer]]
 - On MySQL, each `Buffer` holds the bytes the server sent. They are binary for a prepared query and text for `.simple()`.
 - SQLite returns `Uint8Array` objects.
 
-Call `.raw()` before the query starts, that is before `await`, `.then()` or `.execute()`. After that, Bun may already have asked PostgreSQL for the formats that it decodes. Then `float4`, `numeric` and `time` arrive as text, and `int2[]` and `float8[]` in binary. On SQLite, `.execute()` has already run the query when it returns, so `.raw()` and `.values()` have no effect after it.
+Call `.raw()` before the query starts, that is before `await`, `.then()` or `.execute()`. After that, Bun may already have asked PostgreSQL for the formats that it decodes. Then `numeric` and `time` arrive as text, and `int2[]` and `float8[]` in binary. On SQLite, `.execute()` has already run the query when it returns, so `.raw()` and `.values()` have no effect after it.
 
 ### Result metadata
 
@@ -1577,7 +1577,7 @@ const { count } = await query; // 2
 
 By default, Bun's SQL client creates named prepared statements for queries it can infer are static, which is faster.
 
-Each PostgreSQL or MySQL connection keeps the 256 statements it used last. When it prepares another one, it closes the least recently used statement on the server.
+Each connection keeps the statements it used last: 1,024 on PostgreSQL, 256 on MySQL and MariaDB, where all connections share the server's `max_prepared_stmt_count`. When it prepares another one, it closes the least recently used statement on the server.
 
 On PostgreSQL, a prepared statement can stop working: `ALTER TABLE` changes its result (`cached plan must not change result type`), and `DEALLOCATE ALL` or `DISCARD ALL` removes it. Bun then prepares the statement again and runs the query once more. The query rejects with the server's error instead if Bun has already sent another query behind it on that connection, which the server runs first, or inside a transaction, which is already aborted. The next run prepares the statement again.
 
@@ -1990,7 +1990,8 @@ Bun converts PostgreSQL types to JavaScript types:
 | ------------------------------------------------------------------ | ---------------- | ---------------------------------------------------------------------------------------- |
 | `smallint`, `integer`, `oid`                                       | number           |                                                                                          |
 | `bigint`                                                           | string or BigInt | Depending on the `bigint` option                                                         |
-| `real`, `double precision`                                         | number           |                                                                                          |
+| `double precision`                                                 | number           |                                                                                          |
+| `real`                                                             | number           | See [Typed arrays and `real`](#typed-arrays-and-real)                                    |
 | `numeric`, `money`                                                 | string           | To preserve precision                                                                    |
 | `boolean`                                                          | boolean          |                                                                                          |
 | `text`, `varchar`, `char`                                          | string           |                                                                                          |
@@ -1999,7 +2000,24 @@ Bun converts PostgreSQL types to JavaScript types:
 | `json`, `jsonb`                                                    | object/array     | Automatically parsed                                                                     |
 | `bytea`                                                            | Buffer           |                                                                                          |
 | `uuid`, `inet`, ranges, geometric types, and every other type      | string           | As PostgreSQL prints them                                                                |
-| Arrays of a built-in type, such as `integer[]`, `text[]`, `uuid[]` | Array            | A plain `Array`: nested for each dimension, `null` for `NULL`, elements as in this table |
+| `integer[]`, `real[]`                                              | Typed array      | Or a plain `Array`. See [Typed arrays and `real`](#typed-arrays-and-real)                |
+| Every other array of a built-in type, such as `text[]`, `bigint[]` | Array            | A plain `Array`: nested for each dimension, `null` for `NULL`, elements as in this table |
+
+##### Typed arrays and `real`
+
+How Bun reads `real`, `integer[]` and `real[]` depends on the format in which PostgreSQL sends the result:
+
+| PostgreSQL Type | Binary format                                    | Text format                               |
+| --------------- | ------------------------------------------------ | ----------------------------------------- |
+| `real`          | The 32-bit float, exactly: `0.10000000149011612` | The number as PostgreSQL prints it: `0.1` |
+| `integer[]`     | `Int32Array`                                     | `Array`                                   |
+| `real[]`        | `Float32Array`                                   | `Array`                                   |
+
+A result arrives as text on the first run of a query without parameters, with `.simple()`, with `sql.unsafe()` without values, and with `prepare: false`. Every other result arrives in binary.
+
+An array that holds a `NULL` or has more than one dimension is a plain `Array` in both formats, because a typed array has no place for either. So one column can give a typed array for one row and a plain `Array` for the next. The `real` elements of such an array follow the table above.
+
+To handle both, `Array.from(row.ids)` makes a plain `Array` of either kind, and `Math.fround(row.price)` gives the 32-bit value in either format. That is also the value to compare with: `WHERE price = ${Math.fround(0.1)}` finds a `real` column that holds `0.1`, and `WHERE price = ${0.1}` does not.
 
 #### Not implemented yet
 

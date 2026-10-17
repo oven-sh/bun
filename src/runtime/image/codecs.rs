@@ -217,7 +217,7 @@ pub(crate) struct Decoded {
     /// source didn't carry one or the decode path doesn't extract it —
     /// BMP/GIF (no ICC chunk) and system backends (which already colour-
     /// manage into sRGB during decode, so the profile is no longer
-    /// needed). The image pipeline hands this straight to the matching
+    /// needed). The image pipeline hands an RGB profile straight to the matching
     /// encoder — the RGBA buffer is NOT converted to sRGB, so the bytes
     /// only have their intended colour meaning when the profile travels
     /// with them. Dropping it on a Display-P3 / Adobe RGB / XYB source
@@ -441,7 +441,7 @@ pub(crate) struct EncodeOptions {
     /// JPEG only: emit a progressive scan script (coarse-to-fine render).
     pub(crate) progressive: bool,
     /// ICC profile to embed in the output container (JPEG APP2, PNG iCCP,
-    /// WebP ICCP). `None` ⇒ no profile chunk/marker is written. The
+    /// WebP ICCP). `None` or a non-RGB profile ⇒ no chunk/marker is written. The
     /// pipeline forwards this from the decode step so a non-sRGB source
     /// (P3, Adobe RGB, XYB/Jpegli) preserves its colour meaning through
     /// re-encode. Borrowed; the caller retains ownership.
@@ -529,14 +529,24 @@ impl Encoded {
     }
 }
 
+/// ICC.1 §7.2: the 128-byte header has the data colour space at 16..20 and `acsp` at 36..40.
+fn icc_is_rgb(profile: &[u8]) -> bool {
+    profile.len() >= 128 && profile[36..40] == *b"acsp" && profile[16..20] == *b"RGB "
+}
+
 pub(crate) fn encode(
     rgba: &[u8],
     width: u32,
     height: u32,
-    opts: EncodeOptions,
+    mut opts: EncodeOptions,
 ) -> Result<Encoded, Error> {
+    // Every container below stores RGB samples, which only an RGB profile describes.
     // SAFETY: `EncodeOptions.icc_profile` is borrowed from the caller for the
     // duration of this call (raw-ptr stand-in for a lifetime param).
+    opts.icc_profile = opts
+        .icc_profile
+        .filter(|p| icc_is_rgb(unsafe { p.as_ref() }));
+    // SAFETY: same borrow as above.
     let icc: Option<&[u8]> = opts.icc_profile.map(|p| unsafe { p.as_ref() });
     match opts.format {
         Format::Jpeg => jpeg::encode(rgba, width, height, opts.quality, opts.progressive, icc),

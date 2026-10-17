@@ -99,6 +99,79 @@ const cmykIccJpeg = Buffer.from(
   "base64",
 );
 
+// 32×8 baseline 1-component (greyscale) JPEG: four flat 8×8 blocks of 32, 96, 160 and 224.
+const greyJpeg = Buffer.from(
+  "/9j/2wBDAAgBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAALCAAIACABAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAAPwDx96A9AegP/9k=",
+  "base64",
+);
+
+// A valid ICC v2 profile: 128-byte header, tag table, tags. `space` is the
+// data colour space at 16..20. GRAY has one tone curve; the others have three
+// curves and three colorants. `payload` rides in a private tag.
+function iccProfile(space: "GRAY" | "RGB " | "CMYK" | "Lab ", payload?: Uint8Array): Buffer {
+  const xyz = (x: number, y: number, z: number) => {
+    const tag = Buffer.alloc(20);
+    tag.write("XYZ ", 0, "latin1");
+    tag.writeInt32BE(x, 8);
+    tag.writeInt32BE(y, 12);
+    tag.writeInt32BE(z, 16);
+    return tag;
+  };
+  // prettier-ignore
+  const gamma22 = Buffer.from([0x63, 0x75, 0x72, 0x76, 0, 0, 0, 0, 0, 0, 0, 1, 0x02, 0x33, 0, 0]); // "curv", one u8Fixed8 entry
+  const name = "test " + space.trim();
+  const tags: [string, Buffer][] = [
+    [
+      "desc",
+      Buffer.concat([
+        Buffer.from("desc\0\0\0\0"),
+        Buffer.from([0, 0, 0, name.length + 1]),
+        Buffer.from(name + "\0"),
+        Buffer.alloc(78),
+      ]),
+    ],
+    ["cprt", Buffer.from("text\0\0\0\0none\0")],
+    ["wtpt", xyz(0xf6d6, 0x10000, 0xd32d)],
+  ];
+  if (space === "GRAY") tags.push(["kTRC", gamma22]);
+  else {
+    tags.push(["rTRC", gamma22], ["gTRC", gamma22], ["bTRC", gamma22]);
+    tags.push(
+      ["rXYZ", xyz(0x6fa2, 0x38f5, 0x0390)],
+      ["gXYZ", xyz(0x6299, 0xb785, 0x18da)],
+      ["bXYZ", xyz(0x24a0, 0x0f84, 0xb6cf)],
+    );
+  }
+  // dataType: signature, reserved, flag 1 (binary), bytes.
+  if (payload) tags.push(["bunT", Buffer.concat([Buffer.from("data\0\0\0\0\0\0\0\x01", "latin1"), payload])]);
+  const table = Buffer.alloc(4 + tags.length * 12);
+  table.writeUInt32BE(tags.length, 0);
+  const bodies: Buffer[] = [];
+  let offset = 128 + table.length;
+  tags.forEach(([signature, body], i) => {
+    table.write(signature, 4 + i * 12, "latin1");
+    table.writeUInt32BE(offset, 8 + i * 12);
+    table.writeUInt32BE(body.length, 12 + i * 12);
+    const padding = (4 - (body.length % 4)) % 4;
+    bodies.push(body, Buffer.alloc(padding));
+    offset += body.length + padding;
+  });
+  const header = Buffer.alloc(128);
+  header.writeUInt32BE(offset, 0); // profile size
+  header.writeUInt32BE(0x02100000, 8); // version 2.1
+  header.write("mntr", 12, "latin1"); // device class
+  header.write(space, 16, "latin1"); // data colour space
+  header.write("XYZ ", 20, "latin1"); // profile connection space
+  header.writeUInt16BE(2026, 24); // creation date
+  header.writeUInt16BE(1, 26);
+  header.writeUInt16BE(1, 28);
+  header.write("acsp", 36, "latin1"); // file signature
+  header.writeInt32BE(0xf6d6, 68); // D50 illuminant
+  header.writeInt32BE(0x10000, 72);
+  header.writeInt32BE(0xd32d, 76);
+  return Buffer.concat([header, table, ...bodies]);
+}
+
 function rgbaAt(buf: Uint8Array, w: number, x: number, y: number): [number, number, number, number] {
   const i = (y * w + x) * 4;
   return [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]];
@@ -499,7 +572,9 @@ describe("Bun.Image", () => {
   // XYB) as sRGB and visibly shifts the colours. Bun's contract here is:
   // source-format re-encode preserves the profile; format conversion
   // preserves it when the target container supports ICC (JPEG APP2, PNG
-  // iCCP, WebP ICCP).
+  // iCCP, WebP ICCP). Every output holds RGB samples, so only an RGB ICC
+  // profile is written: a profile for another colour model (greyscale, CMYK)
+  // or a payload with no ICC header does not describe them.
   describe("ICC profile", () => {
     // Splice an iCCP chunk carrying `profile` into a valid PNG. The PNG spec
     // requires iCCP before the first IDAT; put it right after IHDR. Chunk
@@ -581,19 +656,22 @@ describe("Bun.Image", () => {
     // deflate/inflate and libjpeg-turbo's APP2 chunking without
     // modification. Neither library validates ICC internals. The wide byte
     // range (0-255, prime-step LCG) exercises binary-safe transport so a
-    // stray text-mode decode would corrupt and fail the round-trip. 384
-    // bytes fits comfortably in a single APP2 segment; the multi-segment
-    // case is covered by `bigProfile` below.
-    const fakeProfile = new Uint8Array(384);
-    for (let i = 0; i < fakeProfile.length; i++) fakeProfile[i] = (i * 37 + 11) & 0xff;
+    // stray text-mode decode would corrupt and fail the round-trip. It rides
+    // in a private tag of a valid RGB profile, the only kind Bun.Image
+    // writes. The profile fits comfortably in a single APP2 segment; the
+    // multi-segment case is covered by `bigProfile` below.
+    const rawPayload = new Uint8Array(384);
+    for (let i = 0; i < rawPayload.length; i++) rawPayload[i] = (i * 37 + 11) & 0xff;
+    const fakeProfile = iccProfile("RGB ", rawPayload);
 
     // Above libjpeg-turbo's 65 519-byte per-APP2 split threshold so the
     // PNG → JPEG path emits two APP2 segments and exercises the
     // reassembly loop in `extractJpegIcc`. Built once for the multi-
     // segment test only — most tests use the small profile to keep the
     // suite fast.
-    const bigProfile = new Uint8Array(70_000);
-    for (let i = 0; i < bigProfile.length; i++) bigProfile[i] = (i * 131 + 7) & 0xff;
+    const bigRawPayload = new Uint8Array(70_000);
+    for (let i = 0; i < bigRawPayload.length; i++) bigRawPayload[i] = (i * 131 + 7) & 0xff;
+    const bigProfile = iccProfile("RGB ", bigRawPayload);
 
     test("PNG iCCP survives PNG re-encode byte-for-byte", async () => {
       const src = pngWithIccp(cornersPng, fakeProfile);
@@ -800,6 +878,209 @@ describe("Bun.Image", () => {
       expect(extractJpegIcc(jpg)).toBeNull();
       const png = await new Bun.Image(cmykIccJpeg).png().bytes();
       expect(extractPngIccp(png)).toBeNull();
+    });
+
+    // ── Only an RGB profile is written. A greyscale source decodes to R=G=B,
+    // so its one-channel profile does not describe the output (PNG spec, iCCP:
+    // the profile "shall be an RGB color space for color images (color types
+    // 2, 3, and 6)"). The profile's own header decides, not the source: an
+    // RGB profile on a greyscale source is kept. Nothing converts the samples
+    // in place of a dropped profile: the output keeps the stored values.
+
+    const grayProfile = iccProfile("GRAY");
+    const rgbProfile = iccProfile("RGB ");
+    const cmykProfile = iccProfile("CMYK");
+    const labProfile = iccProfile("Lab ");
+
+    // 32×8, 8-bit, opaque grey ramp stored as PNG colour type 0 (grey),
+    // 2 (RGB), 3 (indexed) or 4 (grey + alpha).
+    function rampPng(colourType: 0 | 2 | 3 | 4, profile?: Uint8Array): Uint8Array {
+      const channels = { 0: 1, 2: 3, 3: 1, 4: 2 }[colourType];
+      const ihdr = new Uint8Array(13);
+      const iv = new DataView(ihdr.buffer);
+      iv.setUint32(0, 32);
+      iv.setUint32(4, 8);
+      ihdr[8] = 8;
+      ihdr[9] = colourType;
+      const stride = 1 + 32 * channels;
+      const raw = new Uint8Array(8 * stride);
+      for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 32; x++) {
+          const p = y * stride + 1 + x * channels;
+          raw.fill(colourType === 3 ? x : x * 8, p, p + channels);
+          if (colourType === 4) raw[p + 1] = 255;
+        }
+      }
+      const palette = Uint8Array.from({ length: 32 * 3 }, (_, i) => Math.floor(i / 3) * 8);
+      const png = Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        pngChunk("IHDR", ihdr),
+        ...(colourType === 3 ? [pngChunk("PLTE", palette)] : []),
+        pngChunk("IDAT", zlib.deflateSync(raw)),
+        pngChunk("IEND", new Uint8Array(0)),
+      ]);
+      return profile ? pngWithIccp(png, profile) : png;
+    }
+
+    // Splice one APP2 `ICC_PROFILE` segment (1 of 1) in after SOI.
+    function jpegWithIcc(jpg: Uint8Array, profile: Uint8Array): Buffer {
+      const body = Buffer.concat([Buffer.from("ICC_PROFILE\0", "latin1"), Buffer.from([1, 1]), profile]);
+      const seglen = body.length + 2;
+      return Buffer.concat([
+        jpg.subarray(0, 2),
+        Buffer.from([0xff, 0xe2, seglen >> 8, seglen & 255]),
+        body,
+        jpg.subarray(2),
+      ]);
+    }
+
+    // Wrap a bare 32×8 WebP (RIFF · WEBP · one VP8L chunk) in a VP8X
+    // container whose ICCP chunk carries `profile`.
+    function webpWithIccp(bare: Uint8Array, profile: Uint8Array): Buffer {
+      const riffChunk = (fourcc: string, data: Uint8Array) => {
+        const head = Buffer.alloc(8);
+        head.write(fourcc, 0, "latin1");
+        head.writeUInt32LE(data.length, 4);
+        return Buffer.concat([head, data, Buffer.alloc(data.length & 1)]);
+      };
+      const vp8x = Buffer.alloc(10);
+      vp8x[0] = 0x20; // ICC profile flag
+      vp8x.writeUIntLE(32 - 1, 4, 3); // canvas width - 1
+      vp8x.writeUIntLE(8 - 1, 7, 3); // canvas height - 1
+      const body = Buffer.concat([
+        Buffer.from("WEBP", "latin1"),
+        riffChunk("VP8X", vp8x),
+        riffChunk("ICCP", profile),
+        bare.subarray(12),
+      ]);
+      const head = Buffer.alloc(8);
+      head.write("RIFF", 0, "latin1");
+      head.writeUInt32LE(body.length, 4);
+      return Buffer.concat([head, body]);
+    }
+    const rampJpeg = async (profile: Uint8Array) =>
+      jpegWithIcc(await new Bun.Image(rampPng(2)).jpeg().bytes(), profile);
+    const rampWebp = async (profile: Uint8Array) =>
+      webpWithIccp(await new Bun.Image(rampPng(2)).webp({ lossless: true }).bytes(), profile);
+
+    // What `out` carries, relative to the profile of its source.
+    function profileStatus(out: Uint8Array, sourceProfile: Uint8Array): string {
+      const isWebp = out[0] === 0x52; // "RIFF"
+      const profile = out[0] === 0x89 ? extractPngIccp(out) : isWebp ? extractWebpIccp(out) : extractJpegIcc(out);
+      if (profile !== null) return Buffer.compare(profile, sourceProfile) === 0 ? "source profile" : "other profile";
+      // A WebP with no profile is the bare bitstream, with no VP8X wrapper.
+      return isWebp && String.fromCharCode(...out.subarray(12, 16)) === "VP8X"
+        ? "VP8X container, no profile"
+        : "no profile";
+    }
+
+    // Every way a pipeline ends: each encoder and the re-encode in the source
+    // format, each with and without a geometry step.
+    const outputs: [string, (image: Bun.Image) => Bun.Image][] = [
+      ["png", image => image.png()],
+      ["palette png", image => image.png({ palette: true })],
+      ["jpeg", image => image.jpeg()],
+      ["webp", image => image.webp()],
+      ["lossless webp", image => image.webp({ lossless: true })],
+      ["source format", image => image],
+    ];
+    const onEveryOutput = (status: string) =>
+      Object.fromEntries(outputs.flatMap(([name]) => [name, `${name} after resize`]).map(name => [name, status]));
+    async function profileOnEveryOutput(source: Uint8Array, sourceProfile: Uint8Array) {
+      const entries = outputs.flatMap(([name, encode]) => [
+        [name, encode(new Bun.Image(source))] as const,
+        [`${name} after resize`, encode(new Bun.Image(source).resize(16, 4))] as const,
+      ]);
+      return Object.fromEntries(
+        await Promise.all(
+          entries.map(async ([name, image]) => [name, profileStatus(await image.bytes(), sourceProfile)]),
+        ),
+      );
+    }
+
+    test("the greyscale JPEG fixture decodes to R=G=B", async () => {
+      const { w, h, data } = decodePngRaw(await new Bun.Image(greyJpeg).png().bytes());
+      expect({ w, h, row: [0, 8, 16, 24].map(x => rgbaAt(data, w, x, 0)) }).toEqual({
+        w: 32,
+        h: 8,
+        row: [
+          [32, 32, 32, 255],
+          [96, 96, 96, 255],
+          [160, 160, 160, 255],
+          [224, 224, 224, 255],
+        ],
+      });
+    });
+
+    test.each<[string, () => Uint8Array | Promise<Uint8Array>, Uint8Array]>([
+      ["greyscale PNG (colour type 0) with a GRAY profile", () => rampPng(0, grayProfile), grayProfile],
+      ["greyscale + alpha PNG (colour type 4) with a GRAY profile", () => rampPng(4, grayProfile), grayProfile],
+      ["greyscale JPEG with a GRAY profile", () => jpegWithIcc(greyJpeg, grayProfile), grayProfile],
+      ["RGB PNG (colour type 2) with a GRAY profile", () => rampPng(2, grayProfile), grayProfile],
+      ["indexed PNG (colour type 3) with a GRAY profile", () => rampPng(3, grayProfile), grayProfile],
+      ["RGBA PNG (colour type 6) with a CMYK profile", () => pngWithIccp(gradientPng, cmykProfile), cmykProfile],
+      ["RGB PNG (colour type 2) with a Lab profile", () => rampPng(2, labProfile), labProfile],
+      ["YCbCr JPEG with a GRAY profile", () => rampJpeg(grayProfile), grayProfile],
+      ["YCbCr JPEG with a CMYK profile", () => rampJpeg(cmykProfile), cmykProfile],
+      ["WebP with a GRAY profile", () => rampWebp(grayProfile), grayProfile],
+    ])("%s: the profile is not written", async (_name, source, profile) => {
+      expect(await profileOnEveryOutput(await source(), profile)).toEqual(onEveryOutput("no profile"));
+    });
+
+    test.each<[string, () => Uint8Array | Promise<Uint8Array>]>([
+      ["greyscale PNG (colour type 0)", () => rampPng(0, rgbProfile)],
+      ["greyscale JPEG", () => jpegWithIcc(greyJpeg, rgbProfile)],
+      ["YCbCr JPEG", () => rampJpeg(rgbProfile)],
+      ["WebP", () => rampWebp(rgbProfile)],
+    ])("%s with an RGB profile: the profile is kept byte for byte", async (_name, source) => {
+      expect(await profileOnEveryOutput(await source(), rgbProfile)).toEqual(onEveryOutput("source profile"));
+    });
+
+    const patched = (profile: Uint8Array, at: number, text: string) => {
+      const copy = Buffer.from(profile);
+      copy.write(text, at, "latin1");
+      return copy;
+    };
+    // `GRAY` in the data colour space field, `RGB ` in the fields on both sides of it.
+    const grayBetweenRgb = patched(patched(patched(fakeProfile, 12, "RGB "), 16, "GRAY"), 20, "RGB ");
+
+    test.each<[string, string, Uint8Array]>([
+      ["a payload with no ICC header", "no profile", rawPayload],
+      ["19 bytes, short of the data colour space", "no profile", fakeProfile.subarray(0, 19)],
+      ["39 bytes, short of the file signature", "no profile", fakeProfile.subarray(0, 39)],
+      ["127 bytes, one short of the ICC header", "no profile", fakeProfile.subarray(0, 127)],
+      ["128 bytes, the whole ICC header", "source profile", fakeProfile.subarray(0, 128)],
+      ["a file signature one bit off `acsp`", "no profile", patched(fakeProfile, 36, "acsq")],
+      ["`GRAY` at 16..20 with `RGB ` next to it", "no profile", grayBetweenRgb],
+    ])("%s: %s on every output", async (_name, status, payload) => {
+      expect(await profileOnEveryOutput(pngWithIccp(cornersPng, payload), payload)).toEqual(onEveryOutput(status));
+    });
+
+    test("new Response(image) does not write a GRAY profile", async () => {
+      const out = await new Response(new Bun.Image(rampPng(0, grayProfile)).png()).bytes();
+      expect(profileStatus(out, grayProfile)).toBe("no profile");
+    });
+
+    test("CMYK JPEG with an RGB profile: the profile is not written", async () => {
+      // The decoder converts the ink channels without the profile, so the RGB
+      // it produces is not in that profile's colour space.
+      const source = jpegWithIcc(cmykJpeg, rgbProfile);
+      expect({
+        jpeg: profileStatus(await new Bun.Image(source).jpeg().bytes(), rgbProfile),
+        png: profileStatus(await new Bun.Image(source).png().bytes(), rgbProfile),
+      }).toEqual({ jpeg: "no profile", png: "no profile" });
+    });
+
+    test("the Jpegli XYB profile is kept byte for byte", async () => {
+      // The profile of the JPEG in #30197: device class `scnr`, data colour
+      // space `RGB `. Its copyright tag reads CC0.
+      const xybProfile = Buffer.from(
+        "AAAC0Gp4bCAEQAAAc2NuclJHQiBYWVogB+MADAABAAAAAAAAYWNzcEFQUEwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPbWAAEAAAAA0y1qeGwgVY7dlA8yBAaZxooXtA0/ewAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGZGVzYwAAAMwAAAAsY3BydAAAAPgAAAAkd3RwdAAAARwAAAAUY2hhZAAAATAAAAAsQTJCMAAAAVwAAAEkQjJBMAAAAoAAAABQbWx1YwAAAAAAAAABAAAADGVuVVMAAAAOAAAAHABYAFkAQgBfAFAAZQByAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAYAAAAcAEMAQwAwAABYWVogAAAAAAAA9tYAAQAAAADTLXNmMzIAAAAAAAEMQAAABd3///MpAAAHkgAA/ZD///ui///9ogAAA9sAAMCBbUFCIAAAAAADAwAAAAAAIAAAAPQAAACUAAAAUAAAACBwYXJhAAAAAAAAAAAAAQAAcGFyYQAAAAAAAAAAAAEAAHBhcmEAAAAAAAAAAAABAAACAgIAAAAAAAAAAAAAAAAAAgAAAAAADIYAAAAADIZwyfN5//+PNvN5/////wyGAAAAAAyGAABwyf//83mPNv//83n//3BhcmEAAAAAAAMAAAADAAAAAOOIAAAj/AAAAAAAAAAAcGFyYQAAAAAAAwAAAAMAAAAA44gAACC7AAAAAAAAAABwYXJhAAAAAAADAAAAAwAAAAGC0///4NUAAAAAAAAUoQABhFv//uS7AAASVv//8zIAAJGA///7Tv/+nMEAAR1UAACvjP///4j///+E////mW1CQSAAAAAAAwMAAAAAACAAAAAAAAAAAAAAAAAAAAAAcGFyYQAAAAAAAAAAAAEAAHBhcmEAAAAAAAAAAAABAABwYXJhAAAAAAAAAAAAAQAA",
+        "base64",
+      );
+      expect(await profileOnEveryOutput(await rampJpeg(xybProfile), xybProfile)).toEqual(
+        onEveryOutput("source profile"),
+      );
     });
   });
 

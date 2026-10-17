@@ -711,10 +711,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // For standalone mode, resolve JS/CSS chunks so we can inline their content into HTML.
     // Closing tag escaping (</script → <\\/script, </style → <\\/style) is handled during
     // the HTML assembly step in codeWithSourceMapShifts, not here.
-    //
-    // Buffers are freed via `Drop` (global mimalloc); if
-    // `Chunk::allocator_for_size` ever becomes size-dependent, matched-arena
-    // dealloc must be restored here.
     let mut standalone_chunk_contents: Option<Vec<Option<Box<[u8]>>>> = None;
     // Finalized sourcemap JSON for standalone-mode chunks whose sourcemap
     // option writes a separate .map file (linked/external). Indexed by chunk;
@@ -742,7 +738,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // behavior for inter-chunk imports.
             let mut intermediate_output = core::mem::take(&mut chunks[ci].intermediate_output);
             let code_result = intermediate_output.code_standalone(
-                None,
                 c.parse_graph(),
                 &c.graph,
                 c.options.public_path,
@@ -970,7 +965,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     crate::chunk::Content::Html
                 ) {
                 intermediate_output.code_standalone(
-                    None,
                     c.parse_graph(),
                     &c.graph,
                     public_path,
@@ -984,7 +978,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             } else {
                 let chunk = &chunks[chunk_index_in_chunks_list];
                 intermediate_output.code(
-                    None,
                     c.parse_graph(),
                     &c.graph,
                     public_path,

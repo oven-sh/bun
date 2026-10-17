@@ -117,22 +117,18 @@ impl ResolverContext for NewResolver<'_> {
         matches!(self.tag, ResolutionTag::Folder | ResolutionTag::Symlink)
     }
 
-    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: &Expr) {
+    fn count(&mut self, builder: &mut StringBuilder<'_>) {
         builder.count(self.folder_path);
     }
 
-    fn resolve(
-        &mut self,
-        builder: &mut StringBuilder<'_>,
-        _json: &Expr,
-    ) -> crate::Result<ResolutionType<u64>> {
+    fn resolve(&mut self, builder: &mut StringBuilder<'_>) -> ResolutionType<u64> {
         let appended = builder.append::<SemverString>(self.folder_path);
-        Ok(ResolutionType::<u64>::init(match self.tag {
+        ResolutionType::<u64>::init(match self.tag {
             ResolutionTag::Folder => TaggedValue::Folder(appended),
             ResolutionTag::Symlink => TaggedValue::Symlink(appended),
             ResolutionTag::Workspace => TaggedValue::Workspace(appended),
             _ => unreachable!(),
-        }))
+        })
     }
 
     fn fallback_name(&self) -> Option<Vec<u8>> {

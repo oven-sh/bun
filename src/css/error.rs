@@ -94,20 +94,6 @@ pub struct ParseError<T> {
     pub(crate) location: SourceLocation,
 }
 
-impl<T> ParseError<T> {
-    pub fn basic(self) -> BasicParseError {
-        match self.kind {
-            ParserErrorKind::basic(kind) => BasicParseError {
-                kind,
-                location: self.location,
-            },
-            ParserErrorKind::custom(_) => {
-                panic!("Not a basic parse error. This is a bug in Bun's css parser.")
-            }
-        }
-    }
-}
-
 #[allow(non_camel_case_types)]
 pub enum ParserErrorKind<T> {
     /// A fundamental parse error from a built-in parsing routine.

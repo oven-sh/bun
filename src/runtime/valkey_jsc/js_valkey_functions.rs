@@ -6,7 +6,6 @@ use bun_jsc::{
 };
 
 use super::js_valkey::{JSValkeyClient, SubscriptionCtx};
-use super::protocol_jsc as protocol;
 use super::valkey;
 use super::valkey_command_body::{Args as CommandArgs, Command, Meta as CommandMeta};
 
@@ -73,20 +72,6 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     JSArgument::from_js_maybe_file(global, value, FileBlobs::Allow)
 }
 
-/// Shim around `protocol::valkey_error_to_js` that:
-/// 1. accepts whatever error type `JSValkeyClient::send` currently returns
-///    (presently `crate::Error`) and
-///    converts it to `RedisError` so the user-visible error code matches the
-///    real failure variant, and
-/// 2. wraps the resulting `JSValue` in `Ok` for use in `JsResult<JSValue>`
-///    host functions.
-#[inline]
-fn send_err_to_js(global: &JSGlobalObject, message: &str, err: &crate::Error) -> JsResult<JSValue> {
-    use bun_valkey::valkey_protocol::RedisError;
-    let redis_err = err.name().parse().unwrap_or(RedisError::ConnectionClosed);
-    Ok(protocol::valkey_error_to_js(global, message, redis_err))
-}
-
 /// `JSValkeyClient::send` returns a `*mut JSPromise`; route through the
 /// `opaque_ffi!` ZST accessor instead of an open-coded raw deref.
 #[inline]
@@ -95,37 +80,29 @@ fn promise_to_js(p: *mut JSPromise) -> JSValue {
 }
 
 /// Shared epilog for every Valkey prototype method: build a `Command`,
-/// `this.send()` it, and convert the result to a `JsResult<JSValue>` —
-/// `Ok(promise.toJS())` on success, a JS-side Redis error value on failure.
+/// `this.send()` it, and return the promise as `Ok(promise.toJS())`.
 ///
 /// All 7 `cmd_*!` macros and ~24 hand-written methods (`get`, `getBuffer`,
 /// `set`, `incr`, `decr`, `exists`, `expire`, `ttl`, `srem`, `sadd`,
 /// `sismember`, `hmget`, `hincrby`, `hset`, `smove`, `publish`,
 /// `send_unsubscribe_request_and_cleanup`, …) duplicated this 15-line block
-/// byte-identically; the only per-caller variation is the args slice, the
-/// `meta` flags, and the error-message prefix.
+/// byte-identically; the only per-caller variation is the args slice and `meta`.
 #[inline]
 fn send_cmd(
     this: &JSValkeyClient,
     global: &JSGlobalObject,
-    this_js: JSValue,
     command: &[u8],
     args: CommandArgs<'_>,
     meta: CommandMeta,
-    err_msg: &str,
 ) -> JsResult<JSValue> {
-    match this.send(
+    Ok(promise_to_js(this.send(
         global,
-        this_js,
         &Command {
             command,
             args,
             meta,
         },
-    ) {
-        Ok(p) => Ok(promise_to_js(p)),
-        Err(err) => send_err_to_js(global, err_msg, &err),
-    }
+    )))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -171,7 +148,7 @@ macro_rules! cmd_noargs {
         pub(crate) fn $fn_name(
             this: &Self,
             global: &JSGlobalObject,
-            frame: &CallFrame,
+            _frame: &CallFrame,
         ) -> JsResult<JSValue> {
             compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
                 this, $name,
@@ -179,11 +156,9 @@ macro_rules! cmd_noargs {
             send_cmd(
                 this,
                 global,
-                frame.this(),
                 $command.as_bytes(),
                 CommandArgs::Args(&[]),
                 CommandMeta::default(),
-                concat!("Failed to send ", $command),
             )
         }
     };
@@ -211,11 +186,9 @@ macro_rules! cmd_key {
             send_cmd(
                 this,
                 global,
-                frame.this(),
                 $command.as_bytes(),
                 CommandArgs::Args(&[key]),
                 CommandMeta::default(),
-                concat!("Failed to send ", $command),
             )
         }
     };
@@ -257,11 +230,9 @@ macro_rules! cmd_key_varargs {
             send_cmd(
                 this,
                 global,
-                frame.this(),
                 $command.as_bytes(),
                 CommandArgs::Args(&args),
                 CommandMeta::default(),
-                concat!("Failed to send ", $command),
             )
         }
     };
@@ -296,11 +267,9 @@ macro_rules! cmd_key_value {
             send_cmd(
                 this,
                 global,
-                frame.this(),
                 $command.as_bytes(),
                 CommandArgs::Args(&[key, value]),
                 CommandMeta::default(),
-                concat!("Failed to send ", $command),
             )
         }
     };
@@ -342,11 +311,9 @@ macro_rules! cmd_key_value_value2 {
             send_cmd(
                 this,
                 global,
-                frame.this(),
                 $command.as_bytes(),
                 CommandArgs::Args(&[key, value, value2]),
                 CommandMeta::default(),
-                concat!("Failed to send ", $command),
             )
         }
     };
@@ -382,11 +349,9 @@ macro_rules! cmd_strings_varargs {
             send_cmd(
                 this,
                 global,
-                frame.this(),
                 $command.as_bytes(),
                 CommandArgs::Args(&args),
                 $meta,
-                concat!("Failed to send ", $command),
             )
         }
     };
@@ -423,11 +388,9 @@ macro_rules! cmd_key_value_varargs {
             send_cmd(
                 this,
                 global,
-                frame.this(),
                 $command.as_bytes(),
                 CommandArgs::Args(&args),
                 CommandMeta::default(),
-                concat!("Failed to send ", $command),
             )
         }
     };
@@ -474,12 +437,7 @@ impl JSValkeyClient {
         let checked_meta = cmd.meta.check(&cmd);
         cmd.meta = checked_meta;
         // Send command with slices directly
-        let promise = match this.send(global, frame.this(), &cmd) {
-            Ok(p) => p,
-            Err(err) => {
-                return send_err_to_js(global, "Failed to send command", &err);
-            }
-        };
+        let promise = this.send(global, &cmd);
         Ok(promise_to_js(promise))
     }
 
@@ -497,11 +455,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"GET",
             CommandArgs::Args(&[key]),
             CommandMeta::default(),
-            "Failed to send GET command",
         )
     }
 
@@ -519,11 +475,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"GET",
             CommandArgs::Args(&[key]),
             CommandMeta::RETURN_AS_BUFFER | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            "Failed to send GET command",
         )
     }
 
@@ -571,11 +525,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"SET",
             CommandArgs::Args(&args),
             CommandMeta::default(),
-            "Failed to send SET command",
         )
     }
 
@@ -593,11 +545,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"INCR",
             CommandArgs::Args(&[key]),
             CommandMeta::default(),
-            "Failed to send INCR command",
         )
     }
 
@@ -615,11 +565,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"DECR",
             CommandArgs::Args(&[key]),
             CommandMeta::default(),
-            "Failed to send DECR command",
         )
     }
 
@@ -638,11 +586,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"EXISTS",
             CommandArgs::Args(&[key]),
             CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            "Failed to send EXISTS command",
         )
     }
 
@@ -691,11 +637,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"EXPIRE",
             CommandArgs::Raw(&[key.slice(), seconds_slice]),
             CommandMeta::default(),
-            "Failed to send EXPIRE command",
         )
     }
 
@@ -713,11 +657,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"TTL",
             CommandArgs::Args(&[key]),
             CommandMeta::default(),
-            "Failed to send TTL command",
         )
     }
 
@@ -758,11 +700,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"SREM",
             CommandArgs::Args(&args),
             CommandMeta::default(),
-            "Failed to send SREM command",
         )
     }
 
@@ -801,11 +741,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"SRANDMEMBER",
             CommandArgs::Args(&args),
             CommandMeta::default(),
-            "Failed to send SRANDMEMBER command",
         )
     }
 
@@ -824,11 +762,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"SMEMBERS",
             CommandArgs::Args(&[key]),
             CommandMeta::default(),
-            "Failed to send SMEMBERS command",
         )
     }
 
@@ -863,11 +799,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"SPOP",
             CommandArgs::Args(&args),
             CommandMeta::default(),
-            "Failed to send SPOP command",
         )
     }
 
@@ -908,11 +842,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"SADD",
             CommandArgs::Args(&args),
             CommandMeta::default(),
-            "Failed to send SADD command",
         )
     }
 
@@ -938,11 +870,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"SISMEMBER",
             CommandArgs::Args(&[key, value]),
             CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            "Failed to send SISMEMBER command",
         )
     }
 
@@ -1004,11 +934,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"HMGET",
             CommandArgs::Args(&args),
             CommandMeta::default(),
-            "Failed to send HMGET command",
         )
     }
 
@@ -1032,11 +960,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"HINCRBY",
             CommandArgs::Slices(&[key_slice, field_slice, value_slice]),
             CommandMeta::default(),
-            "Failed to send HINCRBY command",
         )
     }
 
@@ -1060,11 +986,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"HINCRBYFLOAT",
             CommandArgs::Slices(&[key_slice, field_slice, value_slice]),
             CommandMeta::default(),
-            "Failed to send HINCRBYFLOAT command",
         )
     }
 
@@ -1157,19 +1081,12 @@ impl JSValkeyClient {
             return Err(global.throw(format_args!("HSET requires at least one field-value pair")));
         }
 
-        let msg = if command == b"HSET" {
-            "Failed to send HSET command"
-        } else {
-            "Failed to send HMSET command"
-        };
         send_cmd(
             this,
             global,
-            frame.this(),
             command,
             CommandArgs::Slices(&args),
             CommandMeta::default(),
-            msg,
         )
     }
 
@@ -1233,11 +1150,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"HSETNX",
             CommandArgs::Args(&[key, field, value]),
             CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            "Failed to send HSETNX command",
         )
     }
 
@@ -1259,11 +1174,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"HEXISTS",
             CommandArgs::Args(&[key, field]),
             CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            "Failed to send HEXISTS command",
         )
     }
 
@@ -1294,11 +1207,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"PING",
             CommandArgs::Args(args_slice),
             CommandMeta::default(),
-            "Failed to send PING command",
         )
     }
 
@@ -1628,11 +1539,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"SMOVE",
             CommandArgs::Args(&[source, destination, member]),
             CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            "Failed to send SMOVE command",
         )
     }
 
@@ -1811,11 +1720,9 @@ impl JSValkeyClient {
         send_cmd(
             this,
             global,
-            frame.this(),
             b"PUBLISH",
             CommandArgs::Args(&args),
             CommandMeta::default(),
-            "Failed to send PUBLISH command",
         )
     }
 
@@ -1901,14 +1808,7 @@ impl JSValkeyClient {
             args: CommandArgs::Args(&redis_channels),
             meta: CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
         };
-        let promise = match this.send(global, frame.this(), &command) {
-            Ok(p) => p,
-            Err(err) => {
-                // If we catch an error, we need to clean up any handlers we may have added and fall out of subscription mode
-                this.clear_all_receive_handlers(global)?;
-                return send_err_to_js(global, "Failed to send SUBSCRIBE command", &err);
-            }
-        };
+        let promise = this.send(global, &command);
 
         Ok(promise_to_js(promise))
     }
@@ -1918,18 +1818,15 @@ impl JSValkeyClient {
     /// The subscription context must exist when calling this function.
     fn send_unsubscribe_request_and_cleanup(
         this: &Self,
-        this_js: JSValue,
         global: &JSGlobalObject,
         redis_channels: &[JSArgument],
     ) -> JsResult<JSValue> {
         send_cmd(
             this,
             global,
-            this_js,
             b"UNSUBSCRIBE",
             CommandArgs::Args(redis_channels),
             CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
-            "Failed to send UNSUBSCRIBE command",
         )
     }
 
@@ -1953,12 +1850,7 @@ impl JSValkeyClient {
         // If no arguments, unsubscribe from all channels
         if args_view.is_empty() {
             this.clear_all_receive_handlers(global)?;
-            return Self::send_unsubscribe_request_and_cleanup(
-                this,
-                frame.this(),
-                global,
-                &redis_channels,
-            );
+            return Self::send_unsubscribe_request_and_cleanup(this, global, &redis_channels);
         }
 
         // The first argument can be a channel or an array of channels
@@ -2017,12 +1909,7 @@ impl JSValkeyClient {
             // In this case, we only want to send the unsubscribe command to redis if there are no more listeners for this
             // channel.
             if remaining_listeners == 0 {
-                return Self::send_unsubscribe_request_and_cleanup(
-                    this,
-                    frame.this(),
-                    global,
-                    &redis_channels,
-                );
+                return Self::send_unsubscribe_request_and_cleanup(this, global, &redis_channels);
             }
 
             // Otherwise, in order to keep the API consistent, we need to return a resolved promise.
@@ -2073,7 +1960,7 @@ impl JSValkeyClient {
         }
 
         // Now send the unsubscribe command and clean up if necessary
-        Self::send_unsubscribe_request_and_cleanup(this, frame.this(), global, &redis_channels)
+        Self::send_unsubscribe_request_and_cleanup(this, global, &redis_channels)
     }
 
     #[bun_jsc::host_fn(method)]

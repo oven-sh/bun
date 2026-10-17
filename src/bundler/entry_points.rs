@@ -20,11 +20,6 @@ pub mod Fs {
 }
 
 #[derive(Default)]
-pub struct ClientEntryPoint {
-    pub(crate) source: bun_ast::Source,
-}
-
-#[derive(Default)]
 pub struct ServerEntryPoint {
     /// The generated wrapper source for `bun:main`. Always a valid slice
     /// (either empty or owned by `bun.default_allocator`) so readers never

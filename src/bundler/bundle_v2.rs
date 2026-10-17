@@ -4265,20 +4265,18 @@ pub mod bv2_impl {
             // `bun.new(ServerComponentParseTask, …)` — heap-owned by the
             // worker pool; freed via `bun.destroy` in `on_complete` after the
             // result posts back to the bundle thread.
-            let task = bun_core::heap::into_raw(Box::new(ServerComponentParseTask {
+            let task = bun_core::heap::into_raw(Box::new(ServerComponentParseTask::new(
                 data,
                 // SAFETY: `from_mut(self)` is the live bundle (write provenance for
                 // `on_complete`'s `assume_mut`) and outlives the task; `'a` erased to
                 // `'static` for the BACKREF.
-                ctx: Some(unsafe {
+                unsafe {
                     bun_ptr::ParentRef::from_raw_mut(
                         core::ptr::from_mut(&mut *self).cast::<BundleV2<'static>>(),
                     )
-                }),
-                source: task_source,
-                // `..Default::default()` supplies `task: ThreadPoolTask { callback: task_callback_wrap }`.
-                ..Default::default()
-            }));
+                },
+                task_source,
+            )));
 
             self.increment_scan_counter();
 

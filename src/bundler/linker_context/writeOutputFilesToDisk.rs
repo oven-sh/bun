@@ -240,7 +240,6 @@ pub(crate) fn write_output_files_to_disk(
 
         let mut code_result = if let Some(scc) = standalone_chunk_contents {
             match intermediate_output.code_standalone(
-                None,
                 parse_graph,
                 &c.graph,
                 public_path,
@@ -258,7 +257,6 @@ pub(crate) fn write_output_files_to_disk(
             }
         } else {
             match intermediate_output.code(
-                None,
                 parse_graph,
                 &c.graph,
                 public_path,

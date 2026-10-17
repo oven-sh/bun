@@ -197,7 +197,6 @@ impl FdExt for Fd {
                         bun_core::DumpStackTraceOptions {
                             frame_count: 4,
                             stop_at_jsc_llint: true,
-                            ..Default::default()
                         },
                     );
                 } else {

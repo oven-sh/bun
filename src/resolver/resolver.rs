@@ -2,7 +2,7 @@
 //! filesystem, `node_modules` tree, `tsconfig.json` paths, package `exports`,
 //! `browser` maps, and the standalone (compiled) module graph. Holds the
 //! `Resolver` struct and its impl,
-//! plus the local helper shims (`bun_paths` value-dispatch joins,
+//! plus the local helper shims (`bun_paths` joins,
 //! `bun_sys` dir-open wrappers, `FdExt`) and threadlocal scratch buffers.
 
 use crate::{is_package_path, is_package_path_not_absolute};
@@ -64,7 +64,7 @@ pub mod Dependency {
     }
 }
 
-// bun_paths shim — value-dispatched join helpers over `resolve_path::Platform`.
+// bun_paths shim — join helpers fixed to `resolve_path::platform::Auto`.
 // `dirname` (`Option`-returning) and
 // `PosixToWinNormalizer` are the real `::bun_paths` items — brought in by the
 // glob / explicit re-export below, no local re-implementation.
@@ -73,71 +73,32 @@ mod bun_paths {
     pub(super) use ::bun_paths::resolve_path::is_sep_any;
     pub(super) use ::bun_paths::*;
 
-    /// Value-dispatch over `Platform` to the const-generic `PlatformT`
-    /// monomorphizations in `resolve_path`. The resolver body threads
-    /// `Platform::AUTO` / `Platform::Loose` at runtime.
-    macro_rules! dispatch_platform {
-        ($p:expr, |$P:ident| $body:expr) => {{
-            use ::bun_paths::resolve_path::{self as rp, platform};
-            match $p {
-                rp::Platform::Loose => {
-                    type $P = platform::Loose;
-                    $body
-                }
-                rp::Platform::Windows => {
-                    type $P = platform::Windows;
-                    $body
-                }
-                rp::Platform::Posix => {
-                    type $P = platform::Posix;
-                    $body
-                }
-                rp::Platform::Nt => {
-                    type $P = platform::Nt;
-                    $body
-                }
-            }
-        }};
+    pub(super) fn dirname_platform(p: &[u8]) -> &[u8] {
+        ::bun_paths::resolve_path::dirname::<platform::Auto>(p)
     }
-    pub(super) fn dirname_platform(p: &[u8], platform: Platform) -> &[u8] {
-        dispatch_platform!(platform, |P| ::bun_paths::resolve_path::dirname::<P>(p))
-    }
-    /// Port of `bun.path.joinAbsStringBuf` (value-dispatched).
+    /// Port of `bun.path.joinAbsStringBuf`.
     pub(super) fn join_abs_string_buf<'b>(
         cwd: &'b [u8],
         buf: &'b mut [u8],
         parts: &[&[u8]],
-        platform: Platform,
     ) -> &'b [u8] {
-        dispatch_platform!(
-            platform,
-            |P| ::bun_paths::resolve_path::join_abs_string_buf::<P>(cwd, buf, parts)
-        )
+        ::bun_paths::resolve_path::join_abs_string_buf::<platform::Auto>(cwd, buf, parts)
     }
-    pub(super) fn join_abs(cwd: &[u8], platform: Platform, part: &[u8]) -> &'static [u8] {
+    pub(super) fn join_abs(cwd: &[u8], part: &[u8]) -> &'static [u8] {
         // NOTE: `resolve_path::join_abs` ties the result lifetime to `cwd`, but the
         // returned slice always points into the threadlocal `PARSER_JOIN_INPUT_BUFFER`
         // (or is `cwd` itself when `parts.is_empty()`, which never happens here — we
         // pass exactly one part). Re-erase to `'static` so the resolver can hold it
         // across `&mut self` calls.
-        let s = dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join_abs::<P>(
-            cwd, part
-        ));
+        let s = ::bun_paths::resolve_path::join_abs::<platform::Auto>(cwd, part);
         // SAFETY: see NOTE — slice borrows threadlocal storage, valid 'static per-thread.
         unsafe { bun_ptr::detach_lifetime(s) }
     }
-    pub(super) fn join(parts: &[&[u8]], platform: Platform) -> &'static [u8] {
-        dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join::<P>(parts))
+    pub(super) fn join(parts: &[&[u8]]) -> &'static [u8] {
+        ::bun_paths::resolve_path::join::<platform::Auto>(parts)
     }
-    pub(super) fn join_string_buf<'b>(
-        buf: &'b mut [u8],
-        parts: &[&[u8]],
-        platform: Platform,
-    ) -> &'b [u8] {
-        dispatch_platform!(
-            platform,
-            |P| ::bun_paths::resolve_path::join_string_buf::<P>(buf, parts)
-        )
+    pub(super) fn join_string_buf<'b>(buf: &'b mut [u8], parts: &[&[u8]]) -> &'b [u8] {
+        ::bun_paths::resolve_path::join_string_buf::<platform::Auto>(buf, parts)
     }
     /// Compile-time platform-separator literal (`/` → `\` on Windows). A
     /// const fn can't transform a borrowed `&'static [u8]`, so this is a
@@ -2503,7 +2464,7 @@ impl<'a> Resolver<'a> {
         specifier: &[u8],
     ) -> bool {
         if bun_paths::is_absolute(specifier) {
-            let dir = bun_paths::dirname_platform(specifier, bun_paths::Platform::AUTO);
+            let dir = bun_paths::dirname_platform(specifier);
             let a = self.bust_dir_cache(dir);
             let b = self.bust_dir_cache(specifier);
             return a || b;
@@ -2516,12 +2477,9 @@ impl<'a> Resolver<'a> {
             return false;
         }
 
-        let joined = bun_paths::join_abs(
-            bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO),
-            bun_paths::Platform::AUTO,
-            specifier,
-        );
-        let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::AUTO);
+        let joined =
+            bun_paths::join_abs(bun_paths::dirname_platform(import_source_file), specifier);
+        let dir = bun_paths::dirname_platform(joined);
 
         let a = self.bust_dir_cache(dir);
         let b = self.bust_dir_cache(joined);
@@ -3794,10 +3752,7 @@ impl<'a> Resolver<'a> {
                                                 [package_json.name.as_ref(), package_subpath];
                                             debug.add_note_fmt(format_args!(
                                                 "The import {} is missing the suffix {}",
-                                                bstr::BStr::new(ResolvePath::join(
-                                                    &parts,
-                                                    bun_paths::Platform::AUTO
-                                                )),
+                                                bstr::BStr::new(ResolvePath::join(&parts)),
                                                 bstr::BStr::new(&ms)
                                             ));
                                         }
@@ -6560,7 +6515,6 @@ impl<'a> Resolver<'a> {
                     ts_dir_name,
                     bufs!(tsconfig_path_abs),
                     &[ts_dir_name, &current.extends],
-                    bun_paths::Platform::AUTO,
                 );
                 let parent_config_maybe: Option<*mut TSConfigJSON> =
                     match self.parse_tsconfig(abs_path, FD::INVALID) {
@@ -6665,7 +6619,6 @@ impl<'a> Resolver<'a> {
                     &path,
                     bufs!(tsconfig_path_abs),
                     &[b"tsconfig.json".as_slice()],
-                    bun_paths::Platform::AUTO,
                 )
                 .to_vec();
             }
@@ -6788,11 +6741,7 @@ impl<'b> BrowserMapPath<'b> {
                 trimmed,
                 const_format::concatcp!(SEP_STR, "index").as_bytes(),
             ];
-            ResolvePath::join_string_buf(
-                bufs!(tsconfig_base_url),
-                &parts,
-                bun_paths::Platform::AUTO,
-            )
+            ResolvePath::join_string_buf(bufs!(tsconfig_base_url), &parts)
         };
 
         if let Some(_remapped) = map.get(index_path) {

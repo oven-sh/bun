@@ -5,7 +5,6 @@ use bun_collections::index_sort;
 use bun_core::{Output, strings};
 use bun_semver::{ExternalString, String as SemverString};
 
-use crate::bun_json::Expr;
 use crate::dependency::{TagExt as _, VersionTag};
 use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext};
 use crate::lockfile_real::{DependencySlice, Lockfile, PackageIDSlice, QueuedRows, StringBuilder};
@@ -39,12 +38,8 @@ impl ResolverContext for OnlyDependencies {
         true
     }
 
-    fn resolve(
-        &mut self,
-        _builder: &mut StringBuilder<'_>,
-        _json: &Expr,
-    ) -> Result<ResolutionType<u64>, crate::Error> {
-        Ok(ResolutionType::default())
+    fn resolve(&mut self, _builder: &mut StringBuilder<'_>) -> ResolutionType<u64> {
+        ResolutionType::default()
     }
 }
 
@@ -66,16 +61,12 @@ impl<'a> ResolverContext for GitResolver<'a> {
         true
     }
 
-    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: &Expr) {
+    fn count(&mut self, builder: &mut StringBuilder<'_>) {
         builder.count(self.resolved);
         builder.count(self.locked_repo.as_deref().unwrap_or_default());
     }
 
-    fn resolve(
-        &mut self,
-        builder: &mut StringBuilder<'_>,
-        _json: &Expr,
-    ) -> Result<ResolutionType<u64>, crate::Error> {
+    fn resolve(&mut self, builder: &mut StringBuilder<'_>) -> ResolutionType<u64> {
         // `git` and `github` share the `Repository` payload in the value union,
         // so writing through `.github` is correct for both tags.
         // SAFETY: caller guarantees `tag` is `.git` or `.github` (see
@@ -85,13 +76,13 @@ impl<'a> ResolverContext for GitResolver<'a> {
         if let Some(locked) = &self.locked_repo {
             repo.repo = builder.append::<SemverString>(locked);
         }
-        Ok(ResolutionType::init(match self.resolution.tag {
+        ResolutionType::init(match self.resolution.tag {
             ResolutionTag::Git => TaggedValue::Git(repo),
             ResolutionTag::Github => TaggedValue::Github(repo),
             // Only constructed inside the `.git | .github` arm of
             // `process_extracted_tarball_package`; any other tag is a bug.
             _ => unreachable!(),
-        }))
+        })
     }
 
     fn fallback_name(&self) -> Option<Vec<u8>> {
@@ -113,16 +104,12 @@ impl<'a> ResolverContext for TarballResolver<'a> {
         true
     }
 
-    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: &Expr) {
+    fn count(&mut self, builder: &mut StringBuilder<'_>) {
         builder.count(self.url);
     }
 
-    fn resolve(
-        &mut self,
-        builder: &mut StringBuilder<'_>,
-        _json: &Expr,
-    ) -> Result<ResolutionType<u64>, crate::Error> {
-        Ok(ResolutionType::<u64>::init(match self.resolution.tag {
+    fn resolve(&mut self, builder: &mut StringBuilder<'_>) -> ResolutionType<u64> {
+        ResolutionType::<u64>::init(match self.resolution.tag {
             ResolutionTag::LocalTarball => {
                 TaggedValue::LocalTarball(builder.append::<SemverString>(self.url))
             }
@@ -130,7 +117,7 @@ impl<'a> ResolverContext for TarballResolver<'a> {
                 TaggedValue::RemoteTarball(builder.append::<SemverString>(self.url))
             }
             _ => unreachable!(),
-        }))
+        })
     }
 
     fn fallback_name(&self) -> Option<Vec<u8>> {
@@ -446,7 +433,7 @@ impl PackageManager {
                         let mut builder = self.lockfile.string_builder();
 
                         builder.count(&fallback_name);
-                        resolver.count(&mut builder, &Expr::default());
+                        resolver.count(&mut builder);
 
                         bun_core::handle_oom(builder.allocate());
 
@@ -454,9 +441,7 @@ impl PackageManager {
                         pkg.name = name.value;
                         pkg.name_hash = name.hash;
 
-                        pkg.resolution = resolver
-                            .resolve(&mut builder, &Expr::default())
-                            .expect("unreachable");
+                        pkg.resolution = resolver.resolve(&mut builder);
                     }
 
                     pkg

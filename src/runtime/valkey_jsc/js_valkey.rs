@@ -647,32 +647,9 @@ impl JSValkeyClient {
         };
 
         // Copy strings into a persistent buffer since the URL object will be deinitialized
-        let mut connection_strings: Box<[u8]> = Box::default();
-        let mut username: Box<[u8]> = Box::default();
-        let mut password: Box<[u8]> = Box::default();
-        let mut hostname: Box<[u8]> = Box::default();
-
-        // errdefer free(connection_strings) — handled by Box drop on `?`.
-
-        if !username_utf8.slice().is_empty()
-            || !password_utf8.slice().is_empty()
-            || !hostname_slice.is_empty()
-        {
-            let mut b = bun_core::StringBuilder::default();
-            b.count(username_utf8.slice());
-            b.count(password_utf8.slice());
-            b.count(hostname_slice);
-            b.allocate()?;
-            let user_sp = b.append_count(username_utf8.slice());
-            let pass_sp = b.append_count(password_utf8.slice());
-            let host_sp = b.append_count(hostname_slice);
-            connection_strings = b.move_to_slice();
-            // `ValkeyClient` owns each field as an independent
-            // `Box<[u8]>`, so re-slice from the pointers.
-            username = Box::<[u8]>::from(user_sp.slice(&connection_strings));
-            password = Box::<[u8]>::from(pass_sp.slice(&connection_strings));
-            hostname = Box::<[u8]>::from(host_sp.slice(&connection_strings));
-        }
+        let username: Box<[u8]> = Box::from(username_utf8.slice());
+        let password: Box<[u8]> = Box::from(password_utf8.slice());
+        let hostname: Box<[u8]> = Box::from(hostname_slice);
 
         // Parse database number from pathname (e.g., "/1" -> database 1)
         let database: u32 = match uri {
@@ -719,7 +696,6 @@ impl JSValkeyClient {
                 in_flight: command::promise_pair::Queue::new(),
                 queue: command::entry::Queue::new(),
                 status: valkey::Status::NeverConnected,
-                connection_strings,
                 socket: Socket::SocketTcp(uws::SocketTCP {
                     socket: uws::InternalSocket::Detached,
                 }),
@@ -789,12 +765,6 @@ impl JSValkeyClient {
         let client = self.client.get();
         let sub_ctx = self._subscription_ctx.get();
 
-        // `ValkeyClient` (see valkey.rs:290-299) owns `username`/`password`/
-        // `address.hostname` as independent `Box<[u8]>`s rather than sub-slices
-        // of the single `connection_strings` allocation, so rebase arithmetic
-        // against `connection_strings` would compute a garbage offset and read
-        // OOB. Clone each owned buffer directly.
-        let connection_strings_copy: Box<[u8]> = Box::<[u8]>::from(&client.connection_strings[..]);
         let username: Box<[u8]> = Box::<[u8]>::from(&client.username[..]);
         let password: Box<[u8]> = Box::<[u8]>::from(&client.password[..]);
         let hostname: Box<[u8]> = Box::<[u8]>::from(client.address.hostname());
@@ -828,7 +798,6 @@ impl JSValkeyClient {
                 in_flight: command::promise_pair::Queue::new(),
                 queue: command::entry::Queue::new(),
                 status: valkey::Status::NeverConnected,
-                connection_strings: connection_strings_copy,
                 socket: Socket::SocketTcp(uws::SocketTCP {
                     socket: uws::InternalSocket::Detached,
                 }),
@@ -1584,12 +1553,7 @@ impl JSValkeyClient {
         Ok(())
     }
 
-    pub(crate) fn send(
-        &self,
-        global_this: &JSGlobalObject,
-        _this_value: JSValue,
-        command: &Command,
-    ) -> Result<*mut JSPromise, crate::Error> {
+    pub(crate) fn send(&self, global_this: &JSGlobalObject, command: &Command) -> *mut JSPromise {
         // Keep `*self` alive across re-entrant connect/close paths below;
         // the host-fn shim passes a bare `&self` with no ref of its own.
         let _guard = self.ref_guard();

@@ -263,15 +263,11 @@ pub(crate) struct ValkeyClient {
     pub(crate) queue: command::entry::Queue,
 
     // Connection parameters
-    // `connection_strings` is retained because `js_valkey.rs` still slices it
-    // when constructing/duplicating clients.
     pub(crate) password: Box<[u8]>,
     pub(crate) username: Box<[u8]>,
     pub(crate) database: u32,
     pub(crate) address: Address,
     pub(crate) protocol: Protocol,
-
-    pub(crate) connection_strings: Box<[u8]>,
 
     // TLS support
     pub(crate) tls: TLS,
@@ -1360,11 +1356,7 @@ impl ValkeyClient {
         self.send_next_command();
     }
 
-    fn enqueue(
-        &mut self,
-        command: &Command,
-        mut promise: command::Promise,
-    ) -> Result<(), crate::Error> {
+    fn enqueue(&mut self, command: &Command, mut promise: command::Promise) {
         let can_pipeline = command
             .meta
             .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
@@ -1390,7 +1382,7 @@ impl ValkeyClient {
             || can_pipeline
         {
             // We serialize the bytes in here, so we don't need to worry about the lifetime of the Command itself.
-            let entry = command::Entry::create(command, promise)?;
+            let entry = command::Entry::create(command, promise);
             self.queue.push_back(entry);
 
             // If we're connected and using auto pipelining, schedule a flush
@@ -1398,7 +1390,7 @@ impl ValkeyClient {
                 self.register_auto_flusher(self.vm);
             }
 
-            return Ok(());
+            return;
         }
 
         match self.status {
@@ -1406,7 +1398,7 @@ impl ValkeyClient {
                 if command.write(self.writer()).is_err() {
                     let global = self.global_object();
                     let _ = promise.reject(&global, Ok(global.create_out_of_memory_error()));
-                    return Ok(());
+                    return;
                 }
             }
             _ => unreachable!(),
@@ -1421,14 +1413,13 @@ impl ValkeyClient {
         self.in_flight.push_back(cmd_pair);
 
         let _ = self.flush_data();
-        Ok(())
     }
 
     pub(crate) fn send(
         &mut self,
         global_this: &JSGlobalObject,
         command: &Command,
-    ) -> Result<*mut JSPromise, crate::Error> {
+    ) -> *mut JSPromise {
         // FIX: Check meta before using it for routing decisions
         let mut checked_command = *command;
         checked_command.meta = command.meta.check(command);
@@ -1442,7 +1433,7 @@ impl ValkeyClient {
                 Ok(Self::send_rejection_error(global_this, message)),
             );
         } else {
-            self.enqueue(&checked_command, promise)?;
+            self.enqueue(&checked_command, promise);
 
             // Schedule auto-flushing to process this command if pipelining is enabled
             if self.flags.enable_auto_pipelining
@@ -1456,7 +1447,7 @@ impl ValkeyClient {
             }
         }
 
-        Ok(js_promise)
+        js_promise
     }
 
     /// Why `send()` would reject a command outright instead of sending or

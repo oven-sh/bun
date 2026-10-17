@@ -733,15 +733,13 @@ impl<'a> Transpiler<'a> {
 // — used by `ModuleLoader::transpile_source_code` (jsc_hooks.rs) and
 // `AsyncModule` / `JSTranspiler`. The body of
 // `parse_maybe_return_file_only_allow_shared_buffer` does the source-load
-// step (virtual / client-entry / `node:` fallback) and dispatches to the
+// step (virtual / `node:` fallback) and dispatches to the
 // per-loader transpile branches.
 // ══════════════════════════════════════════════════════════════════════════
 
 use crate::bun_node_fallbacks as NodeFallbackModules;
-use crate::entry_points as EntryPoints;
 use bun_ast::RuntimeTranspilerCache;
 use bun_core::strings;
-use bun_resolver::package_json::MacroMap as MacroRemap;
 use bun_sys::Fd as FD;
 
 /// How a parsed source was found to be pre-bundled (plain source vs. cached
@@ -873,7 +871,6 @@ pub struct ParseOptions<'a, 'b> {
     /// `BundleOptions.jsx` — the file-backed `options_impl::jsx::Pragma`, NOT
     /// the lib.rs shim. Callers pass `transpiler.options.jsx.clone()`.
     pub jsx: crate::options_impl::jsx::Pragma,
-    pub macro_remappings: MacroRemap,
     pub macro_js_ctx: MacroJSCtx,
     pub virtual_source: Option<&'b bun_ast::Source>,
     pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
@@ -905,8 +902,8 @@ use bun_options_types::schema::api;
 // `ModuleType`, `Define`, `RuntimeTranspilerCache` are single nominal types
 // shared between `bun_js_parser` and this crate (canonical defs live in the
 // lower-tier crate; bundler re-exports). There are no by-value conversion
-// shims — `to_parser_module_type` is an identity fn and `parse_maybe`
-// threads `self.options.define` / `runtime_transpiler_cache` directly.
+// shims — `parse_maybe` threads `self.options.define` /
+// `runtime_transpiler_cache` directly.
 //
 // D042 UNIFIED: `crate::options_impl::jsx::Pragma` IS
 // `js_ast::parser::options::JSX::Pragma` (both re-export
@@ -923,16 +920,6 @@ pub(crate) fn to_parser_jsx_pragma(
         p.runtime = Runtime::Automatic;
     }
     p
-}
-
-// `crate::options_impl::ModuleType` IS `js_ast::parser::options::ModuleType`
-// (both re-export `bun_options_types::bundle_enums::ModuleType`). Identity shim
-// kept so existing call sites compile unchanged; inlines to a move.
-#[inline(always)]
-fn to_parser_module_type(
-    m: crate::options_impl::ModuleType,
-) -> js_ast::parser::options::ModuleType {
-    m
 }
 
 /// The inline `bun_resolver::fs` module exposes the `FileSystem`
@@ -1239,23 +1226,15 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
-    pub fn parse(
-        &mut self,
-        this_parse: ParseOptions<'a, '_>,
-        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
-    ) -> Option<ParseResult<'a>> {
-        self.parse_maybe_return_file_only::<false>(this_parse, client_entry_point_)
+    pub fn parse(&mut self, this_parse: ParseOptions<'a, '_>) -> Option<ParseResult<'a>> {
+        self.parse_maybe_return_file_only::<false>(this_parse)
     }
 
     pub fn parse_maybe_return_file_only<const RETURN_FILE_ONLY: bool>(
         &mut self,
         this_parse: ParseOptions<'a, '_>,
-        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
     ) -> Option<ParseResult<'a>> {
-        self.parse_maybe_return_file_only_allow_shared_buffer::<RETURN_FILE_ONLY, false>(
-            this_parse,
-            client_entry_point_,
-        )
+        self.parse_maybe_return_file_only_allow_shared_buffer::<RETURN_FILE_ONLY, false>(this_parse)
     }
 
     pub fn parse_maybe_return_file_only_allow_shared_buffer<
@@ -1264,9 +1243,6 @@ impl<'a> Transpiler<'a> {
     >(
         &mut self,
         mut this_parse: ParseOptions<'a, '_>,
-        // The only caller passes `EntryPoints::ClientEntryPoint`, so the
-        // param is typed concretely.
-        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
     ) -> Option<ParseResult<'a>> {
         let arena = this_parse.arena;
         let dirname_fd = this_parse.dirname_fd;
@@ -1283,17 +1259,13 @@ impl<'a> Transpiler<'a> {
         // non-shared-buffer file-read and `data:` URL paths. Threaded into the
         // returned `ParseResult` so it drops with the result instead of being
         // `mem::forget`-ed (PORTING.md §Forbidden patterns). For virtual /
-        // client-entry / `node:` / shared-buffer paths it stays `Empty`
+        // `node:` / shared-buffer paths it stays `Empty`
         // (`Drop` is a no-op).
         let mut source_backing: resolver::cache::Contents = resolver::cache::Contents::Empty;
 
         let source: &'a bun_ast::Source = arena.alloc('brk: {
             if let Some(virtual_source) = this_parse.virtual_source {
                 break 'brk virtual_source.clone();
-            }
-
-            if let Some(client_entry_point) = client_entry_point_ {
-                break 'brk client_entry_point.source.clone();
             }
 
             if path.namespace == b"node" {
@@ -1447,7 +1419,6 @@ impl<'a> Transpiler<'a> {
 
                 let mut jsx = this_parse.jsx;
                 jsx.parse = loader.is_jsx();
-                let _ = &this_parse.macro_remappings;
 
                 // `ParserOptions::init` is hard-typed
                 // `-> Options<'static>` and `Options<'a>` is *invariant* in
@@ -1476,7 +1447,7 @@ impl<'a> Transpiler<'a> {
                     macro_context: None,
                     warn_about_unbundled_modules: !target.is_bun(),
                     allow_unresolved: &p_opts::AllowUnresolved::DEFAULT,
-                    module_type: to_parser_module_type(this_parse.module_type),
+                    module_type: this_parse.module_type,
                     jsc_builtin_syntax: false,
                     output_format: p_opts::Format::Esm,
                     transform_only: self.options.transform_only,
@@ -2177,22 +2148,6 @@ use bun_js_printer as js_printer;
 // T6, so unify on the printer type here.
 use js_printer::analyze_transpiled_module;
 
-/// Map the bundler-local `Target` (options.rs:489) to the lower-tier
-/// `bun_ast::Target` consumed by `js_printer::Options`.
-/// The two enums are variant-for-variant identical but nominally distinct;
-/// they could be collapsed (see lib.rs `pub mod options` shadow note).
-#[inline]
-fn to_bundle_enums_target(t: crate::options_impl::Target) -> bun_ast::Target {
-    use bun_ast::Target as T;
-    match t {
-        crate::options_impl::Target::Browser => T::Browser,
-        crate::options_impl::Target::Bun => T::Bun,
-        crate::options_impl::Target::BunMacro => T::BunMacro,
-        crate::options_impl::Target::Node => T::Node,
-        crate::options_impl::Target::ServerComponentsSsr => T::ServerComponentsSsr,
-    }
-}
-
 /// Re-export so `bun_bundler::PrintFormat::EsmAscii` (AsyncModule.rs:1018)
 /// resolves once `lib.rs` `pub use transpiler::*` lands.
 pub use js_printer::Format as PrintFormat;
@@ -2241,7 +2196,7 @@ impl<'a> Transpiler<'a> {
                 .collect(),
         );
 
-        // `target` is now forwarded via `to_bundle_enums_target` below — it
+        // `target` is now forwarded below — it
         // *does* affect the EsmAscii/bun-runtime path (js_printer/lib.rs:6872
         // gates the `var {require}=import.meta;` hoist on `target == Bun`;
         // regression of oven-sh/bun#15738 if left at the `Browser` default).
@@ -2432,7 +2387,7 @@ impl<'a> Transpiler<'a> {
             // js_printer/lib.rs:6872 to gate the `var {require}=import.meta;`
             // hoist on `Target::Bun` — defaulting to `Browser` here regressed
             // oven-sh/bun#15738.
-            target: to_bundle_enums_target(self.options.target),
+            target: self.options.target,
             ..Default::default()
         };
         js_printer::print_ast::<_, IS_BUN, ENABLE_SOURCE_MAP>(
@@ -2623,18 +2578,7 @@ impl<'a> Transpiler<'a> {
         }
         self.options.transform_only = true;
 
-        // Only the main-thread transpiler reaches here; worker option clones
-        // carry `output_dir_handle: None` and would route output to stdout.
-        let outstream = match self
-            .options
-            .output_dir_handle
-            .as_ref()
-            .map(bun_sys::Dir::fd)
-        {
-            None => TransformOutstream::Stdout,
-            Some(output_dir) => TransformOutstream::Dir(output_dir),
-        };
-        self.process_resolve_queue(self.options.import_path_format, outstream)?;
+        self.process_resolve_queue(self.options.import_path_format)?;
 
         if bun_core::FeatureFlags::TRACING
             && self.options.log().level.at_least(bun_ast::Level::Info)
@@ -2662,7 +2606,6 @@ impl<'a> Transpiler<'a> {
     fn process_resolve_queue(
         &mut self,
         import_path_format: options::ImportPathFormat,
-        outstream: TransformOutstream,
     ) -> crate::Result<()> {
         while let Some(item) = self.resolve_queue.pop_front() {
             bun_ast::Expr::data_store_reset();
@@ -2670,12 +2613,8 @@ impl<'a> Transpiler<'a> {
             bun_ast::store_ast_alloc_heap::reset();
 
             let errors_before = self.log().errors;
-            let output_file = match self.build_with_resolve_result_eager(
-                &item,
-                import_path_format,
-                outstream,
-                None,
-            ) {
+            let output_file = match self.build_with_resolve_result_eager(&item, import_path_format)
+            {
                 Ok(Some(f)) => f,
                 Ok(None) => continue,
                 Err(err) => {
@@ -2759,8 +2698,6 @@ impl<'a> Transpiler<'a> {
         &mut self,
         resolve_result: &resolver::Result,
         import_path_format: options::ImportPathFormat,
-        _outstream: TransformOutstream,
-        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
     ) -> crate::Result<Option<options::OutputFile>> {
         if resolve_result.flags.is_external() {
             return Ok(None);
@@ -2777,22 +2714,7 @@ impl<'a> Transpiler<'a> {
         let file_path_ext: &'static [u8] = crate::linker::dupe(file_path_ref.name().ext);
 
         // Step 1. Parse & scan
-        // Key the loader on the ORIGINAL resolve
-        // result's extension *before* the `client_entry_point` path override.
-        // Compute it here, then apply the override.
         let loader = self.options.loader(file_path_ext);
-
-        // `client_entry_point_` is always `None` from the only in-tree caller;
-        // its source path uses the `bun_paths::fs::Path<'static>` shape, so just override
-        // text/ext when present.
-        let (file_path_text, file_path_ext) = if let Some(cep) = client_entry_point_.as_deref() {
-            (
-                crate::linker::dupe(cep.source.path.text),
-                crate::linker::dupe(cep.source.path.name().ext),
-            )
-        } else {
-            (file_path_text, file_path_ext)
-        };
 
         let mut file_path = Fs::Path::init(file_path_text);
 
@@ -2828,21 +2750,6 @@ impl<'a> Transpiler<'a> {
                 let experimental_decorators = resolve_result.flags.experimental_decorators();
                 let use_define_for_class_fields =
                     resolve_result.flags.use_define_for_class_fields();
-                // `MacroRemap` (StringArrayHashMap of StringArrayHashMap) has
-                // no nested `Clone` impl (the inner clone is fallible).
-                // Rebuild the outer map, deep-cloning
-                // each inner map (fallible), matching the build-command
-                // conversion.
-                let macro_remappings = {
-                    let mut m = MacroRemap::default();
-                    for (k, v) in self.options.macro_remap.iter() {
-                        let inner = v
-                            .clone()
-                            .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
-                        m.insert(k, inner);
-                    }
-                    m
-                };
 
                 let parse_opts = ParseOptions {
                     arena: self.arena,
@@ -2851,7 +2758,6 @@ impl<'a> Transpiler<'a> {
                     dirname_fd,
                     file_descriptor: None,
                     file_fd_ptr: None,
-                    macro_remappings,
                     macro_js_ctx: default_macro_js_value(),
                     jsx,
                     emit_decorator_metadata,
@@ -2870,7 +2776,7 @@ impl<'a> Transpiler<'a> {
                     allow_bytecode_cache: false,
                 };
 
-                let Some(mut result) = self.parse(parse_opts, client_entry_point_) else {
+                let Some(mut result) = self.parse(parse_opts) else {
                     return Ok(None);
                 };
 
@@ -3133,13 +3039,4 @@ impl<'a> Transpiler<'a> {
             },
         ))
     }
-}
-
-/// Outstream selector for `process_resolve_queue` /
-/// `build_with_resolve_result_eager` — a runtime enum since the only
-/// behavioural difference is unused (`_ = outstream`).
-#[derive(Clone, Copy)]
-enum TransformOutstream {
-    Stdout,
-    Dir(#[expect(dead_code)] bun_sys::Fd),
 }

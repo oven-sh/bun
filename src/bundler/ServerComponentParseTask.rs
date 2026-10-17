@@ -14,14 +14,13 @@ use bun_threading::thread_pool::Task as ThreadPoolTask;
 use bun_ast::ast_result::NamedExports;
 use bun_ast::{B, Binding, E, G, S, Stmt, symbol};
 use bun_ast::{ExprNodeList, LocRef, StmtOrExpr, UseDirective};
-use bun_ast::{ImportKind, ImportRecordFlags};
 
 use crate::AstBuilder::AstBuilder;
 use crate::JSAst;
 use crate::Worker;
 use crate::bundle_v2::BundleV2;
 use crate::cache::ExternalFreeFunction;
-use crate::options::{Loader, Target};
+use crate::options::Loader;
 use crate::parse_task::{self, ResultValue, Success, WatcherData, on_complete};
 
 pub(crate) struct ServerComponentParseTask {
@@ -29,30 +28,20 @@ pub(crate) struct ServerComponentParseTask {
     pub data: Data,
     // BACKREF (LIFETIMES.tsv) — written through in `on_complete`.
     // `ParentRef` (write-provenance via `NonNull::from(&mut self)` at construction)
-    // so deref sites are safe; `None` only for the FRU `Default` placeholder.
+    // so deref sites are safe.
     pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
     pub source: Source,
 }
 
-// `ServerComponentParseTask` is bump-arena-allocated; boxing the large arm
-// would leak. The size diff is acceptable.
-#[allow(clippy::large_enum_variant)]
 pub enum Data {
     /// Generate server-side code for a "use client" module. Given the
     /// client ast, a "reference proxy" is created with identical exports.
     ClientReferenceProxy(ReferenceProxy),
-
-    ClientEntryWrapper(ClientEntryWrapper),
 }
 
 pub struct ReferenceProxy {
     pub(crate) other_source: Source,
     pub(crate) named_exports: NamedExports,
-}
-
-pub struct ClientEntryWrapper {
-    // Owned copy.
-    pub(crate) path: Box<[u8]>,
 }
 
 /// Raw thread-pool callback. Recovers `&mut ServerComponentParseTask` from the
@@ -173,15 +162,9 @@ fn task_callback(
 
     match &task.data {
         Data::ClientReferenceProxy(data) => generate_client_reference_proxy(ctx, data, &mut ab)?,
-        Data::ClientEntryWrapper(data) => generate_client_entry_wrapper(data, &mut ab)?,
     }
 
-    let target = match &task.data {
-        // Server-side
-        Data::ClientReferenceProxy(_) => ctx.transpiler().options.target,
-        // Client-side,
-        Data::ClientEntryWrapper(_) => Target::Browser,
-    };
+    let target = ctx.transpiler().options.target;
     let hmr_api_ref = ab.hmr_api_ref;
     let mut bundled_ast: JSAst = ab.to_bundled_ast(target)?;
 
@@ -201,41 +184,22 @@ fn task_callback(
     })
 }
 
-impl Default for ServerComponentParseTask {
-    /// Callers (`bundle_v2.rs`) supply `data`/`ctx`/`source`
-    /// via FRU and rely on this for the intrusive `task` link.
-    fn default() -> Self {
+impl ServerComponentParseTask {
+    pub(crate) fn new(
+        data: Data,
+        ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
+        source: Source,
+    ) -> Self {
         Self {
             task: ThreadPoolTask {
                 node: Default::default(),
                 callback: task_callback_wrap,
             },
-            data: Data::ClientEntryWrapper(ClientEntryWrapper {
-                path: Box::default(),
-            }),
-            ctx: None,
-            source: Source::default(),
+            data,
+            ctx: Some(ctx),
+            source,
         }
     }
-}
-
-fn generate_client_entry_wrapper(data: &ClientEntryWrapper, b: &mut AstBuilder) -> Result<(), OOM> {
-    // `add_import_record` stores the slice raw in the `ImportRecord`; `data.path`
-    // outlives the bundle pass (owned by the heap-allocated task). Route through
-    // `StoreStr` so the lifetime erasure goes through one audited unsafe.
-    let path = bun_ast::StoreStr::new(&data.path[..]);
-    let record = b.add_import_record(path.slice(), ImportKind::Stmt)?;
-    let namespace_ref = b.new_symbol(symbol::Kind::Other, b"main")?;
-    b.append_stmt(S::Import {
-        namespace_ref,
-        import_record_index: record,
-        is_single_line: true,
-        ..Default::default()
-    })?;
-    b.import_records[record as usize]
-        .flags
-        .insert(ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT);
-    Ok(())
 }
 
 fn generate_client_reference_proxy(

@@ -63,12 +63,8 @@ impl DirectoryWatchStore {
             entry.dir
         );
 
-        self.dev_bun_watcher().remove_at_index::<true>(
-            bun_watcher::WatchItemKind::File,
-            entry.watch_index,
-            0,
-            &[],
-        );
+        self.dev_bun_watcher()
+            .remove_at_index::<true>(entry.watch_index);
 
         // The Box key drops on swap_remove_at.
         let _ = self.watches.swap_remove_at(entry_index);

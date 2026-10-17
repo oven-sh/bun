@@ -16,38 +16,13 @@ use super::run_tasks::{self, RunTasksCallbacks};
 use crate::package_manager_task as Task;
 use crate::resolution::Tag as ResolutionTag;
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub(crate) enum StartManifestTaskError {
-    #[error("OutOfMemory")]
-    OutOfMemory,
-    #[error("InvalidURL")]
-    InvalidURL,
-}
-bun_core::oom_from_alloc!(StartManifestTaskError);
-impl From<crate::network_task::ForManifestError> for StartManifestTaskError {
-    fn from(e: crate::network_task::ForManifestError) -> Self {
-        match e {
-            crate::network_task::ForManifestError::OutOfMemory => Self::OutOfMemory,
-            crate::network_task::ForManifestError::InvalidURL => Self::InvalidURL,
-        }
-    }
-}
-impl From<StartManifestTaskError> for crate::Error {
-    fn from(e: StartManifestTaskError) -> Self {
-        match e {
-            StartManifestTaskError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
-            StartManifestTaskError::InvalidURL => crate::Error::InvalidURL,
-        }
-    }
-}
-
 /// `is_required`: a failed fetch is logged as an error rather than a warning.
 fn start_manifest_task(
     manager: &mut PackageManager,
     pkg_name: &[u8],
     is_required: bool,
     needs_extended_manifest: bool,
-) -> Result<(), StartManifestTaskError> {
+) -> Result<(), crate::network_task::ForManifestError> {
     // best-effort metadata backfill: nothing to do without the network
     if manager.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
         return Ok(());

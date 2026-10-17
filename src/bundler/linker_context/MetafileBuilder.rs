@@ -457,7 +457,6 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     // `code()` takes the dummy chunk and the full slice as `&`, so pass
     // `&chunks[0]` directly — overlapping shared borrows are fine.
     let code_result = intermediate.code(
-        None,
         parse_graph,
         &c.graph,
         b"", // no import prefix for metafile

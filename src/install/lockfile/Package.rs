@@ -280,14 +280,10 @@ pub trait ResolverContext {
     }
 
     /// Counts strings to be appended by `resolve`.
-    fn count(&mut self, _builder: &mut StringBuilder<'_>, _json: &Expr) {}
+    fn count(&mut self, _builder: &mut StringBuilder<'_>) {}
 
     /// Produces the package's `Resolution`. Only called when `!is_void()`.
-    fn resolve(
-        &mut self,
-        builder: &mut StringBuilder<'_>,
-        json: &Expr,
-    ) -> crate::Result<ResolutionType<u64>>;
+    fn resolve(&mut self, builder: &mut StringBuilder<'_>) -> ResolutionType<u64>;
 
     /// Name to store when the package.json has no name, or has one that is not safe to use as a
     /// bun.lock `packages` key.
@@ -301,12 +297,8 @@ impl ResolverContext for () {
         true
     }
 
-    fn resolve(
-        &mut self,
-        _builder: &mut StringBuilder<'_>,
-        _json: &Expr,
-    ) -> crate::Result<ResolutionType<u64>> {
-        Ok(ResolutionType::default())
+    fn resolve(&mut self, _builder: &mut StringBuilder<'_>) -> ResolutionType<u64> {
+        ResolutionType::default()
     }
 }
 
@@ -2301,7 +2293,7 @@ impl Package<u64> {
         Scripts::parse_count(&mut string_builder, json);
 
         if !resolver.is_void() {
-            resolver.count(&mut string_builder, &json);
+            resolver.count(&mut string_builder);
         }
 
         let dependency_groups: Vec<DependencyGroup> = {
@@ -2611,7 +2603,7 @@ impl Package<u64> {
 
         if !FEATURES.is_main {
             if !resolver.is_void() {
-                self.resolution = resolver.resolve(&mut string_builder, &json)?;
+                self.resolution = resolver.resolve(&mut string_builder);
             }
         } else {
             self.resolution = Resolution::<u64>::init(TaggedValue::Root);

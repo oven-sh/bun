@@ -2,9 +2,8 @@
 //! into the concrete `BundleOptions` the bundler and runtime consume.
 
 use bun_analytics as analytics;
-use bun_collections::{StringArrayHashMap, StringHashMap};
+use bun_collections::StringArrayHashMap;
 use bun_core::strings;
-use bun_core::{Global, Output};
 use bun_dotenv as DotEnv;
 use bun_js_parser::parser::Runtime;
 use bun_options_types::schema::api;
@@ -25,8 +24,7 @@ pub use bun_options_types::offline_mode::OfflineMode;
 
 // Canonical alias lives in the resolver.
 pub use bun_resolver::package_json::ConditionsMap;
-/// Owning directory handle (closes the fd on `Drop`).
-pub type Dir = bun_sys::Dir;
+
 /// Unified with the canonical
 /// `bun_ast::LoaderHashTable` so the resolver and
 /// bundler share one nominal map type (PORTING.md crate-tier rule).
@@ -191,14 +189,13 @@ pub use bun_options_types::BundlePackage;
 
 // Re-export of `bun_options_types::bundle_enums::ModuleType`.
 // Re-exported so `crate::options_impl::ModuleType` and `js_ast::parser::options::ModuleType`
-// (which also re-exports the BundleEnums def) are the *same* nominal type — kills the
-// `to_parser_module_type` shim in transpiler.rs.
+// (which also re-exports the BundleEnums def) are the *same* nominal type.
 pub use bun_options_types::bundle_enums::ModuleType;
 
 // Re-export of `bun_ast::Target`.
 // There is exactly ONE `Target`; re-export the canonical enum so
 // `BundleOptions.target`, `js_printer::Options.target`, the resolver, and css
-// targets all share one nominal type (kills the `to_bundle_enums_target` shim).
+// targets all share one nominal type.
 pub(crate) use bun_ast::Target;
 
 // Re-export of the canonical map declared next to `Target`; kept as a
@@ -251,7 +248,7 @@ const DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[
 
 /// Bundler-only `Target` methods. Extension trait per PORTING.md crate-tier
 /// rule — the canonical `Target` lives in `bun_options_types` (lower tier) and
-/// cannot depend on `bake_types` / `StringHashMap`. Re-exported through
+/// cannot depend on `bake_types`. Re-exported through
 /// `bun_bundler::options` so `use bun_bundler::options::TargetExt;` makes
 /// `.bake_graph()` etc. available on the single canonical type.
 pub trait TargetExt: Copy {
@@ -259,7 +256,6 @@ pub trait TargetExt: Copy {
     // (PORTING.md "*_jsc alias" rule).
 
     fn bake_graph(self) -> crate::bake_types::Graph;
-    fn out_extensions(self) -> StringHashMap<&'static [u8]>;
 
     // Original comment:
     // The neutral target is for people that don't want esbuild to try to
@@ -294,32 +290,6 @@ impl TargetExt for Target {
             Target::ServerComponentsSsr => crate::bake_types::Graph::Ssr,
             Target::BunMacro | Target::Bun | Target::Node => crate::bake_types::Graph::Server,
         }
-    }
-
-    fn out_extensions(self) -> StringHashMap<&'static [u8]> {
-        let mut exts = StringHashMap::<&'static [u8]>::default();
-
-        const OUT_EXTENSIONS_LIST: &[&[u8]] = &[
-            b".js", b".cjs", b".mts", b".cts", b".ts", b".tsx", b".jsx", b".json",
-        ];
-
-        if self == Target::Node {
-            exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() * 2)
-                .expect("OOM");
-            for &ext in OUT_EXTENSIONS_LIST {
-                exts.put_static_key(ext, b".mjs").expect("OOM");
-            }
-        } else {
-            exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() + 1)
-                .expect("OOM");
-            exts.put_static_key(b".mjs", b".js").expect("OOM");
-        }
-
-        for &ext in OUT_EXTENSIONS_LIST {
-            exts.put_static_key(ext, b".js").expect("OOM");
-        }
-
-        exts
     }
 }
 
@@ -1231,12 +1201,10 @@ pub struct BundleOptions<'a> {
     // `bun_url::URL<'a>` borrows its input string; the owned variant keeps the
     // struct self-contained.
     pub(crate) origin: bun_url::OwnedURL,
-    pub(crate) output_dir_handle: Option<Dir>,
 
     pub output_dir: Box<[u8]>,
     pub root_dir: Box<[u8]>,
 
-    pub(crate) write: bool,
     pub(crate) preserve_symlinks: bool,
     pub(crate) preserve_extensions: bool,
     pub production: bool,
@@ -1265,7 +1233,6 @@ pub struct BundleOptions<'a> {
     /// This list applies to all extension resolution cases. The runtime uses
     /// this for implementing `require.extensions`
     pub(crate) extra_cjs_extensions: Box<[Box<[u8]>]>,
-    pub out_extensions: StringHashMap<&'static [u8]>,
     pub import_path_format: ImportPathFormat,
     pub(crate) defines_loaded: bool,
     pub env: Env,
@@ -1486,12 +1453,8 @@ impl<'a> BundleOptions<'a> {
             react_compiler_parse_test_pragmas: self.react_compiler_parse_test_pragmas,
             inject: self.inject.clone(),
             origin: self.origin.clone(),
-            // The owning handle stays with the parent; copying it here would
-            // close the parent's fd when the worker options drop.
-            output_dir_handle: None,
             output_dir: self.output_dir.clone(),
             root_dir: self.root_dir.clone(),
-            write: self.write,
             preserve_symlinks: self.preserve_symlinks,
             preserve_extensions: self.preserve_extensions,
             production: self.production,
@@ -1510,7 +1473,6 @@ impl<'a> BundleOptions<'a> {
             extension_order: self.extension_order.clone(),
             main_field_extension_order: self.main_field_extension_order,
             extra_cjs_extensions: self.extra_cjs_extensions.clone(),
-            out_extensions: self.out_extensions.clone(),
             import_path_format: self.import_path_format,
             defines_loaded: self.defines_loaded,
             env: self.env.clone(),
@@ -1725,10 +1687,8 @@ impl<'a> BundleOptions<'a> {
             loaders,
             output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
             target,
-            write: transform.write.unwrap_or(false),
             external: ExternalModules::default(), // filled below
             entry_points: transform.entry_points.clone().into_boxed_slice(),
-            out_extensions: StringHashMap::default(), // filled below
             env: Env::default(),
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
@@ -1755,7 +1715,6 @@ impl<'a> BundleOptions<'a> {
             react_compiler_parse_test_pragmas: false,
             inject: None,
             origin: bun_url::OwnedURL::from_href(Box::default()),
-            output_dir_handle: None,
             root_dir: Box::default(),
             preserve_symlinks: false,
             preserve_extensions: false,
@@ -1941,7 +1900,6 @@ impl<'a> BundleOptions<'a> {
             opts.log_mut(),
             opts.target,
         );
-        opts.out_extensions = opts.target.out_extensions();
 
         opts.source_map = SourceMapOption::from_api(transform.source_map);
 
@@ -1955,16 +1913,6 @@ impl<'a> BundleOptions<'a> {
 
         if opts.origin.url().is_absolute() {
             opts.import_path_format = ImportPathFormat::AbsoluteUrl;
-        }
-
-        if opts.write && !opts.output_dir.is_empty() {
-            let handle = open_output_dir(&opts.output_dir)?;
-            // The inline `bun_resolver::fs::FileSystem` does
-            // not yet expose `get_fd_path`, so resolve via `bun_sys` and box.
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let dir = bun_sys::get_fd_path(handle.fd(), &mut buf).map_err(crate::Error::from)?;
-            opts.output_dir = Box::from(&dir[..]);
-            opts.output_dir_handle = Some(handle);
         }
 
         opts.polyfill_node_globals = opts.target == Target::Browser;
@@ -1984,15 +1932,6 @@ impl<'a> BundleOptions<'a> {
             );
         }
         Ok(opts)
-    }
-}
-
-impl Drop for BundleOptions<'_> {
-    fn drop(&mut self) {
-        // self.define dropped automatically (Box<Define>).
-        //
-        // bundler_feature_flags is `Option<Box<StringSet>>`; `None` ≡ the static
-        // empty set (nothing to free), `Some` drops the Box here automatically.
     }
 }
 
@@ -2025,45 +1964,6 @@ pub(crate) mod bundle_options_defaults {
         pub(crate) const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
             b".mjs", b".jsx", b".mts", b".js", b".cjs", b".tsx", b".ts", b".cts", b".json",
         ];
-    }
-}
-
-pub(crate) fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
-    // Routed through `bun_sys` per CLAUDE.md (never `std::fs`).
-    match bun_sys::open_dir_at(bun_sys::Fd::cwd(), output_dir) {
-        Ok(d) => Ok(Dir::from_fd(d)),
-        Err(_) => {
-            // Single-level mkdir
-            // (fails ENOENT if parent missing). Do NOT use `make_path` (the
-            // recursive `mkdir -p` variant) here.
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let len = output_dir.len().min(buf.0.len() - 1);
-            buf.0[..len].copy_from_slice(&output_dir[..len]);
-            buf.0[len] = 0;
-            // SAFETY: NUL-terminated above; `buf` outlives the `mkdirat` call.
-            let z = bun_core::ZStr::from_buf(&buf.0[..], len);
-            if let Err(err) = bun_sys::mkdirat(bun_sys::Fd::cwd(), z, 0o755) {
-                let err: crate::Error = err.into();
-                Output::print_errorln(format_args!(
-                    "error: Unable to mkdir \"{}\": \"{}\"",
-                    bstr::BStr::new(output_dir),
-                    err.name(),
-                ));
-                Global::crash();
-            }
-
-            match bun_sys::open_dir_at(bun_sys::Fd::cwd(), output_dir) {
-                Ok(handle) => Ok(Dir::from_fd(handle)),
-                Err(err2) => {
-                    Output::print_errorln(format_args!(
-                        "error: Unable to open \"{}\": \"{}\"",
-                        bstr::BStr::new(output_dir),
-                        bstr::BStr::new(err2.name()),
-                    ));
-                    Global::crash();
-                }
-            }
-        }
     }
 }
 

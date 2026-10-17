@@ -1,8 +1,7 @@
 //! Hand-maintained colorspace conversion graph.
 
 use super::color::{
-    A98, HSL, HWB, LAB, LCH, OKLAB, OKLCH, P3, ProPhoto, RGBA, Rec2020, SRGB, SRGBLinear, XYZd50,
-    XYZd65,
+    A98, HSL, HWB, LAB, LCH, OKLAB, OKLCH, P3, ProPhoto, Rec2020, SRGB, SRGBLinear, XYZd50, XYZd65,
 };
 
 // Helper: every generated conversion routes through exactly one intermediate
@@ -20,21 +19,6 @@ macro_rules! convert_via {
     };
 }
 
-// ─── convert_RGBA ─────────────────────────────────────────────────────────
-convert_via!(RGBA => SRGB => LAB);
-convert_via!(RGBA => SRGB => LCH);
-convert_via!(RGBA => SRGB => OKLAB);
-convert_via!(RGBA => SRGB => OKLCH);
-convert_via!(RGBA => SRGB => P3);
-convert_via!(RGBA => SRGB => SRGBLinear);
-convert_via!(RGBA => SRGB => A98);
-convert_via!(RGBA => SRGB => ProPhoto);
-convert_via!(RGBA => SRGB => XYZd50);
-convert_via!(RGBA => SRGB => XYZd65);
-convert_via!(RGBA => SRGB => Rec2020);
-convert_via!(RGBA => SRGB => HSL);
-convert_via!(RGBA => SRGB => HWB);
-
 // ─── convert_LAB ──────────────────────────────────────────────────────────
 convert_via!(LAB => XYZd50 => XYZd65);
 convert_via!(LAB => XYZd65 => OKLAB);
@@ -47,7 +31,6 @@ convert_via!(LAB => XYZd65 => ProPhoto);
 convert_via!(LAB => XYZd65 => Rec2020);
 convert_via!(LAB => XYZd65 => HSL);
 convert_via!(LAB => XYZd65 => HWB);
-convert_via!(LAB => SRGB   => RGBA);
 
 // ─── convert_SRGB ─────────────────────────────────────────────────────────
 convert_via!(SRGB => XYZd65     => LAB);
@@ -103,7 +86,6 @@ convert_via!(SRGBLinear => XYZd65 => Rec2020);
 convert_via!(SRGBLinear => XYZd65 => XYZd50);
 convert_via!(SRGBLinear => XYZd65 => HSL);
 convert_via!(SRGBLinear => XYZd65 => HWB);
-convert_via!(SRGBLinear => SRGB   => RGBA);
 
 // ─── convert_P3 ───────────────────────────────────────────────────────────
 convert_via!(P3 => XYZd65 => LAB);
@@ -118,7 +100,6 @@ convert_via!(P3 => XYZd65 => Rec2020);
 convert_via!(P3 => XYZd65 => XYZd50);
 convert_via!(P3 => XYZd65 => HSL);
 convert_via!(P3 => XYZd65 => HWB);
-convert_via!(P3 => SRGB   => RGBA);
 
 // ─── convert_A98 ──────────────────────────────────────────────────────────
 convert_via!(A98 => XYZd65 => LAB);
@@ -133,7 +114,6 @@ convert_via!(A98 => XYZd65 => Rec2020);
 convert_via!(A98 => XYZd65 => XYZd50);
 convert_via!(A98 => XYZd65 => HSL);
 convert_via!(A98 => XYZd65 => HWB);
-convert_via!(A98 => SRGB   => RGBA);
 
 // ─── convert_ProPhoto ─────────────────────────────────────────────────────
 convert_via!(ProPhoto => XYZd50 => XYZd65);
@@ -148,7 +128,6 @@ convert_via!(ProPhoto => XYZd65 => OKLCH);
 convert_via!(ProPhoto => XYZd65 => Rec2020);
 convert_via!(ProPhoto => XYZd65 => HSL);
 convert_via!(ProPhoto => XYZd65 => HWB);
-convert_via!(ProPhoto => SRGB   => RGBA);
 
 // ─── convert_Rec2020 ──────────────────────────────────────────────────────
 convert_via!(Rec2020 => XYZd65 => LAB);
@@ -163,7 +142,6 @@ convert_via!(Rec2020 => XYZd65 => OKLAB);
 convert_via!(Rec2020 => XYZd65 => OKLCH);
 convert_via!(Rec2020 => XYZd65 => HSL);
 convert_via!(Rec2020 => XYZd65 => HWB);
-convert_via!(Rec2020 => SRGB   => RGBA);
 
 // ─── convert_XYZd50 ───────────────────────────────────────────────────────
 convert_via!(XYZd50 => XYZd65 => LCH);
@@ -176,7 +154,6 @@ convert_via!(XYZd50 => XYZd65 => OKLCH);
 convert_via!(XYZd50 => XYZd65 => Rec2020);
 convert_via!(XYZd50 => XYZd65 => HSL);
 convert_via!(XYZd50 => XYZd65 => HWB);
-convert_via!(XYZd50 => SRGB   => RGBA);
 
 // ─── convert_XYZd65 ───────────────────────────────────────────────────────
 convert_via!(XYZd65 => XYZd50     => LAB);
@@ -186,7 +163,6 @@ convert_via!(XYZd65 => LAB        => LCH);
 convert_via!(XYZd65 => SRGBLinear => SRGB);
 convert_via!(XYZd65 => SRGB       => HSL);
 convert_via!(XYZd65 => SRGB       => HWB);
-convert_via!(XYZd65 => SRGB       => RGBA);
 
 // ─── convert_LCH ──────────────────────────────────────────────────────────
 convert_via!(LCH => LAB    => XYZd65);
@@ -201,7 +177,6 @@ convert_via!(LCH => XYZd65 => Rec2020);
 convert_via!(LCH => XYZd65 => XYZd50);
 convert_via!(LCH => XYZd65 => HSL);
 convert_via!(LCH => XYZd65 => HWB);
-convert_via!(LCH => SRGB   => RGBA);
 
 // ─── convert_OKLAB ────────────────────────────────────────────────────────
 convert_via!(OKLAB => XYZd65 => LAB);
@@ -215,7 +190,6 @@ convert_via!(OKLAB => XYZd65 => XYZd50);
 convert_via!(OKLAB => XYZd65 => Rec2020);
 convert_via!(OKLAB => XYZd65 => HSL);
 convert_via!(OKLAB => XYZd65 => HWB);
-convert_via!(OKLAB => SRGB   => RGBA);
 
 // ─── convert_OKLCH ────────────────────────────────────────────────────────
 convert_via!(OKLCH => OKLAB  => XYZd65);
@@ -230,4 +204,3 @@ convert_via!(OKLCH => XYZd65 => XYZd50);
 convert_via!(OKLCH => XYZd65 => Rec2020);
 convert_via!(OKLCH => XYZd65 => HSL);
 convert_via!(OKLCH => XYZd65 => HWB);
-convert_via!(OKLCH => SRGB   => RGBA);

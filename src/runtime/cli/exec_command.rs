@@ -41,7 +41,6 @@ impl ExecCommand {
             ctx.log,
             {
                 let mut args = ctx.args.clone();
-                args.write = Some(false);
                 args.target = Some(api::Target::Bun);
                 args
             },

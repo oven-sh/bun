@@ -44,7 +44,6 @@ impl Framework {
         out.options.entry_points = Box::default();
         out.options.log = log;
         out.options.output_format = mode.output_format();
-        out.options.out_extensions = bun_collections::StringHashMap::new();
         out.options.hot_module_reloading = mode == Mode::Development;
         out.options.code_splitting = mode != Mode::Development;
 

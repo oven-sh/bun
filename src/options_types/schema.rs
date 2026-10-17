@@ -75,8 +75,6 @@ pub mod api {
         pub preserve_symlinks: Option<bool>,
         /// entry_points
         pub entry_points: Vec<Box<[u8]>>,
-        /// write
-        pub write: Option<bool>,
         /// inject
         pub inject: Vec<Box<[u8]>>,
         /// output_dir

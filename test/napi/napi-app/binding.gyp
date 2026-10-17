@@ -373,5 +373,10 @@
                 "NAPI_VERSION=8",
             ],
         },
+        {
+            "target_name": "test_env_finalizers",
+            "sources": ["test_env_finalizers.cpp"],
+            "defines": ["NAPI_VERSION=10"],
+        },
     ]
 }

@@ -501,7 +501,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Eat the comma token
             p.lexer.next()?;
         }
-        let items: &'a mut [Expr] = items_list.into_bump_slice_mut();
+        let items: &'a [Expr] = items_list.into_bump_slice();
 
         // The parenthetical construct must end with a close parenthesis
         p.lexer.expect(T::TCloseParen)?;
@@ -516,7 +516,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut is_arrow_fn = p.lexer.token == T::TEqualsGreaterThan;
         if is_arrow_fn
             || opts.force_arrow_fn
-            || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon)
+            || (Self::IS_TYPESCRIPT_ENABLED
+                && p.lexer.token == T::TColon
+                && level.lte(Level::Assign))
         {
             // Arrow functions are not allowed inside certain expressions
             if level.gt(Level::Assign) {
@@ -532,15 +534,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             // First, try converting the expressions to bindings
-            for i in 0..items.len() {
+            for mut item in items.iter().copied() {
                 let mut is_spread = false;
-                if let js_ast::expr::Data::ESpread(v) = &items[i].data {
+                if let js_ast::expr::Data::ESpread(spread) = &item.data {
                     is_spread = true;
-                    let inner = v.value;
-                    items[i] = inner;
+                    item = spread.value;
                 }
 
-                let mut item = items[i];
                 let tuple = p.convert_expr_to_binding_and_initializer(
                     &mut item,
                     &mut invalid_log,

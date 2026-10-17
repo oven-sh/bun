@@ -479,6 +479,63 @@ describe("Bun.Transpiler", () => {
       exp(`x = ${discarded}`, `x = ${discardedOut};\n`);
     });
 
+    it('a call of "async" before a ":" stays a call', async () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // The parentheses are tried as parameters first. Spread arguments stay spread when they are not.
+      exp("x = a ? async(b, ...c) : d", "x = a ? async(b, ...c) : d;\n");
+      exp("x = a ? async(b, ...[c, d]) : e", "x = a ? async(b, ...[c, d]) : e;\n");
+      exp("x = a ? async(...b) : c => d", "x = a ? async(...b) : (c) => d;\n");
+      exp("x = a ? async(...b, c) : d", "x = a ? async(...b, c) : d;\n");
+      exp("x = a ? async<T>(...b) : c", "x = a ? async(...b) : c;\n");
+      exp("x = a ? q = async(...b) : c", "x = a ? q = async(...b) : c;\n");
+      exp("x = a ? q => async(b, ...c) : d", "x = a ? (q) => async(b, ...c) : d;\n");
+      exp("x = a ? b ? c : async(...d) : e", "x = a ? b ? c : async(...d) : e;\n");
+      exp("switch (x) { case async(b, ...c): break }", "switch (x) {\n  case async(b, ...c):\n    break;\n}");
+
+      // A spread of an assignment is an error for parameters only
+      exp("x = a ? async(b, ...c = d) : e", "x = a ? async(b, ...c = d) : e;\n");
+      exp("x = a ? ([...b = c]) : d", "x = a ? [...b = c] : d;\n");
+      err("x = async(...b = c) => 0", "A rest argument cannot have a default initializer");
+      err("x = (...a = 1) => 0", "A rest argument cannot have a default initializer");
+      err("x = ([...a = 1]) => 0", "A rest argument cannot have a default initializer");
+
+      // Above assignment level the ":" cannot be a return type
+      exp("x = a ? !async(b, ...c) : d", "x = a ? !async(b, ...c) : d;\n");
+      exp("x = a ? 1 + async(b) : d", "x = a ? 1 + async(b) : d;\n");
+      exp("x = a ? 1 + <T>(b) : c", "x = a ? 1 + b : c;\n");
+      exp("switch (x) { case 1 + async(b): break }", "switch (x) {\n  case 1 + async(b):\n    break;\n}");
+      exp(
+        "async function f() { x = a ? await async(b) : d }",
+        "async function f() {\n  x = a ? await async(b) : d;\n}",
+      );
+      err("x = 1 + async(b) => c", "Unexpected =>");
+
+      // An async arrow function keeps its rest parameter
+      exp("x = a ? async (...b): T => c : d", "x = a ? async (...b) => c : d;\n");
+      exp("x = a ? async (b, ...c): T => d : e", "x = a ? async (b, ...c) => d : e;\n");
+
+      using dir = tempDir("ts-async-call-before-colon", {
+        "index.ts": `
+          function async(...parts: string[]) { return parts.join("+"); }
+          const now = true, more = ["b", "c"];
+          console.log(now ? async("a", ...more) : "none");
+          console.log(now ? 1 + async("a").length : 0);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a+b+c\n2\n");
+      expect(exitCode).toBe(0);
+    });
+
     it("type-only import syntax", () => {
       const exp = ts.expectPrinted_;
       const errStartsWith = (code, prefix) => {

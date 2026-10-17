@@ -3123,8 +3123,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
   );
 }
 
-// node processRespondWithFD. offset < 0: the current position. length < 0: to EOF.
-// `stat` is undefined for respondWithFD() without a statCheck, which has not read it.
+// node processRespondWithFD. offset < 0: the current position. length < 0: to EOF. No `stat`: no statCheck read it.
 function processRespondWithFD(
   this: ServerHttp2Stream,
   options,

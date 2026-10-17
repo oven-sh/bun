@@ -15,6 +15,7 @@ import {
 import { exists, rm } from "fs/promises";
 import { bunEnv, bunExe, isASAN, isWindows, pack, readdirSorted, runBunInstall, tempDir } from "harness";
 import { dirname, join } from "path";
+import { pathToFileURL } from "url";
 import { installEnv, TestRegistry } from "registry";
 
 const registry = new TestRegistry();
@@ -1990,7 +1991,10 @@ test.each(["file: folder", "git repository"])("an older bun's nested copy goes b
     "vendor/n/index.js": n["index.js"],
     "package.json": JSON.stringify({
       name: "app",
-      dependencies: { m: "1.0.0", n: kind === "git repository" ? `git+file://${repository}` : "file:./vendor/n" },
+      dependencies: {
+        m: "1.0.0",
+        n: kind === "git repository" ? `git+${pathToFileURL(String(repository))}` : "file:./vendor/n",
+      },
       ...root,
     }),
   });

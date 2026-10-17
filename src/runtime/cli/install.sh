@@ -183,22 +183,32 @@ fi
 refresh_command=''
 
 # Appends the `# bun` block to the config file in $1. The remaining arguments
-# are the lines of the block. Returns 1 when the file already has the block.
+# are the lines of the block. Returns 1 without a write when the file already
+# has every line, so a rerun with the same install dir adds nothing.
 append_shell_config() {
     local config=$1
     shift
 
-    if grep -Fxq '# bun' "$config"; then
+    local missing=false
+    for line in "$@"; do
+        if ! grep -Fxq -- "$line" "$config"; then
+            missing=true
+            break
+        fi
+    done
+
+    if [[ $missing = false ]]; then
         return 1
     fi
 
     {
         echo -e '\n# bun'
 
-        for command in "$@"; do
-            echo "$command"
+        for line in "$@"; do
+            echo "$line"
         done
-    } >>"$config"
+    } >>"$config" ||
+        error "Failed to write to \"$config\""
 }
 
 tilde_bin_dir=$(tildify "$bin_dir")
@@ -276,11 +286,11 @@ bash)
         "export PATH=\"$bin_env:\$PATH\""
     )
 
-    # A macOS terminal opens a login shell, which reads ~/.bash_profile and
-    # never ~/.bashrc. A Linux terminal opens a non-login shell, which reads
-    # only ~/.bashrc.
+    # A macOS or Git Bash terminal opens a login shell, which reads
+    # ~/.bash_profile and never ~/.bashrc. A Linux terminal opens a non-login
+    # shell, which reads only ~/.bashrc.
     case $platform in
-    Darwin*)
+    Darwin* | MINGW64*)
         bash_configs=(
             "$HOME/.bash_profile"
             "$HOME/.bashrc"
@@ -320,7 +330,20 @@ bash)
         fi
     done
 
+    # A login shell (ssh, tty) reads ~/.bash_profile instead of ~/.bashrc. The
+    # distro skeleton ~/.bash_profile sources ~/.bashrc. A hand-written one
+    # that does not gets the block too.
+    bash_profile=$HOME/.bash_profile
+    if [[ $set_manually = false && $bash_config = "$HOME/.bashrc" && -w $bash_profile ]] &&
+        ! grep -q bashrc "$bash_profile"; then
+        if append_shell_config "$bash_profile" "${commands[@]}"; then
+            info "Added \"$tilde_bin_dir\" to \$PATH in \"$(tildify "$bash_profile")\" for login shells"
+        fi
+    fi
+
     if [[ $set_manually = true ]]; then
+        tilde_bash_config=$(tildify "${bash_configs[0]}")
+
         echo "Manually add the directory to $tilde_bash_config (or similar):"
 
         for command in "${commands[@]}"; do

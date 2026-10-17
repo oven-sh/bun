@@ -352,6 +352,84 @@ describe("bundler", () => {
   //   },
   //   outbase: "/src",
   // });
+  // A publicPath without a trailing slash is joined with exactly one "/",
+  // matching esbuild's joinWithPublicPath.
+  itBundled("loader/FilePublicPathJS", {
+    files: {
+      "/src/entries/entry.js": /* js */ `
+        import x from '../images/image.png'
+        console.log(x)
+      `,
+      "/src/images/image.png": `x`,
+    },
+    root: "/src",
+    outdir: "/out",
+    outputPaths: ["/out/entries/entry.js"],
+    publicPath: "https://example.com",
+    loader: { ".png": "file" },
+    onAfterBundle(api) {
+      api.expectFile("/out/entries/entry.js").toMatch(/"https:\/\/example\.com\/image-[a-z0-9]+\.png"/);
+    },
+  });
+  itBundled("loader/FilePublicPathCSS", {
+    files: {
+      "/src/entries/entry.css": /* css */ `
+        div {
+          background: url(../images/image.png);
+        }
+      `,
+      // at least 128 KB, else the CSS printer inlines it as a data: URL
+      "/src/images/image.png": Buffer.alloc(128 * 1024, "x").toString(),
+    },
+    root: "/src",
+    outdir: "/out",
+    outputPaths: ["/out/entries/entry.css"],
+    publicPath: "https://example.com",
+    loader: { ".png": "file" },
+    onAfterBundle(api) {
+      api.expectFile("/out/entries/entry.css").toMatch(/url\("?https:\/\/example\.com\/image-[a-z0-9]+\.png"?\)/);
+    },
+  });
+  itBundled("loader/FilePublicPathAssetNamesJS", {
+    files: {
+      "/src/entries/entry.js": /* js */ `
+        import x from '../images/image.png'
+        console.log(x)
+      `,
+      "/src/images/image.png": `x`,
+    },
+    root: "/src",
+    outdir: "/out",
+    outputPaths: ["/out/entries/entry.js"],
+    publicPath: "https://example.com",
+    loader: { ".png": "file" },
+    assetNaming: "[dir]/[name]-[hash].[ext]",
+    onAfterBundle(api) {
+      api.expectFile("/out/entries/entry.js").toMatch(/"https:\/\/example\.com\/images\/image-[a-z0-9]+\.png"/);
+    },
+  });
+  itBundled("loader/FilePublicPathAssetNamesCSS", {
+    files: {
+      "/src/entries/entry.css": /* css */ `
+        div {
+          background: url(../images/image.png);
+        }
+      `,
+      // at least 128 KB, else the CSS printer inlines it as a data: URL
+      "/src/images/image.png": Buffer.alloc(128 * 1024, "x").toString(),
+    },
+    root: "/src",
+    outdir: "/out",
+    outputPaths: ["/out/entries/entry.css"],
+    publicPath: "https://example.com",
+    loader: { ".png": "file" },
+    assetNaming: "[dir]/[name]-[hash].[ext]",
+    onAfterBundle(api) {
+      api
+        .expectFile("/out/entries/entry.css")
+        .toMatch(/url\("?https:\/\/example\.com\/images\/image-[a-z0-9]+\.png"?\)/);
+    },
+  });
   return;
   itBundled("loader/FileRelativePathAssetNamesJS", {
     // GENERATED
@@ -398,58 +476,6 @@ describe("bundler", () => {
       "/src/images/image.png": `x`,
     },
     root: "/src",
-    assetNaming: "[dir]/[name]-[hash]",
-  });
-  itBundled("loader/FilePublicPathJS", {
-    // GENERATED
-    files: {
-      "/src/entries/entry.js": /* js */ `
-        import x from '../images/image.png'
-        console.log(x)
-      `,
-      "/src/images/image.png": `x`,
-    },
-    root: "/src",
-    publicPath: "https://example.com",
-  });
-  itBundled("loader/FilePublicPathCSS", {
-    // GENERATED
-    files: {
-      "/src/entries/entry.css": /* css */ `
-        div {
-          background: url(../images/image.png);
-        }
-      `,
-      "/src/images/image.png": `x`,
-    },
-    root: "/src",
-    publicPath: "https://example.com",
-  });
-  itBundled("loader/FilePublicPathAssetNamesJS", {
-    // GENERATED
-    files: {
-      "/src/entries/entry.js": /* js */ `
-        import x from '../images/image.png'
-        console.log(x)
-      `,
-      "/src/images/image.png": `x`,
-    },
-    root: "/src",
-    publicPath: "https://example.com",
-    assetNaming: "[dir]/[name]-[hash]",
-  });
-  itBundled("loader/FilePublicPathAssetNamesCSS", {
-    // GENERATED
-    files: {
-      "/src/entries/entry.css": /* css */ `
-        div {
-          background: url(../images/image.png);
-        }
-      `,
-      "/src/images/image.png": `x`,
-    },
-    root: "/src",
-    publicPath: "https://example.com",
     assetNaming: "[dir]/[name]-[hash]",
   });
   itBundled("loader/FileOneSourceTwoDifferentOutputPathsJS", {

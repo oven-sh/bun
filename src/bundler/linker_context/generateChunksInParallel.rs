@@ -571,11 +571,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 } else {
                     c.options.public_path
                 };
-                let normalizer = cheap_prefix_normalizer(public_path, &ch.final_rel_path);
-                let mut resolved: Vec<u8> = Vec::new();
-                resolved.extend_from_slice(normalizer[0]);
-                resolved.extend_from_slice(normalizer[1]);
-                let _ = unique_key_to_path.put(ch.unique_key, resolved.into_boxed_slice()); // OOM-only Result
+                let resolved = cheap_prefix_normalizer(public_path, &ch.final_rel_path).to_boxed();
+                let _ = unique_key_to_path.put(ch.unique_key, resolved); // OOM-only Result
             }
         }
 
@@ -774,7 +771,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         // file rather than a JS file next to the .map. Point at
                         // the .map path relative to the HTML chunk's directory.
                         let mut relative_platform_buf = path::path_buffer_pool::get();
-                        let [a, b]: [&[u8]; 2] = if !c.options.public_path.is_empty() {
+                        let url = if !c.options.public_path.is_empty() {
                             cheap_prefix_normalizer(
                                 c.options.public_path,
                                 &source_map_final_rel_path,
@@ -813,16 +810,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             )
                         };
 
-                        let source_map_start = b"//# sourceMappingURL=";
-                        let total_len =
-                            buffer.len() + source_map_start.len() + a.len() + b.len() + b"\n".len();
-                        let mut buf: Vec<u8> = Vec::with_capacity(total_len);
-                        buf.extend_from_slice(&buffer);
-                        buf.extend_from_slice(source_map_start);
-                        buf.extend_from_slice(a);
-                        buf.extend_from_slice(b);
-                        buf.push(b'\n');
-                        buffer = buf.into_boxed_slice();
+                        crate::chunk::append_source_mapping_url(&mut buffer, url);
                     }
 
                     standalone_sourcemaps[ci] = Some(output_source_map);
@@ -1025,26 +1013,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     source_map_final_rel_path.extend_from_slice(b".map");
 
                     if tag == SourceMapOption::Linked {
-                        let [a, b]: [&[u8]; 2] = if public_path.len() > 0 {
-                            cheap_prefix_normalizer(public_path, &source_map_final_rel_path)
-                        } else {
-                            [b"", path::basename(&source_map_final_rel_path)]
-                        };
-
-                        let source_map_start = b"//# sourceMappingURL=";
-                        let total_len = code_result.buffer.len()
-                            + source_map_start.len()
-                            + a.len()
-                            + b.len()
-                            + b"\n".len();
-                        let mut buf: Vec<u8> = Vec::with_capacity(total_len);
-                        buf.extend_from_slice(&code_result.buffer);
-                        buf.extend_from_slice(source_map_start);
-                        buf.extend_from_slice(a);
-                        buf.extend_from_slice(b);
-                        buf.push(b'\n');
-
-                        code_result.buffer = buf.into_boxed_slice();
+                        crate::chunk::append_source_mapping_url(
+                            &mut code_result.buffer,
+                            crate::chunk::linked_source_map_url(
+                                public_path,
+                                &source_map_final_rel_path,
+                            ),
+                        );
                     }
 
                     sourcemap_output_file =
@@ -1103,13 +1078,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         // with module_info path fixup.
                         // For non-compile builds, use the normal .jsc extension.
                         let source_provider_url = if c.options.compile_mode.is_executable() {
-                            let normalizer =
-                                cheap_prefix_normalizer(public_path, &chunk.final_rel_path);
-                            BunString::create_format(format_args!(
-                                "{}{}",
-                                bstr::BStr::new(normalizer[0]),
-                                bstr::BStr::new(normalizer[1])
-                            ))
+                            BunString::clone_utf8(
+                                &cheap_prefix_normalizer(public_path, &chunk.final_rel_path)
+                                    .to_boxed(),
+                            )
                         } else {
                             BunString::create_format(format_args!(
                                 "{}{}",
@@ -1403,7 +1375,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 } else {
                     c.options.public_path
                 };
-                cheap_prefix_normalizer(public_path, &chunk.final_rel_path).concat()
+                cheap_prefix_normalizer(public_path, &chunk.final_rel_path)
+                    .parts()
+                    .concat()
             })
             .collect();
         chunk_paths.sort_unstable();

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
@@ -3646,40 +3646,57 @@ describe("bundler", () => {
   // because itBundled's fixture pipeline is too slow at this scale under
   // debug+ASAN.
   //
-  // The build gets 60 s: of wall clock on a release build, of user CPU time on
-  // a debug or ASAN build. On those the parse threads can spend most of the
-  // wall clock in the kernel: on one machine the same build took 40 s to 90 s
-  // of wall clock for 15 s to 25 s of user CPU time. The walk runs in user
-  // mode: with the old one the build takes about 125 s of user CPU time.
-  const dagBuildOnCpuClock = isDebug || isASAN;
+  // A debug build bundles 10,000 modules with 2 pool threads: with more, its
+  // parse threads spend the wall clock in the kernel (7 s to 16 s with 2
+  // threads, 45 s to 67 s with 12). It compares user CPU time, which the walk
+  // adds to, with a tree of the same size, where every module has one importer
+  // and any walk is linear: 1.1 to 1.4 times the tree, more than 4 times with
+  // the old walk. Other builds get 60 s of wall clock for 20,000 modules.
   test.concurrent(
     "edgecase/DeepImportDiamondDAG",
     async () => {
-      const N = 20000;
+      const N = isDebug ? 10_000 : 20_000;
+      // Module `i` imports those of `imports(i)` that exist.
+      const writeModules = (root: string, imports: (i: number) => number[]) => {
+        for (let i = 0; i < N; i++) {
+          const deps = imports(i).filter(d => d < N);
+          writeFileSync(
+            join(root, `m${i}.js`),
+            deps.map(d => `import { v as v${d} } from "./m${d}.js";`).join("\n") +
+              `\nexport const v = ${i}${deps.map(d => ` + v${d}`).join("")};\n`,
+          );
+        }
+        writeFileSync(join(root, "entry.js"), `import { v } from "./m0.js"; console.log(typeof v);\n`);
+      };
+      // Resolves to the user CPU time of the build.
+      const bundle = async (root: string) => {
+        await using build = Bun.spawn({
+          cmd: [bunExe(), "build", "entry.js", "--outfile=out.js"],
+          cwd: root,
+          env: isDebug ? { ...bunEnv, UV_THREADPOOL_SIZE: "2" } : bunEnv,
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 60_000,
+        });
+        const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+        expect({ stderr, exitCode, signalCode: build.signalCode }).toEqual({
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+        return Number(build.resourceUsage()!.cpuTime.user);
+      };
+
       using dir = tempDir("deep-import-dag", {});
       const root = String(dir);
-      for (let i = 0; i < N; i++) {
-        const deps: number[] = [];
-        if (i + 1 < N) deps.push(i + 1);
-        if (2 * i + 3 < N) deps.push(2 * i + 3);
-        writeFileSync(
-          join(root, `m${i}.js`),
-          deps.map(d => `import { v as v${d} } from "./m${d}.js";`).join("\n") +
-            `\nexport const v = ${i}${deps.map(d => ` + v${d}`).join("")};\n`,
-        );
+      writeModules(root, i => [i + 1, 2 * i + 3]);
+      if (isDebug) {
+        using tree = tempDir("deep-import-tree", {});
+        writeModules(String(tree), i => [2 * i + 1, 2 * i + 2]);
+        const [dag, control] = await Promise.all([bundle(root), bundle(String(tree))]);
+        expect(dag / control).toBeLessThan(3);
+      } else {
+        await bundle(root);
       }
-      writeFileSync(join(root, "entry.js"), `import { v } from "./m0.js"; console.log(typeof v);\n`);
-
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "entry.js", "--outfile=out.js"],
-        cwd: root,
-        env: bunEnv,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: dagBuildOnCpuClock ? 240_000 : 60_000,
-      });
-      const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-      expect({ stderr, exitCode, signalCode: build.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
-      if (dagBuildOnCpuClock) expect(Number(build.resourceUsage()!.cpuTime.user) / 1e6).toBeLessThan(60);
 
       await using run = Bun.spawn({
         cmd: [bunExe(), "out.js"],
@@ -3694,7 +3711,7 @@ describe("bundler", () => {
         exitCode: 0,
       });
     },
-    dagBuildOnCpuClock ? 300_000 : 120_000,
+    120_000,
   );
   itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
     files: {

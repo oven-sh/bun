@@ -10,6 +10,7 @@ const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
 // Node's last_message_start_: from the first byte of a request to its end, closeIdleConnections() leaves the connection alone.
 const kHttp1MessageOpen = Symbol("http1MessageOpen");
 const reportError = globalThis.reportError;
+const ArrayPrototypeSlice = Array.prototype.slice;
 
 function rethrowUncaught(err) {
   throw err;
@@ -271,7 +272,14 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       if (typeof statusMessage === "string" && checkInvalidHeaderChar(statusMessage)) {
         throw $ERR_INVALID_CHAR("statusMessage");
       }
-      head = { statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs };
+      // A copy: ServerResponse reuses `headers` for other responses once this call returns, and the head goes out later.
+      head = {
+        statusCode,
+        statusMessage,
+        headers: ArrayPrototypeSlice.$call(headers),
+        autoHeaderBits,
+        keepAliveTimeoutSecs,
+      };
     },
     flushHeaders() {
       writeHeadToSocket(null);
@@ -367,6 +375,7 @@ function connectionListenerHTTP1(server, socket, options) {
     maybePauseFallbackReads,
     resumeFallbackReadsOnDrain,
     finishDrainedResponse,
+    fixHeadForLateHandle,
     kMustCloseConnection,
   } = http1ServerPipeline;
   const { allMethods } = process.binding("http_parser");
@@ -375,6 +384,8 @@ function connectionListenerHTTP1(server, socket, options) {
   const IncomingMessageClass: new (socket) => Http1FallbackRequest =
     http1Options.IncomingMessage || http.IncomingMessage;
   const ServerResponseClass = http1Options.ServerResponse || http.ServerResponse;
+  // Only the constructor of a subclass can tell when its response gets the handle.
+  const isResponseSubclass = ServerResponseClass !== http.ServerResponse;
   const keepAliveTimeout = typeof server.keepAliveTimeout === "number" ? server.keepAliveTimeout : 5000;
 
   // Node's connectionListenerInternal sets this so handlers can reach the server
@@ -479,13 +490,6 @@ function connectionListenerHTTP1(server, socket, options) {
       if (!socket._paused && socket.readable) socket.resume();
     };
 
-    const res = new ServerResponseClass(req);
-    // The native dispatcher seeds these from the server; renderNativeHeaders
-    // reads them to decide the Keep-Alive auto-header bits, so the fallback
-    // path must carry them too or keep-alive responses lose their timeout line.
-    res._keepAliveTimeout = keepAliveTimeout;
-    const { maxRequestsPerSocket } = server;
-    res._maxRequestsPerSocket = maxRequestsPerSocket;
     const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout);
     handle.onfinished = function () {
       socket[kHttp1ActiveRequests] = Math.max(0, (socket[kHttp1ActiveRequests] || 1) - 1);
@@ -496,7 +500,20 @@ function connectionListenerHTTP1(server, socket, options) {
     handle.onflushed = function () {
       finishDrainedResponse(res);
     };
-    res[kHttp1ResponseHandle] = handle;
+    // Like the native dispatcher, the constructor gets the handle. Not for a response that waits: this handle writes at once.
+    const res =
+      isResponseSubclass && !socket._httpMessage
+        ? new ServerResponseClass(req, { [kHttp1ResponseHandle]: handle })
+        : new ServerResponseClass(req);
+    // renderNativeHeaders reads these for the Keep-Alive line. The native dispatcher seeds them from the server too.
+    res._keepAliveTimeout = keepAliveTimeout;
+    const { maxRequestsPerSocket } = server;
+    res._maxRequestsPerSocket = maxRequestsPerSocket;
+    if (res[kHttp1ResponseHandle] !== handle) {
+      res[kHttp1ResponseHandle] = handle;
+      // A subclass that does not pass its options to super(), or one whose response waits.
+      if (isResponseSubclass) fixHeadForLateHandle(res);
+    }
     // Node's parserOnIncoming outgoing queue: pipelined requests parse while
     // the previous response is still assigned (its 'finish' detach is a tick
     // away), so queue this response instead of letting assignSocket throw

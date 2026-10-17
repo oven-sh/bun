@@ -5,7 +5,7 @@ const { Stream } = require("internal/stream");
 const { isUint8Array, validateString } = require("internal/validators");
 const { deprecate } = require("internal/util/deprecate");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
-const { kOutHeaders, kNeedDrain, utcDate } = require("internal/http");
+const { kOutHeaders, kNeedDrain, utcDate, headerStateSymbol } = require("internal/http");
 const {
   validateHeaderName,
   validateHeaderValue,
@@ -698,8 +698,9 @@ function parseUniqueHeadersOption(headers) {
   return unique;
 }
 
+// A ServerResponse with a handle keeps `_header` null until end(). Its header state says that the head is stored.
 OutgoingMessage.prototype.setHeader = function setHeader(name, value) {
-  if (this._header) {
+  if (this._header || this[headerStateSymbol]) {
     throw $ERR_HTTP_HEADERS_SENT("set");
   }
   const field = validatedLowercaseHeaderName(name);
@@ -713,7 +714,7 @@ OutgoingMessage.prototype.setHeader = function setHeader(name, value) {
 };
 
 OutgoingMessage.prototype.setHeaders = function setHeaders(headers) {
-  if (this._header) {
+  if (this._header || this[headerStateSymbol]) {
     throw $ERR_HTTP_HEADERS_SENT("set");
   }
 
@@ -750,7 +751,7 @@ OutgoingMessage.prototype.setHeaders = function setHeaders(headers) {
 };
 
 OutgoingMessage.prototype.appendHeader = function appendHeader(name, value) {
-  if (this._header) {
+  if (this._header || this[headerStateSymbol]) {
     throw $ERR_HTTP_HEADERS_SENT("append");
   }
   const field = validatedLowercaseHeaderName(name);
@@ -835,7 +836,7 @@ OutgoingMessage.prototype.hasHeader = function hasHeader(name) {
 OutgoingMessage.prototype.removeHeader = function removeHeader(name) {
   validateString(name, "name");
 
-  if (this._header) {
+  if (this._header || this[headerStateSymbol]) {
     throw $ERR_HTTP_HEADERS_SENT("remove");
   }
 

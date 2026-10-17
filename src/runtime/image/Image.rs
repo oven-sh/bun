@@ -2035,12 +2035,19 @@ fn resolve_resize(r: Resize, sw: u32, sh: u32) -> (u32, u32) {
     // quotient can exceed u32 for tall-thin sources (1×5M with .resize(1k)
     // → 5e9), so clamp to the same per-side cap do_resize uses before the
     // narrowing cast. The maxPixels guard then rejects the product.
-    let mut h: u32 = if r.h != 0 {
-        r.h
+    let derived = r.h == 0;
+    let raw_h: u64 = if derived {
+        (r.w as u64) * (sh as u64) / (sw as u64)
     } else {
-        u32::try_from((0x3FFFFu64).min(1u64.max((r.w as u64) * (sh as u64) / (sw as u64)))).unwrap()
+        r.h as u64
     };
-    if r.fit == Fit::Inside {
+    let mut h: u32 = u32::try_from((0x3FFFFu64).min(1u64.max(raw_h))).unwrap();
+    // A derived height already carries the source's ratio, bar the truncation
+    // above, so fitting it can only shave a pixel off the requested width:
+    // 943×1520 asked for 500 derives 805, and 805/1520 is a hair under
+    // 500/943, so the fit lands on 499. A clamped one no longer carries the
+    // ratio, so there the fit still has work to do.
+    if r.fit == Fit::Inside && (!derived || raw_h != h as u64) {
         // Shrink the box so the source's aspect ratio is preserved and
         // both sides fit. (Sharp's `fit:'inside'`.)
         let sx = (w as f64) / (sw as f64);

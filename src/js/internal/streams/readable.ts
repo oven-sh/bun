@@ -1136,12 +1136,14 @@ function nReadingNextTick(self) {
 Readable.prototype.resume = function () {
   const state = this._readableState;
   // Node 26 (nodejs/node#62557) early-returns on kDestroyed. We narrow it to
-  // kDestroyed && kEndEmitted: fd-slicer-style readables set `destroyed` right
-  // before push(null), and the full guard strands their buffered tail when a
-  // piped dest drains (yauzl/extract-zip). Once 'end' has fired there is
-  // nothing left to flush, so becoming a no-op restores readableFlowing /
-  // isPaused() parity for consumers that resume() past EOF (Readable.toWeb).
-  if ((state[kState] & (kDestroyed | kEndEmitted)) === (kDestroyed | kEndEmitted)) {
+  // kDestroyed && (kEndEmitted || kErrored): fd-slicer-style readables set
+  // `destroyed` right before push(null), and the full guard strands their
+  // buffered tail when a piped dest drains (yauzl/extract-zip). Once 'end' has
+  // fired there is nothing left to flush, and once the stream is errored there
+  // is no tail-flush rationale either (flowing an errored stream would deliver
+  // 'data' ahead of the scheduled 'error'), so in both cases we match Node's
+  // no-op and preserve readableFlowing / isPaused() / readableLength.
+  if ((state[kState] & kDestroyed) !== 0 && (state[kState] & (kEndEmitted | kErrored)) !== 0) {
     return this;
   }
   if ((state[kState] & kFlowing) === 0) {

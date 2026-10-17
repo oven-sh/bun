@@ -409,3 +409,48 @@ describe("Invalid oaepHash and oaepLabel options", () => {
     });
   });
 });
+
+// Node reads the option as `key.padding || defaultPadding`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/cipher.js#L72
+describe("padding option", () => {
+  const message = Buffer.from("I AM THE WALRUS");
+  let signed; // privateEncrypt with the default RSA_PKCS1_PADDING: deterministic
+  let sealed; // publicEncrypt with the default RSA_PKCS1_OAEP_PADDING: randomized
+
+  beforeAll(() => {
+    signed = crypto.privateEncrypt(rsaKeyPem, message);
+    sealed = crypto.publicEncrypt(rsaPubPem, message);
+  });
+
+  test.each([
+    ["null", null],
+    ["0", 0],
+    ["-0", -0],
+    ["false", false],
+    ["NaN", NaN],
+    ["an empty string", ""],
+    ["0n", 0n],
+  ])("%s means the default padding", (_, padding) => {
+    expect(crypto.privateEncrypt({ key: rsaKeyPem, padding }, message)).toEqual(signed);
+    expect(crypto.publicDecrypt({ key: rsaPubPem, padding }, signed)).toEqual(message);
+    expect(crypto.privateDecrypt(rsaKeyPem, crypto.publicEncrypt({ key: rsaPubPem, padding }, message))).toEqual(
+      message,
+    );
+    expect(crypto.privateDecrypt({ key: rsaKeyPem, padding }, sealed)).toEqual(message);
+  });
+
+  // A truthy value is converted to an integer, and 0 is not a padding mode.
+  test.each([
+    ["'0'", "0"],
+    ["{}", {}],
+    ["[]", []],
+  ])("%s is not a padding mode", (_, padding) => {
+    const paddingError = expect.objectContaining({
+      name: "Error",
+      code: "ERR_OSSL_EVP_ILLEGAL_OR_UNSUPPORTED_PADDING_MODE",
+    });
+    expect(() => crypto.privateEncrypt({ key: rsaKeyPem, padding }, message)).toThrow(paddingError);
+    expect(() => crypto.publicDecrypt({ key: rsaPubPem, padding }, signed)).toThrow(paddingError);
+    expect(() => crypto.publicEncrypt({ key: rsaPubPem, padding }, message)).toThrow(paddingError);
+    expect(() => crypto.privateDecrypt({ key: rsaKeyPem, padding }, sealed)).toThrow(paddingError);
+  });
+});

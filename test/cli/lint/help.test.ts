@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { chmodSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 const root = join(import.meta.dir, "../../..");
@@ -218,35 +218,39 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
     expect(exitCode).toBe(0);
   });
 
+  const [flags, problem] = {
+    lint: [["-f", "unix"], /a\.ts:1:1: .+no-debugger/],
+    fmt: [["-l", "--print-width", "80"], /^a\.ts$/],
+    check: [["--pretty", "false", "--threads", "1"], /^a\.ts\(2,14\): error TS2322/],
+  }[command] as [string[], RegExp];
+  const script = { "package.json": JSON.stringify({ scripts: { [command]: "echo the script" } }) };
+  const executable = "#!/bin/sh\necho the executable\n";
+  const source = "debugger  ;\nexport const a: string = 1;\n";
+  /** `from`: the directory to start in, if not `cwd`. `before` is called with the project before that. */
+  type More = { from?: string; env?: Record<string, string>; before?: (dir: string) => void };
+
+  /** Runs `bun ...args` in the directory `cwd` of a project with `files`, which has `a.ts` too. */
+  async function bun(files: Record<string, string>, args: string[], cwd = ".", more: More = {}) {
+    using dir = tempDir("bun-no-script", { ...files, [join(cwd, "a.ts")]: source });
+    for (const name in files) if (files[name].startsWith("#!")) chmodSync(join(String(dir), name), 0o755);
+    more.before?.(String(dir));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: { ...bunEnv, ...more.env },
+      cwd: join(String(dir), more.from ?? cwd),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, source: readFileSync(join(String(dir), cwd, "a.ts"), "utf8") };
+  }
+
+  /** What `bun` runs: "the command" if it reports the problem in `a.ts`, and otherwise what is printed. */
+  async function ran(...args: Parameters<typeof bun>) {
+    const { stdout, stderr, exitCode } = await bun(...args);
+    return problem.test(stdout.trim()) && exitCode === 1 ? "the command" : stdout.trim() || stderr.trim();
+  }
+
   describe("--no-script", () => {
-    const [flags, problem] = {
-      lint: [["-f", "unix"], /a\.ts:1:1: .+no-debugger/],
-      fmt: [["-l", "--print-width", "80"], /^a\.ts$/],
-      check: [["--pretty", "false", "--threads", "1"], /^a\.ts\(2,14\): error TS2322/],
-    }[command] as [string[], RegExp];
-    const script = { "package.json": JSON.stringify({ scripts: { [command]: "echo the script" } }) };
-    const executable = "#!/bin/sh\necho the executable\n";
-
-    /**
-     * What `bun ...args` runs in the directory `cwd` of a project with `files`: "the command" if it reports the problem in
-     * `a.ts`, and otherwise what is printed.
-     */
-    async function ran(files: Record<string, string>, args: string[], cwd = ".") {
-      using dir = tempDir("bun-no-script", {
-        ...files,
-        [join(cwd, "a.ts")]: "debugger  ;\nexport const a: string = 1;\n",
-      });
-      for (const name in files) if (files[name] === executable) chmodSync(join(String(dir), name), 0o755);
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), ...args],
-        env: bunEnv,
-        cwd: join(String(dir), cwd),
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return problem.test(stdout.trim()) && exitCode === 1 ? "the command" : stdout.trim() || stderr.trim();
-    }
-
     test.each([
       `${command} --no-script ${flags.join(" ")} a.ts`,
       `${command} ${flags.join(" ")} --no-script a.ts`,
@@ -332,6 +336,288 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
     test("bun run <command> is the script, which is passed the flag", async () => {
       expect(await ran(script, ["run", command, "--no-script"])).toBe("the script --no-script");
     });
+
+    // A flag of `bun` in front of the command can have its value in the next argument.
+    describe.each([
+      ["a script", script],
+      ["a file", { [`${command}.ts`]: 'console.log("the file");' }],
+      ...(isWindows ? [] : [["an executable of a package", { [`node_modules/.bin/${command}`]: executable }]]),
+    ] as [string, Record<string, string>][])("where the project has %s", (_, own) => {
+      const rest = [...flags, "a.ts"];
+
+      test.each([
+        ["--env-file", ".env"],
+        ["--preload", "./pre.js"],
+        // The type checker doesn't take `-r`, as `-r=./pre.js` either.
+        ...(command === "check" ? [] : [["-r", "./pre.js"]]),
+        ["--shell", "bun"],
+        ["--elide-lines", "5"],
+      ])("bun %s %s <command>", async (...front) => {
+        const files = { ...own, ".env": "A=1\n", "pre.js": "" };
+        const [plain, without, after, before, inOptions] = await Promise.all([
+          ran(files, [command, ...rest]),
+          ran(files, [...front, command, ...rest]),
+          ran(files, [...front, command, "--no-script", ...rest]),
+          ran(files, ["--no-script", ...front, command, ...rest]),
+          ran(files, [command, "--no-script", ...rest], ".", { env: { BUN_OPTIONS: front.join(" ") } }),
+        ]);
+        expect({ without, after, before, inOptions }).toEqual({
+          without: plain,
+          after: "the command",
+          before: "the command",
+          inOptions: "the command",
+        });
+      });
+
+      test("bun --cwd <directory> <command>", async () => {
+        const files = Object.fromEntries(Object.entries(own).map(([name, text]) => [`project/${name}`, text]));
+        const outside = (args: string[], env = {}) => ran(files, args, "project", { from: ".", env });
+        const [plain, without, ...withFlag] = await Promise.all([
+          ran(own, [command, ...rest]),
+          outside(["--cwd", "project", command, ...rest]),
+          outside(["--cwd", "project", command, "--no-script", ...rest]),
+          outside(["--no-script", "--cwd", "project", command, ...rest]),
+          outside([command, "--no-script", ...rest], { BUN_OPTIONS: "--cwd project" }),
+          outside([command, ...rest], { BUN_OPTIONS: "--no-script --cwd project" }),
+          outside(["--cwd", "project", command, ...rest], { BUN_OPTIONS: "--no-script" }),
+        ]);
+        expect(without).toBe(plain);
+        expect(withFlag).toEqual(Array(5).fill("the command"));
+      });
+    });
+
+    test.each(command === "check" ? ["--filter"] : ["--filter", "-F"])(
+      "bun %s <pattern> <command> is bun --filter=<pattern> <command>",
+      async flag => {
+        const rest = [...flags, "a.ts"];
+        const [blank, equals, withFlag] = await Promise.all([
+          ran(script, [flag, "*", command, ...rest]),
+          ran(script, ["--filter=*", command, ...rest]),
+          ran(script, [flag, "*", command, "--no-script", ...rest]),
+        ]);
+        expect({ blank, withFlag }).toEqual({ blank: equals, withFlag: "the command" });
+      },
+    );
+
+    test.skipIf(command !== "check").each([
+      ["-r", "./pre.js"],
+      ["-F", "*"],
+    ])("bun %s %s check --no-script is refused, and the script isn't run", async (...front) => {
+      const result = await bun({ ...script, "pre.js": "" }, [...front, command, "--no-script"]);
+      expect(result.stderr).toStartWith(`error: Invalid Argument '${front[0]}'\n`);
+      expect(result).toMatchObject({ stdout: "", exitCode: 1 });
+    });
+  });
+
+  describe("a directory with the name of the command", () => {
+    const files = {
+      [`${command}/package.json`]: JSON.stringify({ scripts: { dev: "echo the dev script" } }),
+      [`${command}/main.ts`]: 'console.log("the file");',
+    };
+
+    test.each([
+      ["dev", "the dev script\n"],
+      ["main.ts", "the file\n"],
+    ])("bun --cwd <directory> %s", async (word, printed) => {
+      const result = await bun(files, ["--cwd", command, word], command, { from: "." });
+      expect(result).toMatchObject({ stdout: printed, source, exitCode: 0 });
+    });
+
+    test("bun --cwd <directory> <command> is the command", async () => {
+      const args = ["--cwd", command, command, ...flags, "a.ts"];
+      expect(await ran(files, args, command, { from: "." })).toBe("the command");
+    });
+  });
+
+  // Without a config file, `bun lint` looks for `eslintConfig` in the package.json.
+  const config = { ".oxlintrc.json": '{ "rules": { "no-debugger": "error" } }' };
+
+  describe("a package.json that can't be parsed", () => {
+    const scripts = `"scripts": { "${command}": "echo the script" }`;
+    const note = `note: package.json may have a "${command}" script, so nothing was run
+  Fix the file, or pass --no-script to skip the script
+`;
+    const inConflict = (rest: string) =>
+      `{\n<<<<<<< HEAD\n  "version": "1",\n=======\n  "version": "2",\n>>>>>>> other\n  ${rest}\n}\n`;
+    const broken = { "package.json": inConflict(scripts) };
+
+    describe.each([
+      ["has the marks of a merge conflict", inConflict(scripts), /^error: .+\n {4}at .+package\.json:2:1$/m],
+      [
+        "is cut off",
+        `{\n  "name": "a",\n  "scripts": { "${command}": "echo the`,
+        /^error: .+\n {4}at .+package\.json:3:\d+$/m,
+      ],
+    ] as [string, string, RegExp][])("one that %s", (_, text, error) => {
+      const places: [string, Record<string, string>, string][] = [
+        ["in the working directory", { "package.json": text }, "."],
+        [
+          "in a workspace whose root has the script",
+          { "package.json": `{ "workspaces": ["packages/*"], ${scripts} }`, "packages/a/package.json": text },
+          "packages/a",
+        ],
+      ];
+
+      // Both can write `a.ts`.
+      test.skipIf(command === "check").each(places)("%s: nothing is run", async (_, files, cwd) => {
+        // What is asked after the package.json.
+        const others = {
+          [join(cwd, `${command}.ts`)]: 'console.log("the file");',
+          [join(cwd, "node_modules/.bin", command)]: executable,
+        };
+        const result = await bun({ ...files, ...others }, command === "lint" ? ["lint", "--fix"] : ["fmt"], cwd);
+        expect(result.stderr).toMatch(error);
+        expect(result.stderr).toContain(join(cwd, "package.json"));
+        expect(result.stderr).toEndWith(note);
+        expect(result).toMatchObject({ stdout: "", source, exitCode: 2 });
+      });
+
+      test.skipIf(command !== "check").each(places)("%s: the type checker runs", async (_, files, cwd) => {
+        expect(await ran(files, [command, ...flags, "a.ts"], cwd)).toBe("the command");
+      });
+
+      test("--no-script runs the command", async () => {
+        const files = { "package.json": text, ...config };
+        expect(await ran(files, [command, "--no-script", ...flags, "a.ts"])).toBe("the command");
+      });
+    });
+
+    test.each([
+      [command, "--help"],
+      [command, "-h"],
+      ["--help", command],
+      ["-h", command],
+    ])("bun %s %s prints the help", async (...args) => {
+      const [here, elsewhere] = await Promise.all([runIn(broken, ...args), run(command, "--help")]);
+      expect(here).toEqual(elsewhere);
+    });
+
+    test.skipIf(command === "check").each(["--version", "-v", "--revision"])(
+      "bun %s <command> prints the version",
+      async flag => {
+        const [here, elsewhere] = await Promise.all([runIn(broken, flag, command), run(flag)]);
+        expect(here).toEqual(elsewhere);
+      },
+    );
+
+    test.skipIf(command === "check")(
+      "bun <command> --version is for a script of that name, so nothing is run",
+      async () => {
+        const { stdout, stderr, exitCode } = await runIn(broken, command, "--version");
+        expect(stderr).toEndWith(note);
+        expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+      },
+    );
+
+    test("one without the name of the script in it: the command runs", async () => {
+      const files = { "package.json": inConflict('"scripts": { "other": "echo no" }'), ...config };
+      expect(await ran(files, [command, ...flags, "a.ts"])).toBe("the command");
+    });
+  });
+
+  describe("which package.json has the script", () => {
+    test.each([
+      ["with other scripts", `{ "name": "${command}", "scripts": { "other": "echo no" } }`],
+      ["that is empty", ""],
+      ["with nothing but blanks", " \n"],
+      ["that is an array", `["${command}"]\n`],
+      ["that is null", "null\n"],
+    ])("one %s: the command runs", async (_, text) => {
+      expect(await ran({ "package.json": text, ...config }, [command, ...flags, "a.ts"])).toBe("the command");
+    });
+
+    const code = command.charCodeAt(0).toString(16);
+    // `bun run` reads all of these.
+    test.each([
+      ["in single quotes", `{ 'scripts': { '${command}': 'echo the script' } }`],
+      ["with \\u", `{ "scripts": { "\\u00${code}${command.slice(1)}": "echo the script" } }`],
+      ["with \\x", `{ "scripts": { "\\x${code}${command.slice(1)}": "echo the script" } }`],
+    ])("a name that is written %s is the name all the same", async (_, text) => {
+      expect(await ran({ "package.json": text }, [command])).toBe("the script");
+    });
+
+    test("one in UTF-16 is read as `bun run` reads it", async () => {
+      const text = `\ufeff{ "scripts": { "${command}": "echo the script" } }`;
+      const before = (dir: string) => writeFileSync(join(dir, "package.json"), Buffer.from(text, "utf16le"));
+      expect(await ran({}, [command], ".", { before })).toBe("the script");
+    });
+
+    describe.skipIf(isWindows)("what isn't a file that can be read", () => {
+      const root = { "package.json": `{ "scripts": { "${command}": "echo the script" } }` };
+      const link = (to: string) => (dir: string) => symlinkSync(to, join(dir, "sub/package.json"));
+      const pipe = (dir: string) => expect(Bun.spawnSync(["mkfifo", join(dir, "sub/package.json")]).exitCode).toBe(0);
+
+      test.each([
+        ["a link that leads nowhere", link("nowhere")],
+        ["a link to itself", link("package.json")],
+        ["a directory", (dir: string) => mkdirSync(join(dir, "sub/package.json"))],
+      ] as [string, More["before"]][])("%s: the one above is asked", async (_, before) => {
+        expect(await ran(root, [command], "sub", { before })).toBe("the script");
+      });
+
+      test.skipIf(isRoot)("a file without read permission: the one above is asked", async () => {
+        const before = (dir: string) => chmodSync(join(dir, "sub/package.json"), 0);
+        expect(await ran({ ...root, "sub/package.json": "{}" }, [command], "sub", { before })).toBe("the script");
+      });
+
+      test.each([
+        ["a link to a device", link("/dev/null")],
+        ["a named pipe", pipe],
+      ] as [string, More["before"]][])("%s: the command runs, and the one above isn't asked", async (_, before) => {
+        expect(await ran(root, [command, ...flags, "a.ts"], "sub", { before })).toBe("the command");
+      });
+    });
+  });
+
+  // `check` has been a command for longer, and only a script wins over it.
+  describe.skipIf(command === "check")("in what the project has of that name, it is the command", () => {
+    const again = [command, ...flags, "a.ts"];
+    const file = `
+      if (process.env.STARTED) throw new Error("started again");
+      const env = { ...process.env, STARTED: "1" };
+      const child = Bun.spawnSync({ cmd: [process.execPath, ...${JSON.stringify(again)}], env, stdout: "inherit" });
+      process.exit(child.exitCode);
+    `;
+    const ofPackage = `#!/bin/sh
+if [ -n "$STARTED" ]; then echo started again; exit 3; fi
+STARTED=1 exec "${bunExe()}" ${again.join(" ")}
+`;
+
+    describe.each([
+      ["a file", { [`${command}.ts`]: file }],
+      ["the index of a directory", { [`${command}/index.ts`]: file }],
+      ...(isWindows ? [] : [["an executable of a package", { [`node_modules/.bin/${command}`]: ofPackage }]]),
+    ] as [string, Record<string, string>][])("%s", (_, files) => {
+      test.each([
+        ["bun <command>", [command], {}],
+        ["bun <command>, beside a package.json", [command], { "package.json": "{}" }],
+        ["bun run <command>", ["run", command], {}],
+      ] as [string, string[], Record<string, string>][])("%s", async (_, args, more) => {
+        expect(await ran({ ...files, ...more }, args)).toBe("the command");
+      });
+    });
+  });
+
+  test.skipIf(isWindows)("a backslash in the name of a directory isn't a separator", async () => {
+    const { stdout, exitCode } = await bun(
+      { "a\\b/package.json": script["package.json"] },
+      [command, "--help"],
+      "a\\b",
+    );
+    expect(stdout).toContain(`note: package.json has a "${command}" script, so bun ${command} runs that script\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  // The path of a package.json in it is longer than a path can be.
+  test.skipIf(!isLinux)("a working directory whose path is almost as long as a path can be", async () => {
+    using dir = tempDir("bun-long-path", script);
+    let cwd = String(dir);
+    while (cwd.length < 4085) cwd = join(cwd, Buffer.alloc(Math.min(100, 4089 - cwd.length), "d").toString());
+    mkdirSync(cwd, { recursive: true });
+    await using proc = Bun.spawn({ cmd: [bunExe(), command], env: bunEnv, cwd, stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("the script\n");
+    expect(exitCode).toBe(0);
   });
 
   test("shell completions list the same flags as --help --all", async () => {

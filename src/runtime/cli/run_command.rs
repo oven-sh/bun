@@ -2535,6 +2535,11 @@ impl RunCommand {
         // TODO: run module resolution here - try the next condition if the module can't be found
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
         let fs_top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+        crate::cli::script_or_command::note_file_or_executable(
+            env_loader,
+            target_name,
+            fs_top_level_dir,
+        );
         bun_core::scoped_log!(
             RUN_LOG,
             "Try resolve `{}` in `{}`",

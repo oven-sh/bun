@@ -289,8 +289,12 @@ pub(crate) fn has_one(directory: &[u8]) -> bool {
     let is_there = |name: &&[u8]| fs::is_file(&paths::join(directory, name));
     NAMES.iter().any(|name| match *name {
         // One that cannot be read is found out when it is.
-        b"package.json" => fs::read(&paths::join(directory, name))
-            .is_ok_and(|it| json::parse(&it).is_none_or(|it| it.get(b"eslintConfig").is_some())),
+        b"package.json" => {
+            is_there(name)
+                && fs::read(&paths::join(directory, name)).is_ok_and(|it| {
+                    json::parse(&it).is_none_or(|it| it.get(b"eslintConfig").is_some())
+                })
+        }
         _ => is_there(name),
     })
 }

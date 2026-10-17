@@ -2394,10 +2394,8 @@ impl<'l> Loader<'l> {
         }
         if options.ignore {
             let path = options.ignore_path.as_ref().map(absolute);
-            files.extend(eslintrc::ignore_file(
-                path.as_deref(),
-                &self.start_of_ignore_path(),
-            )?);
+            let start = self.start_of_patterns_in(path.as_deref());
+            files.extend(eslintrc::ignore_file(path.as_deref(), &start)?);
         }
         // Only if no file says anything.
         if files.is_empty() && options.eslintrc {
@@ -2739,6 +2737,13 @@ impl<'l> Loader<'l> {
         }
     }
 
+    /// The same for `file`, which is where that file is. The patterns of the `info/exclude` of a repository start where Git has
+    /// them start.
+    fn start_of_patterns_in(&self, file: Option<&[u8]>) -> Vec<u8> {
+        file.and_then(|it| gitignore::root_of_exclude_file(it, self.cwd()))
+            .unwrap_or_else(|| self.start_of_ignore_path())
+    }
+
     /// The name of the files that count in every directory beside `.gitignore`. To oxlint, what `--ignore-path` has is such a
     /// name.
     pub(crate) fn ignore_file_name(&self, loaded: &Loaded) -> Option<&[u8]> {
@@ -2762,6 +2767,10 @@ impl<'l> Loader<'l> {
         }
         let is_in_file = self.ignore_file_name(loaded).is_some_and(|file| {
             let (start, file) = (self.start_of_ignore_path(), paths::from_native(file));
+            let resolved = paths::resolve(&start, &file);
+            if let Some(root) = gitignore::root_of_exclude_file(&resolved, self.cwd()) {
+                return gitignore::has_argument(&root, &resolved, &paths::relative(&root, path));
+            }
             // How it is spelled counts for oxlint. From below bunfig.toml it is spelled as from there.
             match start == self.cwd() {
                 true => gitignore::has_argument(&start, &file, argument),
@@ -2798,10 +2807,11 @@ impl<'l> Loader<'l> {
         if !self.reads_ignore_files(loaded) {
             return Some(Files::default());
         }
-        let of_git = match OfGit::for_search(directory, are_all_in_repositories) {
+        let is_for_oxc = loaded.flavor == Flavor::Oxlint;
+        let of_git = match OfGit::for_search(directory, is_for_oxc, are_all_in_repositories) {
             Some(of_git) => of_git,
-            None if loaded.flavor == Flavor::Oxlint => return None,
-            None => OfGit::above_and_in(directory, true),
+            None if is_for_oxc => return None,
+            None => OfGit::above_and_in(directory, true, is_for_oxc),
         };
         let name = self.ignore_file_name(loaded).map(paths::from_native);
         let mut files = Files::above_and_in(directory, name.as_deref(), of_git);
@@ -2816,7 +2826,7 @@ impl<'l> Loader<'l> {
             }
         } else if let Some(path) = &self.options.ignore_path {
             let path = paths::resolve(self.cwd(), &paths::from_native(path));
-            let start = self.start_of_ignore_path();
+            let start = self.start_of_patterns_in(Some(&path));
             files.named = gitignore::with_file(files.named, &start, &path, true);
         }
         Some(files)

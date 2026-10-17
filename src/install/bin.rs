@@ -849,7 +849,7 @@ pub struct Linker<'a> {
     pub rel_buf: &'a mut [u8],
 
     /// Whether `node_modules_path` is a symlink (see `LinkedNodeModules`). `None` means not checked
-    /// yet. Behind a symlink, a file or directory that has a bin's name is kept, and linking fails.
+    /// yet. Behind a symlink, a directory that has a bin's name is kept, and linking fails.
     pub is_behind_link: Option<bool>,
 
     pub err: Option<Error>,
@@ -1361,14 +1361,20 @@ impl<'a> Linker<'a> {
             }
             Err(readlink_err) => match readlink_err.get_errno() {
                 // A file or a directory.
-                sys::Errno::EINVAL
-                    if global
-                        || Self::is_behind_link(
-                            &mut self.is_behind_link,
-                            self.node_modules_path,
-                        ) =>
-                {
+                sys::Errno::EINVAL if global => {
                     return Err(Error::Sys(bun_errno::SystemErrno::EEXIST));
+                }
+                // pnpm writes its commands as files, so a file is replaced. `unlink` fails on a directory.
+                sys::Errno::EINVAL
+                    if Self::is_behind_link(&mut self.is_behind_link, self.node_modules_path) =>
+                {
+                    // Without the name being what is in the way, the link would fail again.
+                    if errno != sys::Errno::EEXIST {
+                        return Err(err.into());
+                    }
+                    if sys::unlink(abs_dest).is_err() {
+                        return Err(Error::Sys(bun_errno::SystemErrno::EEXIST));
+                    }
                 }
                 sys::Errno::EINVAL => {
                     let _ = sys::delete_tree_absolute(abs_dest.as_bytes());

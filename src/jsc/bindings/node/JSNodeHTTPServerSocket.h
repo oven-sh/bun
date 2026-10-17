@@ -64,6 +64,8 @@ public:
     /* Set by onClose() for the peerEnded / closeError getters: the peer's FIN, the error of a failed read. */
     unsigned peer_ended : 1 = 0;
     int closeReadError = 0;
+    /* Whether the connection closed before the kernel had taken everything, also after an upgrade to a WebSocket. */
+    std::optional<bool> closedWithUnsentData;
     /* Tunnel bytes that onData() queued for JS in tasks that have not run yet. */
     size_t queuedTunnelBytes = 0;
     const char* peerCertVerifyErrorCode = nullptr;

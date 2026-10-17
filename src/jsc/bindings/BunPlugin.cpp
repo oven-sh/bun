@@ -4033,6 +4033,8 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
 {
     // A fetch in flight for a mock that has since been replaced still waits for the old factory.
     // A new import of that module, or of one that waits for it, ends the wait, and everyone gets what the module is now.
+    // Once vi.resetModules() has dropped that fetch, nothing waits for the factory. If it never settles, it would otherwise
+    // count as running until the file ends, and whatever its file imports meanwhile would get the original.
     Vector<Zig::JSModuleMock*, 1> replaced;
     for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
         auto* mock = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get());
@@ -4040,8 +4042,9 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
         if (Zig::isStillRegisteredModuleMock(globalObject, mocked, mock)) [[likely]]
             continue;
         auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), mocked));
+        bool isFetchInFlight = entry && !entry->record();
         Vector<String> unfinished;
-        if (entry && !entry->record() && (mocked == key || Zig::isWaitingForModule(globalObject, running, key, mocked, unfinished)))
+        if (!isFetchInFlight || mocked == key || Zig::isWaitingForModule(globalObject, running, key, mocked, unfinished))
             replaced.append(mock);
     }
     for (auto* mock : replaced)

@@ -4766,6 +4766,45 @@ test.concurrent(
   },
 );
 
+// While a factory runs, what its file imports gets the original of the mocked module. The file of a vi.doMock() factory is
+// the test file, so a factory that never settles claimed every module the later tests imported.
+test.concurrent(
+  "a factory that never settles doesn't hide the module's next mock from a module that a later test imports",
+  async () => {
+    await expectFixturesToPass(
+      {
+        "part.js": `export const part = "real part";`,
+        "host.js": `import { part } from "./part.js"; export const host = "real host, " + part;`,
+        "opener.js": `export const open = async () => (await import("./host.js")).host;`,
+        "lazy.test.js": `
+        import { beforeEach, expect, test, vi } from "bun:test";
+        beforeEach(() => vi.resetModules());
+        test("the factory never settles", async () => {
+          const called = Promise.withResolvers();
+          vi.doMock("./host.js", () => (called.resolve(), new Promise(() => {})));
+          const { open } = await import("./opener.js");
+          void open();
+          await called.promise;
+        });
+        test("the real module, with one of its imports mocked", async () => {
+          vi.doUnmock("./host.js");
+          vi.doMock("./part.js", () => ({ part: "mock part" }));
+          const { open } = await import("./opener.js");
+          expect(await open()).toBe("real host, mock part");
+          vi.doUnmock("./part.js");
+        });
+        test.each([1, 2])("the next mock, %i", async n => {
+          vi.doMock("./host.js", () => ({ host: "mock " + n }));
+          const { open } = await import("./opener.js");
+          expect(await open()).toBe("mock " + n);
+        });
+      `,
+      },
+      4,
+    );
+  },
+);
+
 test.concurrent("evicting modules calls no accessor of module.children", async () => {
   await expectFixturesToPass(
     {

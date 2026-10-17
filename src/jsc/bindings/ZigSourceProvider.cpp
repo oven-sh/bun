@@ -190,12 +190,27 @@ void ensureBuiltinNamesForBytecodeCache(JSC::VM& vm)
         s_builtinNamesForBytecodeCache = WebCore::BunBuiltinNames::createStandalone(vm);
 }
 
+// JSC::ModuleAnalyzer makes its record with a global object's structure; this VM runs no code and has no other use for one.
+static thread_local JSC::JSGlobalObject* s_globalObjectForBytecodeCache = nullptr;
+
+JSC::JSGlobalObject* globalObjectForBytecodeCache(JSC::VM& vm)
+{
+    ASSERT(&vm == s_vmForBytecodeCache);
+    if (!s_globalObjectForBytecodeCache) {
+        s_globalObjectForBytecodeCache = JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull()));
+        JSC::gcProtect(s_globalObjectForBytecodeCache);
+    }
+    return s_globalObjectForBytecodeCache;
+}
+
 extern "C" void Bun__destroyBytecodeCacheVM()
 {
     JSC::VM* vm = std::exchange(s_vmForBytecodeCache, nullptr);
     if (!vm)
         return;
     JSC::JSLockHolder locker(*vm);
+    if (auto* globalObject = std::exchange(s_globalObjectForBytecodeCache, nullptr))
+        JSC::gcUnprotect(globalObject);
     s_builtinNamesForBytecodeCache = nullptr;
     vm->derefSuppressingSaferCPPChecking();
 }

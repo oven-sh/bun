@@ -91,6 +91,48 @@ impl<'a> ParsedOnly<'_, 'a> {
             .get(import_record_index as usize)
             .map_or(&[], |record| record.path.text)
     }
+    /// What a module's record says of this text.
+    pub fn module_syntax(&self) -> ModuleSyntax {
+        ModuleSyntax {
+            import_meta: self.p.has_import_meta,
+            top_level_await: self.p.top_level_await_keyword.len > 0,
+            declarations: self.p.esm_export_keyword.len > 0
+                || self
+                    .starts()
+                    .is_some_and(|starts| starts.has_import_declaration),
+        }
+    }
+}
+
+/// The parts of a module's record that its text decides.
+#[derive(Clone, Copy, Default)]
+pub struct ModuleSyntax {
+    pub import_meta: bool,
+    pub top_level_await: bool,
+    /// `import` and `export` declarations: the record's entries. The two above are flags.
+    pub declarations: bool,
+}
+
+/// `Parser::parse_only` of JavaScript text that is not a file of the build. `None`: it does not parse on its own.
+pub fn parse_only_text<R>(
+    text: &[u8],
+    top_level_await: bool,
+    jsc_builtin_syntax: bool,
+    f: impl FnOnce(&ParsedOnly<'_, '_>) -> R,
+) -> Option<R> {
+    let arena = bun_alloc::Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    let source = bun_ast::Source::init_path_string(&b"chunk.js"[..], text);
+    let mut options = Options::init(Default::default(), bun_ast::Loader::Js);
+    options.features.no_macros = true;
+    options.features.top_level_await = top_level_await;
+    options.jsc_builtin_syntax = jsc_builtin_syntax;
+    options.suppress_warnings_about_weird_code = true;
+    let define = Define::default();
+    let mut log = bun_ast::Log::init();
+    let parser = Parser::init(options, &mut log, &source, &define, &arena).ok()?;
+    parser.parse_only(f).ok()
 }
 
 pub struct Parser<'a> {

@@ -1387,8 +1387,7 @@ impl Diff {
             }
         }
 
-        // `bun pm fetch` links nothing, so it needs no folder to link to.
-        if !missing_workspaces.is_empty() && pm.subcommand != install::Subcommand::Pm {
+        if !missing_workspaces.is_empty() {
             lockfile::pruned_workspaces::exit_if_survivor_depends_on_missing(
                 &*from_lockfile,
                 &missing_workspaces,

@@ -137,20 +137,13 @@ it("should fetch packages missing from cache when lockfile exists", async () => 
 });
 
 // A Docker layer: `COPY package.json bun.lock ./`, then `RUN bun pm fetch`.
-it.each([
-  ["packages/*", {}],
-  ["packages/web", {}],
-  ["packages/*", { web: "workspace:*" }],
-])(
-  "should fetch for a workspace in %s that is not on disk yet (the root depends on %j)",
-  async (workspace, dependencies) => {
+it.each(["packages/*", "packages/web"])(
+  "should fetch for a workspace in %s that is not on disk yet",
+  async workspace => {
     const urls: string[] = [];
     setHandler(dummyRegistry(urls));
     await writeBunfig(textLockfile);
-    await writeFile(
-      join(package_dir, "package.json"),
-      JSON.stringify({ name: "foo", workspaces: [workspace], dependencies }),
-    );
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", workspaces: [workspace] }));
     await mkdir(join(package_dir, "packages", "web"), { recursive: true });
     await writeFile(
       join(package_dir, "packages", "web", "package.json"),

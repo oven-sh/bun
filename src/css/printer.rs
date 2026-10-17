@@ -222,11 +222,6 @@ impl<'a> Printer<'a> {
         b"unknown.css"
     }
 
-    /// Returns whether the indent level is greater than one.
-    pub(crate) fn is_nested(&self) -> bool {
-        self.indent_amt > 2
-    }
-
     /// Add an error related to std lib fmt errors
     pub(crate) fn add_fmt_error(&mut self) -> PrintErr {
         self.error_kind = Some(css::PrinterError {

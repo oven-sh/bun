@@ -454,6 +454,20 @@ describe("transpiler cache", () => {
       expect(run(temp_dir, ["a.js"])).toBe("logged\nwritten");
       expect(newCacheCount()).toBe(0);
     });
+
+    test("--drop keeps a bound console method callable", () => {
+      writeFileSync(
+        join(temp_dir, "a.js"),
+        `const log = console.log.bind(console);\nlog("logged");\nprocess.stdout.write(typeof log + "\\n");` +
+          "\n//" +
+          filler,
+      );
+
+      expect(run(temp_dir, ["a.js"])).toBe("logged\nfunction");
+      // Transpiled on the first run, served from the cache on the second.
+      expect(run(temp_dir, ["--drop=console", "a.js"])).toBe("function");
+      expect(run(temp_dir, ["--drop=console", "a.js"])).toBe("function");
+    });
   });
 
   // Serving the entry point from the cache must not change how the modules it

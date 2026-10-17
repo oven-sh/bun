@@ -1268,6 +1268,8 @@ A footer added to the final bundle. This can be a comment block for a license or
 
 Removes function calls from a bundle. For example, `--drop=console` removes all calls to `console.log`. Bun also removes the arguments to dropped calls, even if they have side effects. Dropping `debugger` removes all `debugger` statements.
 
+`console.log.bind(console)` does not call `console.log`, so it becomes an empty function: a logger that is bound once and called later keeps working.
+
 <Tabs>
   <Tab title="JavaScript">
     ```ts title="build.ts" icon="/icons/typescript.svg"

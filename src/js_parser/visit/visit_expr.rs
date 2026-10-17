@@ -1869,6 +1869,98 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.should_fold_typescript_constant_expressions =
             prev_should_fold_typescript_constant_expressions;
     }
+    /// `console.log.bind(console)` makes a function to call later: `() => {}`, not `undefined`.
+    #[cold]
+    #[inline(never)]
+    fn replace_bind_of_dropped_function(p: &mut Self, e: &mut Expr) -> bool {
+        let Data::ECall(mut call) = e.data else {
+            return false;
+        };
+        let Data::EDot(bind) = call.target.data else {
+            return false;
+        };
+        debug_assert!(bind.name == b"bind");
+        // Not a bind of a dropped function: `Mousetrap.bind(k, f)`, or a callee on the drop list.
+        if !matches!(bind.target.data, Data::EDot(..))
+            || Self::is_drop_key(p, call.target)
+            || !Self::is_dropped_name(p, bind.target)
+        {
+            return false;
+        }
+        // The arguments are removed but still visited: the visit enters every scope in parse order.
+        let old_is_control_flow_dead = p.is_control_flow_dead;
+        p.is_control_flow_dead = true;
+        for arg in call.args.slice_mut() {
+            p.visit_expr(arg);
+        }
+        p.is_control_flow_dead = old_is_control_flow_dead;
+        *e = p.new_expr(E::Arrow::NOOP_RETURN_UNDEFINED, e.loc);
+        true
+    }
+    /// Whether `callee` spells a drop key. Unlike `is_dot_define_match`, `a?.b` counts as `a.b`.
+    fn is_drop_key(p: &Self, callee: Expr) -> bool {
+        let Data::EDot(last) = callee.data else {
+            return false;
+        };
+        let Some(keys) = p.define.dots_for(last.name.slice()) else {
+            return false;
+        };
+        keys.as_slice().iter().any(|key| {
+            let Some((root, members)) = key.parts.split_first() else {
+                return false;
+            };
+            let mut expr = callee;
+            for member in members.iter().rev() {
+                match expr.data {
+                    Data::EDot(dot) if strings::eql(member, &dot.name) => expr = dot.target,
+                    _ => return false,
+                }
+            }
+            let Data::EIdentifier(id) = expr.data else {
+                return false;
+            };
+            key.data.method_call_must_be_replaced_with_undefined()
+                && strings::eql(p.load_name_from_ref(id.ref_), root)
+        })
+    }
+    /// Reads the drop list, not the flag alone: `import.meta.hot` raises it with no drop list.
+    fn is_dropped_name(p: &mut Self, mut expr: Expr) -> bool {
+        loop {
+            match expr.data {
+                Data::EDot(dot) => {
+                    if Self::is_dropped_dot(p, expr) {
+                        return true;
+                    }
+                    expr = dot.target;
+                }
+                Data::EIdentifier(id) => {
+                    let name = p.load_name_from_ref(id.ref_);
+                    return p.symbols[id.ref_.inner_index() as usize].kind
+                        == js_ast::symbol::Kind::Unbound
+                        && !id.must_keep_due_to_with_stmt()
+                        && p.define.for_identifier(name).is_some_and(|define| {
+                            define.method_call_must_be_replaced_with_undefined()
+                        });
+                }
+                _ => return false,
+            }
+        }
+    }
+    fn is_dropped_dot(p: &mut Self, expr: Expr) -> bool {
+        let Data::EDot(dot) = expr.data else {
+            return false;
+        };
+        let defines = p.define;
+        let Some(candidates) = defines.dots_for(dot.name.slice()) else {
+            return false;
+        };
+        for define in candidates.as_slice() {
+            if p.is_dot_define_match(expr, &define.parts) {
+                return define.data.method_call_must_be_replaced_with_undefined();
+            }
+        }
+        false
+    }
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
@@ -2117,6 +2209,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if method_call_should_be_replaced_with_undefined {
                 p.method_call_must_be_replaced_with_undefined = false;
                 match &e_.target.data {
+                    Data::EDot(dot)
+                        if dot.name == b"bind" && Self::replace_bind_of_dropped_function(p, e) =>
+                    {
+                        p.options.ignore_dce_annotations = old_ce;
+                        p.should_fold_typescript_constant_expressions =
+                            old_should_fold_typescript_constant_expressions;
+                        return;
+                    }
                     // If we're removing this call, don't count any arguments as symbol uses
                     Data::EIndex(..) | Data::EDot(..) | Data::EIdentifier(..) => {
                         p.is_control_flow_dead = true;

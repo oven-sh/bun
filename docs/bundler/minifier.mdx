@@ -1150,6 +1150,16 @@ void 0;
 x=void 0;
 ```
 
+`console.log.bind(console)` does not call `console.log`. It makes a function, so it becomes an empty function and the result stays callable.
+
+```ts Input
+const log = console.log.bind(console);
+```
+
+```js Output
+const log=()=>{};
+```
+
 ### Drop custom function calls
 
 **Mode:** `--drop=<name>`
@@ -1165,6 +1175,8 @@ assert.equal(a, b);
 void 0;
 void 0;
 ```
+
+`.bind()` on a method of a dropped name becomes an empty function: `assert.equal.bind(assert)` is `()=>{}`.
 
 ## Keep Names
 

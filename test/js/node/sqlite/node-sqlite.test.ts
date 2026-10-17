@@ -1322,7 +1322,13 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       // On regression the child dies (ASAN abort or segfault) before it
       // prints; an empty stdout then surfaces stderr in the diff.
-      const lines = stdout.trim() === "" ? [stderr] : stdout.trim().split("\n").map(l => JSON.parse(l));
+      const lines =
+        stdout.trim() === ""
+          ? [stderr]
+          : stdout
+              .trim()
+              .split("\n")
+              .map(l => JSON.parse(l));
       const caught = "ERR_INVALID_STATE: session cannot be closed while in a callback";
       // The session survives the callback: the changeset still records the
       // write (len > 0) and the close outside the callback succeeds.

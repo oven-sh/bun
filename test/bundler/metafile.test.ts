@@ -884,7 +884,9 @@ describe("Bun.build metafile artifacts", () => {
           const onDisk = await Bun.file(path).text().catch(() => null);
           artifacts.push({ kind, path, size, text: await output.text(), onDisk });
         }
-        builds.push({ kinds: result.outputs.map(output => output.kind), artifacts, metafile: result.metafile });
+        // By kind, not by position in \`outputs\`.
+        artifacts.sort((a, b) => a.kind.localeCompare(b.kind));
+        builds.push({ artifacts, metafile: result.metafile });
       }
       const files = {};
       for (const name of new Bun.Glob("**").scanSync()) files[name.replaceAll("\\\\", "/")] = await Bun.file(name).text();
@@ -898,9 +900,13 @@ describe("Bun.build metafile artifacts", () => {
       const result = await Bun.build({
         entrypoints: ["./entry.js"],
         metafile: "meta.json",
-        plugins: [{ name: "on-end", setup: build => void build.onEnd(async ({ outputs }) => void (onEnd = await outputs.at(-1).text())) }],
+        plugins: [{ name: "on-end", setup: build => void build.onEnd(async ({ outputs }) => void (onEnd = await outputs.find(isMetafile).text())) }],
       });
-      const artifact = result.outputs.at(-1);
+      const artifact = result.outputs.find(isMetafile);
+
+      function isMetafile(output) {
+        return output.kind === "metafile-json";
+      }
 
       // A relative path would now name another file.
       mkdirSync("elsewhere");
@@ -965,11 +971,10 @@ describe("Bun.build metafile artifacts", () => {
   }
 
   type Artifact = { kind: string; path: string; size: number; text: string; onDisk: string | null };
-  type Built = { kinds: string[]; artifacts: Artifact[]; metafile: Metafile };
+  type Built = { artifacts: Artifact[]; metafile: Metafile };
 
-  /** Each metafile artifact holds the metafile of its own build. They are last in `outputs`, the JSON first. */
-  function expectGenerated({ kinds, artifacts, metafile }: Built) {
-    expect(kinds).toEqual(["entry-point", ...artifacts.map(({ kind }) => kind)]);
+  /** Each metafile artifact holds the metafile of its own build. */
+  function expectGenerated({ artifacts, metafile }: Built) {
     expect(Object.keys(metafile)).toEqual(["inputs", "outputs"]);
     for (const { kind, size, text } of artifacts) {
       expect(size).toBe(Buffer.byteLength(text));
@@ -1045,6 +1050,10 @@ describe("Bun.build metafile artifacts", () => {
         [{ outdir: join(cwd, "d"), metafile: "meta.json" }, ["d/meta.json"]],
         // An absolute path does not go below the outdir.
         [{ outdir: "e", metafile: join(cwd, "absolute", "meta.json") }, ["absolute/meta.json"]],
+        // A backslash in the path. The artifact names the file that was written, wherever the join put it.
+        [{ outdir: "f", metafile: "x\\meta.json" }, ["f/x/meta.json"]],
+        // A backslash in the outdir. On POSIX "o\\p" is one directory, and the metafile is in it.
+        [{ outdir: "o\\p", metafile: "meta.json" }, ["o/p/meta.json"]],
         // A second build into "a". Its metafile is shorter, and it replaces the one of the first build.
         [{ outdir: "a", metafile: "meta.json", entrypoints: ["./foo.js"] }, ["a/meta.json"]],
       ];
@@ -1065,12 +1074,14 @@ describe("Bun.build metafile artifacts", () => {
       expect(builds.at(-1)!.artifacts[0].size).toBeLessThan(builds[0].artifacts[0].size);
 
       // The builds wrote the bundles and the metafiles, and nothing else.
-      const bundles = ["a/entry.js", "a/foo.js", "b/entry.js", "c/entry.js", "d/entry.js", "e/entry.js"];
+      const bundles = ["a", "b", "c", "d", "e", "f", "o/p"].map(outdir => outdir + "/entry.js").concat("a/foo.js");
       expect(
         Object.keys(printed.files)
           .filter(name => !(name in files))
           .sort(),
       ).toEqual([...new Set([...bundles, ...cases.flatMap(([, written]) => written)])].sort());
+      // The names above have "/" for both separators. This reads the outdir "o\\p" as the OS names it.
+      expect(readdirSync(join(cwd, "o\\p")).sort()).toEqual(["entry.js", "meta.json"]);
     });
 
     // A metafile is an output like a chunk: when its write fails, the build fails.
@@ -1079,12 +1090,13 @@ describe("Bun.build metafile artifacts", () => {
         "entry.js": `console.log("hi");`,
         "out/taken": "a file, not a directory",
       });
-      const path = join("taken", "meta");
-      const config: Bun.BuildConfig = {
+      const outdir = join(String(dir), "out");
+      const config = (path: string): Bun.BuildConfig => ({
         entrypoints: [join(String(dir), "entry.js")],
-        outdir: join(String(dir), "out"),
+        outdir,
         metafile: form === "json" ? { json: path } : { markdown: path },
-      };
+      });
+      const blocked = config(join("taken", "meta"));
       const failed = {
         success: false,
         outputs: [],
@@ -1098,11 +1110,14 @@ describe("Bun.build metafile artifacts", () => {
       });
 
       // A compile stops before it makes the executable.
-      expect(report(await Bun.build({ ...config, compile: true, throw: false }))).toEqual(failed);
-      expect(readdirSync(join(String(dir), "out"))).toEqual(["taken"]);
+      expect(report(await Bun.build({ ...blocked, compile: true, throw: false }))).toEqual(failed);
+      expect(readdirSync(outdir)).toEqual(["taken"]);
 
-      expect(report(await Bun.build({ ...config, throw: false }))).toEqual(failed);
-      const thrown = await Bun.build(config).then(
+      expect(report(await Bun.build({ ...blocked, throw: false }))).toEqual(failed);
+      // The same file, named by an absolute path.
+      expect(report(await Bun.build({ ...config(join(outdir, "taken", "meta")), throw: false }))).toEqual(failed);
+
+      const thrown = await Bun.build(blocked).then(
         () => undefined,
         error => error,
       );

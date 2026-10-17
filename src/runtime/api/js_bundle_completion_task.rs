@@ -769,7 +769,10 @@ impl JSBundleCompletionTask {
 
                 let mut to_assign_on_sourcemap = JSValue::ZERO;
                 for (i, output_file) in output_files.iter_mut().enumerate() {
-                    let path: Box<[u8]> = if !outdir.is_empty() {
+                    // An absolute `dest_path` is the path the file was written to.
+                    let is_under_outdir =
+                        !outdir.is_empty() && !bun_paths::is_absolute(&output_file.dest_path);
+                    let path: Box<[u8]> = if is_under_outdir {
                         if outdir_is_abs {
                             Box::from(join_abs_string::<platform::Auto>(
                                 &outdir,

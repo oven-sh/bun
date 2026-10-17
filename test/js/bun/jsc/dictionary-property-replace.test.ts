@@ -21,14 +21,16 @@ async function run(source: string, env: Record<string, string> = {}) {
   return stdout;
 }
 
-test.concurrent("the first overwrite of each property on a dictionary object does not allocate per property", async () => {
-  // 500 objects with 800 properties each. Every property is overwritten once.
-  // With the per-offset WatchpointSet, RSS grows by about 64 bytes per
-  // property: 32 MiB here. With the bit, the growth is the rare data of 500
-  // structures: under 1 MiB, with up to 4 MiB of JIT and GC noise. A debug
-  // build with ASAN needs about 8 s for the 800,000 stores, so the test gets
-  // a longer timeout.
-  const stdout = await run(`
+test.concurrent(
+  "the first overwrite of each property on a dictionary object does not allocate per property",
+  async () => {
+    // 500 objects with 800 properties each. Every property is overwritten once.
+    // With the per-offset WatchpointSet, RSS grows by about 64 bytes per
+    // property: 32 MiB here. With the bit, the growth is the rare data of 500
+    // structures: under 1 MiB, with up to 4 MiB of JIT and GC noise. A debug
+    // build with ASAN needs about 8 s for the 800,000 stores, so the test gets
+    // a longer timeout.
+    const stdout = await run(`
       const N = 800, OBJECTS = 500;
       const keys = Array.from({ length: N }, (_, i) => "key" + i);
       const objects = [];
@@ -45,10 +47,12 @@ test.concurrent("the first overwrite of each property on a dictionary object doe
       for (const data of objects) sum += data[keys[N - 1]];
       console.log(JSON.stringify({ sum, deltaMiB: (after - before) / 2 ** 20 }));
     `);
-  const { sum, deltaMiB } = JSON.parse(stdout);
-  expect(sum).toBe(-(800 - 1) * 500);
-  expect(deltaMiB).toBeLessThan(12);
-}, 60_000);
+    const { sum, deltaMiB } = JSON.parse(stdout);
+    expect(sum).toBe(-(800 - 1) * 500);
+    expect(deltaMiB).toBeLessThan(12);
+  },
+  60_000,
+);
 
 // A property of a dictionary object can be watched for replacement by optimized
 // code (an Equivalence condition), and a cached replace store must still

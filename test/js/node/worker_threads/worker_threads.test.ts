@@ -3289,7 +3289,11 @@ describe("a worker stopped by the handler of its uncaught error", () => {
   const rejects = `setImmediate(() => { Promise.reject(reasonWithStackGetter()); }); setInterval(() => {}, 1000);`;
   const reportedThenExit = { messages: ["reported boom", "exit 7"], errors: [], code: 7 };
   const exitOnly = { messages: ["exit 7"], errors: [], code: 7 };
-  const errorEventThenExit = { messages: ["error event", "exit 5"], errors: [], code: 5 };
+  const errorEventThenExit = {
+    messages: ["code getter ran", "error event", "exit 5"],
+    errors: ["RangeError: boom"],
+    code: 5,
+  };
 
   const cases: [name: string, worker: string, parent: string, expected: object, flags?: string[]][] = [
     // Reported by the nextTick queue.
@@ -3459,11 +3463,18 @@ describe("a worker stopped by the handler of its uncaught error", () => {
        globalThis.addEventListener("error", () => graph.run(() => { throw new Error("boom"); }));
        setTimeout(() => { throw new Error("first"); }, 1);`,
       "",
-      reportedThenExit,
+      { messages: ["reported boom", "exit 7"], errors: ["Error: first"], code: 7 },
     ],
-    // The worker's global 'error' event comes before the report to the parent. A listener that stops the
-    // worker there ends the report: the parent gets the exit code and no 'error' event, and nothing of the
-    // error is read for the parent after the stop (the clone would run its getters).
+    // The worker's global 'error' event comes before the report to the parent, and a listener can stop the
+    // worker there. The parent still receives the error, as it was thrown: it is cloned before the listeners
+    // run (the clone reads the error's properties), so nothing of it is read after the stop.
+    [
+      "a global 'error' listener's change to the error does not reach the parent",
+      `globalThis.addEventListener("error", event => { event.error.message = "changed by the listener"; });
+       setTimeout(() => { throw new RangeError("boom"); }, 1);`,
+      "",
+      { messages: ["exit 1"], errors: ["RangeError: boom"], code: 1 },
+    ],
     [
       "global 'error' listener exits, a timer threw",
       `globalThis.addEventListener("error", () => { post("error event"); process.exit(5); });
@@ -3517,7 +3528,7 @@ describe("a worker stopped by the handler of its uncaught error", () => {
       "global 'error' listener exits, a microtask threw",
       `globalThis.addEventListener("error", () => { post("error event"); process.exit(5); });
        setTimeout(() => queueMicrotask(() => { throw errorWithCodeGetter(); }), 1);`,
-      errorEventThenExit,
+      { messages: ["error event", "exit 5"], errors: ["RangeError: boom"], code: 5 },
     ],
     [
       "EventTarget listener exits, the script that called dispatchEvent() does not go on",
@@ -3560,7 +3571,8 @@ describe("a worker stopped by the handler of its uncaught error", () => {
     const script = `const worker = new Worker(URL.createObjectURL(new Blob([${JSON.stringify(prelude + worker)}])));
       const seen = { messages: [], errors: [] };
       worker.addEventListener("message", event => seen.messages.push(event.data));
-      worker.addEventListener("error", event => seen.errors.push(event.message));
+      // The message of a Web Worker's 'error' event is the error as the worker would print it: keep its "Name: message" line.
+      worker.addEventListener("error", event => seen.errors.push(event.message.split("\\n").find(line => /^\\w*Error: /.test(line)) ?? event.message));
       worker.addEventListener("close", event => console.log(JSON.stringify({ ...seen, code: event.code })));`;
     expect(await run(script, [])).toEqual(printed(expected));
   });

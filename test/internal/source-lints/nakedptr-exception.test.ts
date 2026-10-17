@@ -27,9 +27,8 @@ import path from "path";
 // the gate first (`isStoppingOrStopped`, as `JSNextTickQueue::drain` does). The tests in "a worker stopped
 // by the handler of its uncaught error" (worker_threads.test.ts) guard that half.
 //
-// This is a ratchet: `nakedptr-exception.inventory.json` counts today's uses per file. They re-throw
-// what they take, or convert it for a caller that does. A new one fails the test; removing one requires
-// lowering its count (the test tells you). Regenerate with
+// This is a ratchet: `nakedptr-exception.inventory.json` counts today's uses per file. A new one fails the
+// test; removing one requires lowering its count (the test tells you). Regenerate with
 // `bun test/internal/source-lints/nakedptr-exception.test.ts --update` (run as a script) only when removing.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");

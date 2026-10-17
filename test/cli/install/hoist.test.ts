@@ -2260,12 +2260,23 @@ describe.concurrent("a folder that no bun.lock placed stays", () => {
     }
   });
 
-  // Not every bun.lock says which dependencies are bundled. This one places `dep` at the root alone.
-  test("below a package, from its tarball: bun prune", async () => {
+  // The registry's metadata does not say that `ships` bundles `dep`, so bun.lock places `dep` at the root alone.
+  test("below a package that bundles it: bun prune", async () => {
     const own = JSON.stringify({ name: "dep", version: "1.0.0", from: "the tarball" });
+    const dependencies = { dep: "^1.0.0" };
     using server = await serveGraph(
-      { dep: { "1.0.0": {} }, ships: { "1.0.0": { dependencies: { dep: "^1.0.0" } } } },
-      { "ships-1.0.0": { "node_modules/dep/package.json": own } },
+      { dep: { "1.0.0": {} }, ships: { "1.0.0": { dependencies } } },
+      {
+        "ships-1.0.0": {
+          "package.json": JSON.stringify({
+            name: "ships",
+            version: "1.0.0",
+            dependencies,
+            bundleDependencies: ["dep"],
+          }),
+          "node_modules/dep/package.json": own,
+        },
+      },
     );
     using tmp = tempDir("hoist-own-folder-prune", {
       "bunfig.toml": bunfig(server),
@@ -2273,6 +2284,9 @@ describe.concurrent("a folder that no bun.lock placed stays", () => {
     });
     const dir = String(tmp);
     await run(dir, "install");
+    expect(await file(join(dir, "bun.lock")).text()).not.toContain("bundled");
+    // As in a Docker stage that copies node_modules alone.
+    rmSync(join(dir, ".bun-cache"), { recursive: true });
     await run(dir, "prune");
     expect(await file(join(dir, "node_modules", "ships", "node_modules", "dep", "package.json")).text()).toBe(own);
   });

@@ -1209,8 +1209,6 @@ fn plan_hoisted(
         manager.crash();
     }
 
-    let cache = crate::package_manager::directories::try_get_cache_directory(manager).ok();
-    let manager: &PackageManager = manager;
     let quiet = manager.options.log_level == LogLevel::Silent;
     let lockfile: &Lockfile = &manager.lockfile;
     let hoisted = HoistedTree::init(lockfile, quiet);
@@ -1274,11 +1272,17 @@ fn plan_hoisted(
             if !extracted(pkg_res[pkg_id as usize].tag) || has_bundled_deps(lockfile, pkg_id) {
                 continue;
             }
-            let Some(nested) = descend(&dir, alias)
-                .and_then(|package| open_real_subdir(&package, b"node_modules"))
-            else {
+            let Some(package) = descend(&dir, alias) else {
                 continue;
             };
+            let Some(nested) = open_real_subdir(&package, b"node_modules") else {
+                continue;
+            };
+            // Not every bun.lock says which dependencies are bundled. The package itself does.
+            crate::initialize_store();
+            if crate::git_runner::bundles_dependencies(&package) {
+                continue;
+            }
             let nested_path = join(&join(folder_path, alias), b"node_modules");
             scan_folder(
                 nested,
@@ -1289,8 +1293,6 @@ fn plan_hoisted(
                         || !hoisted.is_installed(tree_id, alias)
                         || !hoisted.owners_installed(tree_id)
                         || !hoisted.removable(tree_id, entry.alias, &nested_path)
-                        // Not every bun.lock says which dependencies are bundled.
-                        || cache.is_some_and(|cache| may_ship(manager, cache, pkg_id, entry.alias))
                 },
                 plan,
             );
@@ -1327,7 +1329,7 @@ fn plan_hoisted(
         };
         if visited.is_set(pkg_id)
             || selection.is_some_and(|sel| !sel.selected.is_set(pkg_id))
-            || is_pruned_workspace(manager, pkg_id)
+            || is_pruned_workspace(&*manager, pkg_id)
         {
             continue;
         }

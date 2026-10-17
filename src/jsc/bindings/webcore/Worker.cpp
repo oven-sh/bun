@@ -467,4 +467,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     return JSValue::encode(jsUndefined());
 }
 
+// https://html.spec.whatwg.org/multipage/workers.html#dom-workerglobalscope-close, consumed by GlobalObject::drainMicrotasks.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionWorkerGlobalScopeClose,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
+{
+    WebCore::clientData(lexicalGlobalObject->vm())->workerCloseRequested = true;
+    return JSValue::encode(jsUndefined());
+}
+
 } // namespace WebCore

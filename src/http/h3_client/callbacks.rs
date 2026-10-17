@@ -305,11 +305,15 @@ extern "C" fn on_stream_writable(s: *mut quic::Stream) {
     encode::drain_send_body(stream, s);
 }
 
+/// RFC 9114 §8.1: the server did no application processing.
+const H3_REQUEST_REJECTED: u64 = 0x10B;
+
 extern "C" fn on_stream_close(s: *mut quic::Stream) {
     let s = qstream_arg(s);
     let Some(stream) = stream_of(s) else { return };
     *s.ext::<Stream>() = None;
     stream.qstream = None;
+    stream.peer_rejected = s.peer_reset_code() == Some(H3_REQUEST_REJECTED);
     bun_core::scoped_log!(
         h3_client,
         "stream_close status={} delivered={}",

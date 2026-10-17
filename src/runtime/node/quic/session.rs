@@ -823,6 +823,13 @@ impl QuicSession {
         self.stream_is_live(p).then(|| unsafe { &*p })
     }
 
+    /// `on_conn_closed` nulls `conn` before any event drains, so a stream
+    /// whose `StreamClosed` is dispatched with no conn was closed by the
+    /// connection's death. Its close is the session's to report.
+    fn defers_stream_close(&self, stream: &super::stream::QuicStream) -> bool {
+        self.conn.get().is_null() && stream.is_open_at_conn_death()
+    }
+
     pub(super) fn apply_peer_datagram_budget(&self) {
         let Some(tp) = self.conn().and_then(|c| c.peer_transport_params()) else {
             return;
@@ -910,7 +917,14 @@ impl QuicSession {
                 self.schedule_process();
                 break;
             }
-            if !matches!(event, SessionEvent::PeerClose { .. } | SessionEvent::Closed) {
+            let runs_js = match &event {
+                SessionEvent::PeerClose { .. } | SessionEvent::Closed => false,
+                SessionEvent::StreamClosed { stream } => self
+                    .live_stream(*stream)
+                    .is_some_and(|s| s.is_announce_suppressed() || !self.defers_stream_close(s)),
+                _ => true,
+            };
+            if runs_js {
                 dispatched_js = true;
             }
             if self.destroyed.get() {
@@ -1462,6 +1476,13 @@ impl QuicSession {
                 if stream.is_announce_suppressed() {
                     self.streams.with_mut(|v| v.retain(|&s| s != stream_ptr));
                     stream.release_close_root();
+                    return Ok(());
+                }
+                // The connection took this stream down. It stays registered
+                // so the session's close reaches it through
+                // `session.destroy(error)` with the connection's error, the
+                // way Node's FinishClose destroys every open stream.
+                if self.defers_stream_close(stream) {
                     return Ok(());
                 }
                 // Runs the parked reader wakeup — user JS, which may destroy

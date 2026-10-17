@@ -1644,6 +1644,7 @@ interface QuicStreamInner {
   oninfo: Function | undefined;
   onwanttrailers: Function | undefined;
   earlySnapshot?: boolean;
+  finReceived?: boolean;
 }
 
 class QuicStream {
@@ -1672,6 +1673,8 @@ class QuicStream {
     ontrailers: undefined,
     oninfo: undefined,
     onwanttrailers: undefined,
+    earlySnapshot: undefined,
+    finReceived: undefined,
   };
 
   static {
@@ -1741,19 +1744,30 @@ class QuicStream {
     inner.iteratorLocked = true;
 
     inner.reader ??= this.#handle?.getReader();
-    if (!inner.reader) return;
-
-    yield* createBlobReaderIterable(inner.reader, {
-      getReadError: () => {
-        if (inner.state.readEnded && !inner.state.finReceived) {
-          if (inner.state.reset) {
-            return ERR_QUIC_STREAM_RESET(Number(inner.state.resetCode ?? 0n));
+    // No reader means an outbound-only unidirectional stream, or a stream
+    // destroyed before it was read. The latter is still checked for
+    // truncation below.
+    if (inner.reader) {
+      yield* createBlobReaderIterable(inner.reader, {
+        getReadError: () => {
+          if (inner.state.readEnded && !inner.state.finReceived) {
+            if (inner.state.reset) {
+              return ERR_QUIC_STREAM_RESET(Number(inner.state.resetCode ?? 0n));
+            }
+            return ERR_QUIC_STREAM_ABORTED("Stream aborted before FIN was received");
           }
-          return ERR_QUIC_STREAM_ABORTED("Stream aborted before FIN was received");
-        }
-        return $ERR_INVALID_STATE("The stream is not readable");
-      },
-    });
+          return $ERR_INVALID_STATE("The stream is not readable");
+        },
+      });
+    }
+
+    // The stream was destroyed before a FIN arrived: the read is truncated.
+    // The close carries the reason (the session's error, or the error
+    // passed to destroy()), so a rejected `closed` rethrows here and a
+    // clean close ends the iteration.
+    if (this.destroyed && !(inner.state.finReceived ?? inner.finReceived)) {
+      await this.closed;
+    }
   }
 
   /**
@@ -2501,6 +2515,7 @@ class QuicStream {
     }
     inner.stats?.[kFinishClose]();
     inner.earlySnapshot = inner.state?.early;
+    inner.finReceived = inner.state?.finReceived;
     inner.state?.[kFinishClose]();
     inner.session![kRemoveStream](this);
     inner.writer?.fail(error);

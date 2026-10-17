@@ -135,7 +135,7 @@ describe("writing the .snap file", () => {
   });
 
   // A FIFO accepts the open but not the positional write at the end of the file.
-  test.skipIf(isWindows).concurrent("a .snap that cannot be written fails the file and the run goes on", async () => {
+  test.skipIf(isWindows).concurrent("a .snap that cannot be written is an error and the run goes on", async () => {
     using dir = tempDir("snapshot-write-error", {
       "a.test.ts": snapTest,
       "b.test.ts": snapTest,
@@ -147,7 +147,7 @@ describe("writing the .snap file", () => {
     // Nothing of a's unwritten .snap ends up in b's.
     expect(fs.readFileSync(`${dir}/__snapshots__/b.test.ts.snap`, "utf8")).toBe(writtenSnap);
     expect(stderr).toContain("2 pass");
-    expect(stderr).toContain("1 fail");
+    expect(stderr).toContain("1 error");
     expect(exitCode).toBe(1);
   });
 });
@@ -189,6 +189,16 @@ describe("--bail", () => {
     using dir = tempDir("snapshot-bail-earlier-file", { "a.test.ts": snapTest, "b.test.ts": failingTest });
     await runUntilBail(dir, "./a.test.ts", "./b.test.ts");
     expect(fs.readFileSync(`${dir}/__snapshots__/a.test.ts.snap`, "utf8")).toBe(writtenSnap);
+  });
+
+  test.skipIf(isWindows).concurrent("still bails on the next failure after a .snap write error", async () => {
+    using dir = tempDir("snapshot-bail-after-write-error", {
+      "a.test.ts": snapTest,
+      "b.test.ts": failingTest,
+      "__snapshots__": {},
+    });
+    expect(Bun.spawnSync({ cmd: ["mkfifo", `${dir}/__snapshots__/a.test.ts.snap`] }).exitCode).toBe(0);
+    await runUntilBail(dir, "--update-snapshots", "./a.test.ts", "./b.test.ts");
   });
 
   test.concurrent("keeps the snapshots of an earlier file when a later file fails to load", async () => {

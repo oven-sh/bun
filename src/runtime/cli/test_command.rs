@@ -3085,7 +3085,7 @@ impl TestCommand {
         // Per file, so this file's snapshots are on disk however a later file ends.
         if let Err(err) = reporter.jest.snapshots.write_snapshot_file() {
             Output::err(err.name(), "Failed to write snapshot file", ());
-            reporter.summary().fail += 1;
+            reporter.jest.unhandled_errors_between_tests += 1;
         }
         Ok(())
     }

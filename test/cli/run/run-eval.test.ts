@@ -108,6 +108,70 @@ for (const flag of ["-e", "--print"]) {
   });
 }
 
+// https://github.com/oven-sh/bun/issues/23631
+// Empty cwd: a token dispatched as a subcommand (`bun test`, `bun x`, ...) must find nothing to act on.
+describe("eval flags take precedence over subcommand names", () => {
+  describe("the code is a subcommand name", () => {
+    const cases: string[][] = [
+      ["-p", "test"],
+      ["--print", "x"],
+      ["--eval", "test"],
+      ["-pe", "help"],
+      ["-e", "test"],
+      // The eval flag is reached after skipping an unrelated flag.
+      ["--smol", "-p", "test"],
+    ];
+
+    for (const args of cases) {
+      const name = args[args.length - 1];
+      test.concurrent(`bun ${args.join(" ")} evaluates \`${name}\``, async () => {
+        using dir = tempDir("eval-subcommand-name", {});
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain(`ReferenceError: ${name} is not defined`);
+        expect(stdout).toBe("");
+        expect(exitCode).toBe(1);
+      });
+    }
+  });
+
+  describe("a script argument is a subcommand name", () => {
+    const argv = "JSON.stringify(process.argv.slice(1))";
+    const cases: string[][] = [
+      [`-p${argv}`, "test"],
+      [`-p=${argv}`, "test"],
+      [`--print=${argv}`, "test"],
+      [`--eval=console.log(${argv})`, "help"],
+      [`-e=console.log(${argv})`, "test"],
+      ["-p", argv, "test"],
+    ];
+
+    for (const args of cases) {
+      const name = args[args.length - 1];
+      test.concurrent(`bun ${args.join(" ")} passes \`${name}\` to the script`, async () => {
+        using dir = tempDir("eval-subcommand-arg", {});
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe(JSON.stringify([name]) + "\n");
+        expect(exitCode).toBe(0);
+      });
+    }
+  });
+});
+
 describe("--print for cjs/esm", () => {
   test("eval result between esm imports", async () => {
     let cwd = tmpdirSync();

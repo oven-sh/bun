@@ -186,27 +186,18 @@ impl LineOffsetTable {
         // Hoist the base pointer so per-iteration offset math is a single sub + truncate.
         let base = contents.as_ptr() as usize;
 
+        // Same decoder as `Chunk.rs`: an ill-formed sequence is one U+FFFD one byte wide.
+        let iter = strings::CodepointIterator::init(contents);
         let mut remaining = contents;
         while !remaining.is_empty() {
-            let b0 = remaining[0];
-            let len_ = strings::wtf8_byte_sequence_length_with_invalid(b0);
-            // After the SIMD skip below lands, the loop head
-            // is overwhelmingly an ASCII '\r'/'\n' or a non-ASCII lead byte, so keep the
-            // 1-byte path branch-only and confine the zero+copy pad to the cold
-            // multibyte arm.
-            // `len_` is the lead byte's *declared* width; a source whose final bytes are
-            // a truncated multibyte sequence declares more bytes than remain, so every
-            // slice below (decode, SIMD-skip offset, advance) must use the clamped width.
-            let cp_len = (len_ as usize).min(remaining.len());
-            let c: i32 = if len_ == 1 {
-                b0 as i32
-            } else {
-                let mut cp_bytes = [0u8; 4];
-                cp_bytes[..cp_len].copy_from_slice(&remaining[..cp_len]);
-                strings::decode_wtf8_rune_t::<i32>(cp_bytes, len_, 0)
-            };
-
             let offset = (remaining.as_ptr() as usize - base) as u32;
+            let mut cursor = strings::Cursor {
+                i: offset,
+                ..Default::default()
+            };
+            let _ = iter.next(&mut cursor);
+            let c: i32 = cursor.c;
+            let cp_len = cursor.width as usize;
 
             if column == 0 {
                 line_byte_offset = offset;

@@ -2231,21 +2231,46 @@ pub fn percent_encode_write(
     Ok(())
 }
 
-/// JavaScript's `encodeURIComponent` on bytes: every byte but `A-Z a-z 0-9 - _ . ! ~ * ' ( )` becomes `%XX`.
-pub fn percent_encode_uri_component(input: &[u8], writer: &mut Vec<u8>) {
+/// Appends `input` to `writer`, with every byte that `keep` rejects written as `%XX`.
+fn percent_encode_except(input: &[u8], writer: &mut Vec<u8>, keep: impl Fn(u8) -> bool) {
     for &byte in input {
-        if byte.is_ascii_alphanumeric()
-            || matches!(
-                byte,
-                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
-            )
-        {
+        if keep(byte) {
             writer.push(byte);
         } else {
             let h = crate::fmt::hex2_upper(byte);
             writer.extend_from_slice(&[b'%', h[0], h[1]]);
         }
     }
+}
+
+/// JavaScript's `encodeURIComponent` on bytes: every byte but `A-Z a-z 0-9 - _ . ! ~ * ' ( )` becomes `%XX`.
+pub fn percent_encode_uri_component(input: &[u8], writer: &mut Vec<u8>) {
+    percent_encode_except(input, writer, |byte| {
+        byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+            )
+    });
+}
+
+/// A file path as a URL path: escapes what a browser would (the WHATWG path percent-encode set), and `%` and `\`, which a file name means literally.
+pub fn percent_encode_url_path(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    fn keep(byte: u8) -> bool {
+        byte.is_ascii_graphic()
+            && !matches!(
+                byte,
+                b'"' | b'#' | b'%' | b'<' | b'>' | b'?' | b'\\' | b'^' | b'`' | b'{' | b'}'
+            )
+    }
+
+    let Some(first) = path.iter().position(|&byte| !keep(byte)) else {
+        return std::borrow::Cow::Borrowed(path);
+    };
+    let mut out = Vec::with_capacity(path.len() + 2 * (path.len() - first));
+    out.extend_from_slice(&path[..first]);
+    percent_encode_except(&path[first..], &mut out, keep);
+    std::borrow::Cow::Owned(out)
 }
 
 /// Levenshtein's distance: how many elements have to be replaced, added or removed to make `b` of `a`.

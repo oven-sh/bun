@@ -12,6 +12,10 @@ export default [
         fn: "close",
         length: 0,
       },
+      "@@dispose": {
+        fn: "close",
+        length: 0,
+      },
 
       symbols: {
         cache: "symbolsValue",

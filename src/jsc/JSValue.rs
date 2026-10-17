@@ -1580,7 +1580,6 @@ impl JSValue {
                 min,
                 max,
                 field_name: property_name.as_bytes(),
-                always_allow_zero: false,
             },
         )?))
     }

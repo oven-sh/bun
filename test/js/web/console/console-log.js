@@ -18,6 +18,8 @@ console.log(new String("Hello"));
 console.log(new String("Hello 👋🏼"));
 console.log(new Number(5));
 console.log(new Boolean(true));
+console.log({ s: new String("Hello"), n: new Number(5), b: new Boolean(true) });
+console.log([new String("Hello"), new String("Hello 👋🏼"), "Hello"]);
 console.log([123, 456, 789]);
 console.log({ name: "foo" });
 console.log({ a: 123, b: 456, c: 789 });

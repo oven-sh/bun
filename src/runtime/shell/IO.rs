@@ -12,7 +12,7 @@ use bun_sys::Fd;
 
 use crate::api::bun_spawn::stdio::{Capture, Dup2, Stdio};
 use crate::shell::builtin::{IoKind, Kind};
-use crate::shell::interpreter::{Interpreter, OutputNeedsIOSafeGuard, ShellExecEnv, shell_dup};
+use crate::shell::interpreter::{Interpreter, OutputNeedsIOSafeGuard, ShellExecEnv, is_pollable};
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::shell_body::subproc::{ShellIO, StdioKind};
@@ -141,10 +141,10 @@ pub(crate) enum CmdOut {
     Fd(OutFd),
     /// The captured buffer of the shell env: `_buffered_stdout` or `_buffered_stderr`.
     Buf(IoKind),
-    /// `> file` for a command that is not a builtin. The fd stays blocking, as a child needs it.
+    /// `> file` for a command that is not a builtin: the file, or a copy of
+    /// the fd of a `Bun.file(fd)`. The fd stays blocking, as a child needs it.
     File(bun_sys::File),
-    /// An fd that this stream does not own: the `File` of the other stream
-    /// (`&> file`), or the fd of a `Bun.file(fd)`.
+    /// The fd of the `File` that the other stream owns: `&> file`.
     BorrowedFd(Fd),
     /// `> ${buffer}` for a builtin.
     ArrayBuf(Box<ArrayBufSink>),
@@ -213,25 +213,24 @@ impl CmdIO {
         redirect_stderr: &mut Option<PinnedArrayBuffer>,
     ) -> JsResult<()> {
         stdio[0] = self.stdin.to_subproc_stdio(interp)?;
-        stdio[1] = self.stdout.to_subproc_stdio(
-            interp,
-            StdioKind::Stdout,
-            &mut shellio.stdout,
-            redirect_stdout,
-        )?;
-        stdio[2] = if self.stderr.is_same_stream(&self.stdout) {
-            // `2>&1` or `1>&2`: the child gets the one stream on stdout.
-            Stdio::Dup2(Dup2 {
-                out: StdioKind::Stderr,
-                to: StdioKind::Stdout,
-            })
+        stdio[1] = self
+            .stdout
+            .to_subproc_stdio(interp, &mut shellio.stdout, redirect_stdout)?;
+        stdio[2] = if !self.stderr.is_same_stream(&self.stdout) {
+            self.stderr
+                .to_subproc_stdio(interp, &mut shellio.stderr, redirect_stderr)?
         } else {
-            self.stderr.to_subproc_stdio(
-                interp,
-                StdioKind::Stderr,
-                &mut shellio.stderr,
-                redirect_stderr,
-            )?
+            // `2>&1` or `1>&2`: the child gets the one stream on stdout.
+            match &stdio[1] {
+                // `Dup2` on Windows is a pipe that this process reads for the
+                // child (`spawn_process_windows`), and only a captured stdout
+                // has a reader. An fd goes to the child on both streams.
+                Stdio::Fd(fd) if cfg!(windows) => Stdio::Fd(*fd),
+                _ => Stdio::Dup2(Dup2 {
+                    out: StdioKind::Stderr,
+                    to: StdioKind::Stdout,
+                }),
+            }
         };
         Ok(())
     }
@@ -311,7 +310,7 @@ impl CmdOut {
         }
     }
 
-    /// The same stream again: for `2>&1` and `1>&2`, and for the second stream
+    /// The same stream again: for `2>&1` and `1>&2`, and for the other stream
     /// of `&> file`. A `Buf` keeps its target, so stderr after `2>&1` appends
     /// to the stdout buffer.
     pub(crate) fn dup(&self) -> CmdOut {
@@ -438,44 +437,54 @@ impl CmdOut {
         }
     }
 
-    /// Makes a stream that `Cmd::apply_redirect` set up for a child process
-    /// into one that the shell itself can write to: the command did not start,
-    /// and the shell reports that on it. A target that cannot be written to
-    /// becomes `Ignore`.
-    pub(crate) fn make_writable(&mut self, interp: &Interpreter) {
-        let fd = match core::mem::replace(self, CmdOut::Ignore) {
-            // The `IOWriter` takes over the fd.
-            CmdOut::File(file) => Ok(file.into_raw()),
-            // The owner keeps its fd. The `IOWriter` closes a copy.
-            CmdOut::BorrowedFd(fd) => shell_dup(fd),
-            CmdOut::JsBuf(idx) => {
-                if let Some(buf) = interp
-                    .js_object(idx)
-                    .and_then(|(global, value)| PinnedArrayBuffer::root(global, value))
-                {
-                    *self = CmdOut::ArrayBuf(Box::new(ArrayBufSink { buf, i: 0 }));
-                }
-                return;
-            }
-            writable @ (CmdOut::Fd(_) | CmdOut::Buf(_) | CmdOut::ArrayBuf(_) | CmdOut::Ignore) => {
-                *self = writable;
-                return;
-            }
-        };
-        let Ok(fd) = fd else { return };
+    /// A stream that writes to `fd` and closes it. The fd keeps the blocking
+    /// mode that it has, which its other users share. A FIFO, a socket or a
+    /// tty that is full is waited for with a poll, so it does not stop this
+    /// thread.
+    pub(crate) fn writer(interp: &Interpreter, fd: Fd) -> CmdOut {
         let writer = IOWriter::init(
             fd,
             io_writer::Flags {
-                pollable: cfg!(windows),
+                pollable: is_pollable(fd),
                 ..Default::default()
             },
             interp.event_loop,
         );
         writer.set_interp(interp.as_ctx_ptr());
-        *self = CmdOut::Fd(OutFd {
+        CmdOut::Fd(OutFd {
             writer,
             captured: None,
-        });
+        })
+    }
+
+    /// Makes the stderr that `Cmd::apply_redirect` set up for a child process
+    /// into one that the shell itself can write to: the command did not start,
+    /// and the shell reports that on it. `Err`: a JS error is thrown.
+    pub(crate) fn make_writable(&mut self, interp: &Interpreter) -> JsResult<()> {
+        match self {
+            CmdOut::Fd(_) | CmdOut::Buf(_) | CmdOut::ArrayBuf(_) | CmdOut::Ignore => {}
+            CmdOut::JsBuf(idx) => {
+                // `Cmd::apply_redirect` stored the index after this lookup worked.
+                let Some((global, value)) = interp.js_object(*idx) else {
+                    *self = CmdOut::Ignore;
+                    return Ok(());
+                };
+                let Some(buf) = PinnedArrayBuffer::root(global, value) else {
+                    return Err(global.throw_out_of_memory());
+                };
+                *self = CmdOut::ArrayBuf(Box::new(ArrayBufSink { buf, i: 0 }));
+            }
+            CmdOut::File(_) => {
+                // The writer takes over the fd.
+                if let CmdOut::File(file) = core::mem::replace(self, CmdOut::Ignore) {
+                    *self = CmdOut::writer(interp, file.into_raw());
+                }
+            }
+            CmdOut::BorrowedFd(_) => {
+                unreachable!("stderr owns the fd of its target; see `Redirected::set_out`")
+            }
+        }
+        Ok(())
     }
 
     /// The stdio that a child process gets for this stream.
@@ -483,7 +492,6 @@ impl CmdOut {
     fn to_subproc_stdio(
         &self,
         interp: &Interpreter,
-        kind: StdioKind,
         shellio: &mut Option<Arc<IOWriter>>,
         redirect_buf: &mut Option<PinnedArrayBuffer>,
     ) -> JsResult<Stdio> {
@@ -506,17 +514,22 @@ impl CmdOut {
                     if fd != Fd::INVALID {
                         Stdio::Fd(fd)
                     } else {
-                        // Windows: fd was moved to libuv → inherit (libuv
-                        // already manages it). On POSIX `IOWriter::fd()` is
-                        // always the live fd, so this branch is unreachable.
-                        Stdio::Inherit
+                        // Windows: fd was moved to libuv. The shell's own
+                        // stdout and stderr writers are on the streams of
+                        // this process, which the child gets by name: after
+                        // `2>&1` or `1>&2` the stream is not at its own slot.
+                        // Another writer is inherited, as before. On POSIX
+                        // `IOWriter::fd()` is always the live fd, so this
+                        // branch is unreachable.
+                        match interp.process_stream(&val.writer) {
+                            Some(fd) => Stdio::Fd(fd),
+                            None => Stdio::Inherit,
+                        }
                     }
                 }
             }
             CmdOut::Buf(_) => Stdio::Pipe,
             CmdOut::File(file) => Stdio::Fd(file.handle()),
-            // `> ${Bun.stdout}` is the stdout that the child has already, as in `Stdio::extract_blob`.
-            CmdOut::BorrowedFd(fd) if *fd == kind.to_fd() => Stdio::Inherit,
             CmdOut::BorrowedFd(fd) => Stdio::Fd(*fd),
             CmdOut::JsBuf(idx) => {
                 // `Cmd::apply_redirect` stored the index after this lookup worked.

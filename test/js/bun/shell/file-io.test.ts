@@ -125,6 +125,84 @@ describe("IOWriter file output redirection", () => {
         fs.closeSync(holder);
       }
     });
+
+    // The target of a command that is not a builtin is open as a child needs
+    // it: blocking. The shell's own message about a command that does not
+    // start must wait for a FIFO that is full, not block the thread in write(2).
+    test.concurrent.skipIf(!isPosix)("message of a command that does not start waits for a full FIFO", async () => {
+      using dir = tempDir("shell-fifo-redirect-message", {
+        "fixture.ts": /* ts */ `
+          import { $ } from "bun";
+          import * as fs from "node:fs";
+          const fifo = process.env.FIFO!;
+          const rfd = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+          const wfd = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+          // Fill the pipe, so that the message does not fit until this script reads.
+          let filled = 0;
+          for (const chunk of [Buffer.alloc(4096, "#"), Buffer.alloc(1, "#")]) {
+            try { while (true) filled += fs.writeSync(wfd, chunk); } catch {}
+          }
+
+          let shell: Awaited<ReturnType<typeof $>> | undefined;
+          const pending = $\`nosuch_cmd_zz 2> \${fifo}\`.quiet().nothrow().then(r => (shell = r));
+
+          // The only reader is this thread. It gets here only if the shell did not block.
+          const buf = Buffer.alloc(65536);
+          const chunks: Buffer[] = [];
+          const read = () => {
+            let n = 0;
+            try { n = fs.readSync(rfd, buf); } catch (e: any) { if (e.code !== "EAGAIN") throw e; }
+            if (n > 0) chunks.push(Buffer.from(buf.subarray(0, n)));
+            return n;
+          };
+          while (!shell) {
+            read();
+            await new Promise<void>(r => setImmediate(r));
+          }
+          await pending;
+          fs.closeSync(wfd);
+          while (read() > 0) {}
+          fs.closeSync(rfd);
+          console.log(
+            JSON.stringify({
+              exitCode: shell!.exitCode,
+              stderr: shell!.stderr.toString(),
+              message: Buffer.concat(chunks).subarray(filled).toString(),
+            }),
+          );
+        `,
+      });
+      const fifo = join(String(dir), "err.fifo");
+      await using mk = Bun.spawn({ cmd: [Bun.which("mkfifo")!, fifo], env: bunEnv });
+      await mk.exited;
+
+      // Hold a read end in the parent so the FIFO survives a child abort
+      // without the tempDir teardown racing an open writer.
+      const holder = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "fixture.ts"],
+          cwd: String(dir),
+          env: { ...bunEnv, FIFO: fifo },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(stdout.trim().split("\n").pop() ?? "");
+        } catch {
+          parsed = stdout;
+        }
+        expect({ parsed, stderr, exitCode }).toEqual({
+          parsed: { exitCode: 1, stderr: "", message: "bun: command not found: nosuch_cmd_zz\n" },
+          stderr: "",
+          exitCode: 0,
+        });
+      } finally {
+        fs.closeSync(holder);
+      }
+    });
   });
 
   describe("writer queue and bump behavior", () => {

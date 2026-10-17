@@ -7,7 +7,8 @@ use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
 use crate::shell::interpreter::{
-    Interpreter, Node, NodeId, ShellExecEnv, StateKind, is_pollable_from_mode, log, shell_openat,
+    Interpreter, Node, NodeId, ShellExecEnv, StateKind, is_pollable_from_mode, log, shell_dup,
+    shell_openat,
 };
 use crate::shell::io::{ArrayBufSink, CmdIO, CmdIn, CmdOut, IO, JsObject, OutFd};
 use crate::shell::io_reader::IOReader;
@@ -87,8 +88,10 @@ impl Redirected {
     fn set_out(&mut self, streams: (bool, bool), out: CmdOut) {
         match streams {
             (true, true) => {
-                self.stderr = Some(out.dup());
-                self.stdout = Some(out);
+                // stderr owns a `File`: the message about a command that does
+                // not start is then written with no copy of the fd.
+                self.stdout = Some(out.dup());
+                self.stderr = Some(out);
             }
             (true, false) => self.stdout = Some(out),
             (false, true) => self.stderr = Some(out),
@@ -123,8 +126,8 @@ impl RedirectError {
 /// Whether a redirect to a target is for stdout and for stderr.
 ///
 /// A target after `2>&1` or `1>&2` comes from the parser reading the next
-/// word as one. Each exec form keeps what it did with it: a child gets both
-/// streams on the target, a builtin gets only the stream that the flags name.
+/// word as one. A child gets both streams on the target. A builtin gets only
+/// the stream that the flags name.
 fn out_streams(flags: ast::RedirectFlags, form: ExecForm) -> (bool, bool) {
     let both = matches!(form, ExecForm::Spawn) && flags.duplicate_out();
     (flags.stdout() || both, flags.stderr() || both)
@@ -866,7 +869,7 @@ impl Cmd {
                     redirected.stdin = Some(CmdIn::Fd(reader));
                 })
             }
-            ExecForm::Builtin => Self::open_writer(interp, cwd_fd, &path, flags.to_flags())
+            ExecForm::Builtin => Self::open_writer(interp, cwd_fd, path, flags.to_flags())
                 .map(|out| redirected.set_out(streams, out)),
             ExecForm::Spawn => shell_openat(cwd_fd, path, flags.to_flags(), 0o666).map(|fd| {
                 let file = bun_sys::File::from_fd(fd);
@@ -883,11 +886,11 @@ impl Cmd {
         }
     }
 
-    /// Opens `target`, a path or an fd, for a builtin to write to.
-    fn open_writer<P: bun_io::open_for_writing_mod::OpenForWritingInput>(
+    /// Opens the file at `path` for a builtin to write to.
+    fn open_writer(
         interp: &Interpreter,
         cwd_fd: bun_sys::Fd,
-        target: &P,
+        path: &bun_core::ZStr,
         flags: i32,
     ) -> bun_sys::Result<CmdOut> {
         let mut pollable = false;
@@ -895,7 +898,7 @@ impl Cmd {
         let mut is_nonblocking = false;
         let fd = bun_io::open_for_writing_impl(
             cwd_fd,
-            target,
+            &path,
             flags,
             0o666,
             &mut pollable,
@@ -1002,25 +1005,28 @@ impl Cmd {
             JsObject::Response(response) => {
                 let body = response.get_body_value();
                 body.to_blob_if_possible();
-                match body.use_as_any_blob() {
-                    crate::webcore::blob::Any::Blob(blob) => blob_file(&blob),
+                // Only a body that is a file is taken. A target that is
+                // rejected below keeps its body.
+                let file = match &*body {
+                    crate::webcore::body::Value::Blob(blob) => blob_file(blob),
                     _ => None,
+                };
+                if file.is_some() {
+                    drop(body.use_as_any_blob());
                 }
+                file
             }
         };
         match file {
             Some(BlobFile::Fd(fd)) => {
+                // The command gets a copy of the fd. The caller keeps its own.
+                let fd = match shell_dup(fd) {
+                    Ok(fd) => fd,
+                    Err(e) => return Err(RedirectError::open(&e, b"Bun.file(fd)")),
+                };
                 let out = match form {
-                    // The builtin writes to a copy of the fd. The caller keeps its own.
-                    ExecForm::Builtin => {
-                        let cwd_fd = interp.as_cmd(this).base.shell().cwd_fd;
-                        let target = bun_io::PathOrFileDescriptor::Fd(fd);
-                        match Self::open_writer(interp, cwd_fd, &target, flags.to_flags()) {
-                            Ok(out) => out,
-                            Err(e) => return Err(RedirectError::open(&e, b"Bun.file(fd)")),
-                        }
-                    }
-                    ExecForm::Spawn => CmdOut::BorrowedFd(fd),
+                    ExecForm::Builtin => CmdOut::writer(interp, fd),
+                    ExecForm::Spawn => CmdOut::File(bun_sys::File::from_fd(fd)),
                 };
                 redirected.set_out(streams, out);
                 Ok(redirected)

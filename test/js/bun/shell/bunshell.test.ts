@@ -2151,6 +2151,14 @@ describe("deno_task", () => {
           );
         });
 
+        // The command gets a copy of the fd when the redirect is applied.
+        test.skipIf(isWindows)("2> Bun.file(fd) with an fd that is not open", async () => {
+          await sameAsBuiltin(
+            name => $`${name} 2> ${Bun.file(2 ** 30)}`,
+            stderr => expect(stderr).toContain("Bun.file(fd)"),
+          );
+        });
+
         test("no command name", async () => {
           using dir = tempDir("shell-redirect-fails", {});
           const builtin = await $`echo < missing_input_zz`.cwd(String(dir)).quiet();
@@ -2198,16 +2206,31 @@ describe("deno_task", () => {
           const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           const builtin = "rejected Cannot redirect stdout/stderr to an immutable blob. Expected a file";
           const external = "rejected Blobs are immutable, and cannot be used for stdout/stderr";
-          const rejected = expect.stringMatching(/^rejected /);
+          // The message names the stream: the command was not searched for.
+          const stream = expect.stringMatching(/^rejected .*ReadableStream/);
           expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
             result: {
-              stream: [rejected, rejected, rejected],
+              stream: [stream, stream, stream],
               blob: [builtin, external, external],
               response: [builtin, external, external],
             },
             stderr: "",
             exitCode: 0,
           });
+        });
+
+        // Only a Response of a file is a target. The others are not read.
+        test("a Response that is rejected keeps its body", async () => {
+          const results = [];
+          for (const name of ["echo", BUN, "nosuch_cmd_zz"]) {
+            const response = new Response("keep");
+            const rejected = await $`${name} --version > ${response}`.quiet().then(
+              () => false,
+              () => true,
+            );
+            results.push({ rejected, bodyUsed: response.bodyUsed, body: await response.text() });
+          }
+          expect(results).toEqual(Array(3).fill({ rejected: true, bodyUsed: false, body: "keep" }));
         });
       });
     });
@@ -2244,6 +2267,16 @@ describe("deno_task", () => {
         .testMini()
         .runAsTest("external 2>&1 in a command substitution");
 
+      // The shell wrote to the stream before the command gets it.
+      TestBuilder.command`echo first; ${BUN} -e ${both} 2>&1`
+        .stdout("first\nout\nerr\n")
+        .testMini()
+        .runAsTest("external 2>&1 after a builtin wrote to stdout");
+      TestBuilder.command`echo first 1>&2; ${BUN} -e ${both} 1>&2`
+        .stderr("first\nout\nerr\n")
+        .testMini()
+        .runAsTest("external 1>&2 after a builtin wrote to stderr");
+
       TestBuilder.command`ls nosuch_dir_zz 2>> err.txt`
         .file("err.txt", "pre\n")
         .exitCode(1)
@@ -2275,14 +2308,19 @@ describe("deno_task", () => {
         using dir = tempDir("shell-redirect-fd", {});
         const path = join(String(dir), "out.txt");
         const fd = openSync(path, "w");
+        // The command writes to a copy of the fd. The fd of the caller keeps its mode: no O_NONBLOCK.
+        const flags = () =>
+          isLinux ? readFileSync(`/proc/self/fdinfo/${fd}`, "utf8").match(/^flags:\s*\d+/m)?.[0] : "";
         try {
+          const before = flags();
           const { stdout, stderr, exitCode } = await run(Bun.file(fd)).quiet();
           expect({
             stdout: stdout.toString(),
             stderr: stderr.toString(),
             file: readFileSync(path, "utf8"),
+            flags: flags(),
             exitCode,
-          }).toEqual({ stdout: "", stderr: "", file: "hi\n", exitCode: 0 });
+          }).toEqual({ stdout: "", stderr: "", file: "hi\n", flags: before, exitCode: 0 });
         } finally {
           closeSync(fd);
         }
@@ -2325,6 +2363,72 @@ describe("deno_task", () => {
         .exitCode(1)
         .stderr("bun: ambiguous redirect: at `bun`\n")
         .runAsTest("an ambiguous redirect names the command as typed");
+    });
+
+    // A redirect gives the command another stream in place of the pipe. The
+    // shell then closes its end of that pipe, as bash and dash do. It does
+    // not keep the end open until the command exits.
+    describe("a redirect in place of a pipe", () => {
+      // Each command waits for a file that the other command writes.
+      const waitFor = (file: string) => `
+        const deadline = Date.now() + 10_000;
+        while (!existsSync(${JSON.stringify(file)})) {
+          if (Date.now() > deadline) process.exit(9);
+          await Bun.sleep(1);
+        }`;
+
+      test("< file: a write to the pipe fails while the command runs", async () => {
+        using dir = tempDir("shell-redirect-pipe", { "in.txt": "from the file\n" });
+        const writer = `
+          import { existsSync, writeFileSync, writeSync } from "fs";
+          ${waitFor("reader-runs")}
+          let result = "wrote";
+          try {
+            writeSync(1, "x");
+          } catch {
+            result = "failed";
+          }
+          writeFileSync("writer-result", result);`;
+        // The shell starts this command after it applied the redirect.
+        const reader = `
+          import { existsSync, writeFileSync } from "fs";
+          writeFileSync("reader-runs", "");
+          ${waitFor("writer-result")}
+          process.stdout.write(await Bun.stdin.text());`;
+        const { stdout, stderr, exitCode } = await $`${BUN} -e ${writer} | ${BUN} -e ${reader} < in.txt`
+          .cwd(String(dir))
+          .quiet()
+          .nothrow();
+        expect({
+          stdout: stdout.toString(),
+          stderr: stderr.toString(),
+          writer: readFileSync(join(String(dir), "writer-result"), "utf8"),
+          exitCode,
+        }).toEqual({ stdout: "from the file\n", stderr: "", writer: "failed", exitCode: 0 });
+      });
+
+      test("> file: the reader of the pipe gets the end of input while the command runs", async () => {
+        using dir = tempDir("shell-redirect-pipe", {});
+        const writer = `
+          import { existsSync } from "fs";
+          ${waitFor("reader-got-end")}
+          console.log("to the file");`;
+        const reader = `
+          import { writeFileSync } from "fs";
+          const input = await Bun.stdin.text();
+          writeFileSync("reader-got-end", "");
+          console.log("end of input after " + input.length + " bytes");`;
+        const { stdout, stderr, exitCode } = await $`${BUN} -e ${writer} > out.txt | ${BUN} -e ${reader}`
+          .cwd(String(dir))
+          .quiet()
+          .nothrow();
+        expect({
+          stdout: stdout.toString(),
+          stderr: stderr.toString(),
+          file: readFileSync(join(String(dir), "out.txt"), "utf8"),
+          exitCode,
+        }).toEqual({ stdout: "end of input after 0 bytes\n", stderr: "", file: "to the file\n", exitCode: 0 });
+      });
     });
   });
 

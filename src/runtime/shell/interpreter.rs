@@ -1118,6 +1118,21 @@ impl Interpreter {
         self.root_io.get()
     }
 
+    /// The stdout or stderr of this process, when `writer` is the writer that
+    /// `setup_io_before_run` made on a copy of it.
+    pub(crate) fn process_stream(&self, writer: &std::sync::Arc<IOWriter>) -> Option<Fd> {
+        use crate::shell::io::OutKind;
+        let io = self.root_io();
+        let is_writer = |out: &OutKind| matches!(out, OutKind::Fd(fd) if std::sync::Arc::ptr_eq(&fd.writer, writer));
+        if is_writer(&io.stdout) {
+            Some(Fd::stdout())
+        } else if is_writer(&io.stderr) {
+            Some(Fd::stderr())
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn compute_estimated_size_for_gc(&self) -> usize {
         let mut size = core::mem::size_of::<Interpreter>();
         size += self.args.get().memory_cost();
@@ -2241,7 +2256,7 @@ fn open_null_device() -> bun_sys::Result<Fd> {
 /// .file.mode`; `EventLoopHandle` is still a shim, so we `fstat` the (already
 /// dup'd) fd here instead. On `fstat` failure we conservatively return `false`
 /// (non-pollable → synchronous write path), matching Windows behavior.
-fn is_pollable(fd: Fd) -> bool {
+pub(crate) fn is_pollable(fd: Fd) -> bool {
     #[cfg(windows)]
     {
         let _ = fd;

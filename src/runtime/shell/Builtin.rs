@@ -293,7 +293,15 @@ impl Builtin {
         use std::io::Write as _;
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
-        interp.as_cmd_mut(cmd).io.stderr.make_writable(interp);
+        if interp
+            .as_cmd_mut(cmd)
+            .io
+            .stderr
+            .make_writable(interp)
+            .is_err()
+        {
+            return Yield::Failed(cmd);
+        }
         if let Some(safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
             interp.as_cmd_mut(cmd).state = CmdState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);

@@ -22,6 +22,9 @@
 
 import type { Dependency } from "../source.ts";
 
+// On a bump, read ParseHeadersInternal() in src/dec/webp_dec.c against
+// `webp::info_needs` (src/runtime/image/codec_webp.rs), which mirrors where
+// WebPGetInfo() stops for an input that ends early.
 const LIBWEBP_COMMIT = "b7e29b9d75bd31422b00c2a446d49d7af06c328d"; // v1.6.0
 
 // prettier-ignore

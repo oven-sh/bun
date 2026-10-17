@@ -100,6 +100,21 @@ impl Handle {
     }
 }
 
+/// The SOF dimensions of `head`, the first bytes of a longer file, when
+/// libjpeg parses its header with no warning and no error. Its memory source
+/// warns when a parse runs past the input. So any other parse can owe its
+/// result to the cut, and only the whole file answers.
+pub(crate) fn header_of_head(head: &[u8]) -> Option<(u32, u32)> {
+    let handle = Handle::init(1)?;
+    // SAFETY: `handle` owns a live tjhandle; ptr/len come from a valid `&[u8]` borrowed for the call.
+    let rc = unsafe { tj3DecompressHeader(handle.as_ptr(), head.as_ptr(), head.len()) };
+    if rc != 0 {
+        return None;
+    }
+    // A stream of tables alone also returns 0. The new handle has no dimensions then.
+    handle.dimensions()
+}
+
 impl Drop for Handle {
     #[inline]
     fn drop(&mut self) {

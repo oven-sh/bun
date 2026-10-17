@@ -18,6 +18,7 @@ pub(crate) use super::codec_gif as gif;
 pub(crate) use super::codec_jpeg as jpeg;
 pub(crate) use super::codec_png as png;
 pub(crate) use super::codec_webp as webp;
+use super::exif;
 
 /// Optional OS-native backend. Absent on Linux (and any platform we haven't
 /// written one for) so the dispatch in `decode`/`encode` compiles away. The
@@ -337,10 +338,52 @@ pub(crate) struct Probe {
     pub height: u32,
 }
 
+impl Probe {
+    /// The end of every probe: the range check, then the pixel limit.
+    #[inline]
+    fn new(format: Format, width: u32, height: u32, max_pixels: u64) -> Result<Probe, Error> {
+        // The PNG/JPEG/BMP specs all cap each dimension at 2³¹−1; a header with
+        // a larger u32 value is corrupt regardless of `maxPixels`. Reject here so
+        // the i32 `last_width`/`last_height` casts downstream can't trap on a
+        // 24-byte hostile IHDR.
+        if width == 0 || height == 0 || width > i32::MAX as u32 || height > i32::MAX as u32 {
+            return Err(Error::DecodeFailed);
+        }
+        guard(width, height, max_pixels)?;
+        Ok(Probe {
+            format,
+            width,
+            height,
+        })
+    }
+
+    /// The size as `metadata()` reports it: a quarter turn swaps the axes.
+    fn oriented(self, orientation: exif::Orientation) -> Probe {
+        let rotate = orientation.transform().rotate;
+        if rotate == 90 || rotate == 270 {
+            Probe {
+                width: self.height,
+                height: self.width,
+                ..self
+            }
+        } else {
+            self
+        }
+    }
+}
+
+/// The bytes that `probe` reads of a PNG and of a GIF.
+const PNG_PROBE_LEN: usize = 24;
+const GIF_PROBE_LEN: usize = 10;
+
 /// Header-only dimensions probe for `.metadata()`. Decoding the full RGBA for
 /// a 1920×1080 PNG just to read the IHDR is ~70× slower than Sharp; this reads
 /// the few bytes each format needs and stops. Still subject to `max_pixels` so
 /// metadata() and bytes() agree on what's "too big".
+///
+/// `probe_head` answers for the first bytes of a longer input. It says when
+/// an arm here reads past those bytes, so an arm that reads further needs a
+/// matching change there.
 pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
     let fmt = Format::sniff(bytes).ok_or(Error::UnknownFormat)?;
     let w: u32;
@@ -348,7 +391,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
     match fmt {
         Format::Png => {
             // sig(8) · IHDR{len(4) type(4) w(4) h(4) ...}
-            if bytes.len() < 24 {
+            if bytes.len() < PNG_PROBE_LEN {
                 return Err(Error::DecodeFailed);
             }
             w = u32::from_be_bytes(bytes[16..20].try_into().expect("infallible: size matches"));
@@ -380,7 +423,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
         }
         Format::Gif => {
             // sig(6) · LSD: w(u16le) h(u16le) …
-            if bytes.len() < 10 {
+            if bytes.len() < GIF_PROBE_LEN {
                 return Err(Error::DecodeFailed);
             }
             w = u16::from_le_bytes(bytes[6..8].try_into().expect("infallible: size matches"))
@@ -409,19 +452,81 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             }
         }
     }
-    // The PNG/JPEG/BMP specs all cap each dimension at 2³¹−1; a header with
-    // a larger u32 value is corrupt regardless of `maxPixels`. Reject here so
-    // the i32 `last_width`/`last_height` casts downstream can't trap on a
-    // 24-byte hostile IHDR.
-    if w == 0 || h == 0 || w > i32::MAX as u32 || h > i32::MAX as u32 {
-        return Err(Error::DecodeFailed);
+    Probe::new(fmt, w, h, max_pixels)
+}
+
+/// The answer of `metadata()`: `probe`, and for a JPEG the size after the
+/// EXIF orientation when `auto_orient`.
+#[inline(always)]
+pub(crate) fn probe_oriented(
+    bytes: &[u8],
+    max_pixels: u64,
+    auto_orient: bool,
+) -> Result<Probe, Error> {
+    let probe = probe(bytes, max_pixels)?;
+    if auto_orient && probe.format == Format::Jpeg {
+        return Ok(probe.oriented(exif::read_jpeg(bytes)));
     }
-    guard(w, h, max_pixels)?;
-    Ok(Probe {
-        format: fmt,
-        width: w,
-        height: h,
-    })
+    Ok(probe)
+}
+
+/// What the first bytes of a longer input say about its `metadata()` answer.
+pub(crate) enum HeadProbe {
+    /// `probe_oriented` of the whole input gives this answer.
+    Final(Result<Probe, Error>),
+    /// No head shorter than this has the answer. `usize::MAX`: only the whole
+    /// input has it, or these bytes cannot tell.
+    Longer(usize),
+}
+
+/// `probe_oriented` for `head`, the first bytes of a longer input. The answer
+/// is `Final` only when no byte after `head` can change it: the size, the
+/// format or the error.
+pub(crate) fn probe_head(head: &[u8], max_pixels: u64, auto_orient: bool) -> HeadProbe {
+    let needs = match Format::sniff(head) {
+        None => {
+            // `sniff` reads 16 bytes, and the brand list of an `ftyp` box to the box's end.
+            let ftyp_box = if head.len() >= 8 && &head[4..8] == b"ftyp" {
+                u32::from_be_bytes(head[0..4].try_into().expect("infallible: size matches"))
+                    as usize
+            } else {
+                0
+            };
+            ftyp_box.max(16)
+        }
+        Some(Format::Png) => PNG_PROBE_LEN,
+        Some(Format::Gif) => GIF_PROBE_LEN,
+        Some(Format::Bmp) => bmp::header_needs(head).unwrap_or(0),
+        Some(Format::Webp) => webp::info_needs(head).unwrap_or(0),
+        Some(Format::Jpeg) => return probe_jpeg_head(head, max_pixels, auto_orient),
+        // `probe` has no answer for these without a decoder (ImageIO on macOS,
+        // WIC on Windows, none elsewhere), and a decoder takes the whole input.
+        Some(Format::Tiff | Format::Heic | Format::Avif) => usize::MAX,
+    };
+    if head.len() < needs {
+        return HeadProbe::Longer(needs);
+    }
+    HeadProbe::Final(probe_oriented(head, max_pixels, auto_orient))
+}
+
+fn probe_jpeg_head(head: &[u8], max_pixels: u64, auto_orient: bool) -> HeadProbe {
+    // The marker walk goes first: it is cheap, and libjpeg is slow to reject a cut header.
+    let orientation = match exif::read_jpeg_head(head) {
+        Ok(orientation) => orientation,
+        Err(needs) => return HeadProbe::Longer(needs),
+    };
+    let Some((width, height)) = jpeg::header_of_head(head) else {
+        return HeadProbe::Longer(usize::MAX);
+    };
+    HeadProbe::Final(
+        Probe::new(Format::Jpeg, width, height, max_pixels).map(|probe| {
+            if auto_orient {
+                probe.oriented(orientation)
+            } else {
+                probe
+            }
+        }),
+    )
 }
 
 #[derive(Copy, Clone)]

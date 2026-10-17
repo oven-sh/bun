@@ -429,6 +429,18 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
     });
   });
 
+  describe.skipIf(command === "check")("a flag of bun whose value reads like the command", () => {
+    test.skipIf(command !== "fmt")("a flag of the command after it counts", async () => {
+      const result = await bun({}, ["--title", command, "--check", command, "a.ts"]);
+      expect(result).toMatchObject({ source, exitCode: 1 });
+    });
+
+    test("--cwd after it counts", async () => {
+      const args = ["--title", command, "--cwd", "sub", command, ...flags, "a.ts"];
+      expect(await ran({}, args, "sub", { from: "." })).toBe("the command");
+    });
+  });
+
   // Without a config file, `bun lint` looks for `eslintConfig` in the package.json.
   const config = { ".oxlintrc.json": '{ "rules": { "no-debugger": "error" } }' };
 

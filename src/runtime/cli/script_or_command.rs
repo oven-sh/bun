@@ -90,6 +90,13 @@ pub(crate) fn place_of_command(command: &[u8]) -> Option<usize> {
     place_of_first_word(&args).filter(|at| args.get(*at) == Some(&command))
 }
 
+/// The arguments of this process before `command`: the flags of `bun` and their values, one of which can read like `command`.
+pub(crate) fn arguments_before(command: &[u8]) -> Vec<&'static [u8]> {
+    let mut args: Vec<&'static [u8]> = bun_core::argv().into_iter().collect();
+    args.truncate(place_of_command(command).unwrap_or(args.len()));
+    args
+}
+
 /// `bun --cwd <dir> lint`: the command, which comes after the flags of `bun` and their values.
 #[cold]
 #[inline(never)]

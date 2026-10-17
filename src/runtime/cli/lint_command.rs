@@ -12,6 +12,7 @@ use bun_sys::File;
 
 use super::check_command::working_directory;
 use super::command::{ContextData, Tag};
+use super::script_or_command::{arguments_before, place_of_command};
 use bun_bunfig::Above;
 
 pub(crate) struct LintCommand;
@@ -38,11 +39,8 @@ fn change_directory(cwd: &[u8]) {
 /// `--cwd` among the flags of `bun`, which precede `command`.
 fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
     let mut found = None;
-    let mut args = bun_core::argv().into_iter();
+    let mut args = arguments_before(command).into_iter();
     while let Some(arg) = args.next() {
-        if arg == command {
-            break;
-        }
         let given = match arg.strip_prefix(b"--cwd") {
             Some(b"") => args.next(),
             Some(rest) => rest.strip_prefix(b"="),
@@ -55,8 +53,7 @@ fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
 
 /// `--config=<path>` among the flags of `bun`, which precede `command`. Without the `=` the path is taken for the command.
 fn bunfig_before(command: &[u8]) -> Option<&'static [u8]> {
-    let flags = (bun_core::argv().into_iter()).take_while(|arg| *arg != command);
-    flags
+    (arguments_before(command).into_iter())
         .filter_map(|arg| {
             arg.strip_prefix(b"--config=")
                 .or_else(|| arg.strip_prefix(b"-c="))
@@ -95,7 +92,9 @@ pub(crate) fn read_bunfigs(
 /// the configuration files.
 fn disallow_code_generation_before(command: &[u8]) {
     let argv = bun_core::argv().to_vec();
-    let flags = argv.iter().take_while(|it| it.as_bytes() != command);
+    let flags = argv
+        .iter()
+        .take(place_of_command(command).unwrap_or(argv.len()));
     super::arguments::disallow_code_generation_from_strings_as_compiled(
         &flags.copied().collect::<Vec<_>>(),
     );

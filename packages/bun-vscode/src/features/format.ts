@@ -62,7 +62,7 @@ function stdinFilepath(document: vscode.TextDocument): string {
   return `untitled.${EXT_BY_LANGUAGE[document.languageId] ?? "ts"}`;
 }
 
-function formatWithBun(document: vscode.TextDocument, token: vscode.CancellationToken): Promise<vscode.TextEdit[]> {
+function formatWithBun(document: vscode.TextDocument, token: vscode.CancellationToken, output: vscode.OutputChannel): Promise<vscode.TextEdit[]> {
   return new Promise(resolve => {
     const text = document.getText();
     const folder = vscode.workspace.getWorkspaceFolder(document.uri);
@@ -76,9 +76,22 @@ function formatWithBun(document: vscode.TextDocument, token: vscode.Cancellation
     let stderr = "";
     child.stdout.on("data", (data: Buffer) => (stdout += data.toString()));
     child.stderr.on("data", (data: Buffer) => (stderr += data.toString()));
-    child.on("error", () => resolve([]));
+    child.on("error", (err) => {
+      output.appendLine(`[bun fmt] spawn error: ${err.message}`);
+      resolve([]);
+    });
+    child.stdin.on("error", (err) => {
+      output.appendLine(`[bun fmt] stdin write error: ${err.message}`);
+      resolve([]);
+    });
     child.on("close", code => {
-      if (code !== 0 || stdout === text) {
+      if (code !== 0) {
+        if (stderr) output.appendLine(`[bun fmt] exited with code ${code}: ${stderr.trim()}`);
+        else output.appendLine(`[bun fmt] exited with code ${code}`);
+        resolve([]);
+        return;
+      }
+      if (stdout === text) {
         resolve([]);
         return;
       }
@@ -92,10 +105,12 @@ function formatWithBun(document: vscode.TextDocument, token: vscode.Cancellation
 }
 
 export function registerFormatter(context: vscode.ExtensionContext) {
+  const output = vscode.window.createOutputChannel("Bun Formatter");
+  context.subscriptions.push(output);
+
   const provider: vscode.DocumentFormattingEditProvider & vscode.DocumentRangeFormattingEditProvider = {
-    provideDocumentFormattingEdits: (document, _options, token) => formatWithBun(document, token),
-    // `bun fmt` has no range mode: format the whole file.
-    provideDocumentRangeFormattingEdits: (document, _range, _options, token) => formatWithBun(document, token),
+    provideDocumentFormattingEdits: (document, _options, token) => formatWithBun(document, token, output),
+    provideDocumentRangeFormattingEdits: (document, _range, _options, token) => formatWithBun(document, token, output),
   };
   context.subscriptions.push(
     vscode.languages.registerDocumentFormattingEditProvider(SELECTOR, provider),

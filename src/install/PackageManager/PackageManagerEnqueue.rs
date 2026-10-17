@@ -658,8 +658,6 @@ pub fn enqueue_dependency_to_root(
     }
 
     // A failed lookup stands until the event loop has gone around; a 404 as long as a manifest.
-    // `bind_row` asks again after that, and says which manifest the import waits for: a rule can
-    // send a git or tarball dependency to the registry, or a registry dependency to another name.
     let turn = this.event_loop.iteration_number();
     let mut manifest_task_id: Option<Task::Id> = None;
 
@@ -2135,8 +2133,7 @@ fn bind_row_without_manifest(
                 };
                 let checkout_id = Task::Id::for_git_checkout(url, &resolved);
 
-                // The checkout is done. A dependency that was bound before its turn comes here
-                // again at its turn, and has nothing to wait for.
+                // Done already: a dependency bound before its turn must not wait for it again.
                 if let Some(pkg_id) = appended_by_task(this, checkout_id) {
                     if needs_ctx {
                         success_fn(this, id, pkg_id);
@@ -2306,8 +2303,7 @@ fn bind_row_without_manifest(
             };
             let task_id = Task::Id::for_tarball(url);
 
-            // The download is done. A dependency that was bound before its turn comes here again
-            // at its turn: as a waiter of the finished task it would hold up every later package.
+            // Done already: a dependency bound before its turn must not wait for it again.
             if let Some(pkg_id) = appended_by_task(this, task_id) {
                 if this.lockfile.buffers.resolutions[id as usize] == invalid_package_id {
                     success_fn(this, id, pkg_id);

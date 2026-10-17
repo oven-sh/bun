@@ -71,8 +71,7 @@ impl PackageManager {
         self.options.scope_for_package_name(name)
     }
 
-    /// Binds the dependency to the package. A dependency that `bun add <specifier>` left without a
-    /// name takes the name of the package. Returns whether that gave it another name.
+    /// Returns whether the dependency, left without a name by `bun add <specifier>`, got another.
     fn bind(&mut self, dependency_id: DependencyID, package_id: PackageID) -> bool {
         debug_assert!(
             (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
@@ -111,9 +110,7 @@ impl PackageManager {
         self.bind(dependency_id, package_id);
     }
 
-    /// `bun add <specifier>` has just named the dependency after the package that the specifier
-    /// points at. A rule for that name could not apply while the dependency had no name, so the
-    /// dependency is resolved once more.
+    /// `bun add <specifier>` just named the dependency: a rule for that name applies only now.
     #[cold]
     fn resolve_again_as_named(&mut self, dependency_id: DependencyID) {
         let lockfile = &mut *self.lockfile;

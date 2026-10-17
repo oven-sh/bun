@@ -70,8 +70,7 @@ fn is_npm_alias(version: &dependency::Version) -> bool {
     version.tag == VersionTag::Npm && version.npm().is_alias
 }
 
-/// The name that the rules for `dependency` are keyed by: the name it is declared under. Only an
-/// alias of a tag (`alias: npm:name@tag`) goes by the name of its package, as it always has.
+/// The declared name, which rules are keyed by. An alias of a tag goes by its package's name.
 #[inline]
 pub(crate) fn rule_key(dependency: &Dependency, buf: &[u8]) -> PackageNameHash {
     if dependency.version.tag == VersionTag::DistTag {
@@ -225,11 +224,7 @@ struct ParseContext<'a, 'b> {
 }
 
 impl OverrideMap {
-    /// The rule for `dependency`, which is the dependency `dependency_id` as it is being resolved:
-    /// `enqueue_pinned` resolves another version than the one in the buffer. A rule goes by the name
-    /// that a dependency is declared under, not by the name that its package gives itself. A
-    /// workspaceOnly dependency has no rule.
-    ///
+    /// `dependency` is `dependency_id` as it is resolved: `enqueue_pinned` passes another version.
     /// Precedence: ranged parent > parent > none; within a tier a matching target range wins; ties go to the parent range text, then the target range text, that sorts first; then the flat map.
     #[inline]
     pub(crate) fn rule_for(
@@ -245,8 +240,7 @@ impl OverrideMap {
         self.rule_selecting(lockfile, dependency_id, dependency, Selects::Overlapping)
     }
 
-    /// Like `rule_for`, but a `name@<range>` key only matches a dependency that declares exactly
-    /// that range, as in yarn.
+    /// Like `rule_for`, but a `name@<range>` key matches only that same declared range, as in yarn.
     pub(crate) fn rule_for_as_yarn(
         &self,
         lockfile: &Lockfile,

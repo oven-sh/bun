@@ -3110,8 +3110,7 @@ fn version_based_peer_range<'a>(
     Some((range, name_hash))
 }
 
-/// `package_index` is keyed by real package names; for an alias, `range` carries it. A git, GitHub
-/// or tarball range carries no name, so the scan has no candidates for it.
+/// `package_index` is keyed by real package names; for an alias, `range` carries it.
 pub(crate) fn peer_candidate_name_hash(
     dep: &Dependency,
     range: &DependencyVersion,

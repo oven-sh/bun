@@ -1148,10 +1148,7 @@ impl Lockfile {
         self.overrides.rule_for(self, id, dependency).is_some()
     }
 
-    /// Whether the package `other` serves a peer for which a rule chose the package `chosen`.
-    /// A registry package or a workspace goes by its name: a package of that name serves the
-    /// peer, as for a peer without a rule. A git, GitHub, tarball or folder package is the one
-    /// that its specifier points at, whatever name it gives itself: no other package serves it.
+    /// Whether `other` serves a peer whose rule chose `chosen`: a git or tarball one, only itself.
     pub(crate) fn serves_overridden_peer(&self, chosen: PackageID, other: PackageID) -> bool {
         if chosen == other {
             return true;

@@ -29,8 +29,7 @@ pub struct UpdateRequest {
     /// invariant; see `version_buf()`).
     pub(crate) version_buf: bun_ptr::RawSlice<u8>,
     pub(crate) package_id: PackageID,
-    /// The name of the dependency that `package_id` was read from, in `version_buf`. Under
-    /// `overrides` the package can have another name.
+    /// The name of the dependency, in `version_buf`. A rule can give it a package of another name.
     pub(crate) name_in_lockfile: SemverString,
     pub(crate) is_aliased: bool,
     pub failed: bool,
@@ -136,9 +135,7 @@ impl UpdateRequest {
         }
     }
 
-    /// The key of the dependency in package.json: the name on the command line, or else the name
-    /// that the lockfile has for the dependency, which is there after `Lockfile::clean_with_logger`.
-    /// Before that, a request without a name gives its specifier.
+    /// The key in package.json: the name that was typed, or the lockfile's once it is resolved.
     pub(crate) fn get_resolved_name(&self) -> &[u8] {
         if self.is_aliased {
             self.name

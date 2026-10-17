@@ -374,9 +374,7 @@ fn bind_waiters_and_notify(
     }
 }
 
-/// Binds the dependencies that waited for `task_id` to `pkg`, which the task fetched for them.
-/// A dependency keeps the name it is declared under, whatever `pkg` names itself. Entries that a
-/// linker queued stay in the task's list. Sets `any_root` if an import of the runtime was resolved.
+/// Binds the dependencies that waited for `task_id` to `pkg`. A linker's entries stay in the list.
 pub(crate) fn bind_waiters_of_appended_package(
     manager: &mut PackageManager,
     task_id: Task::Id,
@@ -411,9 +409,7 @@ pub(crate) fn bind_waiters_of_appended_package(
     }
 }
 
-/// The dependency `id` is bound to `pkg`, which its own specifier points at and which gives itself
-/// another name than the dependency has. Warns if a rule that is keyed by that other name would
-/// replace the dependency: a rule replaces a dependency by the name that it is declared under.
+/// Warns if a rule keyed by the name that `pkg` gives itself would have replaced dependency `id`.
 #[cold]
 fn warn_rule_for_own_name(manager: &mut PackageManager, id: DependencyID, pkg: &Package) {
     let lockfile = &*manager.lockfile;
@@ -2287,8 +2283,7 @@ impl PackageManager {
         }
     }
 
-    /// A failed lookup stands until the event loop has gone around, and a 404 as long as a
-    /// manifest. After that the lookup is forgotten, so the next one asks again.
+    /// Forgets a failed lookup once the event loop has gone around, and a 404 once it expires.
     #[cold]
     #[inline(never)]
     pub(crate) fn forget_stale_miss(&mut self, task_id: Task::Id) {

@@ -20,7 +20,7 @@ const ObjectKeys = Object.keys;
 const ObjectPrototype = Object.prototype;
 const kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
 const env = Bun.env;
-const { kEmptyObject } = require("internal/shared");
+const { getIgnoringObjectPrototype, kEmptyObject } = require("internal/shared");
 
 /** A variable that is set. Object.prototype sets none. */
 function ownEnv(name: string): string | undefined {
@@ -42,11 +42,7 @@ function readOption(object: object, name: string): any {
     const value = (object as $AnyObject)[name];
     return isFromObjectPrototype(name, value) ? undefined : value;
   }
-  for (let link: object | null = object; link !== null; link = ObjectGetPrototypeOf(link)) {
-    if (link === ObjectPrototype) return undefined;
-    if (ObjectHasOwn(link, name)) return (object as $AnyObject)[name];
-  }
-  return undefined;
+  return getIgnoringObjectPrototype(object as $AnyObject, name);
 }
 
 const SQLITE_MEMORY = ":memory:";

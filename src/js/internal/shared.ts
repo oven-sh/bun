@@ -1,4 +1,7 @@
 const ObjectFreeze = Object.freeze;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectHasOwn = Object.hasOwn;
+const ObjectPrototype = Object.prototype;
 
 class NotImplementedError extends Error {
   code: string;
@@ -144,6 +147,14 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
 }
 
 const kEmptyObject = ObjectFreeze(Object.create(null));
+
+// Returns `object[key]` if it's an own property or inherited from a class, but not from Object.prototype.
+function getIgnoringObjectPrototype<T extends object, K extends keyof T>(object: T, key: K): T[K] | undefined {
+  for (let current: object | null = object; current !== null; current = ObjectGetPrototypeOf(current)) {
+    if (current === ObjectPrototype) return undefined;
+    if (ObjectHasOwn(current, key)) return object[key];
+  }
+}
 
 // process.send() options marking cluster-internal traffic; the flag is a private name so user code cannot set it.
 const kInternalSendOptions: any = Object.create(null);
@@ -453,4 +464,5 @@ export default {
   kCustomPromisifyArgsSymbol: Symbol("customPromisifyArgs"),
   kEmptyObject,
   kInternalSendOptions,
+  getIgnoringObjectPrototype,
 };

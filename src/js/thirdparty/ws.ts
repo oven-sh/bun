@@ -4,6 +4,7 @@
 // ported from ws 8.22.0 (MIT). Framing (upstream's Sender and Receiver) is native.
 
 const EventEmitter = require("node:events");
+const { getIgnoringObjectPrototype } = require("internal/shared");
 
 const {
   createWebSocket,
@@ -2330,14 +2331,6 @@ function removeAbortListener(req: HandshakeRequest): void {
 
 function handshakeOnTimeout(websocket: WebSocket): void {
   abortHandshake(websocket, websocket._req!, "Opening handshake has timed out");
-}
-
-// Returns `object[key]` if it's an own property or inherited from a class, but not from Object.prototype.
-function getIgnoringObjectPrototype<T extends object, K extends keyof T>(object: T, key: K): T[K] | undefined {
-  for (let current: object | null = object; current !== null; current = Object.getPrototypeOf(current)) {
-    if (current === Object.prototype) return undefined;
-    if (Object.hasOwn(current, key)) return object[key];
-  }
 }
 
 // `options` is `agent.options`, which node:http merges over the request's options. `connectOpts` is what a proxy agent

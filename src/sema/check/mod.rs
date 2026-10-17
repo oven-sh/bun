@@ -747,7 +747,6 @@ impl<'s> Program<'s> {
             inherited_names: [0; 4],
             cond_distributive_memo: Default::default(),
             relation_too_complex: false,
-            relation_too_deep: false,
             current_source_element: None,
             is_type_checked: false,
             is_emitting: false,
@@ -1441,8 +1440,6 @@ pub struct Checker<'p, 's> {
     cond_distributive_memo: FxHashMap<TypeId, Option<TypeId>>,
     /// Set when a comparison exhausts `Relater::relation_count` (2859). The caller clears it before comparing.
     pub(super) relation_too_complex: bool,
-    /// Whether the last `checkTypeRelatedToEx` reached 100 nested comparisons (2321).
-    pub(super) relation_too_deep: bool,
     /// `c.currentNode`, as `checkSourceElement` and `checkDeferredNode` set it. See `current_node`.
     pub(super) current_source_element: Option<CurrentNode>,
     /// `NodeCheckFlagsTypeChecked` of `task.file`: `check_file` has finished it.

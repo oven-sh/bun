@@ -3442,6 +3442,9 @@ impl<'p, 's> Checker<'p, 's> {
                     return TypeId::OBJECT;
                 }
             }
+            if !loose && let Some(regular) = self.regular_uniform_union_member(ty, value_ty) {
+                return regular;
+            }
             // `isCoercibleUnderDoubleEquals`
             let coerces = loose
                 && (matches!(value_ty, TypeId::NUMBER | TypeId::STRING)
@@ -3456,6 +3459,12 @@ impl<'p, 's> Checker<'p, 's> {
             return self.replace_primitives_with_literals(kept, as_written);
         }
         if self.is_unit(value_ty) {
+            if self.is_uniform_union(ty) {
+                let filtered = self.remove_type(ty, value_ty);
+                if filtered != ty {
+                    return filtered;
+                }
+            }
             let is_plain = Self::is_literal_outside_enum(self.flags(value_ty));
             return self.filter(ty, |c, m| {
                 if is_plain && Self::is_literal_outside_enum(c.flags(m)) {
@@ -3465,6 +3474,16 @@ impl<'p, 's> Checker<'p, 's> {
             });
         }
         ty
+    }
+
+    fn regular_uniform_union_member(&mut self, ty: TypeId, value: TypeId) -> Option<TypeId> {
+        if self.has_primitive_flag(value) && self.is_uniform_union(ty) {
+            let regular = self.regular(value);
+            if self.union_contains_type(ty, regular, false) {
+                return Some(regular);
+            }
+        }
+        None
     }
 
     /// FOR SPEED: a string, number or bigint literal type that is not a member of an enum. No rule
@@ -4482,6 +4501,8 @@ impl<'p, 's> Checker<'p, 's> {
         let discriminant = self.union(clause_types);
         let case_type = if discriminant.is_never() {
             TypeId::NEVER
+        } else if let Some(regular) = self.regular_uniform_union_member(ty, discriminant) {
+            regular
         } else {
             let kept = self.filter(ty, |c, m| c.are_comparable(discriminant, m));
             self.replace_primitives_with_literals(kept, discriminant)

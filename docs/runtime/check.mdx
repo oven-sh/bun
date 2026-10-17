@@ -608,9 +608,9 @@ Your `package.json` has a `check` script. Use `bun check --no-script`. See [If `
 
 ### `bun check` and my editor disagree
 
-Your editor runs its own copy of TypeScript: the `typescript` package in your project, or a version that ships with the editor. `bun check` matches one exact version of TypeScript and uses that version's `lib.*.d.ts` files, whichever version you have installed. `process.versions.typescript` is that version.
+Your editor runs its own copy of TypeScript: the `typescript` package in your project, or a version that ships with the editor. `process.versions.typescript` identifies the baseline for Bun's built-in `lib.*.d.ts` files and type-driven package resolution. Bun also includes the [selected checker fixes](#selected-checker-fixes) listed below.
 
-Install the same version so that both follow the same rules:
+Install the baseline version to align your editor's libraries with Bun:
 
 ```bash terminal icon="terminal"
 bun add -d typescript@$(bun -p process.versions.typescript)
@@ -618,9 +618,9 @@ bun add -d typescript@$(bun -p process.versions.typescript)
 
 Then tell your editor to use the version in your project. In VS Code, run **TypeScript: Select TypeScript Version** from the Command Palette and choose **Use Workspace Version**.
 
-Run the command again after you upgrade Bun, because a new version of Bun can match a newer TypeScript.
+Run the command again after you upgrade Bun, because a new version of Bun can use a newer TypeScript baseline.
 
-If `bun check` and `tsc` from TypeScript 7 report different errors, that is a bug in Bun. [Open an issue on GitHub](https://github.com/oven-sh/bun/issues) with code that shows the difference.
+If `bun check` and the baseline TypeScript report different errors outside the documented differences below, [open an issue on GitHub](https://github.com/oven-sh/bun/issues) with code that shows the difference.
 
 ## Compiler options as flags
 
@@ -642,7 +642,7 @@ bun check -b --strict
 
 ## Differences from `tsc`
 
-`bun check` aims to report exactly what `tsc` from TypeScript 7 reports. `process.versions.typescript` is the exact version.
+`bun check` aims to report what its TypeScript baseline reports, with the differences documented here. `process.versions.typescript` is the version of its built-in declaration libraries and type-driven package resolution.
 
 ```bash terminal icon="terminal"
 bun -p process.versions.typescript
@@ -666,6 +666,15 @@ These differences are intentional:
 - **Some informational options have no effect.** `listFiles`, `listFilesOnly`, `explainFiles`, and `traceResolution` work. Others, such as `diagnostics`, do nothing.
 
 `bun check` finds packages in `node_modules`, like `tsc`. It does not support Yarn Plug'n'Play. In a Yarn project, set `nodeLinker: node-modules` in `.yarnrc.yml`.
+
+### Selected checker fixes
+
+Bun includes two checker fixes from TypeScript after the 7.0.2 baseline:
+
+- **Primitive literal unions retain narrowing in mutable objects.** A value narrowed from a uniform primitive union keeps the selected member when copied into an object. Assigning a different member to that property remains an error.
+- **Recursive mapped and indexed types preserve compatible relationships.** Assertions and comparisons follow the underlying recursive type identities. At the relation-depth limit, a comparison can remain indeterminate instead of reporting an error. Instantiation and complexity limits still apply.
+
+These fixes do not change the built-in declaration libraries or the version used for `typesVersions` and type-dependent package exports.
 
 ## CLI usage
 

@@ -3,7 +3,7 @@
 //   bun scripts/update-typescript-libs.ts [directory of the lib.*.d.ts files]
 //
 // Without an argument, they are those of the `typescript7` package that test/package.json installs. They have to be of
-// the version of typescript-go that the type checker is a port of. test/cli/check/check.test.ts compares them.
+// the declared TypeScript baseline, independent of selected checker backports. test/cli/check/check.test.ts compares them.
 //
 // The format is described in src/runtime/cli/typescript_libs.rs.
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";

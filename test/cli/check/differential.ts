@@ -1,22 +1,36 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { longLimit, spawn } from "../children";
 
-// `bun check` follows TypeScript 7, which is a native program next to its `lib.*.d.ts`: `typescript7` in
-// test/package.json, beside the `typescript` that has the API in JavaScript. `TSC` is the path of another to compare with.
-function nativeTypeScript() {
-  if (process.env.TSC) return process.env.TSC;
+// Most cases use TypeScript 7.0.2: `typescript7` in test/package.json, beside the JavaScript API in `typescript`.
+// `TSC` overrides that baseline. Cases covering selected backports name their pinned oracle separately.
+function nativeTypeScript(packageName = "typescript7", expectedVersion = "7.0.2") {
+  const packagePath = require.resolve(`${packageName}/package.json`);
+  const { version, optionalDependencies } = JSON.parse(readFileSync(packagePath, "utf8"));
+  if (version !== expectedVersion) throw new Error(`Expected ${packageName} ${expectedVersion}, got ${version}`);
+  const name = `@typescript/typescript-${process.platform}-${process.arch}`;
+  // The older nightly did not publish every platform supported by the baseline.
+  if (!Object.hasOwn(optionalDependencies ?? {}, name)) return;
+  let nativePackagePath: string;
   try {
-    const paths = [dirname(require.resolve("typescript7/package.json"))];
-    const name = `@typescript/typescript-${process.platform}-${process.arch}`;
-    return join(dirname(require.resolve(`${name}/package.json`, { paths })), "lib", isWindows ? "tsc.exe" : "tsc");
-  } catch {
-    // There is none for this system.
+    nativePackagePath = require.resolve(`${name}/package.json`, { paths: [dirname(packagePath)] });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "MODULE_NOT_FOUND") throw error;
+    // An optional compiler package may not be installed, including with `--omit=optional`.
+    return;
   }
+  const native = JSON.parse(readFileSync(nativePackagePath, "utf8"));
+  if (native.version !== expectedVersion)
+    throw new Error(`Expected ${packageName} ${expectedVersion}, got ${native.version}`);
+  const executable = join(dirname(nativePackagePath), "lib", isWindows ? "tsc.exe" : "tsc");
+  if (!statSync(executable).isFile()) throw new Error(`Not a TypeScript executable: ${executable}`);
+  return executable;
 }
-export const tsc = nativeTypeScript();
+export const tsc = process.env.TSC || nativeTypeScript();
+// The mapped-type identity backport follows microsoft/typescript-go#4913, after the 7.0.2 baseline.
+export const post4913Tsc = nativeTypeScript("typescript7-post4913", "7.1.0-dev.20260922.1");
 
 export const env = {
   ...bunEnv,
@@ -78,7 +92,7 @@ export async function inTurns<T>(items: T[], run: (item: T) => Promise<void>) {
 }
 
 /** `deep`: nested too deeply for the stack of a build that is not optimised, or too slow in one. */
-type Case = { files: Record<string, string>; build?: true; deep?: true };
+type Case = { files: Record<string, string>; build?: true; deep?: true; oracle?: "post4913" };
 
 /**
  * Small programs about which `bun check` and tsc once said something else, each named after where it was found.
@@ -86,20 +100,29 @@ type Case = { files: Record<string, string>; build?: true; deep?: true };
  */
 export function programsThatOnceDiffered(part: number, parts: number) {
   const tests = 4;
+  const all: Record<string, Case> = JSON.parse(readFileSync(join(import.meta.dir, "differential-cases.json"), "utf8"));
   for (let nth = 0; nth < tests; nth++) {
+    const selected = Object.entries(all)
+      .filter(([, it]) => !(it.deep && (isDebug || isASAN)))
+      // A debug build checks a sample. It is always the same sample.
+      .filter((_, index) => index % (isDebug || isASAN ? 40 : 1) === 0)
+      .filter((_, index) => index % (parts * tests) === part * tests + nth)
+      // Windows cannot create a directory named `c:` or `w*d`.
+      .filter(([, it]) => !isWindows || !Object.keys(it.files).some(path => /[:*?"<>|]/.test(path)));
+    // Report omitted backport coverage while still running the baseline cases in this partition.
+    for (const [name, it] of selected) {
+      if (it.oracle === "post4913" && !post4913Tsc) {
+        test.skip(`${name}: pinned TypeScript oracle is not installed for this platform`, () => {});
+      }
+    }
     test.skipIf(!tsc)(
       `programs about which the two once differed, ${part * tests + nth + 1} of ${parts * tests}`,
       async () => {
-        const all: Record<string, Case> = await Bun.file(join(import.meta.dir, "differential-cases.json")).json();
         using dir = tempDir("bun-check-differential", {});
         const root = String(dir);
-        const cases = Object.entries(all)
-          .filter(([, it]) => !(it.deep && (isDebug || isASAN)))
-          // A debug build checks a sample. It is always the same sample.
-          .filter((_, index) => index % (isDebug || isASAN ? 40 : 1) === 0)
-          .filter((_, index) => index % (parts * tests) === part * tests + nth)
-          // Windows cannot create a directory named `c:` or `w*d`.
-          .filter(([, it]) => !isWindows || !Object.keys(it.files).some(path => /[:*?"<>|]/.test(path)))
+        const cases = selected
+          // Only the selected backport cases need a nightly published for this platform.
+          .filter(([, it]) => it.oracle !== "post4913" || post4913Tsc !== undefined)
           .filter(([name, it]) => {
             try {
               for (const path in it.files) {
@@ -123,7 +146,9 @@ export function programsThatOnceDiffered(part: number, parts: number) {
             linesOf([bunExe(), "check", ...build, "--threads=1"], cwd, root),
           ]);
           // After them: `tsc -b` writes files.
-          const theirs = await linesOf([tsc!, ...build, "--pretty", "false", "--singleThreaded"], cwd, root);
+          const oracle = it.oracle === "post4913" ? post4913Tsc : tsc;
+          expect(oracle, `TypeScript oracle for ${name}`).toBeDefined();
+          const theirs = await linesOf([oracle!, ...build, "--pretty", "false", "--singleThreaded"], cwd, root);
           if (!Bun.deepEquals(theirs, ours)) different[name] = { theirs, ours };
           else if (!Bun.deepEquals(theirs, onOneThread)) different[name] = { theirs, onOneThread };
         });

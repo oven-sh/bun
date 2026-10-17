@@ -1575,6 +1575,39 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
+    /// `isUniformUnionType`: no two literal constituents can compare equal.
+    pub(super) fn is_uniform_union(&self, ty: TypeId) -> bool {
+        if !self.is_primitive_union(ty) {
+            return false;
+        }
+        let mut enum_symbol = None;
+        let mut has_literal = false;
+        for &t in self.parts(ty) {
+            let flags = self.flags(t);
+            if flags & tf::ENUM_LIKE != 0 {
+                if has_literal {
+                    return false;
+                }
+                let parent = match *self.data(t) {
+                    TypeData::EnumLit { member, .. } => self.files().parent_of_symbol(member),
+                    TypeData::Enum { symbol, .. } => self.files().parent_of_symbol(symbol),
+                    _ => None,
+                };
+                if enum_symbol.is_none() {
+                    enum_symbol = parent;
+                } else if enum_symbol != parent {
+                    return false;
+                }
+            } else if flags & (tf::STRING_LITERAL | tf::NUMBER_LITERAL) != 0 {
+                if enum_symbol.is_some() {
+                    return false;
+                }
+                has_literal = true;
+            }
+        }
+        true
+    }
+
     /// `intersectUnionsOfPrimitiveTypes`: multiple unions of primitives, which is what `keyof (A |
     /// B | C)` produces, are intersected as sets. The common members replace the first union, and
     /// the other unions are removed. `false`: there are fewer than two.
@@ -1619,34 +1652,65 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `eachUnionContains`: `"a"` is in a union that has `string`.
     fn each_union_contains(&self, unions: &[TypeId], t: TypeId) -> bool {
-        for &union in unions {
-            let has = |expected: TypeId| self.contains_type(self.parts(union), expected);
-            if has(t) {
-                continue;
-            }
-            if t == TypeId::MISSING {
-                return has(TypeId::UNDEFINED);
-            }
-            if t == TypeId::UNDEFINED {
-                return has(TypeId::MISSING);
-            }
-            let flags = self.flags(t);
-            let primitive = if flags & tf::STRING_LITERAL != 0 {
-                TypeId::STRING
-            } else if flags & (tf::ENUM | tf::NUMBER_LITERAL) != 0 {
-                TypeId::NUMBER
-            } else if flags & tf::BIGINT_LITERAL != 0 {
-                TypeId::BIGINT
-            } else if flags & tf::UNIQUE_ES_SYMBOL != 0 {
-                TypeId::SYMBOL
-            } else {
-                return false;
-            };
-            if !has(primitive) {
-                return false;
+        unions
+            .iter()
+            .all(|&union| self.union_contains_type(union, t, true))
+    }
+
+    /// `unionContainsType`. Equality narrowing must not match a unique symbol through `symbol`.
+    pub(super) fn union_contains_type(&self, union: TypeId, t: TypeId, match_symbol: bool) -> bool {
+        let has = |expected: TypeId| self.contains_type(self.parts(union), expected);
+        if has(t) {
+            return true;
+        }
+        if t == TypeId::MISSING {
+            return has(TypeId::UNDEFINED);
+        }
+        if t == TypeId::UNDEFINED {
+            return has(TypeId::MISSING);
+        }
+        let flags = self.flags(t);
+        let primitive = if flags & tf::STRING_LITERAL != 0 {
+            TypeId::STRING
+        } else if flags & (tf::ENUM | tf::NUMBER_LITERAL) != 0 {
+            TypeId::NUMBER
+        } else if flags & tf::BIGINT_LITERAL != 0 {
+            TypeId::BIGINT
+        } else if flags & tf::UNIQUE_ES_SYMBOL != 0 && match_symbol {
+            TypeId::SYMBOL
+        } else {
+            return false;
+        };
+        has(primitive)
+    }
+
+    /// `removeType`: unlike `filterType`, an unnamed remainder discards the union's origin.
+    pub(super) fn remove_type(&mut self, ty: TypeId, target: TypeId) -> TypeId {
+        if let UnionOrigin::Union(origin) = self.origin(ty)
+            && self.contains_type(origin, target)
+        {
+            return self.filter(ty, |_, t| t != target);
+        }
+        let parts = self.parts(ty);
+        let Some(at) = parts.iter().position(|&t| t == target) else {
+            return ty;
+        };
+        let mut kept = Flat::from_slice(parts);
+        kept.remove(at);
+        match kept[..] {
+            [] => TypeId::NEVER,
+            [only] => only,
+            _ => {
+                let first_new_type_id = self.types().first_new_type_id();
+                let result = self.types().intern_key(TypeKey::Union(&kept));
+                if self.types().is_new_since(result, first_new_type_id)
+                    && !self.is_primitive_union(ty)
+                {
+                    self.types().mark_without_primitive_union(result);
+                }
+                result
             }
         }
-        true
     }
 
     pub(super) fn is_unknown_empty_object(&self, ty: TypeId) -> bool {

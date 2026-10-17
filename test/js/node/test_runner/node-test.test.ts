@@ -141,6 +141,160 @@ describe("node:test", () => {
     });
   });
 
+  // These wait for real timeouts in the child, so they get the same headroom as
+  // the large fixtures above and run in parallel.
+  test.concurrent(
+    "should run a test's hooks and mock restore before the next test when the bun:test timeout ends it",
+    async () => {
+      const { exitCode, stdout, stderr } = await runTests(["35-runner-timeout-order.js"], {}, ["--timeout", "250"]);
+      const order = /^ORDER=(.*)$/m.exec(stdout)?.[1] ?? "null";
+      // The line `node --test --test-timeout=250` (v26.3.0) prints for this fixture.
+      expect(JSON.parse(order)).toEqual([
+        "afterEach(A)",
+        "t.after(A)",
+        "B start shared=clean read=real",
+        "B end shared=used-by-B",
+        "afterEach(B)",
+        "sub1",
+        "afterEach(sub1)",
+        "afterEach(P)",
+        "t.after(P)",
+        "C start",
+        "C end",
+        "afterEach(C)",
+        "suite afterEach(R)",
+        "afterEach(R)",
+        "t.after(R)",
+        "D start",
+        "D end",
+        "suite afterEach(D)",
+        "afterEach(D)",
+        "beforeEach(J)",
+        "afterEach(J)",
+        "K start",
+        "beforeEach(J) end",
+        "K end",
+        "afterEach(K)",
+      ]);
+      // bun:test's plain timeout line. The variant about a `done` callback
+      // would point the user at node:test's own callback.
+      expect(stderr.match(/this test timed out after 250ms\.$/gm)).toHaveLength(4);
+      expect(stderr).toContain("4 pass");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("4 fail"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should move on when a hook hangs after the bun:test timeout ended its test",
+    async () => {
+      const { exitCode, stdout, stderr } = await runTests(["36-runner-timeout-hanging-hook.js"], {}, [
+        "--timeout",
+        "250",
+      ]);
+      const order = /^ORDER=(.*)$/m.exec(stdout)?.[1] ?? "null";
+      expect(JSON.parse(order)).toEqual([
+        "afterEach(H)",
+        "bun:test afterEach",
+        "I",
+        "afterEach(I)",
+        "bun:test afterEach",
+        "afterEach(R)",
+        "bun:test afterEach added by R",
+        "bun:test afterEach",
+      ]);
+      expect(stderr).toContain("a beforeEach/afterEach hook timed out for this test.");
+      expect(stderr).toContain("1 pass");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("2 fail"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should run the hooks of each test that the bun:test timeout ends under --concurrent",
+    async () => {
+      const { exitCode, stdout, stderr } = await runTests(["37-runner-timeout-concurrent.js"], {}, [
+        "--concurrent",
+        "--timeout",
+        "250",
+      ]);
+      const order = /^ORDER=(.*)$/m.exec(stdout)?.[1] ?? "null";
+      expect(JSON.parse(order)?.sort()).toEqual(["afterEach(S1)", "afterEach(S2)"]);
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("2 fail"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should run a test's hooks before the next test when the bun:test timeout expires inside spawnSync",
+    async () => {
+      // The child must start before the timeout expires, so this one is longer.
+      const { exitCode, stdout, stderr } = await runTests(["38-runner-timeout-in-spawn-sync.js"], {}, [
+        "--timeout",
+        "1000",
+      ]);
+      const order = /^ORDER=(.*)$/m.exec(stdout)?.[1] ?? "null";
+      expect(JSON.parse(order)).toEqual(["afterEach(S)", "t.after(S)", "T", "afterEach(T)"]);
+      expect(stderr).toContain("1 pass");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("1 fail"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should retry a test that the bun:test timeout ended on a clean node, so its subtests run",
+    async () => {
+      const { exitCode, stdout, stderr } = await runTests(["39-runner-timeout-retry.js"], {}, [
+        "--retry",
+        "1",
+        "--timeout",
+        "250",
+      ]);
+      const order = /^ORDER=(.*)$/m.exec(stdout)?.[1] ?? "null";
+      expect(JSON.parse(order)).toEqual([
+        "afterEach(F) attempt=1",
+        "check attempt=2",
+        "afterEach(check) attempt=2",
+        "afterEach(F) attempt=2",
+      ]);
+      expect(stderr).toContain("error: 1 subtest failed");
+      expect(stderr).toContain("0 pass");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("1 fail"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should not let the late completion of an attempt that an unhandled rejection ended complete its retry",
+    async () => {
+      const { exitCode, stdout, stderr } = await runTests(["40-uncaught-error-retry.js"], {}, ["--retry", "1"]);
+      const order = /^ORDER=(.*)$/m.exec(stdout)?.[1] ?? "null";
+      expect(JSON.parse(order)).toEqual(["attempt 2 end", "Z"]);
+      expect(stderr).toContain("AssertionError: attempt 2 fails");
+      expect(stderr).toContain("1 pass");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("1 fail"),
+      });
+    },
+    30_000,
+  );
+
   test("should not leak file-level beforeEach hooks across files in one process", async () => {
     const { exitCode, stderr } = await runTests(["14-root-hooks-a.js", "14-root-hooks-b.js"]);
     expect(stderr).toContain("4 pass");

@@ -255,7 +255,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             // thread here; route through the safe singleton accessor.
             let vm: &mut VirtualMachine = VirtualMachine::get().as_mut();
             let g = Self::ensure_posix_group(vm);
-            let Some(sock) = Socket::from_fd(g, uws::SocketKind::Dynamic, fd, this, true) else {
+            let Some(sock) = Socket::from_fd(g, uws::SocketKind::Dynamic, fd, this, 0, true) else {
                 // us_socket_from_fd does NOT take ownership on failure; leaving
                 // the inherited IPC endpoint open keeps the peer process alive.
                 fd.close();

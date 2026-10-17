@@ -36,6 +36,8 @@ struct LintSourceCodeState {
         visitor.append(constructor);
         visitor.append(instance);
         visitor.append(servicesStructure);
+        visitor.append(servicesWithTypesStructure);
+        visitor.append(programOfFileWithTypes);
         visitor.append(problemStructure);
         visitor.append(directiveStructure);
         visitor.append(directivesStructure);
@@ -67,6 +69,9 @@ struct LintSourceCodeState {
     // A `sourceCode` that no plugin gets. The others are made like it.
     JSC::WriteBarrier<JSC::JSObject> instance;
     JSC::WriteBarrier<JSC::Structure> servicesStructure;
+    // The same for a file that wants types, where `program` is `programOfFileWithTypes`: a property that throws when it is read.
+    JSC::WriteBarrier<JSC::Structure> servicesWithTypesStructure;
+    JSC::WriteBarrier<JSC::JSCell> programOfFileWithTypes;
     // `{ ruleId, message, loc }`, `{ type, node, value, justification }` and `{ problems, directives }`
     JSC::WriteBarrier<JSC::Structure> problemStructure;
     JSC::WriteBarrier<JSC::Structure> directiveStructure;

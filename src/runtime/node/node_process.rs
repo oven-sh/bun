@@ -70,9 +70,7 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
     let vm = global_object.bun_vm().as_mut();
     vm.exit_handler.exit_code = code;
     if let Some(worker) = vm.worker_ref() {
-        // @190n: we may need to use requestTerminate or throwTerminationException
-        // instead to terminate the worker sooner
-        worker.exit();
+        worker.exit(vm);
     } else {
         // A watch-reload kill-signal handler may call process.exit; node restarts the child
         // regardless. `process.exit()` must never return control to JS, so replace the process

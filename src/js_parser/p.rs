@@ -307,6 +307,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Set while visiting the first argument of `new Worker(...)` / `new SharedWorker(...)`.
     /// A `new URL(...)` there names a worker entry point, which the bundler already embeds.
     pub(crate) in_worker_url_arg: bool,
+    /// Bindings of `import { URL } from "url"` / `"node:url"`, when `embed_new_url_assets` is set.
+    pub(crate) url_import_refs: Vec<Ref>,
 
     pub(crate) has_classic_runtime_warned: bool,
     pub(crate) macro_call_count: MacroCallCountType,
@@ -4511,6 +4513,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
             let alias: &'a [u8] = item.alias.slice();
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
+            if self.options.features.embed_new_url_assets && alias == b"URL" {
+                let module = self.import_records.items()[stmt.import_record_index as usize]
+                    .path
+                    .text;
+                if module == b"url" || module == b"node:url" {
+                    self.url_import_refs.push(r#ref);
+                }
+            }
 
             // ensure every e_import_identifier holds the namespace
             if self.options.features.hot_module_reloading {
@@ -9862,6 +9872,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             bundler_feature_flag_ref: Ref::NONE,
             in_branch_condition: false,
             in_worker_url_arg: false,
+            url_import_refs: Vec::new(),
             has_classic_runtime_warned: false,
             macro_call_count: 0,
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),

@@ -1965,6 +1965,7 @@ describe("compile/NewUrlSiblingAsset", () => {
           "index.ts": /* ts */ `
           import { existsSync, readFileSync } from "node:fs";
           import { fileURLToPath } from "node:url";
+          import { viaNodeUrl } from "./lib.ts";
           // --bytecode emits CommonJS, which has no top-level await.
           async function main() {
             const viaUrl = readFileSync(new URL("./data.txt", import.meta.url), "utf8");
@@ -1973,15 +1974,22 @@ describe("compile/NewUrlSiblingAsset", () => {
             const viaBunFile = await Bun.file(new URL("sub/nested.txt", import.meta.url)).text();
             const exists = existsSync(new URL("./data.txt", import.meta.url));
             const protocol = new URL("./data.txt", import.meta.url).protocol;
-            console.log(JSON.stringify({ viaUrl, viaPath, viaBare, viaBunFile, exists, protocol }));
+            console.log(JSON.stringify({ viaUrl, viaPath, viaBare, viaBunFile, viaNodeUrl, exists, protocol }));
           }
           main();
         `,
+          "lib.ts": /* ts */ `
+          import { readFileSync } from "node:fs";
+          import { URL } from "node:url";
+          export const viaNodeUrl = readFileSync(new URL("./lib.txt", import.meta.url), "utf8");
+        `,
           "data.txt": "hello from data",
+          "lib.txt": "hello from lib",
           "sub/nested.txt": "hello from nested",
         });
         const { buildStdout, stdout, stderr, exitCode } = await compileAndMove(String(dir), [...extraArgs]);
         expect(buildStdout).toMatch(/embed\s+data\.txt\s+15 bytes/);
+        expect(buildStdout).toMatch(/embed\s+lib\.txt\s+14 bytes/);
         expect(buildStdout).toMatch(/embed\s+sub[\\/]nested\.txt\s+17 bytes/);
         expect(stderr).toBe("");
         expect(JSON.parse(stdout)).toEqual({
@@ -1989,6 +1997,7 @@ describe("compile/NewUrlSiblingAsset", () => {
           viaPath: "hello from nested",
           viaBare: "hello from data",
           viaBunFile: "hello from nested",
+          viaNodeUrl: "hello from lib",
           exists: true,
           protocol: "file:",
         });
@@ -2047,6 +2056,52 @@ describe("compile/NewUrlSiblingAsset", () => {
       message: "from worker",
       embedded: 0,
     });
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
+  // The same file passed as --asset under a name the bundler also produces is embedded once, not rejected.
+  test("a file that is also an --asset with the same name is embedded once", async () => {
+    using dir = tempDir("compile-new-url-asset-overlap", {
+      "index.ts": /* ts */ `
+        import { readFileSync } from "node:fs";
+        console.log(JSON.stringify({
+          text: readFileSync(new URL("./data.txt", import.meta.url), "utf8"),
+          embedded: Bun.embeddedFiles.map(f => f.name),
+        }));
+      `,
+      "data.txt": "same bytes",
+    });
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "./index.ts",
+        "--outfile",
+        "app",
+        "--asset",
+        "./data.txt",
+        "--asset-naming",
+        "[name].[ext]",
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("collides");
+    expect(buildExit).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [join(String(dir), isWindows ? "app.exe" : "app")],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ text: "same bytes", embedded: ["data.txt"] });
     expect(exitCode).toBe(0);
   }, 30_000);
 });

@@ -1307,7 +1307,10 @@ fn print_summary(
 /// the user and are not repeated.
 fn print_embedded_assets(output_files: &[options::OutputFile], cwd: &[u8]) {
     for f in output_files.iter() {
-        if f.output_kind != options::OutputKind::Asset || f.src_path.text.is_empty() {
+        if f.output_kind != options::OutputKind::Asset
+            || f.input_loader != bun_ast::Loader::File
+            || f.source_index.is_none()
+        {
             continue;
         }
         bun_core::prettyln!(
@@ -1336,23 +1339,29 @@ pub(crate) fn collect_compile_assets(
     };
     let entry_name = bun_paths::basename(outfile);
 
-    let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
-    for f in out.iter() {
+    // dest path -> index in `out`
+    let mut seen: StringArrayHashMap<usize> = StringArrayHashMap::new();
+    for (i, f) in out.iter().enumerate() {
         if !f.output_kind.is_file_in_standalone_mode() {
             continue;
         }
-        let _ = seen.put(strings::remove_leading_dot_slash(&f.dest_path), ());
+        let _ = seen.put(strings::remove_leading_dot_slash(&f.dest_path), i);
     }
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {
-            if seen.contains_key(&dest) {
+            if let Some(&existing) = seen.get(&dest) {
+                // The bundler already embedded this file at this name (a `with { type: "file" }`
+                // import or a `new URL(..., import.meta.url)` sibling under `--asset-naming`).
+                if out[existing].value.as_slice() == bytes.as_slice() {
+                    return Ok(());
+                }
                 return Err(format!(
                     "asset {} collides with another embedded file at {}",
                     bun_fmt::quote(asset),
                     bun_fmt::quote(&dest),
                 ));
             }
-            let _ = seen.put(&dest, ());
+            let _ = seen.put(&dest, out.len());
             out.push(options::OutputFile {
                 loader: Loader::File,
                 input_loader: Loader::File,

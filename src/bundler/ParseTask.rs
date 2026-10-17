@@ -2563,7 +2563,9 @@ pub mod parse_worker {
         };
         opts.features.react_compiler_parse_test_pragmas =
             opts.features.react_compiler.is_enabled() && topts.react_compiler_parse_test_pragmas;
-        opts.features.embed_new_url_assets = topts.compile_mode.is_executable();
+        // Browser chunks cannot reach the embedded graph.
+        opts.features.embed_new_url_assets =
+            topts.compile_mode.is_executable() && topts.target.is_bun();
 
         opts.features.server_components = if topts.server_components {
             use bun_ast::runtime::ServerComponentsMode as SC;

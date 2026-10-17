@@ -2470,7 +2470,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // to the build path during the visit.
         let is_url_of_import_meta = p.options.features.embed_new_url_assets
             && e_.args.len_u32() == 2
-            && p.unbound_global_name(&e_.target) == Some(&b"URL"[..])
+            && p.is_url_constructor(&e_.target)
             && matches!(
                 &e_.args.slice()[1].data,
                 Data::EDot(dot) if matches!(dot.target.data, Data::EImportMeta(..)) && dot.name.slice() == b"url"
@@ -2515,6 +2515,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         (symbol.kind == js_ast::symbol::Kind::Unbound).then(|| symbol.original_name.slice())
     }
 
+    /// `URL` as the global, or imported from `url` / `node:url`.
+    fn is_url_constructor(&self, target: &Expr) -> bool {
+        match target.data {
+            Data::EIdentifier(..) => self.unbound_global_name(target) == Some(&b"URL"[..]),
+            Data::EImportIdentifier(ident) => {
+                self.url_import_refs.iter().any(|r| r.eql(ident.ref_))
+            }
+            _ => false,
+        }
+    }
+
     /// `--compile`: `new URL("./file", import.meta.url)` becomes `new URL("file:" + require("./file"))`
     /// with the record loaded by the file loader, so the file is embedded and the URL names the
     /// embedded copy. `"file:"` + an absolute path parses to a `file:///` URL on POSIX
@@ -2526,11 +2537,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let Some(mut specifier) = args[0].data.as_e_string() else {
             return;
         };
-        if specifier.is_utf16 {
-            return;
-        }
         let specifier: &'a [u8] = specifier.slice(self.arena);
-        if !is_relative_file_specifier(specifier) {
+        // A plugin module has no directory on disk to resolve against.
+        let dir = self.source.path.name().dir;
+        if !self.source.path.is_file()
+            || !bun_paths::is_absolute(dir)
+            || !is_relative_file_specifier(specifier)
+        {
             return;
         }
         // A JS/TS source is a worker or import() target, not an asset.
@@ -2542,12 +2555,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
-        let dir = self.source.path.name().dir;
         let mut joined = bun_paths::path_buffer_pool::get();
-        let joined_len = bun_paths::resolve_path::join_abs_string_buf::<
+        let Some(joined_len) = bun_paths::resolve_path::join_abs_string_buf_checked::<
             bun_paths::resolve_path::platform::Auto,
         >(dir, &mut joined.0[..], &[specifier])
-        .len();
+        .map(|j| j.len()) else {
+            return;
+        };
         if joined_len >= joined.0.len() {
             return;
         }
@@ -2929,13 +2943,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 }
 
 /// A `new URL(specifier, base)` argument that names a file relative to the base: not empty, not
-/// absolute, no scheme (`data:`, `https:`, a Windows drive letter), and none of `? # % \ NUL`,
+/// absolute, no scheme (`data:`, `https:`, a Windows drive letter), and no byte the URL parser
+/// strips or reads as syntax (`? # % \`, NUL, tab, newline, leading or trailing space or control),
 /// which would make the URL name a different file than the literal.
 fn is_relative_file_specifier(specifier: &[u8]) -> bool {
     if specifier.is_empty() || matches!(specifier[0], b'/' | b'\\') {
         return false;
     }
-    if strings::index_of_any(specifier, b"?#%\\\0").is_some() {
+    if specifier[0] <= b' ' || specifier[specifier.len() - 1] <= b' ' {
+        return false;
+    }
+    if strings::index_of_any(specifier, b"?#%\\\0\t\n\r").is_some() {
         return false;
     }
     if specifier[0].is_ascii_alphabetic() {

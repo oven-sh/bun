@@ -2884,10 +2884,7 @@ declare module "bun" {
    * @param data The data to hash.
    * @param seed The seed to use.
    */
-  const hash: ((
-    data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-    seed?: number | bigint,
-  ) => number | bigint) &
+  const hash: ((data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number | bigint) => bigint) &
     Hash;
 
   interface Hash {
@@ -5863,6 +5860,11 @@ declare module "bun" {
    * This class only exists in types
    */
   abstract class CryptoHashInterface<T> {
+    /**
+     * The number of bytes the hash produces
+     */
+    readonly byteLength: number;
+
     /**
      * Update the hash with data
      *

@@ -310,9 +310,10 @@ function checkForEmptyInterfaces(program: ts.Program) {
 const PUBLISHED_AS: Record<string, string | null> = {
   "BunObject.bind.ts": "typeof Bun & { braces: typeof Bun.$.braces; shellEscape: typeof Bun.$.escape }",
   "Crypto.bind.ts": "typeof Bun",
+  "CryptoHasher.bind.ts": "typeof Bun",
   "DevServer.bind.ts": null,
   "Glob.bind.ts": "typeof Bun",
-  "HashObject.bind.ts": "typeof Bun.hash",
+  "HashObject.bind.ts": "typeof Bun.hash & { wyhash: typeof Bun.hash }",
   "JSON5Object.bind.ts": "typeof Bun.JSON5",
   "JSONCObject.bind.ts": "typeof Bun.JSONC",
   "NodeModuleModule.bind.ts": null,
@@ -331,7 +332,8 @@ const PUBLISHED_AS: Record<string, string | null> = {
 
 /**
  * Where the published types promise what the schema does not do: a call they allow has an argument
- * the schema refuses, or a result they name is not one the schema gives. They may be narrower than it.
+ * the schema refuses, or a result they name is not one the schema gives. They may be narrower than it,
+ * which says "a buffer" of a `Uint8Array`, but not by leaving out `null`.
  */
 function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, schema: ts.Type) {
   const broken: string[] = [];
@@ -369,7 +371,12 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
     const isGenerated = schema.symbol?.declarations?.some(declaration => declaration.getSourceFile() === generated);
     if (calls.length === 0 && constructs.length === 0 && !isGenerated) {
       const promisesNothing = published.flags & ts.TypeFlags.Void;
-      if (!promisesNothing && !checker.isTypeAssignableTo(published, schema)) {
+      const givesNull = schema.isUnion() && schema.types.some(type => type.flags & ts.TypeFlags.Null);
+      if (
+        !promisesNothing &&
+        (!checker.isTypeAssignableTo(published, schema) ||
+          (givesNull && !checker.isTypeAssignableTo(checker.getNullType(), published)))
+      ) {
         broken.push(`${path} is ${show(schema)}, not ${show(published)}`);
       }
       return;
@@ -439,10 +446,13 @@ describe("@types/bun integration test", () => {
     );
     const program = ts.createProgram({
       rootNames: [join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "index.d.ts"), join(dir, "Bindgen.d.ts"), pairs],
-      options: { ...DEFAULT_COMPILER_OPTIONS, types: [] },
+      options: { ...DEFAULT_COMPILER_OPTIONS, types: [], skipLibCheck: false },
     });
     const source = program.getSourceFile(pairs)!;
-    expect(ts.getPreEmitDiagnostics(program, source).map(diagnostic => diagnostic.messageText)).toEqual([]);
+    // A name that does not resolve is a type that everything is assignable to.
+    for (const file of [source, program.getSourceFile(join(dir, "Bindgen.d.ts"))!]) {
+      expect(ts.getPreEmitDiagnostics(program, file).map(diagnostic => diagnostic.messageText)).toEqual([]);
+    }
 
     const checker = program.getTypeChecker();
     const [published, generated] = source.statements.map(statement => checker.getTypeAtLocation(statement));

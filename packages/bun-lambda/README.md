@@ -20,11 +20,11 @@ Once you publish the layer to your AWS account, you can create a Lambda function
 
 ### Step 1: Create a Bun Lambda handler function
 
-In addition to providing the Bun runtime itself, the Bun Lambda Layer also provides an event transformation so you can write your Bun function in a classic Bun server format. This allows you to also run your Lambda function as a local Bun server with `bun run <handler-name>.ts`. Here are some examples of how to write a Bun Lambda function:
+In addition to providing the Bun runtime itself, the Bun Lambda Layer also provides an event transformation so you can write your Bun function in a classic Bun server format. Locally, `bun run <handler-name>.ts` starts an HTTP server on port 3000 (Bun's default for a `fetch` export). That is not the Lambda runtime — it is how you exercise the same handler before you deploy. Here are some examples of how to write a Bun Lambda function:
 
 #### HTTP Event Example
 
-When an event is triggered from [API Gateway](https://docs.aws.amazon.com/lambda/latest/dg/services-apigateway.html), the layer transforms the event payload into a [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request). This means you can test your Lambda function locally using `bun run`, without any code changes.
+When an event is triggered from [API Gateway](https://docs.aws.amazon.com/lambda/latest/dg/services-apigateway.html), the layer transforms the event payload into a [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request). This means you can test the same `fetch` handler locally with `bun run` (HTTP on port 3000), without any code changes.
 
 ```ts
 export default {

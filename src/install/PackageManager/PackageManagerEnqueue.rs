@@ -263,6 +263,16 @@ pub(crate) fn add_dependency_error(
     }
 }
 
+fn locked_tarball_task_id(this: &PackageManager, package_id: PackageID, url: &[u8]) -> Task::Id {
+    let resolution = &this.lockfile.packages.items_resolution()[package_id as usize];
+    let resolved: &[u8] = match resolution.tag {
+        ResolutionTag::Github => this.lockfile.str(&resolution.github().resolved),
+        _ => b"",
+    };
+    let integrity = &this.lockfile.packages.items_meta()[package_id as usize].integrity;
+    Task::Id::for_locked_tarball(url, resolved, integrity)
+}
+
 pub fn enqueue_tarball_for_download(
     this: &mut PackageManager,
     dependency_id: DependencyID,
@@ -272,9 +282,16 @@ pub fn enqueue_tarball_for_download(
 ) -> Result<(), ForTarballError> {
     let name = this.lockfile.packages.items_name()[package_id as usize];
     let name = this.lockfile.str_detached(&name);
+    // A URL that failed for a dependency in this run is not asked again for the package.
+    let resolved_now = Task::Id::for_tarball(url);
+    let task_id = if this.network_task_has_failed(resolved_now) {
+        resolved_now
+    } else {
+        locked_tarball_task_id(this, package_id, url)
+    };
     enqueue_download(
         this,
-        Task::Id::for_tarball(url),
+        task_id,
         name,
         dependency_id,
         package_id,
@@ -365,7 +382,7 @@ pub fn enqueue_tarball_for_reading(
 ) {
     // `enqueue_local_tarball` copies `path` into the filename store before `string_bytes` can grow.
     let path = this.lockfile.str_detached(resolution.local_tarball());
-    let task_id = Task::Id::for_tarball(path);
+    let task_id = locked_tarball_task_id(this, package_id, path);
     if !push_task_callback(this, task_id, task_context) {
         return;
     }

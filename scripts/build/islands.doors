@@ -56,7 +56,6 @@ door text exit ^<bun_install::lifecycle_script_runner::LifecycleScriptSubprocess
 door text exit ^Bun::generateInternalModuleFromText\(
 door text return ^Bun__textOfBuiltinFunctions$
 door text return ^JSC::textOfBuiltinFunctions\(\)$
-door text exit ^JSC::BuiltinExecutables::linkFromText\(
 door text exit ^Bun::jsInternalModuleBytecode\(
 feature bundler Bun.build, HTML imports and the development server
 when bundler Bun build

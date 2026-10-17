@@ -919,9 +919,7 @@ impl Diff {
         let mut summary = DiffSummary::default();
         let is_root = id_mapping.is_some();
         let frozen = pm.options.enable.frozen_lockfile();
-        // `bun pm fetch` writes nothing but the cache. In a Docker layer that only has the root's
-        // package.json and bun.lock, it downloads what bun.lock has for every workspace.
-        let keeps_missing_workspaces = frozen || pm.subcommand == install::Subcommand::Pm;
+        let keeps_missing_workspaces = lockfile::pruned_workspaces::keeps_missing_workspaces(pm);
         macro_rules! from_buf {
             () => {
                 from_lockfile.buffers.string_bytes.as_slice()
@@ -2372,7 +2370,7 @@ impl Package<u64> {
 
         let missing_workspace = if pm.options.runtime_auto_install {
             workspace_map::MissingWorkspace::SkipEmptyToo
-        } else if pm.options.enable.frozen_lockfile() {
+        } else if lockfile::pruned_workspaces::keeps_missing_workspaces(pm) {
             workspace_map::MissingWorkspace::SkipIfInLockfile(&pm.lockfile)
         } else {
             workspace_map::MissingWorkspace::Error

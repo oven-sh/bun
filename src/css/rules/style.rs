@@ -14,7 +14,8 @@ use crate::{PrintErr, Printer, VendorPrefix};
 pub struct StyleRule<R> {
     /// The selectors for the style rule.
     pub(crate) selectors: selector::parser::SelectorList,
-    /// A vendor prefix override, used during selector printing.
+    /// The vendor prefix passes to print this rule with (see
+    /// `selector::prefix_passes`), or empty to print it once as written.
     pub(crate) vendor_prefix: VendorPrefix,
     /// The declarations within the style rule.
     pub(crate) declarations: DeclarationBlock<'static>,
@@ -63,6 +64,9 @@ impl<R> StyleRule<R> {
                 context.targets,
             );
         }
+        if !self.vendor_prefix.is_empty() {
+            self.vendor_prefix = selector::prefix_passes(self.selectors.v.slice());
+        }
     }
 
     pub(crate) fn is_compatible(&self, targets: &css::targets::Targets) -> bool {
@@ -96,14 +100,22 @@ impl<R> StyleRule<R> {
         if self.vendor_prefix.is_empty() {
             self.to_css_base(dest, true)?;
         } else {
+            // With nesting compiled away, the parent selectors substituted for
+            // `&` print in this rule's passes too.
+            let passes = match dest.ctx {
+                Some(parents) => {
+                    selector::nested_prefix_passes(self.selectors.v.slice(), Some(parents))
+                }
+                None => self.vendor_prefix,
+            };
             let mut first_rule = true;
             let mut emitted_first_pass = false;
-            let mut remaining_prefixes = self.vendor_prefix;
+            let mut remaining_prefixes = passes;
             // `inline for (css.VendorPrefix.FIELDS) |field|` — iterate the bool fields of the
             // packed struct in declared order. In Rust the bitflags type exposes the same
             // ordered single-bit table directly.
             for &prefix in VendorPrefix::FIELDS {
-                if self.vendor_prefix.contains(prefix) {
+                if passes.contains(prefix) {
                     remaining_prefixes.remove(prefix);
                     if !first_rule {
                         if !dest.minify {

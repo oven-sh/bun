@@ -196,7 +196,6 @@ pub struct BundlerOptions {
     pub entry_naming: Box<[u8]>,
     pub chunk_naming: Box<[u8]>,
     pub asset_naming: Box<[u8]>,
-    pub server_components: bool,
     pub react_fast_refresh: bool,
     /// `--check`: type check the entry points and what they import, and do not bundle if there are errors.
     pub check: bool,
@@ -263,7 +262,6 @@ impl Default for BundlerOptions {
             entry_naming: Box::from(&b"[dir]/[name].[ext]"[..]),
             chunk_naming: Box::from(&b"./[name]-[hash].[ext]"[..]),
             asset_naming: Box::from(&b"./[name]-[hash].[ext]"[..]),
-            server_components: false,
             react_fast_refresh: false,
             check: false,
             react_compiler: false,

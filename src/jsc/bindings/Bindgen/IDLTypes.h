@@ -28,15 +28,22 @@ struct IDLStrictNull : WebCore::IDLType<std::nullptr_t> {};
 template<typename IDL>
 struct IDLFalsyAsNull : WebCore::IDLNullable<IDL> {};
 
-template<std::integral T>
+enum class AllowBigInt : bool {
+    No,
+    Yes,
+};
+
+template<std::integral T, AllowBigInt = AllowBigInt::No>
 struct IDLStrictInteger : WebCore::IDLInteger<T> {};
 struct IDLStrictDouble : WebCore::IDLUnrestrictedDouble {};
+// Converts to a numeric first. A BigInt is the double nearest to it.
+struct IDLLooseDoubleOrBigInt : WebCore::IDLUnrestrictedDouble {};
 struct IDLStrictBoolean : WebCore::IDLBoolean {};
 struct IDLStrictString : WebCore::IDLDOMString {};
 
-// Converts to a number first.
-template<std::integral T>
-struct IDLLooseInteger : IDLStrictInteger<T> {};
+// Converts to a number first, or to a numeric where a BigInt is allowed.
+template<std::integral T, AllowBigInt allowBigInt = AllowBigInt::No>
+struct IDLLooseInteger : IDLStrictInteger<T, allowBigInt> {};
 
 namespace Detail {
 template<typename IDL>

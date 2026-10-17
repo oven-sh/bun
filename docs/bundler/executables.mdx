@@ -727,6 +727,19 @@ The import returns a **path string** that points to the embedded file. At build 
 
 You can then read this embedded file using `Bun.file()` or Node.js `fs` APIs.
 
+### Files named with `new URL(..., import.meta.url)`
+
+A file next to a module is often named with a URL built from `import.meta.url`. Many packages ship a `.wasm` file or a font this way:
+
+```ts index.ts icon="/icons/typescript.svg"
+import { readFileSync } from "node:fs";
+
+const wasm = readFileSync(new URL("./module.wasm", import.meta.url));
+const font = await Bun.file(new URL("font.ttf", import.meta.url)).arrayBuffer();
+```
+
+With `--compile`, Bun embeds the file named by `new URL("<relative path>", import.meta.url)` when that file exists at build time, and points the URL at the embedded copy. The build summary lists each embedded file on an `embed` line. A URL that names a JavaScript or TypeScript file, a file that does not exist, or a URL passed to `new Worker()` is left as written.
+
 ### Reading embedded files with Bun.file()
 
 `Bun.file()` is the recommended way to read embedded files:

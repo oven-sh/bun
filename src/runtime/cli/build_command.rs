@@ -827,6 +827,10 @@ impl BuildCommand {
                     reachable_file_count,
                     output_files,
                 );
+                print_embedded_assets(
+                    output_files,
+                    bun_resolver::fs::FileSystem::instance().top_level_dir,
+                );
 
                 Output::flush();
 
@@ -1232,6 +1236,23 @@ fn print_summary(
     bun_core::prettyln!("  <green>bundle<r>  {} modules", reachable_file_count);
 }
 
+/// One line per file-loader asset. `--asset` files were listed by the user and are not repeated.
+fn print_embedded_assets(output_files: &[options::OutputFile], cwd: &[u8]) {
+    for f in output_files.iter() {
+        if f.output_kind != options::OutputKind::Asset
+            || f.input_loader != bun_ast::Loader::File
+            || f.source_index.is_none()
+        {
+            continue;
+        }
+        bun_core::prettyln!(
+            "           <green>embed<r>  {}  <d>{}<r>",
+            bstr::BStr::new(resolve_path::relative(cwd, f.src_path.text)),
+            bun_fmt::size(f.size, Default::default())
+        );
+    }
+}
+
 pub(crate) fn collect_compile_assets(
     assets: &[Box<[u8]>],
     outfile: &[u8],
@@ -1250,23 +1271,28 @@ pub(crate) fn collect_compile_assets(
     };
     let entry_name = bun_paths::basename(outfile);
 
-    let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
-    for f in out.iter() {
+    // dest path -> index in `out`
+    let mut seen: StringArrayHashMap<usize> = StringArrayHashMap::new();
+    for (i, f) in out.iter().enumerate() {
         if !f.output_kind.is_file_in_standalone_mode() {
             continue;
         }
-        let _ = seen.put(strings::remove_leading_dot_slash(&f.dest_path), ());
+        let _ = seen.put(strings::remove_leading_dot_slash(&f.dest_path), i);
     }
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {
-            if seen.contains_key(&dest) {
+            if let Some(&existing) = seen.get(&dest) {
+                // The bundler already embedded this same file under this name.
+                if out[existing].value.as_slice() == bytes.as_slice() {
+                    return Ok(());
+                }
                 return Err(format!(
                     "asset {} collides with another embedded file at {}",
                     bun_fmt::quote(asset),
                     bun_fmt::quote(&dest),
                 ));
             }
-            let _ = seen.put(&dest, ());
+            let _ = seen.put(&dest, out.len());
             out.push(options::OutputFile {
                 loader: Loader::File,
                 input_loader: Loader::File,

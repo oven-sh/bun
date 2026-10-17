@@ -97,6 +97,32 @@ describe("fake node cli", () => {
     );
   });
 
+  describe("--conditions", () => {
+    const files = {
+      "node_modules/condpkg/package.json": JSON.stringify({
+        name: "condpkg",
+        exports: { ".": { custom: "./custom.js", default: "./default.js" } },
+      }),
+      "node_modules/condpkg/custom.js": "module.exports = 'custom';",
+      "node_modules/condpkg/default.js": "module.exports = 'default';",
+      "require.cjs": "console.log(require('condpkg'));",
+      "import.mjs": `
+        import value from "condpkg";
+        import { createRequire } from "node:module";
+        console.log(value, createRequire(import.meta.url)("condpkg"));
+      `,
+    };
+    test.each([
+      [["--conditions=custom", "require.cjs"], "custom"],
+      [["--conditions", "custom", "require.cjs"], "custom"],
+      [["--conditions=custom", "import.mjs"], "custom custom"],
+      [["require.cjs"], "default"],
+    ])("node %j", (args, expected) => {
+      using temp = tempDir("fake-node", files);
+      expect(fakeNodeRun(temp, args)).toEqual({ stdout: expected, stderr: "" });
+    });
+  });
+
   // Bare `node` now matches Node.js: a TTY stdin enters the REPL, a
   // non-TTY stdin (pipe) prints "Missing script". fakeNodeRun's default
   // stdin is platform-dependent (Windows may inherit a console), so pin

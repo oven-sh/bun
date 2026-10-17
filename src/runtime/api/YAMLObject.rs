@@ -10,7 +10,7 @@ use bun_jsc::{
     JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsError, JsResult,
     MarkedArgumentBuffer, wtf,
 };
-use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
+use bun_parsers::yaml::{CyclicAliases, SHARED_STRING_MIN_LEN, YAML, YamlParseError};
 
 pub(crate) fn stringify<'a>(
     cx: &mut JsScope<'a>,
@@ -1076,9 +1076,14 @@ pub(crate) fn parse<'a>(cx: &mut JsScope<'a>, input: JsBytes<'a>) -> JsResult<JS
             mapping,
             key,
             value,
+            key_is_shared_string,
         } in pending
         {
-            mapping.put_may_be_index(global, &key.to_bun_string(global)?, value)?;
+            if key_is_shared_string {
+                JSValue::put_to_property_key(mapping, global, key, value)?;
+            } else {
+                mapping.put_may_be_index(global, &key.to_bun_string(global)?, value)?;
+            }
         }
         Ok(result)
     })
@@ -1090,6 +1095,8 @@ struct PendingProperty {
     mapping: JSValue,
     key: JSValue,
     value: JSValue,
+    /// See `ParserCtx::is_shared_string`.
+    key_is_shared_string: bool,
 }
 
 fn parse_to_values(
@@ -1101,9 +1108,9 @@ fn parse_to_values(
     super::with_text_format_source(global, input, b"input.yaml", |arena, log, source| {
         // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
         // once by pointer identity, so a cyclic graph is fine here.
-        let root =
-            match YAML::parse(source, log, arena, CyclicAliases::Allow) {
-                Ok(root) => root,
+        let parsed =
+            match YAML::parse_shared(source, log, arena, CyclicAliases::Allow) {
+                Ok(parsed) => parsed,
                 Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
                 Err(YamlParseError::SyntaxError) => {
@@ -1122,12 +1129,17 @@ fn parse_to_values(
 
         let mut ctx = ParserCtx {
             seen_objects: HashMap::default(),
+            share_min_len: if parsed.shares_long_strings {
+                SHARED_STRING_MIN_LEN
+            } else {
+                usize::MAX
+            },
             stack_check: StackCheck::init(),
             global,
             pending,
         };
 
-        ctx.to_js(roots, root).map_err(|err| match err {
+        ctx.to_js(roots, parsed.root).map_err(|err| match err {
             ToJsError::OutOfMemory => JsError::OutOfMemory,
             ToJsError::JsError => JsError::Thrown,
             ToJsError::StackOverflow => global.throw_stack_overflow(),
@@ -1137,6 +1149,9 @@ fn parse_to_values(
 
 struct ParserCtx<'a> {
     seen_objects: HashMap<*const c_void, JSValue>,
+    /// A string node of this many bytes or more is in `seen_objects` too. `usize::MAX` for a document
+    /// in which no such node is reached twice.
+    share_min_len: usize,
     stack_check: StackCheck,
 
     global: &'a JSGlobalObject,
@@ -1182,6 +1197,11 @@ impl From<bun_ast::ToJSError> for ToJsError {
 impl<'a> ParserCtx<'a> {
     // deinit: seen_objects has Drop; no explicit impl needed.
 
+    /// Whether `to_js` makes one JS string of `expr` for all the places that hold it.
+    fn is_shared_string(&self, expr: &Expr) -> bool {
+        matches!(expr.data, ExprData::EString(str) if str.data.len() >= self.share_min_len)
+    }
+
     fn to_js(&mut self, args: &mut MarkedArgumentBuffer, expr: Expr) -> Result<JSValue, ToJsError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ToJsError::StackOverflow);
@@ -1190,10 +1210,25 @@ impl<'a> ParserCtx<'a> {
             ExprData::ENull(_) => Ok(JSValue::NULL),
             ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
             ExprData::ENumber(number) => Ok(JSValue::js_number(number.value())),
-            ExprData::EString(str) => Ok(bun_js_parser_jsc::value_string_to_js(
-                str.get(),
-                self.global,
-            )?),
+            ExprData::EString(str) => {
+                if !self.is_shared_string(&expr) {
+                    return Ok(bun_js_parser_jsc::value_string_to_js(
+                        str.get(),
+                        self.global,
+                    )?);
+                }
+                let key = str.as_ptr().cast_const().cast::<c_void>();
+                if let Some(shared) = self.seen_objects.get(&key) {
+                    return Ok(*shared);
+                }
+
+                let shared = bun_js_parser_jsc::value_string_to_js(str.get(), self.global)?;
+
+                args.append(shared);
+                self.seen_objects.put(key, shared)?;
+
+                Ok(shared)
+            }
             ExprData::EArray(e_array) => {
                 let key = e_array.as_ptr().cast_const().cast::<c_void>();
                 if let Some(arr) = self.seen_objects.get(&key) {
@@ -1236,6 +1271,7 @@ impl<'a> ParserCtx<'a> {
 
                     let key = self.to_js(args, key_expr)?;
                     let value = self.to_js(args, value_expr)?;
+                    let key_is_shared_string = self.is_shared_string(&key_expr);
 
                     is_pending |= key.is_object();
                     if is_pending {
@@ -1245,7 +1281,15 @@ impl<'a> ParserCtx<'a> {
                             mapping: obj,
                             key,
                             value,
+                            key_is_shared_string,
                         });
+                        continue;
+                    }
+
+                    if key_is_shared_string {
+                        // The JS string keeps the atom it becomes, so the mappings after the first
+                        // that have this key do not read its text.
+                        JSValue::put_to_property_key(obj, self.global, key, value)?;
                         continue;
                     }
 

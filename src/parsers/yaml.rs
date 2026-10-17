@@ -35,6 +35,18 @@ pub enum CyclicAliases {
     Reject,
 }
 
+/// A string node shorter than this costs less to read again than to look up by its address, so
+/// nothing remembers it: neither a merge (`MergeKeyMemo`) nor [`Parsed::shares_long_strings`].
+pub const SHARED_STRING_MIN_LEN: usize = 64;
+
+/// What [`YAML::parse_shared`] returns.
+pub struct Parsed {
+    pub root: Expr,
+    /// A string node of [`SHARED_STRING_MIN_LEN`] bytes or more can be reached from more than one
+    /// place of `root`: an alias refers to it, or a `<<` copied a property that has it.
+    pub shares_long_strings: bool,
+}
+
 impl YAML {
     pub fn parse(
         source: &bun_ast::Source,
@@ -42,6 +54,16 @@ impl YAML {
         bump: &bun_alloc::Arena,
         cyclic_aliases: CyclicAliases,
     ) -> Result<Expr, YamlParseError> {
+        Ok(Self::parse_shared(source, log, bump, cyclic_aliases)?.root)
+    }
+
+    /// [`YAML::parse`] for a consumer that makes one value of each node.
+    pub fn parse_shared(
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+        bump: &bun_alloc::Arena,
+        cyclic_aliases: CyclicAliases,
+    ) -> Result<Parsed, YamlParseError> {
         bun_core::analytics::Features::yaml_parse_inc();
         source.check_parseable_len(log, "YAML document")?;
 
@@ -56,9 +78,9 @@ impl YAML {
             }
         };
 
-        match stream.docs.len() {
-            0 => Ok(Expr::init(E::Null {}, Loc::EMPTY)),
-            1 => Ok(stream.docs[0].root),
+        let root = match stream.docs.len() {
+            0 => Expr::init(E::Null {}, Loc::EMPTY),
+            1 => stream.docs[0].root,
             _ => {
                 // multi-document yaml streams are converted into arrays
                 let mut items: ast::ExprNodeList =
@@ -66,15 +88,19 @@ impl YAML {
                 for doc in &stream.docs {
                     items.push(doc.root);
                 }
-                Ok(Expr::init(
+                Expr::init(
                     E::Array {
                         items,
                         ..Default::default()
                     },
                     Loc::EMPTY,
-                ))
+                )
             }
-        }
+        };
+        Ok(Parsed {
+            root,
+            shares_long_strings: parser.shares_long_strings,
+        })
     }
 }
 
@@ -1691,15 +1717,25 @@ pub(crate) struct Document {
 /// only null, boolean, number, string, array, object are possible. It also only
 /// does pointer comparison with arrays and objects (so exponential merges are avoided).
 /// Operates on already-built `Expr`s, so it is independent of the input encoding.
-fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr) -> bool {
+fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr, long_keys: Option<&MergeKeyMemo>) -> bool {
     if core::mem::discriminant(&l.data) != core::mem::discriminant(&r.data) {
         return false;
     }
     match (&l.data, &r.data) {
         (ast::ExprData::ENull(_), _) => true,
         (ast::ExprData::EBoolean(lb), ast::ExprData::EBoolean(rb)) => lb.value == rb.value,
-        (ast::ExprData::ENumber(ln), ast::ExprData::ENumber(rn)) => ln.value() == rn.value(),
+        (ast::ExprData::ENumber(ln), ast::ExprData::ENumber(rn)) => {
+            yaml_merge_key_number_bits(ln.value()) == yaml_merge_key_number_bits(rn.value())
+        }
         (ast::ExprData::EString(ls), ast::ExprData::EString(rs)) => {
+            if ls.as_ptr() == rs.as_ptr() {
+                return true;
+            }
+            if MergeKeyMemo::remembers(ls) && MergeKeyMemo::remembers(rs) {
+                if let Some(same_text) = long_keys.and_then(|memo| memo.same_text(*ls, *rs)) {
+                    return same_text;
+                }
+            }
             // UTF-8/UTF-16-aware string equality.
             if ls.is_utf16 != rs.is_utf16 {
                 if ls.is_utf16 {
@@ -1721,18 +1757,83 @@ fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr) -> bool {
 }
 
 /// Encoding-independent companion to [`yaml_merge_key_expr_eql`].
-fn yaml_merge_key_expr_hash(key: &Expr) -> u64 {
-    match &key.data {
+fn yaml_merge_key_expr_hash(
+    key: &Expr,
+    long_keys: &mut Option<Box<MergeKeyMemo>>,
+) -> Result<u64, AllocError> {
+    Ok(match &key.data {
         ast::ExprData::ENull(_) => 0,
         ast::ExprData::EBoolean(b) => 1 + b.value as u64,
-        ast::ExprData::ENumber(n) => {
-            let value = if n.value() == 0.0 { 0.0 } else { n.value() };
-            value.to_bits()
+        ast::ExprData::ENumber(n) => yaml_merge_key_number_bits(n.value()),
+        ast::ExprData::EString(s) if MergeKeyMemo::remembers(s) => {
+            long_keys.get_or_insert_default().hash(*s)?
         }
         ast::ExprData::EString(s) => s.hash(),
         ast::ExprData::EArray(a) => a.as_ptr() as usize as u64,
         ast::ExprData::EObject(o) => o.as_ptr() as usize as u64,
         _ => u64::MAX,
+    })
+}
+
+/// A number key as the two functions above see it: `0.0` and `-0.0` are one key, and so is
+/// every NaN.
+fn yaml_merge_key_number_bits(value: f64) -> u64 {
+    if value == 0.0 {
+        0
+    } else if value.is_nan() {
+        f64::NAN.to_bits()
+    } else {
+        value.to_bits()
+    }
+}
+
+/// Reads the text of a long string key once per node, however many `<<` the node goes through.
+/// It belongs to the parse and not to a mapping: a key that many mappings merge is one node.
+#[derive(Default)]
+pub(crate) struct MergeKeyMemo {
+    /// The hash of a node's text, and the index of that text in `texts`.
+    nodes: bun_collections::HashMap<*const E::String, (u64, u32)>,
+    /// The indexes in `texts` of the texts that have this hash.
+    by_hash: bun_collections::HashMap<u64, Vec<u32>>,
+    /// The first node seen of each distinct text.
+    texts: Vec<ast::StoreRef<E::String>>,
+}
+
+impl MergeKeyMemo {
+    #[inline]
+    fn remembers(s: &E::String) -> bool {
+        !s.is_utf16 && s.data.len() >= SHARED_STRING_MIN_LEN
+    }
+
+    /// `None` for a node that `hash` has not seen.
+    fn same_text(&self, l: ast::StoreRef<E::String>, r: ast::StoreRef<E::String>) -> Option<bool> {
+        let (_, l) = self.nodes.get(&l.as_ptr().cast_const())?;
+        let (_, r) = self.nodes.get(&r.as_ptr().cast_const())?;
+        Some(l == r)
+    }
+
+    #[inline(never)]
+    fn hash(&mut self, s: ast::StoreRef<E::String>) -> Result<u64, AllocError> {
+        let node = s.as_ptr().cast_const();
+        if let Some((hash, _)) = self.nodes.get(&node) {
+            return Ok(*hash);
+        }
+        let hash = s.hash();
+        let same_hash = self.by_hash.get_or_put(hash)?.value_ptr;
+        let text = match same_hash
+            .iter()
+            .find(|text| self.texts[**text as usize].data == s.data)
+        {
+            Some(text) => *text,
+            None => {
+                let text = self.texts.len() as u32;
+                same_hash.push(text);
+                self.texts.push(s);
+                text
+            }
+        };
+        self.nodes.put(node, (hash, text))?;
+        Ok(hash)
     }
 }
 
@@ -2209,6 +2310,10 @@ pub struct Parser<'i, Enc: Encoding> {
 
     pub(crate) merge_props_budget: usize,
     pub(crate) alias_expansion_budget: usize,
+    /// Allocated by the first `<<` that reads a long string key.
+    long_merge_keys: Option<Box<MergeKeyMemo>>,
+    /// See [`Parsed::shares_long_strings`].
+    shares_long_strings: bool,
 
     /// The tokens so far, for [`YAML::parse_as_written`].
     pub(crate) written: Option<Vec<SourceToken>>,
@@ -2256,6 +2361,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             least_stack_left: usize::MAX,
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
             alias_expansion_budget: Self::MAX_ALIAS_EXPANSION,
+            long_merge_keys: None,
+            shares_long_strings: false,
             written: None,
         }
     }
@@ -3186,27 +3293,33 @@ impl MappingProps {
         &mut self,
         merge_props: &[G::Property],
         budget: &mut usize,
+        long_keys: &mut Option<Box<MergeKeyMemo>>,
     ) -> Result<(), AllocError> {
         self.list.reserve(merge_props.len().min(*budget));
 
         while self.merge_indexed < self.list.len() {
             let idx = self.merge_indexed;
             let key = self.list[idx].key.as_ref().unwrap();
-            let hash = yaml_merge_key_expr_hash(key);
-            self.merge_index
-                .get_or_put(hash)?
-                .value_ptr
-                .push(idx as u32);
+            let hash = yaml_merge_key_expr_hash(key, long_keys)?;
+            let same_hash = self.merge_index.get_or_put(hash)?.value_ptr;
+            // A key that is written twice is one key to a merge, so it gets one index.
+            let is_indexed = same_hash.iter().any(|other| {
+                let other = self.list[*other as usize].key.as_ref().unwrap();
+                yaml_merge_key_expr_eql(other, key, long_keys.as_deref())
+            });
+            if !is_indexed {
+                same_hash.push(idx as u32);
+            }
             self.merge_indexed += 1;
         }
 
         'next_merge_prop: for merge_prop in merge_props.iter().rev() {
             let merge_key = merge_prop.key.as_ref().unwrap();
-            let merge_hash = yaml_merge_key_expr_hash(merge_key);
+            let merge_hash = yaml_merge_key_expr_hash(merge_key, long_keys)?;
             if let Some(candidates) = self.merge_index.get(&merge_hash) {
                 for existing_idx in candidates.iter() {
                     let existing_key = self.list[*existing_idx as usize].key.as_ref().unwrap();
-                    if yaml_merge_key_expr_eql(existing_key, merge_key) {
+                    if yaml_merge_key_expr_eql(existing_key, merge_key, long_keys.as_deref()) {
                         continue 'next_merge_prop;
                     }
                 }
@@ -3254,19 +3367,29 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         if is_merge_key {
             self.reject_open_merge_source(&value)?;
+            let own = props.list.len();
             match &value.data {
                 ast::ExprData::EObject(value_obj) => {
-                    props.merge(value_obj.properties.slice(), &mut self.merge_props_budget)?;
+                    props.merge(
+                        value_obj.properties.slice(),
+                        &mut self.merge_props_budget,
+                        &mut self.long_merge_keys,
+                    )?;
+                    self.note_merged(&props.list.slice()[own..]);
                     return Ok(());
                 }
                 ast::ExprData::EArray(value_arr) => {
                     for item in value_arr.items.slice() {
                         if let ast::ExprData::EObject(item_obj) = &item.data {
                             self.reject_open_merge_source(item)?;
-                            props
-                                .merge(item_obj.properties.slice(), &mut self.merge_props_budget)?;
+                            props.merge(
+                                item_obj.properties.slice(),
+                                &mut self.merge_props_budget,
+                                &mut self.long_merge_keys,
+                            )?;
                         }
                     }
+                    self.note_merged(&props.list.slice()[own..]);
                     return Ok(());
                 }
                 _ => {}
@@ -3278,6 +3401,18 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             value: Some(value),
             ..Default::default()
         })?)
+    }
+
+    /// A property that a `<<` appended is a property of its source too, so its key and its value
+    /// are reached from both.
+    fn note_merged(&mut self, merged: &[G::Property]) {
+        self.shares_long_strings = self.shares_long_strings
+            || merged.iter().any(|property| {
+                [property.key, property.value]
+                    .iter()
+                    .flatten()
+                    .any(is_long_string)
+            });
     }
 
     fn reject_open_merge_source(&mut self, node: &Expr) -> Result<(), ParseError> {
@@ -3328,6 +3463,10 @@ fn collection_id(node: &Expr) -> Option<usize> {
         ast::ExprData::EObject(obj) => Some(obj.as_ptr() as usize),
         _ => None,
     }
+}
+
+fn is_long_string(node: &Expr) -> bool {
+    matches!(&node.data, ast::ExprData::EString(s) if s.data.len() >= SHARED_STRING_MIN_LEN)
 }
 
 /// Collection node payloads. The node is allocated when its opening token is
@@ -3997,6 +4136,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
 
                     let (mut copy, stack) = self.resolve_alias(alias)?;
+                    self.shares_long_strings |= is_long_string(&copy);
 
                     self.least_stack_left = stack_left
                         .checked_sub(stack)

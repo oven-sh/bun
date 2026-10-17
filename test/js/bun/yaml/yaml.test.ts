@@ -1,4 +1,5 @@
 import { YAML, file } from "bun";
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
@@ -2861,6 +2862,54 @@ config:
           },
         });
       });
+
+      test.each<[string, Record<string, number>]>([
+        // A key of the mapping wins over a merged one, wherever the `<<` stands.
+        ["a: {.nan: 1, <<: {.nan: 2}}", { NaN: 1 }],
+        ["a: {<<: {.nan: 2}, .nan: 1}", { NaN: 1 }],
+        ["a: {.NaN: 1, <<: {.NAN: 2}}", { NaN: 1 }],
+        ["k: &k .nan\na: {*k : 1, <<: {.nan: 2}}", { NaN: 1 }],
+        // The last of the duplicates in one source wins, as in `{<<: {x: 1, x: 2}}`.
+        ["a: {<<: {.nan: 1, .nan: 2}}", { NaN: 2 }],
+        // The first source of a list wins, as in `{<<: [{x: 1}, {x: 2}]}`.
+        ["a: {<<: [{.nan: 1}, {.nan: 2}]}", { NaN: 1 }],
+        ["s: &s {.nan: 1}\nt: &t {.nan: 2}\na: {<<: [*s, *t, *s]}", { NaN: 1 }],
+        // `0.0` and `-0.0` are one key too, and not the NaN one.
+        ["a: {-0.0: 1, <<: {0: 2, .nan: 3}}", { 0: 1, NaN: 3 }],
+      ])("a NaN key is one key: %j", (input, expected) => {
+        expect((YAML.parse(input) as { a: unknown }).a).toEqual(expected);
+      });
+
+      test("a NaN key is one key in a file that is imported, required or bundled", async () => {
+        using dir = tempDir("yaml-nan-merge-key", {
+          "nan.yaml": "a: {.nan: 1, <<: {.nan: 2}}\nb: {<<: {.nan: 1, .nan: 2}}\nc: {<<: [{.nan: 1}, {.nan: 2}]}\n",
+          "index.cjs": `
+            const { a, b, c } = require("./nan.yaml");
+            import("./nan.yaml").then(imported =>
+              console.log(JSON.stringify({ imported: imported.default, required: { a, b, c } })),
+            );
+          `,
+        });
+        const expected = { a: { NaN: 1 }, b: { NaN: 2 }, c: { NaN: 1 } };
+
+        const bundled = await Bun.build({ entrypoints: [join(String(dir), "nan.yaml")] });
+        expect((await bundled.outputs[0].text()).match(/NaN: \d/g)).toEqual(["NaN: 1", "NaN: 2", "NaN: 1"]);
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "index.cjs"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+          stdout: JSON.stringify({ imported: expected, required: expected }),
+          stderr: "",
+          exitCode: 0,
+        });
+      });
     });
   });
 
@@ -5492,6 +5541,148 @@ test("limits how many properties merge keys can materialize from a small documen
 
   expect(() => YAML.parse(input)).toThrow();
 }, 30_000);
+
+describe("a small document does not make the parser read one key or one string again and again", () => {
+  const repeat = (text: string, count: number) => Buffer.alloc(text.length * count, text).toString();
+  const each = (count: number, text: (i: number) => string) =>
+    Array.from({ length: count }, (_, i) => text(i)).join("");
+  const long = Buffer.alloc(400_000, "k").toString();
+  const slow = isDebug || isASAN;
+
+  // `debug` and `release` are the counts at which a parse that reads the key or the string once per merge,
+  // per alias or per pair of keys takes about three times the bound below.
+  test.each<{
+    name: string;
+    text: (count: number) => string;
+    debug: number;
+    release: number;
+    value: (parsed: any) => unknown;
+    expected: (count: number) => unknown;
+  }>([
+    {
+      name: "NaN keys in one merge source",
+      text: count => `a: {<<: {${repeat(".nan: 1,", count)}}}\n`,
+      debug: 40_000,
+      release: 150_000,
+      value: parsed => parsed.a,
+      expected: () => ({ NaN: 1 }),
+    },
+    {
+      name: "a NaN key merged many times",
+      text: count => `s: &s {.nan: 1}\na: {<<: [${repeat("*s,", count)}]}\n`,
+      debug: 40_000,
+      release: 150_000,
+      value: parsed => parsed.a,
+      expected: () => ({ NaN: 1 }),
+    },
+    {
+      name: "null keys of the mapping and a merged 0, which hash alike",
+      text: count => `s: &s {0: 1}\na: {${repeat("~: 1,", count)}<<: [${repeat("*s,", count)}]}\n`,
+      debug: 30_000,
+      release: 110_000,
+      value: parsed => parsed.a,
+      expected: () => ({ null: 1, 0: 1 }),
+    },
+    {
+      name: "a long key merged many times into one mapping",
+      text: count => `s: &s {${long}: 1}\na: {<<: [${repeat("*s,", count)}]}\n`,
+      debug: 25_000,
+      release: 600_000,
+      value: parsed => parsed.a,
+      expected: () => ({ [long]: 1 }),
+    },
+    {
+      name: "a long key merged many times over another node with its text",
+      text: count => `s: &s {${long}: 1}\nt: &t {${long}: 2}\na: {<<: [*s,${repeat("*t,", count)}]}\n`,
+      debug: 25_000,
+      release: 550_000,
+      value: parsed => parsed.a,
+      expected: () => ({ [long]: 1 }),
+    },
+    {
+      name: "a long key that many merge sources share",
+      text: count =>
+        `k: &k ${long}\ns:\n${each(count, i => `  - &s${i} {*k : ${i}}\n`)}a: {<<: [${each(count, i => `*s${i},`)}]}\n`,
+      debug: 8_000,
+      release: 30_000,
+      value: parsed => parsed.a,
+      expected: () => ({ [long]: 0 }),
+    },
+    {
+      name: "a long key merged into many mappings",
+      text: count => `s: &s {${long}: 1}\nt:\n${repeat("  - {<<: *s}\n", count)}`,
+      debug: 10_000,
+      release: 30_000,
+      value: parsed => [parsed.t.length, parsed.t.at(-1)],
+      expected: count => [count, { [long]: 1 }],
+    },
+    {
+      name: "a long key of many mappings that merge something",
+      text: count => `k: &k ${long}\ns: &s {x: 1}\nt:\n${repeat("  - {*k : 2, <<: *s}\n", count)}`,
+      debug: 10_000,
+      release: 28_000,
+      value: parsed => [parsed.t.length, parsed.t.at(-1)],
+      expected: count => [count, { [long]: 2, x: 1 }],
+    },
+    {
+      name: "a long string that is the key of many mappings",
+      text: count => `x: &x ${long}\nb:\n${repeat("  - {*x : 1}\n", count)}`,
+      debug: 12_500,
+      release: 34_000,
+      value: parsed => [parsed.b.length, parsed.b.at(-1)],
+      expected: count => [count, { [long]: 1 }],
+    },
+    {
+      name: "a long string that is the key of many mappings, after a key that is a sequence",
+      text: count => `x: &x ${long}\nb:\n${repeat("  - {? [a] : 0, *x : 1}\n", count)}`,
+      debug: 10_000,
+      release: 26_000,
+      value: parsed => [parsed.b.length, Object.entries(parsed.b.at(-1))],
+      expected: count => [
+        count,
+        [
+          ["a", 0],
+          [long, 1],
+        ],
+      ],
+    },
+  ])(
+    "$name",
+    ({ text, debug, release, value, expected }) => {
+      const count = slow ? debug : release;
+      const input = text(count);
+
+      const start = performance.now();
+      const parsed = YAML.parse(input);
+      const elapsed = performance.now() - start;
+
+      expect(value(parsed)).toEqual(expected(count));
+      expect(elapsed).toBeLessThan(slow ? 15_000 : 4_000);
+    },
+    30_000,
+  );
+
+  test("a long string that an alias or a merge key shares is one JS string", () => {
+    const text = Buffer.alloc(100_000, "x").toString();
+    const count = 200;
+    // The bytes that strings hold outside the JS heap, more than before the parse.
+    function parse(input: string) {
+      Bun.gc(true);
+      const before = heapStats().extraMemorySize;
+      const parsed = YAML.parse(input) as any;
+      Bun.gc(true);
+      return { parsed, grown: heapStats().extraMemorySize - before };
+    }
+
+    const aliased = parse(`x: &x ${text}\nb: [${repeat("*x,", count)}]\n`);
+    expect(aliased.parsed.b).toEqual(new Array(count).fill(text));
+    expect(aliased.grown).toBeLessThan((count * text.length) / 10);
+
+    const merged = parse(`s: &s {k: ${text}}\nt:\n${repeat("  - {<<: *s}\n", count)}`);
+    expect(merged.parsed.t).toEqual(new Array(count).fill({ k: text }));
+    expect(merged.grown).toBeLessThan((count * text.length) / 10);
+  });
+});
 
 test("bounds alias expansion for parsed and imported YAML documents", async () => {
   // A document with a few levels of anchors, where each level is a sequence of

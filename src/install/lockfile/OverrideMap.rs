@@ -88,10 +88,8 @@ fn range_selects(
 ) -> bool {
     match (range.tag, declared.tag) {
         (VersionTag::Npm, VersionTag::Npm) => {
-            let text = |version: &dependency::Version| {
-                dependency::without_npm_protocol(version.literal.slice(buf))
-            };
-            let is_same_text = text(range) == text(declared);
+            let is_same_text = dependency::without_npm_protocol(range.literal.slice(buf))
+                == dependency::without_npm_protocol(declared.literal.slice(buf));
             let (range, declared) = (range.npm(), declared.npm());
             // An alias key selects aliases of the same package. A plain key never selects an alias.
             range.is_alias == declared.is_alias

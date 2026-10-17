@@ -93,17 +93,30 @@ export function getStdioWriteStream(
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
   if (!underlyingSink && !stream._writableState.autoDestroy) {
     // No FileSink: writes go through Writable, which parks them after a failed write until the stream is
-    // destroyed. Destroy it then (the _destroy above resets it), but keep end() final, as with a FileSink.
+    // destroyed. So a failed write, and only that, destroys the stream and resets it. end() stays final.
+    let failed;
     const write = stream._write;
+    const destroy = stream._destroy;
     stream._write = function (chunk, encoding, cb) {
       write.$call(this, chunk, encoding, err => {
-        if (err) this._writableState.autoDestroy = true;
+        if (err) {
+          failed = err;
+          this._writableState.autoDestroy = true;
+        }
         cb(err);
       });
     };
-    stream._final = function (cb) {
+    stream._destroy = function (err, cb) {
+      if (!err || err !== failed) return destroy.$call(this, err, cb);
+      failed = undefined;
       this._writableState.autoDestroy = false;
-      cb();
+      this._undestroy();
+      // Not through cb: it marks the reset stream errorEmitted and closeEmitted a tick later, and then
+      // end() never finishes.
+      process.nextTick(() => {
+        this.emit("error", err);
+        this.emit("close");
+      });
     };
   }
   return [stream, underlyingSink];

@@ -2,6 +2,7 @@
 // Bun cannot dup the fd for a FileSink. Node has no such step: the same file runs under node for comparison.
 // The report goes to the other stdio fd with fs.writeSync.
 import fs from "node:fs";
+import { finished } from "node:stream";
 import tty from "node:tty";
 
 const [which, scenario] = process.argv.slice(2);
@@ -35,6 +36,18 @@ if (scenario === "failed-writes") {
   });
   write("x");
   process.on("exit", () => report({ callbacks, errors, writableLength: stream.writableLength }));
+} else if (scenario === "failed-write-then-end") {
+  // The parent closes its end of the stream, then sends one byte on stdin.
+  fs.readSync(0, Buffer.alloc(1));
+  const results = { end: "not called", finished: "not called" };
+  // end() from the 'error' listener of the failed write: it must finish, and the stream must stay ended.
+  stream.once("error", () => {
+    finished(stream, e => (results.finished = code(e)));
+    stream.end(e => (results.end = code(e)));
+  });
+  stream.on("finish", () => stream.write("late", e => callbacks.push(code(e))));
+  stream.write("x", e => callbacks.push(code(e)));
+  process.on("exit", () => report({ callbacks, errors, ...results, writableEnded: stream.writableEnded }));
 } else if (scenario === "end-then-write") {
   stream.write("A", e => callbacks.push(code(e)));
   stream.end("B");

@@ -603,6 +603,7 @@ writeStreamPrototype._write = _write;
 function underscoreWriteSync(this: FSStream, data: Buffer, encoding: any, cb: (err?: any) => void) {
   const length = data.length;
   let offset = 0;
+  let retries = 0;
   while (offset < length) {
     let written: number;
     try {
@@ -613,6 +614,9 @@ function underscoreWriteSync(this: FSStream, data: Buffer, encoding: any, cb: (e
       Bun.sleepSync(1);
       continue;
     }
+    // Like writeAll: an fd that takes no bytes several times in a row fails the write.
+    if (written > 0) retries = 0;
+    else if (++retries > 5) return cb(new Error("write failed"));
     this.bytesWritten += written;
     offset += written;
   }

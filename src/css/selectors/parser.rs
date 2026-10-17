@@ -795,13 +795,7 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
                     state.insert(SelectorParsingState::AFTER_NON_STATEFUL_PSEUDO_ELEMENT);
                 }
 
-                if p.is_webkit_scrollbar() {
-                    state.insert(SelectorParsingState::AFTER_WEBKIT_SCROLLBAR);
-                }
-
-                if p.is_view_transition() {
-                    state.insert(SelectorParsingState::AFTER_VIEW_TRANSITION);
-                }
+                state.insert(p.following_pseudo_class_state());
 
                 builder.push_simple_selector(GenericComponent::PseudoElement(p));
             }
@@ -1006,6 +1000,8 @@ pub enum PseudoClass {
     /// A [webkit scrollbar](https://webkit.org/blog/363/styling-scrollbars/) pseudo class.
     // https://webkit.org/blog/363/styling-scrollbars/
     WebkitScrollbar(WebKitScrollbarPseudoClass),
+    /// The non-standard `:window-inactive` pseudo class of WebKit and Blink.
+    WindowInactive,
     /// An unknown pseudo class.
     Custom {
         /// The pseudo class name.
@@ -1107,7 +1103,12 @@ impl PseudoClass {
         use PseudoClass as P;
         matches!(
             self,
-            P::WebkitScrollbar(_) | P::Enabled | P::Disabled | P::Hover | P::Active
+            P::WebkitScrollbar(_)
+                | P::WindowInactive
+                | P::Enabled
+                | P::Disabled
+                | P::Hover
+                | P::Active
         )
     }
 }
@@ -1135,8 +1136,6 @@ pub enum WebKitScrollbarPseudoClass {
     NoButton,
     /// :corner-present
     CornerPresent,
-    /// :window-inactive
-    WindowInactive,
 }
 
 /// A [webkit scrollbar](https://webkit.org/blog/363/styling-scrollbars/) pseudo element.
@@ -1525,7 +1524,8 @@ fn lookup_non_ts_pseudo_class(name: &[u8]) -> Option<PseudoClass> {
         b"single-button" => P::WebkitScrollbar(WS::SingleButton),
         b"no-button" => P::WebkitScrollbar(WS::NoButton),
         b"corner-present" => P::WebkitScrollbar(WS::CornerPresent),
-        b"window-inactive" => P::WebkitScrollbar(WS::WindowInactive),
+        // Unlike lightningcss, not a scrollbar state: WebKit and Blink take it in a plain compound.
+        b"window-inactive" => P::WindowInactive,
         _ => return None,
     } })
 }
@@ -2641,6 +2641,7 @@ bitflags::bitflags! {
         const AFTER_WEBKIT_SCROLLBAR = 1 << 8;
         const AFTER_VIEW_TRANSITION = 1 << 9;
         const AFTER_UNKNOWN_PSEUDO_ELEMENT = 1 << 10;
+        const AFTER_SELECTION = 1 << 11;
     }
 }
 
@@ -3035,20 +3036,40 @@ impl PseudoElement {
         true
     }
 
-    pub(crate) fn is_webkit_scrollbar(&self) -> bool {
-        matches!(self, PseudoElement::WebkitScrollbar(_))
-    }
-
-    pub(crate) fn is_view_transition(&self) -> bool {
+    /// The bit, if any, that `parse_simple_pseudo_class` tests for this kind of pseudo-element.
+    pub(crate) fn following_pseudo_class_state(&self) -> SelectorParsingState {
         use PseudoElement as PE;
-        matches!(
-            self,
+        use SelectorParsingState as S;
+        // No `_` arm, so that a new variant has to be classified here.
+        match self {
+            PE::WebkitScrollbar(_) => S::AFTER_WEBKIT_SCROLLBAR,
             PE::ViewTransitionGroup { .. }
-                | PE::ViewTransitionImagePair { .. }
-                | PE::ViewTransitionNew { .. }
-                | PE::ViewTransitionOld { .. }
-                | PE::ViewTransitionGroupChildren { .. }
-        )
+            | PE::ViewTransitionImagePair { .. }
+            | PE::ViewTransitionOld { .. }
+            | PE::ViewTransitionNew { .. }
+            | PE::ViewTransitionGroupChildren { .. } => S::AFTER_VIEW_TRANSITION,
+            // `::-moz-selection` too: the prefixer prints it beside `::selection`.
+            PE::Selection(_) => S::AFTER_SELECTION,
+            PE::After
+            | PE::Before
+            | PE::FirstLine
+            | PE::FirstLetter
+            | PE::Placeholder(_)
+            | PE::Marker
+            | PE::Backdrop(_)
+            | PE::FileSelectorButton(_)
+            | PE::Cue
+            | PE::CueRegion
+            | PE::CueFunction { .. }
+            | PE::CueRegionFunction { .. }
+            | PE::ViewTransition
+            | PE::DetailsContent
+            | PE::PickerIcon
+            | PE::Checkmark
+            | PE::PickerFunction { .. }
+            | PE::Custom { .. }
+            | PE::CustomFunction { .. } => S::empty(),
+        }
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -3682,7 +3703,11 @@ pub(crate) fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(
             ));
         }
     } else if state.contains(SelectorParsingState::AFTER_PSEUDO_ELEMENT) {
-        if !pseudo_class.is_user_action_state() {
+        // WebKit and Blink take `:window-inactive` after `::selection`.
+        if !pseudo_class.is_user_action_state()
+            && !(state.contains(SelectorParsingState::AFTER_SELECTION)
+                && matches!(pseudo_class, PseudoClass::WindowInactive))
+        {
             return Err(location.new_custom_error(
                 SelectorParseErrorKind::InvalidPseudoClassAfterPseudoElement
                     .into_default_parser_error(),

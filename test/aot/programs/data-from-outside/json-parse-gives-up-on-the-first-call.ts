@@ -5,6 +5,8 @@ interface Flat {
   ok: boolean;
   note: string | null;
 }
+const made: Flat = { id: 0, name: "made here", ok: false, note: null };
+console.log(JSON.stringify(made));
 function read(text: string): Flat {
   return JSON.parse(text);
 }

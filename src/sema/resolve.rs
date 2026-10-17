@@ -548,6 +548,8 @@ impl Options {
             resolves_js_imports_as_code_only,
             code_roots,
             every_named_root_is_own,
+            loads_augmented_modules,
+            relative_imports_need_no_extension,
             specified_use_define_for_class_fields,
         } = self;
         let _ = write!(
@@ -604,7 +606,7 @@ impl Options {
         );
         let _ = write!(
             key,
-            "{uses_engine_arithmetic:?} {uses_ecmascript_bindings:?} {undefined_properties_have_no_declaration:?} {pops_every_type_resolution:?} {resolves_js_imports_as_code_only:?} {code_roots:?} {every_named_root_is_own:?} {specified_use_define_for_class_fields:?} "
+            "{uses_engine_arithmetic:?} {uses_ecmascript_bindings:?} {undefined_properties_have_no_declaration:?} {pops_every_type_resolution:?} {resolves_js_imports_as_code_only:?} {code_roots:?} {every_named_root_is_own:?} {loads_augmented_modules:?} {relative_imports_need_no_extension:?} {specified_use_define_for_class_fields:?} "
         );
     }
 
@@ -1017,6 +1019,8 @@ pub struct Options {
     /// `rootDir` and `composite` have no say about them. `None`: all are its own.
     pub own_roots: Option<usize>,
     pub every_named_root_is_own: bool,
+    pub loads_augmented_modules: bool,
+    pub relative_imports_need_no_extension: bool,
     /// The root files from this one on are the files of a bundle. An import is resolved here for its types, and by the bundler for the
     /// code that runs, often to another file: `@types/react/index.d.ts` and `react/index.js`. Those of them that the program does not
     /// have anyway are loaded for whoever compiles it, see `Module::is_code_only`. `None`: there are none.

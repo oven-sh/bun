@@ -40,8 +40,8 @@
 43	ArrayPrototype.js	flatMap
 44	JSIteratorPrototype.js	flatMap
 45	ArrayPrototype.js	forEach
-46	MapPrototype.js	forEach
-47	SetPrototype.js	forEach
+46	MapPrototype.ts	forEach
+47	SetPrototype.ts	forEach
 48	ArrayConstructor.js	from
 49	JSIteratorConstructor.js	from
 50	TypedArrayConstructor.js	from

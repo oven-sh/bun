@@ -1,7 +1,7 @@
 120-operand-chains: 0 layouts, 0 given, 0 open, places 3 of 11, reads 184 of 305
 any-arithmetic: 7 layouts, 0 given, 11 open, places 54 of 117, reads 6 of 15
 any-value-vs-many-integers: 4 layouts, 0 given, 1 open, places 29 of 41, reads 10 of 24
-arithmetic-number-and-any: 2 layouts, 1 given, 2 open, places 113 of 164, reads 4 of 15
+arithmetic-number-and-any: 2 layouts, 1 given, 2 open, places 114 of 169, reads 4 of 15
 array-subclass-iteration: 0 layouts, 0 given, 1 open, places 56 of 180, reads 17 of 94
 as-on-nullish-and-primitives: 1 layouts, 0 given, 0 open, places 15 of 26, reads 6 of 9
 bigint-update: 1 layouts, 0 given, 0 open, places 5 of 13, reads 2 of 3
@@ -25,7 +25,7 @@ creation-points: 8 layouts, 0 given, 8 open, places 76 of 86, reads 13 of 37
 delete-optional: 2 layouts, 0 given, 0 open, places 12 of 20, reads 2 of 4
 direct-eval-sees-const-enums: 0 layouts, 7 given, 1 open, places 127 of 212, reads 0 of 6
 direct-eval-sees-imports: 2 layouts, 7 given, 2 open, places 561 of 858, reads 3 of 14
-error-constructors: 8 layouts, 0 given, 5 open, places 55 of 123, reads 4 of 38
+error-constructors: 8 layouts, 7 given, 5 open, places 55 of 123, reads 4 of 38
 error-thrown-to-ignoring-handler: 3 layouts, 0 given, 4 open, places 48 of 64, reads 5 of 23
 exceptions-through-finally-to-outer-catch: 4 layouts, 0 given, 3 open, places 94 of 124, reads 3 of 23
 exceptions: 0 layouts, 0 given, 1 open, places 20 of 30, reads 0 of 10

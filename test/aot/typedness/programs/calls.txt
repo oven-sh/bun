@@ -101,7 +101,7 @@ native-getters-exceed-cache-entries: 0 layouts, 0 given, 0 open, places 28 of 53
 new-in-untyped-code: 0 layouts, 9 given, 0 open, places 8 of 38, reads 0 of 51
 new-mispredicted: 3 layouts, 0 given, 3 open, places 22 of 36, reads 0 of 9
 new-object-field-stores-in-try: 3 layouts, 0 given, 2 open, places 82 of 106, reads 26 of 38
-new-of-any-callee: 3 layouts, 11 given, 1 open, places 17 of 63, reads 0 of 52
+new-of-any-callee: 3 layouts, 11 given, 0 open, places 17 of 63, reads 0 of 52
 new-on-classes-with-rest-parameters: 0 layouts, 0 given, 0 open, places 0 of 8, reads 0 of 0
 new-on-unknown-derived-classes: 0 layouts, 0 given, 0 open, places 0 of 8, reads 0 of 0
 non-function-in-typed-field: 2 layouts, 0 given, 1 open, places 31 of 47, reads 1 of 13
@@ -114,7 +114,7 @@ nullish-property-error-message: 0 layouts, 0 given, 0 open, places 30 of 47, rea
 number-elements-passed-to-function-values: 1 layouts, 0 given, 0 open, places 160 of 169, reads 20 of 24
 number-results-returned-unboxed: 0 layouts, 0 given, 0 open, places 35 of 43, reads 8 of 14
 object-allocated-as-cast-subtype: 6 layouts, 0 given, 9 open, places 102 of 137, reads 1 of 19
-observable-properties-of-bound-functions: 8 layouts, 0 given, 6 open, places 59 of 128, reads 39 of 130
+observable-properties-of-bound-functions: 8 layouts, 7 given, 6 open, places 59 of 128, reads 39 of 130
 optimized-call-forms-inside-try: 0 layouts, 0 given, 0 open, places 9 of 28, reads 6 of 42
 overload-annotated-function-expressions: 5 layouts, 0 given, 2 open, places 20 of 44, reads 4 of 17
 own-call-or-apply-property: 2 layouts, 0 given, 0 open, places 19 of 49, reads 1 of 13

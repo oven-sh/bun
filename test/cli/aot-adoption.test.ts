@@ -321,7 +321,7 @@ console.log(five, later);
     const dir = project("aot-check-errors", { "wrong.ts": wrong });
     const { stdout, stderr, exitCode } = await bun(dir, "check", "--aot", "wrong.ts");
     const codes = [...(stdout + stderr).matchAll(/TS1000\d\d/g)].map(match => match[0]);
-    expect(codes).toEqual(["TS100013", "TS100017", "TS100014", "TS100012"]);
+    expect(codes).toEqual(["TS100013", "TS100017", "TS100014"]);
     expect(stdout + stderr).toContain("argument 1 of `double` expects 'number' and always gets \"4\"");
     expect(exitCode).toBe(1);
   });

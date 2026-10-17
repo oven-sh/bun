@@ -11,6 +11,10 @@ const programs: Record<string, string> = {
   "an exported constant without an initializer behind a label": "export const box: string\nlabel:\nexport const title: string\n",
   "`using` without an initializer": "function f() { using x; }\nasync function g() { await using y; }\nf();\n",
   "a guard of `this` on a function that has none": "function invalid(c: any): this is number { return false; }\ndeclare var c: number | number[];\nif (invalid(c)) { c; } else { c; }\n",
+  "named imports without a module": "import { a }\n",
+  "a namespace import without a module": "import * as a\n",
+  "a default import that ends at `from`": "import a from\n",
+  "`import` in front of a function's body": "function f(d: number): number import { const a = d; return a }\nf(1);\n",
 };
 
 for (const [name, text] of Object.entries(programs)) {

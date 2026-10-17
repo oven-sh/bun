@@ -535,7 +535,7 @@ static std::optional<off_t> offsetInExecutableFile(const void* address)
             if (segment.p_type == PT_LOAD && context.target >= start && context.target - start < segment.p_filesz)
                 context.result = static_cast<off_t>(segment.p_offset + (context.target - start));
         }
-        return 1;
+        return context.result ? 1 : 0;
     }, &context);
     return result;
 #endif

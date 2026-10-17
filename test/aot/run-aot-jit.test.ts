@@ -462,14 +462,14 @@ describe("at run time", () => {
       console.log(flag, typeof flag, zero);`);
     expect(stdout).toBe("3\n51 number\nfalse boolean 0\n");
   });
-  test("`x!` checks nothing; `let x!: T` throws when it is read before it is set", async () => {
+  test("`x!` and `let x!: T` check nothing", async () => {
     const { stdout } = await run(`
       const names = new Map<string, string>();
       ${attempt(`const name: string = names.get("bob")!; console.log(name);`)}
       let size!: number;
       function read() { return size + 1; }
       ${attempt(`console.log(read());`)}`);
-    expect(stdout).toBe(`undefined\nTypeError: non-null assertion failed: \`size\` is undefined${note}\n`);
+    expect(stdout).toBe("undefined\nNaN\n");
   });
   test("an array type takes a real array only", async () => {
     const { stdout } = await run(`

@@ -1,11 +1,11 @@
 // `a === b` on two strings inside and outside loops, for every pair of internal representations, every length, and null or undefined on either side.
-// CALLS- sameL StringsAreEqual
-// CALLS+ sameL StringEq
-// CALLS- sameOrNilL StringsAreEqual
+// CALLS+ sameL FlatStringsAreEqual
+// CALLS- sameL StringEq
+// CALLS+ sameOrNilL FlatStringsAreEqual
 // CALLS+ same StringsAreEqual
 // CALLS+ different StringsAreEqual
 // CALLS+ branched StringsAreEqual
-// CALLS- counted StringsAreEqual
+// CALLS+ counted FlatStringsAreEqual
 // CALLS- sameCharacters StringsAreEqual
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
@@ -37,9 +37,10 @@ export function branched(a: string, b: string): string { if (a === b) return "="
 export function counted(list: string[], wanted: string): number { let n = 0; for (const s of list) if (s === wanted) n++; return n; }
 export function sameCharacters(a: string, b: string, i: number): boolean { return a[i] === b[i]; }
 export function ofAny(a: any, b: any): boolean { return a === b; }
+export function flattenedBefore(a: string, b: string): string { const joined = a + b; const first = joined.charCodeAt(0); return first + " " + (joined === a) + " " + (a === joined) + " " + (joined === a + b); }
 export function ofFields(p: { name: string }, q: { name: string }): boolean { return p.name === q.name; }
 export function recorded(s: string, t: string): { a: number; b: boolean; c: number } { return { a: 1, b: s === t, c: 2 }; }
-// The same with the operation inside a loop: there it stands in place.
+// The same with the operation inside a loop.
 export function sameL(a: string, b: string, n: number): boolean { let r = false; for (let k = 0; k < n; k++) r = a === b; return r; }
 export function sameOrNilL(a: string | null | undefined, b: string | null | undefined, n: number): boolean { let r = false; for (let k = 0; k < n; k++) r = a === b; return r; }
 // A call through a table is inlined all the same, behind a test of the callee (IsClosureOf), into the loop of the caller: there the code in place would run. What is called by code that the compiler never saw runs its own code.
@@ -77,5 +78,6 @@ print(["café", "日本", "a\0b", "😀", "\ud83d", "é"].map(t => kinds.map(([
 print([f.counted(["a", "b", rope("ab"), "ab", wide("ab")], "ab"), f.counted([], "x"), f.sameCharacters("abc", "xbz", 1), f.sameCharacters("abc", "xbz", 0), f.sameCharacters("abc", "ab", 2), f.same("x".repeat(5000), "x".repeat(5000)), f.same("x".repeat(5000), "x".repeat(4999) + "y"), f.same(rope("x".repeat(5000)), deepRope("x".repeat(500)).repeat(10))].join());
 { let n = 0; const names = ["alpha", "beta", "gamma", "delta"]; for (let i = 0; i < 40000; i++) { if (f.same(names[i & 3], i % 5 ? names[(i >> 2) & 3] : fresh(names[i & 3]))) n++; if (f.sameOrNil(i % 7 ? names[i & 3] : undefined, i % 11 ? names[i & 3] : null)) n += 2; } print(String(n)); }
 print([["x", "x"], ["x", "y"], [rope("abcd"), "abcd"]].map(([s, t]) => JSON.stringify(f.recorded(s, t))).join());
+print([["0", "-"], ["abcdefgh", "i"], ["a", ""], [wide("ab"), "c"], [rope("abcd"), "abcd"]].map(([s, t]) => flattenedBefore(s, t)).join());
 { let compared = 0, differ = 0; for (const [, make] of kinds) for (const [, other] of kinds) for (const n of [0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64, 65]) { const text = alphabet.slice(0, n); for (const t of [text, "#" + text.slice(1), text.slice(0, -1) + "#", text + "x", text.slice(1), text.slice(0, -1) + "é", text.slice(0, -1) + "š"]) { compared += 2; if (f.same(make(text), other(t)) !== g.sameL(make(text), other(t), 1)) differ++; if (f.sameOrNil(make(t), other(text)) !== g.sameOrNilL(make(t), other(text), 1)) differ++; } } for (const a of [undefined, null, "", "a", rope("ab")]) for (const b of [undefined, null, "", "a", "ab"]) { compared++; if (f.sameOrNil(a, b) !== g.sameOrNilL(a, b, 1)) differ++; } print("the stub against the code in place: " + compared + " compared, " + differ + " differ"); }
 (globalThis as any).kept = [sameL, sameOrNilL, recorded, same, sameOrNil, different, branched, counted, sameCharacters, ofAny, ofFields]; console.log("number");

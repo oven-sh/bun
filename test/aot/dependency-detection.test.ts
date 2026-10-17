@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { createHash } from "node:crypto";
 import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -149,6 +150,33 @@ test("bun check --aot compiles the classes of a typed package, as the build and 
   expect(checked.said).toContain("No type errors");
   expect(checked.said).not.toContain("does not support");
   expect(checked.exitCode).toBe(0);
+}, 120_000);
+
+test.each([
+  ["that type checks", `export function area(side: number): number { return side * side; }\n`, []],
+  ["with a type error", `export function area(side: number): number { const wrong: number = "x"; return side * side; }\n`, ["TS100021"]],
+  ["with an int32 that is not proven", `import type { int32 } from "bun";\nfunction twice(n: int32): number { return n * 2; }\nexport function area(side: number): number { return (twice(side) * side) / 2; }\n`, ["TS100031"]],
+  ["whose int32 is proven", `import type { int32 } from "bun";\nfunction twice(n: int32): number { return n * 2; }\nexport function area(side: number): number { return (twice(1) * side * side) / 2; }\n`, []],
+  ["with an int32 that is not proven as its module is evaluated", `import type { int32 } from "bun";\nfunction twice(n: int32): number { return n * 2; }\ndeclare const given: number;\nexport const start: number = twice(given);\nexport function area(side: number): number { return side * side; }\n`, ["TS100031"]],
+])("bun check --aot says of a typed version %s what the build says", async (_, typed, expected) => {
+  const javascript = `export function area(side) { return side * side; }\n`;
+  using dir = tempDir("aot-dependency-typed-version", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "tsconfig.json": strict(),
+    "main.ts": `import { area } from "shapes";\nconsole.log(area(2));\n`,
+    "node_modules/shapes/package.json": JSON.stringify({ name: "shapes", version: "1.0.0", type: "module", main: "index.js", types: "index.d.ts" }),
+    "node_modules/shapes/index.js": javascript,
+    "node_modules/shapes/index.d.ts": `export declare function area(side: number): number;\n`,
+    ".sound/shapes/sound.json": JSON.stringify({ sound: 1, name: "shapes", version: "1.0.0", when: {}, basis: {}, lay: { "index.js": createHash("sha256").update(javascript).digest("hex"), "index.sound.ts": "new" }, needs: [] }),
+    ".sound/shapes/lay/index.js": `export * from "./index.sound.ts";\n`,
+    ".sound/shapes/lay/index.sound.ts": typed,
+  });
+  const errors = (said: string) => [...new Set([...said.matchAll(/\berror:? (TS\d+)/g)].map(match => match[1]))].sort();
+  const built = await build(String(dir), "./main.ts");
+  const checked = await withoutBundler(String(dir), "check", "--aot", "main.ts");
+  expect({ build: errors(built.said), check: errors(checked.said) }).toEqual({ build: expected, check: expected });
+  expect({ build: built.exitCode === 0, check: checked.exitCode === 0 }).toEqual({ build: expected.length === 0, check: expected.length === 0 });
+  expect(checked.said).toContain(`"shapes" 1.0.0 is compiled from its typed version in .sound/shapes`);
 }, 120_000);
 
 test("a type error beside a decorated class of a dependency does not stop the build either", async () => {

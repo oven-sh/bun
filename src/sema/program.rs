@@ -6780,7 +6780,11 @@ impl<'s> Files<'s> {
                 Some(None) => continue,
                 None => text,
             };
-            let Some(resolved) = resolver.resolve_module_name(text, from, mode) else {
+            let as_the_runtime_finds_it = || match of_program.relative_imports_need_no_extension && mode == ResolutionMode::Import && path_is_relative(text) {
+                true => resolver.resolve_module_name(text, from, ResolutionMode::Require),
+                false => None,
+            };
+            let Some(resolved) = resolver.resolve_module_name(text, from, mode).or_else(as_the_runtime_finds_it) else {
                 continue;
             };
             let (key, found) = ((spec, mode), resolved.file_name);
@@ -6827,7 +6831,7 @@ impl<'s> Files<'s> {
             }
             // "Don't treat redirected files as JS files."
             let is_js_file = is_javascript && !of_program.is_source_of_referenced_project(found);
-            let should_add_file = is_import
+            let should_add_file = (is_import || of_program.loads_augmented_modules && hir.kind != FileKind::Declaration)
                 && get_resolution_diagnostic(options, extension, hir).is_none()
                 && !options.no_resolve
                 && !(of_program.imports_of_sources_add_no_file

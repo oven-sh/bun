@@ -18,6 +18,7 @@ Checked against JavaScriptCore's optimized IR (`dump.js -- <IR> optimized`), on 
 Checked against the remarks of the string-building pass (`dump.js -- <IR> string-builders`), on every platform:
     // REMARK+ <function> <regex>      a line about the function matches
     // REMARK- <function> <regex>      no line about the function matches
+                                       of a function that also has a body for untyped callers, only the lines about its typed body count
 Checked against the machine code, found through the map file (--aotMapFilePath), on ARM64 and x86-64:
     // CALLS+ <function> <regex>       the summary line of the function's machine code matches (see calls() below)
     // CALLS- <function> <regex>       it does not match
@@ -193,6 +194,7 @@ def one(name):
     # An expectation of nothing is met by no dump at all.
     if kinds & {'IR+', 'IR-', 'IR=', 'IRT=', 'IRM='} and not re.search(r'^function ', ir, re.M): bad.append(('', 'THE DUMP HAS NO FUNCTION'))
     remarks = run(JSC, '--useDollarVM=1', HERE + '/dump.js', '--', room + '.bin', 'string-builders').stdout if kinds & {'REMARK+', 'REMARK-'} else ''
+    heads = [line for line in (ir or run(JSC, '--useDollarVM=1', HERE + '/dump.js', '--', room + '.bin', 'optimized').stdout).split('\n') if line.startswith('function ')] if remarks else []
     called, sizes = {}, {}
     expressions = set()
     thunks = None
@@ -222,7 +224,9 @@ def one(name):
             if got != int(count): bad.append('%s has %d of /%s/, not %s' % (fn, got, pattern, count))
         elif kind in ('REMARK+', 'REMARK-'):
             fn, pattern = rest.split(' ', 1)
-            found = any(re.search(pattern, line) for line in remarks.split('\n') if re.search(r'(^|\W)%s(\W|$)' % re.escape(fn), line))
+            about = [line for line in remarks.split('\n') if re.search(r'(^|\W)%s(\W|$)' % re.escape(fn), line)]
+            typed = {'f' + head.split(' ')[1] for head in heads if head.split(' ')[2] == '"%s"' % fn and ' annotated' in head}
+            found = any(re.search(pattern, line) for line in about if not typed or typed & set(line.split(' ')))
             if found != (kind == 'REMARK+'): bad.append('%s: %s remark /%s/' % (fn, 'no' if kind == 'REMARK+' else 'a', pattern))
         elif kind in ('KNOWN', 'PARTLY'):
             if rest.split(' ', 1)[1] not in expressions: bad.append('not in the image: %s' % rest[:70])

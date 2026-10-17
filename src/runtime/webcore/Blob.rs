@@ -2665,6 +2665,10 @@ impl BlobExt for Blob {
         // free the original allocation, not the offset pointer.
         let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
 
+        if let Some(parsed) = EncodedSlice::latin1(buf).try_parse_json_from_utf8(global) {
+            return Ok(parsed);
+        }
+
         if could_be_all_ascii.is_none() || !could_be_all_ascii.unwrap() {
             if let Some(external) = strings::to_utf16_alloc(buf, false, false)
                 .map_err(|_| bun_string_jsc::throw_utf16_transcode_failure(global, buf))?

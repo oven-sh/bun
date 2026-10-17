@@ -16,7 +16,7 @@ async function bun(cwd: string | { cwd: string; BUN_OPTIONS: string }, ...args: 
   return { stdout, stderr, exitCode };
 }
 
-const ofBuild = "--aot, --aot-allow, --aot-baseline, --aot-deny, --aot-explain, --aot-huge-heap, --aot-type-errors, --aot-unchecked-casts, --aot-update-baseline, --aot-warn";
+const ofBuild = "--aot, --aot-allow, --aot-baseline, --aot-deny, --aot-explain, --aot-huge-heap, --aot-type-errors, --aot-update-baseline, --aot-warn";
 const ofRun = "--aot, --aot-audit, --aot-huge-heap, --aot-type-errors";
 
 describe.concurrent("an unknown flag that starts with --aot is an error", () => {
@@ -98,7 +98,7 @@ describe.concurrent("an unknown flag that starts with --aot is an error", () => 
 `,
     });
     expect((await bun(String(dir), "build.ts")).stdout).toBe(
-      `compile.${key} is not an option.${meant ? ` Did you mean compile.${meant}?` : ""} The options that start with aot are aot, aotExplain, aotTypeErrors, aotUncheckedCasts\n`,
+      `compile.${key} is not an option.${meant ? ` Did you mean compile.${meant}?` : ""} The options that start with aot are aot, aotExplain, aotTypeErrors\n`,
     );
   });
 

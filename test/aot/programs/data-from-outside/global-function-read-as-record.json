@@ -1,0 +1,3 @@
+{
+  "skipInShell": "uses Bun APIs that the jsc shell does not provide: Buffer, TextEncoder"
+}

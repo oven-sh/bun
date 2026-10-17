@@ -4584,7 +4584,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn find_variable_read(&mut self, sym: Sym) -> Option<VariableRead> {
         let (declared_in, Decl::Var(_) | Decl::Param(_)) = self.variable_declaration(sym)? else { return None };
         let coverage = self.flow_coverage_of(sym);
-        let is_definite = matches!(self.variable_declaration(sym), Some((of, Decl::Var(pat))) if matches!(root_declaration(self.bound(of), pat), PatParent::Var(d) if self.hir(of)[d].flags.contains(Flags::DEFINITE)));
+        let is_definite = matches!(self.variable_declaration(sym), Some((of, Decl::Var(pat))) if self.files().module(of).builtin.is_some() && matches!(root_declaration(self.bound(of), pat), PatParent::Var(d) if self.hir(of)[d].flags.contains(Flags::DEFINITE)));
         let starts_undefined = self.starts_undefined(sym);
         Some(VariableRead { declared_in, coverage, declared: self.stored_type(sym), may_be_undefined: starts_undefined && !is_definite, is_asserted: starts_undefined && is_definite })
     }

@@ -26,7 +26,7 @@ pub fn build(sorted_paths: &[u8], is_json_module: impl Fn(&[u8]) -> bool) -> Vec
             let is_json = is_json_module(path);
             keys.push((offset as u32 + 1, (path.len() as u32) << 2 | is_json as u32));
             let mut folder = path;
-            while !is_json && let Some(at) = bun_core::strings::last_index_of_char(folder, b'/') {
+            while !is_json && let Some(at) = bun_core::strings::last_index_of_char(folder, bun_paths::SEP) {
                 folder = &folder[..at];
                 if folder.is_empty() || !folders.insert(folder) {
                     break;

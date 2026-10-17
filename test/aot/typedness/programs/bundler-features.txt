@@ -9,7 +9,7 @@ html-import-in-server: 1 layouts, 0 given, 1 open, places 8 of 20, reads 2 of 9
 imports-from-external-module: 0 layouts, 0 given, 0 open, places 0 of 8, reads 0 of 4
 inline-type-import: 2 layouts, 0 given, 0 open, places 4 of 14, reads 2 of 3
 json-module: 19 layouts, 0 given, 22 open, places 109 of 134, reads 20 of 40
-minified-names: 3 layouts, 18 given, 0 open, places 22 of 35, reads 8 of 39
+minified-names: 3 layouts, 18 given, 0 open, places 26 of 44, reads 8 of 39
 minified-private-names: 2 layouts, 0 given, 1 open, places 24 of 40, reads 14 of 43
 namespace-import-of-primitive-module: 1 layouts, 0 given, 1 open, places 5 of 61, reads 2 of 28
 text-imports: 0 layouts, 0 given, 0 open, places 0 of 8, reads 0 of 7

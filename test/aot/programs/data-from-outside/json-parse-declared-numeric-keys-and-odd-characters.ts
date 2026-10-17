@@ -1,6 +1,8 @@
 // IR+ CallBuiltin JSONOpen
 interface Numbered { b: string; 1: string; a: string; "0": number; "01": number; "-1": number; "4294967295": number; "1.5": number }
 interface Flat { id: number; name: string }
+const made: [Numbered, Flat] = [{ b: "", 1: "", a: "", "0": 0, "01": 0, "-1": 0, "4294967295": 0, "1.5": 0 }, { id: 0, name: "made here" }];
+console.log(JSON.stringify(made));
 function show(label: string, work: () => unknown) {
   try {
     const value = work() as any;

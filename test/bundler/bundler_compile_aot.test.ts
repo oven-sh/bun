@@ -857,6 +857,8 @@ describe("Bun.ModuleGraph with --aot", () => {
           static countOwn(values: Sealed[]) { let own = 0; for (let i = 0; i < values.length; i++) if (#secret in values[i]!) own++; return own; }
           own() { return this.#secret; }
           sameAs(other: Sealed) { return this.#secret === other.#secret; }
+          static brand(value: Sealed) { try { value.#secret; return true; } catch { return false; } }
+          static brandByStore(value: Sealed) { try { value.#text = "mine"; return true; } catch { return false; } }
         }
         export class SealedHeir extends Sealed { #deeper = 11; static deeper(value: SealedHeir) { return value.#deeper; } }
         export function makeSealed() { return new Sealed(); }
@@ -1031,7 +1033,7 @@ describe("Bun.ModuleGraph with --aot", () => {
     );
   });
 
-  test.failing("private names and symbols of one graph are not another's", async () => {
+  test.concurrent("private names and symbols of one graph are not another's", async () => {
     expect(await run(`
         const a = await new Bun.ModuleGraph().import(url);
         const b = await new Bun.ModuleGraph().import(url);
@@ -1059,6 +1061,7 @@ describe("Bun.ModuleGraph with --aot", () => {
         let keys = 0;
         for (let i = 0; i < 1000; i++) keys += a.sumKeys(keyed);
         out.push(keys, b.sumKeys(keyed), host.sumKeys(keyed));
+        out.push("brand", a.Sealed.brand(a.makeSealed()), a.Sealed.brand(b.makeSealed()), host.Sealed.brand(a.makeSealed()), a.Sealed.brandByStore(a.makeSealed()), a.Sealed.brandByStore(b.makeSealed()));
         return out;
       `, membersOfOneGraph)).toEqual(
       everywhere([
@@ -1073,6 +1076,7 @@ describe("Bun.ModuleGraph with --aot", () => {
         "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError", 191903000, 3, 1, "symbols", true, false,
         "3,3,6,5,true,true,true,4,2,1,1", "undefined,undefined,6,undefined,false,false,false,undefined,3,2,1",
         "undefined,undefined,6,undefined,false,false,false,undefined,3,2,1", 12, 3, 12, 3, 5000, 5, -5,
+        "brand", true, false, false, true, false,
       ]),
     );
   });
@@ -1110,11 +1114,90 @@ describe("Bun.ModuleGraph with --aot", () => {
     );
   });
 
-  test.failing("import.meta of a second entry point that the host imports", async () => {
+  test.concurrent("import.meta of a second entry point that the host imports", async () => {
     expect(await run(`
         const host = await import(url);
         return [host.meta.url === url, host.meta.main, host.meta.file];
       `, stateOfOneGraph)).toEqual(everywhere([true,false,"app.js"]));
+  });
+
+  test.concurrent("typed code of one graph works on another graph's objects", async () => {
+    expect(await run(`
+        const a = await new Bun.ModuleGraph().import(url);
+        const b = await new Bun.ModuleGraph().import(url);
+        const host = await import(url);
+        const state = () => [a.current(), b.current(), host.current()].join("/");
+        const out: unknown[] = [];
+        for (const [user, maker] of [[a, a], [a, b], [b, a], [host, b], [a, host]]) {
+          const lazy = maker.Lazy.make(), heir = maker.makeLazyHeir(), runner = maker.makeRunner();
+          out.push([user.callHandler(lazy), user.callPlain(lazy), user.callBump(lazy), user.readNow(lazy), user.callBump(heir), user.callDetached(lazy), user.makeAnother(lazy)].join(), state());
+          out.push([user.methodOf(lazy) === maker.Lazy.prototype.bump, user.methodOf(lazy) === user.Lazy.prototype.bump, user.handlerOf(lazy) === lazy.handler, user.classOf(lazy) === maker.Lazy, user.methodOf(heir) === maker.LazyHeir.prototype.bump].join());
+          out.push([user.callRun(runner), user.callStep(runner), user.readSize(runner), user.runOf(runner) === runner.run, user.runOf(runner)()].join(), state());
+          out.push([user.drain(new maker.Walk()), user.drainAny(new maker.Walk()), user.describe(lazy), user.describe(runner), user.toText(lazy), user.keysOf(lazy), user.cloneOf(lazy)].join(), state());
+          const pair = new maker.Pair(maker.Lazy.make(), user.Lazy.make());
+          out.push([user.bothOf(pair), user.innerOf(pair), user.describe(pair)].join(), state());
+        }
+        out.push(a.callAll([a.count, b.count, host.count, b.addCount.bind(null, 0)]), a.callEach([a.Lazy.make(), b.Lazy.make(), host.Lazy.make()]), a.handleEach([a.Lazy.make(), b.Lazy.make(), host.Lazy.make()]), state());
+        let hot = 0;
+        const mixed = [a.Lazy.make(), b.Lazy.make(), a.makeLazyHeir(), b.makeLazyHeir()];
+        for (let i = 0; i < 500; i++) hot = (hot + a.callEach(mixed) + a.handleEach(mixed)) % 1000003;
+        out.push(hot, state());
+        out.push(await a.awaitIt(b.later()), await a.awaitCall(b.later), a.sortBy([1, 3, 2], b.descending), a.mapWith([1, 2], b.addCount), state());
+        return out;
+      `, `
+        export class Lazy { handler = () => count(); plain = function () { return count(); }; bump() { return count(); } get now() { return count(); } static make() { return new Lazy(); } }
+        export class LazyHeir extends Lazy { override bump() { return super.bump() * 10; } }
+        export function makeLazyHeir(): Lazy { return new LazyHeir(); }
+        export function callHandler(value: Lazy) { return value.handler(); }
+        export function callPlain(value: Lazy) { return value.plain(); }
+        export function callBump(value: Lazy) { return value.bump(); }
+        export function readNow(value: Lazy) { return value.now; }
+        export function methodOf(value: Lazy) { return value.bump; }
+        export function handlerOf(value: Lazy) { return value.handler; }
+        export function callDetached(value: Lazy) { const bump = value.bump; return bump.call(value); }
+        export function classOf(value: Lazy) { return value.constructor; }
+        export function makeAnother(value: Lazy) { return new (value.constructor as typeof Lazy)().bump(); }
+        export interface Runner { run(): number; step: () => number; readonly size: number }
+        export function makeRunner(): Runner { return { run() { return count(); }, step: () => count(), get size() { return count(); } }; }
+        export function callRun(value: Runner) { return value.run(); }
+        export function callStep(value: Runner) { return value.step(); }
+        export function readSize(value: Runner) { return value.size; }
+        export function runOf(value: Runner) { return value.run; }
+        export function callAll(values: (() => number)[]) { let sum = 0; for (const f of values) sum = sum * 100 + f(); return sum; }
+        export function callEach(values: Lazy[]) { let sum = 0; for (let i = 0; i < values.length; i++) sum = sum * 100 + values[i]!.bump(); return sum; }
+        export function handleEach(values: Lazy[]) { let sum = 0; for (let i = 0; i < values.length; i++) sum = sum * 100 + values[i]!.handler(); return sum; }
+        export class Walk { left = 2; [Symbol.iterator]() { return this; } next(): IteratorResult<number> { return this.left-- > 0 ? { value: count(), done: false } : { value: undefined, done: true }; } }
+        export function drain(values: Walk) { let sum = 0; for (const value of values) sum = sum * 100 + value; return sum; }
+        export function drainAny(values: Iterable<number>) { let sum = 0; for (const value of values) sum = sum * 100 + value; return sum; }
+        export async function awaitIt(value: Promise<number>) { return (await value) * 100 + count(); }
+        export async function awaitCall(f: () => Promise<number>) { return (await f()) * 100 + count(); }
+        export function sortBy(values: number[], compare: (x: number, y: number) => number) { return values.sort(compare).join(); }
+        export const descending = (x: number, y: number) => y - x + 0 * n;
+        export function mapWith(values: number[], f: (x: number) => number) { return values.map(f).join(); }
+        export const addCount = (x: number) => x + count();
+        export class Pair { constructor(public first: Lazy, public second: Lazy) {} both() { return this.first.bump() * 100 + this.second.bump(); } }
+        export function bothOf(value: Pair) { return value.both(); }
+        export function innerOf(value: Pair) { return value.second.handler(); }
+        export function describe(value: Lazy | Runner | Pair) { return value instanceof Lazy ? "lazy" : value instanceof Pair ? "pair" : "runner"; }
+        export function toText(value: Lazy) { return String(value) + JSON.stringify(value); }
+        export function keysOf(value: Lazy) { return Object.keys(value).join(); }
+        export function cloneOf(value: Lazy) { return { ...value }.handler(); }
+      `)).toEqual(
+      everywhere([
+        "1,2,3,4,50,6,7", "7/0/0", "true,true,true,true,true", "8,9,10,true,11", "11/0/0",
+        "1213,1415,lazy,runner,[object Object]{},handler,plain,16", "16/0/0", "1718,19,pair", "19/0/0",
+        "1,2,3,4,50,6,7", "19/7/0", "true,false,true,true,true", "8,9,10,true,11", "19/11/0",
+        "1213,1415,runner,runner,[object Object]{},handler,plain,16", "19/16/0", "1720,21,runner", "21/17/0",
+        "22,23,24,25,260,27,28", "28/17/0", "true,false,true,true,true", "29,30,31,true,32", "32/17/0",
+        "3334,3536,runner,runner,[object Object]{},handler,plain,37", "37/17/0", "3818,19,runner", "38/19/0",
+        "20,21,22,23,240,25,26", "38/26/0", "true,false,true,true,true", "27,28,29,true,30", "38/30/0",
+        "3132,3334,runner,runner,[object Object]{},handler,plain,35", "38/35/0", "3601,2,runner", "38/36/2",
+        "3,4,5,6,70,8,9", "38/36/9", "true,false,true,true,true", "10,11,12,true,13", "38/36/13",
+        "1415,1617,runner,runner,[object Object]{},handler,plain,18", "38/36/18", "1939,40,runner", "40/36/19",
+        41372038, 423921, 434022, "43/40/22", 309072, "2043/2040/22", 206144, 206245, "3,2,1", "2044,2046",
+        "2045/2044/22",
+      ]),
+    );
   });
 
   test.concurrent("closure outlives its graph", async () => {

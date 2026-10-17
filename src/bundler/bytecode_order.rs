@@ -50,7 +50,7 @@ impl Named<'_> {
 
 /// More than any thread that parsed what the text was printed from had: a text either side could not parse, and the
 /// other could, would have names on one side only.
-const NAMING_THREAD_STACK_SIZE: usize = if cfg!(bun_asan) { 128 } else { 64 } * 1024 * 1024;
+const NAMING_THREAD_STACK_SIZE: usize = 64 * 1024 * 1024;
 const _: () = assert!(
     NAMING_THREAD_STACK_SIZE >= 3 * bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize
 );

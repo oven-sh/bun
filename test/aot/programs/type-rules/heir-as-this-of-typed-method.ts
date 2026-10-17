@@ -30,3 +30,43 @@ let counted = 0;
 for (const c of counters) counted += c.bump() + c.inner.a;
 console.log(counted);
 console.log("heir of Counter, whose method begins with a store to this:", (function (o: any): any { try { return [o.bump(), Object.keys(o).join(), Object.getPrototypeOf(o).count].join(" "); } catch (error: any) { return error.constructor.name; } })(Object.create(counters[0]!)));
+interface Tally { count: number; inner: { a: number }; reset(this: Tally, to: number): number }
+function reset(this: Tally, to: number): number { this.count = to; return this.count + 1; }
+function makeTally(count: number): Tally { return { count, inner: { a: count }, reset }; }
+const tallies: Tally[] = [makeTally(1), makeTally(2)];
+let tallied = 0;
+for (const t of tallies) tallied += t.reset(3) + t.inner.a;
+console.log(tallied);
+console.log("heir of Tally, whose method is a declared function that begins with a store to this:", (function (o: any): any { try { return [o.reset(5), Object.keys(o).join()].join(" "); } catch (error: any) { return error.constructor.name; } })(Object.create(tallies[0]!)));
+interface Gauge { level: number; inner: { a: number }; fill?: (this: Gauge, to: number) => number }
+function fill(this: Gauge, to: number): number { this.level = to; return this.level * 2; }
+const gauges: Gauge[] = [{ level: 1, inner: { a: 1 } }, { level: 2, inner: { a: 2 } }];
+for (const g of gauges) g.fill = fill;
+let gauged = 0;
+for (const g of gauges) gauged += g.fill!(4) + g.inner.a;
+console.log(gauged);
+console.log("heir of Gauge, to which such a function was assigned:", (function (o: any): any { try { return [o.fill(5), Object.keys(o).join()].join(" "); } catch (error: any) { return error.constructor.name; } })(Object.create(gauges[0]!)));
+interface Meter { level: number; inner: { a: number }; set(this: Meter, to: number): number }
+function setMeter(this: Meter, to: number): number { this.level = to; return this.level + 3; }
+const sameFunction = setMeter;
+const meters: Meter[] = [{ level: 1, inner: { a: 1 }, set: sameFunction }, { level: 2, inner: { a: 2 }, set: sameFunction }];
+let metered = 0;
+for (const m of meters) metered += m.set(4) + m.inner.a;
+console.log(metered);
+console.log("heir of Meter, whose method went through a variable:", (function (o: any): any { try { return [o.set(5), Object.keys(o).join()].join(" "); } catch (error: any) { return error.constructor.name; } })(Object.create(meters[0]!)));
+interface Dial { level: number; inner: { a: number }; turn?: (this: Dial, to: number) => number }
+function turnDial(this: Dial, to: number): number { this.level = to; return this.level + 4; }
+function attach(dial: Dial, turn: (this: Dial, to: number) => number): void { dial.turn = turn; }
+const dials: Dial[] = [{ level: 1, inner: { a: 1 } }, { level: 2, inner: { a: 2 } }];
+for (const d of dials) attach(d, turnDial);
+let dialed = 0;
+for (const d of dials) dialed += d.turn!(4) + d.inner.a;
+console.log(dialed);
+console.log("heir of Dial, whose method went through an argument:", (function (o: any): any { try { return [o.turn(5), Object.keys(o).join()].join(" "); } catch (error: any) { return error.constructor.name; } })(Object.create(dials[0]!)));
+interface Scale { level: number; inner: { a: number } }
+function setScale(this: Scale, to: number): number { this.level = to; return this.level + 5; }
+const scales: Scale[] = [{ level: 1, inner: { a: 1 } }, { level: 2, inner: { a: 2 } }];
+let scaled = 0;
+for (const s of scales) scaled += setScale.call(s, 4) + s.inner.a;
+console.log(scaled);
+console.log("heir of Scale, handed over by call:", (function (o: any): any { try { return [setScale.call(o, 5), Object.keys(o).join()].join(" "); } catch (error: any) { return error.constructor.name; } })(Object.create(scales[0]!)));

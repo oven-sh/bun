@@ -1656,6 +1656,11 @@ fn files_that_code_reaches(files: &bun_sema::program::Files<'_>) -> Vec<bool> {
                     only_for_types.push((used.spec, 0));
                 }
             }
+            for &augmented in module.bound.module_augmentations.iter() {
+                if !only_for_types.iter().any(|known| known.0 == augmented) {
+                    only_for_types.push((augmented, 0));
+                }
+            }
             only_for_types.retain(|&(specifier, statements)| {
                 let others = || hir.specifier_uses.iter().filter(|used| used.spec == specifier && used.kind != SpecifierKind::ImportType);
                 others().all(|used| used.kind == SpecifierKind::Import) && others().count() == statements
@@ -3269,6 +3274,8 @@ fn check_project_of(
         project.has_references = false;
         project.options.referenced_outputs = of.referenced_outputs.to_vec();
         project.options.every_named_root_is_own = disk.is_without_bundler;
+        project.options.loads_augmented_modules = true;
+        project.options.relative_imports_need_no_extension = true;
         let cwd = host::from_native(request.cwd);
         let files = project.files.iter();
         let mut seen: FxHashSet<Vec<u8>> =
@@ -3472,7 +3479,7 @@ fn find_global_declarations(disk: &host::Disk, others: &[&Vec<u8>], scanned_earl
         .collect();
     imported.shared_sort_unstable();
     imported.dedup_by(|a, b| a.0 == b.0);
-    let mut places: Vec<(&[u8], &[u8])> = imported.iter().map(|(name, at)| (dirname::<Posix>(others[*at]), package_of_specifier(name))).collect();
+    let mut places: Vec<(&[u8], &[u8])> = imported.iter().map(|(name, at)| (dirname::<Posix>(others[*at]), &name[..])).collect();
     places.shared_sort_unstable();
     places.dedup();
     let mut installed_above: Vec<(&[u8], Vec<Vec<u8>>)> = places.iter().map(|place| (place.0, Vec::new())).collect();
@@ -3482,10 +3489,10 @@ fn find_global_declarations(disk: &host::Disk, others: &[&Vec<u8>], scanned_earl
     });
     let looked_into = Guarded::new(FxHashMap::default());
     let mut asked: Vec<((&[u8], &[u8]), Option<Vec<u8>>)> = places.into_iter().map(|place| (place, None)).collect();
-    bun_sema::util::for_each_mut(&mut asked, in_parallel, &|((directory, package), found)| {
+    bun_sema::util::for_each_mut(&mut asked, in_parallel, &|((directory, specifier), found)| {
         let directory: &[u8] = directory;
         let installed = installed_above.binary_search_by(|known| known.0.cmp(directory)).map_or(&[][..], |at| &installed_above[at].1[..]);
-        *found = package_global_declarations(disk, installed, package, &looked_into);
+        *found = package_global_declarations(disk, installed, specifier, &looked_into);
     });
     let mut of_packages: Vec<Vec<u8>> = asked.into_iter().filter_map(|(_, found)| found).collect();
     of_packages.shared_sort_unstable();
@@ -4825,15 +4832,18 @@ fn package_of_specifier(specifier: &[u8]) -> &[u8] {
 
 type GlobalDeclarationsByRoot = Guarded<FxHashMap<Vec<u8>, Option<Option<Vec<u8>>>>>;
 
-fn package_global_declarations(host: &dyn Host, installed_above: &[Vec<u8>], package: &[u8], looked_into: &GlobalDeclarationsByRoot) -> Option<Vec<u8>> {
+fn package_global_declarations(host: &dyn Host, installed_above: &[Vec<u8>], specifier: &[u8], looked_into: &GlobalDeclarationsByRoot) -> Option<Vec<u8>> {
+    let package = package_of_specifier(specifier);
+    let subpath = specifier[package.len()..].strip_prefix(b"/").unwrap_or_default();
     let typed = [&b"@types/"[..], &strings::replace_owned(package.strip_prefix(b"@").unwrap_or(package), b"/", b"__")].concat();
     for packages in installed_above {
         for name in [package, &typed[..]] {
             let root = inside(packages, name);
-            let known = looked_into.lock().get(&root).cloned();
+            let key = if subpath.is_empty() { root.clone() } else { inside(&root, subpath) };
+            let known = looked_into.lock().get(&key).cloned();
             let found = known.unwrap_or_else(|| {
-                let found = package_global_declarations_at(host, &root);
-                looked_into.lock().insert(root, found.clone());
+                let found = package_global_declarations_at(host, &root, subpath);
+                looked_into.lock().insert(key, found.clone());
                 found
             });
             if let Some(declarations) = found {
@@ -4844,15 +4854,30 @@ fn package_global_declarations(host: &dyn Host, installed_above: &[Vec<u8>], pac
     None
 }
 
-fn package_global_declarations_at(host: &dyn Host, root: &[u8]) -> Option<Option<Vec<u8>>> {
+fn package_global_declarations_at(host: &dyn Host, root: &[u8], subpath: &[u8]) -> Option<Option<Vec<u8>>> {
     let manifest = host.read(&inside(root, b"package.json"))?;
-    let fields = host.parse_package_json(Session::new().arena(), &manifest);
-    let written = fields.as_ref().and_then(|it| it.get(b"types").or_else(|| it.get(b"typings"))?.as_str());
-    let written = written.unwrap_or(b"index.d.ts");
-    let entry = inside(root, written.strip_prefix(b"./").unwrap_or(written));
+    let entry = if subpath.is_empty() {
+        let fields = host.parse_package_json(Session::new().arena(), &manifest);
+        let written = fields.as_ref().and_then(|it| it.get(b"types").or_else(|| it.get(b"typings"))?.as_str());
+        let written = written.unwrap_or(b"index.d.ts");
+        inside(root, written.strip_prefix(b"./").unwrap_or(written))
+    } else {
+        let stem = inside(root, subpath.strip_suffix(b".js").unwrap_or(subpath));
+        [[&stem[..], b".d.ts"].concat(), inside(&stem, b"index.d.ts")].into_iter().find(|candidate| host.is_file(candidate))?
+    };
     let text = host.read(&entry).filter(|_| is_declaration_file_name(&entry))?;
     let words = [&b"export as namespace"[..], b"declare global", b"<reference "];
-    Some(words.iter().any(|word| strings::contains(&text, word)).then(|| host.realpath(&entry)))
+    Some((words.iter().any(|word| strings::contains(&text, word)) || is_script(&entry, &text)).then(|| host.realpath(&entry)))
+}
+
+fn is_script(path: &[u8], text: &[u8]) -> bool {
+    let starts_a_line = |word: &[u8]| text.starts_with(word) || strings::contains(text, &[&b"\n"[..], word].concat());
+    if starts_a_line(b"import") || starts_a_line(b"export") {
+        return false;
+    }
+    let session = Session::new();
+    let atoms = bun_sema::atom::Interner::new_in(&session);
+    !bun_sema_parser::summarize(session.arena(), path, None, text, &atoms, false, false, true).has_module_syntax
 }
 
 /// `check_project`. `named`: of all loaded files, only these files (sorted) and the files they
@@ -5317,7 +5342,7 @@ fn check_named_files(
                     }
                     let (count, (directory, name)) = (1 + errors.count(), invalidation_key(program.files, &modules[i]));
                     let text = &modules[i].hir.text;
-                    let typed_version = first.and_then(|_| typed_packages::typed_version_providing(request.cwd, host::to_native(directory), name, host::to_native(modules[i].path.text), text));
+                    let typed_version = first.and_then(|_| typed_packages::typed_version_providing(request.cwd, host::to_native(directory), name, host::to_native(modules[i].file_name()), text));
                     let known = fallen.iter().position(|known| known.0 == directory);
                     if let Some(known) = known {
                         fallen[known].2 += count;
@@ -6370,7 +6395,7 @@ fn check_named_files(
                 std::thread::scope(|scope| {
                     for index in 0..count {
                         std::thread::Builder::new()
-                            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+                            .stack_size(bun_threading::thread_pool::POOL_THREAD_STACK_SIZE as usize)
                             .spawn_scoped(scope, move || {
                                 bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Check"));
                                 work(index);

@@ -1,1 +1,0 @@
-error: TS100012: This non-null assertion always fails under --aot: the value is always undefined.

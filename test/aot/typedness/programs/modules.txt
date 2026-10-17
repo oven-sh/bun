@@ -33,7 +33,7 @@ require-result-is-value: 4 layouts, 0 given, 0 open, places 13 of 63, reads 2 of
 required-module-in-exported-const: 1 layouts, 1 given, 0 open, places 5 of 33, reads 5 of 29
 required-module-odd-positions: 0 layouts, 7 given, 0 open, places 33 of 91, reads 0 of 5
 same-function-name-across-modules: 3 layouts, 0 given, 2 open, places 49 of 69, reads 10 of 17
-shared-references-across-files: 5 layouts, 0 given, 0 open, places 64 of 83, reads 26 of 42
+shared-references-across-files: 5 layouts, 0 given, 0 open, places 64 of 83, reads 27 of 42
 star-export-commonjs-computed-names: 4 layouts, 0 given, 2 open, places 13 of 29, reads 0 of 4
 this-in-namespace-call: 0 layouts, 0 given, 0 open, places 4 of 20, reads 1 of 4
 throwing-module-not-reevaluated: 0 layouts, 0 given, 1 open, places 13 of 68, reads 0 of 6

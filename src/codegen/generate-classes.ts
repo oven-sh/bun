@@ -1501,7 +1501,7 @@ function generateCachedGetterTable(classes: ClassDefinition[]) {
   );
   return `
 #if ENABLE(AOT)
-static_assert(${classes.length} <= JSC::AOT::Typed::firstDOMConstructorHostClass);
+static_assert(${classes.length} <= JSC::AOT::Typed::firstHostClassNumberedByHand);
 ${assertions.join("\n")}
 
 static constexpr JSC::AOT::Typed::HostClassCachedGetter generatedClassCachedGetters[] = {
@@ -2390,6 +2390,8 @@ ALWAYS_INLINE void GlobalObject::initGeneratedLazyClasses() {
                 init.setConstructor(fns.createConstructor(init.vm, init.global, init.prototype));
 #if ENABLE(AOT)
             JSC::AOT::Typed::didCreateHostClassStructure(globalObject, index, init.structure);
+            if (index == GeneratedLazyClassJSResponse)
+                JSC::AOT::Typed::didCreateHostClassStructure(globalObject, JSC::AOT::Typed::responseHostClass, init.structure);
             if (index == GeneratedLazyClassJSRequest || index == GeneratedLazyClassJSResponse || index == GeneratedLazyClassJSBlob)
                 globalObject->lockHostClassPrototype(init.prototype);
             if (index == GeneratedLazyClassJSResponse)

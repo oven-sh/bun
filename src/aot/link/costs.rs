@@ -448,7 +448,7 @@ fn rule_of_cause(code: u32) -> Option<Rule> {
         100040 | 100042..=100048 => Some(Rule::OpenLayout),
         100075..=100079 => Some(Rule::ByName),
         100018 | 100086 => Some(Rule::CanThrow),
-        100087..=100089 => Some(Rule::ByName),
+        100087..=100090 => Some(Rule::ByName),
         100085 => Some(Rule::LostLayout),
         _ => Rule::of_code(code),
     }
@@ -542,6 +542,7 @@ fn fix_for(code: u32) -> &'static str {
         100026 => "use a version of the package that ships TypeScript sources, or add a typed version of it",
         100083 => "turn the file into TypeScript",
         100087 => "make the call where the type of the value is known, or give the value a declared type",
+        100090 => "check or convert the value where it enters typed code: a parameter that untyped code passes, a field of data from outside, the result of an untyped call",
         100086 => "declare that parameter with concrete parameter types; where the code has to be fast, call the function directly, for example from a loop in place of the helper",
         100009 | 100010 | 100011 | 100084 => "fix the type errors that the build lists for it",
         100022 => "create every object of this type in typed code",
@@ -619,7 +620,7 @@ pub(super) struct Sources<'a, 's> {
     pub open_layouts: &'a [(LayoutId, usize)],
     pub chains: &'a [Chain],
     pub checks_of_parameters: &'a FxHashSet<(FileId, u32)>,
-    pub accesses_without_known_cause: &'a [(Place, Option<(Place, Vec<u8>, bool)>)],
+    pub accesses_without_known_cause: &'a [(Place, Option<CompilerDiagnostic>)],
     pub classes_without_layout: &'a FxHashSet<(FileId, ClassId)>,
     pub other_places_where_external_data_enters: &'a [(Place, CompilerDiagnostic)],
 }
@@ -703,7 +704,8 @@ pub(super) fn explain(sources: &Sources<'_, '_>, as_json: bool, in_parallel: InP
             Rule::CanThrow | Rule::LostLayout | Rule::UntypedBase => {}
             Rule::ReshapedLayout => {
                 tally.absorb(if finding.code == 100080 { &counted_in_code.stores_testing_integrity } else { &counted_in_code.through_records_of_any_prototype });
-                table.add(finding, &finding.related, rule, None, None, &tally);
+                let row = table.add(finding, &[], rule, None, None, &tally);
+                table.rows[row].other_causes.extend(finding.related.iter().map(|other| (other.file, other.start)));
             }
             Rule::UntypedPackage => {
                 if let Some(inside) = finding.args.first().and_then(|package| untyped_by_package.get(package)) {
@@ -756,20 +758,20 @@ pub(super) fn explain(sources: &Sources<'_, '_>, as_json: bool, in_parallel: InP
         table.add(origin.unwrap_or(finding), &[], Rule::CanThrow, None, fix.map(Vec::as_slice), &tally);
     }
     let mut row_of_maker: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
-    for (at, receiver_type) in accesses_without_known_cause {
+    for (at, declaration) in accesses_without_known_cause {
         let Some(chain) = chain_at.get(&(at.file, at.pos)) else { continue };
         let access = CompilerDiagnostic { file: chain.file, start: chain.name_pos, end: chain.name_pos, code: 100030, args: vec![chain.name.clone()], related: Vec::new() };
-        let Some((declared, type_name, is_declared_outside_typed_code)) = receiver_type else {
+        let Some(declared) = declaration else {
             table.add(&access, &[], Rule::ByName, None, None, &tally_of(chain));
             continue;
         };
-        if !is_declared_outside_typed_code {
-            let row = table.add(&CompilerDiagnostic { file: declared.file, start: declared.pos, end: declared.pos, code: 100089, args: vec![type_name.clone()], related: Vec::new() }, &[], Rule::ByName, None, None, &tally_of(chain));
+        if declared.code != 100088 {
+            let row = table.add(declared, &[], Rule::ByName, None, None, &tally_of(chain));
             table.add_example(row, &access);
             continue;
         }
         let package = checker.name_of_package_holding(declared.file).filter(|_| !checked.files.module(declared.file).is_lib);
-        let package = package.map(|name| name.strip_prefix(b"@types/").map_or(name.clone(), <[u8]>::to_vec)).filter(|name| !RUNTIME_DECLARATIONS.contains(&name.as_slice()));
+        let package = package.map(|name| name.strip_prefix(b"@types/").map_or_else(|| name.clone(), <[u8]>::to_vec)).filter(|name| !RUNTIME_DECLARATIONS.contains(&name.as_slice()));
         let row = match package.as_ref().and_then(|package| row_of_package.get(package)) {
             Some(&row) => {
                 table.add_to(row, Rule::ByName, &tally_of(chain));
@@ -888,9 +890,7 @@ pub(super) fn explain(sources: &Sources<'_, '_>, as_json: bool, in_parallel: InP
         };
         let is_in_dependency = checked.files.module(row.cause.file).is_dependency;
         let mut steps_from_the_cause: Vec<&CompilerDiagnostic> = row.steps.iter().filter(|step| !as_json || step.code != STEPS_LEFT_OUT).collect();
-        if rule != Rule::ReshapedLayout {
-            steps_from_the_cause.reverse();
-        }
+        steps_from_the_cause.reverse();
         let steps_left_out = if as_json { 0 } else { steps_from_the_cause.len().saturating_sub(MAX_STEPS_SHOWN) };
         steps_from_the_cause.truncate(steps_from_the_cause.len() - steps_left_out);
         let steps: Vec<(String, usize, usize, String)> = (steps_from_the_cause.into_iter())
@@ -970,7 +970,7 @@ pub(super) fn explain(sources: &Sources<'_, '_>, as_json: bool, in_parallel: InP
             lines.push(format!("     and {steps_left_out} more"));
         }
         if !other_causes.is_empty() {
-            lines.push("     the same types get such values at these places too, and the cost stays until all of them are fixed:".to_owned());
+            lines.push(format!("     {} the same, and the cost stays until all of them are fixed:", if other_causes.len() == 1 { "1 other place does" } else { "other places do" }));
             for (path, line, column) in other_causes.iter().take(MAX_STEPS_SHOWN) {
                 lines.push(format!("       {path}:{line}:{column}"));
             }

@@ -1,4 +1,4 @@
-// Changing the prototype of a typed object is a build error.
+// Typed code may change the prototype of a record.
 interface Plain { a: number }
 const plain: Plain = { a: 1 }
 const parent = { inherited: "yes", hello() { return "hi " + (this as any).a } }

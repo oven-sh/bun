@@ -66,6 +66,17 @@ export const generators: [name: string, extension: "ts" | "js", options?: Option
   // 94 to 97 write a cast or an annotation that the value does not satisfy, and written types are checked.
   ["external-data-in-inferred-places", "ts", { seeds: upTo(146), leftOut: [94, 95, 96, 97], failsToday: Object.fromEntries([70, 71, 72, 73, 74, 75, 88, 89, 98, 99, 120, 121, 138, 139, 140, 141].map(seed => [seed, X])) }],
   ["optional-number-and-boolean-fields", "ts", { seeds: upTo(9) }],
+  // Left out: three sources write `x!`, two a cast that converts, one throws while it loads.
+  [
+    "values-wider-than-their-types",
+    "ts",
+    {
+      ...orThrows,
+      seeds: upTo(391),
+      leftOut: [45, 54, 55, 273, 284, 387],
+      modeFailsToday: Object.fromEntries([10, 25, 34, 35, 40, 41, 42, 44, 291, 314, 337, 349, 350, 351, 377, 388].map(seed => [seed, "the executable throws and bun run --aot goes on as plain Bun does"])),
+    },
+  ],
   // CET and WET are time zones of some ICU data only.
   ["intl-constant-arguments", "ts", { seeds: upTo(121), leftOut: [50, 51] }],
   ["collections-mutated-during-iteration", "ts"],

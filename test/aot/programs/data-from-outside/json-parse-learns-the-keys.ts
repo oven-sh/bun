@@ -1,9 +1,13 @@
 // JSON.parse without a reviver goes by the keys it has seen at each place, from the second text on that begins with the same eight characters. What stays on that path, which objects are filled member by member, and which values go to the general parser.
 declare const aotOperationCount: (name: string) => number;
 const names = ["jsonParsedWithLearnedShapes", "jsonObjectParsedMemberByMember", "jsonValueParsedWithoutShape"];
+const order = '{"customer":{"id":1,"name":"n"},"items":[{"sku":"a","quantity":2},{"sku":"b","quantity":3}],"coupon":"c"}';
 function measure(label: string, text: string, parse: (text: string) => unknown = text => JSON.parse(text), isSeenBefore = true) {
   try {
-    if (isSeenBefore) JSON.parse(text);
+    if (isSeenBefore) {
+      for (let turn = 0; turn < 4; turn++) JSON.parse(order);
+      JSON.parse(text);
+    }
   } catch {}
   const before = names.map(name => aotOperationCount(name));
   let seen: string;
@@ -15,7 +19,6 @@ function measure(label: string, text: string, parse: (text: string) => unknown =
   const [calls, memberByMember, withoutShape] = names.map((name, at) => aotOperationCount(name) - before[at]!);
   console.log(label + ": calls " + calls + ", objects filled member by member " + memberByMember + ", values without a shape " + withoutShape + ", " + seen);
 }
-const order = '{"customer":{"id":1,"name":"n"},"items":[{"sku":"a","quantity":2},{"sku":"b","quantity":3}],"coupon":"c"}';
 measure("a text that begins as none before", order, undefined, false);
 measure("the second that begins so", order, undefined, false);
 measure("the third", order, undefined, false);
@@ -36,7 +39,7 @@ measure("no JSON", '{"customer":');
 measure("an undefined reviver", order, text => JSON.parse(text, undefined));
 measure("a reviver", order, text => JSON.parse(text, (_, held) => held));
 let dictionary = "{";
-for (let i = 0; i < 60; i++) dictionary += (i ? "," : "") + '"key' + i + '":{"value":' + i + "}";
+for (let i = 0; i < 60; i++) dictionary += (i ? "," : "") + '"key' + i + '":{"value":' + i + ',"name":"n","ok":true,"note":null,"more":[1,2,3],"last":"the last of six"}';
 measure("sixty keys", '{"table":' + dictionary + "}}");
 measure("sixty keys again", '{"table":' + dictionary + "}}");
 measure("sixty other keys", '{"table":' + dictionary.replaceAll("key", "other") + "}}");

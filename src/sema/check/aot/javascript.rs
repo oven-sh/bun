@@ -1371,6 +1371,10 @@ impl<'p, 's> Checker<'p, 's> {
         KnownUses::OfFile(uses)
     }
 
+    pub(super) fn recorded_calls_of(&mut self, file: FileId, func: FnId) -> Vec<(FileId, ExprId)> {
+        self.function_uses().calls.get((file, func)).to_vec()
+    }
+
     fn constructor_uses_in(&mut self, file: FileId) -> KnownUses<'p> {
         if self.p.aot.javascript.uses.get().is_some() || self.aot.javascript.last_recorded_file == Some(file) {
             return self.function_uses();

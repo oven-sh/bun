@@ -1,6 +1,6 @@
 import { dlopen, FFIType } from "bun:ffi";
 const isDarwin = process.platform === "darwin";
-const library = dlopen(isDarwin ? "libSystem.B.dylib" : "libc.so.6", {
+const library = dlopen(isDarwin ? "libSystem.B.dylib" : process.platform === "android" ? "libc.so" : "libc.so.6", {
   mmap: { args: [FFIType.u64, FFIType.u64, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.i64], returns: FFIType.i64 },
 });
 const read = 1, write = 2, execute = 4;

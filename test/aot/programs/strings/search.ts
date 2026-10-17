@@ -71,9 +71,9 @@ export function startsWith1(s: string, x: string): boolean { return s.startsWith
 export function startsWith2(s: string, x: string, p: number): boolean { return s.startsWith(x, p); }
 export function endsWith1(s: string, x: string): boolean { return s.endsWith(x); }
 export function endsWith2(s: string, x: string, p: number): boolean { return s.endsWith(x, p); }
-export function searchKnown(s: string, x: string): number { const a = s!, b = x!; return a.indexOf(b) + (a.includes(b) ? 1000 : 0) + 7 * a.lastIndexOf(b); }
-export function startsWithKnown(s: string, x: string): boolean { const a = s!, b = x!; return a.startsWith(b); }
-export function endsWithKnown(s: string, x: string): boolean { const a = s!, b = x!; return a.endsWith(b); }
+export function searchKnown(s: string, x: string): number { const a = `${s}`, b = `${x}`; return a.indexOf(b) + (a.includes(b) ? 1000 : 0) + 7 * a.lastIndexOf(b); }
+export function startsWithKnown(s: string, x: string): boolean { const a = `${s}`, b = `${x}`; return a.startsWith(b); }
+export function endsWithKnown(s: string, x: string): boolean { const a = `${s}`, b = `${x}`; return a.endsWith(b); }
 export function indexOfCharacter(s: string): number { return s.indexOf("o"); }
 export function includesCharacter(s: string): boolean { return s.includes("z"); }
 export function lastIndexOfCharacter(s: string): number { return s.lastIndexOf("o"); }

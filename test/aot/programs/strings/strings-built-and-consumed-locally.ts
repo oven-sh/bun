@@ -22,14 +22,14 @@
 // REMARK- readsBetween rejected
 // REMARK- nilPlusNumber stack
 // REMARK- wordsNotAKey stack
-// REMARK+ wordsNotAKey rejected: string operand and not a map key
+// IRT= 1 wordsNotAKey StringAppendFinish
 // REMARK- readByIndex stack
 // REMARK+ readByIndex rejected: intermediate value escapes
 // REMARK- compared stack
 // REMARK- passedOn stack
 // REMARK- reinitialized stack
 // REMARK- onlyStrings stack
-// REMARK+ onlyStrings rejected: no numeric operand
+// IRT= 1 onlyStrings StringAppendFinish
 // REMARK- withHandler stack
 // REMARK- putInFront stack
 // REMARK- addedToTwice stack

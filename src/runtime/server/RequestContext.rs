@@ -4153,8 +4153,7 @@ where
     unsafe fn protect_for_body_and_render(&self, response_value: JSValue, response: *mut Response) {
         // SAFETY: caller contract: `response` is live. This is the only borrow
         // of its body, and it ends before `render` reborrows the cell.
-        let body_value = unsafe { (*response).get_body_value() };
-        body_value.to_blob_if_possible();
+        let body_value = unsafe { (*response).get_body_value_as_blob_if_possible() };
         let sent_after_return = match body_value {
             Body::Value::Blob(blob) => shim::blob_needs_to_read_file(blob),
             Body::Value::Locked(_) => true,

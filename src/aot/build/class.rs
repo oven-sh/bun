@@ -1610,6 +1610,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         Some(ClassId(std::str::from_utf8(class).ok()?.parse().ok()?))
     }
 
+    pub(crate) fn is_private_field(&self, file: FileId, name: Atom) -> bool {
+        let Some(class) = self.private_name_class(name) else {
+            return false;
+        };
+        let hir = self.hir(file);
+        hir[class].members.iter().all(|member| !matches!(hir[member].key, PropKey::Private(declared) if declared == name) || hir[member].kind == MemberKind::Property && !hir[member].flags.contains(Flags::ACCESSOR))
+    }
+
     pub(crate) fn private_key(&mut self, fx: &mut Fx, name: Atom) -> Option<V> {
         let class = self.private_name_class(name)?;
         self.define_class(fx.file, class);

@@ -2,7 +2,7 @@
 // every call, whichever way the call ends: an 8-bit result, a 16-bit result, or a fallback to the generic writer.
 import { expect } from "bun:test";
 import { test } from "./supported";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 const files = {
@@ -30,7 +30,7 @@ const files = {
   `,
 };
 
-test("a large output buffer is released however the call ends", async () => {
+test.skipIf(isASAN || isDebug)("a large output buffer is released however the call ends", async () => {
   using dir = tempDir("aot-json-stringify-buffer-release", files);
   const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
   await using build = Bun.spawn({

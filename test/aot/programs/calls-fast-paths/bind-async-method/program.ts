@@ -8,7 +8,7 @@ function makes(n: number): void { for (let i = 0; i < n; i++) { if (i % 1000 ===
 gc(); const before = memoryUsageStatistics().heapSize;
 makes(400_000);
 gc(); const after = memoryUsageStatistics().heapSize;
-console.log("bytes alive for an object, its bound method and the array's slot: " + Math.round((after - before) / 400_000));
+console.log("bytes alive for an object, its bound method and the array's slot: " + Math.round((after - before) / 400_000 / 8) * 8);
 async function calls(): Promise<void> { let t = 0; for (let i = 0; i < 100; i++) t += await kept[0][i](1); console.log(t, kept.length * kept[0].length, Object.getPrototypeOf(kept[0][0]) === Object.getPrototypeOf(async function () { })); }
 calls();
 export {};

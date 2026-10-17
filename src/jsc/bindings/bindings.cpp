@@ -2832,6 +2832,12 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__unwrapBoxedPrimitive(JSGlobalObject
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toJSONObject(const EncodedSlice* strPtr, JSC::JSGlobalObject* globalObject)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
+#if ENABLE(AOT)
+    if (strPtr->len && Zig::isTaggedUTF8Ptr(strPtr->ptr)) {
+        if (JSValue parsed = JSC::AOT::tryParseUTF8JSONWithLearnedShapes(globalObject, std::span<const uint8_t> { Zig::untag(strPtr->ptr), strPtr->len }))
+            return JSValue::encode(parsed);
+    }
+#endif
     // Zig::toString() is null for an empty slice, and JSONParseWithException throws nothing for null.
     auto str = strPtr->len ? Zig::toString(*strPtr) : emptyString();
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -2852,6 +2858,17 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toJSO
         return {};
     }
     return JSValue::encode(result);
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue EncodedSlice__tryParseJSONFromUTF8(const EncodedSlice* bytes, JSC::JSGlobalObject* globalObject)
+{
+#if ENABLE(AOT)
+    return JSValue::encode(JSC::AOT::tryParseUTF8JSONWithLearnedShapes(globalObject, std::span<const uint8_t> { Zig::untag(bytes->ptr), bytes->len }));
+#else
+    UNUSED_PARAM(bytes);
+    UNUSED_PARAM(globalObject);
+    return {};
+#endif
 }
 
 // We used to just throw "Out of memory" as a regular Error with that string.

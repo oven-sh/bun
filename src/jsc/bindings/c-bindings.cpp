@@ -825,6 +825,8 @@ extern "C" void bun_initialize_process()
         }
     }
 
+    _setmode(2, _O_BINARY);
+
     // add ctrl+c handler on windows
     Bun__setCTRLHandler(1);
 #endif

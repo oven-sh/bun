@@ -2953,6 +2953,16 @@ impl<'a> Report<'a, '_> {
         }
     }
 
+    fn always_refuses_argument(&self, called: FuncId, number: usize, given: &Declared) -> bool {
+        let callee = &self.flow.program.funcs[called.idx()];
+        let individually = callee.params.len() - usize::from(callee.has(func_flags::HAS_REST) && !callee.params.is_empty());
+        if !callee.has(func_flags::IS_TYPED) || number >= individually || !self.flow.is_informative(callee.params[number]) {
+            return false;
+        }
+        let wanted = self.flow.get(callee.params[number]);
+        !(given.has_objects() && wanted.has_objects()) && self.judge(None, given, given, wanted) == Verdict::Wrong
+    }
+
     fn check_call(&mut self, index: usize, func: &Func, facts: &Facts, keys: &mut Keys, pos: u32, v: V, receiver_of_the_engine: Option<V>, args: &[V]) {
         let program = self.flow.program;
         let Some((found, handed)) = functions_called(program, func, v) else {
@@ -3022,7 +3032,7 @@ impl<'a> Report<'a, '_> {
                     continue;
                 }
                 let verdict = match self.judge(None, &given, &given, &wanted) {
-                    Verdict::Wrong if may_be_expected_undefined => Verdict::Unknown,
+                    Verdict::Wrong if may_be_expected_undefined || !found.iter().all(|&other| self.always_refuses_argument(other, number, &given)) => Verdict::Unknown,
                     verdict => verdict,
                 };
                 self.value = self.constant(func, argument).unwrap_or_default();
@@ -3120,6 +3130,7 @@ impl<'a> Report<'a, '_> {
             });
             let is_only = receiver.parts.len() == 1 && receiver.prims == 0 && !allocated_as.accepts_untyped && holder != b"Reflect";
             match called {
+                b"setPrototypeOf" if allocated_as.kind == LayoutKind::Record && allocated_as.class_flags & (class_flags::MAY_HAVE_OTHER_PROTOTYPE | class_flags::PROTOTYPE_IS_SET_BY_TYPED_CODE) != 0 => {}
                 b"setPrototypeOf" => {
                     self.name = Some("object-set-prototype");
                     self.add(func, pos, Kind::Mutation, if is_only { Verdict::Wrong } else { Verdict::Unknown }, String::new(), String::new(), format!("`{shown}` on {owner}: objects of a declared type keep their prototype"), context);

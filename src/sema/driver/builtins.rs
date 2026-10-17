@@ -353,6 +353,9 @@ impl Scan<'_, '_> {
     }
 
     fn module_global(&self, specifier: Atom) -> Option<usize> {
+        if specifier.is_none() {
+            return None;
+        }
         let text = self.atoms.bytes(specifier);
         GLOBALS.iter().position(|global| global.1.contains(&text))
     }

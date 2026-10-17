@@ -43,3 +43,5 @@ untyped-code/spread-of-objects-with-another-prototype    counts calls into the r
 untyped-code/lazy-builtin-class-keeps-property-caches    counts calls into the runtime
 host-classes/fields-of-host-subclasses-avoid-runtime    counts calls into the runtime
 untyped-code/prototype-freeze-and-assign-invalidate-by-name    counts calls into the runtime
+untyped-code/first-store-by-name-to-field-without-storage    counts calls into the runtime
+untyped-code/later-store-by-name-grows-extension    counts calls into the runtime

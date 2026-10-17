@@ -2,7 +2,7 @@ use super::OnceLock;
 use crate::atom::{Atom, SYMBOL_NAME_PREFIX, known};
 use crate::bind::{AccessKind, Decl, Parent, PatParent, SymFlags, SymbolId};
 use crate::check::Checker;
-use crate::hir::{Chain, ExprId, ExprKind, ExprTag, File, Flags, PatId, PatKind, PatPropId, PropKey, PropKind, StmtKind, UnOp, VarKind};
+use crate::hir::{Chain, ExprId, ExprKind, ExprTag, File, FileKind, Flags, PatId, PatKind, PatPropId, PropKey, PropKind, StmtKind, UnOp, VarKind};
 use crate::program::{FileId, Sym};
 use crate::util::FxHashSet;
 
@@ -12,6 +12,7 @@ const INTERNAL_MODULES: &[u8] = b"/$bun/js/internal/";
 #[derive(Default)]
 pub(super) struct Shared {
     escaped_builtin_exports: OnceLock<FxHashSet<FileId>>,
+    names_module_graph: OnceLock<bool>,
 }
 
 fn skip_assertions(hir: &File, mut e: ExprId) -> ExprId {
@@ -75,9 +76,18 @@ struct HeldSymbol {
 }
 
 impl<'p, 's> Checker<'p, 's> {
+    fn names_module_graph(&self) -> bool {
+        let program = self.p;
+        *program.aot.symbols.names_module_graph.get_or_init(|| {
+            let Some(name) = self.atoms().lookup(b"ModuleGraph") else { return false };
+            let is_imported = |file: FileId| self.hir(file).kind != FileKind::Declaration && self.hir(file).import_specs.iter().any(|spec| spec.imported == name);
+            self.occurs_in_code(name) || (0..program.files.modules.len() as u32).map(FileId).any(is_imported)
+        })
+    }
+
     fn is_module_evaluated_once(&self, file: FileId) -> bool {
         let module = self.files().module(file);
-        module.builtin.is_some() || !module.is_commonjs() && !self.preserves_source_paths()
+        module.builtin.is_some() || !module.is_commonjs() && !self.preserves_source_paths() && !self.names_module_graph()
     }
 
     fn symbol_initializing_constant(&self, file: FileId, e: ExprId) -> Option<HeldSymbol> {

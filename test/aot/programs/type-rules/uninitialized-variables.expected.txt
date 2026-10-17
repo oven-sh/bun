@@ -5,9 +5,12 @@ closure 3: no error
 closure 4: no error
 closure 5: no error
 closure 6: no error
-let x!: TypeError
-let x!, added to: TypeError
-let x!, as an argument with a default: TypeError
+undefined
+let x!: no error
+NaN
+let x!, added to: no error
+10
+let x!, as an argument with a default: no error
 none
 let x! ?? y: no error
 4

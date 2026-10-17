@@ -1661,6 +1661,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if let Some(path) = self.import_meta_path_constant(fx.file, b"path") {
             let path = self.out.strs.intern(&path);
             module_path.push(self.emit(fx, Op::Str(path)));
+        } else if self.shared.entry_points().len() > 1
+            && let Some(entry_point) = self.shared.entry_points().iter().position(|roots| roots.first() == Some(&fx.file))
+        {
+            module_path.push(self.emit(fx, Op::Int(entry_point as i64)));
         }
         self.operation(fx, Operation::GetImportMeta, &module_path)
     }

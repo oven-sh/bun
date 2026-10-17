@@ -150,6 +150,7 @@ static OWN_MESSAGES: &[(u32, Category, &str)] = &[
     (100087, Category::Warning, "The compiler does not know the type of what '{0}' is given here, so the call is not specialized for it."),
     (100088, Category::Warning, "Objects made by {0} have no layout that the compiler knows, so their properties are looked up by name."),
     (100089, Category::Warning, "The compiler has no layout for '{0}', so the properties of its objects are looked up by name."),
+    (100090, Category::Warning, "The compiler cannot prove that what '{0}' holds is of its type '{1}', so its properties are looked up by name."),
 ];
 
 const _: () = {

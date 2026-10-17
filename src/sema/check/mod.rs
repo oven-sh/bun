@@ -633,6 +633,7 @@ impl<'s> Program<'s> {
         self.key_properties = ByIdIndirect::new_in(session);
         self.distributed_intersections = ByKey::new_in(session);
         *self.compiler_diagnostics.get_mut() = Default::default();
+        *self.compiled_untyped.get_mut() = Default::default();
         self.rule_scopes = Default::default();
         // SAFETY: the driver calls this once, as its last use of the program, and the arena that holds the program drops nothing.
         unsafe { core::mem::ManuallyDrop::drop(&mut self.aot) };

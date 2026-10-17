@@ -333,7 +333,7 @@ const kindNames = ["reservation", "transaction", "savepoint"];
 function abandonCopies(scope: Scope, ended: Scope, copies: Query[] = []) {
   for (const query of scope.running) {
     if (stateOf(query).flags & SQLQueryFlags.copy) {
-      stateOf(query).copy.abandon(`the ${kindNames[ended.kind]} ended before the COPY stream did`);
+      stateOf(query).copy!.abandon(`the ${kindNames[ended.kind]} ended before the COPY stream did`);
       copies.push(query);
     }
   }

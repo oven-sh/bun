@@ -1,6 +1,6 @@
 use crate::bind::{FnOwner, MemberOwner, Parent};
 use crate::check::{Checker, ContextFlags};
-use crate::hir::{Chain, ExprId, ExprKind, ExprTag, FileKind, FnId, StmtKind};
+use crate::hir::{Chain, ExprId, ExprKind, FileKind, FnId, StmtKind};
 use crate::program::{FileId, Sym};
 use crate::types::{ElemFlags, EnumValue, Intrinsic, PropFlags, TypeData, TypeId};
 use crate::util::FxHashMap;
@@ -357,6 +357,7 @@ impl ValidationPlan {
 const MAX_EXACT_PLAN_NODES: usize = 1024;
 const MAX_DESTINATION_STEPS: u32 = 4;
 const MAX_DESTINATIONS: usize = 16;
+const MAX_CALL_SITES: usize = 256;
 
 #[derive(Default)]
 struct Tags {
@@ -488,35 +489,28 @@ impl Checker<'_, '_> {
     }
 
     fn add_destinations_at_call_sites(&mut self, declared_in: FileId, generic: FnId, parameter: TypeId, depth: u32, found: &mut Vec<TypeId>) {
-        let name = self.hir(declared_in)[generic].name;
-        if name.is_none() {
-            return;
-        }
-        for file in (0..self.files().modules.len() as u32).map(FileId) {
-            if self.files().module(file).is_untyped() || self.is_declaration_only(file) {
-                continue;
+        for (file, site) in self.recorded_calls_of(declared_in, generic).into_iter().take(MAX_CALL_SITES) {
+            if found.len() >= MAX_DESTINATIONS {
+                return;
             }
             let hir = self.hir(file);
-            for &site in self.file_exprs_by_kind(file).of(ExprTag::Call) {
-                let ExprKind::Call(call) = hir[site].kind else { continue };
-                if !matches!(hir[hir[call].callee].kind, ExprKind::Dot { name: called, .. } | ExprKind::Ident(called) if called == name) {
-                    continue;
-                }
-                self.prepare_enclosing(file, site);
-                let Some((of, func, mapper)) = self.resolved_signature(file, site).sig.and_then(|sig| self.sig_decl(sig)) else { continue };
-                if (of, func) != (declared_in, generic) {
-                    continue;
-                }
-                let destination = match self.types().map(mapper, parameter).filter(|&argument| !self.is_uninformative(argument)) {
-                    Some(argument) => Some(argument),
-                    None => match self.bound(file).expr_parent[site.idx()] {
-                        Parent::Expr(parent) if parent.is_some() && matches!(hir[parent].kind, ExprKind::Await(_)) => self.destination_of_value(file, parent, depth + 1),
-                        _ => self.destination_of_value(file, site, depth + 1).map(|promise| self.fulfillment_type(promise)),
-                    },
-                };
-                if let Some(destination) = destination {
-                    self.add_destinations(file, site, destination, depth + 1, found);
-                }
+            if self.files().module(file).is_untyped() || !matches!(hir[site].kind, ExprKind::Call(_)) {
+                continue;
+            }
+            self.prepare_enclosing(file, site);
+            let Some((of, func, mapper)) = self.resolved_signature(file, site).sig.and_then(|sig| self.sig_decl(sig)) else { continue };
+            if (of, func) != (declared_in, generic) {
+                continue;
+            }
+            let destination = match self.types().map(mapper, parameter).filter(|&argument| !self.is_uninformative(argument)) {
+                Some(argument) => Some(argument),
+                None => match self.bound(file).expr_parent[site.idx()] {
+                    Parent::Expr(parent) if parent.is_some() && matches!(hir[parent].kind, ExprKind::Await(_)) => self.destination_of_value(file, parent, depth + 1),
+                    _ => self.destination_of_value(file, site, depth + 1).map(|promise| self.fulfillment_type(promise)),
+                },
+            };
+            if let Some(destination) = destination {
+                self.add_destinations(file, site, destination, depth + 1, found);
             }
         }
     }
@@ -784,6 +778,7 @@ impl Checker<'_, '_> {
                     let declared = self.type_of_prop(prop, members.mapper);
                     let name = self.atoms().bytes(prop.name).to_vec();
                     let node = match self.annotated_prop_integer_range(prop) {
+                        _ if planning.is_exact && !self.occurs_in_code(prop.name) => planning.add(Planned::Nothing),
                         Some(range) => self.plan_integer_within(planning, range, declared, at),
                         None => self.plan_type(planning, declared, &format!("{at}.{}", bstr::BStr::new(&name))),
                     };

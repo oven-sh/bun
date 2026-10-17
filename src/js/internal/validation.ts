@@ -163,7 +163,7 @@ function build(nodes: any[], at: number, input: any, refused: object): any {
     case 8: {
       if (!isPlainObject(input)) return refused;
       const members = node[1];
-      const checked = [];
+      const checked: any[] = [];
       for (let i = 0; i < members.length; i++) {
         let item = build(nodes, members[i][1], input[members[i][0]], refused);
         if (item === refused) {

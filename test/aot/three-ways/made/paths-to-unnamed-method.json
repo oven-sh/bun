@@ -97,7 +97,7 @@
  "w_reflect_construct": "all agree",
  "w_reflect_get": "all agree",
  "w_reflect_set": "all agree",
- "w_replaced_on_the_prototype": "alone: \nexit code 1: TypeError",
+ "w_replaced_on_the_prototype": "all agree",
  "w_rest_arguments": "all agree",
  "w_result_by_getters": "all agree",
  "w_returned_as_a_generic": "all agree",

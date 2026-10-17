@@ -2,6 +2,11 @@
 // CALLS- sliceToMaybe CallHostFunction
 // CALLS- substringToMaybe CallHostFunction
 // CALLS- substrOfMaybe CallHostFunction
+// CALLS- sliceFromMaybe CallHostFunction
+// CALLS- substringFromMaybe CallHostFunction
+// CALLS- substrFromMaybe CallHostFunction
+// CALLS- sliceBetweenMaybes CallHostFunction
+// CALLS+ sliceFromNullable CallHostFunction
 // CALLS- arraySliceToMaybe CallHostFunction
 // CALLS+ sliceToNullable CallHostFunction
 // CALLS+ arrayIndexOfFrom ArrayIndexOfFrom
@@ -12,6 +17,11 @@ export function sliceOfInteger(s: string, a: number, b: number): string { return
 export function substringToMaybe(s: string, a: number, b: number | undefined): string { return s.substring(a, b); }
 export function substrOfMaybe(s: string, a: number, b: number | undefined): string { return s.substr(a, b); }
 export function sliceToNullable(s: string, a: number, b: number | null | undefined): string { return s.slice(a, b as number); }
+export function sliceFromMaybe(s: string, a?: number): string { return s.slice(a); }
+export function substringFromMaybe(s: string, a: number | undefined): string { return s.substring(a as number); }
+export function substrFromMaybe(s: string, a: number | undefined): string { return s.substr(a as number); }
+export function sliceBetweenMaybes(s: string, a: number | undefined, b: number | undefined): string { return s.slice(a, b); }
+export function sliceFromNullable(s: string, a: number | null | undefined): string { return s.slice(a as number); }
 export function arraySliceToMaybe(list: string[], a: number, b: number | undefined): string[] { return list.slice(a, b); }
 export function arrayIndexOfFrom(list: string[], x: string, from: number): number { return list.indexOf(x, from); }
 export function arrayIncludesFrom(list: string[], x: string, from: number): boolean { return list.includes(x, from); }
@@ -32,6 +42,15 @@ for (const s of [text, wide, ""]) {
   }
 }
 console.log(sliceOfInteger(text, 2, -1), sliceOfInteger(text, 2, 4), sliceToNullable(text, 2, null) === "", sliceToNullable(text, 2, undefined));
+for (const s of [text, wide, ""]) {
+  const row: string[] = [sliceFromMaybe(s)];
+  for (const a of positions) {
+    row.push(sliceFromMaybe(s, a), substringFromMaybe(s, a), substrFromMaybe(s, a), sliceFromNullable(s, a));
+    for (const b of [undefined, 0, 3, -2, 100, NaN]) row.push(sliceBetweenMaybes(s, a, b));
+  }
+  console.log(JSON.stringify(row));
+}
+console.log(sliceFromNullable(text, null), sliceFromNullable(text, 3));
 const strings = ["", "alpha", "beta", "alpha", "al" + "pha", "gamma", "beta"];
 const rope = ["x".repeat(20) + strings[1], "y"];
 const long: string[] = [];

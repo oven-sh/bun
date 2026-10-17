@@ -4,7 +4,8 @@ import { bunEnv, bunExe } from "harness";
 import { dirname, join } from "path";
 import { test } from "./supported";
 
-// The prototype object of a class of the program is fixed under --aot. `bun run --aot` prints what is recorded of the executable.
+// The prototype object of a class of the program is fixed under --aot. `bun run --aot` prints what is recorded of the executable,
+// and what `bun run` prints where nothing is recorded.
 const programs = join(import.meta.dir, "programs");
 
 test.concurrent.each([
@@ -30,5 +31,11 @@ test.concurrent.each([
   const file = existsSync(join(programs, name + ".ts")) ? join(programs, name + ".ts") : join(programs, name, "main.ts");
   await using proc = Bun.spawn({ cmd: [bunExe(), "run", "--aot", file], cwd: dirname(file), env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: readFileSync(join(programs, name + ".expected.txt"), "utf8"), exitCode: 0 });
+  let expected: string;
+  if (existsSync(join(programs, name + ".expected.txt"))) expected = readFileSync(join(programs, name + ".expected.txt"), "utf8");
+  else {
+    await using plain = Bun.spawn({ cmd: [bunExe(), "run", file], cwd: dirname(file), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    [expected] = await Promise.all([plain.stdout.text(), plain.exited]);
+  }
+  expect({ stdout, exitCode }).toEqual({ stdout: expected, exitCode: 0 });
 });

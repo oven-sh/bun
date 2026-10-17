@@ -1,4 +1,6 @@
 // IR+ CallBuiltin JSONOpen
+const namedInCode = ["sku", "quantity", "customer", "lines", "text", "order", "incoming", "body", "name", "depth", "annotated", "key", "id", "title", "labels", "cached"];
+console.log(namedInCode.length);
 interface Line { sku: string; quantity: number }
 interface OrderBody { customer: string; lines: Line[] }
 

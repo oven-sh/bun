@@ -1,10 +1,10 @@
 use super::FieldKey;
 use super::flows::LayoutUsage;
 use super::subtypes::{Facts, IS_INSTANCE};
-use crate::atom::Atom;
+use crate::atom::{Atom, known};
 use crate::bind::{Decl, Parent, SymFlags};
 use crate::check::Checker;
-use crate::hir::{Chain, ExprId, ExprKind, ExprTag, Flags, FnBody, FnId, PatKind, StmtId, StmtKind};
+use crate::hir::{BinOp, Chain, ExprId, ExprKind, ExprTag, Flags, FnBody, FnId, FnKind, PatKind, StmtId, StmtKind};
 use crate::program::FileId;
 use crate::types::TypeId;
 use crate::util::FxHashMap;
@@ -303,6 +303,35 @@ impl<'p, 's> Checker<'p, 's> {
                 && match bound.expr_parent[e.idx()] {
                     Parent::Prop(_) => true,
                     Parent::Expr(parent) => matches!(hir[parent].kind, ExprKind::Assign { op: None, target, value } if value == e && matches!(hir[target].kind, ExprKind::Dot { .. } | ExprKind::Index { .. })),
+                    _ => false,
+                }
+        })
+    }
+
+    pub fn is_only_constructed(&self, file: FileId, func: FnId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let f = &hir[func];
+        if f.kind != FnKind::Decl || f.flags.intersects(Flags::EXPORT | Flags::DEFAULT) {
+            return false;
+        }
+        if hir.exports.iter().any(|export| export.spec.is_none() && export.items.iter().any(|item| hir[item].local == f.name)) {
+            return false;
+        }
+        let id = bound.fn_symbol[func.idx()];
+        self.file_exprs_by_kind(file).of(ExprTag::Ident).iter().filter(|&&mention| bound.expr_symbol[mention.idx()] == id).all(|&mention| {
+            let mut asserted = mention;
+            while let Parent::Expr(parent) = bound.expr_parent[asserted.idx()]
+                && parent.is_some()
+                && matches!(hir[parent].kind, ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) if expr == asserted)
+            {
+                asserted = parent;
+            }
+            let Parent::Expr(parent) = bound.expr_parent[asserted.idx()] else { return false };
+            parent.is_some()
+                && match hir[parent].kind {
+                    ExprKind::New(call) => hir[call].callee == asserted,
+                    ExprKind::Dot { obj, name, .. } => obj == asserted && name == known::prototype,
+                    ExprKind::Binary { op: BinOp::Instanceof, right, .. } => right == asserted,
                     _ => false,
                 }
         })

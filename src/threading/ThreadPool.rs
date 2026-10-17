@@ -215,7 +215,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            stack_size: DEFAULT_THREAD_STACK_SIZE,
+            stack_size: POOL_THREAD_STACK_SIZE,
             max_threads: 0,
         }
     }
@@ -811,9 +811,11 @@ impl ThreadPool {
     }
 }
 
+pub const POOL_THREAD_STACK_SIZE: u32 = if cfg!(bun_asan) { 8 } else { 1 } * DEFAULT_THREAD_STACK_SIZE;
+
 pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
     // 4mb
-    const DEFAULT: u32 = if cfg!(bun_asan) { 32 } else { 4 } * 1024 * 1024;
+    const DEFAULT: u32 = 4 * 1024 * 1024;
     #[cfg(windows)]
     {
         // `std::thread::Builder::stack_size` passes

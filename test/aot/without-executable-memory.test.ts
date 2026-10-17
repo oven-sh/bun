@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { unsupported, withoutCoreDump } from "./run-programs";
-import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isAndroid, isLinux, isMacOS, libcPathForDlopen, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -13,8 +13,10 @@ const names = readdirSync(programs)
   .filter(name => name !== control)
   .sort();
 
+const hasLinuxKernel = isLinux || isAndroid;
+
 const refusesOnLinux = `import { dlopen, FFIType, ptr } from "bun:ffi";
-const libc = dlopen("libc.so.6", {
+const libc = dlopen(${JSON.stringify(hasLinuxKernel ? libcPathForDlopen() : "")}, {
   prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 },
   execv: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
 });
@@ -70,7 +72,7 @@ async function build(name: string, directory: string) {
 const isSupported = !unsupported;
 
 async function whereItIsRefused(executable: string, directory: string, onLinux: "refuse" | "kill" = "kill") {
-  if (isLinux) return run(withoutCoreDump([bunExe(), join(directory, "refuses.ts"), executable, onLinux]));
+  if (hasLinuxKernel) return run(withoutCoreDump([bunExe(), join(directory, "refuses.ts"), executable, onLinux]));
   const signed = await run(["codesign", "--force", "--sign", "-", "--options", "runtime", executable]);
   expect(signed.exitCode).toBe(0);
   return run([executable]);
@@ -82,7 +84,7 @@ describe.skipIf(!isSupported)("an executable needs no permission to make memory 
     const executable = await build(control, String(dir));
     expect(await run([executable])).toEqual({ stdout: "granted\n", stderr: "", exitCode: 0, signalCode: null });
     expect(await whereItIsRefused(executable, String(dir), "refuse")).toEqual({ stdout: "refused\n", stderr: "", exitCode: 0, signalCode: null });
-    if (isLinux) expect(await whereItIsRefused(executable, String(dir))).toMatchObject({ stdout: "", signalCode: "SIGSYS" });
+    if (hasLinuxKernel) expect(await whereItIsRefused(executable, String(dir))).toMatchObject({ stdout: "", signalCode: "SIGSYS" });
   }, 120_000);
 
   test("an executable has no region for generated code, and the same program with the JIT has", async () => {

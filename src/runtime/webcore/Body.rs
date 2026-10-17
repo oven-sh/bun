@@ -673,6 +673,81 @@ impl ValueError {
     }
 }
 
+pub(crate) struct SharedBody {
+    value: JsCell<Value>,
+    global: bun_jsc::GlobalRef,
+    context: bun_jsc::ContextId,
+}
+
+impl SharedBody {
+    pub(crate) fn can_hold(value: &Value) -> bool {
+        matches!(value, Value::WTFStringImpl(_) | Value::InternalBlob(_))
+    }
+
+    pub(crate) fn new(value: Value, global: &JSGlobalObject) -> std::rc::Rc<SharedBody> {
+        std::rc::Rc::new(SharedBody {
+            value: JsCell::new(value),
+            global: bun_jsc::GlobalRef::new(global),
+            context: global.bun_vm().context_of_caller_no_frame().id(),
+        })
+    }
+
+    pub(crate) fn global(&self) -> &JSGlobalObject {
+        &self.global
+    }
+
+    pub(crate) fn is_unread(&self) -> bool {
+        Self::can_hold(self.value.get())
+    }
+
+    pub(crate) fn take_unread(&self) -> Option<Value> {
+        let bytes = self.value.with_mut(|value| match value {
+            Value::InternalBlob(blob) => Some(core::mem::take(&mut blob.bytes)),
+            Value::WTFStringImpl(string) => Some(wtf_impl(string).to_utf8().into_vec()),
+            _ => None,
+        })?;
+        self.value.set(Value::Used);
+        Some(Value::InternalBlob(InternalBlob {
+            bytes,
+            was_string: false,
+        }))
+    }
+
+    pub(crate) fn stream_body(&self) -> Value {
+        let global = self.global();
+        let vm = global.bun_vm();
+        let _context = vm.enter_context(self.context);
+        self.value.with_mut(|value| {
+            if !matches!(value, Value::Locked(_)) {
+                let was_taken = matches!(value, Value::Used);
+                if was_taken {
+                    *value = Value::InternalBlob(InternalBlob {
+                        bytes: vec![0],
+                        was_string: false,
+                    });
+                }
+                let made = value.to_readable_stream(&global.js_thread(vm.context_of_caller_no_frame()));
+                if made.is_err() {
+                    return Value::Used;
+                }
+                if was_taken
+                    && let Value::Locked(locked) = value
+                    && let Some(mut stream) = locked.readable.get()
+                    && let Some(mut blob) = stream.to_any_blob(global)
+                {
+                    blob.detach();
+                }
+            }
+            if let Value::Locked(locked) = value
+                && let Some(stream) = locked.readable.get()
+            {
+                return Value::from_readable_stream_without_lock_check(stream, global);
+            }
+            Value::Used
+        })
+    }
+}
+
 impl From<AnyBlob> for Value {
     /// `Value::drop` releases the string's ref that `into_raw` hands over.
     fn from(blob: AnyBlob) -> Value {
@@ -1685,8 +1760,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// into the GC-traced `js.gc.stream` slot to break the cycle (the JS
     /// wrapper owns the stream; native side must not hold it strongly).
     fn check_body_stream_ref(&self, global_object: &JSGlobalObject) {
-        if let Some(js_value) = self.js_ref() {
-            if let Value::Locked(locked) = self.get_body_value() {
+        if let Value::Locked(locked) = self.get_body_value() {
+            if let Some(js_value) = self.js_ref() {
                 if let Some(stream) = locked.readable.get() {
                     stream.value.ensure_still_alive();
                     Self::stream_set_cached(js_value, global_object, stream.value);

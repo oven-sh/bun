@@ -649,7 +649,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn source_of(&self, file: FileId, e: ExprId) -> Option<&'p [u8]> {
         let hir = self.hir(file);
         let text: &[u8] = hir.text.get(hir[e].pos as usize..hir[e].end as usize)?;
-        (text.len() <= MAX_QUOTED_LENGTH && !text.contains(&b'\n')).then_some(text)
+        (text.len() <= MAX_QUOTED_LENGTH && !bun_core::strings::contains_char(text, b'\n')).then_some(text)
     }
 
     fn quoted_source(&self, file: FileId, e: ExprId) -> Option<Vec<u8>> {

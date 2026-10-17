@@ -100,6 +100,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
+    pub(crate) fn is_locked_global_read_from_global_object(&mut self, file: FileId, obj: ExprId, name: Atom) -> bool {
+        !self.is_builtin_file(file)
+            && self.resolve_locked_builtin(file, obj).is_some_and(|holder| holder.is_global_object())
+            && global_object().object_at(self.c.atoms().bytes(name)).is_some_and(|held| !held.is_global_object())
+    }
+
     pub(crate) fn mark_dead_expr(&mut self, fx: &Fx, e: ExprId) {
         self.mark_dead_expr_in(fx.file, e);
     }

@@ -1,5 +1,5 @@
 concat-map-values-and-elements: 1 layouts, 0 given, 0 open, places 91 of 114, reads 23 of 34
-concat-numbers-and-strings: 1 layouts, 0 given, 1 open, places 58 of 89, reads 9 of 48
+concat-numbers-and-strings: 1 layouts, 0 given, 1 open, places 58 of 89, reads 11 of 48
 constants-in-variables: 1 layouts, 0 given, 0 open, places 39 of 49, reads 4 of 10
 conversions-in: 1 layouts, 0 given, 0 open, places 34 of 44, reads 30 of 39
 conversions-out: 2 layouts, 0 given, 1 open, places 61 of 70, reads 38 of 58

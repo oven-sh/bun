@@ -228,7 +228,7 @@ impl StandaloneModuleGraph {
             return Some(name);
         }
         let root = PRESERVED_PATHS_ROOT.as_bytes();
-        if cfg!(windows) || !self.flags.intersects(flags) || name.first() != Some(&b'/') || root.len() + name.len() > buf.len() {
+        if !self.flags.intersects(flags) || !bun_paths::is_fully_qualified(name) || root.len() + name.len() > buf.len() {
             return None;
         }
         buf[..root.len()].copy_from_slice(root);
@@ -285,9 +285,8 @@ impl StandaloneModuleGraph {
         }
     }
 
-    #[cfg(unix)]
     fn has_compiled_source_in(&self, folder: &[u8]) -> bool {
-        let prefix = [folder, b"/"].concat();
+        let prefix = [folder, bun_paths::SEP_STR.as_bytes()].concat();
         self.sorted_sources().with_prefix(&prefix).next().is_some() || self.entry_point_paths().any(|source| source.starts_with(&prefix))
     }
 
@@ -309,7 +308,7 @@ impl StandaloneModuleGraph {
         }
         if self.flags.contains(Flags::PRESERVES_SOURCE_PATHS) {
             let mut path = path;
-            while path.len() > 1 && path.last() == Some(&b'/') {
+            while path.len() > 1 && path.last().is_some_and(|&last| bun_paths::is_sep_native(last)) {
                 path = &path[..path.len() - 1];
             }
             use bun_bundler::compiled_source_index::Entry;
@@ -325,7 +324,7 @@ impl StandaloneModuleGraph {
             for path in self.compiled_sources() {
                 names.insert(path, false);
                 let mut folder = path;
-                while let Some(at) = strings::last_index_of_char(folder, b'/') {
+                while let Some(at) = strings::last_index_of_char(folder, bun_paths::SEP) {
                     folder = &folder[..at];
                     if folder.is_empty() || names.insert(folder, true).is_some() {
                         break;
@@ -335,7 +334,7 @@ impl StandaloneModuleGraph {
             names
         });
         let mut path = path;
-        while path.len() > 1 && path.last() == Some(&b'/') {
+        while path.len() > 1 && path.last().is_some_and(|&last| bun_paths::is_sep_native(last)) {
             path = &path[..path.len() - 1];
         }
         names.get(path).copied()
@@ -375,13 +374,7 @@ impl StandaloneModuleGraph {
         if is_bun_standalone_file_path(name) {
             return true;
         }
-        #[cfg(unix)]
-        {
-            use std::os::unix::ffi::OsStrExt as _;
-            (self.find_dir(name) || self.compiled_program_files(name) == Some(true)) && !std::path::Path::new(std::ffi::OsStr::from_bytes(name)).is_dir()
-        }
-        #[cfg(not(unix))]
-        false
+        (self.find_dir(name) || self.compiled_program_files(name) == Some(true)) && !is_folder_on_disk(name)
     }
 
     pub fn contains_file(&self, name: &[u8]) -> bool {
@@ -447,7 +440,7 @@ impl StandaloneModuleGraph {
         let name = self.preserved_path_if(Flags::PRESERVES_SOURCE_PATHS | Flags::HAS_ENTRY_POINT_PATHS, name, &mut held)?;
         let mut buf = bun_paths::path_buffer_pool::get();
         let name = Self::normalize_dir_path(name, &mut buf);
-        let has_compiled_files = name.strip_prefix(PRESERVED_PATHS_ROOT.as_bytes()).is_some_and(|path| self.compiled_program_files(path) == Some(true));
+        let has_compiled_files = name.strip_prefix(PRESERVED_PATHS_ROOT.as_bytes()).is_some_and(|path| self.compiled_program_files(&native_separators(path)) == Some(true));
         if !self.dirs.contains_key(name) && !has_compiled_files {
             return None;
         }
@@ -476,9 +469,10 @@ impl StandaloneModuleGraph {
             push(key, true);
         }
         if has_compiled_files {
-            let folder = &prefix[PRESERVED_PATHS_ROOT.len()..];
+            let folder = native_separators(&prefix[PRESERVED_PATHS_ROOT.len()..]);
+            let folder = &folder[..];
             for rel in self.compiled_sources_in(folder).filter_map(|path| path.strip_prefix(folder)) {
-                let mut folders = rel.iter().enumerate().filter(|(_, c)| **c == b'/').map(|(at, _)| &rel[..at]);
+                let mut folders = rel.iter().enumerate().filter(|(_, c)| **c == bun_paths::SEP).map(|(at, _)| &rel[..at]);
                 if recursive {
                     for folder in folders {
                         let _ = seen.put(folder, true);
@@ -514,6 +508,26 @@ struct CompiledProgramLists {
     sources: &'static [u8],
     source_index: &'static [u8],
     resolutions: &'static [u8],
+}
+
+fn native_separators(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if !cfg!(windows) {
+        return path.into();
+    }
+    let mut path = path.to_vec();
+    path::resolve_path::posix_to_platform_in_place::<u8>(&mut path);
+    path.into()
+}
+
+fn is_folder_on_disk(path: &[u8]) -> bool {
+    #[cfg(unix)]
+    let path = {
+        use std::os::unix::ffi::OsStrExt as _;
+        std::ffi::OsStr::from_bytes(path)
+    };
+    #[cfg(not(unix))]
+    let Ok(path) = core::str::from_utf8(path) else { return false };
+    std::path::Path::new(path).is_dir()
 }
 
 #[derive(Clone, Copy)]
@@ -595,14 +609,13 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     }
     fn resolution(&self, source_dir: &[u8], specifier: &[u8], is_require: bool) -> Option<&'static [u8]> {
         /// `@scope/name/sub` -> `@scope/name`.
-        #[cfg(unix)]
         fn package_of(specifier: &[u8]) -> &[u8] {
             let mut slashes = specifier.iter().enumerate().filter(|(_, c)| **c == b'/').map(|(at, _)| at);
             let end = if specifier.first() == Some(&b'@') { slashes.nth(1) } else { slashes.next() };
             &specifier[..end.unwrap_or(specifier.len())]
         }
         let resolutions = SortedLines(self.compiled_program_lists().resolutions);
-        let source_dir = source_dir.strip_suffix(b"/").unwrap_or(source_dir);
+        let source_dir = source_dir.strip_suffix(bun_paths::SEP_STR.as_bytes()).or_else(|| source_dir.strip_suffix(b"/")).unwrap_or(source_dir);
         let mut key: Vec<u8> = Vec::with_capacity(source_dir.len() + specifier.len() + 3);
         key.extend_from_slice(source_dir);
         key.push(0);
@@ -621,13 +634,10 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
             }
             // A path that is made when the program runs.
             let is_relative = specifier.starts_with(b"./") || specifier.starts_with(b"../");
-            if !is_relative && !specifier.starts_with(b"/") {
-                #[cfg_attr(not(unix), allow(unused_mut))]
+            if !is_relative && !bun_paths::is_absolute(specifier) {
                 let mut is_inside_program_package = false;
                 // The name of a package, made when the program runs: from the asking folder upward, as the same name was resolved where it is written.
-                #[cfg(unix)]
                 {
-                    use std::os::unix::ffi::OsStrExt as _;
                     let asked = key[source_dir.len()..].to_vec();
                     let mut folder = source_dir;
                     while !folder.is_empty() {
@@ -639,19 +649,19 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
                         }
                         // A nearer package of that name on the disk is the one that is meant.
                         key.truncate(folder.len());
-                        key.extend_from_slice(b"/node_modules/");
-                        key.extend_from_slice(package_of(specifier));
-                        if std::path::Path::new(std::ffi::OsStr::from_bytes(&key)).is_dir() {
+                        key.extend_from_slice(&native_separators(b"/node_modules/"));
+                        key.extend_from_slice(&native_separators(package_of(specifier)));
+                        if is_folder_on_disk(&key) {
                             return None;
                         }
                         // The program has that package there: another copy further up is not the one that is meant.
                         let path_inside = &specifier[package_of(specifier).len()..];
                         if !path_inside.is_empty() && (self.compiled_source(&key).is_some() || self.has_compiled_source_in(&key)) {
-                            key.extend_from_slice(path_inside);
+                            key.extend_from_slice(&native_separators(path_inside));
                             is_inside_program_package = true;
                             break;
                         }
-                        folder = &folder[..strings::last_index_of_char(folder, b'/').unwrap_or(0)];
+                        folder = &folder[..strings::last_index_of_char(folder, bun_paths::SEP).unwrap_or(0)];
                     }
                 }
                 if !is_inside_program_package {
@@ -669,7 +679,7 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
                 b"/index.js", b"/index.cjs", b"/index.mjs", b"/index.json", b"/index.ts", b"/index.tsx",
             ] {
                 key.truncate(length);
-                key.extend_from_slice(ending);
+                key.extend_from_slice(&native_separators(ending));
                 if let Some(path) = self.compiled_source(&key) {
                     return Some(path);
                 }

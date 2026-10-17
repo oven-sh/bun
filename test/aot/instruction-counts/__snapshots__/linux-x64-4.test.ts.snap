@@ -151,14 +151,14 @@ untyped, module level: 10.63 instructions (module 10.63), 2517 bytes"
 `;
 
 exports[`goes by a switch of 21 cases on every byte of a Uint8Array 1`] = `
-"typed, function: 17.40 instructions (kernel 17.28, module 0.12), 1206 bytes
+"typed, function: 17.40 instructions (kernel 17.28, module 0.12), 1198 bytes
 typed, module level: 17.32 instructions (module 17.32), 2902 bytes
 untyped, function: 17.53 instructions (kernel 17.41, module 0.12), 1295 bytes
 untyped, module level: 17.39 instructions (module 17.39), 2845 bytes"
 `;
 
 exports[`scans a string by index to the closing quote, with a test for an escape and one for control characters 1`] = `
-"typed, function: 14.29 instructions (kernel 14.17, module 0.12), 379 bytes
+"typed, function: 14.29 instructions (kernel 14.17, module 0.12), 375 bytes
 typed, module level: 12.08 instructions (module 12.08), 1914 bytes
 untyped, function: 16.33 instructions (kernel 16.21, module 0.12), 785 bytes
 untyped, module level: 15.14 instructions (module 15.14), 2282 bytes"
@@ -172,24 +172,24 @@ untyped, module level: 135.55 instructions (stub SetHas 80.15, module 55.40), 26
 `;
 
 exports[`sorts a copy of an array of numbers that fall with a comparator 1`] = `
-"typed, function: 38.27 instructions (kernel 31.08, stub ArrayCopy 3.92, stub NewArrayUnderConstructionWithDouble 3.08, module 0.19), 6234 bytes
-typed, module level: 37.98 instructions (module 30.98, stub ArrayCopy 3.92, stub NewArrayUnderConstructionWithDouble 3.08), 7827 bytes
-untyped, function: 66.88 instructions (kernel 59.45, stub ArrayCopy 3.91, stub NewArrayUnderConstructionWithContiguous 3.08, stub Add 0.25, module 0.19), 8294 bytes
-untyped, module level: 67.53 instructions (module 60.55, stub ArrayCopy 3.91, stub NewArrayUnderConstructionWithContiguous 3.08), 9728 bytes"
+"typed, function: 38.27 instructions (kernel 31.08, stub ArrayCopy 3.92, stub NewArrayUnderConstructionWithDouble 3.08, module 0.19), 6210 bytes
+typed, module level: 37.98 instructions (module 30.98, stub ArrayCopy 3.92, stub NewArrayUnderConstructionWithDouble 3.08), 7807 bytes
+untyped, function: 66.88 instructions (kernel 59.45, stub ArrayCopy 3.91, stub NewArrayUnderConstructionWithContiguous 3.08, stub Add 0.25, module 0.19), 8244 bytes
+untyped, module level: 67.53 instructions (module 60.55, stub ArrayCopy 3.91, stub NewArrayUnderConstructionWithContiguous 3.08), 9746 bytes"
 `;
 
 exports[`sorts a copy of an array of numbers with a comparator 1`] = `
-"typed, function: 122.77 instructions (kernel 112.50, stub NewArrayUnderConstructionWithDouble 6.16, stub ArrayCopy 3.92, module 0.19), 6234 bytes
-typed, module level: 122.48 instructions (module 112.41, stub NewArrayUnderConstructionWithDouble 6.16, stub ArrayCopy 3.92), 7969 bytes
-untyped, function: 243.20 instructions (kernel 232.70, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91, stub Add 0.25, module 0.19), 8294 bytes
-untyped, module level: 248.31 instructions (module 238.25, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91), 10240 bytes"
+"typed, function: 122.80 instructions (kernel 112.53, stub NewArrayUnderConstructionWithDouble 6.16, stub ArrayCopy 3.92, module 0.19), 6210 bytes
+typed, module level: 122.52 instructions (module 112.44, stub NewArrayUnderConstructionWithDouble 6.16, stub ArrayCopy 3.92), 7949 bytes
+untyped, function: 243.17 instructions (kernel 232.67, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91, stub Add 0.25, module 0.19), 8244 bytes
+untyped, module level: 248.28 instructions (module 238.22, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91), 10224 bytes"
 `;
 
 exports[`sorts a copy of an array of records by a numeric key 1`] = `
-"typed, function: 208.58 instructions (kernel 198.33, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91, module 0.19), 3943 bytes
-typed, module level: 208.20 instructions (module 198.14, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91), 5474 bytes
-untyped, function: 421.14 instructions (kernel 301.58, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 82.66, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 25.94, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91, stub GetByNameWithDirectColumnWithReceiverInRAX 0.31, stub Add 0.25, module 0.19, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 0.16), 9170 bytes
-untyped, module level: 420.89 instructions (module 301.52, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 82.66, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 25.94, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91, stub GetByNameWithDirectColumnWithReceiverInRAX 0.31, stub Add 0.25, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 0.16), 11206 bytes"
+"typed, function: 208.50 instructions (kernel 198.25, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91, module 0.19), 3900 bytes
+typed, module level: 208.13 instructions (module 198.06, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91), 5459 bytes
+untyped, function: 421.17 instructions (kernel 301.61, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 82.66, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 25.94, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91, stub GetByNameWithDirectColumnWithReceiverInRAX 0.31, stub Add 0.25, module 0.19, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 0.16), 9182 bytes
+untyped, module level: 420.92 instructions (module 301.55, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 82.66, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 25.94, stub NewArrayUnderConstructionWithContiguous 6.16, stub ArrayCopy 3.91, stub GetByNameWithDirectColumnWithReceiverInRAX 0.31, stub Add 0.25, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 0.16), 11184 bytes"
 `;
 
 exports[`sorts a copy of an array of records that fall by a numeric key 1`] = `
@@ -233,7 +233,7 @@ typed, module level: 2834.53 instructions (validate 1326, module 586.75, stub Ge
 `;
 
 exports[`writes a field of a class instance 1`] = `
-"typed, function: 13.43 instructions (kernel 13.31, module 0.12), 350 bytes
+"typed, function: 13.43 instructions (kernel 13.31, module 0.12), 338 bytes
 typed, module level: 13.32 instructions (module 13.32), 1778 bytes
 untyped, function: 57.75 instructions (kernel 43.45, stub PutByNameWithDirectColumnPreservingTwo 14, module 0.12, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRAX 0.10, stub Add 0.08), 560 bytes
 untyped, module level: 55.65 instructions (module 41.47, stub PutByNameWithDirectColumnPreservingTwo 14, stub GetByNameWithDirectColumnWithReceiverInRAX 0.10, stub Add 0.08), 2400 bytes"
@@ -247,9 +247,9 @@ untyped, module level: 64.88 instructions (module 29, the runtime 27.38, stub Ne
 `;
 
 exports[`keeps the elements of an array that are not false, null or empty with filter(Boolean) 1`] = `
-"typed, function: 70.25 instructions (the runtime 27.44, kernel 22.56, stub ValueIsTruthy 11.25, stub NewArrayUnderConstructionWithContiguous 4.88, elsewhere 3.06, module 0.75, stub TypedBuiltinCell of 974 0.31), 621 bytes
+"typed, function: 70.25 instructions (the runtime 27.44, kernel 22.56, stub ValueIsTruthy 11.25, stub NewArrayUnderConstructionWithContiguous 4.88, elsewhere 3.06, module 0.75, stub TypedBuiltinCell of 972 0.31), 621 bytes
 typed, module level: 72.25 instructions (the runtime 28.50, module 24.63, stub ValueIsTruthy 11.25, stub NewArrayUnderConstructionWithContiguous 4.88, elsewhere 3), 2328 bytes
-untyped, function: 77.38 instructions (kernel 28.44, the runtime 27.44, stub ValueIsTruthy 11.25, stub NewArrayUnderConstructionWithContiguous 4.88, elsewhere 3.06, stub GetByNameWithDirectColumnWithReceiverInR15 0.88, module 0.75, stub ReadInheritedOutOfLineByName 0.38, stub TypedBuiltinCell of 974 0.31), 869 bytes
+untyped, function: 77.38 instructions (kernel 28.44, the runtime 27.44, stub ValueIsTruthy 11.25, stub NewArrayUnderConstructionWithContiguous 4.88, elsewhere 3.06, stub GetByNameWithDirectColumnWithReceiverInR15 0.88, module 0.75, stub ReadInheritedOutOfLineByName 0.38, stub TypedBuiltinCell of 972 0.31), 869 bytes
 untyped, module level: 75.75 instructions (the runtime 28.50, module 26.88, stub ValueIsTruthy 11.25, stub NewArrayUnderConstructionWithContiguous 4.88, elsewhere 3, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 0.88, stub ReadInheritedOutOfLineByName 0.38), 2488 bytes"
 `;
 

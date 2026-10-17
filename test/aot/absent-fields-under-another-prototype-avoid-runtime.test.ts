@@ -70,7 +70,7 @@ test("optional fields that are absent at birth stop asking the run time under a 
   expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const counted = async (rounds: number) => {
     const path = join(String(dir), "counts" + rounds);
-    const env = { ...bunEnv, BUN_JSC_useAOTOperationCounters: "1", BUN_JSC_aotTypeCoverageCountsPath: path };
+    const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_useAOTOperationCounters: "1", BUN_JSC_aotTypeCoverageCountsPath: path };
     expect(await run([executable, String(rounds)], String(dir), env)).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
     const counts: Record<string, number> = Object.fromEntries(operations.map(name => [name, 0]));
     for (const line of readFileSync(path + ".operations", "utf8").split("\n")) {

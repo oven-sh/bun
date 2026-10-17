@@ -7,9 +7,9 @@ array-literals: 1 layouts, 0 given, 0 open, places 61 of 69, reads 65 of 103
 array-mutated-by-call-in-loop: 5 layouts, 0 given, 7 open, places 222 of 261, reads 17 of 36
 array-mutated-in-loop-body: 61 layouts, 0 given, 62 open, places 3758 of 4384, reads 1386 of 2685
 array-pushed: 1 layouts, 0 given, 0 open, places 58 of 70, reads 6 of 18
-array-subclass-element-storage: 2 layouts, 0 given, 1 open, places 34 of 71, reads 3 of 24
+array-subclass-element-storage: 2 layouts, 7 given, 1 open, places 34 of 71, reads 3 of 24
 array-subclass-keeps-elements-alive: 2 layouts, 7 given, 1 open, places 86 of 129, reads 19 of 35
-array-subclass-overrides-all: 1 layouts, 0 given, 3 open, places 160 of 310, reads 25 of 94
+array-subclass-overrides-all: 1 layouts, 7 given, 3 open, places 160 of 310, reads 25 of 94
 array-subclass-prototype-element: 0 layouts, 0 given, 1 open, places 46 of 88, reads 2 of 21
 array-subclass-spread-copies: 1 layouts, 0 given, 1 open, places 22 of 42, reads 2 of 9
 array-tiny: 0 layouts, 0 given, 0 open, places 1 of 9, reads 1 of 3
@@ -93,4 +93,4 @@ spreads-in-loops: 1 layouts, 0 given, 1 open, places 68 of 87, reads 2 of 10
 typed-arrays-in-uncounted-loops: 1 layouts, 0 given, 1 open, places 71 of 83, reads 24 of 34
 typed-element-reads-slow-path: 3 layouts, 0 given, 1 open, places 72 of 122, reads 13 of 28
 typed-reads-by-number-keys: 2 layouts, 0 given, 1 open, places 52 of 65, reads 14 of 20
-untyped-element-reads-slow-path: 2 layouts, 15 given, 2 open, places 105 of 136, reads 8 of 25
+untyped-element-reads-slow-path: 2 layouts, 15 given, 2 open, places 108 of 141, reads 8 of 25

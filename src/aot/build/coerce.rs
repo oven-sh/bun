@@ -315,6 +315,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         };
         fx.b.func.values[value.idx()].ty = self.with_integers(described, integers);
         fx.checked.insert(value, checked);
+        let written = self.c.type_of_expr(fx.file, e);
+        let written = self.ty_of(written);
+        let written = self.out.tys.get(written);
+        if described != self.known.string && written.prims & !prim::NULLISH == prim::STRING && !written.has_objects() {
+            fx.b.func.values[value.idx()].set_prediction(Prediction::Ty(self.known.string));
+        }
         value
     }
 
@@ -2286,12 +2292,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if this.is_some() {
             self.record_cast(Ty::from_id(anything), this, CoerceReason::Store);
             if self.out.funcs[func.idx()].kind != FuncKind::Constructor {
+                let views = self.layout_types_in(this);
                 let makes_its_own_this = self.out.funcs[func.idx()].kind == FuncKind::Plain
+                    && views.iter().any(|&view| !self.c.is_instance_type(view))
                     && match self.sources[func.idx()] {
-                        Source::Function { file, func, .. } => self.c.allocates_for_unknown_callers(file, func),
+                        Source::Function { file, func, .. } => self.c.allocates_for_unknown_callers(file, func) && self.c.is_only_constructed(file, func),
                         _ => false,
                     };
-                for view in self.layout_types_in(this) {
+                for view in views {
                     self.c.record_untyped_inflow(view);
                     if !makes_its_own_this && !self.c.is_instance_type(view) {
                         self.c.record_any_inflow(view);

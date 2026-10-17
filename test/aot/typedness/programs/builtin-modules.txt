@@ -8,5 +8,5 @@ node-path-matches-node: 2 layouts, 0 given, 0 open, places 270 of 303, reads 52 
 node-path: 2 layouts, 0 given, 2 open, places 46 of 59, reads 5 of 118
 non-function-listeners-and-ticks: 3 layouts, 0 given, 2 open, places 38 of 55, reads 4 of 34
 non-function-next-tick-callbacks: 2 layouts, 0 given, 2 open, places 29 of 45, reads 1 of 21
-process-members-in-stack-traces: 0 layouts, 0 given, 0 open, places 12 of 27, reads 0 of 21
+process-members-in-stack-traces: 0 layouts, 7 given, 0 open, places 12 of 27, reads 0 of 21
 process-members: 0 layouts, 7 given, 0 open, places 38 of 55, reads 0 of 75

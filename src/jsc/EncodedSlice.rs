@@ -65,6 +65,7 @@ pub trait EncodedSliceJsc: Sized {
     fn to_external_value(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
     /// `JSON.parse` over the bytes.
     fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
+    fn try_parse_json_from_utf8(&self, global: &JSGlobalObject) -> Option<JSValue>;
     /// Like `to_external_value` but with a caller-supplied `ctx` + finalizer
     /// callback (used to keep a `Blob::Store` ref alive).
     ///
@@ -117,6 +118,11 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
     fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         // SAFETY: `self` is a live `&EncodedSlice` for the duration of the call.
         unsafe { cpp::EncodedSlice__toJSONObject(self, global) }
+    }
+    fn try_parse_json_from_utf8(&self, global: &JSGlobalObject) -> Option<JSValue> {
+        // SAFETY: `self` is a live `&EncodedSlice` for the duration of the call.
+        let parsed = unsafe { cpp::EncodedSlice__tryParseJSONFromUTF8(self, global.as_ptr()) };
+        (!parsed.is_empty()).then_some(parsed)
     }
     unsafe fn external(
         &self,

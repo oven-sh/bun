@@ -160,6 +160,19 @@ pub struct BundleV2<'a> {
 bun_core::declare_scope!(Bundle, visible);
 bun_core::declare_scope!(scan_counter, visible);
 
+fn native_separators(mut path: Vec<u8>) -> Vec<u8> {
+    if cfg!(windows) {
+        bun_paths::resolve_path::posix_to_platform_in_place::<u8>(&mut path);
+    }
+    path
+}
+
+fn held_name(folder: &[u8], path: &[u8]) -> Box<[u8]> {
+    let mut name = [folder, path].concat();
+    bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut name);
+    name.into_boxed_slice()
+}
+
 fn index_resolutions(lines: &[u8]) -> Vec<u8> {
     fn package_of(specifier: &[u8]) -> &[u8] {
         let mut slashes = specifier.iter().enumerate().filter(|(_, c)| **c == b'/').map(|(at, _)| at);
@@ -177,15 +190,15 @@ fn index_resolutions(lines: &[u8]) -> Vec<u8> {
         let Some(end_of_folder) = bun_core::strings::index_of_char_usize(key, 0) else { continue };
         let asked = &key[end_of_folder + 1..];
         let specifier = &asked[..asked.len().saturating_sub(2)];
-        if specifier.is_empty() || matches!(specifier[0], b'.' | b'/') {
+        if specifier.is_empty() || matches!(specifier[0], b'.' | b'/') || bun_paths::is_absolute(specifier) {
             continue;
         }
-        let inside = [b"/node_modules/".as_slice(), package_of(specifier), b"/"].concat();
+        let inside = native_separators([b"/node_modules/".as_slice(), package_of(specifier), b"/"].concat());
         let Some(at) = bun_core::strings::last_index_of(path, &inside) else { continue };
         packages.entry([&[1][..], &path[..at], b"\0", asked].concat()).or_insert(path);
-        let is_requested_by_application = !bun_core::strings::contains(&key[..end_of_folder], b"/node_modules/");
+        let is_requested_by_application = !bun_core::strings::contains(&key[..end_of_folder], &native_separators(b"/node_modules/".to_vec()));
         for store in [&b"/node_modules/.bun/"[..], b"/node_modules/.pnpm/"] {
-            if is_requested_by_application && let Some(at) = bun_core::strings::index_of(path, store) {
+            if is_requested_by_application && let Some(at) = bun_core::strings::index_of(path, &native_separators(store.to_vec())) {
                 packages.entry([&[1][..], &path[..at], b"\0", asked].concat()).or_insert(path);
             }
         }
@@ -3261,7 +3274,7 @@ pub mod bv2_impl {
                 let program_paths: bun_collections::hashbrown::HashSet<&[u8], bun_wyhash::BuildHasher> = all_sources.iter().filter(|source| source.path.is_file()).map(|source| source.path.text).collect();
                 let mut resolved_as_opposite_kind: bun_collections::hashbrown::HashSet<(&[u8], &[u8], bool), bun_wyhash::BuildHasher> = Default::default();
                 for (source, records) in all_sources.iter().zip(import_records).filter(|(source, _)| source.path.is_file()) {
-                    let folder = &source.path.text[..bun_core::strings::last_index_of_char(source.path.text, b'/').unwrap_or(0)];
+                    let folder = &source.path.text[..bun_core::strings::last_index_of_char(source.path.text, bun_paths::SEP).unwrap_or(0)];
                     for record in records.as_slice().iter().filter(|record| record.source_index.is_valid()) {
                         let Some(specifier) = specifier_of(source, record) else { continue };
                         let to = &all_sources[after_redirects(record.source_index).get() as usize];
@@ -3276,7 +3289,7 @@ pub mod bv2_impl {
                         resolutions.push(b'\n');
                         // The name of a package, the other way too: an application imports its driver, and the library that computes the name requires it.
                         let is_required = how == b"r";
-                        if matches!(specifier.first(), Some(b'.' | b'/') | None) || !resolved_as_opposite_kind.insert((folder, specifier, !is_required)) {
+                        if matches!(specifier.first(), Some(b'.' | b'/') | None) || bun_paths::is_absolute(specifier) || !resolved_as_opposite_kind.insert((folder, specifier, !is_required)) {
                             continue;
                         }
                         let opposite_kind = if is_required { ImportKind::Stmt } else { ImportKind::Require };
@@ -4050,9 +4063,14 @@ pub mod bv2_impl {
         fn release_scan_arenas(&mut self) {
             let heap = self.graph.heap;
             let workers: Vec<*mut crate::Worker> = self.graph.pool().workers_assignments.lock().values().to_vec();
-            // SAFETY: the map holds live workers, and a `scan_heap` is made while files are parsed, which has ended.
-            let scan_heaps: Vec<*const ThreadLocalArena> =
-                workers.iter().filter_map(|&worker| unsafe { (*worker).scan_heap.as_ref() }.map(core::ptr::from_ref)).collect();
+            let scan_heaps: Vec<*const ThreadLocalArena> = workers
+                .iter()
+                .filter_map(|&worker| {
+                    // SAFETY: the map holds live workers, and a `scan_heap` is made while files are parsed, which has ended.
+                    let scan_heap = unsafe { (*worker).scan_heap.as_ref() };
+                    scan_heap.map(core::ptr::from_ref)
+                })
+                .collect();
             for index in 0..self.graph.ast.len() {
                 if scan_heaps.contains(&core::ptr::from_ref(*self.graph.ast.items_parts()[index].allocator())) {
                     let mut empty = JSAst::empty_in(heap);
@@ -6526,7 +6544,7 @@ pub mod bv2_impl {
                     }
                     data_files.push(options::OutputFile::init(crate::output_file::Options {
                         data: crate::output_file::OptionsData::Buffer { data: Box::from(source.contents()) },
-                        output_path: [b".modules-of-the-program".as_slice(), source.path.text].concat().into_boxed_slice(),
+                        output_path: super::held_name(b".modules-of-the-program", source.path.text),
                         input_loader: Loader::File,
                         output_kind: crate::options::OutputKind::Asset,
                         loader: Loader::File,
@@ -6552,23 +6570,25 @@ pub mod bv2_impl {
                             ..Default::default()
                         }));
                     }
+                }
+                {
                     let mut package_dirs: std::collections::BTreeSet<&[u8]> = Default::default();
                     for source in self.graph.input_files.items_source().iter().filter(is_compiled) {
                         let path = source.path.text;
                         let mut from = 0;
-                        while let Some(at) = bun_core::strings::index_of(&path[from..], b"/node_modules/") {
+                        while let Some(at) = bun_core::strings::index_of(&path[from..], &super::native_separators(b"/node_modules/".to_vec())) {
                             from += at + 14;
-                            let mut slashes = path[from..].iter().enumerate().filter(|(_, c)| **c == b'/').map(|(at, _)| at);
+                            let mut slashes = path[from..].iter().enumerate().filter(|(_, c)| **c == bun_paths::SEP).map(|(at, _)| at);
                             let Some(end) = (if path.get(from) == Some(&b'@') { slashes.nth(1) } else { slashes.next() }) else { break };
                             package_dirs.insert(&path[..from + end]);
                         }
                     }
                     for folder in package_dirs {
-                        let path = [folder, b"/package.json"].concat();
+                        let path = [folder, bun_paths::SEP_STR.as_bytes(), b"package.json"].concat();
                         let Ok(text) = bun_sys::File::read_from(bun_core::Fd::cwd(), &path) else { continue };
                         data_files.push(options::OutputFile::init(crate::output_file::Options {
                             data: crate::output_file::OptionsData::Buffer { data: text.into_boxed_slice() },
-                            output_path: [b".held".as_slice(), &path].concat().into_boxed_slice(),
+                            output_path: super::held_name(b".held", &path),
                             input_loader: Loader::File,
                             output_kind: crate::options::OutputKind::Asset,
                             loader: Loader::File,

@@ -48,10 +48,14 @@ function partsOf(name: string, text: string) {
   return { title: parts[1], setup: parts[2], kernel: parts[3], rest: parts[4], operations: Number(operations[1]) };
 }
 
-function programOf({ setup, kernel, rest }: ReturnType<typeof partsOf>, place: Form["place"]) {
+function isCountedTwice(operations: number) {
+  return operations * (roundsOfMoreOperations - roundsOfFewerOperations) < 10;
+}
+
+function programOf({ setup, kernel, rest, operations }: ReturnType<typeof partsOf>, place: Form["place"]) {
   const waits = /\bawait\b/.test(kernel);
   const windows = (turn: string) =>
-    `const roundsOfWindows = process.argv.slice(2).map(Number);\nfor (let window = 0; window < roundsOfWindows.length; window++) {\n  const rounds = roundsOfWindows[window];\n  for (let round = 0; round < rounds; round++) ${turn}\n  ${mark}\n}\n`;
+    `const roundsOfWindows = process.argv.slice(2).map(Number);\n${isCountedTwice(operations) ? "roundsOfWindows.push(...roundsOfWindows.slice(-2));\n" : ""}for (let window = 0; window < roundsOfWindows.length; window++) {\n  const rounds = roundsOfWindows[window];\n  for (let round = 0; round < rounds; round++) ${turn}\n  ${mark}\n}\n`;
   if (place === "module level") return `${setup}\n${windows(`{\n${kernel}\n  }`)}${rest}`;
   return `${setup}
 let isNeverThrown = 0;
@@ -174,17 +178,26 @@ async function lineOf(
     command: [executable, ...[...roundsBeforeCounting, roundsOfFewerOperations, roundsOfMoreOperations].map(String)],
     env: { ...bunEnv, BUN_JSC_useGC: "0", BUN_JSC_crashIfInterpreterIsUsed: "1" },
     marksBeforeTheFirstWindow: roundsBeforeCounting.length,
-    numberOfWindows: 2,
+    numberOfWindows: isCountedTwice(parts.operations) ? 4 : 2,
     functions,
   });
   expect({ stderr: counted.stderr, exitCode: counted.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const operations = parts.operations * (roundsOfMoreOperations - roundsOfFewerOperations);
-  const shares = sharesOf(counted.windows, operations, entry);
+  const shares = sharesOf(
+    [cheapest(counted.windows.filter((_, index) => index % 2 === 0)), cheapest(counted.windows.filter((_, index) => index % 2 === 1))],
+    operations,
+    entry,
+  );
   if (form.place !== "module level") expect(shares.map(share => share.where)).toContain("kernel");
   return `${label}: ${shown(shares)}, ${bytes} bytes`;
 }
 
 type Share = { where: string; instructions: number };
+
+function cheapest(windows: Map<string, number>[]) {
+  const total = (window: Map<string, number>) => [...window.values()].reduce((sum, instructions) => sum + instructions, 0);
+  return windows.reduce((best, window) => (total(window) < total(best) ? window : best));
+}
 
 function sharesOf([few, many]: Map<string, number>[], operations: number, entry: string): Share[] {
   return [...new Set([...few.keys(), ...many.keys()])]

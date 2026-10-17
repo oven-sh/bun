@@ -171,12 +171,13 @@ describe.concurrent("--aot-explain=costs-json", () => {
     expect(rows[0].cost.readsByName).toBeGreaterThanOrEqual(8);
     expect(rows[0].cost.functions).toBe(4);
     expect(rows[0].examples.map(at)).toContain("main.ts:11:17");
+    expect(rows.map(row => row.message)).toContain("The compiler cannot prove that what 'name' holds is of its type 'string', so its properties are looked up by name.");
   }, 60_000);
 
   test("every place that can freeze or re-parent any object is named", async () => {
     const { rows } = await check(marks, "--aot-explain=costs-json");
     const found = rows.filter(row => row.rule === "reshaped-layout");
-    expect(found.map(row => [at(row), ...row.because.map(at)].join(" ")).sort()).toEqual(["main.ts:10:25", "main.ts:5:28 main.ts:7:15"]);
+    expect(found.map(row => [at(row), ...row.otherCauses.map(at)].join(" ")).sort()).toEqual(["main.ts:10:25", "main.ts:5:28 main.ts:7:15"]);
     expect(found.map(row => row.cost.guardedAccesses > 0)).toEqual([true, true]);
   }, 60_000);
 

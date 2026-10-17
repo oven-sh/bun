@@ -1,7 +1,7 @@
 // Two calls of a field that holds one function, in functions without loops, go through one shared body: no read of the field and no call by value at the site.
-// IR= 1 first CallDirect
+// IR= 1 first CallDirect f[0-9]+ \(v[0-9]+, v[0-9]+, v[0-9]+\)
 // IR= 0 first Call v[0-9]+, v[0-9]+ \(
-// IR= 1 second CallDirect
+// IR= 1 second CallDirect f[0-9]+ \(v[0-9]+, v[0-9]+, v[0-9]+\)
 // IR= 0 second Call v[0-9]+, v[0-9]+ \(
 interface Store {
   put: (id: number, value: number) => number;

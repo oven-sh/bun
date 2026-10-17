@@ -250,7 +250,7 @@ impl<'p, 's> Checker<'p, 's> {
         (!reasons.is_empty() || !is_created_elsewhere).then_some(reasons)
     }
 
-    fn declared_type_of_receiver(&mut self, file: FileId, receiver: ExprId) -> Option<(Place, Vec<u8>, bool)> {
+    fn declaration_behind_receiver(&mut self, file: FileId, receiver: ExprId) -> Option<CompilerDiagnostic> {
         let ty = self.type_of_expr(file, receiver);
         let ty = self.reduced(ty);
         let mut found = None;
@@ -258,13 +258,29 @@ impl<'p, 's> Checker<'p, 's> {
             let Some(declared) = self.type_declaration_site(part).filter(|_| self.may_hold_objects(part)) else { continue };
             let is_declared_outside_typed_code = self.hir(declared.file).kind == FileKind::Declaration || self.is_untyped_file(declared.file);
             if found.is_none() || is_declared_outside_typed_code {
-                found = Some((declared, self.display_name(part).into_bytes(), is_declared_outside_typed_code));
+                let name = self.display_name(part).into_bytes();
+                found = Some(self.finding_at(declared, if is_declared_outside_typed_code { 100088 } else { 100089 }, vec![name]));
             }
             if is_declared_outside_typed_code {
                 break;
             }
         }
-        found
+        if found.is_some() {
+            return found;
+        }
+        let hir = self.hir(file);
+        let mut origin = receiver;
+        while let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) | ExprKind::Await(expr) = hir[origin].kind {
+            origin = expr;
+        }
+        let ExprKind::Ident(name) = hir[origin].kind else { return None };
+        let bound_to = self.bound(file).expr_symbol[origin.idx()];
+        if bound_to.is_none() {
+            return None;
+        }
+        let Some((declared_in, Decl::Var(pat) | Decl::Param(pat))) = self.files().value_declaration(self.files().sym(file, bound_to)) else { return None };
+        let (name, type_name) = (self.atoms().bytes(name).to_vec(), self.display_name(ty).into_bytes());
+        Some(self.finding_at(Place { file: declared_in, pos: self.hir(declared_in)[pat].pos }, 100090, vec![name, type_name]))
     }
 
     pub fn explain_untyped_values(&mut self, values: &[(FileId, ExprId)], classes_without_layout: &FxHashSet<(FileId, ClassId)>) -> Vec<Vec<CompilerDiagnostic>> {
@@ -272,7 +288,7 @@ impl<'p, 's> Checker<'p, 's> {
         values.iter().map(|&(file, value)| self.untyped_receiver_reasons(file, value, &marks, classes_without_layout).unwrap_or_default()).collect()
     }
 
-    pub fn find_accesses_by_name(&mut self, accesses: &[(FileId, ExprId, u32, Vec<u8>)], classes_without_layout: &FxHashSet<(FileId, ClassId)>, scopes: &Scopes) -> (Vec<CompilerDiagnostic>, Vec<(Place, Option<(Place, Vec<u8>, bool)>)>) {
+    pub fn find_accesses_by_name(&mut self, accesses: &[(FileId, ExprId, u32, Vec<u8>)], classes_without_layout: &FxHashSet<(FileId, ClassId)>, scopes: &Scopes) -> (Vec<CompilerDiagnostic>, Vec<(Place, Option<CompilerDiagnostic>)>) {
         let marks = self.external_marks().0;
         let (mut found, mut unexplained) = (Vec::new(), Vec::new());
         for &(file, receiver, name_pos, ref name) in accesses {
@@ -281,12 +297,12 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let Some(related) = self.untyped_receiver_reasons(file, receiver, &marks, classes_without_layout) else {
                 if scopes.collects_everything() {
-                    unexplained.push((Place { file, pos: name_pos }, self.declared_type_of_receiver(file, receiver)));
+                    unexplained.push((Place { file, pos: name_pos }, self.declaration_behind_receiver(file, receiver)));
                 }
                 continue;
             };
             if related.is_empty() {
-                unexplained.push((Place { file, pos: name_pos }, self.declared_type_of_receiver(file, receiver)));
+                unexplained.push((Place { file, pos: name_pos }, self.declaration_behind_receiver(file, receiver)));
                 continue;
             }
             found.push(CompilerDiagnostic { related, ..self.finding_at(Place { file, pos: name_pos }, 100030, vec![name.clone()]) });

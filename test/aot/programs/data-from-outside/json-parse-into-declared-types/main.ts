@@ -1,6 +1,9 @@
 // JSON.parse(text) whose result goes to a declared type is parsed by code compiled for that type where the text is compact and has the declared keys in the declared order, and by JSON.parse itself otherwise. Whatever the text is, the result is what JSON.parse makes of it.
 // IR+ CallBuiltin JSONOpen
+// IR+ CallBuiltin JSONParseWithShape
 import { describe, parseEveryText } from "./texts";
+const namedInCode = ["id", "name", "ok", "note", "a", "b", "c", "d", "e", "first", "second", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "sku", "quantity", "items", "tags", "owner", "age", "value", "next", "label", "children", "kind", "radius", "side", "color", "level", "mode", "zero", "flag", "nothing", "anything", "unknown", "object", "when", "table", "run", "big", "constructor", "toString", "list", "left", "right", "sites", "text", "held", "notTexts", "get", "enumerable", "configurable", "extra01", "extra02", "extra03", "extra04", "extra05", "extra06", "extra07", "extra08", "extra09", "extra10", "extra11", "extra12", "extra13", "extra14", "extra15", "extra16"];
+console.log(namedInCode.length);
 
 interface Flat {
   id: number;
@@ -48,6 +51,30 @@ interface Chain {
 interface Tree {
   label: string;
   children: Tree[];
+}
+interface ManyMore {
+  extra01?: number;
+  extra02?: number;
+  extra03?: number;
+  extra04?: number;
+  extra05?: number;
+  extra06?: number;
+  extra07?: number;
+  extra08?: number;
+  extra09?: number;
+  extra10?: number;
+  extra11?: number;
+  extra12?: number;
+  extra13?: number;
+  extra14?: number;
+  extra15?: number;
+  extra16?: number;
+}
+interface LargeFlat extends Flat, ManyMore {}
+interface LargeOrder extends Order, ManyMore {}
+interface LargeTree extends ManyMore {
+  label: string;
+  children: LargeTree[];
 }
 type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number } | { kind: "dot" };
 enum Color {
@@ -148,6 +175,12 @@ const sites: [string, (text: string) => unknown][] = [
   ["ReadonlyMembers", text => JSON.parse(text) as ReadonlyMembers],
   ["WithTemplate", text => JSON.parse(text) as WithTemplate],
   ["Both", text => JSON.parse(text) as Both],
+  ["LargeFlat", text => JSON.parse(text) as LargeFlat],
+  ["LargeFlat[]", text => JSON.parse(text) as LargeFlat[]],
+  ["LargeOrder", text => JSON.parse(text) as LargeOrder],
+  ["LargeTree", text => JSON.parse(text) as LargeTree],
+  ["LargeFlat or LargeOrder", text => JSON.parse(text) as LargeFlat | LargeOrder],
+  ["Record of LargeFlat", text => JSON.parse(text) as Record<string, LargeFlat>],
   ["generic", text => parseAs<Flat>(text)],
   ["with a reviver", text => JSON.parse(text, (_key, value) => (typeof value === "number" ? value + 1 : value)) as Flat],
   ["with undefined as the reviver", text => JSON.parse(text, undefined) as Flat],

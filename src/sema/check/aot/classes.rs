@@ -1592,6 +1592,16 @@ impl<'p, 's> Checker<'p, 's> {
             if becomes_a_prototype_at.is_some_and(|index| hir.ids(hir[call].args).nth(index) == Some(asserted)) {
                 return None;
             }
+            let only_reads_its_first_argument = matches!(
+                self.global_method_names(file, call),
+                Some((
+                    b"Object",
+                    b"keys" | b"getOwnPropertyNames" | b"getOwnPropertySymbols" | b"getOwnPropertyDescriptor" | b"getOwnPropertyDescriptors" | b"hasOwn" | b"isExtensible" | b"isFrozen" | b"isSealed"
+                )) | Some((b"Reflect", b"ownKeys" | b"has" | b"getOwnPropertyDescriptor" | b"isExtensible"))
+            );
+            if only_reads_its_first_argument && hir.ids(hir[call].args).next() == Some(asserted) {
+                return None;
+            }
         }
         if self.prototype_use(file, prototype) != PrototypeUse::Accessed {
             return Some(false);

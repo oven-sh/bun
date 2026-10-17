@@ -7054,6 +7054,7 @@ impl<'p, 's> Checker<'p, 's> {
         match self.data(ty) {
             TypeData::Ref { target, .. } => self.is_declaration_only(target.file),
             TypeData::Anon { origin: Origin::TypeLiteral(file, literal), .. } => self.is_declaration_only(*file) && !self.is_safe_validate_result(*file, *literal),
+            TypeData::Anon { origin: Origin::GlobalThis, .. } => true,
             TypeData::Intersection(parts) => parts.iter().any(|&part| self.is_declared_only_record(part)),
             TypeData::Synth(shape) if shape.spread_rank >= u32::MAX - 1 => shape.created_from.is_some_and(|(_, viewed)| self.parts(viewed).iter().any(|&part| self.is_declared_only_record(part))),
             _ => false,

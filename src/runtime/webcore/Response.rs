@@ -14,7 +14,7 @@ use bun_core::Output;
 use bun_core::{String as BunString, Utf8Bytes};
 use bun_http_types::Method::Method;
 
-use super::body::{Body, BodyMixin, Value as BodyValue, ValueError as BodyValueError};
+use super::body::{Body, BodyMixin, SharedBody, Value as BodyValue, ValueError as BodyValueError};
 use super::{FetchHeaders, ReadableStream, Request};
 
 // Codegen (`generated_classes.rs`) re-exports `Blob` from
@@ -210,6 +210,7 @@ pub(crate) struct Response {
     init: JsCell<Init>,
     url: JsCell<BunString>,
     redirected: Cell<bool>,
+    body_was_read: Cell<bool>,
     /// The JS wrapper, fetch (so a discarded JS Response can still resolve
     /// its body) and HTMLRewriter each hold a ref.
     ref_count: Cell<u32>,
@@ -225,6 +226,8 @@ pub(crate) struct Response {
 
     /// Fetch's `AbortSignal` listener; survives `FetchTasklet` teardown so a fully-buffered body is still errored.
     abort_listener: JsCell<Option<Box<BodyAbortListener>>>,
+
+    shared_body: JsCell<Option<std::rc::Rc<SharedBody>>>,
 }
 
 impl Default for Response {
@@ -234,11 +237,13 @@ impl Default for Response {
             init: JsCell::new(Init::default()),
             url: JsCell::new(BunString::EMPTY),
             redirected: Cell::new(false),
+            body_was_read: Cell::new(false),
             ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             js_ref: JsCell::new(JsRef::empty()),
             reported_estimated_size: Cell::new(0),
             abort_listener: JsCell::new(None),
+            shared_body: JsCell::new(None),
         }
     }
 }
@@ -421,7 +426,57 @@ impl Response {
     pub(crate) fn get_body_value(&self) -> &mut BodyValue {
         // R-2: both `Response.body` and `Body.value` are `JsCell` —
         // single-JS-thread interior-mutability boundary. See `Body::value_mut`.
+        if self.shared_body.get().is_some() {
+            self.settle_shared_body();
+        }
         self.body.get().value_mut()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn settle_shared_body(&self) {
+        let Some(shared) = self.shared_body.take() else {
+            return;
+        };
+        *self.body.get().value_mut() = shared.stream_body();
+        self.check_body_stream_ref(shared.global());
+        if self.body_was_read.get()
+            && let Some(this_value) = self.js_ref.get().try_get()
+            && let Some(stream) = self.get_body_readable_stream()
+        {
+            js::body_set_cached(this_value, shared.global(), stream.value);
+        }
+    }
+
+    pub(crate) fn get_body_value_as_blob_if_possible(&self) -> &mut BodyValue {
+        if !self.body_was_read.get()
+            && let Some(shared) = self.shared_body.get()
+            && let Some(value) = shared.take_unread()
+        {
+            *self.body.get().value_mut() = value;
+            self.shared_body.set(None);
+        }
+        let value = self.get_body_value();
+        value.to_blob_if_possible();
+        value
+    }
+
+    fn share_body(&self, global_this: &JSGlobalObject, this_value: JSValue) -> Option<std::rc::Rc<SharedBody>> {
+        if let Some(shared) = self.shared_body.get() {
+            if !shared.is_unread() {
+                return None;
+            }
+            self.body_was_read.set(true);
+            return Some(std::rc::Rc::clone(shared));
+        }
+        let value = self.body.get().value_mut();
+        if !SharedBody::can_hold(value) || js::body_get_cached(this_value).is_some() {
+            return None;
+        }
+        let shared = SharedBody::new(mem::replace(value, BodyValue::Used), global_this);
+        self.shared_body.set(Some(std::rc::Rc::clone(&shared)));
+        self.body_was_read.set(true);
+        Some(shared)
     }
 }
 
@@ -455,6 +510,13 @@ impl Response {
     }
 
     pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
+        let js_value = self.create_wrapper(global_object);
+        self.check_body_stream_ref(global_object);
+        js_value
+    }
+
+    #[inline(always)]
+    fn create_wrapper(&self, global_object: &JSGlobalObject) -> JSValue {
         self.calculate_estimated_byte_size();
         // `bun_jsc::generated::JSResponse::to_js` ⇒ `Response__create` (C++
         // shim). Payload type is erased (`*mut ()`) at the bun_jsc tier.
@@ -466,8 +528,6 @@ impl Response {
             global_object,
         );
         self.js_ref.set(JsRef::init_weak(js_value));
-
-        self.check_body_stream_ref(global_object);
         js_value
     }
 
@@ -642,6 +702,7 @@ impl Response {
         // `fmt::Error`.
         let js_err = |_: JsError| core::fmt::Error;
 
+        let _ = self.get_body_value();
         match self.body.get().known_len() {
             Some(len) => writeln!(
                 writer,
@@ -825,6 +886,7 @@ impl Response {
             (*this).url.set(BunString::EMPTY);
             (*this).js_ref.set(JsRef::empty());
             (*this).abort_listener.set(None);
+            (*this).shared_body.set(None);
 
             // Contents are gone; the allocation itself stays until any outstanding
             // WeakRef derefs (RequestContext.response_weakref). WeakRef.get() returns
@@ -1197,6 +1259,35 @@ impl Response {
         })))
     }
 
+    fn from_response(global_this: &JSGlobalObject, other_value: JSValue) -> JsResult<JSValue> {
+        let other = other_value.as_direct::<Response>().expect("the caller has compared the structure");
+        // SAFETY: `as_direct` returned the live `*mut Response` of the wrapper, which `other_value` roots for this call.
+        let other = unsafe { &*other };
+        if let Some(shared) = other.share_body(global_this, other_value) {
+            let init = other.init.get().clone(global_this)?;
+            let response = bun_core::heap::into_raw(Box::new(Response {
+                body: JsCell::new(Body::new(BodyValue::Used)),
+                init: JsCell::new(init),
+                shared_body: JsCell::new(Some(shared)),
+                ..Default::default()
+            }));
+            // SAFETY: `response` is freshly boxed; ownership transfers to the JSC wrapper.
+            return Ok(unsafe { (*response).create_wrapper(global_this) });
+        }
+        let body = match js::body_get_cached(other_value) {
+            Some(body) => body,
+            None => {
+                let body = <Self as BodyMixin>::get_body(other, global_this)?;
+                js::body_set_cached(other_value, global_this, body);
+                body
+            }
+        };
+        let init = other.init.get().clone(global_this)?;
+        let response = Self::from_body_and_init(global_this, body, init, None)?;
+        // SAFETY: `response` is freshly boxed; ownership transfers to the JSC wrapper.
+        Ok(unsafe { (*response).to_js(global_this) })
+    }
+
     fn from_parts(global_this: &JSGlobalObject, body_value: JSValue, parts: &InitParts) -> JsResult<JSValue> {
         if body_value.is_object() && body_value.as_class_ref::<Blob>().is_some_and(|blob| blob.is_s3()) {
             return Err(global_this.throw_invalid_arguments(format_args!(
@@ -1216,6 +1307,11 @@ pub(crate) struct InitParts {
     headers: JSValue,
     header_count: u32,
     header_names_and_values: *const JSValue,
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Response__createFromResponse(global_this: &JSGlobalObject, other: JSValue) -> JSValue {
+    bun_jsc::host_fn::to_js_host_call(global_this, || Response::from_response(global_this, other))
 }
 
 /// # Safety

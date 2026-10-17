@@ -57,6 +57,7 @@ call	Member
 charCodeAt	Member
 clear	Member
 closeAllIterators	Call
+collectionTable	Call
 constructor	Value
 cpp	Call
 create	Member
@@ -154,11 +155,9 @@ loadEsmIntoCjs	Call
 makeAbortError	Call
 makeIteratorResult	Call
 makeTypeError	Call
-mapIterationEntry	Call
-mapIterationEntryKey	Call
-mapIterationEntryValue	Call
-mapIterationNext	Call
-mapStorage	Call
+mapKeyAt	Call
+mapNext	Call
+mapValueAt	Call
 min	Call
 napiDlopenHandle	Member
 newArrayWithSize	Call
@@ -169,7 +168,6 @@ newRejectedPromise	Call
 newResolvedPromise	Call
 newRustFunction	Call
 onEndCallbacks	Member
-orderedHashTableSentinel	Value
 overridableRequire	Value
 overriddenName	Value
 ownKeys	Call
@@ -209,10 +207,8 @@ runTail	Member
 rust	Call
 set	Member
 setColumnNameTransform	Member
-setIterationEntry	Call
-setIterationEntryKey	Call
-setIterationNext	Call
-setStorage	Call
+setKeyAt	Call
+setNext	Call
 size	Member
 start	Member
 stepGenerator	Call

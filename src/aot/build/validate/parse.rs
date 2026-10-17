@@ -28,6 +28,121 @@ fn is_parsed_in_place(plan: &ValidationPlan, node: u32) -> bool {
     }
 }
 
+const MAX_SHAPED_MEMBERS: usize = 48;
+const MAX_SHAPED_NAME_LENGTH: usize = 48;
+const MAX_SHAPE_NESTING_WITHOUT_OBJECTS: u32 = 8;
+
+struct ExpectedShapes<'a> {
+    plan: &'a ValidationPlan,
+    number_of_node: Vec<Option<u32>>,
+    shapes: Vec<Vec<u8>>,
+    anything: Option<u32>,
+}
+
+impl ExpectedShapes<'_> {
+    fn is_scalar(&self, node: u32) -> bool {
+        match &self.plan.nodes[node as usize].planned {
+            Planned::Primitive(_) | Planned::Value(_) => true,
+            Planned::Union { arms, .. } => arms.iter().all(|&arm| self.is_scalar(arm)),
+            _ => false,
+        }
+    }
+
+    fn has_shape(&self, node: u32) -> bool {
+        self.has_shape_within(node, MAX_SHAPE_NESTING_WITHOUT_OBJECTS)
+    }
+
+    fn has_shape_within(&self, node: u32, steps: u32) -> bool {
+        if steps == 0 {
+            return false;
+        }
+        match &self.plan.nodes[node as usize].planned {
+            Planned::Object { members, .. } => {
+                let is_shaped_name = |name: &[u8]| name.len() <= MAX_SHAPED_NAME_LENGTH && !name.iter().all(u8::is_ascii_digit);
+                is_parsed_in_place(self.plan, node) && members.len() <= MAX_SHAPED_MEMBERS && members.iter().all(|member| is_shaped_name(&member.name))
+            }
+            Planned::Array { element: held, .. } => self.is_scalar(*held) || self.has_shape_within(*held, steps - 1),
+            Planned::Dictionary { held, .. } => self.has_shape_within(*held, steps - 1),
+            Planned::Union { arms, .. } => arms.iter().any(|&arm| !matches!(self.plan.nodes[arm as usize].planned, Planned::Union { .. }) && self.has_shape_within(arm, steps - 1)),
+            _ => false,
+        }
+    }
+
+    fn reserve(&mut self, node: u32) -> u32 {
+        let number = self.shapes.len() as u32;
+        self.shapes.push(Vec::new());
+        self.number_of_node[node as usize] = Some(number);
+        number
+    }
+
+    fn number_of_anything(&mut self) -> u32 {
+        if self.anything.is_none() {
+            self.anything = Some(self.shapes.len() as u32);
+            self.shapes.push(b"*".to_vec());
+        }
+        self.anything.unwrap_or_default()
+    }
+
+    fn number_of(&mut self, node: u32) -> u32 {
+        if let Some(known) = self.number_of_node[node as usize] {
+            return known;
+        }
+        if !self.has_shape(node) {
+            return self.number_of_anything();
+        }
+        let plan = self.plan;
+        match &plan.nodes[node as usize].planned {
+            Planned::Object { members, .. } => {
+                let number = self.reserve(node);
+                let mut text = b"{".to_vec();
+                for member in members {
+                    let held = self.number_of(member.node);
+                    text.extend_from_slice(&[b"\"", &member.name[..], b"\"", held.to_string().as_bytes()].concat());
+                }
+                text.push(b'}');
+                self.shapes[number as usize] = text;
+                number
+            }
+            Planned::Array { element: held, .. } | Planned::Dictionary { held, .. } => {
+                let number = self.reserve(node);
+                let is_array = matches!(plan.nodes[node as usize].planned, Planned::Array { .. });
+                let held = self.number_of(*held);
+                self.shapes[number as usize] = if is_array { format!("[{held}]") } else { format!("<{held}>") }.into_bytes();
+                number
+            }
+            Planned::Union { arms, .. } => {
+                let shaped: Vec<u32> = arms.iter().copied().filter(|&arm| !matches!(plan.nodes[arm as usize].planned, Planned::Union { .. }) && self.has_shape(arm)).collect();
+                if let [only] = shaped[..] {
+                    let number = self.number_of(only);
+                    self.number_of_node[node as usize] = Some(number);
+                    return number;
+                }
+                let number = self.reserve(node);
+                let alternatives: Vec<String> = shaped.into_iter().map(|arm| self.number_of(arm).to_string()).collect();
+                self.shapes[number as usize] = format!("({})", alternatives.join(",")).into_bytes();
+                number
+            }
+            _ => self.number_of_anything(),
+        }
+    }
+}
+
+pub(super) fn expected_shapes(plan: &ValidationPlan) -> Option<Vec<u8>> {
+    let mut expected = ExpectedShapes { plan, number_of_node: vec![None; plan.nodes.len()], shapes: Vec::new(), anything: None };
+    if !expected.has_shape(plan.root) {
+        return None;
+    }
+    expected.number_of(plan.root);
+    Some(expected.shapes.join(&b';'))
+}
+
+const MAX_MEMBERS_OF_COMPILED_PARSERS: usize = 16;
+
+pub(super) fn is_small_enough_for_compiled_parsers(plan: &ValidationPlan) -> bool {
+    let members: usize = plan.nodes.iter().map(|node| if let Planned::Object { members, .. } = &node.planned { members.len() } else { 0 }).sum();
+    members <= MAX_MEMBERS_OF_COMPILED_PARSERS
+}
+
 fn opening_byte(plan: &ValidationPlan, node: u32) -> Option<u8> {
     match plan.nodes[node as usize].planned {
         Planned::Primitive(PlannedPrimitive::Text) => Some(b'"'),
@@ -306,10 +421,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.read(result)
     }
 
-    fn emit_compact_object_parser(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, node: u32, start: V, malformed: BlockId) {
+    fn emit_compact_object_parser(&mut self, fx: &mut Fx, plan: &Rc<ValidationPlan>, number: u32, node: u32, start: V, fails: BlockId) {
         let Planned::Object { members, .. } = &plan.nodes[node as usize].planned else { return };
-        let is_recursive = reaches(plan, node, node, &mut Vec::new());
-        let fails = if is_recursive { malformed } else { fx.b.new_block() };
         let cursor = fx.b.new_var(self.known.counter);
         fx.b.write(cursor, start);
         let has_members = self.new_flag(fx);
@@ -377,16 +490,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             fx.b.switch_to(next);
         }
         self.return_parsed(fx, created, end);
-        if !is_recursive {
-            fx.b.seal(fails);
-            fx.b.switch_to(fails);
-            let back = self.emit(fx, Op::Int(-1));
-            let brace = self.emit(fx, Op::Binary { op: BinOp::Add, a: start, b: back });
-            fx.b.func.values[brace.idx()].ty = self.known.counter;
-            let value = self.emit_parser_operation(fx, Operation::JSONValueAt, &[brace], self.out.tys.anything);
-            let end = self.continue_after_parsed_value(fx, malformed);
-            self.return_parsed(fx, value, end);
-        }
     }
 
     fn continue_after_compact_separator(&mut self, fx: &mut Fx, cursor: Var, closer: &[u8], continues: BlockId, fails: BlockId) {
@@ -454,6 +557,25 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let end = self.continue_after_text(fx, cursor, b"]", true, fails);
         let created = self.emit_list(fx, &items);
         self.return_parsed(fx, created, end);
+    }
+
+    pub(super) fn emit_parse_with_shapes(&mut self, fx: &mut Fx, text: V, shapes: &[u8]) -> V {
+        let (general_path, done) = (fx.b.new_block(), fx.b.new_block());
+        let result = self.new_temporary(fx);
+        let shapes = self.emit_text(fx, shapes);
+        let parsed = self.emit_parser_operation(fx, Operation::JSONParseWithShape, &[text, shapes], self.out.tys.anything);
+        fx.b.write(result, parsed);
+        let undefined = self.emit(fx, Op::Undefined);
+        let has_no_answer = self.emit(fx, Op::StrictEq { a: parsed, b: undefined });
+        self.branch(fx, has_no_answer, general_path, done);
+        fx.b.seal(general_path);
+        fx.b.switch_to(general_path);
+        let parsed = self.emit_global_method_call(fx, b"JSON", b"parse", &[text]);
+        fx.b.write(result, parsed);
+        fx.b.jump(done);
+        fx.b.seal(done);
+        fx.b.switch_to(done);
+        fx.b.read(result)
     }
 
     fn parser_for(&mut self, fx: &Fx, number: u32, node: u32, ty: TypeId) -> FuncId {

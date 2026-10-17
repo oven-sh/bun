@@ -59,11 +59,17 @@ fn utf16_length(text: &[u8]) -> i64 {
     i64::from(bun_core::strings::utf8_decoded_len_utf16(text))
 }
 
+#[derive(Clone)]
+enum ParserByDestination {
+    Compiled(u32),
+    ExpectingShapes(Rc<[u8]>),
+}
+
 #[derive(Default)]
 pub(crate) struct Validators {
     plans: Vec<Rc<ValidationPlan>>,
     plan_numbers: FxHashMap<(TypeId, bool), u32>,
-    exact_plan_numbers: FxHashMap<TypeId, Option<u32>>,
+    parsers_by_destination: FxHashMap<TypeId, Option<ParserByDestination>>,
     functions: FxHashMap<GeneratedFunction, FuncId>,
     functions_by_type: FxHashMap<(TypeId, bool, bool, bool, bool, bool), GeneratedFunction>,
     sources: Vec<GeneratedFunction>,
@@ -143,20 +149,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         Some(self.coerce_to(fx, validated, Ty { id: created, checked: ty }, CoerceReason::Cast))
     }
 
-    fn exact_plan(&mut self, ty: TypeId) -> Option<(Rc<ValidationPlan>, u32)> {
-        let number = match self.validators.exact_plan_numbers.get(&ty) {
-            Some(&known) => known,
-            None => {
-                let plan = self.c.exact_parse_plan(ty).filter(parse::is_parsed_by_type);
-                let number = plan.map(|plan| {
-                    self.validators.plans.push(Rc::new(plan));
-                    self.validators.plans.len() as u32 - 1
-                });
-                self.validators.exact_plan_numbers.insert(ty, number);
-                number
+    fn parser_by_destination(&mut self, ty: TypeId) -> Option<ParserByDestination> {
+        if let Some(known) = self.validators.parsers_by_destination.get(&ty) {
+            return known.clone();
+        }
+        let parser = self.c.exact_parse_plan(ty).and_then(|plan| {
+            if parse::is_parsed_by_type(&plan) && parse::is_small_enough_for_compiled_parsers(&plan) {
+                self.validators.plans.push(Rc::new(plan));
+                return Some(ParserByDestination::Compiled(self.validators.plans.len() as u32 - 1));
             }
-        }?;
-        Some((Rc::clone(&self.validators.plans[number as usize]), number))
+            parse::expected_shapes(&plan).map(|shapes| ParserByDestination::ExpectingShapes(shapes.into()))
+        });
+        self.validators.parsers_by_destination.insert(ty, parser.clone());
+        parser
     }
 
     pub(crate) fn parse_for_destination_type(&mut self, fx: &mut Fx, e: ExprId, call: CallId) -> Option<V> {
@@ -164,10 +169,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return None;
         }
         let ty = self.c.parsed_text_destination(fx.file, e)?;
-        let (plan, number) = self.exact_plan(ty)?;
+        let parser = self.parser_by_destination(ty)?;
         let hir = self.hir(fx.file);
         let text = self.expr(fx, hir.id_at(hir[call].args, 0));
-        Some(self.emit_exact_parse(fx, &plan, number, text))
+        Some(match parser {
+            ParserByDestination::Compiled(number) => {
+                let plan = Rc::clone(&self.validators.plans[number as usize]);
+                self.emit_exact_parse(fx, &plan, number, text)
+            }
+            ParserByDestination::ExpectingShapes(shapes) => self.emit_parse_with_shapes(fx, text, &shapes),
+        })
     }
 
     fn emit_safe_result(&mut self, fx: &mut Fx, declared: Option<TypeId>, is_success: bool, name: &[u8], value: V) -> V {

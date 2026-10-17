@@ -15,6 +15,7 @@
 //                                         only the bundler provides (--define, --feature, files imported as text)
 //                                         "skipInShell": why shell/quick.py skips the program; not read here
 //                                         "skipWithASAN": why a Bun built with AddressSanitizer skips the program
+//                                         "skipInVariants": why variant() leaves the program out
 //   programs/**/tsconfig.json             the compiler options for the programs below it
 //   programs/jsc-shell-functions.ts       noInline(), gc() and similar functions, for the programs that import it
 //   packages/, packages-<topic>.test.ts   programs that import packages, with a runner of their own: packages/run-packages.ts
@@ -245,7 +246,8 @@ export function variant(label: string, buildEnv: Record<string, string>, runEnv:
       .filter(path => Number((hash(path) >> 16n) % BigInt(parts)) === part - 1)
       .filter(path => !isASAN || (hash(path) >> 32n) % 3n === 0n)
       // Nothing is compiled for a program that the build rejects.
-      .filter(path => !existsSync(besideOf(path) + ".build-errors.txt") && !existsSync(besideOf(path) + ".todo.txt")),
+      .filter(path => !existsSync(besideOf(path) + ".build-errors.txt") && !existsSync(besideOf(path) + ".todo.txt"))
+      .filter(path => !existsSync(besideOf(path) + ".json") || !JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")).skipInVariants),
     buildEnv,
     runEnv,
   );

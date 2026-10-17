@@ -1832,6 +1832,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if let Some(value) = self.folded_import_meta_member(fx, e, obj, name) {
             return value;
         }
+        if matches!(self.hir(fx.file)[e].kind, ExprKind::Dot { chain: Chain::No, .. }) && self.is_locked_global_read_from_global_object(fx.file, obj, name) {
+            let name = self.c.atoms().bytes(name).to_vec();
+            let value = self.public_global(fx, &name);
+            return self.coerce_to_expr_type(fx, value, e);
+        }
         if let Some(member) = self.namespace_member(fx, obj, name) {
             let value = self.read_sym(fx, member, pos);
             return self.coerce_to_expr_type(fx, value, e);
@@ -1879,7 +1884,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         if let Some(key) = self.private_key(fx, name) {
             let obj = self.chain_operand(fx, e, obj, bail);
-            let value = self.private_get(fx, obj, key);
+            let value = if self.is_private_field(fx.file, name) {
+                self.operation(fx, Operation::PrivateFieldGet, &[obj, key])
+            } else {
+                self.private_get(fx, obj, key)
+            };
             return self.coerce_to_expr_type(fx, value, e);
         }
         let cached_getter = self.host_class_cached_getter(fx, obj, name);
@@ -3967,6 +3976,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     (true, None) => self.expr(fx, obj),
                     (false, _) => self.emit(fx, Op::Undefined),
                 };
+                let value = self.emit_call_by_signature(fx, e, callee, this, c.args);
+                return self.coerce_to_expr_type(fx, value, e);
+            }
+            if chain == Chain::No && c.chain == Chain::No && self.is_locked_global_read_from_global_object(fx.file, obj, name) {
+                let this = self.expr(fx, obj);
+                let name = self.c.atoms().bytes(name).to_vec();
+                let callee = self.public_global(fx, &name);
                 let value = self.emit_call_by_signature(fx, e, callee, this, c.args);
                 return self.coerce_to_expr_type(fx, value, e);
             }

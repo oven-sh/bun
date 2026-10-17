@@ -1,5 +1,6 @@
 // `slice`, `substring`, `substr` and the `trim` methods inside and outside loops, on every internal representation of a string.
-// CALLS+ slicedL operationAOTTypedSubstring
+// CALLS+ slicedL Substring(;|$)
+// CALLS- slicedL operationAOTTypedSubstring
 // CALLS+ trimmed StringTrim(;|$)
 // CALLS+ trimmedStart StringTrimStart(;|$)
 // CALLS+ trimmedEnd StringTrimEnd(;|$)

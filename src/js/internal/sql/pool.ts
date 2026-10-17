@@ -79,7 +79,7 @@ class Reservation {
 /// connecting -> open -> closed, never back: whatever still holds a closed one cannot reach the one that replaced it.
 class PooledConnection<ConnectionHandle extends NativeConnection = any> {
   adapter: BaseSQLAdapter<ConnectionHandle, any>;
-  connection: ConnectionHandle | null = null;
+  connection: NativeConnection = null;
   state: PooledConnectionState = PooledConnectionState.connecting;
   closeHandlers: Set<(err: Error) => void> = new Set();
   flags: number = 0;
@@ -455,7 +455,7 @@ async function createPooledConnectionHandle<ConnectionHandle>(
 
 /// A result of several: CALL <proc>() and a text of several statements.
 function addResult(query: QueryType<any, any>, result: SQLResultArray<unknown>) {
-  const results = stateOf(query).results;
+  const results: any = stateOf(query).results;
   if (!results) {
     stateOf(query).results = result;
   } else if (SQLResultArray.isResult(results)) {

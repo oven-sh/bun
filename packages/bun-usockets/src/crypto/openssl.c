@@ -247,6 +247,7 @@ static void us_ssl_rare_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
 
 /* Defined in src/uws/lib.rs. `wrapper` is what us_ssl_set_wrapper stored. */
 extern int us_ssl_wrapper_server_identity(void *wrapper, SSL *ssl);
+extern int us_ssl_wrapper_select_cert(void *wrapper, SSL *ssl);
 extern int us_ssl_wrapper_identity_checked(void *wrapper);
 extern void us_ssl_wrapper_new_session(void *wrapper, SSL_SESSION *session);
 extern void us_ssl_wrapper_keylog(void *wrapper, const char *line, size_t length);
@@ -3199,7 +3200,7 @@ void us_ssl_ctx_set_sni_policy(SSL_CTX *ctx, int request_cert, int reject_unauth
  * authenticated again, against this context's CA. That refusal is deliberate
  * (RFC 6066 section 3; openssl/ssl.h: "partition session caches between SNI
  * hosts") and must not be relaxed for parity with another runtime. */
-static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
+void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
   SSL_set_SSL_CTX(ssl, ctx);
   if (us_ctx_sni_policy_ex_idx < 0) return;
   uintptr_t policy = (uintptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_sni_policy_ex_idx);
@@ -3266,7 +3267,12 @@ static size_t us_client_hello_servername(const SSL_CLIENT_HELLO *hello, char *ou
 static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *hello) {
   SSL *ssl = hello->ssl;
   struct us_socket_t *s = ssl ? us_ssl_socket(ssl) : NULL;
-  if (!s) return ssl_select_cert_success;
+  if (!s) {
+    /* An SSL that no us_socket_t drives: its wrapper decides (src/uws/lib.rs). */
+    void *wrapper = ssl ? us_ssl_wrapper(ssl) : NULL;
+    if (wrapper && !us_ssl_wrapper_select_cert(wrapper, ssl)) return ssl_select_cert_retry;
+    return ssl_select_cert_success;
+  }
   struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
   struct us_server_names_t *names = rare ? rare->server_names : NULL;
 
@@ -3477,6 +3483,12 @@ void us_socket_on_server_name(struct us_socket_t *s) {
    * SNICallback needs. The CTX is a memoized SecureContext possibly shared
    * with a listener, and this install is permanent, so us_select_cert_cb must
    * stay a no-op on any SSL carrying neither resolver. */
+  SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
+  if (ctx) SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
+}
+
+/* As us_socket_on_server_name, for an SSL that no us_socket_t drives. */
+void us_ssl_wrapper_on_server_name(SSL *ssl) {
   SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
   if (ctx) SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
 }

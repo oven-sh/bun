@@ -498,6 +498,162 @@ fn places_of(
     places
 }
 
+/// The `place_key` of every row of the tree stored in `lockfile`, with the package `resolutions` binds the row to.
+fn stored_places(lockfile: &Lockfile, resolutions: &[PackageID]) -> Vec<(u64, PackageID)> {
+    let buffers = &lockfile.buffers;
+    let trees = buffers.trees.as_slice();
+    let rows = buffers.hoisted_dependencies.as_slice();
+    let dependencies = buffers.dependencies.as_slice();
+    let folders = folder_keys(trees, dependencies);
+    let mut places = Vec::with_capacity(rows.len());
+    for (tree, &folder) in trees.iter().zip(&folders) {
+        places.extend(tree.dependencies.get(rows).iter().filter_map(|&row| {
+            let package_id = *resolutions.get(row as usize)?;
+            let name_hash = dependencies.get(row as usize)?.name_hash;
+            (package_id != invalid_package_id).then(|| (place_key(folder, name_hash), package_id))
+        }));
+    }
+    places
+}
+
+/// `stored_places` of the tree that `Lockfile::filter` links when it skips no row. `lockfile` is left as it was.
+fn linked_places(lockfile: &mut Lockfile) -> Option<Vec<(u64, PackageID)>> {
+    let buffers = &mut lockfile.buffers;
+    let trees = core::mem::take(&mut buffers.trees);
+    let rows = core::mem::take(&mut buffers.hoisted_dependencies);
+    // The builder binds peers.
+    let resolutions = buffers.resolutions.clone();
+    const METHOD: BuilderMethod = BuilderMethod::Filter;
+    let mut log = bun_ast::Log::init();
+    let hoisted = lockfile.hoist::<METHOD>(&mut log, None, true, &[], None, Layout::Locked);
+    let places = (hoisted.is_ok()).then(|| stored_places(lockfile, &lockfile.buffers.resolutions));
+    lockfile.buffers.resolutions = resolutions;
+    lockfile.buffers.trees = trees;
+    lockfile.buffers.hoisted_dependencies = rows;
+    places
+}
+
+/// What the rows of the tree stored in `lockfile` are bound to, as one number.
+pub(crate) fn stored_rows_hash(lockfile: &Lockfile) -> u64 {
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    (lockfile.buffers.hoisted_dependencies.iter()).fold(0, |hash, &row| {
+        let package_id = (resolutions.get(row as usize)).map_or(invalid_package_id, |&id| id);
+        place_key(hash, ((row as u64) << 32) | package_id as u64)
+    })
+}
+
+/// Where the loaded bun.lock placed each package, kept while the run binds its rows to other packages.
+pub(crate) enum LoadedPlaces {
+    /// The run binds no row to another package, or links no hoisted tree.
+    None,
+    /// `buffers.resolutions`. The tree that bun.lock saves is the tree that was linked.
+    Rows(Vec<PackageID>),
+    /// `linked_places`. A self-contained workspace is not linked where bun.lock saves it.
+    Linked(Vec<(u64, PackageID)>),
+}
+
+impl LoadedPlaces {
+    pub(crate) fn of(lockfile: &mut Lockfile) -> LoadedPlaces {
+        if lockfile.self_contained_workspaces.count() == 0 {
+            return LoadedPlaces::Rows(lockfile.buffers.resolutions.clone());
+        }
+        linked_places(lockfile).map_or(LoadedPlaces::None, LoadedPlaces::Linked)
+    }
+
+    /// The places of the tree `linked` saves, or links (`Linked`), that `self` filled from another source. `loaded` is the lockfile of `self` after the run. Sorted.
+    pub(crate) fn rebound(
+        &self,
+        loaded: &Lockfile,
+        linked: &mut Lockfile,
+    ) -> Vec<(u64, PackageID)> {
+        let (mut before, mut after) = match self {
+            LoadedPlaces::None => return Vec::new(),
+            LoadedPlaces::Rows(rows) => (
+                stored_places(loaded, rows),
+                stored_places(linked, &linked.buffers.resolutions),
+            ),
+            LoadedPlaces::Linked(places) => match linked_places(linked) {
+                Some(after) => (places.clone(), after),
+                None => return Vec::new(),
+            },
+        };
+        // The registry versions of a name are one source, so only a place that holds another kind of package on one side can change source.
+        let other_kind = |lockfile: &Lockfile, place: &&(u64, PackageID)| {
+            lockfile.packages.items_resolution()[place.1 as usize].tag
+                != crate::resolution::Tag::Npm
+        };
+        let mut keys: Vec<u64> = (before.iter().filter(|place| other_kind(loaded, place)))
+            .chain(after.iter().filter(|place| other_kind(linked, place)))
+            .map(|place| place.0)
+            .collect();
+        if keys.is_empty() {
+            return Vec::new();
+        }
+        keys.sort_unstable();
+        for places in [&mut before, &mut after] {
+            places.retain(|place| keys.binary_search(&place.0).is_ok());
+            places.sort_unstable();
+        }
+        let same = |&(_, old): &(u64, PackageID), &(_, new): &(u64, PackageID)| {
+            same_source(loaded, old, linked, new)
+        };
+        let mut rebound = Vec::new();
+        let mut before = before.chunk_by(|a, b| a.0 == b.0).peekable();
+        for now in after.chunk_by(|a, b| a.0 == b.0) {
+            while before.next_if(|was| was[0].0 < now[0].0).is_some() {}
+            let Some(was) = before.next_if(|was| was[0].0 == now[0].0) else {
+                continue;
+            };
+            // Two folders can have one key, so the rows of a key are compared as sets.
+            let kept = now.iter().all(|new| was.iter().any(|old| same(old, new)))
+                && was.iter().all(|old| now.iter().any(|new| same(old, new)));
+            if !kept {
+                rebound.extend_from_slice(now);
+            }
+        }
+        rebound
+    }
+}
+
+/// Whether a place keeps its source. The registry versions of a name are one source: `PackageInstall::verify` tells them apart.
+fn same_source(loaded: &Lockfile, old_id: PackageID, linked: &Lockfile, new_id: PackageID) -> bool {
+    use crate::resolution::Tag;
+    let was = &loaded.packages.items_resolution()[old_id as usize];
+    let is = &linked.packages.items_resolution()[new_id as usize];
+    was.tag == is.tag
+        && (matches!(was.tag, Tag::Npm | Tag::Uninitialized)
+            || was.eql(
+                is,
+                loaded.buffers.string_bytes.as_slice(),
+                linked.buffers.string_bytes.as_slice(),
+            ))
+}
+
+/// The rows of the tree stored in `lockfile` that hold a package of `rebound` at its place: `(tree << 32 | dependency, place key)`. Sorted.
+pub(crate) fn rebound_rows(lockfile: &Lockfile, rebound: &[(u64, PackageID)]) -> Vec<(u64, u64)> {
+    let buffers = &lockfile.buffers;
+    let rows = buffers.hoisted_dependencies.as_slice();
+    let dependencies = buffers.dependencies.as_slice();
+    let resolutions = buffers.resolutions.as_slice();
+    let folders = folder_keys(buffers.trees.as_slice(), dependencies);
+    let key_of = |tree_id: usize, row: DependencyID| {
+        place_key(folders[tree_id], dependencies[row as usize].name_hash)
+    };
+    let mut found: Vec<u64> = Vec::new();
+    for (tree_id, tree) in buffers.trees.iter().enumerate() {
+        for &row in tree.dependencies.get(rows) {
+            let place = (key_of(tree_id, row), resolutions[row as usize]);
+            if rebound.binary_search(&place).is_ok() {
+                found.push((tree_id as u64) << 32 | row as u64);
+            }
+        }
+    }
+    found.sort_unstable();
+    (found.into_iter())
+        .map(|row| (row, key_of((row >> 32) as usize, row as DependencyID)))
+        .collect()
+}
+
 // `manager` and the three fields from `workspace_filters` on: only for `METHOD == .Filter`.
 pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) list: MultiArrayList<BuilderEntry>,

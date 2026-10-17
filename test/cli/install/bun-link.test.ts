@@ -28,6 +28,7 @@ import {
   toHaveBins,
 } from "harness";
 import { basename, join } from "path";
+import { TestRegistry } from "registry";
 import {
   createTestContext,
   destroyTestContext,
@@ -862,6 +863,97 @@ it("a link: dependency whose link is in place is not linked again", async () => 
   expect(stdout).toContain("1 package installed");
   expect(exitCode).toBe(0);
   expect(await realpath(link)).toBe(await realpath(join(String(dir), "other")));
+});
+
+// https://github.com/oven-sh/bun/issues/28964
+describe("a link to a package the registry has at the same version", () => {
+  const registry = new TestRegistry();
+  beforeAll(() => {
+    registry.start();
+  });
+  afterAll(() => registry.stop());
+
+  /** `lib` is registered for `bun link`. It is `no-deps@1.0.0` like the registry's package, with another file. */
+  async function project(dependencies: Record<string, string>) {
+    const dir = tempDir("bun-link-registry", {
+      "lib/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+      "lib/linked.txt": "",
+      "app/package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies }),
+      "app/bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker: "hoisted" } }),
+    });
+    const [lib, app] = [join(String(dir), "lib"), join(String(dir), "app")];
+    const linkEnv = {
+      ...env,
+      BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+      BUN_INSTALL_GLOBAL_DIR: join(String(dir), "global", "install", "global"),
+      BUN_INSTALL_BIN: join(String(dir), "global", "bin"),
+    };
+    async function bun(cwd: string, ...args: string[]) {
+      await using proc = spawn({ cmd: [bunExe(), ...args], cwd, env: linkEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+    expect(await bun(lib, "link")).toMatchObject({ exitCode: 0 });
+    const slot = join(app, "node_modules", "no-deps");
+    return {
+      bun: (...args: string[]) => bun(app, ...args),
+      /** What `node_modules/no-deps` is, and the files of `lib`. */
+      state: async () => ({
+        link: (await lstat(slot)).isSymbolicLink(),
+        files: await readdirSorted(slot),
+        lib: await readdirSorted(lib),
+      }),
+      [Symbol.dispose]: () => dir[Symbol.dispose](),
+    };
+  }
+  const linked = { link: true, files: ["linked.txt", "package.json"], lib: ["linked.txt", "package.json"] };
+  const fromRegistry = { link: false, files: ["index.js", "package.json"], lib: ["linked.txt", "package.json"] };
+  const noChanges = { stdout: expect.stringContaining("(no changes)"), exitCode: 0 };
+
+  it.concurrent("`bun add` replaces the link of a `link:` dependency with the registry package", async () => {
+    using app = await project({ "no-deps": "link:no-deps" });
+    expect(await app.bun("install")).toMatchObject({ exitCode: 0 });
+    expect(await app.state()).toEqual(linked);
+
+    expect(await app.bun("add", "no-deps@1.0.0")).toMatchObject({
+      stdout: expect.stringContaining("installed no-deps@1.0.0"),
+      exitCode: 0,
+    });
+    expect(await app.state()).toEqual(fromRegistry);
+    expect(await app.bun("install", "--frozen-lockfile")).toMatchObject(noChanges);
+    expect(await app.state()).toEqual(fromRegistry);
+  });
+
+  it.concurrent("`bun install <package>` replaces the link that `bun link --save` put there", async () => {
+    using app = await project({});
+    expect(await app.bun("install", "no-deps@1.0.0")).toMatchObject({ exitCode: 0 });
+    expect(await app.state()).toEqual(fromRegistry);
+    expect(await app.bun("link", "no-deps", "--save")).toMatchObject({ exitCode: 0 });
+    expect(await app.state()).toEqual(linked);
+
+    expect(await app.bun("install", "no-deps@1.0.0")).toMatchObject({
+      stdout: expect.stringContaining("installed no-deps@1.0.0"),
+      exitCode: 0,
+    });
+    expect(await app.state()).toEqual(fromRegistry);
+    expect(await app.bun("install", "--frozen-lockfile")).toMatchObject(noChanges);
+    expect(await app.state()).toEqual(fromRegistry);
+  });
+
+  // `bun link <package>` without `--save` changes neither package.json nor bun.lock.
+  it.concurrent("a link that was not saved stays when other installs follow", async () => {
+    using app = await project({ "no-deps": "1.0.0" });
+    expect(await app.bun("install")).toMatchObject({ exitCode: 0 });
+    expect(await app.bun("link", "no-deps")).toMatchObject({ exitCode: 0 });
+    expect(await app.state()).toEqual(linked);
+
+    expect(await app.bun("install")).toMatchObject(noChanges);
+    expect(await app.bun("add", "basic-1@1.0.0")).toMatchObject({
+      stdout: expect.stringContaining("installed basic-1@1.0.0"),
+      exitCode: 0,
+    });
+    expect(await app.state()).toEqual(linked);
+  });
 });
 
 it("link and unlink --dry-run do not touch the global link directory", async () => {

@@ -183,6 +183,8 @@ pub(crate) fn install_hoisted_packages(
     install_root_dependencies: bool,
     log_level: package_manager::Options::LogLevel,
     packages_to_install: Option<&[PackageID]>,
+    // `tree::LoadedPlaces::rebound` of this run.
+    rebound: &[(u64, PackageID)],
 ) -> crate::Result<package_install::Summary> {
     analytics::features::hoisted_bun_install.fetch_add(1, Ordering::Relaxed);
 
@@ -400,6 +402,12 @@ pub(crate) fn install_hoisted_packages(
 
             let pkg_len = this.lockfile.packages.len();
             let trees_count = this.lockfile.buffers.trees.len();
+            // `filter()` has run: the lockfile holds the tree that is linked.
+            let rebound_rows = if rebound.is_empty() {
+                Vec::new()
+            } else {
+                tree::rebound_rows(&this.lockfile, rebound)
+            };
             let trusted_deps = this.find_trusted_dependencies_from_update_requests();
 
             break 'brk PackageInstaller {
@@ -453,6 +461,8 @@ pub(crate) fn install_hoisted_packages(
                     break 'trees trees.into_boxed_slice();
                 },
                 trusted_dependencies_from_update_requests: trusted_deps,
+                rebound_settled: Bitset::init_empty(rebound_rows.len())?,
+                rebound: rebound_rows,
                 seen_bin_links: StringHashMap::<()>::default(),
                 destination_dir_subpath_buf: bun_paths::PathBuffer::ZEROED,
                 folder_path_buf: bun_paths::PathBuffer::ZEROED,
@@ -591,6 +601,9 @@ pub(crate) fn install_hoisted_packages(
             this.sleep();
         }
         installer.link_bins_after_scripts();
+        if !rebound.is_empty() {
+            installer.summary.rebound_stale = installer.rebound_stale(rebound);
+        }
         // Bin linking reads `successfully_installed`, so move it into the summary only afterwards.
         installer.summary.successfully_installed =
             Some(core::mem::take(&mut installer.successfully_installed));

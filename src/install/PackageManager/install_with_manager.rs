@@ -150,6 +150,8 @@ pub fn install_with_manager(
     // but we force allowing updates to the lockfile when you do bun add
     let mut had_any_diffs = false;
     let mut direct_deps_before = DirectDependencies::default();
+    let mut loaded_places = lockfile::tree::LoadedPlaces::None;
+    let mut loaded_rows_hash: Option<u64> = None;
     manager.progress = Default::default();
 
     match &load_result {
@@ -292,6 +294,19 @@ pub fn install_with_manager(
                 manager.lockfile.linked_members = core::mem::take(&mut lockfile.linked_members);
                 // The lockfile's record of `trustedDependencies` doesn't decide either.
                 manager.lockfile.trusted_dependencies = lockfile.trusted_dependencies.take();
+                // From here on the run binds the rows of the loaded bun.lock to other packages in place.
+                if manager.subcommand != Subcommand::Install
+                    || manager.summary.changes_resolutions()
+                {
+                    if manager.options.do_.install_packages()
+                        && !manager.options.lockfile_only
+                        && manager.options.node_linker != NodeLinker::Isolated
+                    {
+                        loaded_places = lockfile::tree::LoadedPlaces::of(&mut manager.lockfile);
+                    }
+                } else if cfg!(debug_assertions) {
+                    loaded_rows_hash = Some(lockfile::tree::stored_rows_hash(&manager.lockfile));
+                }
                 if manager.subcommand == Subcommand::Dedupe {
                     crate::dedupe::dedupe_after_differ(manager);
                 }
@@ -687,6 +702,11 @@ pub fn install_with_manager(
     super::add_catalog::refuse_declared_positionals(manager);
     super::package_json_write_back::fold_resolved_positionals(manager);
 
+    debug_assert!(
+        loaded_rows_hash
+            .is_none_or(|hash| hash == lockfile::tree::stored_rows_hash(&manager.lockfile)),
+        "an install that changes no resolution bound a row of the loaded bun.lock to another package"
+    );
     let lockfile_before_clean = clean_lockfile(manager, log_level)?;
     if !manager.options.dry_run {
         Output::flush();
@@ -947,6 +967,15 @@ pub fn install_with_manager(
             remove_stale_workspace_links(&lockfile_before_clean, &manager.lockfile);
         }
 
+        // A run that logged an error does not save bun.lock, so it leaves each slot to the row it has.
+        let rebound =
+            if !isolated && !had_errors_before_cleaning_lockfile && !manager.log_mut().has_errors()
+            {
+                loaded_places.rebound(&lockfile_before_clean, &mut manager.lockfile)
+            } else {
+                Vec::new()
+            };
+
         let warn_incorrect_peers = log_level.is_verbose()
             && manager.options.local_package_features.peer_dependencies
             && (had_any_diffs
@@ -971,6 +1000,7 @@ pub fn install_with_manager(
                 install_root_dependencies,
                 log_level,
                 None,
+                &rebound,
             )?
         };
         summary.fail += manager.report_offline_misses(&summary.offline_misses, &[0], isolated)?;
@@ -1066,7 +1096,11 @@ pub fn install_with_manager(
     if removes_collapsed_copies && isolated {
         crate::prune::unlink_dropped_dependencies(manager, &lockfile_before_clean);
     } else if removes_collapsed_copies {
-        crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
+        crate::prune::remove_collapsed_copies(
+            manager,
+            &lockfile_before_clean,
+            &install_summary.rebound_stale,
+        );
     }
     let runs_root_scripts =
         manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global;

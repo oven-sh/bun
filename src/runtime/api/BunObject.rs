@@ -1870,12 +1870,13 @@ pub(crate) mod JSZlib {
         heap.error(format_args!("{}", bstr::BStr::new(message)))
     }
 
+    #[allow(clippy::large_types_passed_by_value)] // the generated thunk hands over the struct it made
     pub(crate) fn gzip_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
         options: ZlibCompressionOptions<'a>,
     ) -> BufferResult<'a> {
-        gzip_or_deflate_sync(heap, data, options, true)
+        gzip_or_deflate_sync(heap, data, &options, true)
     }
 
     #[allow(clippy::large_types_passed_by_value)] // the generated thunk hands over the struct it made
@@ -1887,12 +1888,13 @@ pub(crate) mod JSZlib {
         gunzip_or_inflate_sync(heap, data, &options, false)
     }
 
+    #[allow(clippy::large_types_passed_by_value)] // the generated thunk hands over the struct it made
     pub(crate) fn deflate_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
         options: ZlibCompressionOptions<'a>,
     ) -> BufferResult<'a> {
-        gzip_or_deflate_sync(heap, data, options, false)
+        gzip_or_deflate_sync(heap, data, &options, false)
     }
 
     #[allow(clippy::large_types_passed_by_value)] // the generated thunk hands over the struct it made
@@ -1994,7 +1996,7 @@ pub(crate) mod JSZlib {
     fn gzip_or_deflate_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
-        options: ZlibCompressionOptions<'a>,
+        options: &ZlibCompressionOptions<'a>,
         is_gzip: bool,
     ) -> BufferResult<'a> {
         let level = options.level.map_or(6, |level| level as i32);

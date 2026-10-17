@@ -8571,6 +8571,10 @@ pub mod elf {
         /// `dlpi_name` copied to an owned buffer (empty when libc reports `NULL`,
         /// as Android does for the main program).
         pub name: Box<[u8]>,
+        /// Start of the `PT_LOAD` segment that spans the looked-up address.
+        pub segment_start: usize,
+        /// First address past that segment. Reads outside `[segment_start, segment_end)` are unmapped.
+        pub segment_end: usize,
     }
 
     /// Walk loaded ELF objects via `dl_iterate_phdr`, returning the one whose
@@ -8631,6 +8635,8 @@ pub mod elf {
                     context.result = Some(LoadedModule {
                         base_address: info.dlpi_addr as usize,
                         name,
+                        segment_start: seg_start,
+                        segment_end: seg_end,
                     });
                     return 1; // error.Found → stop iteration
                 }

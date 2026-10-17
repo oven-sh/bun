@@ -2071,6 +2071,37 @@ describe.concurrent("a folder that no bun.lock placed stays", () => {
     }
   });
 
+  // The folder of `runs` is new, so nothing in it is left over from an older bun, whatever its version.
+  test("below a package that this run installs, from its script, with another version than bun.lock has", async () => {
+    const own = JSON.stringify({ name: "b", version: "2.0.5", from: "the script" });
+    using server = await serveGraph(
+      {
+        m: { "1.0.0": { dependencies: { b: "^1.0.0" } } },
+        runs: { "1.0.0": { dependencies: { b: "^2.0.0" }, scripts: { postinstall: `${bunExe()} build.js` } } },
+        b: { "1.0.0": {}, "2.0.0": {} },
+      },
+      {
+        "runs-1.0.0": {
+          "build.js": `require("fs").mkdirSync("node_modules/b", { recursive: true });
+            require("fs").writeFileSync("node_modules/b/package.json", ${JSON.stringify(own)});`,
+        },
+      },
+    );
+    using tmp = tempDir("hoist-own-new-folder", {
+      "bunfig.toml": bunfig(server),
+      "package.json": JSON.stringify({
+        name: "root",
+        dependencies: { m: "1.0.0" },
+        devDependencies: { b: "^2.0.0" },
+        trustedDependencies: ["runs"],
+      }),
+    });
+    const dir = String(tmp);
+    await run(dir, "install", "--omit=dev");
+    await run(dir, "add", "runs", "--omit=dev");
+    expect(await file(join(dir, "node_modules", "runs", "node_modules", "b", "package.json")).text()).toBe(own);
+  });
+
   test("below a package, from the script of the project, where an older bun nested a copy", async () => {
     const own = JSON.stringify({ name: "b", version: "2.0.0", from: "the project" });
     using server = await serveGraph({

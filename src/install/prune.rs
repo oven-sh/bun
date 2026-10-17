@@ -1670,6 +1670,7 @@ pub(crate) fn remove_copies_of_the_older_layout(
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
     mut places: Vec<(u64, PackageID)>,
+    installed_now: Option<&DynamicBitSet>,
     same_version: SameVersion,
 ) {
     let Ok(cache) = crate::package_manager::directories::try_get_cache_directory(manager) else {
@@ -1685,7 +1686,7 @@ pub(crate) fn remove_copies_of_the_older_layout(
         workspace_filters,
         tree::Layout::Older,
     ) {
-        remove_from_older_places(manager, &places, cache, same_version);
+        remove_from_older_places(manager, &places, cache, installed_now, same_version);
         restore_tree(&mut manager.lockfile, saved);
     }
     manager.lockfile.buffers.resolutions = resolutions;
@@ -1775,6 +1776,7 @@ fn remove_from_older_places(
     manager: &PackageManager,
     places: &[(u64, PackageID)],
     cache: sys::Fd,
+    installed_now: Option<&DynamicBitSet>,
     same_version: SameVersion,
 ) {
     let lockfile: &Lockfile = &manager.lockfile;
@@ -1804,13 +1806,18 @@ fn remove_from_older_places(
             continue;
         }
         // A package with bundled dependencies ships folders at any depth, so a tree inside one is
-        // skipped. Scripts can create anything, so inside a package whose scripts may have run,
-        // only a folder that hides the version in bun.lock is removed.
+        // skipped. So is a tree inside a package that this run installed: its folder is new, and
+        // nothing in it is left over from an older Bun. Scripts can create anything, so inside a
+        // package whose scripts may have run, only a folder that hides the version in bun.lock is
+        // removed.
         let mut same_version = same_version;
         let mut above = id;
         while above != 0 {
             let owner = tree_owner(lockfile, above);
-            if has_bundled_deps(lockfile, owner) {
+            let is_new = !is_member_tree(lockfile, above)
+                && installed_now
+                    .is_some_and(|set| set.is_set_allow_out_of_bound(owner as usize, false));
+            if is_new || has_bundled_deps(lockfile, owner) {
                 break;
             }
             if can_have_run_scripts(lockfile, trees[above].folder_name(deps, buf), owner) {

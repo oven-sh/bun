@@ -121,9 +121,10 @@ test("heapStats does not count a prototype as an instance", async () => {
       console.log(JSON.stringify(classes.filter(name => counts[name])));`,
     ],
     env: bunEnv,
-    stderr: "inherit",
+    stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout).toBe("[]\n");
   expect(exitCode).toBe(0);
 });

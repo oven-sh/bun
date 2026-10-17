@@ -2525,8 +2525,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `new URL("./file", import.meta.url)` -> `new URL("file:" + require("./file"))` with the file
-    /// loader. `"file:"` + `/$bunfs/root/x` and `"file:"` + `B:/~BUN/root/x` both parse as `file:///`.
+    /// `new URL("./file", import.meta.url)` -> `new URL("file:" + require("./file"))`, file loader.
     fn embed_new_url_asset(&mut self, e_: &mut E::New) {
         let args = e_.args.slice_mut();
         let arg_loc = args[0].loc;

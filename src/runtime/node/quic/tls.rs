@@ -1,4 +1,5 @@
 use core::ffi::c_int;
+use core::net::IpAddr;
 use core::ptr::null_mut;
 
 use bun_boringssl_sys as ssl;
@@ -519,10 +520,34 @@ impl TlsContext {
                         return Err("verifyHostname requires a non-empty servername");
                     }
                     let param = ssl::SSL_CTX_get0_param(ctx);
-                    if param.is_null()
-                        || ssl::X509_VERIFY_PARAM_set1_host(param, host.as_ptr().cast(), host.len())
-                            != 1
-                    {
+                    if param.is_null() {
+                        return Err("failed to bind hostname for certificate verification");
+                    }
+                    // OpenSSL's `SSL_set1_host` (what Node calls) binds an IP
+                    // literal as an IP, so it matches the certificate's IP SANs.
+                    // BoringSSL's `set1_host` matches DNS names only.
+                    let bound = match bun_core::ip_address::parse_strict(host) {
+                        Some(ip) => {
+                            let (v4, v6);
+                            let octets: &[u8] = match ip {
+                                IpAddr::V4(ip) => {
+                                    v4 = ip.octets();
+                                    &v4
+                                }
+                                IpAddr::V6(ip) => {
+                                    v6 = ip.octets();
+                                    &v6
+                                }
+                            };
+                            ssl::X509_VERIFY_PARAM_set1_ip(param, octets.as_ptr(), octets.len())
+                        }
+                        None => ssl::X509_VERIFY_PARAM_set1_host(
+                            param,
+                            host.as_ptr().cast(),
+                            host.len(),
+                        ),
+                    };
+                    if bound != 1 {
                         return Err("failed to bind hostname for certificate verification");
                     }
                 }

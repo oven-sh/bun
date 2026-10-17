@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tls } from "harness";
 import { createPrivateKey, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -249,4 +249,40 @@ test("connect() refuses a servername with a NUL byte", async () => {
         verifyPeer: "manual",
       } as SessionOptions))(),
   ).rejects.toThrow("servername must not contain null bytes");
+});
+
+// https://github.com/oven-sh/bun/issues/45514
+// `tls` from harness has SANs DNS:localhost, IP:127.0.0.1 and IP:::1.
+test.each(["127.0.0.1", "::1"])(
+  "a client verifies an IP servername %s against the certificate's IP SAN",
+  async servername => {
+    await using server = await listen(ignoreErrors, {
+      sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+      alpn: ["quic-test"],
+    });
+    const session = await connect(server.address!, { alpn: "quic-test", servername, ca: [Buffer.from(tls.cert)] });
+    try {
+      expect(await session.opened).toMatchObject({ validationErrorCode: undefined, validationErrorReason: undefined });
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+test.each([
+  ["127.0.0.2", "IP address mismatch"],
+  ["::2", "IP address mismatch"],
+  ["example.com", "Hostname mismatch"],
+])("a client rejects servername %s when the certificate does not name it", async (servername, reason) => {
+  await using server = await listen(ignoreErrors, {
+    sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+    alpn: ["quic-test"],
+  });
+  const session = await connect(server.address!, { alpn: "quic-test", servername, ca: [Buffer.from(tls.cert)] });
+  ignoreErrors(session);
+  try {
+    await expect(session.opened).rejects.toThrow(`Peer certificate validation failed: ${reason}`);
+  } finally {
+    session.destroy();
+  }
 });

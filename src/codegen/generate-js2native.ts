@@ -88,6 +88,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "postgres.rs": "sql_jsc/postgres.rs",
   "runtime/dns_jsc/dns.rs": "runtime/dns_jsc/dns.rs",
   "runtime/node/types.rs": "runtime/node/types.rs",
+  "runtime/socket/pending_writes.rs": "runtime/socket/pending_writes.rs",
   "runtime/socket/socket.rs": "runtime/socket/socket.rs",
   "runtime/timer/Timer.rs": "runtime/timer/Timer.rs",
   "runtime/webcore/ByteStream.rs": "runtime/webcore/ByteStream.rs",

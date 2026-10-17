@@ -735,6 +735,11 @@ impl Builtin {
                         ));
                         return Some(Yield::Failed(cmd));
                     }
+                    if redirect.stdin()
+                        && crate::shell::util::throw_if_body_not_in_memory(global, body).is_err()
+                    {
+                        return Some(Yield::Failed(cmd));
+                    }
                     let original_blob = body.use_();
                     if !redirect.stdin() && !redirect.stdout() && !redirect.stderr() {
                         drop(original_blob);

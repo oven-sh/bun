@@ -155,6 +155,8 @@ pub struct VirtualMachine {
     main: bun_ptr::RawSlice<u8>,
     pub main_is_html_entrypoint: bool,
     pub main_resolved_path: bun_core::String,
+    /// The one attempt to fill `main_resolved_path` ran. An empty path then means `main` cannot be opened.
+    pub main_resolved_path_tried: bool,
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
     pub overridden_main: crate::strong::Optional,
@@ -3446,6 +3448,7 @@ impl VirtualMachine {
         self.has_loaded = false;
         self.set_main(entry_path);
         self.main_resolved_path = bun_core::String::EMPTY;
+        self.main_resolved_path_tried = false;
         self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
         self.overridden_main.deinit();
 
@@ -5666,6 +5669,7 @@ impl VirtualMachine {
         self.has_loaded = false;
         self.set_main(entry_path);
         self.main_resolved_path = bun_core::String::EMPTY;
+        self.main_resolved_path_tried = false;
         self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
         self.overridden_main.deinit();
 
@@ -5946,6 +5950,7 @@ impl VirtualMachine {
         self.set_main(b"");
         self.main_hash = 0;
         self.main_resolved_path = bun_core::String::EMPTY;
+        self.main_resolved_path_tried = false;
         self.unhandled_error_counter = 0;
 
         let old_global = self.global;

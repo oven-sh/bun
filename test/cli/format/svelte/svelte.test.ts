@@ -1,7 +1,7 @@
 // Svelte components: a port of prettier-plugin-svelte 4.1.1, which oxfmt calls too, and of the parser of Svelte 5.57.
 // cases.json: inputs with what Prettier 3.9.9 with the plugin, and oxfmt 0.72, print for them. It is made by
 // test/cli/format/oracle/svelte/make-fixtures.ts. A case without an output is one that they refuse.
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10,6 +10,9 @@ import cases from "./cases.json";
 import { forOxfmt } from "./for-oxfmt";
 
 afterAll(endChildren);
+// `bun test` gives a test 5 seconds. A debug build takes up to a second to start `bun fmt`, and most of a minute for what
+// is nested 10,000 deep. No lane of CI has a debug build.
+if (isDebug) setDefaultTimeout(120_000);
 
 async function formatIn(cwd: string, names: string[], flags: string[] = ["."]) {
   await using proc = spawn({
@@ -54,17 +57,19 @@ const plugin = (version: string) => ({
 
 /**
  * `bun fmt` takes far longer to start than to format a component. So the texts of many tests are formatted in one run
- * for each configuration, which starts with the first test that asks for it. A test adds its texts while the tests are
- * collected, and looks at what became of them, and at what was said about them, when it runs.
+ * for each configuration. A test adds its texts while the tests are collected. When it runs, it looks at what became of
+ * them and at what was said about them, in a run that has them: the run of all the texts, which the first tests of the
+ * file start, or else one of only its own, as when `-t` leaves those tests out.
  */
 function sharedRun(flags: string[] = []) {
   const texts: string[] = [];
   const name = (index: number) => `${index}.svelte`;
-  const runs = new Map<string, ReturnType<typeof run>>();
+  // By the configuration, the runs that there are. Each has the texts from `first` up to `end`.
+  const runs = new Map<string, { first: number; end: number; done: ReturnType<typeof run> }[]>();
 
-  async function run(config: Record<string, string>) {
-    const names = texts.map((_, index) => name(index));
-    const files = Object.fromEntries(texts.map((text, index) => [names[index], text]));
+  async function run(config: Record<string, string>, first: number, end: number) {
+    const names = texts.slice(first, end).map((_, index) => name(first + index));
+    const files = Object.fromEntries(names.map((it, index) => [it, texts[first + index]]));
     const { stdout, stderr, exitCode, files: after } = await format({ ...config, ...files }, names, flags);
     // By the name of a file, what is said about it: a message ends with where it is and an empty line. By "", the rest.
     const said = new Map<string, string>();
@@ -72,14 +77,17 @@ function sharedRun(flags: string[] = []) {
       const about = /\n {3,4}at (\d+\.svelte)(:\d+:\d+)?\n\n$/.exec(message)?.[1] ?? "";
       said.set(about, (said.get(about) ?? "") + message);
     }
-    return { stdout, exitCode, files: after, said };
+    return { stdout, exitCode, files: new Map(names.map((it, index) => [it, after[index]])), said };
   }
 
-  /** The run with `config`, which the first to ask for it starts. */
-  function runWith(config: Record<string, string>) {
+  /** With `config`: a run that has the texts from `first` up to `end`, or a new one of only those. */
+  function runWith(config: Record<string, string>, first: number, end: number) {
     const key = JSON.stringify(config);
-    if (!runs.has(key)) runs.set(key, run(config));
-    return runs.get(key)!;
+    const sameConfig = runs.get(key) ?? [];
+    runs.set(key, sameConfig);
+    let found = sameConfig.find(it => it.first <= first && end <= it.end);
+    if (!found) sameConfig.push((found = { first, end, done: run(config, first, end) }));
+    return found.done;
   }
 
   return {
@@ -91,17 +99,14 @@ function sharedRun(flags: string[] = []) {
       return {
         names,
         async under(config: Record<string, string>) {
-          const { files, said } = await runWith(config);
-          return {
-            stderr: names.map(it => said.get(it) ?? "").join(""),
-            files: files.slice(first, first + names.length),
-          };
+          const { files, said } = await runWith(config, first, first + names.length);
+          return { stderr: names.map(it => said.get(it) ?? "").join(""), files: names.map(it => files.get(it)) };
         },
       };
     },
-    /** With a configuration: what the run printed that is about no file, and how it ended. */
+    /** With a configuration: what the run of all the texts printed that is about no file, and how it ended. */
     async rest(config: Record<string, string>) {
-      const { stdout, exitCode, said } = await runWith(config);
+      const { stdout, exitCode, said } = await runWith(config, 0, texts.length);
       return { stdout, stderr: said.get("") ?? "", exitCode };
     },
   };
@@ -154,6 +159,7 @@ function sameOrDifferent(added: [before: string, after: string][]) {
 
 describe.concurrent("Svelte", () => {
   // The rows of the tables below, in one run for each configuration: one that formats, and one with `--debug-check`.
+  // These tests are the first, and they start the runs of all the rows.
   const inOneRun = sharedRun();
   const inOneCheck = sharedRun(["--debug-check"]);
 
@@ -779,14 +785,15 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     ["{#if a\n/* c */\n}d{/if}\n", "{#if a\n/* c */\n}d{/if}\n", "{#if a}d{/if}\n"],
     ["<p on:click={a // b\n}>c</p>\n", "<p\n  on:click={a // b\n  }\n>\n  c\n</p>\n", "<p on:click={a}>c</p>\n"],
   ];
-  const [commentsBefore, commentsAfter] = [0, 1].map(which => inOneRun.add(comments.map(it => it[which])));
-  const commentsChecked = inOneCheck.add(comments.map(it => it[0]));
+  // Each text, and what it is formatted to, which stays.
+  const withComments = inOneRun.add(comments.flatMap(it => [it[0], it[1]]));
+  const withCommentsChecked = inOneCheck.add(comments.map(it => it[0]));
   test.each(everyConfig)("no comment is lost: %j", async config => {
     for (const [, after, ofPlugin] of comments) expect(after).not.toBe(ofPlugin);
-    const expected = { stderr: "", files: comments.map(it => it[1]) };
-    expect(
-      await Promise.all([commentsBefore.under(config), commentsAfter.under(config), commentsChecked.under(config)]),
-    ).toEqual([expected, expected, { stderr: "", files: comments.map(it => it[0]) }]);
+    expect(await Promise.all([withComments.under(config), withCommentsChecked.under(config)])).toEqual([
+      { stderr: "", files: comments.flatMap(it => [it[1], it[1]]) },
+      { stderr: "", files: comments.map(it => it[0]) },
+    ]);
   });
 
   // By what is wrong with the plugin: the text, what Bun makes of it, and what the plugin makes of it. `null`: it refuses it.
@@ -1495,14 +1502,13 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     ],
   };
   describe.each(Object.entries({ ...damaged, ...strict }))("%s", (_, rows) => {
-    const [before, after] = ([0, 1] as const).map(which => inOneRun.add(rows.map(it => it[which])));
+    // Each text, and what it is formatted to, which stays.
+    const written = inOneRun.add(rows.flatMap(it => [it[0], it[1]]));
     const checked = inOneCheck.add(rows.map(it => it[0]));
 
     test.each(everyConfig)("%j", async config => {
-      const expected = { stderr: "", files: rows.map(it => it[1]) };
-      expect(await Promise.all([before.under(config), after.under(config), checked.under(config)])).toEqual([
-        expected,
-        expected,
+      expect(await Promise.all([written.under(config), checked.under(config)])).toEqual([
+        { stderr: "", files: rows.flatMap(it => [it[1], it[1]]) },
         { stderr: "", files: rows.map(it => it[0]) },
       ]);
     });
@@ -1602,14 +1608,14 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ],
       ["<pre>{(\n  b // c\n)}</pre>\n", "<pre>{b // c\n  }</pre>\n", "<pre>{b // c\n  }</pre>\n", null],
     ];
-    const [first, second, third] = ([0, 1, 2] as const).map(which => inOneRun.add(rows.map(it => it[which])));
+    const written = inOneRun.add(rows.flatMap(it => [it[0], it[1], it[2]]));
     const checked = inOneCheck.add(rows.map(it => it[0]));
 
     test.each(everyConfig)("%j", async config => {
-      const printed = (which: 0 | 1 | 2) => ({ stderr: "", files: rows.map(it => it[which]) });
-      expect(
-        await Promise.all([first.under(config), second.under(config), third.under(config), checked.under(config)]),
-      ).toEqual([printed(1), printed(2), printed(2), printed(0)]);
+      expect(await Promise.all([written.under(config), checked.under(config)])).toEqual([
+        { stderr: "", files: rows.flatMap(it => [it[1], it[2], it[2]]) },
+        { stderr: "", files: rows.map(it => it[0]) },
+      ]);
     });
 
     const seen = rows.filter(it => it[3] !== null);
@@ -1825,13 +1831,13 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         '<p\n  style:background="linear-gradient(red, orange, yellow, green, blue, indigo,\n  violet, white)"\n>\n  y\n</p>\n',
       ],
     ];
-    const [first, second] = ([0, 1] as const).map(which => inOneRun.add(right.map(it => it[which])));
-    const [firstChecked, secondChecked] = ([0, 1] as const).map(which => inOneCheck.add(right.map(it => it[which])));
+    const both = right.flatMap(it => [it[0], it[1]]);
+    const [written, checked] = [inOneRun.add(both), inOneCheck.add(both)];
     test("says nothing about what is right", async () => {
-      const printed = (which: (row: (typeof right)[0]) => string) => ({ stderr: "", files: right.map(which) });
-      expect(
-        await Promise.all([first.under({}), second.under({}), firstChecked.under({}), secondChecked.under({})]),
-      ).toEqual([printed(it => it[1]), printed(it => it[2] ?? it[1]), printed(it => it[0]), printed(it => it[1])]);
+      expect(await Promise.all([written.under({}), checked.under({})])).toEqual([
+        { stderr: "", files: right.flatMap(it => [it[1], it[2] ?? it[1]]) },
+        { stderr: "", files: both },
+      ]);
     });
 
     // What a word or a string is does not depend on the `,`, the `;` or the line break next to it, which change.
@@ -1988,12 +1994,12 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     "<pre><i>{#await b} {:then c} {/await}</i></pre>\n",
   ];
   // The control: elsewhere it is nothing.
-  const awaits = [inOneRun.add(inPre), inOneRun.add(["<p>{#await b} {:then c} {:catch d} {/await}</p>\n"])];
+  const awaits = inOneRun.add([...inPre, "<p>{#await b} {:then c} {:catch d} {/await}</p>\n"]);
   test("in <pre> a part of an await block that has white space in it has something in it", async () => {
-    expect(await Promise.all(awaits.map(it => it.under({})))).toEqual([
-      { stderr: "", files: inPre },
-      { stderr: "", files: ["<p>{#await b catch d}{/await}</p>\n"] },
-    ]);
+    expect(await awaits.under({})).toEqual({
+      stderr: "",
+      files: [...inPre, "<p>{#await b catch d}{/await}</p>\n"],
+    });
   });
 
   test("a start tag that ends with a comment at the end of a line has its `>` on the next, with bracketSameLine too", async () => {

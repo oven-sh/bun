@@ -1,5 +1,6 @@
 use core::cell::{Cell, RefCell};
 use core::ops::Range;
+use std::borrow::Cow;
 use std::io::Write as _;
 use std::sync::Arc;
 
@@ -1428,6 +1429,13 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
     let member_folders: Vec<Box<[u8]>> = (0..after.packages.len())
         .filter_map(|id| workspace_node_modules(after, id as PackageID))
         .collect();
+    let new_member_folders: Vec<(Box<[u8]>, usize)> = (0..new.folders.len())
+        .filter(|&new_idx| new.trees[new_idx].parent == 0 && is_member_tree(after, new_idx))
+        .filter_map(|new_idx| {
+            let folder = workspace_node_modules(after, tree_owner(after, new_idx))?;
+            Some((folder, new_idx))
+        })
+        .collect();
     let mut plan = Plan::default();
     for old_idx in 0..old.folders.len() {
         let old_path = old.path(old_idx);
@@ -1459,8 +1467,28 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
                 continue;
             }
         }
+        // The path of a tree below a workspace starts with the workspace's name, as in
+        // `node_modules/two/node_modules/y/node_modules`. The workspace can have another name by now.
+        let top_now: Option<&[u8]> = match old_member_folders.iter().find(|it| it.1 == top) {
+            Some((folder, _)) if member_folders.contains(folder) => {
+                match new_member_folders.iter().find(|it| it.0 == *folder) {
+                    Some(&(_, new_top)) => {
+                        Some(new.path(new_top)).filter(|now| *now != old.path(top))
+                    }
+                    // Nothing is nested in it anymore. The loop below removes what was.
+                    None => continue,
+                }
+            }
+            _ => None,
+        };
+        let path_now = |old_idx: usize| match top_now {
+            Some(top_now) => {
+                Cow::Owned([top_now, &old.path(old_idx)[old.path(top).len()..]].concat())
+            }
+            None => Cow::Borrowed(old.path(old_idx)),
+        };
         let old_expected = old.expected(old_idx);
-        let surviving = new_tree_at(old_path);
+        let surviving = new_tree_at(&path_now(old_idx));
         // A workspace's name is only kept in the root `node_modules`. In a nested one, a package
         // from the registry can have the same name.
         let still_placed = |alias: &[u8]| {
@@ -1474,7 +1502,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
             Some(id) => new.trees[id as usize].parent,
             // The root has no dependencies left, so `new` has no tree for it.
             None if old_idx == 0 => tree::INVALID_ID,
-            None => match new_tree_at(old.path(old.trees[old_idx].parent as usize)) {
+            None => match new_tree_at(&path_now(old.trees[old_idx].parent as usize)) {
                 Some(parent_id) => parent_id,
                 None => continue,
             },
@@ -1910,8 +1938,10 @@ fn remove_from_older_places(
             let Some(needs) = lockfile.packages.items_dependencies().get(package as usize) else {
                 continue;
             };
-            let own = open_package(&dir, kept.name.slice(buf))
-                .and_then(|kept| kept.open_at(b"node_modules").ok());
+            let Some(kept) = open_package(&dir, kept.name.slice(buf)) else {
+                continue;
+            };
+            let own = kept.open_at(b"node_modules").ok();
             for need in needs.get(deps) {
                 let found = (only_older.iter()).find(|(dep, _)| dep.name_hash == need.name_hash);
                 if let Some(&(dep, resolved)) = found

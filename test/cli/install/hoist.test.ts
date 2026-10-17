@@ -2170,47 +2170,75 @@ test.concurrent("a nested copy that stays keeps no dependency that it has a copy
   expect(await run(dir, "--no-install", "-p", "require('n')")).toBe("1.1.0\n");
 });
 
-// `pk/two/node_modules/y` is judged by what bun.lock now places in that folder, whatever the workspace is called.
-describe.concurrent("the copy in the node_modules of a workspace", () => {
-  async function project() {
-    const server = await serveGraph({ y: { "1.0.0": {}, "2.0.0": {} } });
-    const tmp = tempDir("hoist-renamed-workspace", {
+// What is in `pk/two/node_modules` is judged by what bun.lock now places in that folder, whatever the workspace is called.
+describe.concurrent("the copies in the node_modules of a workspace", () => {
+  const json = (name: string, dependencies: object) => JSON.stringify({ name, dependencies });
+
+  /** Installs, writes `edits`, installs again. Returns what is at the top and in `pk/two` before and after. */
+  async function edited(members: Record<string, string>, edits: Record<string, string>) {
+    using server = await serveGraph({
+      y: { "1.0.0": {}, "2.0.0": {} },
+      nn: { "1.0.0": { dependencies: { y: "^1.0.0" } }, "2.0.0": {} },
+    });
+    using tmp = tempDir("hoist-renamed-workspace", {
       "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
       "package.json": JSON.stringify({ name: "app", workspaces: ["pk/*"] }),
-      "pk/one/package.json": JSON.stringify({ name: "one", dependencies: { y: "1.0.0" } }),
-      "pk/two/package.json": JSON.stringify({ name: "two", dependencies: { y: "2.0.0" } }),
+      ...members,
     });
     const dir = String(tmp);
     await run(dir, "install");
-    expect(layout(dir, "pk/two")).toEqual(["y@1.0.0", "pk/two/y@2.0.0"]);
-    return {
-      dir,
-      [Symbol.dispose]() {
-        tmp[Symbol.dispose]();
-        server[Symbol.dispose]();
-      },
-    };
+    const before = layout(dir, "pk/two");
+    for (const [path, text] of Object.entries(edits)) await write(join(dir, path), text);
+    await run(dir, "install");
+    return { before, after: layout(dir, "pk/two") };
   }
 
-  test("stays if the workspace gets another name", async () => {
-    using app = await project();
-    await write(join(app.dir, "pk/two/package.json"), JSON.stringify({ name: "zwei", dependencies: { y: "2.0.0" } }));
-    await run(app.dir, "install");
-    expect(layout(app.dir, "pk/two")).toEqual(["y@1.0.0", "pk/two/y@2.0.0"]);
+  const own = {
+    "pk/one/package.json": json("one", { y: "1.0.0" }),
+    "pk/two/package.json": json("two", { y: "2.0.0" }),
+  };
+  test("one stays if the workspace gets another name", async () => {
+    expect(await edited(own, { "pk/two/package.json": json("zwei", { y: "2.0.0" }) })).toEqual({
+      before: ["y@1.0.0", "pk/two/y@2.0.0"],
+      after: ["y@1.0.0", "pk/two/y@2.0.0"],
+    });
+  });
+  test("one goes if the workspace gets another name and the version at the top", async () => {
+    expect(await edited(own, { "pk/two/package.json": json("zwei", { y: "1.0.0" }) })).toEqual({
+      before: ["y@1.0.0", "pk/two/y@2.0.0"],
+      after: ["y@1.0.0"],
+    });
+  });
+  test("one goes if the folder is no workspace anymore", async () => {
+    expect(await edited(own, { "package.json": JSON.stringify({ name: "app", workspaces: ["pk/one"] }) })).toEqual({
+      before: ["y@1.0.0", "pk/two/y@2.0.0"],
+      after: ["y@1.0.0"],
+    });
   });
 
-  test("goes if the workspace gets another name and the version at the top", async () => {
-    using app = await project();
-    await write(join(app.dir, "pk/two/package.json"), JSON.stringify({ name: "zwei", dependencies: { y: "1.0.0" } }));
-    await run(app.dir, "install");
-    expect(layout(app.dir, "pk/two")).toEqual(["y@1.0.0"]);
+  // `pk/two/node_modules/nn/node_modules/y` is one level deeper.
+  const deeper = {
+    "pk/one/package.json": json("one", { nn: "2.0.0", y: "2.0.0" }),
+    "pk/three/package.json": json("three", { y: "1.0.0" }),
+    "pk/two/package.json": json("two", { nn: "1.0.0" }),
+  };
+  const nested = ["nn@2.0.0", "y@2.0.0", "pk/two/nn@1.0.0", "pk/two/nn/y@1.0.0"];
+  test("one below a package stays if another workspace takes the name", async () => {
+    const edits = {
+      "pk/two/package.json": json("zwei", { nn: "1.0.0" }),
+      "pk/three/package.json": json("two", { y: "1.0.0" }),
+    };
+    expect(await edited(deeper, edits)).toEqual({ before: nested, after: nested });
   });
-
-  test("goes if the folder is no workspace anymore", async () => {
-    using app = await project();
-    await write(join(app.dir, "package.json"), JSON.stringify({ name: "app", workspaces: ["pk/one"] }));
-    await run(app.dir, "install");
-    expect(layout(app.dir, "pk/two")).toEqual(["y@1.0.0"]);
+  test("one below a package goes if the workspace gets another name and the version is at the top", async () => {
+    const edits = {
+      "pk/two/package.json": json("zwei", { nn: "1.0.0" }),
+      "pk/one/package.json": json("one", { nn: "2.0.0", y: "1.0.0" }),
+    };
+    expect(await edited(deeper, edits)).toEqual({
+      before: nested,
+      after: ["nn@2.0.0", "y@1.0.0", "pk/two/nn@1.0.0"],
+    });
   });
 });
 

@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { isASAN } from "harness";
+import { isASAN, isDebug } from "harness";
 
-const asanIsSlowMultiplier = isASAN ? 0.2 : 1;
-const count = Math.floor(10000 * asanIsSlowMultiplier);
+const slowBuildMultiplier = isDebug ? 0.02 : isASAN ? 0.2 : 1;
+const count = Math.floor(10000 * slowBuildMultiplier);
 
 test(`load the same file ${count} times`, async () => {
   const meta = {

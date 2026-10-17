@@ -235,8 +235,13 @@ mod _impl {
                 .stream
                 .with_mut(|s| s.init(pledged_src_size, dictionary));
             if err.is_error() {
-                CompressionStream::<Self>::emit_error(self, global, this_value, err);
-                return Ok(JSValue::FALSE);
+                return Err(CompressionStream::<Self>::init_failed(
+                    self,
+                    global,
+                    this_value,
+                    err,
+                    err.message(),
+                ));
             }
 
             let Some(mut params_) = init_params_array_value.as_array_buffer(global) else {
@@ -261,22 +266,17 @@ mod _impl {
                     .stream
                     .with_mut(|s| s.set_params(c_uint::try_from(i).expect("int cast"), x));
                 if err_.is_error() {
-                    self.stream.with_mut(|s| s.close());
-                    // The Context is torn down (`mode` is `NONE`); reject any
-                    // further operation the way `close()` does.
-                    self.closed.set(true);
-                    // SAFETY: is_error() ⇔ msg is non-null; it points at a NUL-terminated C string.
-                    let msg = unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes();
-                    return Err(global
-                        .err(
-                            jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
-                            format_args!("{}", bstr::BStr::new(msg)),
-                        )
-                        .throw());
+                    return Err(CompressionStream::<Self>::init_failed(
+                        self,
+                        global,
+                        this_value,
+                        err_,
+                        err_.message(),
+                    ));
                 }
             }
 
-            Ok(JSValue::TRUE)
+            Ok(JSValue::UNDEFINED)
         }
 
         #[bun_jsc::host_fn(method)]

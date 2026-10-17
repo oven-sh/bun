@@ -2140,6 +2140,34 @@ test("runtime transpiler keeps the call after an import.meta.hot method that is 
   });
 });
 
+// With HMR off, an `import.meta.hot` method that is not called is `undefined`, and it must transpile like `undefined`.
+test.each([false, true])(
+  "an import.meta.hot method that is not called transpiles like undefined (minify.syntax: %p)",
+  syntax => {
+    const transpiler = new Bun.Transpiler({ loader: "ts", minify: { syntax } });
+    const contexts = [
+      "const f = METHOD; init(); start();",
+      "sink(METHOD); after();",
+      "sink(METHOD, nested()); after();",
+      "if (typeof METHOD !== 'function') { setup(); } init();",
+      "function a() { return METHOD; } b(); c();",
+      "const f = METHOD; new Foo(); y(); z();",
+      "table[METHOD](); after();",
+      "[METHOD, noop][1](fn); after();",
+      "(METHOD || fallback)(); after();",
+      "(cond ? METHOD : fallback)(); after();",
+      "METHOD ?? init(); start();",
+      "export const value = METHOD; export function go() { init(); start(); }",
+    ];
+    const methods = ["accept", "dispose", "decline", "prune", "invalidate", "on", "off", "send"];
+    const transpile = (value: string) =>
+      contexts.map(context => transpiler.transformSync(context.replaceAll("METHOD", value)));
+    expect(methods.map(method => transpile(`import.meta.hot.${method}`))).toEqual(
+      methods.map(() => transpile("undefined")),
+    );
+  },
+);
+
 // `Bun.Transpiler` prints through the same path as `bun build --no-bundle`.
 // The exports keep their names and take every one-character name the minifier
 // can produce, so the import and the parameter each need a longer name.

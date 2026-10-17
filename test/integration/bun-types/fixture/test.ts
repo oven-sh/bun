@@ -73,6 +73,8 @@ describe("bun:test", () => {
     expect(Math.PI).toBeGreaterThan(3n);
     expect(Math.PI).toBeGreaterThanOrEqual(3.14);
     expect(Math.PI).toBeGreaterThanOrEqual(3n);
+    expect(Math.PI).toBeWithin(3, 4);
+    expect(3n).toBeWithin(3n, 4);
     expect(NaN).toBeNaN();
     expect(null).toBeNull();
     expect(undefined).toBeUndefined();

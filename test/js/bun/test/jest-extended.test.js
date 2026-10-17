@@ -358,6 +358,25 @@ describe("jest-extended", () => {
     expect(Infinity).not.toBeWithin(-Infinity, Infinity);
   });
 
+  test("toBeWithin() compares a BigInt the way >= and < do", () => {
+    expect(1n).toBeWithin(0, 5);
+    expect(0n).toBeWithin(0, 5);
+    expect(5n).not.toBeWithin(0, 5);
+    expect(-1n).not.toBeWithin(0, 5);
+    expect(4n).toBeWithin(0.5, 4.5);
+    expect(1n).toBeWithin(0n, 5n);
+    expect(1).toBeWithin(0n, 5n);
+    expect(4.5).toBeWithin(0n, 5);
+    expect(5).not.toBeWithin(0, 5n);
+    expect(2n ** 70n).toBeWithin(-Infinity, Infinity);
+    expect(2n ** 70n).toBeWithin(2n ** 70n, 2n ** 70n + 1n);
+    expect(2n ** 70n).not.toBeWithin(0, Number.MAX_SAFE_INTEGER);
+    expect(1n).not.toBeWithin(NaN, 5);
+    expect(NaN).not.toBeWithin(0n, 5n);
+    expect(() => expect(1n).not.toBeWithin(0, 5)).toThrow("toBeWithin");
+    expect(() => expect(5n).toBeWithin(0, 5)).toThrow("toBeWithin");
+  });
+
   test("toBeEven()", () => {
     expect(1).not.toBeEven();
     expect(2).toBeEven();

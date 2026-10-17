@@ -257,10 +257,14 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     writeContinue() {
       writeToSocket("HTTP/1.1 100 Continue\r\n\r\n");
     },
-    writeInformational(chunk, encoding) {
-      // _writeRaw hands the fully-rendered 1xx block here (writeEarlyHints /
-      // writeProcessing / writeInformation all route through it).
-      if (!socket.writableEnded) socket.write(chunk, encoding);
+    writeInformational(chunk, encoding, callback) {
+      // Raw bytes of _writeRaw(): a 1xx block, or the data of _send(). Like the native handle, -1 is for a socket that is gone.
+      if (this.aborted || socket.destroyed) return -1;
+      if (socket.writableEnded) {
+        if (typeof callback === "function") process.nextTick(callback);
+        return true;
+      }
+      return socket.write(chunk, encoding, callback) !== false;
     },
     writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs) {
       const originalStatusCode = statusCode;

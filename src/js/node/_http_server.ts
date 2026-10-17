@@ -65,6 +65,7 @@ const {
   kOutHeaders,
   onDataIncomingMessage,
   http1ServerPipeline,
+  serverResponseMethods,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
@@ -3018,10 +3019,7 @@ function advanceResponsePipeline(server, socket) {
         const op = ops[i];
         const kind = op[0];
         if (kind === "raw") {
-          // Buffered 1xx bytes: route through the same AsyncSocket buffer the
-          // response's own writeHead/end use so they precede the final response.
-          handle.writeInformational(op[1], op[2]);
-          if (typeof op[3] === "function") process.nextTick(op[3]);
+          if (!writeRawToHandle(res, handle, op[1], op[2], op[3])) hitBackpressure = true;
         } else if (kind === "write") {
           if (ServerResponsePrototypeWrite.$call(res, op[1], op[2], op[3]) === false) hitBackpressure = true;
         } else {
@@ -3097,21 +3095,35 @@ function accountQueuedHeaderBytes(res, queued) {
   addPipelineOutgoingData(queued, bytes);
 }
 
+// Like Node's write_(), the implicit head is stored before the throw: headersSent is true behind it.
+function refuseBodyChunk(res, fromEnd) {
+  if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
+    if (fromEnd) res[kImplicitHeaderFromEnd] = true;
+    try {
+      res._implicitHeader();
+    } finally {
+      if (fromEnd) res[kImplicitHeaderFromEnd] = false;
+    }
+  }
+  return $ERR_HTTP_BODY_NOT_ALLOWED();
+}
+
 function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
   callWriteHeadIfObservable(res, res[headerStateSymbol]);
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
     updateHasBody(res, res.statusCode);
   }
-  accountQueuedHeaderBytes(res, queued);
   if (!res._hasBody) {
     if (chunk && res[kRejectNonStandardBodyWrites]) {
-      throw $ERR_HTTP_BODY_NOT_ALLOWED();
+      throw refuseBodyChunk(res, false);
     }
+    accountQueuedHeaderBytes(res, queued);
     // Node's write_(): a response that cannot have a body discards the write, calls back and returns true.
     queued.ops.push(["write", undefined, encoding, undefined]);
     if (typeof callback === "function") process.nextTick(callback);
     return true;
   }
+  accountQueuedHeaderBytes(res, queued);
   queued.ops.push(["write", chunk, encoding, callback]);
   if (chunk) {
     const bytes = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
@@ -3133,13 +3145,13 @@ function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
     updateHasBody(res, res.statusCode);
   }
-  accountQueuedHeaderBytes(res, queued);
   if (chunk && !res._hasBody) {
     if (res[kRejectNonStandardBodyWrites]) {
-      throw $ERR_HTTP_BODY_NOT_ALLOWED();
+      throw refuseBodyChunk(res, true);
     }
     chunk = undefined;
   }
+  accountQueuedHeaderBytes(res, queued);
   queued.ops.push(["end", chunk, encoding, callback]);
   if (chunk) {
     const bytes = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
@@ -3356,20 +3368,63 @@ Object.defineProperty(ServerResponse.prototype, "headersSent", {
   },
 });
 
+// Writes a 1xx block or the data of _send() through the handle of the response, so the bytes keep their place among its own.
+function writeRawToHandle(res, handle, chunk, encoding, callback) {
+  // Native handle: the count of bytes that wait, or -1 for a socket that is gone. Fallback handle: what its socket.write() returned.
+  const result = handle.writeInformational(chunk, encoding, callback);
+  if (result === true) return true;
+  if (result !== false) {
+    // Like Node's _writeRaw(): a destroyed socket takes nothing, and nothing calls back.
+    if (result < 0) return false;
+    if (result === 0) {
+      // Nothing waits, so the callbacks of earlier writes are due too. They run first.
+      if (res[kPendingCallbacks].length !== 0) res._callPendingCallbacks();
+      if (typeof callback === "function") process.nextTick(callback);
+      return true;
+    }
+    // Like write(): the callback waits for the bytes.
+    if (typeof callback === "function") res[kPendingCallbacks].push(callback);
+  }
+  handle.onwritable ??= allowWritesToContinue.bind(res);
+  return false;
+}
+
 ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
-  if (!this[kHandle]) {
+  const handle = this[kHandle];
+  if (!handle) {
     // Standalone path: OutgoingMessage._writeRaw buffers to outputData while
     // no socket is assigned yet (kSocket is null) and flushes the buffer
     // ahead of the chunk once one is - writing through the auto-creating
     // `socket` getter here would drop the bytes into a FakeSocket.
     return OutgoingMessagePrototype._writeRaw.$apply(this, arguments);
   }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L408-L411
+  if (typeof encoding === "function") {
+    callback = encoding;
+    encoding = null;
+  }
+  // In Node.js the write() of the socket throws this: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/writable.js#L462-L471
+  if (encoding && (encoding === "buffer" ? typeof chunk === "string" : !Buffer.isEncoding(encoding))) {
+    throw $ERR_UNKNOWN_ENCODING(encoding);
+  }
+  // The native handle knows fewer names than Buffer does ("utf-16le"), and writes utf8 for the others.
+  if (typeof chunk === "string" && encoding && encoding !== "utf8" && encoding !== "latin1" && encoding !== "ascii") {
+    chunk = Buffer.from(chunk, encoding);
+    encoding = null;
+  }
+  if (this.finished) {
+    // Node.js writes such bytes behind the message. Nothing goes out here: the callback runs behind 'finish', with an error for bytes.
+    const lost = chunk ? chunk.length !== 0 : false;
+    if (typeof callback === "function") {
+      const error = lost ? $ERR_STREAM_WRITE_AFTER_END() : undefined;
+      if (this.writableFinished) process.nextTick(callback, error);
+      else this.once("finish", () => process.nextTick(callback, error));
+    }
+    return !lost;
+  }
   const queued = this[kPipelinedQueuedState];
   if (queued !== undefined) {
-    // Queued pipelined response: like Node.js (which buffers to outputData
-    // while no socket is assigned and flushes on assignSocket), buffer the
-    // raw 1xx bytes and write them ahead of the buffered body once this
-    // response reaches the head of the pipeline.
+    // Queued pipelined response: like Node.js's outputData, the bytes are kept and written in their place at its turn.
     queued.ops.push(["raw", chunk, encoding, callback]);
     const bytes = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
     queued.bytes += bytes;
@@ -3377,12 +3432,7 @@ ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
     addPipelineOutgoingData(queued, bytes);
     return queued.bytes < this.writableHighWaterMark;
   }
-  // Write through the response handle's AsyncSocket buffer (same path as
-  // writeHead/end) so 1xx lines share ordering with the final response bytes;
-  // socket.write() would land in the socket handle's separate stream buffer.
-  this[kHandle].writeInformational(chunk, encoding);
-  if (typeof callback === "function") process.nextTick(callback);
-  return true;
+  return writeRawToHandle(this, handle, chunk, encoding, callback);
 };
 
 ServerResponse.prototype.writeEarlyHints = function (hints, cb) {
@@ -3534,7 +3584,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
   if (chunk && !this._hasBody) {
     if (this[kRejectNonStandardBodyWrites]) {
-      throw $ERR_HTTP_BODY_NOT_ALLOWED();
+      throw refuseBodyChunk(this, true);
     } else {
       // node.js just ignores the write in this case
       chunk = undefined;
@@ -3744,7 +3794,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   }
   if (chunk && !this._hasBody) {
     if (this[kRejectNonStandardBodyWrites]) {
-      throw $ERR_HTTP_BODY_NOT_ALLOWED();
+      throw refuseBodyChunk(this, false);
     } else {
       // node.js just ignores the write in this case
       chunk = undefined;
@@ -3788,7 +3838,9 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     result = handle.write(chunk, encoding, onWritable, strict);
   }
 
-  if (result < 0 && hasBody) {
+  if (result >= 0) {
+    this._callPendingCallbacks();
+  } else if (hasBody) {
     if (callback) {
       // The write was buffered due to backpressure.
       // We need to defer the callback until the write actually goes through.
@@ -3796,8 +3848,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     }
     return false;
   }
-
-  this._callPendingCallbacks();
+  // Else a response with no body, behind a raw write whose bytes wait: the callbacks that wait stay.
   if (callback) {
     // A write callback reports that its bytes reached the socket: uncork them before the callback can destroy the response.
     handle.flushHeaders();
@@ -3840,6 +3891,8 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
 // advanceResponsePipeline replays buffered ops through these; patched res.write/res.end (compression middleware) must not see them again.
 const ServerResponsePrototypeWrite = ServerResponse.prototype.write;
 const ServerResponsePrototypeEnd = ServerResponse.prototype.end;
+serverResponseMethods.write = ServerResponsePrototypeWrite;
+serverResponseMethods.end = ServerResponsePrototypeEnd;
 
 const kBytesBuffered = Symbol("kBytesBuffered");
 const kAccountingFlushScheduled = Symbol("kAccountingFlushScheduled");
@@ -3955,35 +4008,23 @@ Object.defineProperty(ServerResponse.prototype, "closed", {
   },
 });
 
+// Node's _send(): the stored head, then _writeRaw(). https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L374-L397
 ServerResponse.prototype._send = function (data, encoding, callback, _byteLength) {
-  const handle = this[kHandle];
-  if (!handle) {
+  if (!this[kHandle]) {
     return OutgoingMessagePrototype._send.$apply(this, arguments);
   }
 
-  const strict = strictContentLength(this, this[headerStateSymbol], false);
-  if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
-    handle.cork(() => {
-      const renderedHeaders = renderNativeHeaders(this);
-      try {
-        handle.writeHead(
-          this[kSnapshotStatusCode] ?? this.statusCode,
-          this[kSnapshotStatusMessage] ?? this.statusMessage,
-          renderedHeaders,
-          renderedAutoHeaders,
-          renderedKeepAliveSecs,
-        );
-      } finally {
-        // A throwing writeHead (status validation) must not leave the shared
-        // scratch array marked busy for the rest of the process.
-        releaseRenderedHeaders(renderedHeaders);
-      }
-      this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-      handle.write(data, encoding, callback, strict);
-    });
-  } else {
-    handle.write(data, encoding, callback, strict);
+  if (this[headerStateSymbol] === NodeHTTPHeaderState.assigned) {
+    const queued = this[kPipelinedQueuedState];
+    if (queued === undefined) {
+      ServerResponsePrototypeFlushHeaders.$call(this);
+    } else if (queued.headerBytes === 0) {
+      // A kept write() with no chunk sends the head at the turn. Counted header bytes mean that a kept op sends it.
+      accountQueuedHeaderBytes(this, queued);
+      queued.ops.push(["write", undefined, undefined, undefined]);
+    }
   }
+  return this._writeRaw(data, encoding, callback);
 };
 
 const kSnapshotStatusCode = Symbol("kSnapshotStatusCode");
@@ -4099,8 +4140,8 @@ ServerResponse.prototype.flushHeaders = function () {
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.assigned) this._implicitHeader();
 
   if (this[kPipelinedQueuedState] !== undefined) {
-    // Queued pipelined response: its headers go out when it is assigned the
-    // socket (advanceResponsePipeline) - nothing can be flushed before then.
+    // Queued pipelined response: like Node.js, _send("") keeps the head for the turn of the response.
+    this._send("");
     return;
   }
 
@@ -4131,6 +4172,7 @@ ServerResponse.prototype.flushHeaders = function () {
     this._send("");
   }
 };
+const ServerResponsePrototypeFlushHeaders = ServerResponse.prototype.flushHeaders;
 
 function updateHasBody(response, statusCode) {
   // RFC 2616, 10.2.5:

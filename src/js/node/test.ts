@@ -446,6 +446,18 @@ function reportCancelledFile(
 type FileFlags = (cwd: string) => [beforeTest: string[], afterTest: string[]];
 let fileFlags: FileFlags | undefined;
 
+function isCAStoreFlag(arg: string) {
+  return arg === "--use-system-ca" || arg === "--use-openssl-ca" || arg === "--use-bundled-ca";
+}
+
+function withoutCAStoreFlags(flags: string[]) {
+  const kept: string[] = [];
+  for (let i = 0; i < flags.length; i++) {
+    if (!isCAStoreFlag(flags[i])) kept[kept.length] = flags[i];
+  }
+  return kept;
+}
+
 async function runOneFile(
   file: string,
   opts: ReturnType<typeof validateRunOptions>,
@@ -460,10 +472,21 @@ async function runOneFile(
   // child has those there too. execArgv is then given again after them: the
   // last value of a flag counts, and the option has the last word.
   fileFlags ??= $newRustFunction("jest.rs", "jsNodeTestFileFlags", 1) as FileFlags;
-  const [beforeTest, afterTest] = fileFlags(opts.cwd as string);
+  let [beforeTest, afterTest] = fileFlags(opts.cwd as string);
   const execArgv = opts.execArgv as string[];
   // With -e or -p the child evaluates a script, and what follows `test` is the script's.
-  const evaluates = execArgv.some(arg => ["-e", "-p", "-pe", "--eval", "--print"].includes(arg));
+  let evaluates = false;
+  // Bun takes one CA store flag, so the one of the option is the child's.
+  let choosesCAStore = false;
+  for (let i = 0; i < execArgv.length; i++) {
+    const arg = execArgv[i];
+    evaluates ||= arg === "-e" || arg === "-p" || arg === "-pe" || arg === "--eval" || arg === "--print";
+    choosesCAStore ||= isCAStoreFlag(arg);
+  }
+  if (choosesCAStore) {
+    beforeTest = withoutCAStoreFlags(beforeTest);
+    afterTest = withoutCAStoreFlags(afterTest);
+  }
   const args = evaluates
     ? [process.execPath, ...beforeTest, ...afterTest, ...execArgv, "test", absolute, ...(opts.argv as string[])]
     : [

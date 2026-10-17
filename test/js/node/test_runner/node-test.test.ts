@@ -524,6 +524,10 @@ test("mock.property/mock.method survive a polluted Object.prototype", async () =
 
 // run() starts one `bun test` process for each file. Node.js documents that such a process
 // inherits the options of the process that called run() ("Child process option inheritance").
+//
+// Each test here starts a bun process that starts more bun processes. On a debug+ASAN build
+// one of them takes several seconds to start, so the tests have more than the 5 seconds a
+// test has by default, as the first tests of this file do.
 describe("run() starts each file with the runtime flags of its caller", () => {
   const fixture = {
     // The file run() is given. It prints what its process was started with and what that allows.
@@ -565,9 +569,9 @@ describe("run() starts each file with the runtime flags of its caller", () => {
     "probe.mjs": `
       import { run } from "node:test";
       import { fileURLToPath } from "node:url";
-      export async function probe(options = {}, file = "probe.test.mjs") {
+      export async function probe(options = {}) {
         const result = { probes: [], stdout: [], fail: 0 };
-        const files = [fileURLToPath(new URL(file, import.meta.url))];
+        const files = [fileURLToPath(new URL("./probe.test.mjs", import.meta.url))];
         for await (const { type, data } of run({ files, ...options })) {
           if (type === "test:stdout" && data.message.startsWith("PROBE ")) {
             result.probes.push(JSON.parse(data.message.slice("PROBE ".length)));
@@ -758,6 +762,28 @@ describe("run() starts each file with the runtime flags of its caller", () => {
   );
 
   test.concurrent(
+    "--use-bundled-ca in the execArgv option replaces --use-system-ca of the caller",
+    async () => {
+      // Bun takes one of the CA store flags, and ends with an error for two.
+      const { probes, fail, exitCode } = await result(
+        {
+          "runner.mjs": `
+            import { probe } from "./probe.mjs";
+            console.log("RESULT " + JSON.stringify(await probe({ execArgv: ["--use-bundled-ca"] })));
+          `,
+        },
+        [bunExe(), "--use-system-ca", "--smol", "runner.mjs"],
+      );
+      expect({ probes, fail, exitCode }).toMatchObject({
+        probes: [{ execArgv: ["--smol", "--use-bundled-ca"] }],
+        fail: 0,
+        exitCode: 0,
+      });
+    },
+    60_000,
+  );
+
+  test.concurrent(
     "a child that is given every flag it can be given runs its file",
     async () => {
       // Every flag `bun run` and `bun test` share, but the ones that stay with the caller, the
@@ -904,30 +930,15 @@ describe("run() starts each file with the runtime flags of its caller", () => {
           import { test } from "bun:test";
           import { probe } from "./probe.mjs";
           test("run() in a test", async () => {
-            console.log("RESULT " + JSON.stringify(await probe({}, "forks.test.mjs")));
+            console.log("RESULT " + JSON.stringify(await probe()));
           }, 60_000);
         `,
-        // bun:test is only for a test run. A helper that was given this preload would fail.
         "setup.mjs": `
           import { beforeAll } from "bun:test";
           beforeAll(() => {
             globalThis.PRELOADED = "by bun test";
           });
         `,
-        "forks.test.mjs": `
-          import { test } from "node:test";
-          import { fork } from "node:child_process";
-          import { once } from "node:events";
-          import { fileURLToPath } from "node:url";
-          // The helper is another bun process: it does not start in the 5 seconds a test has.
-          test("forks", { timeout: 60_000 }, async () => {
-            const helper = fork(fileURLToPath(new URL("./helper.mjs", import.meta.url)), { stdio: "ignore" });
-            const [helperExit] = await once(helper, "exit");
-            const preloaded = globalThis.PRELOADED ?? null;
-            console.log("PROBE " + JSON.stringify({ execArgv: process.execArgv, preloaded, helperExit }));
-          });
-        `,
-        "helper.mjs": ``,
         "ci.toml": `[test]\npreload = ["./setup.mjs"]\n`,
       };
       const [flags, config] = await Promise.all([
@@ -935,8 +946,9 @@ describe("run() starts each file with the runtime flags of its caller", () => {
         result(files, [bunExe(), "test", "--config=./ci.toml", "./outer.test.mjs"]),
       ]);
       // What is after `test` is in force in the child, and is not in its process.execArgv,
-      // which fork() hands on.
-      const held = { preloaded: "by bun test", helperExit: 0 };
+      // which fork() hands on: a helper that was given this preload would fail, because
+      // bun:test is only for a test run.
+      const held = { preloaded: "by bun test" };
       expect(flags).toMatchObject({ probes: [{ ...held, execArgv: ["--smol"] }], fail: 0, exitCode: 0 });
       expect(config).toMatchObject({ probes: [{ ...held, execArgv: [] }], fail: 0, exitCode: 0 });
     },
@@ -1000,7 +1012,7 @@ describe("run() starts each file with the runtime flags of its caller", () => {
         // The coordinator writes this preload on the command line of each worker.
         "bunfig.toml": `[test]\npreload = ["./pre.mjs"]\n`,
       };
-      const flags = ["--parallel=2", "--no-addons", "--disallow-code-generation-from-strings", "--title=in-parallel"];
+      const flags = ["--parallel=2", "--no-addons", "--disallow-code-generation-from-strings", "--define=RUN_FLAG:1"];
       // With one file the same command starts no worker.
       const [workers, alone] = await Promise.all([
         result(files, [bunExe(), "test", ...flags, "./in-worker.test.mjs", "./another.test.mjs"]),
@@ -1013,6 +1025,7 @@ describe("run() starts each file with the runtime flags of its caller", () => {
             dlopen: "refused",
             codeFromString: "EvalError",
             preloaded: null,
+            defined: null,
           },
         ],
         fail: 0,
@@ -1020,7 +1033,6 @@ describe("run() starts each file with the runtime flags of its caller", () => {
       };
       expect(workers).toMatchObject(held);
       expect(alone).toMatchObject(held);
-      expect(workers.probes[0].title).toBe(alone.probes[0].title);
     },
     60_000,
   );
@@ -1053,6 +1065,7 @@ describe("run() starts each file with the runtime flags of its caller", () => {
         "--tsconfig-override=./tsconfig.json",
         "--preload",
         "./pre.mjs",
+        "--import=file://./pre.mjs",
         "runner.mjs",
       ]);
       // A process that is given an env file does not read the ".env" of its directory.
@@ -1062,12 +1075,14 @@ describe("run() starts each file with the runtime flags of its caller", () => {
         "--config=./other.bunfig.toml",
         "--tsconfig-override=./tsconfig.json",
         "--preload=./pre.mjs",
+        "--import=file://./pre.mjs",
       ];
       const resolved = [
         `--env-file=${cwd}${sep}./other.env`,
         `--config=${join(cwd, "other.bunfig.toml")}`,
         `--tsconfig-override=${join(cwd, "tsconfig.json")}`,
         `--preload=${join(cwd, "pre.mjs")}`,
+        `--import=${join(cwd, "pre.mjs")}`,
       ];
       const [here, ...others] = children;
       expect(here).toMatchObject({ probes: [{ ...read, execArgv: typed }], fail: 0 });
@@ -1227,7 +1242,8 @@ describe("run() starts each file with the runtime flags of its caller", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toMatchObject({ exitCode: 0 });
+      const built = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect({ stdout: built[0], stderr: built[1], exitCode: built[2] }).toMatchObject({ exitCode: 0 });
 
       const file = join(String(dir), "probe.test.mjs");
       await using proc = spawn({

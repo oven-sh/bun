@@ -1040,20 +1040,29 @@ fn write_flag(
                 }
             }
         }
-        // The others are joined to the directory as the caller joined them.
-        Some(directory)
-            if !bun_paths::is_absolute(value)
-                && !(count_in(MODULES_FROM_STARTUP_DIRECTORY, names) > 0
-                    && bun_paths::is_package_path_not_absolute(value)) =>
-        {
-            let mut spill = Vec::new();
-            flag.extend_from_slice(resolve_path::join_abs_string_spill::<platform::Auto>(
-                directory,
-                &mut spill,
-                &[value],
-            ));
+        // The others are joined to the directory as the caller joined them. A
+        // module can have `file://` in front of its path, and a package name
+        // is not a path.
+        Some(directory) => {
+            let is_module = count_in(MODULES_FROM_STARTUP_DIRECTORY, names) > 0;
+            let path = match value.strip_prefix(b"file://".as_slice()) {
+                Some(path) if is_module => path,
+                _ => value,
+            };
+            if bun_paths::is_absolute(path)
+                || (is_module && bun_paths::is_package_path_not_absolute(path))
+            {
+                flag.extend_from_slice(value);
+            } else {
+                let mut spill = Vec::new();
+                flag.extend_from_slice(resolve_path::join_abs_string_spill::<platform::Auto>(
+                    directory,
+                    &mut spill,
+                    &[path],
+                ));
+            }
         }
-        _ => flag.extend_from_slice(value),
+        None => flag.extend_from_slice(value),
     }
     flag.into_boxed_slice()
 }

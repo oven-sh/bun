@@ -1069,7 +1069,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return;
                             }
                         }
-                    } else if let Some(array) = target.data.as_e_array() {
+                    } else if !is_call_target
+                        && !is_template_tag
+                        && let Some(array) = target.data.as_e_array()
+                    {
+                        // A call or a tagged template on `[x][0]` gives `x` the array as `this`.
                         let int: usize = number.value() as usize;
                         // [x][0] -> x
                         // ['a', 'b', 'c'][1] -> 'b'
@@ -1089,13 +1093,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return;
                             }
                             if inlined.can_be_inlined_from_property_access() {
-                                // "[obj.m][0]()" => "(0, obj.m)()"
-                                *e = if is_call_target && inlined.has_value_for_this_in_call() {
-                                    p.new_expr(E::Number::new(0.0), expr.loc)
-                                        .join_with_comma(inlined)
-                                } else {
-                                    inlined
-                                };
+                                *e = inlined;
                                 return;
                             }
                         }

@@ -894,6 +894,19 @@ enum ContinueSendReason {
     OnWritable,
 }
 
+/// Node's `Control`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L559-L598
+#[derive(Default)]
+struct Control {
+    refs: Cell<i32>,
+    ref_explicitly_set: Cell<bool>,
+    /// `hasRef()` of Node's `#channel`: whether the open socket holds the event loop.
+    has_ref: Cell<bool>,
+    /// The share of `refs` that stands for `process`'s 'message' and 'disconnect' listeners.
+    listeners: Cell<i32>,
+    /// The one of `refs` for all sends under way. Node has one for each, which only differs while `refs` is negative.
+    sending: Cell<bool>,
+}
+
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct SendQueue {
     ref_count: Cell<u32>,
@@ -903,6 +916,7 @@ pub(crate) struct SendQueue {
 
     pub(crate) retry_count: Cell<u32>,
     pub(crate) keep_alive: JsCell<KeepAlive>,
+    control: Control,
     #[cfg(debug_assertions)]
     pub(crate) has_written_version: Cell<u8>,
     pub(crate) mode: Mode,
@@ -1031,6 +1045,7 @@ impl SendQueue {
             waiting_for_ack: JsCell::new(None),
             retry_count: Cell::new(0),
             keep_alive: JsCell::new(KeepAlive::default()),
+            control: Control::default(),
             #[cfg(debug_assertions)]
             has_written_version: Cell::new(0),
             mode,
@@ -1433,15 +1448,54 @@ impl SendQueue {
         if self.waiting_for_ack.get().is_some() {
             return true; // waiting to receive an ack/nack from the other side
         }
-        if self.queue.get().is_empty() {
-            return false; // nothing to send
+        if self.queue.get().is_empty() && !self.control.has_ref.get() {
+            return false; // nothing to send, and the channel is not ref'd
         }
-        // Anything still queued (including head with cursor==0 under backpressure) must keep the loop alive; a closed socket does not.
+        // Anything still queued (including head with cursor==0 under backpressure) and a ref'd channel must keep the loop alive; a closed socket does not.
         self.socket_is_open()
     }
 
-    pub(crate) fn update_ref(&self, global: &JSGlobalObject) {
-        let _ = global;
+    /// `by` calls of `Control#refCounted`, or of `Control#unrefCounted` if negative.
+    fn add_refs(&self, by: i32) {
+        let before = self.control.refs.get();
+        let after = before + by;
+        self.control.refs.set(after);
+        if self.control.ref_explicitly_set.get() {
+            return;
+        }
+        if before < 1 && after >= 1 {
+            self.control.has_ref.set(true);
+        } else if before > 0 && after <= 0 {
+            self.control.has_ref.set(false);
+        }
+    }
+
+    pub(crate) fn ref_counted(&self, by: i32) {
+        self.add_refs(by);
+        self.update_ref();
+    }
+
+    pub(crate) fn set_listener_count(&self, count: i32) {
+        self.ref_counted(count - self.control.listeners.replace(count));
+    }
+
+    pub(crate) fn set_ref(&self, enabled: bool) {
+        self.control.ref_explicitly_set.set(true);
+        self.control.has_ref.set(enabled);
+        self.update_ref();
+    }
+
+    pub(crate) fn start_with_ref(&self) {
+        self.control.has_ref.set(true);
+        self.update_ref();
+    }
+
+    fn update_ref(&self) {
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L868-L874
+        let sending = self.waiting_for_ack.get().is_some() || !self.queue.get().is_empty();
+        if sending != self.control.sending.replace(sending) {
+            self.add_refs(if sending { 1 } else { -1 });
+        }
         // Note: KeepAlive::{ref_,unref} take an `EventLoopCtx` (aio cycle-
         // break vtable), not `&VirtualMachine`; dispatch is
         // routed through `bun_io::get_vm_ctx` which `bun_runtime` registers.
@@ -1467,7 +1521,7 @@ impl SendQueue {
         self.debug_log_message_queue();
 
         if self.write_in_progress.get() {
-            self.update_ref(global);
+            self.update_ref();
             return; // write in progress
         }
 
@@ -1506,7 +1560,7 @@ impl SendQueue {
                 if self.close_after_flush.get() && !waiting_for_ack && self.queue.get().is_empty() {
                     self.close_socket_next_tick(true);
                 }
-                self.update_ref(global);
+                self.update_ref();
             }
             Next::EmptyItem(itm) => {
                 itm.complete(global); // call the callback & deinit
@@ -1516,9 +1570,10 @@ impl SendQueue {
             Next::Send(fd) => {
                 debug_assert!(!self.write_in_progress.get());
                 self.write_in_progress.set(true);
+                // Before the write, so that one that finishes at once counts as a send too: whether it does is a race with the reader.
+                self.update_ref();
                 self.write(fd);
                 // the write is queued. this._onWriteComplete() will be called when the write completes.
-                self.update_ref(global);
             }
         }
     }
@@ -1587,7 +1642,7 @@ impl SendQueue {
                 self.close_socket(CloseReason::Failure, CloseFrom::User);
             }
         }
-        self.update_ref(&global_this);
+        self.update_ref();
     }
 
     pub(crate) fn write_version_packet(&self, global: &JSGlobalObject) {

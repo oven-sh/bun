@@ -1,6 +1,7 @@
 // Hardcoded module "node:child_process"
 const EventEmitter = require("node:events");
 const { kHandle } = require("internal/shared");
+const Control = require("internal/process/channel_control");
 const {
   validateBoolean,
   validateFunction,
@@ -684,6 +685,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 }
 const etimedoutErrorCode = $newRustFunction("node_util_binding.rs", "etimedoutErrorCode", 0);
 const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
+const startChannelWithRef = $newRustFunction("node_cluster_binding.rs", "startChannelWithRef", 1);
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1511,7 +1513,8 @@ class ChildProcess extends EventEmitter {
       if (has_ipc) {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
-        this.channel = new Control();
+        this.channel = new Control(this.#handle);
+        startChannelWithRef(this.#handle);
         Object.defineProperty(this, "_channel", {
           get() {
             return this.channel;
@@ -1918,12 +1921,6 @@ function abortChildProcess(child, killSignal, reason) {
     }
   } catch (err) {
     child.emit("error", err);
-  }
-}
-
-class Control extends EventEmitter {
-  constructor() {
-    super();
   }
 }
 

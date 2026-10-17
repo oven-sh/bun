@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { bunExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 test("child_process ipc", async () => {
   const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc_fixture.js`.text();
@@ -12,4 +12,83 @@ test("child_process ipc", async () => {
     cb ERR_IPC_CHANNEL_CLOSED
     "
   `);
+});
+
+test.concurrent("which operations on subprocess.channel hold the event loop", async () => {
+  const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc-channel-ref-fixture.mjs rows parent`
+    .env(bunEnv)
+    .text();
+  // node (v26.7.0) has identical output, without the Bun.spawn row and with "held" for send(small):
+  // only a write that does not finish at once ends the hold there.
+  expect(output).toMatchInlineSnapshot(`
+    "parent: child.unref: held
+    parent: child.unref unref: not held
+    parent: child.unref unref ref: held
+    parent: child.unref refCounted unrefCounted: not held
+    parent: child.unref disconnect: not held
+    parent: child.unref disconnect ref: not held
+    parent: child.unref send(small): not held
+    parent: child.unref send(big): not held
+    parent: child.unref ref send(big): held
+    parent: child.unref send(handle): not held
+    parent: advanced child.unref: held
+    Bun.spawn: child.unref: not held
+    "
+  `);
+});
+
+test.concurrent("which operations on process.channel hold the event loop", async () => {
+  const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc-channel-ref-fixture.mjs rows child`
+    .env(bunEnv)
+    .text();
+  // node (v26.7.0) has identical output
+  expect(output).toMatchInlineSnapshot(`
+    "child: none: not held
+    child: on(message,a): held
+    child: on(disconnect,a): held
+    child: on(message,a) off(message,a): not held
+    child: on(message,a) on(message,b) off(message,a): held
+    child: on(message,a) on(message,b) removeAll(message): not held
+    child: on(message,a) unrefCounted: not held
+    child: on(message,a) on(disconnect,a) unrefCounted: held
+    child: on(message,a) on(message,b) unrefCounted removeAll(message) on(message,a): not held
+    child: refCounted: held
+    child: refCounted unrefCounted: not held
+    child: refCounted refCounted unrefCounted: held
+    child: unrefCounted refCounted: not held
+    child: unrefCounted on(message,a): not held
+    child: ref: held
+    child: ref unrefCounted: held
+    child: ref on(message,a) off(message,a): held
+    child: on(message,a) unref: not held
+    child: on(message,a) unref refCounted: not held
+    child: unref on(message,a): not held
+    child: send(big): not held
+    child: on(message,a) send(big): held
+    child: on(message,a) disconnect: not held
+    child: disconnect ref: not held
+    "
+  `);
+});
+
+test.concurrent("a child held only by process.channel.ref() leaves when the parent disconnects", async () => {
+  await using child = Bun.spawn({
+    cmd: [bunExe(), "-e", `process.channel.ref(); console.log("ready");`],
+    env: bunEnv,
+    stdout: "pipe",
+    ipc() {},
+  });
+  await child.stdout.getReader().read();
+  child.disconnect();
+  expect(await child.exited).toBe(0);
+});
+
+test.concurrent("a channel that could not be opened does not hold the event loop", async () => {
+  await using child = Bun.spawn({
+    cmd: [bunExe(), "-e", `process.on("message", () => {});`],
+    env: { ...bunEnv, NODE_CHANNEL_FD: "99", NODE_CHANNEL_SERIALIZATION_MODE: "json" },
+    stderr: "pipe",
+  });
+  expect(await child.stderr.text()).toContain("Unable to start IPC");
+  expect(await child.exited).toBe(0);
 });

@@ -4,7 +4,7 @@
 //   at all. It should happen in the protocol before it reaches JS.
 // - We should not be creating JSFunction's in process.nextTick.
 
-use crate::ipc::{IsInternal, SerializeAndSendResult};
+use crate::ipc::{IsInternal, SendQueue, SerializeAndSendResult};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional};
 
 use crate::api::bun::subprocess::Subprocess;
@@ -267,42 +267,49 @@ pub(crate) fn handle_internal_message_primary(
 //
 //
 
+/// The channel of `subprocess`, or this process's own (opened if it was not yet) when that is not a `Subprocess`.
+fn with_channel(global: &JSGlobalObject, subprocess: JSValue, f: impl FnOnce(&SendQueue)) {
+    if let Some(subprocess) = subprocess.as_class_ref::<Subprocess<'_>>() {
+        if let Some(channel) = subprocess.ipc() {
+            f(channel);
+        }
+    } else if let Some(instance) = crate::ipc_host::get_ipc_instance(global.bun_vm().as_mut()) {
+        // SAFETY: `get_ipc_instance` returns the live boxed instance that `CHANNEL` holds.
+        f(unsafe { (*instance).data() });
+    }
+}
+
+/// `(subprocess | undefined, enabled, counted)`: the four methods of `Control`.
 #[bun_jsc::host_fn]
-pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_as_array::<1>();
-
-    if arguments.len() == 0 {
-        return Err(global.throw_missing_arguments_value(&["enabled"]));
-    }
-    if !arguments[0].is_boolean() {
-        return Err(global.throw_invalid_argument_type_value("enabled", "boolean", arguments[0]));
-    }
-
-    let enabled = arguments[0].to_boolean();
-    let vm = global.bun_vm().as_mut();
-    vm.channel_ref_overridden = true;
-    if enabled {
-        vm.channel_ref.ref_(bun_io::js_vm_ctx());
-    } else {
-        vm.channel_ref.unref(bun_io::js_vm_ctx());
-    }
+pub(crate) fn set_channel_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [subprocess, enabled, counted] = frame.arguments_as_array::<3>();
+    let enabled = enabled.to_boolean();
+    with_channel(global, subprocess, |channel| {
+        if counted.to_boolean() {
+            channel.ref_counted(if enabled { 1 } else { -1 });
+        } else {
+            channel.set_ref(enabled);
+        }
+    });
     Ok(JSValue::UNDEFINED)
 }
 
-// HOST_EXPORT(Bun__refChannelUnlessOverridden, c)
-pub(crate) fn ref_channel_unless_overridden(global: &JSGlobalObject) {
-    let vm = global.bun_vm().as_mut();
-    if !vm.channel_ref_overridden {
-        vm.channel_ref.ref_(bun_io::js_vm_ctx());
-    }
+/// Node's `Pipe` has a ref from the start, which only the child drops: https://github.com/nodejs/node/blob/v26.3.0/lib/child_process.js#L181
+#[bun_jsc::host_fn]
+pub(crate) fn start_channel_with_ref(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let [subprocess] = frame.arguments_as_array::<1>();
+    with_channel(global, subprocess, SendQueue::start_with_ref);
+    Ok(JSValue::UNDEFINED)
 }
 
-// HOST_EXPORT(Bun__unrefChannelUnlessOverridden, c)
-pub(crate) fn unref_channel_unless_overridden(global: &JSGlobalObject) {
-    let vm = global.bun_vm().as_mut();
-    if !vm.channel_ref_overridden {
-        vm.channel_ref.unref(bun_io::js_vm_ctx());
-    }
+// HOST_EXPORT(Bun__setChannelListenerCount, c)
+pub(crate) fn set_channel_listener_count(global: &JSGlobalObject, count: i32) {
+    with_channel(global, JSValue::UNDEFINED, |channel| {
+        channel.set_listener_count(count)
+    });
 }
 
 #[bun_jsc::host_fn]

@@ -832,6 +832,7 @@ unsafe impl Sync for SyncCStr {}
 static Bun__userAgent: SyncCStr = SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
 
 /// The certificate authorities that TLS connections trust by default.
+#[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum CAStore {
     Bundled,

@@ -764,7 +764,6 @@ fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
-#[repr(u8)]
 pub(crate) use bun_core::Global::Bun__Node__UseSystemCA;
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────

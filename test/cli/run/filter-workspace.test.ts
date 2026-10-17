@@ -321,6 +321,34 @@ describe("bun", () => {
     });
   });
 
+  test.each([
+    ["prescript", ["dep0 prescript: Exited with code 7", "dep0 script: Skipped", "dep0 postscript: Skipped"]],
+    ["script", ["dep0 prescript: Exited with code 0", "dep0 script: Exited with code 7", "dep0 postscript: Skipped"]],
+  ])("a failed %s skips the scripts after it, and other packages still run", (failing, lines) => {
+    const scripts = { prescript: "echo ran-pre", script: "echo ran-main", postscript: "echo ran-post" };
+    using dir = tempDir("testworkspace", {
+      dep0: { "package.json": JSON.stringify({ name: "dep0", scripts: { ...scripts, [failing]: "exit 7" } }) },
+      dep1: {
+        "package.json": JSON.stringify({
+          name: "dep1",
+          dependencies: { dep0: "*" },
+          scripts: { script: "echo ran-dependent" },
+        }),
+      },
+    });
+    const { exitCode, stdout } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "--filter", "*", "script"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = stdout.toString().split("\n");
+    expect(out.filter(line => line.startsWith("dep0 ") && !line.includes("ran-"))).toEqual(lines);
+    expect(out).toContain("dep1 script: ran-dependent");
+    expect(exitCode).toBe(7);
+  });
+
   test("respect dependency order", () => {
     using dir = tempDir("testworkspace", {
       dep0: {

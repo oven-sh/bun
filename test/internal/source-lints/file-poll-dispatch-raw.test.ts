@@ -30,7 +30,7 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // `&mut FilePoll` as the only live reference to the slot; that is only true
 // while this holds.
 //
-// For each frame in CHAIN (located by name, wherever it lives) this pins:
+// For each frame in CHAIN (located by file and name) this pins:
 //   - signature: the poll arrives as `*mut FilePoll` (a `self` receiver on the
 //     FilePoll methods counts as taking it by reference unless spelled
 //     `self: *mut Self`), and no parameter takes it as `&FilePoll` / `&mut
@@ -45,12 +45,12 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //     it gets from uSockets, so its pointer is the body's
 //     `let <name>: *mut FilePoll = ..` binding;
 //   - body: no `let` binding is a `&[mut] FilePoll`, and no `let` initializer
-//     starts with a reborrow of the frame's pointer (`&*p`, `&mut *p`,
-//     `&mut (*p)`, `p.as_ref()`, `p.as_mut()`, with or without `unsafe { }`),
-//     i.e. no frame holds a reference into the slot beyond a single statement.
-//     Statement-scoped accesses (`(*p).flags`, `(*p).update_flags(..)`,
-//     `helper(unsafe { &mut *p })`) are the intended shape and are not
-//     matched.
+//     contains a reborrow of the frame's pointer (`&*p`, `&mut *p`,
+//     `&mut (*p)`, `p.as_ref()`, `p.as_mut()`), wrapped or not: text cannot
+//     tell `Some(&mut *p)` from `f(&mut *p)`, so a binding may not be built
+//     from a reference into the slot at all. Statement-scoped accesses
+//     (`(*p).flags`, `(*p).update_flags(..)`, `helper(unsafe { &mut *p });`)
+//     are the intended shape and are not matched.
 //
 // A new frame on the chain goes into CHAIN (and into the `handsTo` of the frame
 // above it); a new `__bun_run_file_poll` arm that passes the poll to a handler
@@ -60,10 +60,14 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // writer-parent-mut-borrow.test.ts.
 
 interface Frame {
-  /** Function name; unique across the Rust tree unless `file` narrows it. */
+  /** Function name. */
   name: string;
-  /** Repo-relative file that defines the frame, for a name other files also use. */
-  file?: string;
+  /**
+   * Repo-relative files that define or declare the frame. A same-named
+   * function elsewhere (`on_poll`, `on_update` are common handler names) is
+   * not this frame.
+   */
+  files: string[];
   /**
    * How the poll reaches the frame. `receiver`: a method on FilePoll itself.
    * `param`: a free function or a method on something else, with the poll as
@@ -75,20 +79,31 @@ interface Frame {
   handsTo: string[];
 }
 
+const IO = "src/io/posix_event_loop.rs";
 const CHAIN: Frame[] = [
   // Both calls are present in the source (one per `#[cfg]`), so both are checked
   // whatever the host platform is.
-  { name: "Bun__internal_dispatch_ready_poll", poll: "tagged", handsTo: ["on_kqueue_event", "on_epoll_event"] },
-  { name: "on_kqueue_event", poll: "receiver", handsTo: ["on_update"] },
-  { name: "on_epoll_event", poll: "receiver", handsTo: ["on_update"] },
-  { name: "on_update", poll: "receiver", handsTo: ["__bun_run_file_poll"] },
-  // Matches the definition in dispatch.rs and the `extern "Rust"` declaration
-  // in posix_event_loop.rs (declaration: signature only). These two arms pass
-  // the poll on to a handler which re-arms or deinits it; every other arm hands
-  // its owner only `size_or_offset` / `hup`.
-  { name: "__bun_run_file_poll", poll: "param", handsTo: ["memory_pressure::on_poll", "on_dns_poll"] },
-  { name: "on_dns_poll", poll: "param", handsTo: [] },
-  { name: "on_poll", file: "src/runtime/node/memory_pressure.rs", poll: "param", handsTo: [] },
+  {
+    name: "Bun__internal_dispatch_ready_poll",
+    files: [IO],
+    poll: "tagged",
+    handsTo: ["on_kqueue_event", "on_epoll_event"],
+  },
+  { name: "on_kqueue_event", files: [IO], poll: "receiver", handsTo: ["on_update"] },
+  { name: "on_epoll_event", files: [IO], poll: "receiver", handsTo: ["on_update"] },
+  { name: "on_update", files: [IO], poll: "receiver", handsTo: ["__bun_run_file_poll"] },
+  // The definition in dispatch.rs and the `extern "Rust"` declaration in
+  // posix_event_loop.rs (declaration: signature only). These two arms pass the
+  // poll on to a handler which re-arms or deinits it; every other arm hands its
+  // owner only `size_or_offset` / `hup`.
+  {
+    name: "__bun_run_file_poll",
+    files: [IO, "src/runtime/dispatch.rs"],
+    poll: "param",
+    handsTo: ["memory_pressure::on_poll", "on_dns_poll"],
+  },
+  { name: "on_dns_poll", files: ["src/runtime/dns_jsc/dns.rs"], poll: "param", handsTo: [] },
+  { name: "on_poll", files: ["src/runtime/node/memory_pressure.rs"], poll: "param", handsTo: [] },
 ];
 
 const POLL_TYPE = String.raw`(?:[\w]+::)*(?:FilePoll|Self)\b`;
@@ -111,15 +126,14 @@ const REF_POLL_BINDING = new RegExp(
 // reborrows continue past the `}` and do not match.
 const REBORROW_BINDING =
   /\blet\s+(?:mut\s+)?\w+\s*(?::[^=;{}]*)?=\s*(?:unsafe\s*\{\s*&mut\s+\*[^;{}]*\}|&mut\s+\*[^;{}]*|unsafe\s*\{[^;{}]*\.as_mut\(\)[^;{}]*\})\s*;/g;
-// A `let` whose initializer starts with a reference derived from the frame's
-// pointer, shared or mutable, however it continues: `let x = unsafe { &*p };`,
+// A `let` whose initializer contains a reference derived from the frame's
+// pointer, shared or mutable, wherever it sits: `let x = unsafe { &*p };`,
 // `let x = unsafe { &mut (*p) };`, `let x = unsafe { p.as_mut() }.unwrap();`,
-// `let x = p.as_ref().unwrap();`. A reborrow passed as an argument inside the
-// initializer (`let n = f(unsafe { &mut *p });`) ends with the statement and
-// does not match.
+// `let x = Some(unsafe { &mut *p });`. `(*p).field` reads (no `&`) do not match.
+// `pointer` is an identifier from a signature or a `let`, so the pattern stays linear.
 function reborrowOf(pointer: string): RegExp {
   return new RegExp(
-    String.raw`\blet\s+(?:mut\s+)?[^=;]*?=\s*(?:unsafe\s*\{\s*)?(?:&\s*(?:mut\s+)?\(?\s*\*\s*${pointer}\b|\b${pointer}\s*\.\s*as_(?:ref|mut)\s*\(\))[^;]*;`,
+    String.raw`\blet\b[^;]*?(?:&\s*(?:mut\s+)?\(?\s*\*\s*${pointer}\b|\b${pointer}\s*\.\s*as_(?:ref|mut)\s*\(\))[^;]*;`,
     "g",
   );
 }
@@ -167,12 +181,15 @@ interface Analysis {
   offenders: string[];
 }
 
-/** Analyze one comment-stripped Rust file. */
-function analyze(source: string, stripped: string): Analysis {
+/**
+ * Analyze one comment-stripped Rust file. `allFrames` looks for every frame
+ * whatever `source` is, for fixtures that put the whole chain in one file.
+ */
+function analyze(source: string, stripped: string, allFrames = false): Analysis {
   const found: string[] = [];
   const offenders: string[] = [];
   for (const frame of CHAIN) {
-    if (frame.file !== undefined && frame.file !== source) continue;
+    if (!allFrames && !frame.files.includes(source)) continue;
     const header = new RegExp(String.raw`\bfn\s+${frame.name}\s*(?:<[^>]*>)?\s*\(`, "g");
     for (const m of stripped.matchAll(header)) {
       const line = lineOf(stripped, m.index);
@@ -276,10 +293,8 @@ for (const abs of rustSources) {
   if (path.relative(root, realpathSync(abs)).replaceAll(path.sep, "/") !== source) continue;
   if (tracked !== null && !tracked.has(source)) continue;
   scanned++;
-  const content = await file(abs).text();
-  // Cheap pre-filter; `analyze` re-locates the frames precisely.
-  if (!CHAIN.some(frame => content.includes(frame.name))) continue;
-  const analysis = analyze(source, strip(content));
+  if (!CHAIN.some(frame => frame.files.includes(source))) continue;
+  const analysis = analyze(source, strip(await file(abs).text()));
   found.push(...analysis.found);
   offenders.push(...analysis.offenders);
 }
@@ -452,10 +467,9 @@ impl Resolver {
 }
 `);
 
-// The memory-pressure handler, located by file since other owners also have an
-// `on_poll`. Before: the poll arrives by reference. After: statement-scoped
-// reads, a reborrow handed to a helper as an argument (ends with the
-// statement), and an `as_mut()` on a pointer that is not the poll.
+// The memory-pressure handler. Before: the poll arrives by reference. After:
+// statement-scoped reads, a reborrow handed to a helper as an argument (not a
+// binding), and an `as_mut()` on a pointer that is not the poll.
 const MP_FILE = "src/runtime/node/memory_pressure.rs";
 const MP_BEFORE = strip(`
     pub(crate) fn on_poll(poll: &mut FilePoll, fflags: i64) {
@@ -492,7 +506,7 @@ function mutate(from: string, to: string): string {
 }
 
 test("the analysis reports the pre-conversion chain", () => {
-  expect(analyze("before.rs", BEFORE)).toEqual({
+  expect(analyze("before.rs", BEFORE, true)).toEqual({
     found: [
       "before.rs:24: Bun__internal_dispatch_ready_poll",
       "before.rs:4: on_kqueue_event",
@@ -520,7 +534,7 @@ test("the analysis reports the pre-conversion chain", () => {
   });
 });
 
-test("a frame located by file is checked there and nowhere else", () => {
+test("a frame is looked for in its own files and nowhere else", () => {
   expect(analyze(MP_FILE, MP_BEFORE)).toEqual({
     found: [`${MP_FILE}:2: on_poll`],
     offenders: [
@@ -530,10 +544,12 @@ test("a frame located by file is checked there and nowhere else", () => {
   });
   expect(analyze(MP_FILE, MP_AFTER)).toEqual({ found: [`${MP_FILE}:2: on_poll`], offenders: [] });
   expect(analyze("src/runtime/node/other.rs", MP_BEFORE)).toEqual({ found: [], offenders: [] });
+  // A stranger's `on_update(&mut self)` is not the chain's.
+  expect(analyze("src/runtime/other.rs", "fn on_update(&mut self, n: i64) {}")).toEqual({ found: [], offenders: [] });
 });
 
 test("the analysis accepts the converted chain", () => {
-  expect(analyze("after.rs", AFTER)).toEqual({
+  expect(analyze("after.rs", AFTER, true)).toEqual({
     found: [
       "after.rs:37: Bun__internal_dispatch_ready_poll",
       "after.rs:7: on_kqueue_event",
@@ -555,7 +571,7 @@ test("the analysis reports a reference frame re-introduced anywhere on the chain
       "    fn run_owner(poll: &mut FilePoll, size_or_offset: i64) {\n" +
       "        unsafe { __bun_run_file_poll(poll, size_or_offset) };",
   );
-  expect(analyze("m.rs", helperParam).offenders).toEqual([
+  expect(analyze("m.rs", helperParam, true).offenders).toEqual([
     "m.rs:27: on_update: never calls `__bun_run_file_poll` itself; whatever now sits between them belongs in CHAIN",
   ]);
 
@@ -566,13 +582,13 @@ test("the analysis reports a reference frame re-introduced anywhere on the chain
       "    fn run_owner(&mut self, size_or_offset: i64) {\n" +
       "        unsafe { __bun_run_file_poll(self, size_or_offset) };",
   );
-  expect(analyze("m.rs", helperMethod).offenders).toEqual([
+  expect(analyze("m.rs", helperMethod, true).offenders).toEqual([
     "m.rs:27: on_update: never calls `__bun_run_file_poll` itself; whatever now sits between them belongs in CHAIN",
   ]);
 
   // A reborrow handed to the next frame on an edge other than the DNS one.
   const reborrowArgument = mutate("Self::on_update(this, 0)", "Self::on_update(&mut *this, 0)");
-  expect(analyze("m.rs", reborrowArgument).offenders).toEqual([
+  expect(analyze("m.rs", reborrowArgument, true).offenders).toEqual([
     "m.rs:19: on_epoll_event: line 24 passes `on_update` `&mut *this` first, not `this`",
   ]);
 
@@ -583,7 +599,7 @@ test("the analysis reports a reference frame re-introduced anywhere on the chain
       "        slot.flags.remove(Flags::Hup);\n" +
       "        unsafe { __bun_run_file_poll(self, size_or_offset) };",
   );
-  expect(analyze("m.rs", asMutBinding).offenders).toEqual([
+  expect(analyze("m.rs", asMutBinding, true).offenders).toEqual([
     "m.rs:27: on_update: line 33 keeps a reborrow for the rest of the frame: let slot = unsafe { self.as_mut().unwrap_unchecked() };",
   ]);
 
@@ -593,22 +609,31 @@ test("the analysis reports a reference frame re-introduced anywhere on the chain
     "unsafe { (*this).update_flags(Flags::from_epoll_event(epoll_event)) };",
     "let poll = unsafe { &*this };\n        poll.update_flags(Flags::from_epoll_event(epoll_event));",
   );
-  expect(analyze("m.rs", sharedReborrow).offenders).toEqual([
+  expect(analyze("m.rs", sharedReborrow, true).offenders).toEqual([
     "m.rs:19: on_epoll_event: line 23 keeps a reborrow for the rest of the frame: let poll = unsafe { &*this };",
   ]);
   const parenthesised = mutate(
     'syslog!("onKQueueEvent: {}", unsafe { &*this });',
     'let poll = unsafe { &mut (*this) };\n        syslog!("onKQueueEvent: {}", poll);',
   );
-  expect(analyze("m.rs", parenthesised).offenders).toEqual([
+  expect(analyze("m.rs", parenthesised, true).offenders).toEqual([
     "m.rs:7: on_kqueue_event: line 10 keeps a reborrow for the rest of the frame: let poll = unsafe { &mut (*this) };",
   ]);
   const asRef = mutate(
     "let fd = unsafe { (*poll).fd.native() };",
     "let slot = unsafe { poll.as_ref() }.unwrap_unchecked();\n        let fd = slot.fd.native();",
   );
-  expect(analyze("m.rs", asRef).offenders).toEqual([
+  expect(analyze("m.rs", asRef, true).offenders).toEqual([
     "m.rs:79: on_dns_poll: line 80 keeps a reborrow for the rest of the frame: let slot = unsafe { poll.as_ref() }.unwrap_unchecked();",
+  ]);
+
+  // A reborrow wrapped in a constructor is a binding that can outlive the hand-off.
+  const wrapped = mutate(
+    "unsafe { __bun_run_file_poll(self, size_or_offset) };",
+    "let kept = Some(unsafe { &mut *self });\n        unsafe { __bun_run_file_poll(self, size_or_offset) };\n        drop(kept);",
+  );
+  expect(analyze("m.rs", wrapped, true).offenders).toEqual([
+    "m.rs:27: on_update: line 33 keeps a reborrow for the rest of the frame: let kept = Some(unsafe { &mut *self });",
   ]);
 
   // The entry point has to name the pointer's type for its hand-offs to be checkable.
@@ -616,14 +641,16 @@ test("the analysis reports a reference frame re-introduced anywhere on the chain
     "let file_poll: *mut FilePoll = tag.as_file_poll();",
     "let file_poll = tag.as_file_poll();",
   );
-  expect(analyze("m.rs", untypedEntry).offenders).toEqual([
+  expect(analyze("m.rs", untypedEntry, true).offenders).toEqual([
     "m.rs:37: Bun__internal_dispatch_ready_poll: does not bind the decoded poll as `let <name>: *mut FilePoll = ..`",
   ]);
 
   // The chain is spelled `*mut FilePoll`; a `NonNull` would be dereferenced
   // with `as_mut()`, which the body check only sees in the form above.
   const nonNullParam = mutate("on_dns_poll(&self, poll: *mut FilePoll)", "on_dns_poll(&self, poll: NonNull<FilePoll>)");
-  expect(analyze("m.rs", nonNullParam).offenders).toEqual(["m.rs:79: on_dns_poll: has no `*mut FilePoll` parameter"]);
+  expect(analyze("m.rs", nonNullParam, true).offenders).toEqual([
+    "m.rs:79: on_dns_poll: has no `*mut FilePoll` parameter",
+  ]);
 });
 
 test("every frame of the FilePoll dispatch chain carries the poll as a raw pointer", () => {

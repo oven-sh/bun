@@ -21,7 +21,7 @@ use bun_sema::resolve::{
     hash_without_case, inside, is_declaration_file_name, is_same_path, join, root_length,
     to_file_name_lower_case, to_path, typescript_path,
 };
-pub use bun_sema::resolve::{PluginImport, PluginImported, PluginImports};
+pub use bun_sema::resolve::{PluginImport, PluginImports};
 use bun_sema::session::Arena;
 use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
@@ -282,7 +282,7 @@ pub struct Disk {
     /// `Host::shared_paths`
     paths: bun_threading::Guarded<FxHashSet<Arc<Paths>>>,
     /// `Host::plugin_imports`
-    pub(crate) plugin_imports: PluginImports,
+    plugin_imports: PluginImports,
     pub(crate) scripts_of_page: Option<ScriptsOfPage>,
 }
 
@@ -721,22 +721,19 @@ impl Disk {
 
     /// `Provided::plugin_imports`, by `tspath.Path` like `script_kinds`. Only a file has a path.
     pub(crate) fn take_plugin_imports(&mut self, mut imports: PluginImports) {
-        let written = |name: &[u8]| match name.starts_with(b"/") {
-            true => self.as_written(name),
+        let key = |name: &[u8]| match name.starts_with(b"/") {
+            true => to_path(&self.as_written(name), self.case_sensitive).into_owned(),
             false => name.to_vec(),
         };
-        let key = |name: &[u8]| to_path(&written(name), self.case_sensitive).into_owned();
         for (importer, imported) in &mut imports {
             *importer = key(importer);
             for import in imported {
-                import.path = match import.is {
-                    PluginImported::Source => written(&import.path),
-                    PluginImported::Loaded | PluginImported::Virtual => key(&import.path),
-                };
+                import.path = key(&import.path);
             }
         }
         imports.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
-        // One file under two names.
+        // The bundler has a file once for each target that it is bundled for: one file, and
+        // what it imports for each.
         imports.dedup_by(|again, first| {
             let is_same = again.0 == first.0;
             if is_same {
@@ -1403,6 +1400,9 @@ impl Host for Asking<'_> {
         None
     }
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
+        &[]
+    }
+    fn plugin_imports(&self) -> &[(Vec<u8>, Vec<PluginImport>)] {
         &[]
     }
     fn scripts_of_page(&self, _: &[u8]) -> Vec<Vec<u8>> {

@@ -1420,6 +1420,9 @@ impl Host for WithoutListings<'_> {
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
         self.0.extra_file_extensions()
     }
+    fn plugin_imports(&self) -> &[(Vec<u8>, Vec<bun_sema::resolve::PluginImport>)] {
+        self.0.plugin_imports()
+    }
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
         self.0.scripts_of_page(page)
     }

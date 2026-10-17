@@ -2582,10 +2582,11 @@ pub mod bv2_impl {
                         continue;
                     }
                     let imported = record.source_index.get() as usize;
-                    // Into what a plugin has loaded, or out of it to code.
+                    // Into what a plugin has loaded, or out of it to the code of a file.
                     let is_loaded = is_loaded_by_plugin(imported);
-                    let is_followed = is_loaded
-                        || is_loaded_by_plugin(importer) && loaders[imported].is_javascript_like();
+                    let is_code =
+                        loaders[imported].is_javascript_like() && sources[imported].path.is_file();
+                    let is_followed = is_loaded || is_loaded_by_plugin(importer) && is_code;
                     if is_followed && is_of_the_project(imported) {
                         return Some(options::PluginImport {
                             importer: end(importer),

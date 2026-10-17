@@ -55,7 +55,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     JSObject* options = Bun::createInspectOptionsObject(vm, globalObject, max_depth, colors);
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSFunction* inspectFn = globalObject->utilInspectFunction();
+    JSObject* inspectFn = globalObject->utilInspectFunction();
     RETURN_IF_EXCEPTION(scope, {});
     auto callData = JSC::getCallData(functionToCall);
     MarkedArgumentBuffer arguments;

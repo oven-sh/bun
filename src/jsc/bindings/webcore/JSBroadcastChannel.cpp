@@ -209,7 +209,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototype_inspectCustom, (JSC::JSGlob
     inputObj->putDirect(vm, vm.propertyNames->name, jsString(vm, channel->name()), 0);
     inputObj->putDirect(vm, Identifier::fromString(vm, "active"_s), jsBoolean(!channel->isClosed()), 0);
 
-    JSFunction* utilInspect = globalObject->utilInspectFunction();
+    JSObject* utilInspect = globalObject->utilInspectFunction();
     RETURN_IF_EXCEPTION(throwScope, {});
     auto callData = JSC::getCallData(utilInspect);
     MarkedArgumentBuffer arguments;

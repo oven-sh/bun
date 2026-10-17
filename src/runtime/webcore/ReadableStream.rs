@@ -193,6 +193,7 @@ impl ReadableStream {
     }
 
     /// Lift the whole payload out of an unread stream. On success the stream is spent (closed, disturbed, locked).
+    /// A shared stream ([`Self::is_shared_stream`]) only lends its fd and stays unread.
     pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
         if self.is_disturbed(global_this) || self.is_locked(global_this) {
             return None;
@@ -223,6 +224,10 @@ impl ReadableStream {
                 }
                 // it should be lazy, file shouldn't have opened yet.
                 debug_assert!(!blobby.started.get());
+                // The caller takes the fd, not the stream's bytes.
+                if self.is_shared_stream() {
+                    return Some(webcore::blob::Any::Blob(blob));
+                }
                 webcore::blob::Any::Blob(blob)
             }
             Source::Bytes(_) => {
@@ -302,6 +307,11 @@ impl ReadableStream {
     /// A Body consumer owns this stream now; it stays disturbed and locked (the spec reader is never released).
     pub(crate) fn mark_consumed_as_body(&self, global_object: &JSGlobalObject) {
         ReadableStream__markConsumedAsBody(self.value, global_object);
+    }
+
+    /// The Blob's one cached stream (`Bun.stdin.stream()`), see `FileReader::shared`.
+    pub(crate) fn is_shared_stream(&self) -> bool {
+        self.ptr.file().is_some_and(|reader| reader.shared.get())
     }
 
     /// Mark the stream disturbed + locked-without-reader. Called by native

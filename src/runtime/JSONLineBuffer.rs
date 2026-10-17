@@ -19,6 +19,10 @@ pub(crate) struct JSONLineBuffer {
     pub(crate) newline_pos: Option<u32>,
     /// How far we've scanned for newlines relative to head.
     pub(crate) scanned_pos: u32,
+    /// Longest line handed out, newline excluded. Capped so a line and its newline fit `u32`.
+    max_line: u32,
+    /// Sticky: a line passed `max_line`. The storage is freed and later bytes are dropped.
+    too_long: bool,
 }
 
 /// Return type of [`JSONLineBuffer::next`]: a complete message slice plus its newline offset.
@@ -31,14 +35,36 @@ impl JSONLineBuffer {
     /// Compact the buffer when head exceeds this threshold.
     const COMPACTION_THRESHOLD: u32 = 16 * 1024 * 1024; // 16 MB
 
+    pub(crate) fn new(max_line: usize) -> Self {
+        Self {
+            // One more byte would make the consumed count of a line at the limit overflow.
+            max_line: max_line.min(u32::MAX as usize - 1) as u32,
+            ..Self::default()
+        }
+    }
+
     /// Get the active (unconsumed) portion of the buffer.
     fn active_slice(&self) -> &[u8] {
         &self.data.slice()[self.head as usize..]
     }
 
-    /// Scan for newline in unscanned portion of the buffer.
+    /// Whether a line passed `max_line`. The buffer hands out nothing after that.
+    pub(crate) fn is_too_long(&self) -> bool {
+        self.too_long
+    }
+
+    /// Refuse the over-long line and free the storage. `#[cold]` keeps the caller's scan inlined.
+    #[cold]
+    #[inline(never)]
+    fn refuse(&mut self) {
+        *self = Self::new(self.max_line as usize);
+        self.too_long = true;
+    }
+
+    /// Scan the unscanned bytes for a newline, and refuse the line if it passed `max_line`.
+    #[inline]
     fn scan_for_newline(&mut self) {
-        if self.newline_pos.is_some() {
+        if self.too_long || self.newline_pos.is_some() {
             return;
         }
         let slice = self.active_slice();
@@ -47,13 +73,21 @@ impl JSONLineBuffer {
         }
 
         let unscanned = &slice[self.scanned_pos as usize..];
-        if let Some(local_idx) = strings::index_of_char(unscanned, b'\n') {
-            let pos = self.scanned_pos.saturating_add(local_idx);
-            self.newline_pos = Some(pos);
-            self.scanned_pos = pos.saturating_add(1); // Only scanned up to (and including) the newline
-        } else {
-            debug_assert!((slice.len() as u64) <= u32::MAX as u64);
-            self.scanned_pos = u32::try_from(slice.len()).expect("int cast"); // No newline, scanned everything
+        let newline = strings::index_of_char_usize(unscanned, b'\n')
+            .map(|local_idx| self.scanned_pos as usize + local_idx);
+        // With no newline, the whole unconsumed part is one unfinished line.
+        let line_len = newline.unwrap_or(slice.len());
+        if line_len > self.max_line as usize {
+            self.refuse();
+            return;
+        }
+        // `line_len <= max_line <= u32::MAX - 1`, so both narrowings are exact.
+        match newline {
+            Some(pos) => {
+                self.newline_pos = Some(pos as u32);
+                self.scanned_pos = pos as u32 + 1; // Only scanned up to (and including) the newline
+            }
+            None => self.scanned_pos = line_len as u32, // No newline, scanned everything
         }
     }
 
@@ -68,6 +102,23 @@ impl JSONLineBuffer {
 
     /// Append bytes to the buffer, scanning only new data for newline.
     pub(crate) fn append(&mut self, bytes: &[u8]) {
+        if self.too_long {
+            return;
+        }
+        // Only a read that can cross `max_line` is judged before the copy, and pays a scan.
+        if self.newline_pos.is_none() {
+            // With no newline, every unconsumed byte is scanned and belongs to one line.
+            let pending = self.scanned_pos as usize;
+            debug_assert_eq!(pending, self.data.len() - self.head as usize);
+            if pending + bytes.len() > self.max_line as usize {
+                let line_len = strings::index_of_char_usize(bytes, b'\n')
+                    .map_or(pending + bytes.len(), |local_idx| pending + local_idx);
+                if line_len > self.max_line as usize {
+                    self.refuse();
+                    return;
+                }
+            }
+        }
         let _ = self.data.write(bytes);
         self.scan_for_newline();
     }

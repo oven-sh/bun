@@ -1,7 +1,7 @@
 import { RedisClient, SQL } from "bun";
 import { heapStats } from "bun:jsc";
 import { setSystemTime } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
@@ -193,6 +193,50 @@ describe("getTimerCount", () => {
   });
   test("throws error if fake timers not active", () => {
     expect(() => vi.getTimerCount()).toThrow("Fake timers are not active");
+  });
+
+  // getTimerCount() and runOnlyPendingTimers() each walk the whole timer heap.
+  // A walk that recurses once per node overflows the native stack (SIGSEGV).
+  // Only Linux applies `ulimit -s` to the main thread's stack.
+  test.skipIf(!isLinux)("walks a deep timer heap without overflowing the stack", async () => {
+    // A debug build takes 0.1 ms to create a timer, and its bigger frames overflow sooner.
+    const N = isDebug ? 5_000 : 10_000;
+    const script = `
+      import { jest } from "bun:test";
+      jest.useFakeTimers();
+      // Decreasing deadlines link the timers into one chain of child nodes.
+      // A Bun.sleep() timer fires without a call into JS.
+      const sleeps = [];
+      for (let i = 0; i < ${N}; i++) sleeps.push(Bun.sleep(${N} - i));
+      let pending, left;
+      // The deepest JS frame leaves native code about 128 KB of stack.
+      (function dive() {
+        try {
+          dive();
+        } catch {
+          pending ??= jest.getTimerCount();
+          left ??= jest.runOnlyPendingTimers().getTimerCount();
+        }
+      })();
+      jest.useRealTimers();
+      await Promise.all(sleeps);
+      console.log("pending", pending, "left", left);
+    `;
+    await using proc = Bun.spawn({
+      // JavaScriptCore caps JS frames at 5 MB of stack. Under a smaller stack,
+      // the recursion above ends at the real end of the stack.
+      cmd: ["sh", "-c", 'ulimit -s 4096 && exec "$0" -e "$1"', bunExe(), script],
+      // The environment is on that stack too, and JavaScriptCore does not count
+      // it. The 64 KB commit message of a CI build would take half of the 128 KB,
+      // so the child gets only the settings for bun and the sanitizers.
+      env: Object.fromEntries(Object.entries(bunEnv).filter(([name]) => /^BUN_|SAN_OPTIONS$/.test(name))),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(`pending ${N} left 0\n`);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });
 describe("clearAllTimers", () => {

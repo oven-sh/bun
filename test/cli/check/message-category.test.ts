@@ -2,8 +2,8 @@
 // whatever it reports, of whatever category (`EmitFilesAndReportErrors`), and collects nothing more after it
 // (`GetDiagnosticsOfAnyProgram`). Only its summary counts the errors alone.
 //
-// In a file of its own, with projects that load no library and one process of Bun for a test: check.test.ts starts
-// twenty debug builds at a time, which do not end within the five seconds of a test.
+// In a file of its own, with projects that load no library: twenty debug builds at a time then end within the five
+// seconds of a test, which those of check.test.ts do not.
 import { describe, expect, test } from "bun:test";
 import { bunExe, tempDir } from "harness";
 import { join } from "node:path";
@@ -140,7 +140,7 @@ const cases: Record<string, { args?: string[]; files: Files; stdout: string[]; s
   },
 };
 
-describe("bun check", () => {
+describe.concurrent("bun check", () => {
   test.each(Object.entries(cases))("%s", async (_, { args = [], files, stdout, summary, exitCode = 1 }) => {
     using dir = project(files);
     const ours = await run(String(dir), [bunExe(), "check", ...args]);
@@ -149,7 +149,7 @@ describe("bun check", () => {
 });
 
 // The layouts that tsc does not have. What a line is called there is Bun's own, and it is what says why the run failed.
-describe("bun check, in its own layouts", () => {
+describe.concurrent("bun check, in its own layouts", () => {
   const layouts: Record<string, [args: string[], more: Record<string, string | undefined>, stdout: string[]]> = {
     "--pretty": [
       ["--pretty"],
@@ -183,7 +183,7 @@ describe("bun check, in its own layouts", () => {
 });
 
 // tsc is the oracle: the same lines, and it fails where `bun check` fails.
-describe.skipIf(!tsc)("bun check and tsc", () => {
+describe.concurrent.skipIf(!tsc)("bun check and tsc", () => {
   test.each(Object.entries(cases))("%s", async (_, { args = [], files }) => {
     // Each has its own copy: a build writes files.
     using theirRoot = project(files);
@@ -211,7 +211,7 @@ const stopped = (checked: string) => ({
   exitCode: 1,
 });
 
-describe("--check", () => {
+describe.concurrent("--check", () => {
   test("bun --check does not run the file", async () => {
     using dir = project(halfWritten);
     const ours = await run(String(dir), [bunExe(), "--check", "main.ts"]);
@@ -231,9 +231,9 @@ describe("--check", () => {
       "main.test.ts": `import { test } from "bun:test";\nimport type { P } from "./half";\nconst p: P = 1;\ntest("it ran", () => console.log(p));\n`,
     });
     const ours = await run(String(dir), [bunExe(), "test", "--check", "main.test.ts"]);
-    expect(ours.stderr).toContain(`${message("half.ts")}\n${found("2 files")}`);
-    expect(ours.stdout + ours.stderr).not.toContain("it ran");
-    expect(ours.exitCode).toBe(1);
+    // Its first line has the version.
+    const stdout = ours.stdout.replace(/^bun test v\S+ \(\w+\)$/, "bun test");
+    expect({ ...ours, stdout, stderr: lines(ours.stderr) }).toEqual({ ...stopped("2 files"), stdout: "bun test" });
   });
 
   const logged = `1 | export const p = import();
@@ -271,7 +271,7 @@ error: ${ts1450}
 });
 
 // oxlint makes a problem of it, like of every other diagnostic of the type checker.
-describe("bun lint --type-aware --type-check", () => {
+describe.concurrent("bun lint --type-aware --type-check", () => {
   const problems = async (files: Files) => {
     using dir = project({ "a.ts": call, ...files });
     const format = ["-f", "json-with-metadata"];

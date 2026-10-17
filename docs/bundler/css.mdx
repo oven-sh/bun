@@ -180,6 +180,8 @@ Bun's CSS bundler converts these color formats to backwards-compatible alternati
 }
 ```
 
+Bun adds these fallbacks to some properties only. See [Where Bun adds color fallbacks](#where-bun-adds-color-fallbacks).
+
 ### Color function
 
 The `color()` function specifies colors in predefined color spaces beyond traditional RGB, giving you access to wider color gamuts.
@@ -205,6 +207,62 @@ For browsers that don't support these color spaces, Bun's CSS bundler adds RGB f
 
   background-color: #6a805d;
   background-color: color(a98-rgb 0.44 0.5 0.37);
+}
+```
+
+### Where Bun adds color fallbacks
+
+Bun adds the fallbacks from the two sections above to these properties in style rules:
+
+- `color`
+- `background`, `background-color`, and `background-image`
+- `border` and `border-color`, and their per-side and logical forms such as `border-top` and `border-inline-start-color`
+- `border-image` and `border-image-source`
+- `box-shadow` and `text-shadow`
+
+In a `lab()`, `lch()`, `oklab()`, or `oklch()` color, write lightness as a percentage and the other channels as numbers, as in `oklch(65% 0.25 10)`. Bun adds the fallbacks for that form.
+
+Bun adds no fallback in any other place. The color stays in the notation you wrote:
+
+- Other properties, such as `outline-color`, `text-decoration-color`, `caret-color`, `fill`, and `stroke`.
+- Every declaration inside `@keyframes`.
+- Custom properties, such as `--accent: lab(50% 40 59)`. A property that reads the custom property with `var(--accent)` gets no fallback either.
+
+In other properties and in `@keyframes`, write an RGB declaration before the declaration that uses the newer color. Bun keeps both declarations in order. A browser that does not support the newer color uses the RGB declaration:
+
+```css title="styles.css" icon="file-code"
+.icon {
+  fill: #bf5702;
+  fill: lab(50% 40 59);
+}
+
+@keyframes pulse {
+  from {
+    color: #bf5702;
+    color: lab(50% 40 59);
+  }
+}
+```
+
+A browser accepts any value in a custom property, so the second declaration always wins there. Put the newer colors in one `@supports` rule instead:
+
+```css title="styles.css" icon="file-code"
+:root {
+  --accent: #bf5702;
+}
+
+.dark {
+  --accent: #ed7e31;
+}
+
+@supports (color: lab(0% 0 0)) {
+  :root {
+    --accent: lab(50% 40 59);
+  }
+
+  .dark {
+    --accent: lab(65% 40 59);
+  }
 }
 ```
 

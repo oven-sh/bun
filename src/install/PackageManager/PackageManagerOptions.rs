@@ -693,6 +693,8 @@ impl Options {
         // Runtime auto-install only: the bunfig.toml files of the project's other folders. The first
         // has the ones that `bun_install_ref` overrides, the second the ones that override it.
         runtime_bunfigs: [Option<&Api::BunInstall>; 2],
+        // `bunx`: expands `$VAR` in config registries, as `env` plus the project's `.env` files.
+        mut config_env: Option<&mut DotEnvLoader>,
         subcommand: Subcommand,
     ) -> crate::Result<()> {
         let bunfigs = [runtime_bunfigs[0], bun_install_ref, runtime_bunfigs[1]];
@@ -721,7 +723,11 @@ impl Options {
         if base.url.is_empty() {
             base.url = Npm::registry::DEFAULT_URL.as_bytes().into();
         }
-        self.scope = Npm::registry::Scope::from_api(b"", base, Some(&mut *env))?;
+        self.scope = Npm::registry::Scope::from_api(
+            b"",
+            base,
+            Some(config_env.as_deref_mut().unwrap_or(&mut *env)),
+        )?;
         // `did_override_default_scope` is set at the end of this fn;
         // on the OOM error path the field is irrelevant (process aborts).
 
@@ -746,13 +752,20 @@ impl Options {
                     }
                     self.registries.put(
                         Npm::registry::Scope::hash(name),
-                        Npm::registry::Scope::from_api(name, registry.clone(), Some(&mut *env))?,
+                        Npm::registry::Scope::from_api(
+                            name,
+                            registry.clone(),
+                            Some(config_env.as_deref_mut().unwrap_or(&mut *env)),
+                        )?,
                     )?;
                 }
             }
 
             for url_auth in &config.url_auth {
-                if let Some(url_auth) = Npm::registry::UrlAuth::from_api(url_auth, env)? {
+                if let Some(url_auth) = Npm::registry::UrlAuth::from_api(
+                    url_auth,
+                    config_env.as_deref_mut().unwrap_or(&mut *env),
+                )? {
                     self.url_auth.push(url_auth);
                 }
             }
@@ -967,7 +980,11 @@ impl Options {
             };
             self.registries.put(
                 Npm::registry::Scope::hash(name),
-                Npm::registry::Scope::from_api(name, registry, Some(&mut *env))?,
+                Npm::registry::Scope::from_api(
+                    name,
+                    registry,
+                    Some(config_env.as_deref_mut().unwrap_or(&mut *env)),
+                )?,
             )?;
         }
 

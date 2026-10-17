@@ -159,6 +159,9 @@ export async function warmNodeGyp() {
   try {
     const child = spawn({
       cmd: [bunExe(), "--bun", "x", "node-gyp@11", "--version"],
+      // The registries of the project are part of the name of what bunx installs, so this warms
+      // the copy that the addon directories below this one use.
+      cwd: import.meta.dir,
       stderr: "pipe",
       stdout: "ignore",
       stdin: "ignore",

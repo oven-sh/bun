@@ -214,11 +214,13 @@ impl CopyFile {
         }
     }
 
-    pub(crate) fn do_open_file<const WHICH: IOWhich>(&mut self) -> Result<(), crate::Error> {
+    /// Opens nothing, and leaves `destination_fd` invalid, when the destination path names `source`'s file.
+    pub(crate) fn do_open_file<const WHICH: IOWhich>(
+        &mut self,
+        source: Option<&Stat>,
+    ) -> Result<(), crate::Error> {
         let mut path_buf1 = bun_paths::path_buffer_pool::get();
-        // open source file first
-        // if it fails, we don't want the extra destination file hanging out
-        if matches!(WHICH, IOWhich::Both | IOWhich::Source) {
+        if matches!(WHICH, IOWhich::Source) {
             self.source_fd = match bun_sys::open(
                 self.source_file_store
                     .pathlike
@@ -246,7 +248,7 @@ impl CopyFile {
             };
         }
 
-        if matches!(WHICH, IOWhich::Both | IOWhich::Destination) {
+        if matches!(WHICH, IOWhich::Destination) {
             loop {
                 // detach `dest` lifetime from `self` (borrowck) — slice_z
                 // copies into path_buf1, so build the ZStr directly from the buffer.
@@ -259,6 +261,12 @@ impl CopyFile {
                 };
                 // SAFETY: path_buf1[dest_len] == 0 written above.
                 let dest: &bun_core::ZStr = bun_core::ZStr::from_buf(&path_buf1[..], dest_len);
+                // Before every open: a parent directory from the last pass can make the path name the source.
+                if source
+                    .is_some_and(|source| Self::is_same_file(source, &bun_sys::stat_no_path(dest)))
+                {
+                    return Ok(());
+                }
                 let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
                 match bun_sys::open(dest, OPEN_DESTINATION_FLAGS, mode) {
                     bun_sys::Result::Ok(result) => {
@@ -277,18 +285,9 @@ impl CopyFile {
                         match blob::mkdir_if_not_exists(self, &errno, dest, dest.as_bytes()) {
                             Retry::Continue => continue,
                             Retry::Fail => {
-                                if matches!(WHICH, IOWhich::Both) {
-                                    self.source_fd.close();
-                                    self.source_fd = Fd::INVALID;
-                                }
                                 return Err(bun_errno::from_errno(errno.errno as i32).into());
                             }
                             Retry::No => {}
-                        }
-
-                        if matches!(WHICH, IOWhich::Both) {
-                            self.source_fd.close();
-                            self.source_fd = Fd::INVALID;
                         }
 
                         self.system_error = Some(
@@ -613,12 +612,14 @@ impl CopyFile {
         Ok(())
     }
 
-    pub(crate) fn run_async(&mut self) {
-        #[cfg(target_os = "macos")]
-        let mut stat_: Option<Stat> = None;
-        #[cfg(not(target_os = "macos"))]
-        let stat_: Option<Stat> = None;
+    /// Whether `dest` is the file that `source` describes.
+    fn is_same_file(source: &Stat, dest: &bun_sys::Result<Stat>) -> bool {
+        // An inode number of 0 means the file system reports no identity.
+        matches!(dest, bun_sys::Result::Ok(dest)
+            if source.st_ino != 0 && dest.st_dev == source.st_dev && dest.st_ino == source.st_ino)
+    }
 
+    pub(crate) fn run_async(&mut self) {
         if let PathOrFileDescriptor::Fd(fd) = &self.destination_file_store.pathlike {
             self.destination_fd = *fd;
         }
@@ -627,8 +628,8 @@ impl CopyFile {
             self.source_fd = *fd;
         }
 
-        // Do we need to open both files?
-        if self.destination_fd == Fd::INVALID && self.source_fd == Fd::INVALID {
+        // The source comes first: the destination is compared with it before it is opened.
+        if self.source_fd == Fd::INVALID {
             // First, we attempt to clonefile() on macOS
             // This is the fastest way to copy a file.
             #[cfg(target_os = "macos")]
@@ -648,15 +649,13 @@ impl CopyFile {
 
                         // stat the output file, make sure it:
                         // 1. Exists
-                        match bun_sys::stat(
+                        let stat_size = match bun_sys::stat(
                             self.source_file_store
                                 .pathlike
                                 .path()
                                 .slice_z(&mut path_buf),
                         ) {
                             bun_sys::Result::Ok(result) => {
-                                stat_ = Some(result);
-
                                 if bun_sys::S::ISDIR(result.st_mode as u32) {
                                     self.system_error = Some(unsupported_directory_error());
                                     return;
@@ -665,17 +664,18 @@ impl CopyFile {
                                 if !bun_sys::S::ISREG(result.st_mode as u32) {
                                     break 'do_clonefile;
                                 }
+
+                                result.st_size
                             }
                             bun_sys::Result::Err(err) => {
                                 // If we can't stat it, we also can't copy it.
                                 self.system_error = Some(err.to_system_error());
                                 return;
                             }
-                        }
+                        };
 
                         match self.do_clonefile() {
                             Ok(()) => {
-                                let stat_size = stat_.unwrap().st_size;
                                 if self.max_length != MAX_SIZE
                                     && self.max_length
                                         < SizeType::try_from(stat_size).expect("int cast")
@@ -728,21 +728,7 @@ impl CopyFile {
                 }
             }
 
-            if self.do_open_file::<{ IOWhich::Both }>().is_err() {
-                return;
-            }
-            // Do we need to open only one file?
-        } else if self.destination_fd == Fd::INVALID {
-            self.source_fd = self.source_file_store.pathlike.fd();
-
-            if self.do_open_file::<{ IOWhich::Destination }>().is_err() {
-                return;
-            }
-            // Do we need to open only one file?
-        } else if self.source_fd == Fd::INVALID {
-            self.destination_fd = self.destination_file_store.pathlike.fd();
-
-            if self.do_open_file::<{ IOWhich::Source }>().is_err() {
+            if self.do_open_file::<{ IOWhich::Source }>(None).is_err() {
                 return;
             }
         }
@@ -751,7 +737,6 @@ impl CopyFile {
             return;
         }
 
-        debug_assert!(self.destination_fd.is_valid());
         debug_assert!(self.source_fd.is_valid());
 
         if matches!(
@@ -761,16 +746,14 @@ impl CopyFile {
             // nothing to do for the Fd case
         }
 
-        let stat: Stat = match stat_ {
-            Some(s) => s,
-            None => match bun_sys::fstat(self.source_fd) {
-                bun_sys::Result::Ok(result) => result,
-                bun_sys::Result::Err(err) => {
-                    self.do_close();
-                    self.system_error = Some(err.to_system_error());
-                    return;
-                }
-            },
+        // From the opened fd: the source path can name another file by now.
+        let stat: Stat = match bun_sys::fstat(self.source_fd) {
+            bun_sys::Result::Ok(result) => result,
+            bun_sys::Result::Err(err) => {
+                self.system_error = Some(err.to_system_error());
+                self.do_close();
+                return;
+            }
         };
 
         if bun_sys::S::ISDIR(stat.st_mode as _) {
@@ -778,6 +761,32 @@ impl CopyFile {
             self.do_close();
             return;
         }
+
+        if self.destination_fd == Fd::INVALID {
+            // Only a regular file has an identity to compare.
+            let source = bun_sys::S::ISREG(stat.st_mode as _).then_some(&stat);
+            if self
+                .do_open_file::<{ IOWhich::Destination }>(source)
+                .is_err()
+            {
+                self.do_close();
+                return;
+            }
+
+            if self.destination_fd == Fd::INVALID {
+                // A copy of a file onto itself: nothing to empty or write.
+                self.read_len = SizeType::try_from(stat.st_size).expect("int cast");
+                if let Some(mode) = self.destination_mode {
+                    if let bun_sys::Result::Err(err) = bun_sys::fchmod(self.source_fd, mode) {
+                        self.system_error = Some(err.to_system_error());
+                    }
+                }
+                self.do_close();
+                return;
+            }
+        }
+
+        debug_assert!(self.destination_fd.is_valid());
 
         // BSD fstat on a pipe reports bytes currently buffered in st_size;
         // only a regular-file st_size is a length.
@@ -799,6 +808,8 @@ impl CopyFile {
                 )
                 && self.max_length > PREALLOCATE_LENGTH
                 && self.max_length != MAX_SIZE
+                // A rename after the compare can make the source the destination: do not zero-fill it.
+                && !Self::is_same_file(&stat, &bun_sys::fstat(self.destination_fd))
             {
                 let _ = bun_sys::preallocate_file(
                     self.destination_fd.native(),

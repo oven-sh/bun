@@ -18,7 +18,6 @@
 
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { basename } from "node:path";
 import zlib from "node:zlib";
 
 function crc32(buf) {
@@ -222,7 +221,7 @@ const args = process.argv.slice(2);
 const paths = args.filter(a => !a.startsWith("--"));
 // [name, PNG, calls per sample]
 const fixtures = paths.length
-  ? paths.map(p => [basename(p), readFileSync(p), 1])
+  ? paths.map(p => [p, readFileSync(p), 1])
   : [
       ["screenshot 1920×1080", makePng(1920, 1080, screenshot(1)), 1],
       ["screenshot 1920×1080, under 256 colours", makePng(1920, 1080, screenshot(0)), 1],

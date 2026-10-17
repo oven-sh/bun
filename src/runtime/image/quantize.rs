@@ -300,14 +300,17 @@ struct Sums {
 /// The cut of `pixels` along `ch` with the least squared error, as the value that starts part two.
 fn cut(pixels: &[[u8; 4]], ch: usize, total: &Moments, at_value: &mut [Sums]) -> Option<u8> {
     let (mut least, mut most) = (usize::from(u8::MAX), 0usize);
-    for pixel in pixels {
+    // One step per run of equal pixels: a flat area would write the same sums once per pixel.
+    for run in pixels.chunk_by(|a, b| a == b) {
+        let pixel = run[0];
+        let count = run.len() as u64;
         let value = usize::from(pixel[ch]);
         least = least.min(value);
         most = most.max(value);
         let sums = &mut at_value[value];
-        sums.n += 1;
+        sums.n += count;
         for c in 0..4usize {
-            sums.sum[c] += u64::from(pixel[c]);
+            sums.sum[c] += count * u64::from(pixel[c]);
         }
     }
     // The sum of squares is fixed: least error is the largest L²/nL + R²/nR over the parts' sums.

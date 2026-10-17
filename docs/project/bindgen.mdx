@@ -198,7 +198,7 @@ any other: nothing looks at how many there are.
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
 | `b.array(T)`                                     | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
-| `b.dictionary(members)`                          | a generated `struct`             | an object that is not an array                                |
+| `b.dictionary(members)`                          | `&` a generated `struct`         | an object that is not an array                                |
 | `b.union(alternatives)`                          | a generated `enum`               | see [Unions and kinds](#unions-and-kinds)                     |
 | `b.class(options)`                               | `JsWrapper<'a, T>`               | an instance                                                   |
 
@@ -265,9 +265,8 @@ export const BracesOptions = b.dictionary({
 Each member is read, then converted, in declaration order, once. A member
 whose type does not accept `undefined` is required. A member can be written
 `{ type, rustName, altNames }` to rename its field or to accept other spellings.
-A dictionary whose members can all be absent implements `Default`. The thunk hands the struct
-over by value, so the body of one over 64 bytes needs
-`#[allow(clippy::large_types_passed_by_value)]`.
+A dictionary whose members can all be absent implements `Default`. As an argument the struct
+stays in the frame of the thunk, and the body borrows it: `options: &BracesOptions`.
 
 A member is looked up on the object and its prototype chain, **stopping before
 the calling realm's `Object.prototype`**, so a polluted `Object.prototype` cannot
@@ -361,7 +360,7 @@ export const gzipSync = b.fn({
 ```
 
 ```rust
-fn gzip_sync<'a>(heap: &JsHeap<'a>, data: &[u8], options: ZlibCompressionOptions<'a>) -> bindgen::Result<'a, JsLocal<'a, BufferSource>>
+fn gzip_sync<'a>(heap: &JsHeap<'a>, data: &[u8], options: &ZlibCompressionOptions<'a>) -> bindgen::Result<'a, JsLocal<'a, BufferSource>>
 ```
 
 | Option      | Values                                               | Meaning                                                                |

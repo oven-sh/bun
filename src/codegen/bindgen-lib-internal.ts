@@ -1428,6 +1428,10 @@ export class DictionaryType extends NamedType {
     });
     return fields.filter(text => text.length > 0).join("\n");
   }
+  /** A body borrows it, whatever its size. */
+  get rustIsCopy(): boolean {
+    return false;
+  }
   /** Every member can be absent. */
   get hasDefault(): boolean {
     return this.members.every(member => member.type.takesUndefined);

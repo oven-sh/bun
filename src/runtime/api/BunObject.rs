@@ -343,7 +343,7 @@ pub(crate) fn gc_from_js(cx: &mut JsScope<'_>, force: bool) -> usize {
 pub(crate) fn braces(
     cx: &mut JsScope<'_>,
     brace_str: BunString,
-    opts: BracesOptions,
+    opts: &BracesOptions,
 ) -> JsResult<JSValue> {
     let global = cx.global();
     let brace_utf8 = brace_str.to_utf8();
@@ -446,7 +446,7 @@ pub(crate) fn braces(
 pub(crate) fn which<'a>(
     heap: &JsHeap<'a>,
     command: &'a [u8],
-    options: WhichOptions<'a>,
+    options: &WhichOptions<'a>,
 ) -> bindgen::Result<'a, Option<JsLocal<'a, JSString>>> {
     if command.len() >= MAX_PATH_BYTES {
         return Err(heap.error(format_args!("bin path is too long")));
@@ -818,7 +818,7 @@ thread_local! {
 pub(crate) fn open_in_editor<'a>(
     heap: &JsHeap<'a>,
     path: &'a [u8],
-    options: EditorOptions<'a>,
+    options: &EditorOptions<'a>,
 ) -> bindgen::Result<'a, ()> {
     let vm = VirtualMachine::get();
     let editor_name = options.editor.filter(|name| !name.is_empty());
@@ -1406,7 +1406,7 @@ pub(crate) fn alloc_unsafe<'a>(
     heap.create_uninitialized_uint8_array(size as usize)
 }
 
-pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: MMapOptions) -> JsResult<JSValue> {
+pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> JsResult<JSValue> {
     let global_this = cx.global();
 
     #[cfg(windows)]
@@ -1873,35 +1873,33 @@ pub(crate) mod JSZlib {
     pub(crate) fn gzip_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
-        options: ZlibCompressionOptions<'a>,
+        options: &ZlibCompressionOptions<'a>,
     ) -> BufferResult<'a> {
         gzip_or_deflate_sync(heap, data, options, true)
     }
 
-    #[allow(clippy::large_types_passed_by_value)] // the generated thunk hands over the struct it made
     pub(crate) fn inflate_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
-        options: ZlibDecompressionOptions<'a>,
+        options: &ZlibDecompressionOptions<'a>,
     ) -> BufferResult<'a> {
-        gunzip_or_inflate_sync(heap, data, &options, false)
+        gunzip_or_inflate_sync(heap, data, options, false)
     }
 
     pub(crate) fn deflate_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
-        options: ZlibCompressionOptions<'a>,
+        options: &ZlibCompressionOptions<'a>,
     ) -> BufferResult<'a> {
         gzip_or_deflate_sync(heap, data, options, false)
     }
 
-    #[allow(clippy::large_types_passed_by_value)] // the generated thunk hands over the struct it made
     pub(crate) fn gunzip_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
-        options: ZlibDecompressionOptions<'a>,
+        options: &ZlibDecompressionOptions<'a>,
     ) -> BufferResult<'a> {
-        gunzip_or_inflate_sync(heap, data, &options, true)
+        gunzip_or_inflate_sync(heap, data, options, true)
     }
 
     fn gunzip_or_inflate_sync<'a>(
@@ -1994,7 +1992,7 @@ pub(crate) mod JSZlib {
     fn gzip_or_deflate_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
-        options: ZlibCompressionOptions<'a>,
+        options: &ZlibCompressionOptions<'a>,
         is_gzip: bool,
     ) -> BufferResult<'a> {
         let level = options.level.map_or(6, |level| level as i32);
@@ -2066,7 +2064,7 @@ pub(crate) mod JSZstd {
 
     fn level_of<'a>(
         heap: &JsHeap<'a>,
-        options: ZstdCompressionOptions,
+        options: &ZstdCompressionOptions,
     ) -> bindgen::Result<'a, i32> {
         let level = options.level.map_or(3, |level| level as i32);
         if !(1..=22).contains(&level) {
@@ -2160,7 +2158,7 @@ pub(crate) mod JSZstd {
     pub(crate) fn compress_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
-        options: ZstdCompressionOptions,
+        options: &ZstdCompressionOptions,
     ) -> bindgen::Result<'a, JsLocal<'a, BufferSource>> {
         let level = level_of(heap, options)?;
         let output = compress_to_box(data, level).map_err(|failure| failure.into_error(heap))?;
@@ -2248,7 +2246,7 @@ pub(crate) mod JSZstd {
     pub(crate) fn compress<'a>(
         cx: &mut JsScope<'a>,
         data: PinnedBytes,
-        options: ZstdCompressionOptions,
+        options: &ZstdCompressionOptions,
     ) -> bindgen::Result<'a, JSValue> {
         let level = level_of(&cx.heap, options)?;
         Ok(schedule(cx, data, true, level))

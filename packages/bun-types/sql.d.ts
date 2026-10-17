@@ -444,6 +444,9 @@ declare module "bun" {
        * over the environment. Without `url` and without a connection string,
        * Bun reads a URL from the environment, such as `DATABASE_URL`, and the
        * other options change single fields of it.
+       *
+       * With `adapter`, a `DATABASE_URL` that names another adapter's server is
+       * not used, except for the TLS mode it asks for when no other URL applies.
        */
       url?: URL | string | undefined;
 

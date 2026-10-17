@@ -795,7 +795,7 @@ Bun uses the first of these variables that is set:
 | 5     | `SQLITE_URL`                                                   | SQLite                  |
 
 - A URL that Bun reads from a `TLS_*` variable uses `sslmode=require` unless the URL or an option names a mode. If you pass `process.env.TLS_DATABASE_URL` to `new SQL()` yourself, add `?sslmode=require` or `tls: true`.
-- With the `adapter` option, Bun reads `DATABASE_URL` and then only that adapter's variables. It does not connect to a `DATABASE_URL` whose protocol names another adapter.
+- With the `adapter` option, Bun reads `DATABASE_URL` and then only that adapter's variables. It does not connect to a `DATABASE_URL` whose protocol names another adapter. When no other URL applies, the connection still uses the TLS mode that URL asks for, unless `tls: false` or `ssl` says otherwise. A URL without a host names no other server, so its user, password, database and TLS mode apply.
 - Next to `hostname`, `host`, `path`, `socket` or `url`, Bun skips a SQLite URL.
 
 ### PostgreSQL Environment Variables

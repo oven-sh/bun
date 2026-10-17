@@ -625,7 +625,12 @@ static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksV
     auto* sink = WebCore::JSBunStandaloneTextSink::create(vm, runtime->standaloneTextSinkStructure(domGlobalObject));
     for (unsigned i = 0; i < length; i++) {
         textAccumulatorWrite(vm, globalObject, sink, sink->m_accumulator, values.at(i));
-        RETURN_IF_EXCEPTION(scope, {});
+        if (scope.exception()) [[unlikely]] {
+            // Nothing reads the sink after this, and the collector does not know the size of its text.
+            WTF::Locker locker { sink->cellLock() };
+            sink->m_accumulator.reset(locker);
+            return {};
+        }
     }
     WTF::String text = finishTextAccumulator(vm, globalObject, sink, sink->m_accumulator);
     RETURN_IF_EXCEPTION(scope, {});
@@ -664,14 +669,9 @@ static JSValue textAccumulatorWrite(JSC::VM& vm, JSGlobalObject* globalObject, J
         WTF::String string = asString(chunk)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         unsigned length = string.length();
-        if (length) {
-            accumulator.rope.append(string);
-            if (accumulator.rope.hasOverflowed()) [[unlikely]] {
-                throwOutOfMemoryError(globalObject, scope);
-                return {};
-            }
-            accumulator.hasString = true;
-            accumulator.estimatedLength += length;
+        if (length && !accumulator.tryAppendString(string)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
         }
         return jsNumber(length);
     }
@@ -688,8 +688,13 @@ static JSValue textAccumulatorWrite(JSC::VM& vm, JSGlobalObject* globalObject, J
     if (byteLength) {
         accumulator.hasBuffer = true;
         JSC::JSString* flushedRope = nullptr;
-        if (accumulator.rope.length()) {
-            flushedRope = jsString(vm, accumulator.rope.toString());
+        if (accumulator.hasRope()) {
+            WTF::String rope = accumulator.tryRopeString();
+            if (rope.isNull()) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            flushedRope = jsString(vm, WTF::move(rope));
             RETURN_IF_EXCEPTION(scope, {});
         }
         bool appended;
@@ -722,13 +727,12 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
     if (!hasString && !hasBuffer)
         return WTF::emptyString();
     if (hasString && !hasBuffer) {
-        if (exceedsStringLimit(accumulator.rope.length())) [[unlikely]] {
-            releaseAccumulated();
+        WTF::String rope = accumulator.tryRopeString();
+        releaseAccumulated();
+        if (rope.isNull()) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return WTF::String();
         }
-        WTF::String rope = accumulator.rope.toString();
-        releaseAccumulated();
         if (rope.length() && rope[0] == 0xFEFF)
             return rope.substring(1);
         return rope;
@@ -757,8 +761,13 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
             return WTF::String();
         }
     }
-    if (accumulator.rope.length()) {
-        WTF::String rope = accumulator.rope.toString();
+    if (accumulator.hasRope()) {
+        WTF::String rope = accumulator.tryRopeString();
+        if (rope.isNull()) [[unlikely]] {
+            releaseAccumulated();
+            throwOutOfMemoryError(globalObject, scope);
+            return WTF::String();
+        }
         if (rope[0] == 0xFEFF)
             rope = rope.substring(1);
         if (!appendUTF8WithinStringLimit(rope, bytes)) [[unlikely]] {

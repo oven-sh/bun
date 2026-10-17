@@ -25,7 +25,6 @@ const {
   stat,
   symlink,
   unlink,
-  utimes,
 } = require("node:fs/promises");
 const { dirname, isAbsolute, join, parse, resolve } = require("node:path");
 
@@ -270,48 +269,20 @@ async function mayCopyFile(srcStat, src, dest, opts) {
   }
 }
 
+// The promise form of copyTimesAndModeSync in internal/fs/cp-sync, created the same way.
+let copyTimesAndMode: ((src: string, dest: string, mode: number) => Promise<void>) | undefined;
+
 async function _copyFile(srcStat, src, dest, opts) {
   await copyFile(src, dest, opts.mode);
   if (opts.preserveTimestamps) {
-    return handleTimestampsAndMode(srcStat.mode, src, dest);
+    copyTimesAndMode ??= $newRustFunction("node_fs_binding.rs", "copyTimesAndMode", 3);
+    return copyTimesAndMode(src, dest, srcStat.mode);
   }
   return setDestMode(dest, srcStat.mode);
 }
 
-async function handleTimestampsAndMode(srcMode, src, dest) {
-  // Make sure the file is writable before setting the timestamp
-  // otherwise open fails with EPERM when invoked with 'r+'
-  // (through utimes call)
-  if (fileIsNotWritable(srcMode)) {
-    await makeFileWritable(dest, srcMode);
-    return setDestTimestampsAndMode(srcMode, src, dest);
-  }
-  return setDestTimestampsAndMode(srcMode, src, dest);
-}
-
-function fileIsNotWritable(srcMode) {
-  return (srcMode & 0o200) === 0;
-}
-
-function makeFileWritable(dest, srcMode) {
-  return setDestMode(dest, srcMode | 0o200);
-}
-
-async function setDestTimestampsAndMode(srcMode, src, dest) {
-  await setDestTimestamps(src, dest);
-  return setDestMode(dest, srcMode);
-}
-
 function setDestMode(dest, srcMode) {
   return chmod(dest, srcMode);
-}
-
-async function setDestTimestamps(src, dest) {
-  // The initial srcStat.atime cannot be trusted
-  // because it is modified by the read(2) system call
-  // (See https://nodejs.org/api/fs.html#fs_stat_time_values)
-  const updatedSrcStat = await stat(src);
-  return utimes(dest, updatedSrcStat.atime, updatedSrcStat.mtime);
 }
 
 function onDir(srcStat, destStat, src, dest, opts) {

@@ -14,7 +14,6 @@ const {
   statSync,
   symlinkSync,
   unlinkSync,
-  utimesSync,
 } = require("node:fs");
 const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
 
@@ -416,38 +415,29 @@ function mayCopyFile(srcStat, src, dest, opts) {
   }
 }
 
+// The first copy with preserveTimestamps creates it, so a process that never
+// asks for the option has no such function.
+let copyTimesAndModeSync: ((src: string, dest: string, mode: number) => void) | undefined;
+
 function copyFile(srcStat, src, dest, opts) {
   copyFileSync(src, dest, opts.mode);
-  if (opts.preserveTimestamps) handleTimestamps(srcStat.mode, src, dest);
+  if (opts.preserveTimestamps) {
+    // Node does this step with stat(src), utimes(dest) and chmod(dest):
+    // https://github.com/nodejs/node/blob/v26.11.1/lib/internal/fs/cp/cp-sync.js#L106-L132
+    // utimes takes a Date or a number of seconds, and neither can hold the time
+    // of a file, so node's copy gets a time near the one of its source. The
+    // native step keeps the time as the OS reports it, so the copy gets the same
+    // time. It reads src after the copy, because the read(2) of the copy changes
+    // atime. It does not make dest writable first, as node does: only a setter
+    // that opens dest for writing needs that (fs-extra's, where the walker is from).
+    copyTimesAndModeSync ??= $newRustFunction("node_fs_binding.rs", "copyTimesAndModeSync", 3);
+    return copyTimesAndModeSync(src, dest, srcStat.mode);
+  }
   return setDestMode(dest, srcStat.mode);
-}
-
-function handleTimestamps(srcMode, src, dest) {
-  // Make sure the file is writable before setting the timestamp
-  // otherwise open fails with EPERM when invoked with 'r+'
-  // (through utimes call)
-  if (fileIsNotWritable(srcMode)) makeFileWritable(dest, srcMode);
-  return setDestTimestamps(src, dest);
-}
-
-function fileIsNotWritable(srcMode) {
-  return (srcMode & 0o200) === 0;
-}
-
-function makeFileWritable(dest, srcMode) {
-  return setDestMode(dest, srcMode | 0o200);
 }
 
 function setDestMode(dest, srcMode) {
   return chmodSync(dest, srcMode);
-}
-
-function setDestTimestamps(src, dest) {
-  // The initial srcStat.atime cannot be trusted
-  // because it is modified by the read(2) system call
-  // (See https://nodejs.org/api/fs.html#fs_stat_time_values)
-  const updatedSrcStat = statSync(src);
-  return utimesSync(dest, updatedSrcStat.atime, updatedSrcStat.mtime);
 }
 
 function onDir(srcStat, destStat, src, dest, opts) {

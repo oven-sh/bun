@@ -5025,7 +5025,8 @@ declare module "bun" {
        * Replaces the built-in hostname check, as in `fetch()` and `tls.connect()`.
        * Any truthy return value rejects the server, including the Promise of an
        * `async` function.
-       * Through an HTTPS proxy it runs for the target's certificate only.
+       * Through an HTTPS proxy it runs for the target's certificate only. The
+       * proxy's certificate goes to `proxy.tls.checkServerIdentity`.
        * With `rejectUnauthorized: false` it still runs when the certificate
        * chain verified, but its result is not enforced.
        * @param hostname - The name the certificate is verified against: `serverName` if set, else the URL host
@@ -5040,7 +5041,7 @@ declare module "bun" {
     /**
      * Headers to send to the server
      */
-    headers?: import("node:http").OutgoingHttpHeaders;
+    headers?: import("node:http").OutgoingHttpHeaders | Headers | [string, string][];
   };
 
   type WebSocketOptionsProxy = {
@@ -5048,7 +5049,7 @@ declare module "bun" {
      * HTTP proxy to use for the WebSocket connection.
      *
      * Can be a string URL, a URL instance, or an object with `url` and
-     * optional `headers`.
+     * optional `headers` and `tls`.
      *
      * @example
      * ```ts
@@ -5086,6 +5087,29 @@ declare module "bun" {
            * Supports plain objects or Headers class instances.
            */
           headers?: import("node:http").OutgoingHttpHeaders | Headers;
+          /**
+           * TLS options for the connection to an `https://` proxy.
+           *
+           * If set, even to `{}` or `true`, the proxy uses only these options and the
+           * target uses only the top-level `tls` option. Otherwise `tls`
+           * applies to both connections.
+           *
+           * `serverName` and `checkServerIdentity` are the exception: the
+           * top-level ones never apply to the proxy, only the ones given here.
+           * By default the proxy's certificate is checked against the hostname
+           * in the proxy URL.
+           *
+           * @example
+           * ```ts
+           * const ws = new WebSocket("wss://example.com", {
+           *   proxy: {
+           *     url: "https://proxy.internal:8443",
+           *     tls: { ca: Bun.file("./proxy-ca.pem") }
+           *   }
+           * });
+           * ```
+           */
+          tls?: WebSocketOptionsTLS["tls"] | boolean;
         };
   };
 
@@ -5116,9 +5140,19 @@ declare module "bun" {
 
   interface WebSocketEventMap {
     close: CloseEvent;
-    error: Event;
-    message: MessageEvent;
+    error: ErrorEvent;
+    message: globalThis.MessageEvent;
     open: Event;
+    /**
+     * Fired when a Ping frame is received. Bun has already replied with a Pong.
+     * `data` is the payload, typed according to `binaryType`. Not available in browsers.
+     */
+    ping: globalThis.MessageEvent;
+    /**
+     * Fired when a Pong frame is received. `data` is the payload, typed according
+     * to `binaryType`. Not available in browsers.
+     */
+    pong: globalThis.MessageEvent;
   }
 
   /**
@@ -5178,9 +5212,10 @@ declare module "bun" {
     readonly extensions: string;
 
     /**
-     * The type of binary data being received.
+     * The type of `data` for binary `message`, `ping` and `pong` events: `Buffer`
+     * (`"nodebuffer"`, the default), `ArrayBuffer` or `Blob`.
      */
-    binaryType: "arraybuffer" | "nodebuffer";
+    binaryType: "arraybuffer" | "blob" | "nodebuffer";
 
     /**
      * Event handler for open event
@@ -5190,15 +5225,20 @@ declare module "bun" {
     /**
      * Event handler for message event
      */
-    onmessage: ((this: WebSocket, ev: MessageEvent) => any) | null;
+    onmessage: ((this: WebSocket, ev: globalThis.MessageEvent) => any) | null;
 
     /**
-     * Event handler for error event
+     * Event handler for error event. Fires when the connection fails, followed by a
+     * `close` event with code `1006`. `ev.message` describes the failure. `ev.error` is
+     * an `Error` that may have a `code`, such as `"ECONNREFUSED"`, `"ENOTFOUND"`,
+     * `"SELF_SIGNED_CERT_IN_CHAIN"` or `"WS_ERR_INVALID_UTF8"`.
      */
-    onerror: ((this: WebSocket, ev: Event) => any) | null;
+    onerror: ((this: WebSocket, ev: ErrorEvent) => any) | null;
 
     /**
-     * Event handler for close event
+     * Event handler for close event. Fires once the connection closes. `code` and
+     * `reason` come from the server's Close frame (`1005` if the frame had no code).
+     * `code` is `1006` if the connection ended without a Close frame.
      */
     onclose: ((this: WebSocket, ev: CloseEvent) => any) | null;
 
@@ -5206,12 +5246,15 @@ declare module "bun" {
      * Transmits data to the server
      * @param data The data to send to the server
      */
-    send(data: string | ArrayBufferLike | ArrayBufferView): void;
+    send(data: string | ArrayBufferLike | ArrayBufferView | Blob): void;
 
     /**
-     * Closes the WebSocket connection
+     * Starts the closing handshake. Sends a Close frame and sets `readyState` to `CLOSING`.
+     * The `close` event fires once the server replies with its own Close frame and closes
+     * the connection. If the server hasn't done so after 30 seconds, Bun closes the connection.
      * @param code A close code an endpoint is allowed to send (RFC 6455): `1000`-`1014` except
      * the reserved `1004`-`1006`, or `3000`-`4999`. Any other code throws an `InvalidAccessError`.
+     * If omitted, the Close frame has no code or reason.
      * @param reason A human-readable string explaining why the connection is closing. Throws a
      * `SyntaxError` if longer than 123 bytes of UTF-8
      */
@@ -5221,13 +5264,13 @@ declare module "bun" {
      * Sends a ping frame to the server
      * @param data Optional data to include in the ping frame
      */
-    ping(data?: string | ArrayBufferLike | ArrayBufferView): void;
+    ping(data?: string | ArrayBufferLike | ArrayBufferView | Blob): void;
 
     /**
      * Sends a pong frame to the server
      * @param data Optional data to include in the pong frame
      */
-    pong(data?: string | ArrayBufferLike | ArrayBufferView): void;
+    pong(data?: string | ArrayBufferLike | ArrayBufferView | Blob): void;
 
     /**
      * Immediately terminates the connection
@@ -5337,12 +5380,12 @@ declare module "bun" {
      * Byte offset into the file where the mapping starts.
      * @default 0
      */
-    offset?: number;
+    offset?: number | bigint;
     /**
      * Maximum number of bytes to map. Clamped to the file size
      * (minus `offset`). Defaults to mapping the rest of the file.
      */
-    size?: number;
+    size?: number | bigint;
   }
   /**
    * Open a file as a live-updating `Uint8Array` without copying memory
@@ -9233,7 +9276,7 @@ declare module "bun" {
    *
    * Like `readline()`, but without the IO.
    */
-  function indexOfLine(buffer: ArrayBufferView | ArrayBufferLike, offset?: number): number;
+  function indexOfLine(buffer: ArrayBufferView | ArrayBufferLike, offset?: number | bigint): number;
 
   interface GlobScanOptions {
     /**
@@ -10657,6 +10700,8 @@ declare module "bun" {
     optionalDependencies?: Record<string, string>;
     peerDependencies?: Record<string, string>;
     optionalPeers?: string[];
+    /** Names in `optionalDependencies` that did not resolve, listed when another package in the lockfile has the name */
+    unresolved?: string[];
     bin?: string | Record<string, string>;
     binDir?: string;
   };
@@ -10669,6 +10714,7 @@ declare module "bun" {
   type BunLockFilePackageInfo = BunLockFileBasePackageInfo & {
     os?: string | string[];
     cpu?: string | string[];
+    hasInstallScript?: true;
     bundled?: true;
   };
 

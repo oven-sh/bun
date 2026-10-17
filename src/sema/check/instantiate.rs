@@ -394,6 +394,26 @@ impl<'p, 's> Checker<'p, 's> {
         self.instantiate_cached(ty, mapper, serial)
     }
 
+    /// `instantiate(ty, mapper)`, if nothing has to be computed for it.
+    pub(super) fn instantiation_if_known(
+        &mut self,
+        ty: TypeId,
+        mapper: MapperId,
+    ) -> Option<TypeId> {
+        if mapper == MapperId::IDENTITY {
+            return Some(ty);
+        }
+        match self.types().instantiation_class(ty) {
+            InstantiationClass::Unchanged => Some(ty),
+            InstantiationClass::TypeParameter => Some(self.types().map(mapper, ty).unwrap_or(ty)),
+            _ if !self.index_infos_in_instantiation.is_empty() => None,
+            _ => match self.recent_instantiations.get_tagged(ty.0, mapper.0) {
+                Some((known, _)) => Some(TypeId(known)),
+                None => self.p.instantiations.get(&self.task, &(ty, mapper)),
+            },
+        }
+    }
+
     /// `getTypeOfInstantiatedSymbol`: `links.resolvedType` keeps the result, so only the first request
     /// for the type of a symbol gets to `instantiateType`, adds to `instantiationCount` and can fail
     /// at a limit. There is no symbol here: a result that is known stands for one that has its type.

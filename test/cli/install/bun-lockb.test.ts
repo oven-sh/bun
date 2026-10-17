@@ -334,6 +334,40 @@ it("migrating bun.lockb keeps a peer required when it is satisfied only by the d
   expect(await file(join(fromLockb, "bun.lock")).text()).toBe(migrated);
 });
 
+it("migrating bun.lockb keeps an unresolved peer of the root or a workspace required", async () => {
+  // no published version is in either range
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: false },
+    files: {
+      "package.json": JSON.stringify({
+        name: "lockb-unresolved-peer",
+        workspaces: ["packages/*"],
+        dependencies: { "a-dep": "1.0.1" },
+        peerDependencies: { "no-deps": "^9.0.0" },
+      }),
+      "packages/ui/package.json": JSON.stringify({ name: "ui", peerDependencies: { "what-bin": "^9.0.0" } }),
+    },
+  });
+
+  await runBunInstall(env, packageDir, { allowWarnings: true });
+  expect(await exists(join(packageDir, "bun.lockb"))).toBe(true);
+
+  await runBunInstall(env, packageDir, { saveTextLockfile: true, allowWarnings: true });
+  const migrated = await file(join(packageDir, "bun.lock")).text();
+  expect((Bun.JSONC.parse(migrated) as { workspaces: object }).workspaces).toEqual({
+    "": {
+      name: "lockb-unresolved-peer",
+      dependencies: { "a-dep": "1.0.1" },
+      peerDependencies: { "no-deps": "^9.0.0" },
+    },
+    "packages/ui": { name: "ui", peerDependencies: { "what-bin": "^9.0.0" } },
+  });
+
+  await runBunInstall(env, packageDir, { frozenLockfile: true, allowWarnings: true });
+  await runBunInstall(env, packageDir, { savesLockfile: false, allowWarnings: true });
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(migrated);
+});
+
 it("recovers from a corrupted binary lockfile instead of panicking", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 
@@ -939,6 +973,75 @@ describe.concurrent("--frozen-lockfile after a migration, with a root postinstal
         });
       });
     });
+  });
+});
+
+describe.concurrent.each(["isolated", "hoisted"] as const)(
+  "bun.lockb drops a version that only a peer held once the peer moves (%s)",
+  linker => {
+    it.each([
+      // one-dep's no-deps@1.0.1 goes to the top of the tree, and it is in the range of the peer.
+      ["down to the version at the top of the tree", {}, { "one-dep": "1.0.0" }, "no-deps@1.1.0"],
+      ["up to the highest version in its range", { "no-deps": "1.0.1" }, { top: "npm:no-deps@1.1.0" }, "no-deps@1.0.1"],
+    ])("%s", async (_, before, after, dropped) => {
+      const app = (others: object) =>
+        JSON.stringify({ name: "app", dependencies: { "peer-deps-fixed": "1.0.0", ...others } });
+      const { packageDir, packageJson } = await registry.createTestDir({
+        bunfigOpts: { saveTextLockfile: false, linker },
+        files: { "package.json": app(before) },
+      });
+      expect(await run(packageDir, "install")).toMatchObject({ exitCode: 0 });
+      expect((await run(packageDir, "pm", "hash-string")).stdout).toContain(dropped);
+
+      await write(packageJson, app(after));
+      expect(await run(packageDir, "install")).toMatchObject({ exitCode: 0 });
+      const lockb = await file(join(packageDir, "bun.lockb")).bytes();
+
+      expect(await run(packageDir, "install", "--frozen-lockfile")).toMatchObject({
+        stderr: expect.not.stringContaining("error:"),
+        exitCode: 0,
+      });
+      expect(await run(packageDir, "install")).toMatchObject({ exitCode: 0 });
+      expect(await file(join(packageDir, "bun.lockb")).bytes()).toEqual(lockb);
+      expect((await run(packageDir, "pm", "hash-string")).stdout).not.toContain(dropped);
+    });
+  },
+);
+
+describe.concurrent("no command sees the version that a peer moved away from", () => {
+  beforeAll(() => void registry.advisories.add("no-deps", { vulnerable_versions: "1.1.0" }));
+
+  it.each(["isolated", "hoisted"] as const)("%s", async linker => {
+    const app = (others: object) =>
+      JSON.stringify({ name: "app", dependencies: { "peer-deps-fixed": "1.0.0", ...others } });
+    const { packageDir, packageJson } = await registry.createTestDir({
+      bunfigOpts: { saveTextLockfile: false, linker },
+      files: { "package.json": app({}) },
+    });
+    expect(await run(packageDir, "install")).toMatchObject({ exitCode: 0 });
+    // The peer has no-deps@1.1.0 for now, so the advisory is found.
+    expect(await run(packageDir, "audit")).toMatchObject({
+      stdout: expect.stringContaining("1 vulnerability"),
+      exitCode: 1,
+    });
+
+    await write(packageJson, app({ "one-dep": "1.0.0" }));
+    expect(await run(packageDir, "install", "--yarn")).toMatchObject({ exitCode: 0 });
+    const hash = (await run(packageDir, "pm", "hash")).stdout;
+
+    expect(await run(packageDir, "why", "no-deps")).toMatchObject({
+      stdout: expect.not.stringContaining("no-deps@1.1.0"),
+      exitCode: 0,
+    });
+    expect(await run(packageDir, "audit")).toMatchObject({
+      stdout: expect.stringContaining("No vulnerabilities found"),
+      exitCode: 0,
+    });
+    expect(await file(join(packageDir, "yarn.lock")).text()).not.toContain(`version "1.1.0"`);
+    expect((await run(packageDir, "bun.lockb")).stdout).not.toContain(`version "1.1.0"`);
+
+    expect(await run(packageDir, "install")).toMatchObject({ exitCode: 0 });
+    expect((await run(packageDir, "pm", "hash")).stdout).toBe(hash);
   });
 });
 

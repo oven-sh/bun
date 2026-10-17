@@ -1556,6 +1556,19 @@ describe("bun update <name> semantics", () => {
         expect(await installedVersion(dir, "dep-with-tags")).toBe("3.0.0");
       },
     );
+
+    it.concurrent(
+      `bun update ${[...args, "--latest"].join(" ")} does not take a dist-tag entry below the version its tag names`,
+      async () => {
+        // `pre-3` is 3.0.1 and `latest` is 3.0.0.
+        const dir = await setup({ "dep-with-tags": "pre-3" });
+        expect(await installedVersion(dir, "dep-with-tags")).toBe("3.0.1");
+        await update(dir, ...args, "--latest");
+        await expectInSync(dir, { "dep-with-tags": "^3.0.1" });
+        expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["3.0.1"]);
+        expect(await installedVersion(dir, "dep-with-tags")).toBe("3.0.1");
+      },
+    );
   }
 
   it.concurrent("bun update --latest rewrites a dist-tag literal next to a range", async () => {
@@ -2647,7 +2660,7 @@ describe("bun update <name> semantics", () => {
       await writeFile(foreign, "not a bin of map-bin");
 
       const { stderr, exitCode } = await runGlobal("update");
-      expect(stderr).toContain("Failed to link map-bin: EEXIST");
+      expect(stderr).toContain("failed to link map-bin: EEXIST");
       expect(await readFile(foreign, "utf8")).toBe("not a bin of map-bin");
       expect(join(globalBinDir, "map_bin")).toBeValidBin(globalBinTarget("map-bin", "bin", "map-bin"));
       expect(exitCode).toBe(1);

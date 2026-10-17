@@ -1370,8 +1370,7 @@ class ChildProcess extends EventEmitter {
     return result;
   }
 
-  // Own data properties as in node. A getter creates the stream on first read.
-  // The private slots only hold what spawn() created, which exit handling drains.
+  // Own data properties as in node. The private slots hold only what spawn() created.
   #defineOwn(key: string, value) {
     Object.defineProperty(this, key, { value, enumerable: true, configurable: true, writable: true });
   }
@@ -1420,7 +1419,7 @@ class ChildProcess extends EventEmitter {
     this.#defineOwn("stdio", value);
   }
 
-  // Holds an assigned `connected` until spawn() or a disconnect overwrites it, as in node.
+  // An assigned `connected`, until spawn() or a disconnect overwrites it.
   #connected;
 
   get connected() {
@@ -1476,8 +1475,9 @@ class ChildProcess extends EventEmitter {
     this.#connected = undefined;
     // node's spawn() assigns the streams over any value assigned before it.
     for (const key of ["stdin", "stdout", "stderr", "stdio"]) {
-      if (Object.hasOwn(this, key)) delete this[key];
+      if (ObjectHasOwn(this, key)) delete this[key];
     }
+    this.#stdin = this.#stdout = this.#stderr = this.#stdioObject = undefined;
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
 

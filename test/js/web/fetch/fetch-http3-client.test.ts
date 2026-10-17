@@ -394,6 +394,72 @@ describe("fetch protocol: http3", () => {
     }
   });
 
+  // A node:quic origin hands over the pseudo-headers as they arrive. Bun.serve
+  // cannot be the origin: it reports a method that its table does not have as
+  // another method.
+  test("a method outside the table is the :method pseudo-header as written", async () => {
+    const decoder = new TextDecoder();
+    const origin = await listen(
+      async (session: any) => {
+        session.onstream = (stream: any) => stream.closed.catch(() => {});
+        await session.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+        transportParams: { maxIdleTimeout: 5 },
+        async onheaders(this: any, received: Record<string, string>) {
+          let body = "";
+          for await (const chunks of this) for (const chunk of chunks) body += decoder.decode(chunk, { stream: true });
+          this.sendHeaders({ ":status": "204", "x-method": received[":method"], "x-body": body }, { terminal: true });
+        },
+      },
+    );
+    try {
+      const got: { method: string | null; body: string | null }[] = [];
+      for (const init of [{ method: "BREW" }, { method: "PatCh", body: "the payload" }, { method: "Put" }]) {
+        const { headers } = await fetch(`https://127.0.0.1:${origin.address.port}/`, { ...h3, ...init });
+        got.push({ method: headers.get("x-method"), body: headers.get("x-body") });
+      }
+      expect(got).toEqual([
+        { method: "BREW", body: "" },
+        { method: "PatCh", body: "the payload" },
+        { method: "PUT", body: "" },
+      ]);
+    } finally {
+      // Not close(): it waits for the session that fetch() keeps in its pool.
+      await origin.destroy();
+    }
+  });
+
+  // QPACK encodes a field from a 16-bit length. A longer method that went out
+  // cut to the low 16 bits of its length would be `DELETE` in the second row.
+  test("a method over 65,535 bytes does not go out as its first bytes", async () => {
+    // An origin of its own, closed with the test: the client gives up these
+    // two streams before it sends their HEADERS.
+    await using origin = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: req => new Response(null, { headers: { "x-method": req.method } }),
+    });
+    const url = `https://127.0.0.1:${origin.port}/`;
+    const tooLong = Buffer.alloc(65536, "X").toString();
+    const outcomes: object[] = [];
+    for (const method of [tooLong, "DELETE" + tooLong]) {
+      outcomes.push(
+        await fetch(url, { ...h3, method }).then(
+          res => ({ arrivedAs: res.headers.get("x-method") }),
+          err => ({ code: err.code }),
+        ),
+      );
+    }
+    expect(outcomes).toEqual([{ code: "HTTP3HeaderEncodingError" }, { code: "HTTP3HeaderEncodingError" }]);
+
+    const res = await fetch(url, { ...h3, method: "DELETE" });
+    expect(res.headers.get("x-method")).toBe("DELETE");
+  });
+
   test("long path + many request headers (>32)", async () => {
     const path = "/echo?" + Buffer.alloc(2000, "p").toString();
     const headers: Record<string, string> = {};

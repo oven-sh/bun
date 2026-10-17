@@ -153,7 +153,7 @@ impl IncomingBuffer {
     fn init(mode: Mode) -> IncomingBuffer {
         match mode {
             Mode::Advanced => IncomingBuffer::Advanced(Vec::<u8>::default()),
-            Mode::Json => IncomingBuffer::Json(JSONLineBuffer::default()),
+            Mode::Json => IncomingBuffer::Json(JSONLineBuffer::new(json::max_line_len())),
         }
     }
 }
@@ -262,6 +262,11 @@ mod advanced {
     const HEADER_LENGTH: usize = size_of::<IPCMessageType>() + size_of::<u32>();
     // HEADER_LENGTH is a 5-byte compile-time constant; narrowing to u32 is provably safe.
     const HEADER_LENGTH_U32: u32 = HEADER_LENGTH as u32;
+
+    /// The longest body that decodes: the deserializer's `WTF::Vector<uint8_t>` crashes above it.
+    fn max_message_len() -> usize {
+        BunString::max_length()
+    }
     // v2 added `SerializedMessageWithBuffers`. The peer's advertised version is
     // debug-logged, never consulted, so mixed-version pairs only break when a
     // Buffer-bearing message actually crosses to a v1 peer.
@@ -334,7 +339,8 @@ mod advanced {
                 || x == IPCMessageType::SerializedInternalMessage as u8
                 || x == IPCMessageType::SerializedMessageWithBuffers as u8 =>
             {
-                if message_len > u32::MAX - HEADER_LENGTH_U32 {
+                // Refused at the header, before the body is buffered.
+                if message_len as usize > max_message_len() {
                     return Err(IPCDecodeError::InvalidFormat);
                 }
                 // `header_length + message_len` would be evaluated as u32; a peer-controlled
@@ -453,6 +459,12 @@ mod json {
     // 2 is internal
     // ["[{\d\.] is regular
 
+    /// The most bytes a line may have, newline excluded: a line past it cannot become a string.
+    pub(super) fn max_line_len() -> usize {
+        // The longest string, as UTF-8 (3 bytes a unit at most), plus an internal tag byte.
+        BunString::max_length().saturating_mul(3).saturating_add(1)
+    }
+
     pub(super) fn decode_ipc_message(
         data: &[u8],
         global_this: &JSGlobalObject,
@@ -490,6 +502,12 @@ mod json {
         // A bare newline or a lone tag byte is invalid JSON.
         if json_data.is_empty() {
             return Err(IPCDecodeError::InvalidFormat);
+        }
+
+        // Too long for a string: report it as the ASCII path below does, not as a parse failure.
+        if BunString::utf16_transcode_too_long(json_data) {
+            bun_core::hint::cold();
+            return Err(IPCDecodeError::Js(JsError::OutOfMemory));
         }
 
         let is_ascii = strings::is_all_ascii(json_data);
@@ -2279,6 +2297,10 @@ fn decode_next_json(incoming: &JsCell<IncomingBuffer>, global: &JSGlobalObject) 
             unreachable!()
         };
         let Some(msg) = json_buf.next() else {
+            if json_buf.is_too_long() {
+                // Reported like a finished line that is too long to become a string.
+                return DecodeStep::Fail(IPCDecodeError::Js(JsError::OutOfMemory));
+            }
             return DecodeStep::Wait;
         };
         match decode_ipc_message(Mode::Json, msg.data, global, Some(msg.newline_pos)) {
@@ -2490,8 +2512,12 @@ pub(crate) mod IPCHandlers {
     pub(crate) mod WindowsNamedPipe {
         use super::*;
 
+        /// One read, as on POSIX: libuv otherwise suggests the frame length the peer declares.
+        const MAX_READ: usize = 512 * 1024;
+
         pub(crate) fn on_read_alloc(send_queue: &SendQueue, suggested_size: usize) -> &mut [u8] {
             log!("NewNamedPipeIPCHandler#onReadAlloc {}", suggested_size);
+            let suggested_size = suggested_size.min(MAX_READ);
             // SAFETY: the returned region is the buffer's spare capacity,
             // handed to libuv for the pending read; nothing else touches
             // `incoming` until `on_read` commits the byte count.

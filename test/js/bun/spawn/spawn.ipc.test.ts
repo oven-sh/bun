@@ -1,7 +1,90 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows } from "harness";
+import { bunEnv, bunExe, gcTick, isPosix, isWindows, tempDir } from "harness";
+import { spawn as spawnNode } from "node:child_process";
+import { once } from "node:events";
+import { totalmem } from "node:os";
+import type { Writable } from "node:stream";
+import { text } from "node:stream/consumers";
 import path from "path";
+
+// A receiver refuses a JSON line longer than the longest UTF-8 form of the longest string.
+// BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT lowers that string length, so these tests reach
+// the limit with kilobytes instead of gigabytes.
+const maxStringLength = 64 * 1024;
+const maxLineLength = 3 * maxStringLength + 1;
+const lowLimitEnv = { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(maxStringLength) };
+
+// Sender source: 1 MiB of "a" and no newline, which is past the lowered limit. Exit code 1
+// says the receiver took all of it.
+const flood = `
+  const chunk = Buffer.alloc(65536, "a");
+  for (let i = 0; i < 16; i++) write(chunk);
+  process.exit(1);
+`;
+
+/**
+ * Runs `senderSource` as the child of a process that receives on the IPC channel under the
+ * lowered limit. The sender has `write(bytes)`, which puts raw bytes on its end of the
+ * channel, and `send(message)`, which sends one JSON message. The sender exits with 42 once
+ * the receiver has closed the channel.
+ *
+ * The receiver runs in its own subprocess so a crash shows up as a failing assertion here
+ * rather than taking out the test runner.
+ */
+async function runReceiver(serialization: "json" | "advanced", senderSource: string, disconnectAfter = 0) {
+  using dir = tempDir("ipc-receive-limit", {
+    "receiver.js": `
+      let received = 0;
+      const sender = Bun.spawn({
+        cmd: [process.execPath, "sender.js"],
+        env: { ...process.env, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: undefined },
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: ${JSON.stringify(serialization)},
+        ipc(message, subprocess) {
+          console.log("MESSAGE", typeof message === "string" ? "string of " + message.length : JSON.stringify(message));
+          // The sender waits for the channel to close, so end it once every message the
+          // test expects has arrived.
+          if (++received === ${disconnectAfter}) subprocess.disconnect();
+        },
+      });
+      console.log("SENDER_EXIT", await sender.exited);
+    `,
+    "sender.js": `
+      const { writeSync } = require("fs");
+      const retry = new Int32Array(new SharedArrayBuffer(4));
+      // The receiver's close reaches a write in flight as EPIPE, ECONNRESET or (on macOS,
+      // which tests the connection first) ENOTCONN.
+      const closed = new Set(["EPIPE", "ECONNRESET", "ENOTCONN"]);
+      function write(bytes) {
+        for (let offset = 0; offset < bytes.length; ) {
+          try {
+            offset += writeSync(3, bytes, offset);
+          } catch (e) {
+            if (closed.has(e.code)) process.exit(42);
+            if (e.code !== "EAGAIN") throw e;
+            Atomics.wait(retry, 0, 0, 1);
+          }
+        }
+      }
+      function send(message) {
+        process.send(message);
+      }
+      process.on("disconnect", () => process.exit(42));
+      ${senderSource}
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "receiver.js"],
+    env: lowLimitEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.split("\n").filter(Boolean), stderr, exitCode };
+}
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
   it("the subprocess should be defined and the child should send", done => {
@@ -156,6 +239,76 @@ describe("ipc mode json", () => {
     expect(stdout.trim()).toBe("CHILD_EXIT 42");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+
+  it.concurrent.skipIf(isWindows)("closes the channel when an unfinished line passes the length limit", async () => {
+    // The complete lines come first and are delivered. The bytes behind them never get a
+    // newline: the receiver must close the channel once they pass the limit, and not buffer
+    // them while it waits for one.
+    expect(await runReceiver("json", `write(Buffer.from('{"n":1}\\n{"n":2}\\n'));` + flood)).toEqual({
+      stdout: ['MESSAGE {"n":1}', 'MESSAGE {"n":2}', "SENDER_EXIT 42"],
+      stderr: "IPC message is too long.\n",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent.skipIf(isWindows)(
+    "a child closes the channel when its parent sends an unfinished line past the length limit",
+    async () => {
+      // The child is the receiver. Its channel is the extra stdio pipe that NODE_CHANNEL_FD
+      // names, so this process can write raw bytes to it.
+      const child = spawnNode(
+        bunExe(),
+        [
+          "-e",
+          `process.on("message", () => console.log("MESSAGE"));
+           process.on("disconnect", () => console.log("DISCONNECT"));`,
+        ],
+        {
+          env: { ...lowLimitEnv, NODE_CHANNEL_FD: "3", NODE_CHANNEL_SERIALIZATION_MODE: "json" },
+          stdio: ["ignore", "pipe", "pipe", "pipe"],
+        },
+      );
+      const channel = child.stdio[3] as Writable;
+      // The child closes its end while most of these bytes are still unread.
+      channel.on("error", () => {});
+      channel.end(Buffer.alloc(16 * maxLineLength, "a"));
+
+      const [stdout, stderr, [exitCode]] = await Promise.all([
+        text(child.stdout!),
+        text(child.stderr!),
+        once(child, "exit"),
+      ]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "DISCONNECT\n",
+        stderr: "IPC message is too long.\n",
+        exitCode: 0,
+      });
+    },
+  );
+
+  it.concurrent("refuses a message that is longer than a string, and reports it", async () => {
+    // 65535 characters of U+4E2D: 196607 bytes of JSON text, under the byte limit, and one
+    // character past what a string of the receiver's limit holds. The merge base closes the
+    // channel here with nothing on stderr.
+    const sender = `send("\u4e2d".repeat(${maxStringLength - 1}));`;
+    expect(await runReceiver("json", sender)).toEqual({
+      stdout: ["SENDER_EXIT 42"],
+      stderr: "IPC message is too long.\n",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("delivers a message as long as a string, in reads of its own size", async () => {
+    // 65534 characters of U+4E2D: 196604 bytes of JSON text, exactly the longest string the
+    // receiver holds. It also spans several reads on both platforms, which is what makes the
+    // Windows read chunk visible: the message must arrive whole.
+    const sender = `send("\u4e2d".repeat(${maxStringLength - 2})); send({ after: true });`;
+    expect(await runReceiver("json", sender, 2)).toEqual({
+      stdout: [`MESSAGE string of ${maxStringLength - 2}`, 'MESSAGE {"after":true}', "SENDER_EXIT 42"],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 
@@ -322,6 +475,57 @@ describe("ipc mode advanced", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  it.concurrent.skipIf(isWindows)(
+    "closes the channel at the header of a frame that is too long to deserialize",
+    async () => {
+      // A frame longer than the deserializer's buffer can never decode. The receiver must
+      // refuse it when the header arrives, and not buffer a body of that length first.
+      const header = `write(Buffer.from([0x02, 0x01, 0x00, 0x01, 0x00]));`;
+      expect(await runReceiver("advanced", header + flood)).toEqual({
+        stdout: ["SENDER_EXIT 42"],
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+});
+
+// The line limit is derived from the longest string, so without the synthetic limit above it
+// takes gigabytes to reach. A peer that writes 2^32 bytes with no newline used to abort the
+// receiver in a length cast. The receiver holds the whole line until it refuses it, so this
+// runs one case at a time, in a child process, and only on machines with room.
+describe.skipIf(!isPosix || totalmem() < 16 * 1024 ** 3)("ipc mode json at the real line limit", () => {
+  it("closes the channel instead of aborting when a peer writes 2^32 bytes with no newline", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const sender = Bun.spawn({
+            cmd: ["sh", "-c", "head -c 4294967296 /dev/zero >&3"],
+            stdio: ["ignore", "inherit", "inherit"],
+            serialization: "json",
+            ipc(message) { console.log("MESSAGE", typeof message); },
+          });
+          // The sender's own exit says nothing: the receiver closes the channel while its
+          // last bytes are still on the way, so it ends by itself or on a broken pipe.
+          await sender.exited;
+          console.log("RECEIVER_ALIVE");
+          `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "RECEIVER_ALIVE\n",
+      stderr: "IPC message is too long.\n",
+      exitCode: 0,
+      signalCode: null,
+    });
+  }, 180_000);
 });
 
 // getIPCInstance error path: on Windows, windowsConfigureClient can open the

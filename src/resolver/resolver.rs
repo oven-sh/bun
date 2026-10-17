@@ -4588,9 +4588,7 @@ impl<'a> Resolver<'a> {
                             {
                                 return Ok(None);
                             }
-                            // An ENOENT ancestor can still have an accessible child
-                            // (Android `/storage/emulated/`, #44565): keep walking
-                            // without a parent, as a repeated lookup already does.
+                            // An ENOENT ancestor can still have an openable child (#44565).
                             top_parent = allocators::Result {
                                 index: allocators::NOT_FOUND,
                                 hash: queue_top.result.hash,

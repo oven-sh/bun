@@ -12,7 +12,7 @@ use bun_sys::File;
 
 use super::check_command::working_directory;
 use super::command::{ContextData, Tag};
-use super::script_or_command::{arguments_before, place_of_command};
+use super::script_or_command::{arguments_before, directory_of_cwd, place_of_command};
 use bun_bunfig::Above;
 
 pub(crate) struct LintCommand;
@@ -25,7 +25,7 @@ const HAS_TEST_RUNNER: bool = bun_core::Environment::IS_CANARY || bun_core::Envi
 
 fn change_directory(cwd: &[u8]) {
     // The copy is freed here: `exit` does not return, so nothing would free it afterwards.
-    let changed = bun_sys::chdir(&bun_core::ZBox::from_bytes(cwd));
+    let changed = bun_sys::chdir(&bun_core::ZBox::from_vec(directory_of_cwd(cwd)));
     if let bun_sys::Result::Err(err) = changed {
         Output::err(
             err,

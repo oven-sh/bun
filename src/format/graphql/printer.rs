@@ -277,7 +277,8 @@ impl<'t> Builder<'t, '_, '_> {
         let flavor = self.f.options().flavor;
         let is_ignored = comments.iter().any(|it| {
             let comment = self.slice(self.comment_span(it));
-            flavor.is_ignore_comment(comment.get(1..).unwrap_or_default().trim_ascii())
+            let content = comment.get(1..).unwrap_or_default();
+            flavor.is_ignore_comment(bun_core::strings::trim_js_whitespace(content))
         });
         match is_ignored {
             true => self.ignored(self.tree.span(id)),

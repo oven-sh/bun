@@ -429,6 +429,56 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
     });
   });
 
+  test.each([
+    ["-e", 'console.log("evaluated")', "evaluated\n"],
+    ["-be", 'console.log("evaluated")', "evaluated\n"],
+    ["-p", '"printed"', "printed\n"],
+    ["-bp", '"printed"', "printed\n"],
+  ])("bun %s <code> <command> evaluates the code", async (flag, code, printed) => {
+    expect(await bun({}, [flag, code, command])).toMatchObject({ stdout: printed, source, exitCode: 0 });
+    expect(await bun({}, [flag + code, command])).toMatchObject({ stdout: printed, source, exitCode: 0 });
+  });
+
+  test.skipIf(command === "check")("bun -bc=<path> <command>: the letters of the path are not flags", async () => {
+    expect(await ran({ "all.toml": "" }, ["-bc=all.toml", command, ...flags, "a.ts"])).toBe("the command");
+  });
+
+  test.each(["-F", "-bF"])("bun %s <pattern> <command> runs the scripts of the packages", async flag => {
+    const files = {
+      "package.json": JSON.stringify({ workspaces: ["one"] }),
+      "one/package.json": JSON.stringify({ name: "one", scripts: { [command]: "echo the script" } }),
+    };
+    for (const args of [[flag, "*"], [`${flag}*`]]) {
+      const result = await bun(files, [...args, command]);
+      expect(result.stdout).toContain("the script");
+      expect(result).toMatchObject({ source, exitCode: 0 });
+    }
+  });
+
+  describe("the value of --cwd is what it is for `bun run`", () => {
+    test.each([[["--cwd="]], [["--cwd", ""]]])("an empty one is the working directory: %j", async cwd => {
+      expect(await ran(script, [...cwd, command])).toBe("the script");
+      expect(await ran({}, [...cwd, command, ...flags, "a.ts"])).toBe("the command");
+    });
+
+    test.each(["missing/..", "a.ts/..", "missing/../."])(
+      "`..` takes back a name that isn't a directory: %s",
+      async cwd => {
+        expect(await ran(script, [`--cwd=${cwd}`, command])).toBe("the script");
+        expect(await ran(script, ["--cwd", cwd, command])).toBe("the script");
+      },
+    );
+
+    test.skipIf(isWindows)("`..` after a link is the directory that has the link", async () => {
+      const files = { "project/package.json": script["package.json"], "else/where/deep/b.ts": source };
+      const before = (dir: string) => symlinkSync("../else/where/deep", join(dir, "project/link"));
+      expect(await ran(files, ["--cwd=link/..", command], "project", { before })).toBe("the script");
+      expect(await ran(files, ["--cwd=link/..", command, "--no-script", ...flags, "a.ts"], "project", { before })).toBe(
+        "the command",
+      );
+    });
+  });
+
   describe.skipIf(command === "check")("a flag of bun whose value reads like the command", () => {
     test.skipIf(command !== "fmt")("a flag of the command after it counts", async () => {
       const result = await bun({}, ["--title", command, "--check", command, "a.ts"]);

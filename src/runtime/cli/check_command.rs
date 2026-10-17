@@ -110,7 +110,8 @@ fn parse(args: &[&ZStr]) -> Options {
     }
     if let Some(cwd) = parsed.option(b"--cwd") {
         // The copy is freed here: `exit` does not return, so nothing would free it afterwards.
-        let changed = bun_sys::chdir(&bun_core::ZBox::from_bytes(cwd));
+        let directory = super::script_or_command::directory_of_cwd(cwd);
+        let changed = bun_sys::chdir(&bun_core::ZBox::from_vec(directory));
         if let bun_sys::Result::Err(err) = changed {
             Output::err(
                 err,

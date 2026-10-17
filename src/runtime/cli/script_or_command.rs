@@ -32,21 +32,54 @@ impl Unparsable {
     }
 }
 
+/// What the flag of `bun` takes that `is_it` says yes to. `None`: there is no such flag.
+fn values_of(is_it: &dyn Fn(&bun_clap::Names) -> bool) -> Option<&'static bun_clap::Values> {
+    let mut flags = super::arguments::AUTO_PARAMS.iter();
+    flags.find(|it| is_it(&it.names)).map(|it| &it.takes_value)
+}
+
+/// Where the first of `shorts`, the letters of a chain like `-be`, is that takes a value: the rest of the chain, as in
+/// `-Fpattern`, or else the next argument. `None` also where the value is optional, which is never the next argument. What
+/// follows that letter in `-bc=bunfig.toml` is a value too, not more letters.
+fn place_of_short_with_value(shorts: &[u8]) -> Option<usize> {
+    use bun_clap::Values;
+    for (at, short) in shorts.iter().enumerate() {
+        match values_of(&|names| names.short == Some(*short)) {
+            Some(Values::One | Values::Many) => return Some(at),
+            Some(Values::OneOptional) => return None,
+            Some(Values::None) | None => {}
+        }
+    }
+    None
+}
+
 /// Whether `flag` is one of `bun`'s that has its value in the argument after it.
 fn has_value_in_next_argument(flag: &[u8]) -> bool {
-    use bun_clap::{Names, Values};
-    let takes_value = |is_it: &dyn Fn(&Names) -> bool| {
-        (super::arguments::AUTO_PARAMS.iter())
-            .any(|it| matches!(it.takes_value, Values::One | Values::Many) && is_it(&it.names))
-    };
     match flag {
-        [b'-', b'-', long @ ..] => takes_value(&|names| names.matches_long(long)),
-        // The first in a chain that takes a value has the rest of the chain for it: `-Fpattern`.
-        [b'-', shorts @ ..] => (shorts.iter())
-            .position(|short| takes_value(&|names| names.short == Some(*short)))
-            .is_some_and(|at| at + 1 == shorts.len()),
+        [b'-', b'-', long @ ..] => matches!(
+            values_of(&|names| names.matches_long(long)),
+            Some(bun_clap::Values::One | bun_clap::Values::Many)
+        ),
+        [b'-', shorts @ ..] => {
+            place_of_short_with_value(shorts).is_some_and(|at| at + 1 == shorts.len())
+        }
         _ => false,
     }
+}
+
+/// The letter of `flag` that takes a value, if `flag` is a chain of letters: `e` for `-e` and `-be`, `F` for `-bFpattern`.
+fn short_with_value(flag: &[u8]) -> Option<u8> {
+    match flag {
+        [b'-', b'-', ..] => None,
+        [b'-', shorts @ ..] => place_of_short_with_value(shorts).map(|at| shorts[at]),
+        _ => None,
+    }
+}
+
+/// Whether `flag` is `--eval` or `--print`.
+fn evaluates(flag: &[u8]) -> bool {
+    let name = bun_core::strings::split_once_char(flag, b'=').map_or(flag, |it| it.0);
+    matches!(name, b"--eval" | b"--print") || matches!(short_with_value(flag), Some(b'e' | b'p'))
 }
 
 /// Whether `bun <command> <flag>` is a valid command line.
@@ -69,8 +102,7 @@ fn place_of_first_word(args: &[&[u8]]) -> Option<usize> {
         if arg == b"--" {
             return Some(at + 1).filter(|next| *next < args.len());
         }
-        let name = bun_core::strings::split_once_char(arg, b'=').map_or(arg, |it| it.0);
-        if matches!(name, b"-e" | b"--eval" | b"-p" | b"--print" | b"-pe") {
+        if evaluates(arg) {
             return None;
         }
         // `bun -l fmt`: the flags of these commands count before them too.
@@ -154,6 +186,19 @@ pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
     }
 }
 
+/// The directory that `--cwd <given>` names, as `bun run` takes it: `..` is folded before links are followed, and an empty
+/// value is the working directory.
+pub(crate) fn directory_of_cwd(given: &[u8]) -> Vec<u8> {
+    use bun_paths::{platform::Loose, resolve_path::join_abs_string_spill};
+    let cwd = working_directory();
+    let base: &[u8] = if bun_paths::is_absolute(given) {
+        b"/"
+    } else {
+        &cwd
+    };
+    join_abs_string_spill::<Loose>(base, &mut Vec::new(), &[given]).to_vec()
+}
+
 /// Decides what `bun <command>` runs, without looking at `command`'s own arguments.
 pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
     let args: Vec<&[u8]> = bun_core::argv().into_iter().collect();
@@ -167,7 +212,7 @@ pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
             arg,
             b"--workspaces" | b"--parallel" | b"--sequential" | b"--if-present"
         ) || arg.starts_with(b"--filter")
-            || arg.starts_with(b"-F")
+            || short_with_value(arg) == Some(b'F')
         {
             return Ok(Runs::Other);
         }
@@ -181,7 +226,7 @@ pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
     let cwd = match given {
         Some(given) => {
             let mut buffer = bun_paths::path_buffer_pool::get();
-            let given = bun_core::ZBox::from_bytes(given);
+            let given = bun_core::ZBox::from_vec(directory_of_cwd(given));
             // The command says that it can't go there.
             let Ok(real) = bun_sys::realpath(&given, &mut buffer) else {
                 return Ok(Runs::Command);

@@ -979,6 +979,16 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  // Option+Space on a Mac, and the space of an input method for Chinese or Japanese.
+  test.each(["\u00a0", "\u3000"])("%j beside `prettier-ignore` is white space", async space => {
+    const files = {
+      "a.ts": `//${space}prettier-ignore\nconst  a  =  1;\n/* prettier-ignore${space}*/\nconst  b  =  2;\n`,
+      "b.jsx": `<a>\n  {/*${space}prettier-ignore */}\n  <b   c="d"   />\n</a>;\n`,
+      "c.graphql": `#${space}prettier-ignore\ntype  A  { a:  Int }\n`,
+    };
+    expect(await different(files, [])).toEqual([]);
+  });
+
   // Where a comment makes the tool print another program, or none. The extension, the text, what is printed,
   // and what the tool prints.
   describe.each([

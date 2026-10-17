@@ -84,6 +84,93 @@ describe("bundler", () => {
       stdout: "undefined",
     },
   });
+  itBundled("cjs2esm/BadNamedImportReExportedFromEntryCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import {bad} from './bar.cjs';
+        export {bad};
+        console.log(bad);
+      `,
+      "/bar.cjs": /* js */ `
+        exports.foo = 'bar';
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("__INVALID__REF__");
+    },
+    runtimeFiles: {
+      "/test.mjs": /* js */ `
+        import { bad } from './out.js';
+        if (bad !== undefined) throw new Error("expected undefined, got " + bad);
+      `,
+    },
+    run: [{ stdout: "undefined" }, { file: "/test.mjs" }],
+  });
+  itBundled("cjs2esm/BadNamedExportFromEntryCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        export {bad} from './bar.cjs';
+      `,
+      "/bar.cjs": /* js */ `
+        exports.foo = 'bar';
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("__INVALID__REF__");
+    },
+    runtimeFiles: {
+      "/test.mjs": /* js */ `
+        import { bad } from './out.js';
+        if (bad !== undefined) throw new Error("expected undefined, got " + bad);
+      `,
+    },
+    run: { file: "/test.mjs" },
+  });
+  itBundled("cjs2esm/BadNamedImportNamedReExportedToEntryFromCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import {bad} from './foo';
+        export {bad};
+        console.log(bad);
+      `,
+      "/foo.js": /* js */ `
+        export {bad} from './bar.cjs';
+      `,
+      "/bar.cjs": /* js */ `
+        exports.foo = 'bar';
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("__INVALID__REF__");
+    },
+    runtimeFiles: {
+      "/test.mjs": /* js */ `
+        import { bad } from './out.js';
+        if (bad !== undefined) throw new Error("expected undefined, got " + bad);
+      `,
+    },
+    run: [{ stdout: "undefined" }, { file: "/test.mjs" }],
+  });
+  itBundled("cjs2esm/BadNamedImportReExportedFromWrappedModuleCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        const mod = await import('./sub.js');
+        if (!('bad' in mod)) throw new Error("expected 'bad' to be exported from wrapped module");
+        console.log(mod.bad);
+      `,
+      "/sub.js": /* js */ `
+        import {bad} from './bar.cjs';
+        export {bad};
+      `,
+      "/bar.cjs": /* js */ `
+        exports.foo = 'bar';
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("__INVALID__REF__");
+    },
+    run: { stdout: "undefined" },
+  });
   itBundled("cjs2esm/ExportsFunction", {
     files: {
       "/entry.js": /* js */ `

@@ -296,7 +296,7 @@ Not checked:    other tools' configs, CI files, Git hooks
     },
   );
 
-  test("the built-in plugins stay installed for the Prettier that formats another language", async () => {
+  test("built-in plugins are still needed if the installed Prettier formats another language", async () => {
     const plugins = ["prettier-plugin-astro", "prettier-plugin-packagejson", "prettier-plugin-svelte"];
     const { stdout, exitCode } = await doctor({
       ...Object.assign({}, ...["prettier", ...plugins].map(installed)),

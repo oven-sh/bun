@@ -87,7 +87,7 @@ describe.concurrent("Svelte", () => {
   }
 
   const [input, output] = ["<p   >a</p>\n<script>let  a</script>\n", "<script>\n  let a;\n</script>\n\n<p>a</p>\n"];
-  // A stand-in for Prettier, which would say that it has been there.
+  // A stand-in for Prettier. Its output would show that it ran.
   const prettier = {
     "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
     "node_modules/prettier/index.cjs": `exports.resolveConfig = async () => null;
@@ -220,7 +220,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     expect(result.exitCode).toBe(1);
   });
 
-  test("Prettier's plugin as a module that the configuration imports", async () => {
+  test("the config imports Prettier's plugin as a module", async () => {
     const files = {
       "prettier.config.mjs":
         'import * as svelte from "prettier-plugin-svelte";\nexport default { plugins: [svelte] };\n',
@@ -261,7 +261,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     expect((await format({ ...both, "a.svelte": input }, ["a.svelte"])).files).toEqual([output]);
   });
 
-  describe("components never go to the Prettier of the project", () => {
+  describe("components never go to the project's Prettier", () => {
     const files = { ...prettier, ".prettierrc": prettierrc, "a.svelte": input };
 
     test.each([undefined, "4.1.1", "4.1.0", "4.0.0", "3.5.2", "2.10.1", "4.1.2", "5.0.0"])(
@@ -295,7 +295,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
   });
 
-  test("--parser svelte without the plugin is a parser that Prettier does not have, whatever else it could load", async () => {
+  test("--parser svelte without the plugin is an unknown parser, as in Prettier, whatever else is listed", async () => {
     using dir = tempDir("bun-format-svelte", {
       ...prettier,
       "node_modules/prettier-plugin-astro/package.json": '{ "name": "prettier-plugin-astro", "version": "1.0.0" }',
@@ -317,9 +317,9 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
   });
 
-  // To Prettier nothing in a component can be formatted on its own, as in HTML, CSS and Markdown. With the plugin, Prettier 3.9.9
-  // then writes `<script ✂prettier:content✂="bGV0ICBh">{}</script>` in the place of the script.
-  describe("with a range a component stays as it is", () => {
+  // Prettier can't format part of a component, as with HTML, CSS and Markdown. With the plugin, Prettier 3.9.9 then
+  // prints `<script ✂prettier:content✂="bGV0ICBh">{}</script>` in place of the script.
+  describe("a range leaves a component unchanged", () => {
     const forSvelte = (options: object) => ({ overrides: [{ files: "*.svelte", options }] });
     const configs = [{}, { ".prettierrc": prettierrc, ...prettier, ...plugin("4.1.1") }];
 
@@ -345,20 +345,20 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     );
 
     test.each(["--range-start=0", `--range-end=${input.length}`, "--range-end=1000"])(
-      "a range that is all of it is none: %s",
+      "a range that covers the whole file doesn't count: %s",
       async flag => {
         expect((await format({ "a.svelte": input }, ["a.svelte"], [flag])).files).toEqual([output]);
       },
     );
 
-    test("not with one for other files", async () => {
+    test("a range that's only for other files doesn't apply", async () => {
       const config = { plugins, overrides: [{ files: "*.js", options: { rangeEnd: 5 } }] };
       expect((await format({ ".prettierrc": JSON.stringify(config), "a.svelte": input }, ["a.svelte"])).files).toEqual([
         output,
       ]);
     });
 
-    test("its line breaks are those of endOfLine, and a byte order mark stays", async () => {
+    test("line breaks still follow endOfLine, and a byte order mark is kept", async () => {
       const text = `\uFEFF${input.replaceAll("\n", "\r\n")}`;
       const run = (endOfLine: string) =>
         format({ "a.svelte": text }, ["a.svelte"], ["--range-start=3", `--end-of-line=${endOfLine}`]);
@@ -366,14 +366,14 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       expect((await run("lf")).files).toEqual([`\uFEFF${input}`]);
     });
 
-    test("what cannot be parsed is still an error", async () => {
+    test("a syntax error is still reported", async () => {
       const result = await format({ "a.svelte": "<p>{a +}</p>\n" }, ["a.svelte"], ["--range-start=1"]);
       expect(result.stderr).toMatch(refusalOf("a.svelte"));
       expect(result.exitCode).toBe(2);
     });
   });
 
-  // Prettier 3.9.9 looks for the offset in the text that the plugin has parsed, which has something else in the place of a script.
+  // Prettier 3.9.9 looks the offset up in the text that the plugin parsed, where a placeholder replaces each script.
   test.each([
     [0, 0],
     [17, 15],
@@ -381,7 +381,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     [55, 49],
     [60, 51],
     [67, 58],
-  ])("--cursor-offset=%d says where the cursor is in the formatted text: %d", async (before, after) => {
+  ])("--cursor-offset=%d prints the cursor's offset in the formatted text: %d", async (before, after) => {
     const text = '<script>\n  let   a = 1;\n</script>\n\n<p   class="x"  >{a   +  1}</p>\n';
     for (const config of [{}, { ".prettierrc": prettierrc, ...prettier, ...plugin("4.1.1") }]) {
       using dir = tempDir("bun-format-svelte", config);
@@ -422,7 +422,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       });
     });
 
-    test("is an error with the version installed that takes it too", async () => {
+    test("is also an error if the installed version accepts it", async () => {
       const project = { ...files, ...prettier, ...plugin("2.10.1") };
       const result = await format({ ...project, ".prettierrc": JSON.stringify({ plugins, ...options }) }, ["a.svelte"]);
       expect(result.stderr).toContain("error: Invalid svelteSortOrder value: scripts-markup-styles.\n");
@@ -435,7 +435,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     const files = { ".prettierrc": JSON.stringify({ plugins, svelteStrictMode: true }), "a.svelte": input };
 
     test.each([[{}], [plugin("4.1.1")], [{ ...prettier, ...plugin("3.4.0") }]])(
-      "is ignored, which is said, as Prettier says it: %j",
+      "is ignored with the same warning as Prettier's: %j",
       async installed => {
         expect(await format({ ...files, ...installed }, ["a.svelte"])).toMatchObject({
           stderr: "warn: Ignored unknown option { svelteStrictMode: true }.\n",

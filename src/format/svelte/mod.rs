@@ -130,8 +130,9 @@ pub fn format(
     let refuse = |error: SyntaxError| FormatError::SyntaxErrorAt(in_file(error));
     let mut tree = (parsers.tree_of(text))
         .map_err(|error| error.map_or(FormatError::NestedTooDeeply, refuse))?;
-    // Prettier's `isSourceElement`: nothing in a component can be formatted on its own, as in HTML, so the text stays as it is.
-    // Prettier writes the text that the plugin parsed, where `<script ✂prettier:content✂="..">{}</script>` stands for a script.
+    // Prettier's `isSourceElement` accepts nothing in a component, as in HTML, so a range leaves the text unchanged.
+    // Prettier itself prints the text that the plugin parsed, where `<script ✂prettier:content✂="..">{}</script>`
+    // replaces each script.
     if range.start > first || range.end < original.len() {
         out.extend_from_slice(&original[..first]);
         let line_ending = options.line_ending.resolve(original);

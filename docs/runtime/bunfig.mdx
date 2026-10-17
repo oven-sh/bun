@@ -737,7 +737,7 @@ sortPackageJson = true
 
 `sortPackageJson = { sortScripts = true }` sorts `scripts` by name too.
 
-Next to a `.prettierrc` that lists `prettier-plugin-packagejson`, the keys are sorted in that plugin's order. The key overrides that: `true` sorts in Bun's order, `false` doesn't sort.
+If a `.prettierrc` lists `prettier-plugin-packagejson`, the keys are sorted in that plugin's order. Setting `sortPackageJson` overrides that: `true` sorts in Bun's order, and `false` doesn't sort.
 
 ### `format.jsdoc`
 

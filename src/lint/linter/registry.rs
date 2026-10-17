@@ -4,6 +4,7 @@
 mod deprecated;
 
 use super::config::oxlint_category;
+use crate::languages::Language;
 use crate::rule::{Meta, Plugin};
 use crate::runner::RuleEntry;
 use bun_core::strings;
@@ -18,6 +19,7 @@ pub struct Registry {
     /// by that name, which is there once.
     extensions: Vec<(&'static str, &'static RuleEntry)>,
     native_plugins: NativePlugins,
+    languages: &'static [&'static dyn Language],
 }
 
 fn core_rule_of(extension: &Meta) -> &'static str {
@@ -53,10 +55,13 @@ impl NativePlugins {
         }
         let names = strings::split(text, b",").map(<[u8]>::trim_ascii);
         let names = names.filter(|name| !name.is_empty());
-        let names = names.map(|name| match Plugin::answers_in_place_of(name, None) {
-            true => Ok(Box::from(name)),
-            false => Err(name),
-        });
+        let names =
+            names.map(
+                |name| match NativePlugins::names().any(|it| it.as_bytes() == name) {
+                    true => Ok(Box::from(name)),
+                    false => Err(name),
+                },
+            );
         Ok(NativePlugins::Only(names.collect::<Result<_, _>>()?))
     }
 }
@@ -333,7 +338,22 @@ impl Registry {
             rules,
             extensions,
             native_plugins: NativePlugins::All,
+            languages: &[],
         }
+    }
+
+    /// `languages` are the languages that the registered rules are for.
+    pub fn with_languages(mut self, languages: &'static [&'static dyn Language]) -> Registry {
+        self.languages = languages;
+        self
+    }
+
+    /// The language that `plugin` exports as `name`.
+    pub fn language(&self, plugin: Plugin, name: &[u8]) -> Option<&'static dyn Language> {
+        let is_it = |it: &&&dyn Language| {
+            it.plugin() == plugin && it.names().iter().any(|it| it.as_bytes() == name)
+        };
+        self.languages.iter().find(is_it).copied()
     }
 
     pub fn answering_for(mut self, which: NativePlugins) -> Registry {

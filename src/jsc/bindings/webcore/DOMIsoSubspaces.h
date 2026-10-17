@@ -24,6 +24,7 @@ public:
     IsoSubspace* m_subspaceForWrappingFunction { nullptr };
     IsoSubspace* m_subspaceForNapiClass { nullptr };
     IsoSubspace* m_subspaceForJSSQLStatement { nullptr };
+    IsoSubspace* m_subspaceForJSSQLDatabase { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteDatabaseSync { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteStatementSync { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteStatementSyncIterator { nullptr };

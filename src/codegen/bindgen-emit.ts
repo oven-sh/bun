@@ -15,6 +15,7 @@ import {
   type Method,
   type ModuleDefinition,
   NamedType,
+  type NamespaceDefinition,
   OptionalType,
   type Origin,
   type OverloadDispatch,
@@ -26,7 +27,6 @@ import {
   UnionType,
   UnitType,
   type ValueKind,
-  WithValueType,
 } from "./bindgen-lib-internal.ts";
 import { cap, low } from "./helpers.ts";
 
@@ -35,7 +35,9 @@ export interface SchemaFile {
   moduleDefinition: ModuleDefinition | null;
   /** In dependency order. */
   types: NamedType[];
+  /** Those of `namespaces` too. */
   functions: FunctionDefinition[];
+  namespaces: NamespaceDefinition[];
 }
 
 export interface Tables {
@@ -133,8 +135,8 @@ export function analyze(files: readonly SchemaFile[]): Tables {
 
 const implementationType = (type: Type) => `${type.idlType}::ImplementationType`;
 const externType = (type: Type): string =>
-  type instanceof WithValueType
-    ? `Bun::Bindgen::ExternWithValue<${externType(type.inner)}>`
+  type.passesValue
+    ? `Bun::Bindgen::ExternWithValue<Bun::Bindgen::ExternOf<${type.idlType}>>`
     : `Bun::Bindgen::ExternOf<${type.idlType}>`;
 const toExtern = (variable: string) => `Bun::Bindgen::toExtern(${variable})`;
 
@@ -385,7 +387,9 @@ ${[...headers].map(header => `#include "${header}"\n`).join("")}${file.types.map
     file.functions.length > 0
       ? `
 namespace Bun::Bindgen::Generated::${file.origin.namespace} {
-${file.functions.map(fn => `JSC_DECLARE_HOST_FUNCTION(${hostFunctionName(fn)});`).join("\n")}
+${file.functions.map(fn => `JSC_DECLARE_HOST_FUNCTION(${hostFunctionName(fn)});`).join("\n")}${file.namespaces
+          .map(namespace => `\n// A PropertyCallback of a static property table.\n${cppNamespaceSignature(namespace)};`)
+          .join("")}
 }
 `
       : ""
@@ -393,6 +397,32 @@ ${file.functions.map(fn => `JSC_DECLARE_HOST_FUNCTION(${hostFunctionName(fn)});`
 }
 
 const hostFunctionName = (fn: FunctionDefinition) => `js${cap(fn.name.replace(/^_+/, ""))}`;
+
+const cppNamespaceSignature = (namespace: NamespaceDefinition) =>
+  `JSC::JSValue create${cap(namespace.name)}(JSC::VM& vm, JSC::JSObject* owner)`;
+
+function cppSourceForNamespace(namespace: NamespaceDefinition, origin: Origin): string {
+  return `
+namespace Bun::Bindgen::Generated::${origin.namespace} {
+${cppNamespaceSignature(namespace)}
+{
+    JSC::JSGlobalObject* globalObject = owner->globalObject();
+    JSC::JSObject* object = ${
+      namespace.call
+        ? `JSC::JSFunction::create(vm, globalObject, ${namespace.call.length}, ${asciiLiteral(namespace.name)}, ${hostFunctionName(namespace.call)}, JSC::ImplementationVisibility::Public)`
+        : `JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min<unsigned>(${namespace.functions.length}, JSC::JSFinalObject::maxInlineCapacity))`
+    };
+${namespace.functions
+  .map(
+    fn =>
+      `    object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, ${asciiLiteral(fn.name)}), ${fn.length}, ${hostFunctionName(fn)}, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, 0);`,
+  )
+  .join("\n")}
+    return object;
+}
+}
+`;
+}
 
 function cppSourceForEnum(type: EnumerationType): string {
   const pairs = type.spellings
@@ -450,7 +480,7 @@ template<> void Bun::Bindgen::convertDictionaryInto<${type.cpp}>(JSC::JSGlobalOb
     auto* object = value.getObject();
 ${
   type.nonObjectAsEmpty
-    ? `    if (!object || object->isCallable()) {
+    ? `    if (!object${type.nonObjectAsEmpty === "typeof" ? " || object->isCallable()" : ""}) {
 ${indent(type.cppAssign("result", {}), 8)}
         return;
     }`
@@ -516,22 +546,18 @@ function cppDeclareConverted(type: Type, variable: string, value: string, ctx: s
 /** Converts the arguments, then returns what `symbol(globalObject, ...leading, ...converted)` returns. */
 function cppCallBody(signature: Signature, symbol: string, leading: readonly string[] = []): string {
   const lines: string[] = [];
-  const rereads: string[] = [];
+  // Converting a later argument can run JavaScript that detaches or resizes a buffer.
+  const readLast: string[] = [];
   signature.args.forEach(({ name, type }, i) => {
     lines.push(`JSC::EnsureStillAliveScope argument${i} = callFrame->argument(${i});`);
     lines.push(`[[maybe_unused]] auto ctx${i} = Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(name)} };`);
-    // Converting a later argument can run JavaScript that detaches or resizes the buffer.
-    if (type.borrowsHeap && i < signature.args.length - 1)
-      rereads.push(
-        `converted${i} = ${type.cppConvert(`argument${i}.value()`, `ctx${i}`, name)};`,
-        `scope.assertNoException();`,
-      );
+    readLast.push(...type.cppReadLast(`converted${i}`, `argument${i}.value()`));
     lines.push(...cppDeclareConverted(type, `converted${i}`, `argument${i}.value()`, `ctx${i}`, name));
     if (type.conversionThrows) lines.push(`RETURN_IF_EXCEPTION(scope, {});`);
   });
-  lines.push(...rereads);
+  lines.push(...readLast);
   const args = signature.args.map(({ type }, i) => {
-    return type instanceof WithValueType
+    return type.passesValue
       ? `${externType(type)} { ${toExtern(`converted${i}`)}, JSC::JSValue::encode(argument${i}.value()) }`
       : toExtern(`converted${i}`);
   });
@@ -836,6 +862,7 @@ export function cppSource(file: SchemaFile): string {
   if (accepted.length > 0) headers.add("Bindgen/DictionaryMemberReader.h");
   const systemHeaders = ["JavaScriptCore/JSFunction.h"];
   if (accepted.some(type => !type.allowArray)) systemHeaders.unshift("JavaScriptCore/ArrayConstructor.h");
+  if (file.namespaces.length > 0) systemHeaders.push("JavaScriptCore/ObjectConstructor.h");
   if (file.types.some(type => type instanceof EnumerationType)) systemHeaders.push("wtf/SortedArrayMap.h");
   return `${banner(file.origin)}#include "root.h"
 #include "Generated${file.origin.namespace}.h"
@@ -850,7 +877,9 @@ ${[...headers].map(header => `#include "${header}"\n`).join("")}${systemHeaders.
             ? cppSourceForClass(type)
             : "",
     )
-    .join("")}${file.functions.map(cppSourceForFunction).join("")}`;
+    .join("")}${file.functions.map(cppSourceForFunction).join("")}${file.namespaces
+    .map(namespace => cppSourceForNamespace(namespace, file.origin))
+    .join("")}`;
 }
 
 /** Included by headers most of the C++ includes, so it holds only what sizes their members. */
@@ -922,11 +951,18 @@ const rustExternParameters = (signature: Signature, scope: RustScope) =>
 const rustArguments = (signature: Signature) => signature.args.map(rustArgumentName);
 /** Each argument gets the call's lifetime here: left to inference in the call, a body could ask for `'static`. */
 function rustTakeArguments(args: readonly { name: string; type: Type }[], scope: RustScope): string {
-  const taken = args.flatMap(arg => {
-    const name = rustArgumentName(arg);
-    const converted = arg.type.rustFromExtern(name, scope);
-    return converted === name ? [] : [`let ${name} = ${converted};\n`];
-  });
+  // What can return early comes last: by then Rust owns whatever the other arguments hand over.
+  const taken = args
+    .toSorted((a, b) => +a.type.rustFromExternThrows - +b.type.rustFromExternThrows)
+    .flatMap(arg => {
+      const name = rustArgumentName(arg);
+      const converted = arg.type.rustFromExtern(name, scope);
+      if (arg.type.rustFromExternThrows)
+        return [
+          `let ${name} = match ${converted} {\n    Ok(value) => value,\n    Err(error) => return error.into_host_fn_return(cx),\n};\n`,
+        ];
+      return converted === name ? [] : [`let ${name} = ${converted};\n`];
+    });
   if (taken.some(line => /\bheap\b/.test(line))) taken.unshift("let heap = &cx.heap;\n");
   return taken.join("");
 }

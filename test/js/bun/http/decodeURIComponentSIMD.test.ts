@@ -355,48 +355,119 @@ describe("decodeURIComponentSIMD with UTF-8 byte input", () => {
       "a" + String.fromCodePoint(0xfffd) + "bA",
     );
   });
+
+  it("keeps a '%' that is not an escape next to multi-byte characters", () => {
+    expect(decodeURIComponentSIMD(encoder.encode("é%zz"))).toBe("é%zz");
+    expect(decodeURIComponentSIMD(encoder.encode("%zzé"))).toBe("%zzé");
+    // The two bytes after the '%' are the start of one character.
+    expect(decodeURIComponentSIMD(encoder.encode("%é"))).toBe("%é");
+    expect(decodeURIComponentSIMD(encoder.encode("%€"))).toBe("%€");
+    expect(decodeURIComponentSIMD(encoder.encode("%😀"))).toBe("%😀");
+  });
 });
 
-describe("decodeURIComponentSIMD edge cases", () => {
-  it("should handle cursor advancement correctly with invalid hex", () => {
-    // This test would fail because of the cursor advancement bug
-    // When it sees %GG, it only advances by 1 instead of 3, causing
-    // the GG to be treated as literal characters
-    expect(decodeURIComponentSIMD("%GG%20test")).toBe(String.fromCodePoint(0xfffd) + " " + "test");
+// A "%" without two hex digits after it is not an escape. The decoder keeps
+// it and continues with the next character. It does not replace the "%" and
+// does not skip the characters after it. URLSearchParams decodes a bare "%"
+// the same way, so these tests compare with it.
+//
+// The comparison holds for a bare "%" only. A well-formed sequence that is
+// overlong or out of range, such as %C0%AF, gives one U+FFFD here and one
+// U+FFFD for each byte in URLSearchParams.
+describe("decodeURIComponentSIMD with a '%' that is not an escape", () => {
+  // Every other escape in these inputs decodes to valid UTF-8, so the only
+  // question is what happens to the bare "%".
+  it.each([
+    "%",
+    "%%",
+    "%%%",
+    "%%%%",
+    "%2",
+    "%g",
+    "%2g",
+    "%g2",
+    "%gg",
+    "%0G",
+    "%G0",
+    "%2%3",
+    "%00%0G",
+    "50%-off",
+    "a%zzb",
+    "abc%",
+    "x%2",
+    "hello%",
+    "hello%2",
+    "a%%b",
+    "%2sf%2a",
+    "%2%2af%2a",
+    "%%2a",
+    "a%25b%zz",
+    "%zz%41",
+    "%41%zz",
+    "%zz%C3%A9",
+    "%C3%A9%zz",
+    "valid%20invalid%GGvalid%20",
+    "%é",
+    "é%",
+    "%€",
+    // The "%" at, before and after a 16-byte chunk boundary.
+    ...[15, 16, 31].map(length => Buffer.alloc(length, "a").toString() + "%GG"),
+  ])("decodes %s the same way URLSearchParams does", input => {
+    expect(decodeURIComponentSIMD(input)).toBe(new URLSearchParams("v=" + input).get("v")!);
   });
 
-  it("should handle multiple invalid sequences consecutively", () => {
-    // Similar cursor advancement issue
-    expect(decodeURIComponentSIMD("%ZZ%XX%YY")).toBe(String.fromCodePoint(0xfffd).repeat(3));
+  // A multi-byte sequence that a bare "%" cuts off. The cut-off sequence
+  // becomes one U+FFFD, and the "%" and the characters after it are kept.
+  it.each([
+    ["%C3%zz", "\uFFFD%zz"],
+    ["%C3%", "\uFFFD%"],
+    ["%E2%zz", "\uFFFD%zz"],
+    ["%E2%82%", "\uFFFD%"],
+    ["%F0%9F%", "\uFFFD%"],
+    ["%F0%9F%98%zz", "\uFFFD%zz"],
+    ["a%C3%zzb", "a\uFFFD%zzb"],
+  ])("decodes %s to one U+FFFD and keeps the percent sign", (input, expected) => {
+    expect(decodeURIComponentSIMD(input)).toBe(expected);
+    expect(new URLSearchParams("v=" + input).get("v")).toBe(expected);
   });
 
-  it("should handle incomplete sequences at SIMD boundaries", () => {
-    // Create a string that puts a % character right at the SIMD boundary
-    // then follow it with invalid hex digits
-    const prefix = "a".repeat(15); // 15 bytes to align the % at boundary
-    expect(decodeURIComponentSIMD(prefix + "%GG")).toBe(prefix + String.fromCodePoint(0xfffd));
+  it("keeps a '%' followed by non-hex characters literal", () => {
+    expect(decodeURIComponentSIMD("%GG%20test")).toBe("%GG test");
+    expect(decodeURIComponentSIMD("50%-off")).toBe("50%-off");
+    expect(decodeURIComponentSIMD("a%zzb")).toBe("a%zzb");
   });
 
-  it("should handle mixed valid/invalid sequences at SIMD boundaries", () => {
-    // This combines SIMD boundary alignment with the cursor advancement bug
-    const prefix = "a".repeat(15);
-    expect(decodeURIComponentSIMD(prefix + "%GG%20%HH%20")).toBe(
-      prefix + String.fromCodePoint(0xfffd) + " " + String.fromCodePoint(0xfffd) + " ",
-    );
+  it("keeps consecutive invalid escapes literal", () => {
+    expect(decodeURIComponentSIMD("%ZZ%XX%YY")).toBe("%ZZ%XX%YY");
+    expect(decodeURIComponentSIMD("a%%b")).toBe("a%%b");
+    expect(decodeURIComponentSIMD("%%%")).toBe("%%%");
   });
 
-  it("should handle large sequences of invalid encodings", () => {
-    // This would really expose the cursor advancement issue
-    const input = "%GG".repeat(1000);
-    // it should be full of unicode replacement characters
-    expect(decodeURIComponentSIMD(input).length).toBe(String.fromCodePoint(0xfffd).repeat(1000).length);
+  it("keeps a truncated escape at the end of the input literal", () => {
+    expect(decodeURIComponentSIMD("abc%")).toBe("abc%");
+    expect(decodeURIComponentSIMD("x%2")).toBe("x%2");
+    expect(decodeURIComponentSIMD("%")).toBe("%");
   });
 
-  it("should handle invalid sequences followed by valid UTF-8", () => {
-    // This combines the cursor advancement bug with UTF-8 decoding
-    expect(decodeURIComponentSIMD("%GG%F0%9F%98%80")).toBe(
-      // replacement + replacement + smiley
-      String.fromCodePoint(0xfffd) + "😀",
-    );
+  it("handles invalid escapes at SIMD boundaries", () => {
+    const prefix = Buffer.alloc(15, "a").toString(); // aligns the % at the 16-byte boundary
+    expect(decodeURIComponentSIMD(prefix + "%GG")).toBe(prefix + "%GG");
+    expect(decodeURIComponentSIMD(prefix + "%GG%20%HH%20")).toBe(prefix + "%GG %HH ");
+  });
+
+  it("handles large sequences of invalid escapes", () => {
+    const input = Buffer.alloc(3000, "%GG").toString();
+    expect(decodeURIComponentSIMD(input)).toBe(input);
+  });
+
+  it("decodes valid escapes adjacent to invalid ones", () => {
+    expect(decodeURIComponentSIMD("%GG%F0%9F%98%80")).toBe("%GG😀");
+    expect(decodeURIComponentSIMD("a%25b%zz")).toBe("a%b%zz");
+  });
+
+  it("still replaces decoded bytes that are not valid UTF-8 with U+FFFD", () => {
+    // These are well-formed %XX escapes whose decoded bytes are invalid UTF-8.
+    expect(decodeURIComponentSIMD("a%FFb")).toBe("a\uFFFDb");
+    expect(decodeURIComponentSIMD("a%C3x")).toBe("a\uFFFDx");
   });
 });

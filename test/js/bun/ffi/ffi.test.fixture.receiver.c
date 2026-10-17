@@ -127,6 +127,8 @@ napi_value asNapiValue;
 
 EncodedJSValue ValueUndefined = { TagValueUndefined };
 EncodedJSValue ValueTrue = { TagValueTrue };
+// What a host function returns after throwing; JSC unwinds to the pending exception and ignores it.
+EncodedJSValue ValueEmpty = { 0 };
 
 typedef void* JSContext;
 
@@ -144,10 +146,10 @@ static bool JSVALUE_IS_CELL(EncodedJSValue val) __attribute__((__always_inline__
 static bool JSVALUE_IS_INT32(EncodedJSValue val) __attribute__((__always_inline__)); 
 static bool JSVALUE_IS_NUMBER(EncodedJSValue val) __attribute__((__always_inline__));
 
-static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) __attribute__((__always_inline__));
-static int64_t  JSVALUE_TO_INT64(EncodedJSValue value) __attribute__((__always_inline__));
-uint64_t JSVALUE_TO_UINT64_SLOW(EncodedJSValue value);
-int64_t  JSVALUE_TO_INT64_SLOW(EncodedJSValue value);
+// The dlopen() argument conversion for the ABI_TYPE_* type `abiType`; when it throws, `*threw` is set and the wrapper must return.
+uint64_t JSVALUE_TO_SLOT_SLOW(void* jsGlobalObject, int32_t abiType, bool* threw, int64_t value);
+static uint64_t JSVALUE_TO_UINT64(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue value) __attribute__((__always_inline__));
+static int64_t  JSVALUE_TO_INT64(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue value) __attribute__((__always_inline__));
 
 EncodedJSValue UINT64_TO_JSVALUE_SLOW(void* jsGlobalObject, uint64_t val);
 EncodedJSValue INT64_TO_JSVALUE_SLOW(void* jsGlobalObject, int64_t val);
@@ -313,7 +315,7 @@ static bool JSVALUE_TO_BOOL(EncodedJSValue val) {
 }
 
 
-static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) {
+static uint64_t JSVALUE_TO_UINT64(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue value) {
   if (JSVALUE_IS_INT32(value)) {
     return (uint64_t)JSVALUE_TO_INT32(value);
   }
@@ -326,9 +328,10 @@ static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) {
     return (uint64_t)JSVALUE_TO_TYPED_ARRAY_LENGTH(value);
   }
 
-  return JSVALUE_TO_UINT64_SLOW(value);
+  // A BigInt, or not a number at all (the slow path throws for those).
+  return JSVALUE_TO_SLOT_SLOW(jsGlobalObject, abiType, threw, value.asInt64);
 }
-static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
+static int64_t JSVALUE_TO_INT64(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue value) {
   if (JSVALUE_IS_INT32(value)) {
     return (int64_t)JSVALUE_TO_INT32(value);
   }
@@ -337,7 +340,7 @@ static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
     return (int64_t)JSVALUE_TO_DOUBLE(value);
   }
 
-  return JSVALUE_TO_INT64_SLOW(value);
+  return (int64_t)JSVALUE_TO_SLOT_SLOW(jsGlobalObject, abiType, threw, value.asInt64);
 }
 
 static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {

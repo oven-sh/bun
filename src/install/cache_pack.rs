@@ -183,6 +183,20 @@ fn is_npm_entry_package_name(name: &[u8]) -> bool {
             .is_ok_and(|scoped| strings::count_char(name, b'/') == usize::from(scoped))
 }
 
+/// `<resolved>[+<algorithm>-<32 hex>]` without the part from `+` on.
+fn without_entry_digest(id: &[u8]) -> Option<&[u8]> {
+    let Some(plus) = strings::index_of_char_usize(id, b'+') else {
+        return Some(id);
+    };
+    let digest = &id[plus + 1..];
+    let (algorithm, hex_at) = crate::integrity::Tag::parse(digest);
+    let hex = &digest[hex_at..];
+    (algorithm.is_supported()
+        && hex.len() == directories::ENTRY_DIGEST_PREFIX_LEN * 2
+        && hex.iter().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+    .then_some(&id[..plus])
+}
+
 /// `Some` for the shapes `cached_*_folder_name_print` give unpatched entries, and nothing else.
 fn entry_tag(name: &[u8]) -> Option<ResolutionTag> {
     // Also what every file system can hold, so that no rename into the cache fails on the name.
@@ -195,7 +209,8 @@ fn entry_tag(name: &[u8]) -> Option<ResolutionTag> {
     let (tag, id) = if let Some(rest) = name.strip_prefix(b"@T@") {
         (ResolutionTag::RemoteTarball, without_cache_version(rest)?)
     } else if let Some(rest) = name.strip_prefix(b"@GH@") {
-        (ResolutionTag::Github, without_cache_version(rest)?)
+        let id = without_cache_version(rest)?;
+        (ResolutionTag::Github, without_entry_digest(id)?)
     } else if let Some(rest) = name.strip_prefix(b"@G@") {
         (ResolutionTag::Git, rest)
     } else {

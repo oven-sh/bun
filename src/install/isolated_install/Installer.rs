@@ -1502,7 +1502,13 @@ impl<'a> Installer<'a> {
                 directories::cached_git_folder_name(manager, pkg_res.git(), patch_hash)
             }
             ResolutionTag::Github => {
-                directories::cached_github_folder_name(manager, pkg_res.github(), patch_hash)
+                let pkg_id = self.store.ids(entry_id).pkg_id;
+                directories::cached_github_folder_name(
+                    manager,
+                    pkg_res.github(),
+                    &self.lockfile().packages.items_meta()[pkg_id as usize].integrity,
+                    patch_hash,
+                )
             }
             ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                 let pkg_id = self.store.ids(entry_id).pkg_id;

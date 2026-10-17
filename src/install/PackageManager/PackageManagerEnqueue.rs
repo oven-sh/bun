@@ -263,6 +263,16 @@ pub(crate) fn add_dependency_error(
     }
 }
 
+fn locked_tarball_task_id(this: &PackageManager, package_id: PackageID, url: &[u8]) -> Task::Id {
+    let resolution = &this.lockfile.packages.items_resolution()[package_id as usize];
+    let resolved: &[u8] = match resolution.tag {
+        ResolutionTag::Github => this.lockfile.str(&resolution.github().resolved),
+        _ => b"",
+    };
+    let integrity = &this.lockfile.packages.items_meta()[package_id as usize].integrity;
+    Task::Id::for_locked_tarball(url, resolved, integrity)
+}
+
 pub fn enqueue_tarball_for_download(
     this: &mut PackageManager,
     dependency_id: DependencyID,
@@ -272,9 +282,16 @@ pub fn enqueue_tarball_for_download(
 ) -> Result<(), ForTarballError> {
     let name = this.lockfile.packages.items_name()[package_id as usize];
     let name = this.lockfile.str_detached(&name);
+    // A URL that failed for a dependency in this run is not asked again for the package.
+    let resolved_now = Task::Id::for_tarball(url);
+    let task_id = if this.network_task_has_failed(resolved_now) {
+        resolved_now
+    } else {
+        locked_tarball_task_id(this, package_id, url)
+    };
     enqueue_download(
         this,
-        Task::Id::for_tarball(url),
+        task_id,
         name,
         dependency_id,
         package_id,
@@ -327,6 +344,8 @@ fn enqueue_download(
         offline_miss(this, task_id, "", name, is_required);
         return Err(ForTarballError::Offline);
     }
+    // Only a linker records the integrity of what it downloads for a row.
+    let pins_row = is_asked_by_linker(&task_context);
     if !push_task_callback(this, task_id, task_context) {
         return Ok(());
     }
@@ -341,6 +360,7 @@ fn enqueue_download(
         dependency_id,
         &package,
         authorization,
+        pins_row,
     )? {
         // reshaped for borrowck — `task: &mut NetworkTask` borrows
         // `*this` (pool slot); reborrow as raw so `this.network_tarball_batch`
@@ -365,7 +385,7 @@ pub fn enqueue_tarball_for_reading(
 ) {
     // `enqueue_local_tarball` copies `path` into the filename store before `string_bytes` can grow.
     let path = this.lockfile.str_detached(resolution.local_tarball());
-    let task_id = Task::Id::for_tarball(path);
+    let task_id = locked_tarball_task_id(this, package_id, path);
     if !push_task_callback(this, task_id, task_context) {
         return;
     }
@@ -2344,6 +2364,8 @@ fn bind_row_without_manifest(
             let github_url;
             let url: &[u8] = match res.tag {
                 ResolutionTag::Github => {
+                    // Resolving asks for the ref as written: a dependency has no commit.
+                    debug_assert!(res.github().resolved.is_empty());
                     github_url = this.alloc_github_url(res.github());
                     &github_url
                 }
@@ -2394,6 +2416,7 @@ fn bind_row_without_manifest(
                         ..Package::default()
                     },
                     Authorization::NoAuthorization,
+                    true,
                 ) {
                     // --offline miss: already reported (if required) / skipped (if optional)
                     Err(ForTarballError::Offline) => return Ok(()),
@@ -3161,6 +3184,7 @@ fn tarball_task(
         dependency_id,
         package,
         Authorization::AllowAuthorization,
+        true,
     )?;
     Ok(Some(ResolvedPackageTask::NetworkTask(
         task.expect("unreachable"),

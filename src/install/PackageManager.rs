@@ -230,13 +230,13 @@ use directories::attempt_to_create_package_json_and_open;
 pub use directories::{
     attempt_to_create_package_json, cached_git_folder_name, cached_git_folder_name_print,
     cached_git_folder_name_print_auto, cached_github_folder_name, cached_github_folder_name_print,
-    cached_github_folder_name_print_auto, cached_npm_package_folder_name,
-    cached_npm_package_folder_name_print, cached_npm_package_folder_print_basename,
-    cached_tarball_folder_name, cached_tarball_folder_name_print, compute_cache_dir_and_subpath,
-    fetch_cache_directory_path, get_cache_directory, get_cache_directory_and_abs_path,
-    get_temporary_directory, global_link_dir, global_link_dir_path, is_folder_in_cache,
-    path_for_cached_npm_path, path_for_resolution, save_lockfile, setup_global_dir,
-    update_lockfile_if_needed, write_yarn_lock,
+    cached_npm_package_folder_name, cached_npm_package_folder_name_print,
+    cached_npm_package_folder_print_basename, cached_tarball_folder_name,
+    cached_tarball_folder_name_print, compute_cache_dir_and_subpath, fetch_cache_directory_path,
+    get_cache_directory, get_cache_directory_and_abs_path, get_temporary_directory,
+    global_link_dir, global_link_dir_path, is_folder_in_cache, path_for_cached_npm_path,
+    path_for_resolution, save_lockfile, setup_global_dir, update_lockfile_if_needed,
+    write_yarn_lock,
 };
 
 pub use self::package_manager_enqueue as enqueue;
@@ -517,6 +517,8 @@ pub struct PackageManager {
     /// Set by the first git task.
     pub(crate) git_env: bun_ptr::JsCell<Option<crate::repository::GitEnv>>,
     pub(crate) appended_task_packages: AppendedTaskPackageMap,
+    /// The `reread_key` of each GitHub row that took what `bun update` read again in this run.
+    pub(crate) reread_github_rows: Vec<u64>,
 
     pub(crate) network_dedupe_map: crate::network_task::DedupeMap,
     pub(crate) async_network_task_queue: AsyncNetworkTaskQueue,
@@ -1740,6 +1742,7 @@ fn allocate_package_manager(
         wr!(running_git_tasks, AtomicU32::new(0));
         wr!(git_env, bun_ptr::JsCell::new(None));
         wr!(appended_task_packages, AppendedTaskPackageMap::default());
+        wr!(reread_github_rows, Vec::new());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
         wr!(network_tarball_batch, thread_pool::Batch::default());

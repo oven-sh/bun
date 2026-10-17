@@ -1150,8 +1150,29 @@ impl LinkBatch {
 
 // ───────────────────────────── impl PackageInstall ─────────────────────────────
 
-/// Holds the commit of a git package or the integrity of a tarball. Both linkers look for it.
+/// A git package's commit, a tarball's integrity, or `<resolved>[+<integrity>]` for GitHub.
 pub(crate) const BUN_TAG: &[u8] = b".bun-tag";
+
+/// The commit in the `.bun-tag` of an installed GitHub package.
+pub(crate) fn github_tag_commit(tag: &[u8]) -> &[u8] {
+    strings::split_once_char(tag, b'+').map_or(tag, |(commit, _)| commit)
+}
+
+/// Whether `tag` names the commit of the row and, unless `skips_verify`, the bytes that it pins.
+pub(crate) fn github_tag_matches(
+    tag: &[u8],
+    resolved: &[u8],
+    integrity: &Integrity,
+    skips_verify: bool,
+) -> bool {
+    let commit = github_tag_commit(tag);
+    // A copy of bytes that no hash is known of has the commit alone.
+    let bytes = tag.get(commit.len() + 1..).unwrap_or_default();
+    strings::eql_long(resolved, commit, true)
+        && (skips_verify
+            || !integrity.tag.is_supported()
+            || strings::eql_long(integrity.sri(&mut [0; Integrity::MAX_SRI_LEN]), bytes, true))
+}
 
 /// Whether an installed tarball's `.bun-tag` says it holds the bytes bun.lock pins.
 pub(crate) fn tarball_tag_matches(tag: &[u8], integrity: &Integrity, skips_verify: bool) -> bool {
@@ -1228,8 +1249,15 @@ impl<'a> PackageInstall<'a> {
                     .repository()
                     .resolved
                     .slice(&lockfile.buffers.string_bytes);
+                let is_github = resolution.tag == resolution::Tag::Github;
                 self.verify_bun_tag(
-                    &|tag| strings::eql_long(resolved, tag, true),
+                    &|tag| {
+                        if is_github {
+                            github_tag_matches(tag, resolved, integrity, skips_verify)
+                        } else {
+                            strings::eql_long(resolved, tag, true)
+                        }
+                    },
                     root_node_modules_dir,
                 )
             }

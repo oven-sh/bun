@@ -12,6 +12,7 @@ use crate::extract_tarball;
 use crate::network_task::Callback as NetworkTaskCallback;
 use crate::npm;
 use crate::patch_install::Callback as PatchTaskCallback;
+use crate::repository_real::RepositoryExt as _;
 use crate::retry_timer;
 use crate::tarball_stream::TarballStream;
 use bun_install::{
@@ -1375,6 +1376,7 @@ fn run_tasks_erased(
                     // shared `&task` here coexists with the field-disjoint
                     // `&task.request` borrow held via `resolution` above.
                     task.data_extract(),
+                    manager.waiter_repins_github(task.id),
                     log_level,
                 ) {
                     resolve_waiters_and_notify(
@@ -1398,7 +1400,7 @@ fn run_tasks_erased(
                     }
                 }
 
-                manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
+                manager.set_extracted(package_id, resolution, task.data_extract());
 
                 name_progress(manager, alias, EXTRACT);
             }
@@ -1668,6 +1670,7 @@ fn run_tasks_erased(
                     // `&task` here coexists with the field-disjoint
                     // `&task.request` borrow held via `git_checkout` above.
                     task.data_git_checkout(),
+                    false,
                     log_level,
                 ) {
                     resolve_waiters_and_notify(
@@ -1840,36 +1843,6 @@ pub fn get_network_task(this: &mut PackageManager) -> *mut NetworkTask {
     core::mem::ManuallyDrop::new(this.preallocated_network_tasks.claim())
         .addr()
         .as_ptr()
-}
-
-pub(crate) fn alloc_github_url_for_ref(
-    this: &PackageManager,
-    repository: &Repository,
-    committish: &[u8],
-) -> Vec<u8> {
-    let mut github_api_url: &[u8] = b"https://api.github.com";
-    if let Some(url) = this.env().get(b"GITHUB_API_URL") {
-        if !url.is_empty() {
-            github_api_url = url;
-        }
-    }
-
-    let owner = this.lockfile.str(&repository.owner);
-    let repo = this.lockfile.str(&repository.repo);
-
-    let mut out = Vec::new();
-    write!(
-        &mut out,
-        "{}/repos/{}/{}{}tarball/{}",
-        bstr::BStr::new(strings::without_trailing_slash(github_api_url)),
-        bstr::BStr::new(owner),
-        bstr::BStr::new(repo),
-        // repo might be empty if dep is https://github.com/... style
-        if !repo.is_empty() { "/" } else { "" },
-        bstr::BStr::new(committish),
-    )
-    .expect("unreachable");
-    out
 }
 
 /// A later dependency that joins an entry left in `task_queue` waits forever. Returns the waiters.
@@ -2080,6 +2053,8 @@ pub fn generate_network_task_for_tarball<'a>(
     dependency_id: DependencyID,
     package: &Package,
     authorization: Authorization,
+    // Whether the one who asks gives a row of the lockfile the integrity of this download.
+    pins_row: bool,
 ) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
     // Only reached when the tarball is not already extracted in the cache.
     if this.options.offline == Options::OfflineMode::Offline {
@@ -2150,7 +2125,8 @@ pub fn generate_network_task_for_tarball<'a>(
         skip_verify: false,
         in_trusted_dependencies: this.lockfile.in_trusted_dependencies(pkg_name),
         integrity: package.meta.integrity,
-        stays_unpinned: package.meta.id != bun_install::invalid_package_id && !this.pins_tarballs(),
+        stays_unpinned: package.meta.id != bun_install::invalid_package_id
+            && !(pins_row && this.pins_tarballs()),
         url: stored_string(url),
         // Copied here: extract workers must not read lockfile buffers.
         github_resolved: if package.resolution.tag == bun_install::ResolutionTag::Github {
@@ -2282,9 +2258,51 @@ impl PackageManager {
         (self.network_dedupe_map.get(&task_id)).is_some_and(|e| e.failed)
     }
 
+    /// The tarball of a `github:` dependency, or of the package that a lockfile resolved one to.
+    /// Such a package is asked for by its commit: the ref in package.json can have moved since.
     pub(crate) fn alloc_github_url(&self, repository: &Repository) -> Vec<u8> {
-        let committish = self.lockfile.str(&repository.committish);
-        alloc_github_url_for_ref(self, repository, committish)
+        let buf = self.lockfile.buffers.string_bytes.as_slice();
+        let committish = repository.committish.slice(buf);
+        let commit = repository.resolved_commit(buf);
+        let is_sha = |hex: &[u8]| hex.len() >= 7 && hex.iter().all(u8::is_ascii_hexdigit);
+        // GitHub ends the name in `resolved` with 7 digits of the commit. A dependency has no
+        // name there yet, and another host can name the root of its tarball after anything.
+        let git_ref = if !is_sha(commit)
+            // A lockfile migrated from npm or pnpm has the committish itself in `resolved`.
+            || repository.resolved.eql(repository.committish, buf, buf)
+            // GitHub answers 404 for 7 digits that two objects share: keep a longer sha.
+            || (committish.len() > commit.len()
+                && is_sha(committish)
+                && committish[..commit.len()].eq_ignore_ascii_case(commit))
+        {
+            committish
+        } else {
+            commit
+        };
+
+        let mut github_api_url: &[u8] = b"https://api.github.com";
+        if let Some(url) = self.env().get(b"GITHUB_API_URL") {
+            if !url.is_empty() {
+                github_api_url = url;
+            }
+        }
+
+        let owner = repository.owner.slice(buf);
+        let repo = repository.repo.slice(buf);
+
+        let mut out = Vec::new();
+        write!(
+            &mut out,
+            "{}/repos/{}/{}{}tarball/{}",
+            bstr::BStr::new(strings::without_trailing_slash(github_api_url)),
+            bstr::BStr::new(owner),
+            bstr::BStr::new(repo),
+            // repo might be empty if dep is https://github.com/... style
+            if !repo.is_empty() { "/" } else { "" },
+            bstr::BStr::new(git_ref),
+        )
+        .expect("unreachable");
+        out
     }
 }
 

@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
 describe("bun test", () => {
@@ -1994,6 +1994,29 @@ describe.concurrent("--react-compiler", () => {
     const result = await compiled({ "bunfig.toml": `[test]\n${config}` }, args);
     expect(result.compiled).toBe(expected);
     expect(result.exitCode).toBe(0);
+  });
+
+  // The fifth is OptOut.tsx: the compiler reads it to find that it has nothing to do.
+  test.each([
+    [["--react-compiler"], everything, 5],
+    [[], "", 0],
+  ])("a compiled file is cached whatever its size %j", async (args, expected, entries) => {
+    using dir = tempDir("react-compiler", files);
+    const cache = join(String(dir), "cache");
+    mkdirSync(cache);
+    for (let run = 0; run < 2; run++) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--preload=./setup.tsx", ...args, "./compiled.test.tsx"],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.match(/compiled: (.*)/)?.[1]).toBe(expected);
+      expect(readdirSync(cache)).toHaveLength(entries);
+      expect(exitCode).toBe(0);
+    }
   });
 
   test("the original of a mocked module is compiled", async () => {

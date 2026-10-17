@@ -329,6 +329,10 @@ impl<'a> Options<'a> {
         self.features.hash_for_runtime_transpiler(hasher);
     }
 
+    pub fn runs_react_compiler(&self) -> bool {
+        self.features.react_compiler.is_enabled()
+    }
+
     pub fn hash_test_features_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
         self.features
             .hash_test_features_for_runtime_transpiler(hasher);

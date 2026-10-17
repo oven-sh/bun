@@ -877,7 +877,8 @@ impl RuntimeTranspilerCache {
             return true;
         }
 
-        if source.contents.len() < MINIMUM_CACHE_SIZE {
+        // The React Compiler takes several times as long as the rest, also for a small file.
+        if source.contents.len() < MINIMUM_CACHE_SIZE && !parser_options.runs_react_compiler() {
             return false;
         }
 

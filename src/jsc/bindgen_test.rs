@@ -206,6 +206,28 @@ pub(crate) fn sum_bytes_then_text(bytes: &[u8], text: &[u8]) -> u32 {
     sum(bytes) + sum(text)
 }
 
+pub(crate) fn fill_buffer<'a>(
+    heap: &JsHeap<'a>,
+    buffer: JsLocal<'a, BufferSource>,
+    value: u8,
+) -> usize {
+    // SAFETY: no other argument has bytes.
+    unsafe {
+        buffer.with_bytes_mut(heap, |bytes| {
+            bytes.fill(value);
+            bytes.len()
+        })
+    }
+}
+
+pub(crate) fn sum_bytes_if_any(bytes: Option<&[u8]>, _: &[u8]) -> i32 {
+    bytes.map_or(-1, |bytes| sum(bytes) as i32)
+}
+
+pub(crate) fn string_or_object_echo(text: bun_core::String) -> bun_core::String {
+    text
+}
+
 pub(crate) fn sum_before_and_after_callback<'a>(
     cx: &mut JsScope<'a>,
     buffer: JsLocal<'a, BufferSource>,
@@ -355,6 +377,14 @@ impl TestCounterClass for TestCounter {
         self.count
     }
 
+    fn add_length<'a>(&mut self, text: &'a [u8], times: i32) -> i32 {
+        self.increment((text.len() as i32).wrapping_mul(times))
+    }
+
+    fn add_number(&mut self, by: i32) -> i32 {
+        self.increment(by)
+    }
+
     fn listen<'a>(&self, this: JsWrapper<'a, Self>, heap: &JsHeap<'a>, listener: JsLocal<'a>) {
         this.set_listener_field(heap, listener);
     }
@@ -381,6 +411,14 @@ impl TestCounterClass for TestCounter {
 
     fn alive() -> usize {
         ALIVE.load(Ordering::SeqCst)
+    }
+
+    fn static_count() -> usize {
+        Self::alive()
+    }
+
+    fn limit<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+        Err(heap.range_error(format_args!("there is no limit")))
     }
 }
 

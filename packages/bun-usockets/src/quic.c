@@ -58,8 +58,9 @@ struct us_quic_socket_context_s {
     /* us_quic_socket_context_shutdown ran while `processing` was set;
      * us_quic_engine_leave finishes it. */
     int shutdown_pending;
-    /* us_quic_listen_socket_close ran while `processing` was set;
-     * us_quic_engine_leave runs us_quic_abort_conns. */
+    /* us_quic_listen_socket_close ran, or the last UDP fd closed under live
+     * conns, while `processing` was set; us_quic_engine_leave runs
+     * us_quic_abort_conns. */
     int abort_pending;
     int is_client;
     unsigned int conn_count;
@@ -225,6 +226,19 @@ static void us_quic_send_unsent(us_quic_socket_context_t *ctx) {
     us_quic_engine_leave(ctx);
 }
 
+/* Closes every conn at once, with the engine off the stack. Under
+ * process_conns lsquic_conn_abort only marks a conn, and cooldown skips a conn
+ * that is already going away: abort again, so the tick below closes them all. */
+static void us_quic_abort_conns(us_quic_socket_context_t *ctx) {
+    if (!ctx->engine) return;
+    for (us_quic_socket_t *qs = ctx->conns; qs; qs = qs->next) {
+        if (qs->conn) lsquic_conn_abort(qs->conn);
+    }
+    lsquic_engine_cooldown(ctx->engine);
+    us_quic_process(ctx);
+    us_quic_send_unsent(ctx);
+}
+
 /* ───── packets out ───── */
 
 static inline socklen_t sa_len(const struct sockaddr *sa) {
@@ -314,10 +328,10 @@ static int us_quic_sendmmsg(int fd, struct mmsghdr *mm, unsigned k) {
  * retires that one datagram through ci_packet_too_large and feeds DPLPMTUD.
  *
  * A datagram the kernel refuses for any other reason (EPERM from a firewall
- * rule, EACCES, ENETUNREACH, ...) is counted as sent. To lsquic that is a
- * packet lost on the wire: the loss timer retransmits it with backoff, and the
- * handshake or idle timeout ends a connection that never gets through. Neither
- * remaining outcome fits:
+ * rule, EACCES, ENETUNREACH, ...) is counted as sent, and so is one whose UDP
+ * socket has closed. To lsquic that is a packet lost on the wire: the loss
+ * timer retransmits it with backoff, and the handshake or idle timeout ends a
+ * connection that never gets through. Neither remaining outcome fits:
  *   - With the errno passed through, lsquic closes the connection that owns
  *     specs[sent]. On a shared unconnected UDP socket Linux reports a pending
  *     ICMP error on the next send to *any* destination, so the error isn't
@@ -334,7 +348,7 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
     struct mmsghdr mm[BATCH];
     while (sent < n) {
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
-        if (!ls->udp) { errno = EBADF; break; }
+        if (!ls->udp) { sent++; continue; }
         int fd = us_poll_fd((struct us_poll_t *) ls->udp);
         unsigned k = 0;
         while (k < BATCH && sent + k < n && specs[sent + k].peer_ctx == (void *) ls) {
@@ -369,7 +383,7 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
 #else
     for (; sent < n; sent++) {
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
-        if (!ls->udp) { errno = EBADF; break; }
+        if (!ls->udp) continue;
         LIBUS_SOCKET_DESCRIPTOR fd = us_poll_fd((struct us_poll_t *) ls->udp);
         if (us_quic_send_one(fd, &specs[sent]) < 0) {
             int stop = us_quic_send_would_block(errno) || errno == EMSGSIZE;
@@ -382,16 +396,13 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
 #endif
 
     /* EMSGSIZE goes to lsquic as it is. Everything else that stops the loop is
-     * backpressure, or a UDP socket that is already closed: report EAGAIN, so
-     * the engine pauses and resumes from on_drain → send_unsent_packets (or
-     * from its one-second failsafe when there is no socket left to poll). */
+     * backpressure: report EAGAIN, so the engine pauses and resumes from
+     * on_drain → send_unsent_packets. */
     if (sent < n && errno != EMSGSIZE) {
         errno = EAGAIN;
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
-        if (ls->udp) {
-            us_poll_change((struct us_poll_t *) ls->udp, ls->ctx->loop,
-                LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
-        }
+        us_poll_change((struct us_poll_t *) ls->udp, ls->ctx->loop,
+            LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     }
     return (int) sent;
 }
@@ -445,6 +456,13 @@ static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
     }
     ls->next = ctx->closed_listeners;
     ctx->closed_listeners = ls;
+    /* Conns with no UDP fd left have no wire, and the owner waits for the
+     * release: close them, now or when the engine leaves. */
+    if (ctx->on_released && !ctx->listeners && ctx->conn_count) {
+        if (ctx->processing) ctx->abort_pending = 1;
+        else us_quic_abort_conns(ctx);
+        return;
+    }
     us_quic_report_if_released(ctx);
 }
 
@@ -1023,19 +1041,6 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
     ls->next = ctx->listeners;
     ctx->listeners = ls;
     return ls;
-}
-
-/* The engine half of an abrupt close, with the engine off the stack. Under
- * process_conns lsquic_conn_abort only marks a conn, and cooldown skips a conn
- * that is already going away: abort again, so the tick below closes them all. */
-static void us_quic_abort_conns(us_quic_socket_context_t *ctx) {
-    if (!ctx->engine) return;
-    for (us_quic_socket_t *qs = ctx->conns; qs; qs = qs->next) {
-        if (qs->conn) lsquic_conn_abort(qs->conn);
-    }
-    lsquic_engine_cooldown(ctx->engine);
-    us_quic_process(ctx);
-    us_quic_send_unsent(ctx);
 }
 
 void us_quic_listen_socket_close(us_quic_listen_socket_t *ls) {

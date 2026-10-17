@@ -1,4 +1,5 @@
 import type { ServerWebSocket } from "bun";
+import { socketFaultInjection } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { createHash, createPrivateKey, randomBytes, X509Certificate } from "crypto";
 import { readFileSync } from "fs";
@@ -1611,7 +1612,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     });
 
     test("behind the await, with an idle H3 connection", async () => {
-      const first = Bun.serve({ ...options, port: 0 });
+      await using first = Bun.serve({ ...options, port: 0 });
       const port = first.port!;
       for (let i = 0; i < 2; i++) expect(await fetchH3(port, "/").then(res => res.text())).toBe("ok");
       expect(first.pendingRequests).toBe(0);
@@ -1627,7 +1628,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     test("before it returns, with an H3 connection that has not carried a request", async () => {
       let freed = false;
       for (let wait = 1; wait <= 128 && !freed; wait *= 2) {
-        const server = Bun.serve({ ...options, port: 0 });
+        await using server = Bun.serve({ ...options, port: 0 });
         const port = server.port!;
         const session = await connect(
           { address: "127.0.0.1", port } as SocketAddress,
@@ -1641,7 +1642,9 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
           try {
             (await Bun.udpSocket({ port, hostname: "127.0.0.1" })).close();
             freed = true;
-          } catch {}
+          } catch (e) {
+            if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE") throw e;
+          }
           server.stop(true);
           await stopped;
         } finally {
@@ -1847,6 +1850,61 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       } finally {
         server.stop(true);
       }
+    },
+  );
+
+  // The event loop closes a UDP socket whose receive fails, and nothing tells
+  // the server. The connections have no socket left, so quic.c closes them
+  // then: a stop() that waited for them to drain would hold its promise for
+  // the idle timeout. The fault is armed in the server process only. The next
+  // datagram from a client fails its receive, so the acknowledgement of the
+  // last response never arrives. A stop() of a server with nothing left
+  // returns a settled promise, else the pending promise of the first stop().
+  test.skipIf(!socketFaultInjection.available()).each([
+    ["32 connections, closed before the stop", 32, "", "server.stop();"],
+    ["1 connection, closed during the drain", 1, "server.stop();", ""],
+  ])(
+    "a graceful stop() does not wait for the H3 connections of a UDP socket that the loop closed on a receive error (%s)",
+    async (_what, connections, inHandler, afterClose) => {
+      const script = `
+        import { socketFaultInjection as fault } from "bun:internal-for-testing";
+        const armed = Promise.withResolvers();
+        const server = Bun.serve({
+          port: 0, hostname: "127.0.0.1", tls: ${JSON.stringify(tls)}, http3: true, http1: false,
+          fetch(req) {
+            if (new URL(req.url).pathname !== "/arm") return new Response("ok");
+            fault.set({ syscall: "recvmsg", action: "errno", errno: "ENOBUFS" });
+            ${inHandler}
+            armed.resolve();
+            return new Response("armed");
+          },
+        });
+        const port = server.port;
+        console.error("PORT=" + port);
+        await armed.promise;
+        while (true) {
+          try {
+            (await Bun.udpSocket({ port, hostname: "127.0.0.1" })).close();
+            break;
+          } catch (e) {
+            if (e.code !== "EADDRINUSE") throw e;
+          }
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        ${afterClose}
+        console.error("STOPPED " + Bun.peek.status(server.stop()));
+      `;
+      await withCustomServer(script, async (port, _send, waitForStderr) => {
+        using sessions = new DisposableStack();
+        const open = Array.from({ length: connections }, () => sessions.use(new Bun.FetchSession()));
+        const get = (session: Bun.FetchSession, path: string) =>
+          fetchH3(port, path, { session } as RequestInit).then(res => res.text());
+        // One at a time, so lsquic keeps its first send batch size: the close
+        // then covers more connections than one batch holds.
+        for (const session of open) expect(await get(session, "/")).toBe("ok");
+        expect(await get(open[0], "/arm")).toBe("armed");
+        expect((await waitForStderr(/STOPPED (\w+)/))[1]).toBe("fulfilled");
+      });
     },
   );
 

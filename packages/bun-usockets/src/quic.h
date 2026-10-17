@@ -123,7 +123,8 @@ void us_quic_socket_context_on_close(us_quic_socket_context_t *ctx,
 /* The context has closed its last UDP socket and its last connection has gone,
  * in either order. It runs after the close(2). It can run inside
  * lsquic_engine_process_conns, so it must not enter the engine or free the
- * context. us_quic_socket_context_free itself does not report. */
+ * context. us_quic_socket_context_free itself does not report. A context with
+ * this hook closes its connections when its last UDP socket goes first. */
 void us_quic_socket_context_on_released(us_quic_socket_context_t *ctx,
     void (*on_released)(us_quic_socket_context_t *));
 

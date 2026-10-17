@@ -50,6 +50,10 @@ export const highwayStringsForTesting: (
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
+export const setSQLiteColumnNameTransform = (
+  statement: import("bun:sqlite").Statement,
+  transform: ((name: string) => string) | null | undefined,
+) => statement.native.$setColumnNameTransform(transform);
 
 export const patchInternals = {
   parse: $newRustFunction("patch.rs", "TestingAPIs.parse", 1),
@@ -262,14 +266,30 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   range: $bindgen("bindgen_test.bind.ts", "range"),
   words: $bindgen("bindgen_test.bind.ts", "words"),
   sumBytes: $bindgen("bindgen_test.bind.ts", "sumBytes"),
-  sumBytesOptional: $bindgen("bindgen_test.bind.ts", "sumBytesOptional"),
   sumBytesThenText: $bindgen("bindgen_test.bind.ts", "sumBytesThenText"),
   sumBeforeAndAfterCallback: $bindgen("bindgen_test.bind.ts", "sumBeforeAndAfterCallback"),
-  withValueEcho: $bindgen("bindgen_test.bind.ts", "withValueEcho"),
   fail: $bindgen("bindgen_test.bind.ts", "fail"),
   TestCounter: $bindgen("bindgen_test.bind.ts", "TestCounter"),
   TestHolder: $bindgen("bindgen_test.bind.ts", "TestHolder"),
   makeToken: $bindgen("bindgen_test.bind.ts", "makeToken"),
+  bytesOf: $bindgen("bindgen_test.bind.ts", "bytesOf"),
+  bytesOfOrToString: $bindgen("bindgen_test.bind.ts", "bytesOfOrToString"),
+  bytesOfString: $bindgen("bindgen_test.bind.ts", "bytesOfString"),
+  bytesOfBufferOrBlob: $bindgen("bindgen_test.bind.ts", "bytesOfBufferOrBlob"),
+  bytesOfRefusingUndefined: $bindgen("bindgen_test.bind.ts", "bytesOfRefusingUndefined"),
+  bytesOfThen: $bindgen("bindgen_test.bind.ts", "bytesOfThen"),
+  bytesOfThenCopyingShared: $bindgen("bindgen_test.bind.ts", "bytesOfThenCopyingShared"),
+  bytesOfThenCopied: $bindgen("bindgen_test.bind.ts", "bytesOfThenCopied"),
+  bytesOfAreSameMemory: $bindgen("bindgen_test.bind.ts", "bytesOfAreSameMemory"),
+  bytesOfAreSameMemoryCopyingShared: $bindgen("bindgen_test.bind.ts", "bytesOfAreSameMemoryCopyingShared"),
+  bytesBeforeAndAfterCallback: $bindgen("bindgen_test.bind.ts", "bytesBeforeAndAfterCallback"),
+  bytesBeforeAndAfterCallbackCopyingShared: $bindgen(
+    "bindgen_test.bind.ts",
+    "bytesBeforeAndAfterCallbackCopyingShared",
+  ),
+  pinnedBytesAfterCallback: $bindgen("bindgen_test.bind.ts", "pinnedBytesAfterCallback"),
+  stringAsIsOrBytes: $bindgen("bindgen_test.bind.ts", "stringAsIsOrBytes"),
+  asBigInt: $bindgen("bindgen_test.bind.ts", "asBigInt"),
   integerOrBigInt: $bindgen("bindgen_test.bind.ts", "integerOrBigInt"),
   looseInteger: $bindgen("bindgen_test.bind.ts", "looseInteger"),
   looseIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "looseIntegerOrBigInt"),
@@ -595,6 +615,7 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 
 export const timerInternals = {
   timerClockMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.timerClockMs", 0),
+  monotonicNowMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.monotonicNowMs", 0),
 };
 
 // Raw datagram descriptor helpers for tests that need an unbound fd (which

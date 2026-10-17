@@ -31,7 +31,11 @@ describe.concurrent("bun lint", () => {
     "%s",
     async (_, it) => {
       const [configName, config] = configOf(it);
-      using dir = tempDir("bun-lint-robustness", { [configName]: config, [it.file]: it.text() });
+      using dir = tempDir("bun-lint-robustness", {
+        [configName]: config,
+        [it.file]: it.text(),
+        ...(it.compilerOptions && { "tsconfig.json": JSON.stringify({ compilerOptions: it.compilerOptions }) }),
+      });
       const args = ["lint", "-c", configName, "--threads", "2", ...(it.args ?? ["-f", "unix"]), it.file];
       await using proc = spawn({
         cmd: isWindows ? [bunExe(), ...args] : ["sh", "-c", `ulimit -c 0; ${limit}exec "$0" "$@"`, bunExe(), ...args],

@@ -4158,7 +4158,9 @@ class ServerHttp2Session extends Http2Session {
       headersTuple: [string[], Record<string, any>, string[] | undefined],
       flags: number,
     ) {
-      if (!self || typeof stream !== "object" || self.closed || stream.closed) return;
+      if (!self || typeof stream !== "object" || stream.closed) return;
+      // Like node's onSessionHeaders: after close() only a stream not yet delivered is dropped.
+      if (self.closed && (stream[bunHTTP2StreamStatus] & StreamState.Delivered) === 0) return;
       const requestPerf = stream[kPerfState];
       if (requestPerf !== undefined && requestPerf.firstHeader === 0) {
         requestPerf.firstHeader = performance.now() - requestPerf.start;

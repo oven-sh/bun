@@ -2400,7 +2400,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   }
 
   get sentInfoHeaders() {
-    return this[kInfoHeaders] || [];
+    return this[kInfoHeaders];
   }
 
   get sentTrailers() {
@@ -3539,13 +3539,13 @@ class ServerHttp2Stream extends Http2Stream {
     }
     const session = this[bunHTTP2Session];
     assertSession(session);
+    // request() throws on an invalid header, before it sends anything.
+    session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
     if (!this[kInfoHeaders]) {
       this[kInfoHeaders] = [headers];
     } else {
       ArrayPrototypePush.$call(this[kInfoHeaders], headers);
     }
-
-    session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
   }
   respond(headers?: HeadersObject | any[] | null, options?: any) {
     if (this.destroyed || this.session === undefined) {

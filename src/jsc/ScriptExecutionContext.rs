@@ -149,6 +149,27 @@ impl ScriptExecutionContext {
         *self.stopped.get()
     }
 
+    /// In a `Bun.ModuleGraph`'s context, makes `value` refer to the graph. Returns whether it did.
+    pub fn keep_graph_alive_from(&self, value: JSValue) -> bool {
+        let dom_context = self.dom_context.get();
+        // SAFETY: a graph's `WebCore::ScriptExecutionContext`, non-null until its destructor
+        // releases this one (`dom_context_released`); JS thread.
+        !dom_context.is_null() && unsafe { Bun__ModuleGraph__keepAliveFrom(dom_context, value) }
+    }
+
+    /// The graph that [`keep_graph_alive_from`](Self::keep_graph_alive_from) made `value` refer to.
+    pub fn graph_kept_alive_from(value: JSValue) -> Option<JSValue> {
+        // SAFETY: any value; JS thread.
+        let graph = unsafe { Bun__ModuleGraph__keptAliveFrom(value) };
+        graph.is_object().then_some(graph)
+    }
+
+    /// Undoes [`keep_graph_alive_from`](Self::keep_graph_alive_from) for `value`.
+    pub fn let_go_of_graph(value: JSValue) {
+        // SAFETY: any value; JS thread.
+        unsafe { Bun__ModuleGraph__letGoFrom(value) }
+    }
+
     /// A graph's context stops for good (JS thread): one stop-phase sweep over
     /// its handles and its client sockets.
     pub(crate) fn stop(&self, reason: StopReason) -> SweepResult {
@@ -508,6 +529,13 @@ macro_rules! impl_abort_handle_owner {
 }
 
 // `WebCore::ScriptExecutionContext` owns the context of a `Bun.ModuleGraph`.
+
+unsafe extern "C" {
+    // ModuleGraph.cpp
+    fn Bun__ModuleGraph__keepAliveFrom(context: *mut core::ffi::c_void, value: JSValue) -> bool;
+    fn Bun__ModuleGraph__keptAliveFrom(value: JSValue) -> JSValue;
+    fn Bun__ModuleGraph__letGoFrom(value: JSValue);
+}
 
 /// A global's `WebCore::ScriptExecutionContext` is made with this as its Rust half.
 ///

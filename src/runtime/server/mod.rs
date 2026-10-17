@@ -204,6 +204,8 @@ bitflags::bitflags! {
     pub struct ServerFlags: u8 {
         const DEINIT_SCHEDULED            = 1 << 0;
         const TERMINATED                  = 1 << 1;
+        /// The wrapper refers to the `Bun.ModuleGraph` of the server's context (`join_context`).
+        const KEEPS_GRAPH                 = 1 << 2;
     }
 }
 
@@ -1702,6 +1704,45 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.poll_ref.unref(self.vm.loop_ctx());
     }
 
+    /// The server is `context`'s from here on, and keeps its `Bun.ModuleGraph` until it leaves.
+    /// SAFETY: `this` is the live heap-allocated server, pinned until it leaves its context.
+    pub(crate) unsafe fn join_context(this: *mut Self, context: &jsc::ScriptExecutionContext) {
+        // SAFETY: fn contract.
+        unsafe {
+            (*this).leave_context();
+            (*this).context.set(context.id());
+            jsc::AbortHandle::arm_owner(this, context);
+            if let Some(wrapper) = (*this).js_value.try_get() {
+                if context.keep_graph_alive_from(wrapper) {
+                    (*this).flags.insert(ServerFlags::KEEPS_GRAPH);
+                }
+            }
+        }
+    }
+
+    /// The graph that the wrapper refers to, held for a task that runs in the graph's context.
+    fn graph_kept(&self) -> Option<jsc::Strong> {
+        if !self.flags.contains(ServerFlags::KEEPS_GRAPH) {
+            return None;
+        }
+        let graph = jsc::ScriptExecutionContext::graph_kept_alive_from(self.js_value.try_get()?)?;
+        Some(jsc::Strong::create(
+            graph,
+            bun_opaque::opaque_deref(self.global_this),
+        ))
+    }
+
+    /// The server is no context's any more, and its wrapper refers to no graph.
+    fn leave_context(&mut self) {
+        self.abort_handle.leave();
+        if self.flags.contains(ServerFlags::KEEPS_GRAPH) {
+            self.flags.remove(ServerFlags::KEEPS_GRAPH);
+            if let Some(wrapper) = self.js_value.try_get() {
+                jsc::ScriptExecutionContext::let_go_of_graph(wrapper);
+            }
+        }
+    }
+
     pub(crate) fn stop_listening(&mut self, abrupt: bool) {
         // httplog!("stopListening", .{});
 
@@ -1917,6 +1958,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     promise: self.all_closed_promise.take(),
                     tracker: jsc::AsyncTaskTracker::init(vm_ref),
                     context: self.context.get(),
+                    _graph: self.graph_kept(),
                 },
                 vm_ref,
             );
@@ -1925,7 +1967,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.unref();
         }
         if self.is_drained() {
-            self.abort_handle.leave();
+            self.leave_context();
             // No handler is dispatched from here on (`js_value_for_dispatch`), so the wrapper —
             // the handlers' only GC root — may become collectible.
             self.js_value.downgrade();
@@ -4430,6 +4472,8 @@ pub(crate) struct ServerAllConnectionsClosedTask {
     /// The context of the script that made the server: `stop()`'s promise (and node:http's
     /// `'close'`, which waits on it) is settled for that script.
     pub(crate) context: jsc::ContextId,
+    /// The `Bun.ModuleGraph` of `context`, which must still be there when the promise is settled.
+    pub(crate) _graph: Option<jsc::Strong>,
 }
 
 impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {

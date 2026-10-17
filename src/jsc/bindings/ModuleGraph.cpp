@@ -326,6 +326,37 @@ extern "C" void* Bun__currentGraphContext(JSGlobalObject* globalObject)
     return defaultGlobalObject(globalObject)->currentScriptExecutionContext()->bunContext();
 }
 
+// Keeps the graph of `context` alive: `owner`, an object that native code roots, refers to it.
+extern "C" bool Bun__ModuleGraph__keepAliveFrom(WebCore::ScriptExecutionContext* context, EncodedJSValue encodedOwner)
+{
+    JSObject* graph = context->moduleGraph();
+    JSObject* owner = JSValue::decode(encodedOwner).getObject();
+    if (!graph || !owner)
+        return false;
+    VM& vm = owner->vm();
+    owner->putDirect(vm, moduleGraphSlotName(vm), graph, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    return true;
+}
+
+extern "C" EncodedJSValue Bun__ModuleGraph__keptAliveFrom(EncodedJSValue encodedOwner)
+{
+    JSObject* owner = JSValue::decode(encodedOwner).getObject();
+    if (!owner)
+        return JSValue::encode(jsUndefined());
+    VM& vm = owner->vm();
+    JSValue graph = owner->getDirect(vm, moduleGraphSlotName(vm));
+    return JSValue::encode(graph ? graph : jsUndefined());
+}
+
+extern "C" void Bun__ModuleGraph__letGoFrom(EncodedJSValue encodedOwner)
+{
+    JSObject* owner = JSValue::decode(encodedOwner).getObject();
+    if (!owner)
+        return;
+    VM& vm = owner->vm();
+    owner->putDirect(vm, moduleGraphSlotName(vm), jsUndefined(), static_cast<unsigned>(PropertyAttribute::DontEnum));
+}
+
 // The frame's properties, in the order async_hooks.ts's Frame declares them, at fixed offsets.
 enum ModuleGraphFrameOffset : PropertyOffset { FrameStorage,
     FrameValue,

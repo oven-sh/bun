@@ -1286,10 +1286,8 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                         server.on_reload_from_zig(&mut config, global_object);
                         // Its handlers are the calling script's now, and so is the server: it goes
                         // with that script's context, not with the one that first listened.
-                        server.abort_handle.leave();
-                        server.context.set(context.id());
                         // SAFETY: heap-allocated; leaves its context in `stop_listening` / `deinit`.
-                        unsafe { bun_jsc::AbortHandle::arm_owner(std::ptr::from_mut(server), context) };
+                        unsafe { <$T>::join_context(std::ptr::from_mut(server), context) };
                         return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
                     }};
                 }
@@ -1365,10 +1363,7 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
 
             // SAFETY: `server` is heap-allocated and leaves its context in
             // `stop_listening` / `deinit`.
-            unsafe {
-                (*server).context.set(context.id());
-                bun_jsc::AbortHandle::arm_owner(server, context)
-            };
+            unsafe { <$ServerType>::join_context(server, context) };
 
             // `init` moved `config` into the server (`mem::take`), so the
             // local `config` is defaulted from here on — read `allow_hot`

@@ -2904,9 +2904,13 @@ mod draft {
                             libc::close(i);
                         }
                     }
-                    // SAFETY: argv is NUL-terminated array of NUL-terminated strings; environ is the
-                    // process environment block
+                    // SAFETY: fcntl and execve are async-signal-safe; argv and environ are
+                    // NUL-terminated. Only stderr is inherited by the crash reporter.
                     unsafe {
+                        let flags = libc::fcntl(2, libc::F_GETFD);
+                        if flags != -1 {
+                            libc::fcntl(2, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+                        }
                         libc::execve(argv[0], argv.as_ptr(), bun_core::c_environ());
                     }
                     // SAFETY: _exit is async-signal-safe in the forked child

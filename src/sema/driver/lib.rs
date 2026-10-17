@@ -2494,6 +2494,22 @@ fn check_project_of(
     }
 }
 
+/// The files of a program whose path leads through a link, each with the `tspath.Path` of its
+/// real path. `Host::plugin_imports` has a file by its real path, as the bundler does. A program
+/// has it by the path that it is imported by.
+fn files_through_links(program: &Program, host: &dyn Host) -> Vec<(Vec<u8>, FileId)> {
+    let is_case_sensitive = host.is_case_sensitive();
+    let modules = program.files.modules.iter().enumerate();
+    let modules = modules.filter(|(_, module)| !module.is_lib);
+    let linked = modules.filter_map(|(index, module)| {
+        let real = host.realpath(module.file_name());
+        let real = to_path(&real, is_case_sensitive);
+        let is_linked = *real != *module.path.text;
+        is_linked.then(|| (real.into_owned(), FileId(index as u32)))
+    });
+    linked.collect()
+}
+
 /// `named` is sorted. It has, and `file` is, a `tspath.Path`.
 fn is_among(named: &[Vec<u8>], file: &[u8]) -> bool {
     named.binary_search_by(|it| it.as_slice().cmp(file)).is_ok()
@@ -3591,22 +3607,6 @@ fn may_declare_a_global(
         && !has_import
         && !has(b"export")
         && !(is_javascript(path) && has(b"require"))
-}
-
-/// The files of a program whose path leads through a link, each with the `tspath.Path` of its
-/// real path. `Host::plugin_imports` has a file by its real path, as the bundler does. A program
-/// has it by the path that it is imported by.
-fn files_through_links(program: &Program, host: &dyn Host) -> Vec<(Vec<u8>, FileId)> {
-    let is_case_sensitive = host.is_case_sensitive();
-    let modules = program.files.modules.iter().enumerate();
-    let modules = modules.filter(|(_, module)| !module.is_lib);
-    let linked = modules.filter_map(|(index, module)| {
-        let real = host.realpath(module.file_name());
-        let real = to_path(&real, is_case_sensitive);
-        let is_linked = *real != *module.path.text;
-        is_linked.then(|| (real.into_owned(), FileId(index as u32)))
-    });
-    linked.collect()
 }
 
 /// `check_project`. `named`: of all loaded files, only these files (sorted) and the files they

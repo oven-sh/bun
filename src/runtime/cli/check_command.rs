@@ -8,7 +8,7 @@ use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
 use bun_clap as clap;
 use bun_core::{Global, Output, ZStr, env_var};
 use bun_sema_driver::format::{self, Layout, Style};
-use bun_sema_driver::host::{AlreadyRead, BeforeRead, PluginImport, PluginImports, Provided};
+use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided};
 use bun_sema_driver::{
     Category, CommandLine, CompilerOption, Diagnostic, FlagError, Progress, RejectedFlag, Report,
     Request, ScriptKind,
@@ -687,7 +687,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         has_types_with(&by_extension, path) || script_kinds.iter().any(|it| it.0 == **path)
     };
     // The imports of a file follow each other.
-    let mut imports = PluginImports::new();
+    let mut imports = bun_sema_driver::host::PluginImports::new();
     let mut importer = None;
     for import in plugin_imports {
         let path = name_of_module(cwd, import.imported);
@@ -705,7 +705,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
             imports.push((name_of_module(cwd, import.importer), Vec::new()));
         }
         if let Some((_, of_importer)) = imports.last_mut() {
-            of_importer.push(PluginImport { path, is_source });
+            of_importer.push(bun_sema_driver::host::PluginImport { path, is_source });
         }
     }
     let provided = Provided {

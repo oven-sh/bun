@@ -28,7 +28,9 @@
 
 #if ENABLE(WEB_CRYPTO)
 
+#include "CryptoDigest.h"
 #include "ScriptExecutionContext.h"
+#include <openssl/err.h>
 
 namespace WebCore {
 
@@ -139,6 +141,92 @@ void CryptoAlgorithm::dispatchOperationInWorkQueue(WorkQueue& workQueue, ScriptE
 void CryptoAlgorithm::dispatchOperationInWorkQueue(WorkQueue& workQueue, ScriptExecutionContext& context, BoolCallback&& callback, ExceptionCallback&& exceptionCallback, Function<ExceptionOr<bool>()>&& operation)
 {
     dispatchAlgorithmOperation(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback), WTF::move(operation));
+}
+
+static size_t maxInputSizeForInlineOperation(CryptoAlgorithmIdentifier hashOrCipher)
+{
+    switch (hashOrCipher) {
+    case CryptoAlgorithmIdentifier::SHA_1:
+    case CryptoAlgorithmIdentifier::SHA_224:
+    case CryptoAlgorithmIdentifier::SHA_256:
+    case CryptoAlgorithmIdentifier::AES_CTR:
+    case CryptoAlgorithmIdentifier::AES_CBC:
+    case CryptoAlgorithmIdentifier::AES_GCM:
+    case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
+        return 1024;
+    case CryptoAlgorithmIdentifier::SHA_384:
+    case CryptoAlgorithmIdentifier::SHA_512:
+        return 256;
+    // AES-CFB-8 encrypts a whole block for every byte.
+    case CryptoAlgorithmIdentifier::AES_CFB:
+    case CryptoAlgorithmIdentifier::SHA3_256:
+    case CryptoAlgorithmIdentifier::SHA3_384:
+    case CryptoAlgorithmIdentifier::SHA3_512:
+        return 64;
+    default:
+        return 0;
+    }
+}
+
+// A macro's loop turns only while the macro is waited for, so what it started is posted the way the work queue posts it.
+static void postFromEventLoop(ScriptExecutionContext& context, Function<void(ScriptExecutionContext&)>&& task)
+{
+    if (auto loopKind = context.currentLoopKind(); loopKind != BunLoopKind::Regular)
+        ScriptExecutionContext::postTaskTo(context.identifier(), loopKind, WTF::move(task));
+    else
+        context.postTaskAfterYield(WTF::move(task));
+}
+
+template<typename ResultCallbackType, typename OperationType>
+static void runOrDispatchAlgorithmOperation(CryptoAlgorithmIdentifier hashOrCipher, size_t inputSize, WorkQueue& workQueue, ScriptExecutionContext& context, ResultCallbackType&& callback, CryptoAlgorithm::ExceptionCallback&& exceptionCallback, OperationType&& operation)
+{
+    if (inputSize > maxInputSizeForInlineOperation(hashOrCipher)) {
+        dispatchAlgorithmOperation(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback), WTF::move(operation));
+        return;
+    }
+    auto result = operation();
+    // A failed operation leaves its reason on the BoringSSL error queue of the thread it ran on, which is now the caller's.
+    if (result.hasException())
+        ERR_clear_error();
+    postFromEventLoop(context, [result = WTF::move(result), callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback)](auto&) mutable {
+        if (result.hasException()) {
+            exceptionCallback(result.releaseException().code(), ""_s);
+            return;
+        }
+        callback(result.releaseReturnValue());
+    });
+}
+
+void CryptoAlgorithm::dispatchOperation(CryptoAlgorithmIdentifier hashOrCipher, size_t inputSize, WorkQueue& workQueue, ScriptExecutionContext& context, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, Function<ExceptionOr<Vector<uint8_t>>()>&& operation)
+{
+    runOrDispatchAlgorithmOperation(hashOrCipher, inputSize, workQueue, context, WTF::move(callback), WTF::move(exceptionCallback), WTF::move(operation));
+}
+
+void CryptoAlgorithm::dispatchOperation(CryptoAlgorithmIdentifier hashOrCipher, size_t inputSize, WorkQueue& workQueue, ScriptExecutionContext& context, BoolCallback&& callback, ExceptionCallback&& exceptionCallback, Function<ExceptionOr<bool>()>&& operation)
+{
+    runOrDispatchAlgorithmOperation(hashOrCipher, inputSize, workQueue, context, WTF::move(callback), WTF::move(exceptionCallback), WTF::move(operation));
+}
+
+void CryptoAlgorithm::dispatchDigest(CryptoAlgorithmIdentifier hash, std::unique_ptr<PAL::CryptoDigest>&& digest, Vector<uint8_t>&& message, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
+{
+    if (!digest) {
+        exceptionCallback(OperationError, ""_s);
+        return;
+    }
+    if (message.size() <= maxInputSizeForInlineOperation(hash)) {
+        digest->addBytes(message.begin(), message.size());
+        postFromEventLoop(context, [callback = WTF::move(callback), result = digest->computeHash()](auto&) {
+            callback(result);
+        });
+        return;
+    }
+    workQueue.dispatch(context.globalObject(), [digest = WTF::move(digest), message = WTF::move(message), callback = WTF::move(callback), contextIdentifier = context.identifier(), loopKind = context.currentLoopKind()]() mutable {
+        digest->addBytes(message.begin(), message.size());
+        auto result = digest->computeHash();
+        ScriptExecutionContext::postTaskTo(contextIdentifier, loopKind, [callback = WTF::move(callback), result = WTF::move(result)](auto&) {
+            callback(result);
+        });
+    });
 }
 
 }

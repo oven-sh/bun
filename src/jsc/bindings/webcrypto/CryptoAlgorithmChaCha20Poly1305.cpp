@@ -90,7 +90,8 @@ void CryptoAlgorithmChaCha20Poly1305::encrypt(const CryptoAlgorithmParameters& p
     if (!validateIvLength(aeadParameters, exceptionCallback))
         return;
 
-    dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
+    auto inputSize = plainText.size() + aeadParameters.additionalDataVector().size();
+    dispatchOperation(s_identifier, inputSize, workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
         [parameters = crossThreadCopy(aeadParameters), key = WTF::move(key), plainText = WTF::move(plainText)] {
             return platformEncrypt(parameters, downcast<CryptoKeyRaw>(key.get()), plainText);
         });
@@ -110,7 +111,8 @@ void CryptoAlgorithmChaCha20Poly1305::decrypt(const CryptoAlgorithmParameters& p
         return;
     }
 
-    dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
+    auto inputSize = cipherText.size() + aeadParameters.additionalDataVector().size();
+    dispatchOperation(s_identifier, inputSize, workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
         [parameters = crossThreadCopy(aeadParameters), key = WTF::move(key), cipherText = WTF::move(cipherText)] {
             return platformDecrypt(parameters, downcast<CryptoKeyRaw>(key.get()), cipherText);
         });

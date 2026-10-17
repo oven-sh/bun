@@ -1419,11 +1419,8 @@ fn configure_env_for_scripts_run(
                 .load_node_js_config(paths_fs, node_path_z.as_ref())?;
         } else {
             let mut bun_path: &[u8] = b"";
-            if RunCommand::create_fake_temporary_node_executable(
-                &mut node_shim_path,
-                &mut bun_path,
-            )
-            .is_ok()
+            if RunCommand::create_fake_temporary_node_executable(&mut node_shim_path, &mut bun_path)
+                .is_ok()
             {
                 // `NODE` is the shim, which runs as `node`, not the bun binary, which runs as
                 // `bun`. Without a shim, the `node` of PATH.

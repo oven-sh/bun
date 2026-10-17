@@ -269,8 +269,9 @@ function underCaret(preview: string, text: string) {
 }
 
 describe.each(["test", "run", ...bundles, "compiled"])("%s", laneName => {
-  // On Windows, an executable has no preview of an error whose stack has been read.
-  const hasPreviewAfterStack = !(isWindows && laneName === "compiled");
+  // Once the stack of an error has been read, an executable reads the preview from the file on disk. It looks for the
+  // path in the frame, which is relative to where it was built, from where it runs.
+  const hasPreviewAfterStack = laneName !== "compiled";
 
   test("every program loads", () => {
     expect(lanes[laneName].failed).toEqual({});

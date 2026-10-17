@@ -36,7 +36,7 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
 };
 type FD = number;
 
-const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
+const { validateInteger, validateInt32, validateFunction, getValidatedFsPath } = require("internal/validators");
 
 const kIsPerformingIO = Symbol("kIsPerformingIO");
 const kIoDone = Symbol("kIoDone");
@@ -90,12 +90,6 @@ function streamFileHandleClose(this: FileHandle, fd: FD, cb: (err?: any) => void
   this.close().then(() => cb(), cb);
 }
 
-function getValidatedPath(p: any) {
-  if (p instanceof URL) return Bun.fileURLToPath(p as URL);
-  if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
-  return require("node:path").resolve(p);
-}
-
 function copyObject(source) {
   const target = {};
   // Node tests for prototype lookups, so { ...source } will not work.
@@ -145,7 +139,7 @@ function ReadStream(this: FSStream, path, options): void {
   if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
-    this.path = getValidatedPath(path);
+    this.path = getValidatedFsPath(path);
     const { flags, mode } = options;
     this.flags = flags === undefined ? "r" : flags;
     this.mode = mode === undefined ? 0o666 : mode;
@@ -387,10 +381,7 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
   if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
-    // Internal $fastPath callers (writableFromFileSink) discard .path; do not
-    // resolve it - path.resolve("") needs process.cwd(), which throws when
-    // the cwd has been deleted (Node still spawns children in that state).
-    this.path = fastPath ? path : getValidatedPath(path);
+    this.path = fastPath ? path : getValidatedFsPath(path);
     const { flags, mode } = options;
     this.flags = flags === undefined ? "w" : flags;
     this.mode = mode === undefined ? 0o666 : mode;

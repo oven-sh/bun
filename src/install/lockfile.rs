@@ -1795,6 +1795,7 @@ impl Lockfile {
         );
         let mut pkgs = self.packages.slice();
         let len = pkgs.len();
+        let mut added_by_extensions: Vec<(PackageID, PackageNameHash, bool)> = Vec::new();
 
         let self::package::PackageColumnsMut {
             name: pkg_names,
@@ -1863,6 +1864,24 @@ impl Lockfile {
                 continue;
             }
 
+            // pnpm-lock.yaml lists what `packageExtensions` added among a package's own
+            // dependencies. The manifest only has the package's own.
+            let extensions = &self.package_extensions;
+            for (name_hash, is_peer) in extensions.names_added_to(pkg_name_hash, npm_ver, buf) {
+                let groups = if is_peer {
+                    [pkg.package.peer_dependencies; 2]
+                } else {
+                    [pkg.package.dependencies, pkg.package.optional_dependencies]
+                };
+                let declares = groups.iter().any(|group| {
+                    (group.name.get(&manifest.external_strings).iter())
+                        .any(|name| name.hash == name_hash)
+                });
+                if !declares {
+                    added_by_extensions.push((i as PackageID, name_hash, is_peer));
+                }
+            }
+
             let mut builder = string_builder!(self);
 
             let bin_extern_strings_count = pkg.package.bin.count(
@@ -1913,7 +1932,7 @@ impl Lockfile {
                 pkg_meta.integrity = pkg.package.integrity;
             }
         }
-        Ok(())
+        self.adopt_package_extension_rows(manager.log_mut(), &added_by_extensions)
     }
 }
 

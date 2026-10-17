@@ -2230,6 +2230,13 @@ impl<'a> Installer<'a> {
         } else {
             Default::default()
         };
+        // By name: an entry keeps the id of the first dependency that reached it, which can be the
+        // peer dependency of another package.
+        let is_direct = |name_hash: u64| {
+            (parent_dependencies.get(dependencies).iter()).any(|own| {
+                own.name_hash == name_hash && bin_real::LinkOrder::declares(own.behavior)
+            })
+        };
 
         let mut deps_with_bins: Vec<_> = entry_deps[parent_entry_id.get() as usize]
             .slice()
@@ -2240,8 +2247,7 @@ impl<'a> Installer<'a> {
             let [a, b] = [a, b].map(|dep| {
                 let dependency = &dependencies[dep.dep_id as usize];
                 bin_real::LinkOrder::new(
-                    parent_dependencies.contains(dep.dep_id)
-                        && bin_real::LinkOrder::declares(dependency.behavior),
+                    is_direct(dependency.name_hash),
                     self.resolution(dep.entry_id).tag,
                     dependency.name.slice(string_buf),
                 )

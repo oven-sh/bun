@@ -4907,6 +4907,37 @@ describe.concurrent("bins of a package that dependents reach under different nam
     expect(memberBin(packageDir, "a-first", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
   });
 
+  test("of two direct dependencies with one command, the first by name keeps it if another package has it as a peer", async () => {
+    const tarball = await new Bun.Archive(
+      {
+        "package/package.json": JSON.stringify({
+          name: "aa-plugin",
+          version: "1.0.0",
+          peerDependencies: { "what-bin": ">=1.0.0" },
+        }),
+      },
+      { compress: "gzip" },
+    ).bytes();
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          dependencies: {
+            "aa-plugin": "file:./aa-plugin.tgz",
+            "what-bin": "1.0.0",
+            "what-bin-next": "npm:what-bin@1.5.0",
+          },
+        }),
+        "aa-plugin.tgz": Buffer.from(tarball),
+      },
+    });
+
+    await runBunInstall(installEnv(packageDir), packageDir);
+
+    expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+  });
+
   test("an alias, a workspace package with the same command and a bin that fails to link in one dependent", async () => {
     // Too long for a file name, so making the link fails.
     const longBinName = Buffer.alloc(300, "a").toString();

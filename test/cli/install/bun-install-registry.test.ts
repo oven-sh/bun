@@ -380,6 +380,74 @@ describe.concurrent("certificate authority", () => {
     expect(proxy.targets).toEqual([`localhost:${server.port}`, `localhost:${server.port}`]);
   });
 
+  // With the system store on, every file in $SSL_CERT_DIR is read. The default store only finds files there that are
+  // named after a hash of the certificate, so `my-ca.pem` tells the two apart. Other systems keep their store elsewhere.
+  describe.skipIf(!isLinux)("--use-system-ca", () => {
+    async function run(args: string[], extraEnv: Record<string, string> = {}) {
+      const { packageDir, packageJson, env } = await setupTest();
+      using server = Bun.serve({
+        port: 0,
+        fetch: mockRegistryFetch(),
+        ...tls,
+      });
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            version: "1.1.1",
+            dependencies: { "no-deps": `https://localhost:${server.port}/no-deps-1.0.0.tgz` },
+          }),
+        ),
+        write(
+          join(packageDir, "bunfig.toml"),
+          Bun.TOML.stringify({ install: { cache: false, registry: `https://localhost:${server.port}/` } }),
+        ),
+        write(join(packageDir, "certs", "my-ca.pem"), tls.cert),
+      ]);
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: packageDir,
+        stderr: "pipe",
+        stdout: "pipe",
+        env: {
+          ...env,
+          SSL_CERT_DIR: join(packageDir, "certs"),
+          SSL_CERT_FILE: "",
+          BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+          ...extraEnv,
+        },
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out, err, exitCode };
+    }
+
+    test("the certificate is not trusted without it", async () => {
+      const { out, err, exitCode } = await run(["install"]);
+      expect(err).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(out).not.toContain("+ no-deps@");
+      expect(exitCode).toBe(1);
+    });
+
+    test.each([
+      [["install", "--use-system-ca"], {}],
+      [["--use-system-ca", "install"], {}],
+      [["install"], { BUN_OPTIONS: "--use-system-ca" }],
+      [["install"], { NODE_USE_SYSTEM_CA: "1" }],
+    ])("bun %j with %j trusts the system's certificates", async (args, extraEnv) => {
+      const { out, err, exitCode } = await run(args, extraEnv);
+      expect(err).not.toContain("error:");
+      expect(out).toContain("+ no-deps@");
+      expect(exitCode).toBe(0);
+    });
+
+    test("is refused together with --use-bundled-ca", async () => {
+      const { err, exitCode } = await run(["install", "--use-system-ca", "--use-bundled-ca"]);
+      expect(err).toBe("error: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca\n");
+      expect(exitCode).toBe(1);
+    });
+  });
+
   test(`non-existent --cafile`, async () => {
     const { packageDir, packageJson, env } = await setupTest();
     await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }));
@@ -1569,6 +1637,7 @@ describe.concurrent("frozen lockfile", () => {
       "Resolving dependencies
       Resolved, downloaded and extracted [4]
       error: lockfile had changes, but lockfile is frozen
+      note: dependencies in package.json changed since bun.lock was saved: basic-1 was added
       note: try re-running without --frozen-lockfile and commit the updated lockfile"
     `);
     expect(exitCode).toBe(1);
@@ -14769,6 +14838,72 @@ describe("manifest conditional requests", () => {
         [etag, 304],
       ]);
       expect(tarballRequests).toStrictEqual(["1.0.0"]);
+    },
+  );
+
+  /** Forwards to the registry at `upstream` and adds `headerLine` after the registry's own headers, as nginx's `add_header` does. */
+  async function startProxy(upstream: number, headerLine: string) {
+    const sockets: Socket[] = [];
+    const proxy = createTcpServer(socket => {
+      sockets.push(socket);
+      let received = "";
+      socket.on("error", () => {});
+      socket.on("data", async chunk => {
+        received += chunk;
+        const end = received.indexOf("\r\n\r\n");
+        if (end === -1) return;
+        const [requestLine, ...lines] = received.slice(0, end).split("\r\n");
+        received = received.slice(end + 4);
+        const response = await fetch(`http://localhost:${upstream}${requestLine.split(" ")[1]}`, {
+          headers: lines
+            .map((line): [string, string] => [
+              line.slice(0, line.indexOf(":")),
+              line.slice(line.indexOf(":") + 1).trim(),
+            ])
+            .filter(([name]) => name.toLowerCase() !== "host"),
+        });
+        let body = Buffer.from(await response.arrayBuffer());
+        if (response.headers.get("content-type")?.includes("json")) {
+          body = Buffer.from(body.toString().replaceAll(`localhost:${upstream}`, `localhost:${port}`));
+        }
+        const kept = [...response.headers].filter(([name]) => !["content-length", "connection"].includes(name));
+        socket.write(
+          [
+            `HTTP/1.1 ${response.status} ${response.statusText || "OK"}`,
+            ...kept.map(([name, value]) => `${name}: ${value}`),
+            headerLine,
+            `Content-Length: ${body.length}`,
+            "\r\n",
+          ].join("\r\n"),
+        );
+        socket.write(body);
+      });
+    });
+    await new Promise<void>(resolve => proxy.listen(0, resolve));
+    const port = (proxy.address() as { port: number }).port;
+    return {
+      port,
+      [Symbol.dispose]() {
+        proxy.close();
+        for (const socket of sockets) socket.destroy();
+      },
+    };
+  }
+
+  test.each(["no-cache", "no-store", "max-age=0"])(
+    "a second header line, Cache-Control: %s, counts next to the registry's max-age=300",
+    async added => {
+      const { server, requests } = startRegistry({ etag, cacheControl: "public, max-age=300" });
+      using _ = server;
+      using proxy = await startProxy(server.port, `Cache-Control: ${added}`);
+      await setup(proxy.port);
+
+      await install("1.0.0");
+      await install("1.0.0");
+      expect(requests.map(request => [request.ifNoneMatch, request.status])).toStrictEqual([
+        [null, 200],
+        [etag, 304],
+      ]);
     },
   );
 

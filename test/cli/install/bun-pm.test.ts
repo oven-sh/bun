@@ -1657,7 +1657,7 @@ function refused(cacheDir: string, what: string, bunx = "Cleared") {
     stdout: `${bunx} 0 cached 'bunx' packages\n`,
     stderr:
       `error: refusing to clear "${cacheDir}": is or contains ${what}\n` +
-      "note: cache directory comes from $BUN_INSTALL_CACHE_DIR, --cache-dir or $BUN_INSTALL. " +
+      "note: cache directory comes from $BUN_INSTALL_CACHE_DIR, --cache-dir, ~/.bunfig.toml or $BUN_INSTALL. " +
       "point it at a directory used only for the bun install cache\n",
     exitCode: 1,
   };
@@ -2248,6 +2248,7 @@ describe.concurrent.each(["rm", "prune"] as const)("the directory of bun pm cach
     return {
       envCache,
       mine,
+      home: join(String(side), "home"),
       proj: join(String(root), "proj"),
       spawnEnv: cacheEnv(String(side)),
       [Symbol.dispose]() {
@@ -2262,6 +2263,28 @@ describe.concurrent.each(["rm", "prune"] as const)("the directory of bun pm cach
     expect(await pmCache([action, "--cache-dir", box.mine], box.proj, box.spawnEnv)).toEqual(done);
     expect(await entries(box.mine)).toEqual(left);
     expect(await entries(box.envCache)).toEqual(envCacheEntries);
+  });
+
+  test("the user's own .bunfig.toml names it", async () => {
+    using box = caches(`pm-cache-${action}-user-bunfig`);
+    const spawnEnv = { ...box.spawnEnv, XDG_CONFIG_HOME: undefined };
+    await writeFile(join(box.home, ".bunfig.toml"), `[install.cache]\ndir = ${JSON.stringify(box.mine)}\n`);
+    expect(await pmCache([], box.proj, spawnEnv)).toEqual({ stdout: box.mine, stderr: "", exitCode: 0 });
+
+    expect(await pmCache([action], box.proj, spawnEnv)).toEqual(done);
+    expect(await entries(box.mine)).toEqual(left);
+    expect(await entries(box.envCache)).toEqual(envCacheEntries);
+  });
+
+  // `cache` in .npmrc is npm's cache as well, so npm's own files are in that directory.
+  test("the user's own .npmrc does not", async () => {
+    using box = caches(`pm-cache-${action}-user-npmrc`);
+    await writeFile(join(box.home, ".npmrc"), `cache=${box.mine}\n`);
+    expect(await pmCache([], box.proj, box.spawnEnv)).toEqual({ stdout: box.mine, stderr: "", exitCode: 0 });
+
+    expect(await pmCache([action], box.proj, box.spawnEnv)).toEqual(done);
+    expect(await entries(box.mine)).toEqual(envCacheEntries);
+    expect(await entries(box.envCache)).toEqual(left);
   });
 
   test("the project's bunfig.toml does not", async () => {

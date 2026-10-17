@@ -3644,6 +3644,31 @@ fn get_or_put_resolved_package(
             {
                 find_result = tagged;
             }
+            // Both rules also hold for a `catalog:` dependency. `--latest` replaced its catalog entry
+            // with the `latest` tag, so `version` no longer says what the entry was.
+            if let Some(original) = steered_catalog_original(this, dependency) {
+                let locked_buf = &*original.original_version_string_buf;
+                if let Some(locked) = original.original_version
+                    && find_result
+                        .version
+                        .order(locked, &manifest.string_buf, locked_buf)
+                        == core::cmp::Ordering::Less
+                    && let Some(kept) = manifest.find_by_version(locked)
+                {
+                    find_result = kept;
+                }
+                if let Some(tagged) = manifest
+                    .find_by_dist_tag_with_filter(
+                        dependency::trim_literal(&original.original_version_literal),
+                        this.options.minimum_release_age_ms,
+                        this.options.minimum_release_age_excludes,
+                    )
+                    .unwrap()
+                    && tagged.is_newer_than(manifest, find_result.version, &manifest.string_buf)
+                {
+                    find_result = tagged;
+                }
+            }
 
             // The callee leaves `this.manifests`, which `manifest` and `find_result` point into.
             get_or_put_resolved_package_with_find_result(
@@ -3894,6 +3919,25 @@ fn update_target_declares(this: &mut PackageManager, dependency_id: DependencyID
     };
     (lockfile.packages.items_dependencies().get(id as usize))
         .is_some_and(|rows| rows.contains(dependency_id))
+}
+
+/// The original text of a catalog entry and the version that bun.lock had for it, recorded before
+/// `bun update --latest` replaced the entry with the `latest` tag. `None` if `dependency` does not
+/// use such an entry.
+fn steered_catalog_original<'a>(
+    this: &'a PackageManager,
+    dependency: &Dependency,
+) -> Option<&'a package_manager_real::PackageUpdateInfo> {
+    use package_manager_real::{PackageJSONEditor, PackageUpdateInfo};
+    if dependency.version.tag != dependency::version::Tag::Catalog
+        || !PackageJSONEditor::steers_catalogs_to_latest(this)
+    {
+        return None;
+    }
+    let buf = this.lockfile.buffers.string_bytes.as_slice();
+    let catalog_name = dependency.version.catalog().slice(buf);
+    let key = PackageUpdateInfo::catalog_row_key(dependency.name.slice(buf), catalog_name);
+    this.updating_packages.get(&key)
 }
 
 /// The lockfile-loaded instance the row's range accepts (`package_index` lists highest first).

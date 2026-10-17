@@ -150,6 +150,7 @@ const catalogNote = (...names: string[]) =>
   `note: skipped ${names.length} catalog ${names.length === 1 ? "entry" : "entries"} not in bun.lock (unused by the workspaces on disk): ${quoted(names)}`;
 const changedSectionNote = (section: "overrides" | "the catalog" | "dependencies") =>
   `note: ${section} in package.json changed since bun.lock was saved`;
+const dependencyNote = (change: string) => `${changedSectionNote("dependencies")}: ${change}`;
 const savedLockfile = "Saved lockfile";
 const frozenError = "error: lockfile had changes, but lockfile is frozen";
 const frozenHint = "note: try re-running without --frozen-lockfile and commit the updated lockfile";
@@ -458,7 +459,7 @@ describe.each(linkers)("linker: %s", linker => {
     const { packageDir, pruned } = await prunedTree(linker);
     await editApp(packageDir, app => (app.dependencies["no-deps"] = "2.0.0"));
 
-    await frozenFails(packageDir, linker, frozenFailure());
+    await frozenFails(packageDir, linker, frozenFailure(dependencyNote("no-deps in packages/app was added")));
 
     expect(await lockText(packageDir)).toBe(pruned);
     expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
@@ -513,7 +514,8 @@ describe.each(linkers)("linker: %s", linker => {
 
     await editApp(packageDir, app => (app.dependencies["is-number"] = "2.0.0"));
 
-    await frozenFails(packageDir, linker, [skippedNote("other", "other2"), ...frozenFailure()]);
+    const note = dependencyNote("is-number in packages/app was added");
+    await frozenFails(packageDir, linker, [skippedNote("other", "other2"), ...frozenFailure(note)]);
 
     expect(await lockText(packageDir)).toBe(full);
   });
@@ -1441,7 +1443,8 @@ describe("hoisted", () => {
 
     await editApp(packageDir, app => (app.dependencies["is-number"] = "1.0.0"));
 
-    await fails(packageDir, linker, [...frozenInstall, "--dry-run"], [prunedNote, ...frozenFailure()]);
+    const note = dependencyNote("is-number in packages/app was added");
+    await fails(packageDir, linker, [...frozenInstall, "--dry-run"], [prunedNote, ...frozenFailure(note)]);
 
     expect(await lockText(packageDir)).toBe(full);
     expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
@@ -1477,7 +1480,7 @@ describe("hoisted", () => {
       expect(edited).not.toBe(pruned);
       await write(join(packageDir, "bun.lock"), edited);
 
-      await frozenFails(packageDir, linker, frozenFailure(changedSectionNote("dependencies")));
+      await frozenFails(packageDir, linker, frozenFailure(dependencyNote("a-dep in packages/app is 1.0.1, was 1.0.0")));
       expect(await lockText(packageDir)).toBe(edited);
       expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
 
@@ -1623,7 +1626,7 @@ describe("hoisted", () => {
       JSON.stringify({ ...rootPackageJson, dependencies: { "is-number": "1.0.0" } }),
     );
 
-    await frozenFails(packageDir, linker, [prunedNote, ...frozenFailure()]);
+    await frozenFails(packageDir, linker, [prunedNote, ...frozenFailure(dependencyNote("is-number was added"))]);
 
     expect(await lockText(packageDir)).toBe(full);
     expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
@@ -1980,7 +1983,8 @@ describe("hoisted", () => {
     const { packageDir, full } = await verbatimScenario(linker, hookTree, survivors);
     await editApp(packageDir, app => (app.dependencies["no-deps"] = "2.0.0"));
 
-    await frozenFails(packageDir, linker, [prunedNote, ...frozenFailure()]);
+    const note = dependencyNote("no-deps in packages/app was added");
+    await frozenFails(packageDir, linker, [prunedNote, ...frozenFailure(note)]);
 
     expect(await lockText(packageDir)).toBe(full);
     expect(await exists(join(packageDir, "node_modules"))).toBeFalse();

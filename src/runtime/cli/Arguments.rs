@@ -764,19 +764,7 @@ fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum BunCAStore {
-    Bundled,
-    Openssl,
-    System,
-}
-#[unsafe(no_mangle)]
-static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
-    core::sync::atomic::AtomicU8::new(BunCAStore::Bundled as u8);
-#[unsafe(no_mangle)]
-pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
+pub(crate) use bun_core::Global::Bun__Node__UseSystemCA;
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
@@ -1526,43 +1514,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if args.flag(b"--zero-fill-buffers") {
             Bun__Node__ZeroFillBuffers.store(true, core::sync::atomic::Ordering::Relaxed);
         }
-        let use_system_ca = args.flag(b"--use-system-ca");
-        let use_openssl_ca = args.flag(b"--use-openssl-ca");
-        let use_bundled_ca = args.flag(b"--use-bundled-ca");
-
-        // Disallow any combination > 1
-        if (use_system_ca as u8) + (use_openssl_ca as u8) + (use_bundled_ca as u8) > 1 {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca"
-            );
-            Global::exit(1);
-        }
-
-        // CLI overrides env var (NODE_USE_SYSTEM_CA)
-        let store: Option<BunCAStore> = if use_bundled_ca {
-            Some(BunCAStore::Bundled)
-        } else if use_openssl_ca {
-            Some(BunCAStore::Openssl)
-        } else if use_system_ca || env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false) {
-            Some(BunCAStore::System)
-        } else {
-            // No CA flag — leave the FFI default (Bundled) in place. Avoids a
-            // `transmute<u8, BunCAStore>` round-trip through the atomic, which
-            // would be UB on an out-of-range discriminant.
-            None
-        };
-        if let Some(store) = store {
-            Bun__Node__CAStore.store(store as u8, core::sync::atomic::Ordering::Relaxed);
-            // Back-compat boolean used by native code until fully migrated
-            Bun__Node__UseSystemCA.store(
-                store == BunCAStore::System,
-                core::sync::atomic::Ordering::Relaxed,
-            );
-        } else {
-            // `Bun__Node__UseSystemCA` is written unconditionally,
-            // even when no CA flag/env was supplied (default bundled ⇒ false).
-            Bun__Node__UseSystemCA.store(false, core::sync::atomic::Ordering::Relaxed);
-        }
+        Global::set_ca_store_from_flags(|flag| args.flag(flag));
 
         if args.flag(b"--tls-min-v1.3") && args.flag(b"--tls-max-v1.2") {
             bun_core::pretty_errorln!(

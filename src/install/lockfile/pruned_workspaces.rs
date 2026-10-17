@@ -6,7 +6,14 @@ use crate::dependency::{Dependency, Tag as DependencyVersionTag, VersionExt as _
 use crate::lockfile::DependencySlice;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile_real::{CatalogMap, Lockfile, bun_lock, join_top_level_dir};
-use crate::{PackageID, PackageManager, PackageNameHash, ResolutionTag};
+use crate::{PackageID, PackageManager, PackageNameHash, ResolutionTag, Subcommand};
+
+/// A plain install drops a workspace that bun.lock lists if its folder is not on disk. A frozen
+/// install keeps it. So does `bun pm fetch`, which writes nothing but the cache: in a Docker layer
+/// that only has the root's package.json and bun.lock, it downloads for every workspace.
+pub(crate) fn keeps_missing_workspaces(manager: &PackageManager) -> bool {
+    manager.options.enable.frozen_lockfile() || manager.subcommand == Subcommand::Pm
+}
 
 pub(crate) fn workspace_is_missing_on_disk(
     lockfile: &Lockfile,
@@ -67,7 +74,7 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
     to_lockfile: &Lockfile,
     root: &Survivor,
     survivors: &[Survivor],
-    frozen: bool,
+    keeps_missing_workspaces: bool,
     silent: bool,
 ) {
     let pkgs = from_lockfile.packages.slice();
@@ -87,8 +94,9 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
                 return Some(id);
             }
         }
-        // A frozen install must not ask the registry for a workspace's name; a plain one resolves.
-        if !frozen {
+        // A frozen install and `bun pm fetch` must not ask the registry for a workspace's name. A
+        // plain install resolves it.
+        if !keeps_missing_workspaces {
             return None;
         }
         let rows = recorded.begin() as usize..recorded.end() as usize;

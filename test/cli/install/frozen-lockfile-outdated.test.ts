@@ -107,6 +107,8 @@ type Edit = {
   root?: (json: PackageJson) => PackageJson;
   member?: (json: PackageJson) => PackageJson;
   vendored?: (json: PackageJson) => PackageJson;
+  /** What the error of a frozen install says about the first dependency that differs. */
+  names?: string;
 };
 
 async function apply(dir: string, edit: Edit) {
@@ -138,24 +140,30 @@ const transitive: PackageJson = { name: "root", version: "1.0.0", dependencies: 
 const dependencyRows: Record<string, Edit> = {
   "a dependency's range is loosened but still satisfied by the locked version": {
     root: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": ">=1.0.0" } }),
+    names: "no-deps is >=1.0.0, was ^1.0.0",
   },
   "a dependency's range is raised to the locked version": {
     root: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": "^1.1.0" } }),
+    names: "no-deps is ^1.1.0, was ^1.0.0",
   },
   "a dependency's range is pinned to the locked version": {
     root: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": "1.1.0" } }),
+    names: "no-deps is 1.1.0, was ^1.0.0",
   },
   "a dependency is added that the lockfile already resolves transitively": {
     from: transitive,
     root: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": "1.0.1" } }),
+    names: "no-deps was added",
   },
   "a dependency that stays in the tree transitively is removed": {
     from: { ...transitive, dependencies: { ...transitive.dependencies, "no-deps": "1.0.1" } },
     root: json => ({ ...json, dependencies: without(json.dependencies, "no-deps") }),
+    names: "no-deps was removed",
   },
   "a catalog: dependency moves to another catalog with the same range": {
     from: twoCatalogs,
     root: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": "catalog:other" } }),
+    names: "no-deps is catalog:other, was catalog:",
   },
   "a dependency moves from dependencies to devDependencies": {
     root: json => ({
@@ -163,16 +171,25 @@ const dependencyRows: Record<string, Edit> = {
       dependencies: without(json.dependencies, "no-deps"),
       devDependencies: { "no-deps": "^1.0.0" },
     }),
+    names: "no-deps is listed in other dependency groups",
+  },
+  "a peer dependency becomes optional": {
+    from: { ...transitive, peerDependencies: { "no-deps": "1.0.1" } },
+    root: json => ({ ...json, peerDependenciesMeta: { "no-deps": { optional: true } } }),
+    names: "no-deps changed in peerDependenciesMeta",
   },
   "a workspace drops a dependency that the root still needs": {
     member: json => ({ ...json, dependencies: without(json.dependencies, "a-dep") }),
+    names: "a-dep in packages/member was removed",
   },
   // https://github.com/oven-sh/bun/issues/22689
   "a workspace adds a dependency that the lockfile already resolves for another workspace": {
     member: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": "^1.0.0" } }),
+    names: "no-deps in packages/member was added",
   },
   "a workspace's range is retyped": {
     member: json => ({ ...json, dependencies: { "a-dep": "^1.0.1" } }),
+    names: "a-dep in packages/member is ^1.0.1, was 1.0.1",
   },
 };
 
@@ -186,7 +203,7 @@ describe.each(["bun.lock", "bun.lockb"] as const)("%s", lockfile => {
         const frozen = await bun(packageDir, ...args);
 
         expect(frozen.stderr).toContain(frozenError);
-        expect(frozen.stderr).toContain(dependenciesNote(lockfile));
+        expect(frozen.stderr).toContain(`${dependenciesNote(lockfile)}: ${edit.names}\n`);
         expect(await lockText(packageDir, lockfile)).toBe(lock);
         expect(frozen.exitCode).toBe(1);
       }
@@ -289,7 +306,7 @@ describe.concurrent("--frozen-lockfile fails when", () => {
 
     expect(normalizeBunSnapshot(stderr, packageDir)).toMatchInlineSnapshot(`
       "error: lockfile had changes, but lockfile is frozen
-      note: dependencies in package.json changed since bun.lock was saved
+      note: dependencies in package.json changed since bun.lock was saved: no-deps is >=1.0.0, was ^1.0.0
       note: try re-running without --frozen-lockfile and commit the updated lockfile"
     `);
     expect(normalizeBunSnapshot(stdout, packageDir)).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);

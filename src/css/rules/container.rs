@@ -6,10 +6,6 @@ use crate::properties::Property;
 use crate::{PrintErr, Printer};
 
 /// A [`<container-name>`](https://drafts.csswg.org/css-contain-3/#typedef-container-name).
-///
-/// Shared by the `@container` prelude and the `container` / `container-name`
-/// declarations (`properties::contain`), so every container name is printed
-/// through one CSS-modules scoping decision.
 #[derive(Clone, Copy, css::CssEql, css::DeepClone)]
 pub struct ContainerName {
     pub(crate) v: CustomIdent,

@@ -21,7 +21,6 @@
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSJsonWebKey.h"
 #include <JavaScriptCore/AggregateError.h>
-#include <JavaScriptCore/AsyncFunctionPrototype.h>
 #include <JavaScriptCore/BigIntObject.h>
 #include <JavaScriptCore/CallFrame.h>
 #include <JavaScriptCore/CallFrameInlines.h>
@@ -965,18 +964,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAsyncFunction,
     if (!executable)
         return JSValue::encode(jsBoolean(false));
 
-    if (executable->isAsyncGenerator()) {
-        return JSValue::encode(jsBoolean(true));
-    }
-
-    auto proto = function->getPrototype(globalObject);
-    if (!proto.isCell()) {
-        return JSValue::encode(jsBoolean(false));
-    }
-
-    auto* protoCell = proto.asCell();
     return JSValue::encode(
-        jsBoolean(protoCell->inherits<AsyncFunctionPrototype>()));
+        jsBoolean(isAsyncFunctionParseMode(executable->parseMode())));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsGeneratorFunction,
     (JSC::JSGlobalObject * globalObject,

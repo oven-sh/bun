@@ -3813,6 +3813,50 @@ describe("bundler", () => {
     },
   });
 
+  // A local whose name ends in "Ref" is taken for a ref once its `.current` is read. Listing it in an effect's dependencies
+  // used to be reported as reading a ref during render, unless it was initialized in one of a few ways. The expected sizes
+  // come from babel-plugin-react-compiler 0.0.0-experimental-a1856f3-20260507, which only refuses `pier.bollard`.
+  describe("react-compiler/ALocalNamedLikeARef", () => {
+    const remove = "bollardRef.current.remove();";
+    test.each([
+      ["const bollardRef = pier?.bollard;", "bollardRef?.current?.remove();", 4],
+      ["const bollardRef = pier?.bollard;", remove, 4],
+      ["const bollardRef = pier?.bollard;", "bollardRef?.current.remove();", 4],
+      ["const bollardRef = pier?.bollard;", "bollardRef.current?.remove();", 4],
+      ["const bollardRef = pier?.bollard;", "const x = bollardRef?.current; x;", 3],
+      ["const bollardRef = pier?.bollard;", "const x = bollardRef.current; x;", 2],
+      ["const bollardRef = pier ? pier.bollard : undefined;", remove, 4],
+      ["const bollardRef = pier && pier.bollard;", remove, 4],
+      ["const bollardRef = pier?.a?.bollard;", remove, 4],
+      ["const bollardRef = pier?.[0];", remove, 4],
+      ["const bollardRef = pier?.();", remove, 6],
+      ["const bollardRef = pier;", remove, 3],
+      ["let bollardRef; bollardRef = pier.bollard;", remove, 6],
+      ["let bollardRef = null; if (pier) bollardRef = pier.bollard;", remove, 6],
+      ["const bollardRef = pier.bollard;", remove, null],
+      ["const bollardRef = pier.bollard;", "bollardRef?.current?.remove();", null],
+    ])("%s %s", async (declaration, effect, size) => {
+      using dir = tempDir("react-compiler-ref-named-local", {
+        "entry.js": `
+          import { useEffect } from "react";
+          export function useMooring(pier) {
+            ${declaration}
+            useEffect(() => {
+              ${effect}
+            }, [bollardRef]);
+          }
+        `,
+      });
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "entry.js")],
+        packages: "external",
+        reactCompiler: true,
+      });
+      const output = await result.outputs[0].text();
+      expect(output.match(/_c\((\d+)\)/)?.[1] ?? null).toBe(size === null ? null : String(size));
+    });
+  });
+
   // The parser inlines a spread object literal into the props.
   itBundled("react-compiler/JsxSpreadWithAComputedKey", {
     files: {

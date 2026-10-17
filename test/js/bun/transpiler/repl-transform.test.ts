@@ -178,6 +178,31 @@ describe("Bun.Transpiler replMode", () => {
       expect(results[1]).toBeInstanceOf(context.Counter);
       expect(typeof context.Counter).toBe("function");
     });
+
+    // Each line runs inside a wrapper function. If a sloppy block-level function stayed a
+    // declaration there, its Annex B `var` would belong to the wrapper and hide the global.
+    test("a block-level function does not hide a function of an earlier line", async () => {
+      const { results } = await runReplSession([
+        "function w() { return 1; }",
+        "if (false) { function w() { return 2; } } w()",
+        "exit: { break exit; function w() { return 2; } } w()",
+        "if (typeof w !== 'function') { function w() { return 2; } } w()",
+      ]);
+
+      expect(results.slice(1)).toEqual([1, 1, 1]);
+    });
+
+    // Inside a function of the line, the `var` belongs to that function, as it does in a file.
+    test("a block-level function inside a function is visible after its block", async () => {
+      const { results } = await runReplSession([
+        "function parse() { _token_stack: function lex() { return 'token'; } return lex(); }",
+        "parse()",
+        "function w() { return 1; }",
+        "if (false) { function w() { return 2; } } [w(), (function () { { function n() {} } return typeof n; })()]",
+      ]);
+
+      expect([results[1], results[3]]).toEqual(["token", [1, "function"]]);
+    });
   });
 
   describe("object literal detection", () => {

@@ -142,6 +142,74 @@ describe("bundler", () => {
       "/foo.magic": [`123`],
     },
   });
+  // A max-length 16-bit rope throws "Out of memory" on its first flatten, so
+  // `external: true` keeps the JS-side path checks from reading it first.
+  test.concurrent("plugin/string answer that cannot be flattened fails the build", async () => {
+    using dir = tempDir("plugin-string-answer-cannot-flatten", {
+      "entry.ts": `import { foo } from "./foo.magic"; console.log(foo);`,
+      "foo.magic": `hello world`,
+      "build.mjs": `
+        let huge = "\\u0100";
+        for (let i = 0; i < 30; i++) huge = huge + huge + "\\u0100";
+        console.log("length=" + (huge.length === 2 ** 31 - 1));
+
+        async function run(name, answer) {
+          const { success, logs } = await Bun.build({
+            entrypoints: ["./entry.ts"],
+            throw: false,
+            plugins: [{
+              name,
+              setup(build) {
+                build.onResolve({ filter: /foo\\.magic$/ }, args => {
+                  console.log(name + ": resolve returned");
+                  return answer.resolve ? answer.resolve(args.path) : undefined;
+                });
+                build.onLoad({ filter: /\\.magic$/ }, () => {
+                  console.log(name + ": load returned");
+                  return answer.load ? answer.load() : undefined;
+                });
+              },
+            }],
+          });
+          const errors = logs.map(l => l.level + " " + JSON.stringify(l.message) + " " + l.position?.file.split(/[\\\\/]/).pop());
+          console.log(name + ": success=" + success + " " + errors.join(", "));
+        }
+
+        await run("contents", { load: () => ({ contents: huge, loader: "js" }) });
+        await run("path", { resolve: () => ({ path: huge, external: true }) });
+        await run("namespace", { resolve: path => ({ path, namespace: huge, external: true }) });
+        await run("ok", { load: () => ({ contents: "export const foo = 1;", loader: "js" }) });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr }).toEqual({
+      stdout: [
+        "length=true",
+        "contents: resolve returned",
+        "contents: load returned",
+        'contents: success=false error "Out of memory" foo.magic',
+        "path: resolve returned",
+        'path: success=false error "Out of memory" entry.ts',
+        "namespace: resolve returned",
+        'namespace: success=false error "Out of memory" entry.ts',
+        "ok: resolve returned",
+        "ok: load returned",
+        "ok: success=true ",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
   itBundled("plugin/ResolveAndLoadDefaultExport", {
     files: {
       "index.ts": /* ts */ `

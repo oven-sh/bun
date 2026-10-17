@@ -2234,6 +2234,7 @@ pub(crate) fn install_isolated_packages(
             held_members: Some(Vec::new()),
             left_out_entries: Vec::new(),
             pending_lifecycle_scripts: Default::default(),
+            replaced_links: Default::default(),
         };
         // From here on no `&mut PackageManager` is held across a call on `installer`: it would alias.
 
@@ -2652,6 +2653,7 @@ pub(crate) fn install_isolated_packages(
 
         installer.relink_bins_of_members_with_scripts();
         installer.unlink_left_out_entries();
+        installer.unlink_dropped_bins();
         installer.warn_left_out_links();
         installer.record_update_request_trust();
 

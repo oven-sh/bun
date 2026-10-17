@@ -2867,13 +2867,9 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
         file_name.clear();
         file_name.extend_from_slice(stem);
         file_name.extend_from_slice(b".bunx");
-        let Ok(shim) = sys::File::read_from(bin.fd(), &file_name) else {
+        let Some(target) = crate::bin_real::Linker::shim_target(bin.fd(), &file_name) else {
             continue;
         };
-        let Some(target_len) = shim.chunks_exact(2).position(|unit| unit == [b'"', 0]) else {
-            continue;
-        };
-        let target = strings::to_utf8_alloc_from_le_bytes(&shim[..target_len * 2]);
         if !is_dangling(parent, &target)
             || (global.is_none() && leads_into_package(parent, &target))
         {

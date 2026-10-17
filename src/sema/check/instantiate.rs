@@ -116,6 +116,53 @@ impl ActiveMappers {
     }
 }
 
+/// The one field of a property that instantiating it replaces, with the new value. It can be compared with a property that
+/// is instantiated already, without a copy of the one that is not.
+#[derive(Copy, Clone)]
+pub(super) enum PropInstantiation {
+    /// The type in `PropSource::Type` or `PropSource::Copy`.
+    Type(TypeId),
+    /// `Prop::mapper`, with any other source.
+    Mapper(MapperId),
+}
+
+impl PropInstantiation {
+    /// Instantiates `prop`, which it was computed for.
+    pub(super) fn apply_to(self, prop: &mut Prop) {
+        match (self, &mut prop.source) {
+            (Self::Type(new), PropSource::Type(ty) | PropSource::Copy(ty, ..)) => *ty = new,
+            (Self::Type(_), _) => {}
+            (Self::Mapper(mapper), _) => prop.mapper = mapper,
+        }
+    }
+
+    /// Whether `apply_to(prop)` would make `prop` equal to `instantiated`, which has the same name.
+    pub(super) fn makes(self, instantiated: &Prop, prop: &Prop) -> bool {
+        instantiated.flags == prop.flags
+            && instantiated.name_type == prop.name_type
+            && match self {
+                Self::Mapper(mapper) => {
+                    instantiated.mapper == mapper && instantiated.source == prop.source
+                }
+                Self::Type(new) => {
+                    instantiated.mapper == prop.mapper
+                        && match (&instantiated.source, &prop.source) {
+                            (PropSource::Type(ty), PropSource::Type(_)) => *ty == new,
+                            (
+                                PropSource::Copy(ty, declared, has_value_declaration),
+                                PropSource::Copy(_, declared_of_prop, prop_has_value_declaration),
+                            ) => {
+                                *ty == new
+                                    && has_value_declaration == prop_has_value_declaration
+                                    && declared == declared_of_prop
+                            }
+                            _ => false,
+                        }
+                }
+            }
+    }
+}
+
 impl<'p, 's> Checker<'p, 's> {
     pub fn mapper_from(&mut self, params: &[TypeId], args: &[TypeId]) -> MapperId {
         let pairs: smallvec::SmallVec<[(TypeId, TypeId); 8]> =
@@ -250,10 +297,39 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getInstantiatedSymbol`
     pub(super) fn instantiate_prop(&mut self, prop: &mut Prop, mapper: MapperId) {
-        match &mut prop.source {
-            PropSource::Type(ty) | PropSource::Copy(ty, ..) => *ty = self.instantiate(*ty, mapper),
-            _ => prop.mapper = self.compose(prop.mapper, mapper),
+        self.instantiation_of_prop(prop, mapper).apply_to(prop);
+    }
+
+    /// What `instantiate_prop` changes in `prop`.
+    pub(super) fn instantiation_of_prop(
+        &mut self,
+        prop: &Prop,
+        mapper: MapperId,
+    ) -> PropInstantiation {
+        match &prop.source {
+            PropSource::Type(ty) | PropSource::Copy(ty, ..) => {
+                PropInstantiation::Type(self.instantiate(*ty, mapper))
+            }
+            // FOR SPEED, the property of a mapped type keeps a mapper that maps to types without type variables. Its type is
+            // the template under that mapper, which has a key for every type parameter that the template mentions, so
+            // nothing is left for `mapper` to replace. An interface that extends `Omit<..>` has hundreds of these,
+            // each with a mapper of its own, and every intersection that the interface is in maps its `this` anew.
+            PropSource::Mapped(..)
+                if mapper != MapperId::IDENTITY && self.maps_to_closed_types(prop.mapper) =>
+            {
+                PropInstantiation::Mapper(prop.mapper)
+            }
+            _ => PropInstantiation::Mapper(self.compose(prop.mapper, mapper)),
         }
+    }
+
+    /// Whether no mapper changes any of the types that `mapper` maps to.
+    fn maps_to_closed_types(&self, mapper: MapperId) -> bool {
+        let types = self.types();
+        let is_closed = |pair: &(TypeId, TypeId)| {
+            types.instantiation_class(pair.1) == InstantiationClass::Unchanged
+        };
+        types.mapping(mapper).iter().all(is_closed)
     }
 
     /// `instantiateType(t, c.restrictiveMapper)`, `instantiateType(t, c.permissiveMapper)`: `map`

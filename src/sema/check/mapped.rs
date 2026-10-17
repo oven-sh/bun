@@ -2770,11 +2770,17 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getTypeOfMappedSymbol`: the type of `prop`, which `build_mapped_shape` created for the
     /// mapped type `of`, or of a copy of it. `strips` is `CheckFlagsStripOptional`.
     pub(super) fn type_of_mapped_prop(&mut self, of: TypeId, prop: &Prop, strips: bool) -> TypeId {
+        // FOR SPEED: nearly every call is for a type that is stored, and finding the entry takes longer than reading it.
+        let key = (of, prop.mapper, prop.name);
+        if let Some(&known) = self.known_mapped_prop_types.get(&key) {
+            return known;
+        }
         let known = (self.p.mapped_prop_types).get(&self.task, &(of, prop.name));
         // `TypeFlagsAny`: no type variables, so it is the same under every mapper.
         if let Some(known) = known
             && self.has_any_flag(known)
         {
+            self.known_mapped_prop_types.insert(key, known);
             return known;
         }
         let Some((file, node, _)) = self.mapped_origin(of) else {
@@ -2782,12 +2788,18 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let created_for = of;
         let of = self.containing_type_of_mapped_prop(created_for, prop);
+        // The entry of `created_for` is read first, and decides if its type is `any`. While it is missing, the next call
+        // may find one.
+        let reads_the_same_entry_from_now_on = of == created_for || known.is_some();
         let known = if of == created_for {
             known
         } else {
             (self.p.mapped_prop_types).get(&self.task, &(of, prop.name))
         };
         if let Some(known) = known {
+            if reads_the_same_entry_from_now_on {
+                self.known_mapped_prop_types.insert(key, known);
+            }
             return known;
         }
         let q = Query::MappedProp(of, prop.name);

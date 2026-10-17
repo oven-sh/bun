@@ -11,8 +11,8 @@ use crate::session::{Arena, ArenaVec, Session};
 use crate::table::{ById, Frozen};
 use crate::util::memory::{Length, Stable};
 use crate::util::{
-    AppendVec, FxHashMap, GrowingPlaces, InParallel, LocalVec, SHARDS, for_each_mut, shard_of,
-    spread_hash,
+    AppendVec, FxHashMap, FxHasher, GrowingPlaces, InParallel, LocalVec, SHARDS, for_each_mut,
+    shard_of, spread_hash,
 };
 use bun_alloc::{ArenaBox, vec_from_iter_in};
 use std::alloc::Allocator;
@@ -596,6 +596,29 @@ impl<'s> Prop<'s> {
             _ => &[],
         }
     }
+
+    /// A hash that leaves out the lists in the source. Equal properties still have equal hashes, and the property of a
+    /// union of a hundred members takes no longer to hash than any other.
+    pub fn hash_without_lists<H: Hasher>(&self, hasher: &mut H) {
+        (self.name, self.flags, self.mapper, self.name_type).hash(hasher);
+        std::mem::discriminant(&self.source).hash(hasher);
+        match &self.source {
+            PropSource::Type(ty) => ty.hash(hasher),
+            PropSource::Literal(file, written) => (file, written).hash(hasher),
+            PropSource::Symbol(symbol) => symbol.hash(hasher),
+            PropSource::Intersected(of, parts) => (of, parts.len()).hash(hasher),
+            PropSource::Mapped(of, strips_optional, _) => (of, strips_optional).hash(hasher),
+            PropSource::Copy(ty, declared, _) => (ty, declared.len()).hash(hasher),
+            PropSource::ReverseMapped(of, _) => of.hash(hasher),
+        }
+    }
+
+    /// `hash_without_lists`, as a number.
+    pub fn fx_hash_without_lists(&self) -> u64 {
+        let mut hasher = FxHasher::default();
+        self.hash_without_lists(&mut hasher);
+        hasher.finish()
+    }
 }
 
 /// `ElementWithComputedPropertyName`
@@ -994,7 +1017,7 @@ pub mod tf {
 }
 
 bitflags::bitflags! {
-    /// The `ObjectFlags` that are derived from a type's constituents, plus four that are specific
+    /// The `ObjectFlags` that are derived from a type's constituents, plus five that are specific
     /// to this checker.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct ObjectFlags: u16 {
@@ -1037,6 +1060,9 @@ bitflags::bitflags! {
         /// `getConditionalTypeInstantiation` looks it up under the key without one. And for a union
         /// with `Provenance::has_other_instantiation`.
         const HAS_OTHER_INSTANTIATION = 256;
+        /// An intersection of object types that are their own apparent types: any but a mapped type with type variables,
+        /// which `getResolvedApparentTypeOfMappedType` may replace.
+        const HAS_ONLY_OWN_APPARENT_TYPES = 1024;
     }
 }
 
@@ -2485,6 +2511,20 @@ impl<'p, 's> Types<'p, 's> {
                 .any(|&member| matches!(self.get(member), TypeData::Intersection(_))),
             _ => false,
         };
+        let is_own_apparent_type = |&member: &TypeId| match self.get(member) {
+            TypeData::Anon {
+                origin: Origin::Mapped(..),
+                ..
+            } => !(self.object_flags(member)).contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES),
+            TypeData::Ref { .. }
+            | TypeData::Tuple { .. }
+            | TypeData::Anon { .. }
+            | TypeData::Fns { .. }
+            | TypeData::Synth(_)
+            | TypeData::ReverseMapped { .. } => true,
+            _ => false,
+        };
+        let has_only_own_apparent_types = matches!(data, TypeData::Intersection(members) if members.iter().all(is_own_apparent_type));
         let mut flags = self.object_flags_of(data);
         let has_type_variables_in_alias = (created.1.as_ref())
             .and_then(|provenance| provenance.alias.as_ref())
@@ -2533,8 +2573,12 @@ impl<'p, 's> Types<'p, 's> {
                 flags |= ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL;
             }
         }
-        // Unlike the others, it is not propagated from the type's constituents.
+        // Unlike the others, these two are not propagated from the type's constituents.
         flags.set(ObjectFlags::MAY_BE_REDUCED, may_be_reduced);
+        flags.set(
+            ObjectFlags::HAS_ONLY_OWN_APPARENT_TYPES,
+            has_only_own_apparent_types,
+        );
         // See `mark_ordered_by_id`.
         let has_ordered_by_id = |list: &[TypeId]| {
             let is_ordered_by_id =

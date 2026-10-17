@@ -80,6 +80,7 @@ pub mod task;
 #[cfg(feature = "baselines")]
 #[path = "../standalone/type_writer.rs"]
 pub mod type_writer;
+mod union_property;
 mod unions;
 #[cfg(feature = "baselines")]
 #[path = "../standalone/visit_node.rs"]
@@ -715,6 +716,8 @@ impl<'s> Program<'s> {
             instantiations_computed: 0,
             recent_instantiations: Default::default(),
             recent_composed: Default::default(),
+            known_mapped_prop_types: Default::default(),
+            props_without_write_types: Default::default(),
             unresolved_members: Vec::new(),
             unresolved_members_hits: 0,
             members_in_place_hits: 0,
@@ -745,6 +748,7 @@ impl<'s> Program<'s> {
             order_dependent_filter: 0,
             simplified: Default::default(),
             inherited_names: [0; 4],
+            inherited_name_set: None,
             cond_distributive_memo: Default::default(),
             relation_too_complex: false,
             relation_too_deep: false,
@@ -756,6 +760,8 @@ impl<'s> Program<'s> {
             is_checking_in_flow_loop: false,
             never_checked: Default::default(),
             never_in_progress: Vec::new(),
+            reduced_unions: Default::default(),
+            union_indexes: Default::default(),
             never_in_progress_from: Vec::new(),
             reverse_mapped_inferences_from: Vec::new(),
             defaults_in_progress: Vec::new(),
@@ -1350,6 +1356,13 @@ pub struct Checker<'p, 's> {
     recent_instantiations: instantiate::Recent,
     /// The entries most recently read from or written to `Program::composed`.
     recent_composed: instantiate::Recent,
+    /// The types that `type_of_mapped_prop` has found in `Program::mapped_prop_types`, by what decides which entry it
+    /// reads: the mapped type in the source of the property, the mapper of the property and its name. Not a `Recent`: the
+    /// properties of a union of a hundred `Omit<..>` are read in turn, over and over, and are more than that has places for.
+    known_mapped_prop_types: FxHashMap<(TypeId, MapperId, Atom), TypeId>,
+    /// The properties of unions and intersections of which no constituent has a write type that is not its type: the union
+    /// or the intersection, the name and the number of constituents.
+    props_without_write_types: crate::util::FxHashSet<(TypeId, Atom, usize)>,
     /// `ObjectFlagsUnresolvedMembers`. `resolveObjectTypeMembers` calls `setStructuredTypeMembers`
     /// with the members that the class or interface declares before it instantiates the base
     /// types. A request for the members of the type reference in the meantime finds no inherited
@@ -1431,6 +1444,9 @@ pub struct Checker<'p, 's> {
     /// A 256-bit filter of the property names of `Object`, `Function`, `CallableFunction` and
     /// `NewableFunction`: a name whose bit is clear is not one of them. All zero: not built yet.
     pub(super) inherited_names: [u64; 4],
+    /// The names themselves, for a name whose bit is set. `None`: not built yet, or the members of one of the four types
+    /// are not stored, so that looking a name up in it resolves them again.
+    pub(super) inherited_name_set: Option<crate::util::FxHashSet<Atom>>,
     /// `resolvedConstraintOfDistributive`. `None` is `noConstraintType`.
     cond_distributive_memo: FxHashMap<TypeId, Option<TypeId>>,
     /// Set when a comparison exhausts `Relater::relation_count` (2859). The caller clears it before comparing.
@@ -1457,6 +1473,10 @@ pub struct Checker<'p, 's> {
     never_checked: std::cell::RefCell<Vec<(u32, u32)>>,
     /// The intersections being tested for being uninhabited.
     pub(super) never_in_progress: Vec<TypeId>,
+    /// `resolvedReducedType` of a union, once the answer for every member is final.
+    reduced_unions: FxHashMap<TypeId, TypeId>,
+    /// See `union_property`.
+    union_indexes: union_property::UnionIndexes<'p>,
     /// The height of `stack` at which `is_empty_intersection` began, for each one in progress.
     pub(super) never_in_progress_from: Vec<usize>,
     /// The height of `stack` at which the worker of each `inferReverseMappedType` in progress began.

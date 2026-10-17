@@ -7,6 +7,7 @@ pub use memory::{AppendVec, LocalVec};
 use bun_collections::index_sort;
 use bun_threading::Guarded;
 use memory::Newest;
+use smallvec::{SmallVec, smallvec};
 use std::alloc::{Allocator, Global};
 use std::hash::Hasher;
 use std::marker::PhantomData;
@@ -99,6 +100,100 @@ pub fn number_repeated<K: Copy + Eq + std::hash::Hash>(keys: &[K]) -> FxHashMap<
         }
     }
     numbers
+}
+
+/// A set of positions in a list, one bit for each. Two sets that are combined are about lists of the same length. Up to
+/// 128 positions take no allocation.
+#[derive(Clone, Default)]
+pub(crate) struct PositionSet(SmallVec<[u64; 2]>);
+
+/// The positions of the bits that are set in a word, lowest first.
+struct BitsOfWord(u64);
+
+impl Iterator for BitsOfWord {
+    type Item = usize;
+
+    #[inline]
+    fn next(&mut self) -> Option<usize> {
+        if self.0 == 0 {
+            return None;
+        }
+        let bit = self.0.trailing_zeros() as usize;
+        self.0 &= self.0 - 1;
+        Some(bit)
+    }
+}
+
+impl PositionSet {
+    /// The empty set of positions in a list of `len` items.
+    pub(crate) fn new(len: usize) -> PositionSet {
+        PositionSet(smallvec![0; len.div_ceil(64)])
+    }
+
+    /// Makes it `new(len)`, and keeps the allocation.
+    pub(crate) fn reset(&mut self, len: usize) {
+        self.0.clear();
+        self.0.resize(len.div_ceil(64), 0);
+    }
+
+    #[inline]
+    pub(crate) fn insert(&mut self, position: usize) {
+        self.0[position / 64] |= 1 << (position % 64);
+    }
+
+    #[inline]
+    pub(crate) fn remove(&mut self, position: usize) {
+        self.0[position / 64] &= !(1 << (position % 64));
+    }
+
+    #[inline]
+    pub(crate) fn contains(&self, position: usize) -> bool {
+        self.0[position / 64] & 1 << (position % 64) != 0
+    }
+
+    /// Adds what is in `other`.
+    #[inline]
+    pub(crate) fn extend(&mut self, other: &PositionSet) {
+        for (word, other) in self.0.iter_mut().zip(&other.0) {
+            *word |= other;
+        }
+    }
+
+    /// Adds what is in `other` and not in `excluded`.
+    #[inline]
+    pub(crate) fn extend_except(&mut self, other: &PositionSet, excluded: &PositionSet) {
+        for ((word, other), excluded) in self.0.iter_mut().zip(&other.0).zip(&excluded.0) {
+            *word |= other & !excluded;
+        }
+    }
+
+    /// The words of the set without what is in `excluded`, each with its index.
+    #[inline]
+    fn words_except(
+        &self,
+        excluded: &PositionSet,
+    ) -> impl DoubleEndedIterator<Item = (usize, u64)> {
+        let words = self.0.iter().zip(&excluded.0).enumerate();
+        words.map(|(at, (word, excluded))| (at, word & !excluded))
+    }
+
+    /// The lowest position that is not in `excluded`.
+    pub(crate) fn first_except(&self, excluded: &PositionSet) -> Option<usize> {
+        let (at, word) = self.words_except(excluded).find(|it| it.1 != 0)?;
+        Some(at * 64 + word.trailing_zeros() as usize)
+    }
+
+    /// The highest position that is not in `excluded`.
+    pub(crate) fn last_except(&self, excluded: &PositionSet) -> Option<usize> {
+        let (at, word) = self.words_except(excluded).rev().find(|it| it.1 != 0)?;
+        Some(at * 64 + 63 - word.leading_zeros() as usize)
+    }
+
+    /// In ascending order.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = usize> {
+        let words = self.0.iter().enumerate();
+        words.flat_map(|(at, &word)| BitsOfWord(word).map(move |bit| at * 64 + bit))
+    }
 }
 
 /// A list that is either borrowed from permanent storage or was built for the caller.

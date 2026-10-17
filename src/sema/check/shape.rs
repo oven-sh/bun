@@ -4,7 +4,7 @@ use super::relate::Ternary;
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, SymbolId};
 use crate::table::Handle;
-use crate::util::SharedSort;
+use crate::util::{PositionSet, SharedSort};
 use smallvec::{SmallVec, smallvec};
 
 /// `thisAssignmentDeclarationKind`, with its location.
@@ -102,22 +102,36 @@ impl<P: std::ops::DerefMut<Target = [u32]>> Names<P> {
 pub struct Resolved<'s> {
     pub shape: Shape<'s>,
     names: Names<ArenaBox<'s, [u32]>>,
+    /// A 256-bit filter of the names of the properties: a name whose bit is clear is not one of them.
+    name_filter: [u64; 4],
 }
 
-/// Every field is named, so that a new one is a compile error. `names` is derived from `shape`, so it is not shown.
+/// Every field is named, so that a new one is a compile error. `names` and `name_filter` are derived from `shape`, so they
+/// are not shown.
 impl crate::types::Follow for Resolved<'_> {
     fn visit<V: crate::types::Visitor>(&self, visitor: &mut V) {
-        let Resolved { shape, names: _ } = self;
+        let Resolved {
+            shape,
+            names: _,
+            name_filter: _,
+        } = self;
         shape.visit(visitor);
     }
     fn follow(&mut self, link: &crate::types::Link) {
-        let Resolved { shape, names } = self;
+        let Resolved {
+            shape,
+            names,
+            name_filter,
+        } = self;
         let has_own_names = shape.props.iter().any(|prop| prop.name.is_own());
         shape.follow(link);
         // The slots are indexed by a hash of the atom ids, which have changed.
         if has_own_names && shape.props.len() > FEW {
             names.places.fill(0);
             names.add_all(&shape.props);
+        }
+        if has_own_names {
+            *name_filter = Resolved::name_filter_of(&shape.props);
         }
     }
 }
@@ -126,17 +140,39 @@ impl<'s> Resolved<'s> {
     fn new(shape: Shape<'s>) -> Resolved<'s> {
         Resolved {
             names: Names::of(&shape.props),
+            name_filter: Resolved::name_filter_of(&shape.props),
             shape,
         }
     }
 
+    fn name_filter_of(props: &[Prop]) -> [u64; 4] {
+        let mut filter = [0; 4];
+        for prop in props {
+            filter[prop.name.0 as usize / 64 % 4] |= 1 << (prop.name.0 % 64);
+        }
+        filter
+    }
+
+    /// `false`: no property of one has the name of a property of the other.
+    #[inline]
+    fn may_share_a_name_with(&self, other: &Resolved) -> bool {
+        let both = self.name_filter.iter().zip(&other.name_filter);
+        both.fold(0, |any, (a, b)| any | a & b) != 0
+    }
+
     #[inline]
     pub fn prop(&self, name: Atom) -> Option<&Prop<'s>> {
+        self.position(name).map(|at| &self.shape.props[at])
+    }
+
+    /// The position of `prop(name)` among the properties.
+    #[inline]
+    fn position(&self, name: Atom) -> Option<usize> {
         let props = &self.shape.props;
         if props.len() > FEW {
-            return self.names.find(props, name).map(|at| &props[at]);
+            return self.names.find(props, name);
         }
-        props.iter().find(|p| p.name == name)
+        props.iter().position(|p| p.name == name)
     }
 }
 
@@ -259,6 +295,43 @@ pub(super) enum Found {
     ByIndex,
 }
 
+/// Where `getPropertyOfTypeEx` looks a name up in a type: what it works out before it uses the name.
+#[derive(Copy, Clone)]
+pub(super) enum PropertyHolder<'p> {
+    /// `getReducedApparentType` of the type is this union.
+    Union(TypeId),
+    /// It is this type, which has these members.
+    Members(TypeId, Members<'p>),
+    /// It has no members.
+    Nothing,
+}
+
+/// A property as a constituent of an intersection has it, and the mapper of the constituent's members. Two are equal if
+/// both parts are.
+#[derive(Copy, Clone)]
+struct PropOfConstituent<'a>(&'a Prop<'a>, MapperId);
+
+impl PartialEq for PropOfConstituent<'_> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.1 == other.1 && (std::ptr::eq(self.0, other.0) || self.0 == other.0)
+    }
+}
+
+impl Eq for PropOfConstituent<'_> {}
+
+impl std::hash::Hash for PropOfConstituent<'_> {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, hasher: &mut H) {
+        hasher.write_u32(self.1.0);
+        self.0.hash_without_lists(hasher);
+    }
+}
+
+/// From this length on, a list of properties that is searched for every constituent of a union or an intersection has a
+/// hash set beside it.
+pub(super) const LONG_PROP_LIST: usize = 8;
+
 /// How the looked-up property is used (`getAssignmentTargetKind`, `accessKind`).
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum Access {
@@ -364,7 +437,7 @@ pub(super) struct SpreadSymbolOptions {
 
 /// Whether it is an object type that a property access reads directly: any but a mapped type.
 #[inline]
-fn is_plain_object(data: &TypeData) -> bool {
+pub(super) fn is_plain_object(data: &TypeData) -> bool {
     let is_mapped = matches!(
         data,
         TypeData::Anon {
@@ -4581,6 +4654,9 @@ impl<'p, 's> Checker<'p, 's> {
         // it can depend on other properties of the whole. For each name that several members have:
         // the properties, the one in `b` first.
         let mut lists: Vec<Vec<Prop<'s>, &'s Arena>> = Vec::new();
+        // What is in the lists that are long: the index of the list, and `hash_for_is_own` of a property in it. An
+        // intersection can have hundreds of members with a property of one name.
+        let mut in_long_lists = crate::util::FxHashSet::<(usize, u64)>::default();
         for &written in parts {
             let (part, union, Some(members)) = self.members_of_constituent(whole, written) else {
                 continue;
@@ -4612,6 +4688,13 @@ impl<'p, 's> Checker<'p, 's> {
                             && (&other.source, other.mapper) == (&own.source, own.mapper)
                             && other.flags & modifiers == own.flags & modifiers
                 };
+                // Equal for two properties if `is_own` holds for them.
+                let hash_for_is_own = |prop: &Prop| match prop.source {
+                    PropSource::Symbol(_) => {
+                        crate::util::fx_hash(&(&prop.source, prop.mapper, prop.flags & modifiers))
+                    }
+                    _ => prop.fx_hash_without_lists(),
+                };
                 match b.position(prop.name) {
                     // The same property reached through two paths is added once.
                     Some(i) => {
@@ -4621,8 +4704,21 @@ impl<'p, 's> Checker<'p, 's> {
                                 lists[i].push(b.shape.props[i].clone_in(self.arena));
                                 lists[i].push(own);
                             }
-                        } else if !lists[i].iter().any(is_own) {
-                            lists[i].push(own);
+                        } else if lists[i].len() < LONG_PROP_LIST {
+                            if !lists[i].iter().any(is_own) {
+                                lists[i].push(own);
+                            }
+                        } else {
+                            if lists[i].len() == LONG_PROP_LIST {
+                                let hashes = lists[i].iter().map(|it| (i, hash_for_is_own(it)));
+                                in_long_lists.extend(hashes);
+                            }
+                            // A new hash says that the property is new. Otherwise the list says.
+                            if in_long_lists.insert((i, hash_for_is_own(&own)))
+                                || !lists[i].iter().any(is_own)
+                            {
+                                lists[i].push(own);
+                            }
                         }
                     }
                     None => {
@@ -5844,8 +5940,17 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getTypeOfSymbol(prop)`, then `getWriteTypeOfSymbol(prop)`: what
     /// `createUnionOrIntersectionProperty` asks of every symbol that it combines, in that order.
-    fn type_and_write_type_of_prop(&mut self, prop: &Prop) -> (TypeId, TypeId) {
+    pub(super) fn type_and_write_type_of_prop(&mut self, prop: &Prop) -> (TypeId, TypeId) {
+        let before = self.non_cacheable_mark();
         let ty = self.type_of_prop(prop, MapperId::IDENTITY);
+        // FOR SPEED: for these, `write_type_of_prop` asks for the type once more, where tsgo reads `links.resolvedType`.
+        // That computes a type that is not final again, so then it is asked.
+        let is_made_of_the_type = !prop.flags.contains(PropFlags::ACCESSOR)
+            && !matches!(prop.source, PropSource::Intersected(..));
+        if is_made_of_the_type && self.non_cacheable_mark() == before {
+            let is_optional = prop.flags.contains(PropFlags::OPTIONAL);
+            return (ty, self.remove_missing_type(ty, is_optional));
+        }
         (ty, self.write_type_of_prop(prop, MapperId::IDENTITY))
     }
 
@@ -5855,6 +5960,11 @@ impl<'p, 's> Checker<'p, 's> {
         // `links.writeType`, else `links.resolvedType`: `createUnionOrIntersectionProperty` has
         // `writeTypes` as soon as the write type of a constituent is not its type.
         if let PropSource::Intersected(whole, parts) = &prop.source {
+            let key = (*whole, prop.name, parts.len());
+            if self.props_without_write_types.contains(&key) {
+                return self.type_of_prop(prop, outer);
+            }
+            let before = self.non_cacheable_mark();
             let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
             let mut has_write_types = false;
             // `writeTypes` has no `indexTypes`.
@@ -5867,6 +5977,9 @@ impl<'p, 's> Checker<'p, 's> {
                 types.push(write_type);
             }
             if !has_write_types {
+                if self.non_cacheable_mark() == before {
+                    self.props_without_write_types.insert(key);
+                }
                 return self.type_of_prop(prop, outer);
             }
             let all = if self.is_union(*whole) {
@@ -6419,6 +6532,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `ObjectFlags::HAS_ONLY_OWN_APPARENT_TYPES`
+    #[inline]
+    pub(super) fn has_only_own_apparent_types(&self, ty: TypeId) -> bool {
+        let flags = self.types().object_flags(ty);
+        flags.contains(ObjectFlags::HAS_ONLY_OWN_APPARENT_TYPES)
+    }
+
     /// `apparent_type` for a type whose apparent type may differ from it.
     fn apparent_type_of_other(&mut self, ty: TypeId) -> TypeId {
         // An unconstrained type parameter has the base constraint `unknown`. The original type is passed as the `this` argument
@@ -6438,13 +6558,8 @@ impl<'p, 's> Checker<'p, 's> {
             // FOR SPEED, an intersection of types that are their own apparent types is left
             // unchanged: `getTypeWithThisArgument` gives them the `this` argument and nothing else,
             // and `build_intersection_shape` passes that.
-            TypeData::Intersection(parts) => {
-                let is_own_apparent_type = |&part: &TypeId| {
-                    let data = self.data(part);
-                    is_plain_object(data)
-                        || super::relate::is_object_kind(data) && !self.has_type_variables(part)
-                };
-                return if parts.iter().all(is_own_apparent_type) {
+            TypeData::Intersection(_) => {
+                return if self.has_only_own_apparent_types(ty) {
                     ty
                 } else {
                     self.apparent_type_of_intersection_type(ty, original_type)
@@ -6922,7 +7037,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getDeclarationModifierFlagsFromSymbol` and `isReadonlySymbol` for what
     /// `createUnionOrIntersectionProperty` has made: with a `ValueDeclaration`, its modifiers count,
     /// not those of the constituents. The property of a mapped type has none.
-    fn set_modifiers_of_value_declaration(&mut self, prop: &mut Prop<'s>) {
+    pub(super) fn set_modifiers_of_value_declaration(&mut self, prop: &mut Prop<'s>) {
         if Self::value_declaration(prop).is_none() {
             return;
         }
@@ -7169,6 +7284,9 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     let count = members.shape().props.len();
                     let shares_a_name = seen.iter().any(|earlier| {
+                        if !members.resolved.may_share_a_name_with(earlier.resolved) {
+                            return false;
+                        }
                         let (few, many) = match count < earlier.shape().props.len() {
                             true => (&members, earlier),
                             false => (earlier, &members),
@@ -7259,62 +7377,111 @@ impl<'p, 's> Checker<'p, 's> {
         // What `build_intersection_shape` leaves out where it asks whether the property is optional.
         let is_of_no_member = |c: &Self, prop: &Prop| matches!(prop.source, PropSource::Symbol(sym) if !c.is_member_symbol(sym));
         let mut seen = crate::util::FxHashSet::<Atom>::default();
+        // `prop_set` from `LONG_PROP_LIST` entries on: those, and the ones that come after.
+        let mut long_prop_set = crate::util::FxHashSet::<PropOfConstituent<'_>>::default();
+        // FOR SPEED, a name that no later member has is passed over: there is nothing to combine it with, and no later
+        // member asks `seen` for it. A few members are compared pair by pair. The pairs grow with the square of the
+        // members, so for more of them the members that have each name are counted.
+        const FEW_MEMBERS: usize = 8;
+        let mut members_with_name = FxHashMap::<Atom, u32>::default();
+        if all.len() > FEW_MEMBERS {
+            for member in &all {
+                for prop in &member.shape().props {
+                    *members_with_name.entry(prop.name).or_default() += 1;
+                }
+            }
+        }
+        // The positions of the properties of a member that are looked at.
+        let mut shared = PositionSet::default();
         for (at, &member) in all.iter().enumerate() {
             let rest = &all[at + 1..];
             if rest.is_empty() {
                 break;
             }
-            for prop in &member.shape().props {
+            let props = &member.shape().props;
+            shared.reset(props.len());
+            if all.len() > FEW_MEMBERS {
+                for (position, prop) in props.iter().enumerate() {
+                    if members_with_name.get(&prop.name).is_some_and(|&n| n > 1) {
+                        shared.insert(position);
+                    }
+                }
+            } else {
+                Self::add_positions_of_shared_names(member, rest, &mut shared);
+            }
+            for position in shared.iter() {
+                let prop = &props[position];
                 // Of two members only the first gets here, and all its names are new.
                 if all.len() > 2 && !seen.insert(prop.name) {
                     continue;
                 }
-                let mut first: Option<(Prop<'s>, TypeId)> = None;
+                // `singleProp` is `prop`, instantiated. With the identity that is `prop` itself.
+                let mut single_copy: Option<Prop<'s>> = None;
+                let mut type_of_single: Option<TypeId> = None;
                 let (mut some, mut every) = (prop.flags, prop.flags);
                 let (mut is_non_uniform, mut has_literal) = (false, false);
                 let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
                 let mut has_one_of_no_member = is_of_no_member(self, prop);
                 // `propSet`: a symbol that several members have is considered once.
-                let mut prop_set: SmallVec<[(&Prop, MapperId); 4]> = SmallVec::new();
+                let mut prop_set: SmallVec<[PropOfConstituent<'_>; 4]> = SmallVec::new();
+                long_prop_set.clear();
                 let mut scope = None;
                 for &later in rest {
                     let Some(other) = later.resolved.prop(prop.name) else {
                         continue;
                     };
-                    // FOR SPEED: a property of a union has a property of each constituent in it, and
-                    // the identity changes nothing.
-                    let second_copy;
-                    let second = match later.mapper {
-                        MapperId::IDENTITY => other,
-                        mapper => {
-                            let mut copy = other.clone_in(self.arena);
-                            self.instantiate_prop(&mut copy, mapper);
-                            second_copy = copy;
-                            &second_copy
-                        }
-                    };
-                    let first_type = match &first {
-                        // The same property reached through two paths.
-                        Some((single, _)) if single == second => continue,
-                        Some((_, first_type)) => *first_type,
+                    // One property under one mapper is one property, whatever that makes of it.
+                    if std::ptr::eq(prop, other) && member.mapper == later.mapper {
+                        continue;
+                    }
+                    // FOR SPEED, `other` is copied only once its type is needed: a property of a union has a property
+                    // of each constituent in it.
+                    let instantiation = self.instantiation_of_prop(other, later.mapper);
+                    if single_copy.is_none() && member.mapper != MapperId::IDENTITY {
+                        let mut copy = prop.clone_in(self.arena);
+                        self.instantiate_prop(&mut copy, member.mapper);
+                        single_copy = Some(copy);
+                    }
+                    let single = single_copy.as_ref().unwrap_or(prop);
+                    // The same property reached through two paths.
+                    if instantiation.makes(single, other) {
+                        continue;
+                    }
+                    let first_type = match type_of_single {
+                        Some(first_type) => first_type,
                         None => {
-                            let mut single = prop.clone_in(self.arena);
-                            self.instantiate_prop(&mut single, member.mapper);
-                            if single == *second {
-                                continue;
-                            }
                             scope = Some(self.begin_scope());
-                            let (first_type, _) = self.type_and_write_type_of_prop(&single);
+                            let (first_type, _) = self.type_and_write_type_of_prop(single);
                             has_literal = is_literal(self, first_type);
-                            first = Some((single, first_type));
+                            type_of_single = Some(first_type);
                             types.push(first_type);
                             first_type
                         }
                     };
-                    if prop_set.contains(&(other, later.mapper)) {
-                        continue;
+                    let of_later = PropOfConstituent(other, later.mapper);
+                    if prop_set.len() < LONG_PROP_LIST {
+                        if prop_set.contains(&of_later) {
+                            continue;
+                        }
+                        prop_set.push(of_later);
+                    } else {
+                        if long_prop_set.is_empty() {
+                            long_prop_set.extend(prop_set.iter().copied());
+                        }
+                        if !long_prop_set.insert(of_later) {
+                            continue;
+                        }
                     }
-                    prop_set.push((other, later.mapper));
+                    let second_copy;
+                    let second = match later.mapper {
+                        MapperId::IDENTITY => other,
+                        _ => {
+                            let mut copy = other.clone_in(self.arena);
+                            instantiation.apply_to(&mut copy);
+                            second_copy = copy;
+                            &second_copy
+                        }
+                    };
                     let (second, _) = self.type_and_write_type_of_prop(second);
                     types.push(second);
                     has_one_of_no_member |= is_of_no_member(self, other);
@@ -7382,6 +7549,35 @@ impl<'p, 's> Checker<'p, 's> {
         NeverReduced::No
     }
 
+    /// Adds the positions of the properties of `member` whose name one of `others` has too. Of two members, the names of
+    /// the one that has fewer are looked up in the other.
+    fn add_positions_of_shared_names(
+        member: Members<'p>,
+        others: &[Members<'p>],
+        positions: &mut PositionSet,
+    ) {
+        let props = &member.shape().props;
+        for other in others {
+            if !member.resolved.may_share_a_name_with(other.resolved) {
+                continue;
+            }
+            let of_other = &other.shape().props;
+            if of_other.len() < props.len() {
+                for prop in of_other {
+                    if let Some(position) = member.resolved.position(prop.name) {
+                        positions.insert(position);
+                    }
+                }
+            } else {
+                for (position, prop) in props.iter().enumerate() {
+                    if other.resolved.prop(prop.name).is_some() {
+                        positions.insert(position);
+                    }
+                }
+            }
+        }
+    }
+
     /// An intersection, or `ObjectFlagsContainsIntersections`.
     #[inline]
     pub(super) fn may_be_reduced(&self, ty: TypeId) -> bool {
@@ -7403,7 +7599,19 @@ impl<'p, 's> Checker<'p, 's> {
     fn reduced_members(&mut self, ty: TypeId) -> TypeId {
         match self.data(ty) {
             TypeData::Intersection(_) if self.is_empty_intersection(ty) => TypeId::NEVER,
-            TypeData::Union(_) => self.filter(ty, |c, m| !c.is_never_intersection(m)),
+            TypeData::Union(members) => {
+                if let Some(&known) = self.reduced_unions.get(&ty) {
+                    return known;
+                }
+                let before = self.non_cacheable_mark();
+                let reduced = self.filter(ty, |c, m| !c.is_never_intersection(m));
+                // A member that is being reduced counts as not `never` for the time being, and moves no counter.
+                let is_in_progress = |member: &TypeId| self.never_in_progress.contains(member);
+                if self.non_cacheable_mark() == before && !members.iter().any(is_in_progress) {
+                    self.reduced_unions.insert(ty, reduced);
+                }
+                reduced
+            }
             _ => ty,
         }
     }
@@ -7492,7 +7700,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getRestTypeOfTupleType` of the apparent type of `ty`, if that is a tuple: the type of its
     /// elements from the first non-fixed one on, `undefined` if all are fixed.
-    fn beyond_fixed_elements(&mut self, ty: TypeId) -> Option<TypeId> {
+    pub(super) fn beyond_fixed_elements(&mut self, ty: TypeId) -> Option<TypeId> {
         let apparent = self.apparent_type(ty);
         let TypeData::Tuple { flags, .. } = self.data(apparent) else {
             return None;
@@ -7546,284 +7754,50 @@ impl<'p, 's> Checker<'p, 's> {
         name: Atom,
         skip_object_function_property_augment: bool,
     ) -> Option<(&'p Prop<'p>, MapperId)> {
+        let holder = self.property_holder(ty);
+        self.property_of_holder(holder, name, skip_object_function_property_augment)
+    }
+
+    /// The part of `getPropertyOfTypeEx(ty, ..)` that does not depend on the name.
+    #[inline]
+    pub(super) fn property_holder(&mut self, ty: TypeId) -> PropertyHolder<'p> {
         let apparent = self.reduced_apparent_type(ty);
         if self.is_union(apparent) {
-            // `getPropertyOfUnionOrIntersectionType`: "We need to filter out partial properties in union types"
-            let skips = skip_object_function_property_augment;
-            let prop = self.union_property_ex(apparent, name, skips)?;
-            return (!prop.flags.contains(PropFlags::READ_PARTIAL))
-                .then_some((prop, MapperId::IDENTITY));
+            return PropertyHolder::Union(apparent);
         }
-        let members = self.members_of_apparent_type(ty, apparent)?;
-        if self.is_type_only_member(apparent, name) {
-            return None;
+        match self.members_of_apparent_type(ty, apparent) {
+            Some(members) => PropertyHolder::Members(apparent, members),
+            None => PropertyHolder::Nothing,
         }
-        if skip_object_function_property_augment {
-            return Some((members.resolved.prop(name)?, members.mapper));
-        }
-        self.property_in_type(apparent, &members, name)
     }
 
-    /// `getUnionOrIntersectionProperty` for a union.
-    pub(super) fn union_property(&mut self, union: TypeId, name: Atom) -> Option<&'p Prop<'p>> {
-        self.union_property_ex(union, name, false)
-    }
-
-    /// `skips`: `skipObjectFunctionPropertyAugment`. `union_properties` is `propertyCache`. There is
-    /// no `propertyCacheWithoutFunctionPropertyAugment`: only the import of a name from a module
-    /// with `export =` looks a property of a union up that way.
-    fn union_property_ex(
+    /// The rest of `getPropertyOfTypeEx`.
+    #[inline]
+    pub(super) fn property_of_holder(
         &mut self,
-        union: TypeId,
-        name: Atom,
-        skips: bool,
-    ) -> Option<&'p Prop<'p>> {
-        let kept = match skips {
-            true => None,
-            false => self.p.union_properties.get(&self.task, &(union, name)),
-        };
-        let holder = match kept {
-            Some(kept) => kept,
-            None => {
-                let scope = self.begin_scope();
-                let holder = self.create_union_property(union, name, skips).map(|prop| {
-                    self.synth(Shape {
-                        props: vec_from_iter_in([prop], self.arena),
-                        ..Shape::new_in(self.arena)
-                    })
-                });
-                if let Ok(stored) = self.end_scope_by_counters(scope)
-                    && !skips
-                {
-                    self.p
-                        .union_properties
-                        .insert(&self.task, (union, name), holder, stored);
-                }
-                holder
-            }
-        };
-        match self.data(holder?) {
-            TypeData::Synth(shape) => shape.props.first(),
-            _ => None,
-        }
-    }
-
-    /// `CheckFlagsHasNonUniformType` and `CheckFlagsHasLiteralType` of the property that
-    /// `createUnionOrIntersectionProperty` makes of `props`. That of a union has them among its
-    /// flags. That of an intersection has not: its type is resolved lazily.
-    fn non_uniform_and_literal(&mut self, props: &[Prop<'_>]) -> PropFlags {
-        let mut flags = PropFlags::empty();
-        let first_type = self.type_of_prop(&props[0], MapperId::IDENTITY);
-        for prop in props {
-            let t = self.type_of_prop(prop, MapperId::IDENTITY);
-            if t != first_type {
-                flags |= PropFlags::HAS_NON_UNIFORM_TYPE;
-            }
-            // `isLiteralType`, `isPatternLiteralType`
-            if self.is_boolean(t)
-                || !t.is_never() && self.every_type(t, |c, m| c.is_unit(m))
-                || self.is_pattern_literal(t)
-            {
-                flags |= PropFlags::HAS_LITERAL_TYPE;
-            }
-        }
-        flags
-    }
-
-    /// `createUnionOrIntersectionProperty`, where `isUnion`. `build_intersection_shape` has the other half.
-    fn create_union_property(
-        &mut self,
-        containing_type: TypeId,
+        holder: PropertyHolder<'p>,
         name: Atom,
         skip_object_function_property_augment: bool,
-    ) -> Option<Prop<'s>> {
-        let skips = skip_object_function_property_augment;
-        let access = PropFlags::PRIVATE | PropFlags::PROTECTED;
-        let accessor = PropFlags::ACCESSOR | PropFlags::WRITE_ONLY;
-        let is_late_bound = self.atoms().is_symbol_name(name);
-        // `singleProp` is the first.
-        let mut prop_set: SmallVec<[Prop<'s>; 4]> = SmallVec::new();
-        let mut index_types: SmallVec<[TypeId; 4]> = SmallVec::new();
-        // `prop != singleProp`, `propSet.Add(prop)`: a symbol that many members inherit is
-        // considered once.
-        let mut symbols: SmallVec<[(*const Prop<'p>, MapperId); 8]> = SmallVec::new();
-        let mut merged_instantiations = false;
-        let (mut flags, mut is_public, mut first_owner) =
-            (PropFlags::empty(), false, containing_type);
-        for &current in self.parts(containing_type) {
-            let t = self.apparent_type(current);
-            // An intersection with a member whose apparent type is `never`, such as a conditional
-            // type with that constraint, has the apparent type `never`.
-            if self.is_error_type(t)
-                || t.is_never()
-                || self.is_apparent_type_of_intersection_never(t)
-            {
-                continue;
+    ) -> Option<(&'p Prop<'p>, MapperId)> {
+        match holder {
+            PropertyHolder::Union(apparent) => {
+                // `getPropertyOfUnionOrIntersectionType`: "We need to filter out partial properties in union types"
+                let skips = skip_object_function_property_augment;
+                let prop = self.union_property_ex(apparent, name, skips)?;
+                (!prop.flags.contains(PropFlags::READ_PARTIAL))
+                    .then_some((prop, MapperId::IDENTITY))
             }
-            let holder = self.apparent_type_or_type_variable(current, t);
-            if let Some((prop, mapper)) = self.get_property_of_type_ex(holder, name, skips) {
-                let symbol = (std::ptr::from_ref(prop), mapper);
-                if symbols.contains(&symbol) {
-                    continue;
+            PropertyHolder::Members(apparent, members) => {
+                if self.is_type_only_member(apparent, name) {
+                    return None;
                 }
-                symbols.push(symbol);
-                let mut prop = prop.clone_in(self.arena);
-                self.instantiate_prop(&mut prop, mapper);
-                // `prop.Flags&SymbolFlagsClassMember`: a variable of a module or of `globalThis` is
-                // not considered.
-                if !matches!(prop.source, PropSource::Symbol(sym) if !self.is_member_symbol(sym)) {
-                    flags |= prop.flags & PropFlags::OPTIONAL;
+                if skip_object_function_property_augment {
+                    return Some((members.resolved.prop(name)?, members.mapper));
                 }
-                flags |= prop.flags & (PropFlags::READONLY | access);
-                is_public |= !prop.flags.intersects(access);
-                match prop_set.first() {
-                    None => {
-                        first_owner = t;
-                        flags |= prop.flags & accessor;
-                        prop_set.push(prop);
-                    }
-                    Some(single) => {
-                        // `prop.Flags&SymbolFlagsAccessor`: a getter alone is read-only.
-                        let accessors = |p: &Prop| match p.flags.contains(PropFlags::ACCESSOR) {
-                            true => p.flags & (accessor | PropFlags::READONLY),
-                            false => PropFlags::empty(),
-                        };
-                        if accessors(&prop) != accessors(single) {
-                            flags.remove(accessor);
-                        }
-                        // `isInstantiation`: instantiations of one property that
-                        // `compareProperties` finds equal are one property.
-                        let is_same =
-                            single.source == prop.source && self.compare_properties(single, &prop);
-                        if is_same {
-                            merged_instantiations = matches!(single.source, PropSource::Symbol(symbol)
-                            if (self.files().parent_of_symbol(symbol)).is_some_and(|parent| {
-                                !self.local_type_params_of_symbol(parent).is_empty()
-                            }));
-                        } else if !prop_set.contains(&prop) {
-                            prop_set.push(prop);
-                        }
-                    }
-                }
-                continue;
+                self.property_in_type(apparent, &members, name)
             }
-            let index_info = match self.members_for_index_infos(t) {
-                Some(members) if !is_late_bound => {
-                    self.applicable_index_info_for_name(&members, name)
-                }
-                _ => None,
-            };
-            if let Some(info) = index_info {
-                flags.remove(accessor);
-                flags |= PropFlags::WRITE_PARTIAL;
-                flags.set(
-                    PropFlags::READONLY,
-                    flags.contains(PropFlags::READONLY) || info.readonly,
-                );
-                index_types.push(self.beyond_fixed_elements(t).unwrap_or(info.value));
-            } else if self.is_closed_object_literal_type(t) {
-                flags |= PropFlags::WRITE_PARTIAL;
-                index_types.push(TypeId::UNDEFINED);
-            } else {
-                flags |= PropFlags::READ_PARTIAL;
-            }
+            PropertyHolder::Nothing => None,
         }
-        let is_partial = flags.intersects(PropFlags::READ_PARTIAL | PropFlags::WRITE_PARTIAL);
-        // "No property was found, or, in a union, a property has a private or protected declaration in one constituent, but is missing
-        // or has a different declaration in another constituent."
-        if prop_set.is_empty()
-            || (prop_set.len() > 1 || is_partial)
-                && flags.intersects(access)
-                && !(prop_set.len() > 1 && Self::has_common_declaration(&prop_set, self.arena))
-        {
-            return None;
-        }
-        if prop_set.len() == 1 && !is_partial {
-            // The property of the only member that has one is that of the union. That of an
-            // intersection gets its two flags here: see `non_uniform_and_literal`.
-            let mut single = prop_set.pop()?;
-            if let PropSource::Intersected(of, props) = &single.source
-                && self.is_intersection(*of)
-            {
-                single.flags |= self.non_uniform_and_literal(props);
-            }
-            // `links.writeType` of the clone of `singleProp`.
-            if merged_instantiations {
-                self.write_type_of_prop(&single, MapperId::IDENTITY);
-            }
-            return Some(single);
-        }
-        for prop in &prop_set {
-            self.type_and_write_type_of_prop(prop);
-        }
-        flags |= self.non_uniform_and_literal(&prop_set);
-        // `links.nameType`
-        if self.is_numeric_name(name)
-            && self
-                .key_type_of_props(first_owner, &prop_set)
-                .is_some_and(|key| self.is_string_like(key))
-        {
-            flags |= PropFlags::STRING_NAME;
-        }
-        // `getDeclarationModifierFlagsFromSymbol`: private if one is, else public if one is, else protected.
-        if flags.contains(PropFlags::PRIVATE) || is_public {
-            flags.remove(PropFlags::PROTECTED);
-        }
-        prop_set.extend(index_types.iter().map(|&t| Prop {
-            name,
-            flags: PropFlags::WRITE_PARTIAL,
-            source: PropSource::Type(t),
-            mapper: MapperId::IDENTITY,
-            name_type: TypeId::UNRESOLVED,
-        }));
-        let mut result = Prop {
-            name,
-            flags,
-            source: PropSource::Intersected(containing_type, self.list_of(prop_set)),
-            mapper: MapperId::IDENTITY,
-            name_type: TypeId::UNRESOLVED,
-        };
-        self.set_modifiers_of_value_declaration(&mut result);
-        Some(result)
-    }
-
-    /// `compareProperties(sourceProp, targetProp, compareTypesEqual)`
-    fn compare_properties(&mut self, source: &Prop<'s>, target: &Prop<'s>) -> bool {
-        if source == target {
-            return true;
-        }
-        let access = PropFlags::PRIVATE | PropFlags::PROTECTED;
-        let accessibility = source.flags & access;
-        if accessibility != target.flags & access {
-            return false;
-        }
-        if !accessibility.is_empty() {
-            // `getTargetSymbol`
-            if source.source != target.source {
-                return false;
-            }
-        } else if (source.flags ^ target.flags).contains(PropFlags::OPTIONAL) {
-            return false;
-        }
-        if self.is_readonly_symbol(source) != self.is_readonly_symbol(target) {
-            return false;
-        }
-        // `getNonMissingTypeOfSymbol`
-        let [source, target] = [source, target].map(|prop| {
-            let ty = self.type_of_prop(prop, MapperId::IDENTITY);
-            self.remove_missing_type(ty, prop.flags.contains(PropFlags::OPTIONAL))
-        });
-        source == target
-    }
-
-    /// `hasCommonDeclaration`
-    fn has_common_declaration(props: &[Prop], arena: &'s Arena) -> bool {
-        let mut common = Self::declared_properties(&[&props[0]], arena);
-        for prop in &props[1..] {
-            let other = Self::declared_properties(&[prop], arena);
-            common.retain(|declared| other.iter().any(|it| it.source == declared.source));
-        }
-        !common.is_empty()
     }
 
     /// The members with the index signatures `getIndexInfosOfType(ty)` returns: for a union, those

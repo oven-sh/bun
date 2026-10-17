@@ -914,11 +914,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `Checker::inherited_names`. Left unchanged if one of the four does not exist, or not yet.
+    /// `Checker::inherited_names` and `Checker::inherited_name_set`. Left unchanged if one of the four does not exist, or
+    /// not yet.
     #[cold]
     fn note_inherited_names(&mut self) {
         let before = self.non_cacheable_mark();
         let mut names = [0; 4];
+        let mut name_set = FxHashSet::default();
+        let mut are_members_stored = true;
         for global in [
             known::Object,
             known::Function,
@@ -929,13 +932,25 @@ impl<'p, 's> Checker<'p, 's> {
             let Some(members) = self.members(global) else {
                 return;
             };
+            are_members_stored &= self.resolved_members(global).is_some();
             for prop in &members.shape().props {
                 names[prop.name.0 as usize / 64 % 4] |= 1 << (prop.name.0 % 64);
+                name_set.insert(prop.name);
             }
         }
         if self.non_cacheable_mark() == before {
             self.inherited_names = names;
+            self.inherited_name_set = are_members_stored.then_some(name_set);
         }
+    }
+
+    /// Whether `inherited_property` finds no `name`, whatever the type, and resolves nothing on the way.
+    pub(super) fn is_never_inherited(&self, name: Atom) -> bool {
+        let n = name.0 as usize;
+        let name_set = self.inherited_name_set.as_ref();
+        self.inherited_names != [0; 4]
+            && (self.inherited_names[n / 64 % 4] & 1 << (n % 64) == 0
+                || name_set.is_some_and(|names| !names.contains(&name)))
     }
 
     fn inherited_property(
@@ -4354,16 +4369,18 @@ impl<'p, 's> Checker<'p, 's> {
         // `getPropertiesOfUnionOrIntersectionType`: "The properties of a union type are those that are present in all constituent
         // types, so we only need to check the properties of the first type without index signature".
         let mut props: ArenaVec<Prop> = ArenaVec::new_in(self.arena);
+        let mut names_of_props = FxHashSet::<Atom>::default();
         for &current in &members {
             let Some(of_current) = self.members(current) else {
                 continue;
             };
             for prop in &of_current.shape().props {
-                if props.iter().all(|it| it.name != prop.name)
+                if !names_of_props.contains(&prop.name)
                     && let Some((combined, mapper)) = self.get_property_of_type(apparent, prop.name)
                 {
                     let mut combined = combined.clone_in(self.arena);
                     self.instantiate_prop(&mut combined, mapper);
+                    names_of_props.insert(combined.name);
                     props.push(combined);
                 }
             }
@@ -7350,7 +7367,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whether `apparent_type_of_intersection` replaces the member `p` by another type.
-    fn intersection_member_has_other_apparent_type(&self, p: TypeId) -> bool {
+    pub(super) fn intersection_member_has_other_apparent_type(&self, p: TypeId) -> bool {
         p == TypeId::OBJECT || self.is_deferred(p) || self.has_primitive_flag(p)
     }
 

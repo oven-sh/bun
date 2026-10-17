@@ -199,3 +199,40 @@ test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is no
     Module._resolveFilename("path", __filename, false, { paths: { 0: "/some/path" } });
   }).toThrow();
 });
+
+test("require.resolve anchors a relative options.paths entry at the cwd", () => {
+  // Node resolves a relative entry with path.resolve(), so it is relative to process.cwd().
+  const { path: dir, cleanup } = createTempDir("require-resolve-relative-paths", {
+    "lib/node_modules/relative-paths-pkg/package.json": JSON.stringify({
+      name: "relative-paths-pkg",
+      main: "index.js",
+    }),
+    "lib/node_modules/relative-paths-pkg/index.js": "module.exports = 'relative-paths';",
+  });
+  const previousCwd = process.cwd();
+
+  try {
+    process.chdir(dir);
+    const expected = resolve(dir, "lib/node_modules/relative-paths-pkg/index.js");
+
+    expect(require.resolve("relative-paths-pkg", { paths: ["./lib"] })).toBe(expected);
+    expect(require.resolve("relative-paths-pkg", { paths: ["lib"] })).toBe(expected);
+
+    const fakeParent = new Module("/some/other/directory/file.js");
+    fakeParent.filename = "/some/other/directory/file.js";
+    fakeParent.paths = Module._nodeModulePaths("/some/other/directory");
+    expect(Module._resolveFilename("relative-paths-pkg", fakeParent, false, { paths: ["lib"] })).toBe(expected);
+
+    // An entry that does not exist under the cwd is not found.
+    let caught;
+    try {
+      require.resolve("relative-paths-pkg", { paths: ["./missing"] });
+    } catch (err) {
+      caught = err.code;
+    }
+    expect(caught).toBe("MODULE_NOT_FOUND");
+  } finally {
+    process.chdir(previousCwd);
+    cleanup();
+  }
+});

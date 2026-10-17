@@ -357,8 +357,13 @@ impl S3Credentials {
         let path = normalize_name(path);
         let bucket = normalize_name(bucket);
 
-        // if we allow path.len == 0 it will list the bucket for now we disallow
-        if !ALLOW_EMPTY_PATH && path.is_empty() {
+        // An empty key addresses the bucket root. Only a bucket-level request
+        // (ListObjectsV2, HeadBucket, CreateBucket, DeleteBucket) may do that,
+        // and it needs a bucket: with none, the request would go to the root
+        // of the endpoint.
+        if path.is_empty()
+            && (!ALLOW_EMPTY_PATH || (bucket.is_empty() && !self.virtual_hosted_style))
+        {
             return Err(SignError::InvalidPath);
         }
 

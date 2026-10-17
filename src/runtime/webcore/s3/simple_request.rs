@@ -521,6 +521,9 @@ pub(crate) type S3Callback = Callback;
 pub(crate) struct S3SimpleRequestOptions<'a> {
     // signing options
     pub path: &'a [u8],
+    /// A bucket-level request (ListObjectsV2, HeadBucket, CreateBucket,
+    /// DeleteBucket): an empty `path` is the bucket root, not an invalid key.
+    pub(crate) allow_empty_path: bool,
     pub method: Method,
     pub(crate) search_params: Option<&'a [u8]>,
     pub(crate) content_type: Option<&'a [u8]>,
@@ -542,6 +545,7 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
     fn default() -> Self {
         Self {
             path: b"",
+            allow_empty_path: false,
             method: Method::GET,
             search_params: None,
             content_type: None,
@@ -573,8 +577,8 @@ pub(crate) fn resolve_proxy(proxy_url: Option<&[u8]>, url: &[u8]) -> Box<[u8]> {
 }
 
 /// What puts an S3 request on the HTTP thread asks first: this file's function and
-/// `client::download_stream` before anything else, the caller of `client::list_objects` before
-/// it allocates. (A `MultiPartUpload` asks its own abort handle: see `process_buffered`.)
+/// `client::download_stream` before anything else. (A `MultiPartUpload` asks its own abort
+/// handle: see `process_buffered`.)
 pub(crate) fn nothing_new_leaves(context: &bun_jsc::ScriptExecutionContext) -> bool {
     !VirtualMachine::get().script_allowed() || context.is_stopped()
 }
@@ -605,22 +609,24 @@ pub(crate) fn execute_simple_s3_request(
         )?;
         return Ok(());
     }
-    let result = match this.sign_request::<false>(
-        &SignOptions {
-            path: options.path,
-            method: options.method,
-            search_params: options.search_params,
-            content_disposition: options.content_disposition,
-            content_encoding: options.content_encoding,
-            acl: options.acl,
-            storage_class: options.storage_class,
-            request_payer: options.request_payer,
-            content_hash: None,
-            content_md5: None,
-            content_type: None,
-        },
-        None,
-    ) {
+    let sign_options = SignOptions {
+        path: options.path,
+        method: options.method,
+        search_params: options.search_params,
+        content_disposition: options.content_disposition,
+        content_encoding: options.content_encoding,
+        acl: options.acl,
+        storage_class: options.storage_class,
+        request_payer: options.request_payer,
+        content_hash: None,
+        content_md5: None,
+        content_type: None,
+    };
+    let result = match if options.allow_empty_path {
+        this.sign_request::<true>(&sign_options, None)
+    } else {
+        this.sign_request::<false>(&sign_options, None)
+    } {
         Ok(r) => r,
         Err(sign_err) => {
             // options.range drops here automatically

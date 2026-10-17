@@ -217,8 +217,7 @@ ScriptExecutionContext::~ScriptExecutionContext()
     m_inScriptExecutionContextDestructor = true;
 #endif // ASSERT_ENABLED
 
-    // Unlink first: an observer's contextDestroyed() may destroy another observer, whose
-    // destructor then unlinks itself (MessagePort::contextDestroyed -> close() -> deref).
+    // Unlink first: contextDestroyed() can destroy another observer, which then unlinks itself.
     while (!m_destructionObservers.isEmpty()) {
         auto* destructionObserver = &*m_destructionObservers.begin();
         destructionObserver->remove();

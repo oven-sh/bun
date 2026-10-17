@@ -144,3 +144,83 @@ test("CLAUDECODE flag handles no test files found", () => {
   expect(normalizeBunSnapshot(normalOutput, dir)).toMatchSnapshot("no-tests-normal");
   expect(normalizeBunSnapshot(quietOutput, dir)).toMatchSnapshot("no-tests-quiet");
 });
+
+// When `bun test` finds no test file, it says how a test file is named. The two
+// tests below hold what it says against the file names the scanner takes.
+const passingTest = `import { test } from "bun:test"; test("x", () => {});`;
+
+async function runBunTest(cwd: string, args: string[], CLAUDECODE: "0" | "1") {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", ...args],
+    env: { ...testEnv, CLAUDECODE },
+    cwd,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+test.concurrent("the note for no test files found names suffixes that make a file a test file", async () => {
+  using empty = tempDir("no-tests-note", { "MyApp.ts": passingTest });
+  const note = `Test files end in ".test", "_test", ".spec" or "_spec" before the extension (ex: "MyApp.test.ts")`;
+
+  // A filter that matches no file prints the note too, with and without CLAUDECODE=1.
+  const filter = "a-filter-that-matches-no-file";
+  const [noArguments, noMatch, noMatchQuiet] = await Promise.all([
+    runBunTest(String(empty), [], "0"),
+    runBunTest(String(empty), [filter], "0"),
+    runBunTest(String(empty), [filter], "1"),
+  ]);
+  expect(noArguments.stderr).toContain(note);
+  expect(noMatch.stderr).toContain("note: " + note);
+  expect(noMatchQuiet.stderr).toContain("note: " + note);
+  expect([noArguments.exitCode, noMatch.exitCode, noMatchQuiet.exitCode]).toEqual([1, 1, 1]);
+
+  // Do what the note says: one file for each suffix that it names.
+  const suffixes = Array.from(noArguments.stderr.matchAll(/"([._][a-z_]+)"/g), match => match[1]);
+  expect(suffixes).toEqual([".test", "_test", ".spec", "_spec"]);
+  using named = tempDir(
+    "no-tests-note-named",
+    Object.fromEntries(suffixes.map(suffix => [`MyApp${suffix}.ts`, passingTest])),
+  );
+  const { stderr, exitCode } = await runBunTest(String(named), [], "0");
+  expect(stderr).toContain("Ran 4 tests across 4 files.");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent(
+  "CLAUDECODE=1 error for no test files found prints a glob that matches the file names the scanner takes",
+  async () => {
+    const testFiles = [".test", "_test", ".spec", "_spec"]
+      .flatMap(suffix => ["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"].map(ext => `MyApp${suffix}.${ext}`))
+      .concat("nested/dir/MyApp_test.ts")
+      .sort();
+    const otherFiles = [
+      "MyApp.ts",
+      "MyApp_test_.ts",
+      "MyApp_spec_.ts",
+      "MyApp.testunit.ts",
+      "My.testApp.ts",
+      "testMyApp.ts",
+      "MyApp.test.json",
+    ];
+    // Each file prints its own name when the scanner takes it.
+    const printsName = (name: string) =>
+      `import { test } from "bun:test"; test("x", () => { console.log("RAN ${name}"); });`;
+    using mixed = tempDir(
+      "no-tests-glob-mixed",
+      Object.fromEntries([...testFiles, ...otherFiles].map(name => [name, printsName(name)])),
+    );
+    using empty = tempDir("no-tests-glob-empty", { "MyApp.ts": passingTest });
+
+    const [scan, quiet] = await Promise.all([runBunTest(String(mixed), [], "0"), runBunTest(String(empty), [], "1")]);
+    expect(Array.from(scan.stdout.matchAll(/^RAN (\S+)/gm), match => match[1]).sort()).toEqual(testFiles);
+    expect(scan.exitCode).toBe(0);
+
+    const glob = quiet.stderr.match(/0 test files matching (\S+) in --cwd=/)?.[1];
+    expect(glob).toBe("**/*{.test,.spec,_test,_spec}.{js,jsx,ts,tsx,mjs,cjs,mts,cts}");
+    expect([...testFiles, ...otherFiles].filter(name => new Bun.Glob(glob!).match(name))).toEqual(testFiles);
+    expect(quiet.exitCode).toBe(1);
+  },
+);

@@ -4839,6 +4839,34 @@ test.concurrent(
   },
 );
 
+test.concurrent("listing the keys of a barrel runs no getter of the mock behind it", async () => {
+  await expectFixturesToPass(
+    {
+      "leaf.js": `export const token = "real"; export const other = 1;`,
+      "star.js": `export * from "./leaf.js";`,
+      "named.js": `export { token } from "./leaf.js";`,
+      "keys.test.js": `
+        import { beforeEach, expect, test, vi } from "bun:test";
+        let reads = 0;
+        vi.mock("./leaf.js", () => ({ get token() { reads++; return "mock"; }, other: 2 }));
+        import * as star from "./star.js";
+        import * as named from "./named.js";
+        beforeEach(() => void (reads = 0));
+        test("Object.keys()", () => {
+          expect(Object.keys(star).sort()).toEqual(["other", "token"]);
+          expect(Object.keys(named)).toEqual(["token"]);
+          expect(reads).toBe(0);
+        });
+        test("JSON.stringify() reads each name once", () => {
+          expect(JSON.parse(JSON.stringify(star))).toEqual({ token: "mock", other: 2 });
+          expect(reads).toBe(1);
+        });
+      `,
+    },
+    2,
+  );
+});
+
 test.concurrent("evicting modules calls no accessor of module.children", async () => {
   await expectFixturesToPass(
     {

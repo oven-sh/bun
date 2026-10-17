@@ -1,6 +1,7 @@
 /**
  * All tests in this file run in both Bun and Node.js: `bun test` runs them
- * here, and the last test runs this same file under Node.js.
+ * here, and the last test runs this same file under Node.js. That is why it
+ * uses node:test and node:assert, and gets "harness" from a dynamic import.
  *
  * Node has one PerformanceObserver class, which is the global one. An observer
  * has one queue for the entries of every type it observes, and all the queues
@@ -31,8 +32,9 @@ const turns = async (count: number) => {
 /** Lets a delivery that is due happen. */
 const delivery = () => turns(2);
 
+const harness = typeof Bun !== "undefined" ? await import("harness") : undefined;
 // Runs `script` with the runtime that runs this file.
-const childEnv = typeof Bun !== "undefined" ? (await import("harness")).bunEnv : process.env;
+const childEnv = harness?.bunEnv ?? process.env;
 async function run(script: string) {
   const child = spawn(process.execPath, ["-e", script], { env: childEnv, stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "";
@@ -1089,12 +1091,20 @@ describe("the PerformanceObserver class", () => {
 });
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
-if (typeof Bun !== "undefined") {
-  const { bunEnv, nodeExe } = await import("harness");
+if (harness) {
+  const { bunEnv, nodeExe } = harness;
   const node = nodeExe();
+  // A Node.js that does not strip types cannot run this file: there is nothing to compare with.
+  const runsTypeScript =
+    !!node &&
+    ["strip", "transform"].includes(
+      Bun.spawnSync({ cmd: [node, "-p", "process.features.typescript"], env: bunEnv })
+        .stdout.toString()
+        .trim(),
+    );
 
   describe("Node.js compatibility", () => {
-    (node ? test : test.skip)("all tests pass in Node.js", async () => {
+    (runsTypeScript ? test : test.skip)("all tests pass in Node.js", async () => {
       // A direct run, not `node --test`: the runner mode forks a second node
       // process per file. node:test still exits non-zero on any failure.
       const child = spawn(node!, ["--v8-pool-size=1", fileURLToPath(import.meta.url)], {

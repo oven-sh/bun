@@ -1027,9 +1027,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     );
   }
 
-  // PGO: paths resolved to absolute. generate/use are mutually exclusive.
-  const pgoGenerate = partial.pgoGenerate ? resolve(partial.pgoGenerate) : undefined;
-  const pgoUse = partial.pgoUse ? resolve(partial.pgoUse) : undefined;
+  // PGO: paths resolved against the checkout, like every other path override. generate/use are mutually exclusive.
+  const pgoGenerate = partial.pgoGenerate ? resolve(cwd, partial.pgoGenerate) : undefined;
+  const pgoUse = partial.pgoUse ? resolve(cwd, partial.pgoUse) : undefined;
   if (pgoGenerate && pgoUse) {
     throw new BuildError("--pgo-generate and --pgo-use are mutually exclusive");
   }

@@ -6,7 +6,7 @@
  * way a build directory inside another checkout or worktree looks: a walk up from cwd would stop at that one.
  */
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -20,7 +20,8 @@ const decoy = { "package.json": JSON.stringify({ name: "bun", version: "0.0.0" }
 async function run(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
-    env: { ...bunEnv, BUN_BUILD_TRACE: undefined },
+    // GIT_SHA: configure takes the revision from it and runs no git, which could write to stderr.
+    env: { ...bunEnv, BUN_BUILD_TRACE: undefined, GIT_SHA: "0".repeat(40) },
     cwd,
     stdout: "pipe",
     stderr: "pipe",
@@ -44,7 +45,9 @@ test.concurrent("the config resolves the checkout from an external build directo
   expect(exitCode).toBe(0);
 });
 
-test.concurrent(
+// The replay globs every source of the checkout: 0.4s under a release build, about 25s under debug ASAN.
+// On Windows, build.ts re-executes itself in the Visual Studio shell first, which prints to stdout.
+test.concurrent.skipIf(isDebug || isASAN || isWindows)(
   "the regen replay writes build.ninja for an external build directory",
   async () => {
     using dir = tempDir("build-repo-root", { out: {}, ...decoy });
@@ -64,6 +67,4 @@ test.concurrent(
     expect(manifest).toContain(buildScript);
     expect(manifest).toContain(esbuild);
   },
-  // The replay globs every source of the checkout, which takes about 25s under a debug ASAN build.
-  { timeout: 90_000 },
 );

@@ -16,6 +16,9 @@ const displayOnly: Record<string, number> = {
   "scripts/build/timings.ts": 2,
 };
 
+/** A line of a comment: `//` or a JSDoc line. Strings are not stripped, so a glob such as "deps/*.ts" is no comment. */
+const commentLine = /^\s*(\/\/|\/\*|\*)/;
+
 test("the build scripts do not derive paths from process.cwd()", async () => {
   const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
   const files = ["scripts/build.ts"];
@@ -26,10 +29,11 @@ test("the build scripts do not derive paths from process.cwd()", async () => {
 
   const found: Record<string, number> = {};
   for (const file of files.sort()) {
-    const source = readFileSync(path.join(repoRoot, file), "utf8")
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
-    const count = source.match(/\bprocess\.cwd\(\)/g)?.length ?? 0;
+    let count = 0;
+    for (const line of readFileSync(path.join(repoRoot, file), "utf8").split("\n")) {
+      if (commentLine.test(line)) continue;
+      count += line.match(/\bprocess\.cwd\(\)/g)?.length ?? 0;
+    }
     if (count > 0) found[file] = count;
   }
   expect(found).toEqual(displayOnly);

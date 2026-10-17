@@ -4849,7 +4849,7 @@ describe("bundler", () => {
     outdir: "/out",
     target: "bun",
     onAfterBundle(api) {
-      api.expectFile("/out/entry.js").toMatch(/\.then\(\([\w$]+\)=>m\([\w$]+\.default\)\)/);
+      api.expectFile("/out/entry.js").toContain(".then((n)=>m(n.default))");
     },
     run: { file: "/out/entry.js", stdout: "c c c" },
   });
@@ -4875,7 +4875,7 @@ describe("bundler", () => {
     outdir: "/out",
     target: "node",
     onAfterBundle(api) {
-      api.expectFile("/out/entry.js").toMatch(/\.then\(\([\w$]+\)=>m\([\w$]+\.default,1\)\)/);
+      api.expectFile("/out/entry.js").toContain(".then((n)=>m(n.default,1))");
     },
     run: { file: "/out/entry.js", stdout: "64 entry" },
   });

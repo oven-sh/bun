@@ -138,7 +138,7 @@ describe("addEventListener({ signal }) lifetimes", () => {
     ? bunEnv
     : { ...bunEnv, Malloc: "1", ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") };
 
-  test("the signal is collected before its listeners", async () => {
+  test.concurrent("the signal is collected before its listeners", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -186,28 +186,34 @@ describe("addEventListener({ signal }) lifetimes", () => {
     });
   });
 
-  test("the targets are collected before the signal aborts", async () => {
+  test.concurrent("the targets are collected before the signal aborts", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
+          const { heapStats } = require("bun:jsc");
+          const count = 600;
           const controller = new AbortController();
           const kept = new EventTarget();
           let calls = 0;
           (() => {
-            for (let i = 0; i < 300; i++) new EventTarget().addEventListener("x", () => calls++, { signal: controller.signal });
+            for (let i = 0; i < count / 2; i++) new EventTarget().addEventListener("x", () => calls++, { signal: controller.signal });
             kept.addEventListener("x", () => calls++, { signal: controller.signal });
-            for (let i = 0; i < 300; i++) new EventTarget().addEventListener("x", () => calls++, { signal: controller.signal });
+            for (let i = 0; i < count / 2; i++) new EventTarget().addEventListener("x", () => calls++, { signal: controller.signal });
           })();
-          for (let i = 0; i < 3; i++) {
+          // A collection destroys the targets that nothing refers to, and their listeners with them.
+          let targets;
+          for (let i = 0; i < 10; i++) {
             Bun.gc(true);
             await new Promise(resolve => setImmediate(resolve));
+            targets = heapStats().objectTypeCounts.EventTarget ?? 0;
+            if (targets < count / 10) break;
           }
           kept.dispatchEvent(new Event("x"));
           controller.abort();
           kept.dispatchEvent(new Event("x"));
-          console.log(JSON.stringify({ calls }));
+          console.log(JSON.stringify({ collected: targets < count / 10, calls }));
         `,
       ],
       env,
@@ -216,7 +222,7 @@ describe("addEventListener({ signal }) lifetimes", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode, stderr }).toEqual({
-      stdout: JSON.stringify({ calls: 1 }),
+      stdout: JSON.stringify({ collected: true, calls: 1 }),
       exitCode: 0,
       stderr,
     });
@@ -224,7 +230,7 @@ describe("addEventListener({ signal }) lifetimes", () => {
 
   // These two targets count their "message" listeners to hold the event loop open, so
   // EventTarget::removeEventListener() tells them the event type after the listener is gone.
-  test("abort removes a message listener from the global scope and from a MessagePort", async () => {
+  test.concurrent("abort removes a message listener from the global scope and from a MessagePort", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -341,7 +347,7 @@ describe("addEventListener({ signal }) lifetimes", () => {
 // An AbortSignal.timeout() lives for as long as something can observe its abort
 // (JSAbortSignalOwner::isReachableFromOpaqueRoots). A { signal } listener is
 // such an observer, from addEventListener() until it leaves its target.
-describe("addEventListener({ signal: AbortSignal.timeout() })", () => {
+describe.concurrent("addEventListener({ signal: AbortSignal.timeout() })", () => {
   test("the timeout removes the listener when nothing else refers to the signal", async () => {
     const target = new EventTarget();
     let calls = 0;

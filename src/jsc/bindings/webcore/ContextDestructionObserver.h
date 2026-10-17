@@ -9,9 +9,7 @@
 
 namespace WebCore {
 
-// Linked into its context's observer list (ScriptExecutionContext::m_destructionObservers)
-// from observeContext() until contextDestroyed() or the destructor: two pointer stores each
-// way, and the context's destructor unlinks the head N times instead of draining a hash set.
+// A node of ScriptExecutionContext::m_destructionObservers while it observes a context.
 class ContextDestructionObserver : public AbstractRefCountedAndCanMakeWeakPtr<ContextDestructionObserver>, public BasicRawSentinelNode<ContextDestructionObserver> {
 
 public:

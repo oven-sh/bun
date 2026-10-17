@@ -405,6 +405,8 @@ void MessagePort::contextDestroyed()
 {
     ASSERT(scriptExecutionContext());
 
+    // close() releases the jsRef() self-reference, which can be the last one.
+    Ref protectedThis { *this };
     close();
     ActiveDOMObject::contextDestroyed();
 }

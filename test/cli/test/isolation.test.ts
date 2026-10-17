@@ -1464,8 +1464,9 @@ test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next fil
 test.concurrent("--isolate: destroying a global with many leaked AbortControllers is not quadratic", async () => {
   const count = 50_000;
   using dir = tempDir("isolate-many-observers", {
-    // The first global of the run is not the one measured: a debug build's
-    // outer frames still hold its address, so it is never collected.
+    // The measured global is the second one of the run. On a debug build the
+    // first one survives every GC: TestCommand::exec's frame still holds its
+    // address in stale spill slots.
     "a-first.test.ts": `
       import { test, expect } from "bun:test";
       test("first file", () => {
@@ -1485,11 +1486,14 @@ test.concurrent("--isolate: destroying a global with many leaked AbortController
     `,
     "c-collect.test.ts": `
       import { test, expect } from "bun:test";
+      import { heapStats } from "bun:jsc";
       test("collect the previous file's global", () => {
         const start = performance.now();
         Bun.gc(true);
         console.log("GC_MS=" + (performance.now() - start).toFixed(0));
-        expect(1).toBe(1);
+        // The previous file's global died in that collection, with its
+        // controllers: the timed GC ran the observer drain.
+        expect(heapStats().objectTypeCounts.AbortController ?? 0).toBeLessThan(${count / 10});
       });
     `,
   });
@@ -1511,11 +1515,13 @@ test.concurrent("--isolate: destroying a global with many leaked AbortController
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("3 pass");
   expect(exitCode).toBe(0);
+  expect(stdout).toMatch(/ALLOC_MS=\d+/);
+  expect(stdout).toMatch(/GC_MS=\d+/);
   const allocMs = Number(stdout.match(/ALLOC_MS=(\d+)/)![1]);
   const gcMs = Number(stdout.match(/GC_MS=(\d+)/)![1]);
   // Creating the controllers and collecting them are both linear in count
-  // (about 1.2x each other on a debug build). Before the fix the collection
-  // took 20x the creation on release and debug builds alike.
+  // (1.2x to 1.8x each other on a debug build, under load). Before the fix
+  // the collection took 17x the creation on release and debug builds alike.
   expect(gcMs, `alloc ${allocMs}ms, gc ${gcMs}ms`).toBeLessThan(allocMs * 8);
 });
 

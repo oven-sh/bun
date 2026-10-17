@@ -209,9 +209,8 @@ private:
 
     WeakHashSet<ActiveDOMObject> m_activeDOMObjects;
     WeakHashSet<ScriptExecutionContext> m_ownedGraphContexts;
-    // Linked in the observer's constructor, unlinked in its destructor, both on this
-    // context's thread. Intrusive: nothing allocated per observer, and the destructor's
-    // drain is N head unlinks (a HashSet::takeAny() drain rescans the tombstones, O(N^2)).
+    // Linked from observeContext() until contextDestroyed() or the observer's destructor,
+    // on this context's thread only. Intrusive: nothing allocated per observer.
     SentinelLinkedList<ContextDestructionObserver, BasicRawSentinelNode<ContextDestructionObserver>> m_destructionObservers;
 
     std::atomic<bool> m_activeDOMObjectsAreStopped { false };

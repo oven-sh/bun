@@ -102,12 +102,11 @@ pub(super) struct Inbound {
     pub errored: bool,
 }
 
-/// `buildNgHeaderString`'s `[NUL-joined string, pair count]`, Latin-1 on the
-/// wire as node does (`StringBytes::Write(.., LATIN1)`).
+/// `buildNgHeaderString`'s `[NUL-joined string, pair count]`.
 pub(super) struct HeaderBlock {
+    /// Latin-1 on the wire, as node does (`StringBytes::Write(.., LATIN1)`).
     bytes: Vec<u8>,
-    /// The shim refuses a buffer that does not parse to exactly this many
-    /// pairs. That is what keeps the Latin-1 encode unspliceable.
+    /// The shim sends only a buffer with exactly this many pairs: a NUL from the encode cannot splice one in.
     count: c_int,
     /// The string had no code unit above U+00FF, so the encode changed none.
     lossless: bool,
@@ -126,7 +125,7 @@ impl HeaderBlock {
         })
     }
 
-    /// Whether the shim hands the block to lsquic. It needs no stream to say.
+    /// Whether the shim hands the block to lsquic. No stream is needed to tell.
     pub(super) fn is_sendable(&self) -> bool {
         lsquic::headers_sendable(&self.bytes, self.count, self.lossless)
     }
@@ -153,8 +152,7 @@ pub(crate) struct QuicStream {
     headers_received: Cell<bool>,
     /// RFC 9218 (urgency, incremental).
     priority: Cell<(u8, bool)>,
-    /// Header blocks sent while lsquic has not opened the stream, each with
-    /// its end-of-stream flag. `bind_raw` submits them.
+    /// Header blocks, each with its end-of-stream flag, that wait for lsquic to open the stream.
     pending_headers: JsCell<Vec<(HeaderBlock, bool)>>,
     trailers_requested: Cell<bool>,
     blocked_reported: Cell<bool>,
@@ -577,8 +575,7 @@ impl QuicStream {
         }
     }
 
-    /// The one place a header block goes to lsquic. `false`: lsquic did not
-    /// take it.
+    /// The one place a header block goes to lsquic. `false`: lsquic did not take it.
     fn submit_block(&self, s: lsquic::Stream, block: &HeaderBlock, eos: bool) -> bool {
         if s.send_headers(&block.bytes, block.count, eos) != 0 {
             return false;
@@ -600,8 +597,7 @@ impl QuicStream {
         self.with_state(|s| s.has_outbound = 1);
     }
 
-    /// The header block that came with `openStream`. lsquic takes it now, or
-    /// `bind_raw` submits it when lsquic opens the stream.
+    /// The header block of `openStream`: lsquic takes it now, or `bind_raw` submits it later.
     pub(super) fn send_own_headers(&self, block: HeaderBlock, eos: bool) {
         let Some(s) = self.ls() else {
             self.queue_block(block, eos);
@@ -614,11 +610,7 @@ impl QuicStream {
         }
     }
 
-    /// lsquic refused a header block that node:quic submitted for the caller.
-    /// The caller holds a `true` from `sendHeaders()`, or the stream that
-    /// create*Stream resolved with, and has no refusal to read. The stream
-    /// ends as Node's `Stream::NotifyStreamOpened` ends it, with the
-    /// application's internal error: `stream.closed` rejects with that code.
+    /// The caller has no answer to read for this block, so the stream fails as in Node's `Stream::NotifyStreamOpened`.
     fn fail_refused_block(&self, s: lsquic::Stream) {
         let Some(session) = self.session_ref() else {
             return;
@@ -632,8 +624,7 @@ impl QuicStream {
         self.with_state(|st| st.write_ended = 1);
         s.reset(code);
         s.stop_sending(code);
-        // The two frames are only queued. The close makes lsquic report the
-        // stream closed without an answer from the peer.
+        // Without the close, lsquic reports the stream closed only after the peer answers.
         s.close();
     }
 
@@ -1034,8 +1025,7 @@ impl QuicStream {
         let eos = is_trailing
             || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
         let Some(s) = self.ls() else {
-            // The answer an open stream gives for this block. A `true` here
-            // would queue a block that `bind_raw` can only fail the stream for.
+            // An open stream answers `false` for this block. Queued, it could only fail the stream.
             if !block.is_sendable() {
                 return Ok(JSValue::js_boolean(false));
             }

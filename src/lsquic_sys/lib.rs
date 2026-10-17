@@ -657,8 +657,7 @@ impl Stream {
     }
 }
 
-/// Whether [`Stream::send_headers`] would hand this block to lsquic, answered
-/// with no stream. `lossless`: the Latin-1 encode changed no code unit.
+/// Whether [`Stream::send_headers`] would hand the block to lsquic. `lossless`: the encode changed no code unit.
 pub fn headers_sendable(nul_joined: &[u8], expected: c_int, lossless: bool) -> bool {
     // SAFETY: the shim only reads `nul_joined[..len]`.
     unsafe {

@@ -1283,6 +1283,15 @@ function validateBody(body) {
   throw $ERR_INVALID_ARG_TYPE("options.body", ["string", "ArrayBuffer", "ArrayBufferView", "Blob", "FileHandle"], body);
 }
 
+// What setBody() refuses about a FileHandle, checked where Node's validateBody() checks the lock.
+function validateDeferredFileHandle(body) {
+  if (body[kFileLocked]) {
+    throw $ERR_INVALID_STATE("FileHandle is locked");
+  }
+  // createReadStream() throws EBADF for a closed handle and creates nothing.
+  if (body[kFileHandle] === -1) body.createReadStream();
+}
+
 /**
  * Parses an alternating [name, value, name, value, ...] array from C++
  * into a plain header object. Multi-value headers become arrays.
@@ -1696,8 +1705,7 @@ class QuicStream {
       return stream.#inner.state;
     };
 
-    // What the highWaterMark and on* setters store. #createStream makes their
-    // checks before it opens the stream, so that none can refuse an open one.
+    // What the highWaterMark and on* setters store. #createStream checks the values before it opens the stream.
     initLocalStream = function (stream, highWaterMark, onheaders, ontrailers, oninfo, onwanttrailers) {
       const inner = stream.#inner;
       const { state } = inner;
@@ -2620,9 +2628,7 @@ class QuicStream {
     const inner = this.#inner;
 
     if (inner.pendingTrailers) {
-      // As Node v26.10.0 does (v26.3.0 lets the throw out of the callback and
-      // drops the answer):
-      // https://github.com/nodejs/node/blob/v26.10.0/lib/internal/quic/quic.js#L2794-L2807
+      // Node v26.10.0: https://github.com/nodejs/node/blob/v26.10.0/lib/internal/quic/quic.js#L2794-L2807
       let sent;
       try {
         sent = this.sendTrailers(inner.pendingTrailers);
@@ -3291,21 +3297,10 @@ class QuicSession {
     const deferredBody = body !== undefined && (isBlob(body) || FileHandle.isFileHandle(body));
     const validatedBody = deferredBody ? undefined : validateBody(body);
     if (deferredBody && FileHandle.isFileHandle(body)) {
-      // setBody() takes the lock once the stream is open. Node checks it at
-      // this point, in validateBody().
-      if (body[kFileLocked]) {
-        throw $ERR_INVALID_STATE("FileHandle is locked");
-      }
-      // setBody() reads the handle with createReadStream(), which throws for a
-      // closed handle and makes nothing.
-      if (body[kFileHandle] === -1) body.createReadStream();
+      validateDeferredFileHandle(body);
     }
 
-    // Node makes the checks from here to the header block on a stream that it
-    // already opened, and leaves that stream open when one of them throws:
-    // https://github.com/nodejs/node/blob/v26.10.0/lib/internal/quic/quic.js#L3465-L3500
-    // An open stream holds a stream ID that only a reset gives back, so the
-    // checks run first here, in Node's order.
+    // Node checks these on the open stream and leaves it open on a throw: https://github.com/nodejs/node/blob/v26.10.0/lib/internal/quic/quic.js#L3465-L3500
     validateInteger(highWaterMark, "highWaterMark", 0, 0xffffffff);
     if (onheaders) {
       validateFunction(onheaders, "onheaders");
@@ -3340,8 +3335,7 @@ class QuicSession {
       packedPriority = (urgency << 1) | (incremental ? 1 : 0);
     }
 
-    // The priority and the header block go with the open: the native side
-    // opens a stream only for a header block that it can send.
+    // The native side opens a stream only for a header block that it can send.
     const handle = this.#handle.openStream(
       direction,
       validatedBody,
@@ -3353,8 +3347,7 @@ class QuicSession {
       throw ERR_QUIC_OPEN_STREAM_FAILED();
     }
     if (handle === false) {
-      // No stream was opened. Node opens one, drops the `false` that
-      // sendHeaders() answers and resolves with a stream that sent no headers.
+      // No stream was opened. Node opens one and drops the `false` of sendHeaders().
       throw ERR_QUIC_STREAM_ABORTED("Failed to submit headers");
     }
 

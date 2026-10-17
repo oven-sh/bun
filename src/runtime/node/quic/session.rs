@@ -614,9 +614,7 @@ impl QuicSession {
     pub(super) fn is_server(&self) -> bool {
         self.is_server.get()
     }
-    /// Node's `Application::GetInternalErrorCode`. The state buffer gets the
-    /// HTTP/3 code only when the handshake is reported, and lsquic opens the
-    /// streams that waited for the handshake before that.
+    /// Node's `Application::GetInternalErrorCode`. `state` has the HTTP/3 code only after the handshake report.
     pub(super) fn internal_error_code(&self) -> u64 {
         let is_http = self
             .endpoint_ref()
@@ -2080,8 +2078,7 @@ impl QuicSession {
         }
         let [direction, body, priority, headers, terminal] = frame.arguments_as_array::<5>();
         let unidirectional = direction.is_number() && direction.as_number() == 1.0;
-        // lsquic cannot take a stream ID back. Everything that can throw or
-        // refuse the call runs before the stream exists.
+        // lsquic cannot take a stream back: every throw and refusal comes before the stream exists.
         let priority = if priority.is_undefined() {
             None
         } else {
@@ -2104,8 +2101,6 @@ impl QuicSession {
             frame.this(),
             null_mut(),
         )?;
-        // SAFETY: `qs` was just created, and its wrapper roots it.
-        let stream = unsafe { &*qs };
         if unidirectional {
             self.pending_local_uni.with_mut(|q| q.push_back(qs));
         } else {
@@ -2114,16 +2109,21 @@ impl QuicSession {
         self.streams.with_mut(|v| v.push(qs));
         self.bump_stream_stat(if unidirectional { STREAM_ID_UNI_BIT } else { 0 }, true);
         if let Some(buf) = body.as_array_buffer(global) {
-            stream.outbound.with_mut(|o| {
-                o.started = true;
-                o.data.extend(buf.byte_slice().iter().copied());
-                o.end = super::stream::PendingEnd::Fin;
-            });
-            // As attach_source/init_streaming_source/send_headers do: this
-            // is what makes a later setOutbound() throw instead of
-            // appending a second body.
-            stream.with_state(|s| s.has_outbound = 1);
+            // SAFETY: `qs` was just created.
+            unsafe {
+                (*qs).outbound.with_mut(|o| {
+                    o.started = true;
+                    o.data.extend(buf.byte_slice().iter().copied());
+                    o.end = super::stream::PendingEnd::Fin;
+                });
+                // As attach_source/init_streaming_source/send_headers do: this
+                // is what makes a later setOutbound() throw instead of
+                // appending a second body.
+                (*qs).with_state(|s| s.has_outbound = 1);
+            }
         }
+        // SAFETY: `qs` was just created, and its wrapper roots it.
+        let stream = unsafe { &*qs };
         if let Some(packed) = priority {
             stream.apply_priority(packed);
         }
@@ -2135,8 +2135,7 @@ impl QuicSession {
                 conn.make_stream();
             }
         }
-        // After the request, so that a stream lsquic opens at once takes the
-        // block with no queue entry. The engine has not run yet.
+        // After make_stream: a stream that lsquic opened at once takes the block with no queue entry.
         if let Some(block) = block {
             stream.send_own_headers(block, terminal.to_boolean());
         }

@@ -78,17 +78,12 @@ This is called when the event loop is active and needs to wait for I/O:
                │
                ▼
 ┌─────────────────────────────────────┐
-│  2. Update date header timer        │
+│  2. Process GC timer                │
 └──────────────┬──────────────────────┘
                │
                ▼
 ┌─────────────────────────────────────┐
-│  3. Process GC timer                │
-└──────────────┬──────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────┐
-│  4. Poll I/O via uSockets            │ ← epoll_wait/kevent with timeout
+│  3. Poll I/O via uSockets            │ ← epoll_wait/kevent with timeout
 │     (epoll_kqueue.c:251-320)        │
 │     - Dispatch ready polls          │
 │     - Each I/O event treated as task│
@@ -96,17 +91,17 @@ This is called when the event loop is active and needs to wait for I/O:
                │
                ▼
 ┌─────────────────────────────────────┐
-│  5. Drain timers (POSIX)            │ ← setTimeout/setInterval callbacks
+│  4. Drain timers (POSIX)            │ ← setTimeout/setInterval callbacks
 └──────────────┬──────────────────────┘
                │
                ▼
 ┌─────────────────────────────────────┐
-│  6. Call VM.onAfterEventLoop()      │
+│  5. Call VM.onAfterEventLoop()      │
 └──────────────┬──────────────────────┘
                │
                ▼
 ┌─────────────────────────────────────┐
-│  7. Handle rejected promises        │
+│  6. Handle rejected promises        │
 └─────────────────────────────────────┘
 ```
 

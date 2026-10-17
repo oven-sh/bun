@@ -4,18 +4,17 @@
 //! this file is loaded as `pub mod timer;` from `mod.rs` (codegen
 //! path `crate::timer::timer::*`). The canonical struct definitions (`All`,
 //! `Kind`, `Maps`, `TimeoutObject`, `ImmediateObject`, `TimerObjectInternals`,
-//! `DateHeaderTimer`, …) live in `mod.rs`; this module only adds the JS-facing
+//! …) live in `mod.rs`; this module only adds the JS-facing
 //! `impl super::All { … }` surface plus the C-ABI export thunks.
 
 use bun_core::String as BunString;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _};
-use bun_uws::Loop as UwsLoop;
 
 use super::{
-    All, CountdownOverflowBehavior, DateHeaderTimer, EventLoopTimer, EventLoopTimerState,
-    EventLoopTimerTag, ImmediateObject, Kind, TimeoutObject, TimeoutWarning, TimerObjectInternals,
+    All, CountdownOverflowBehavior, EventLoopTimer, EventLoopTimerTag, ImmediateObject, Kind,
+    TimeoutObject, TimeoutWarning, TimerObjectInternals,
 };
 use crate::jsc_hooks::{timer_all, timer_all_mut};
 
@@ -34,36 +33,6 @@ impl All {
         unsafe {
             (*all).last_id = (*all).last_id.wrapping_add(1);
             (*all).last_id
-        }
-    }
-
-    /// # Safety
-    /// `vm` must point to the live per-thread `VirtualMachine`.
-    // Forwards `vm` to `DateHeaderTimer::enable` without dereferencing it here;
-    // the raw pointer is intentional (avoids aliased-`&mut` across the
-    // jsc/runtime crate cycle — see DateHeaderTimer.rs).
-    pub(crate) fn update_date_header_timer_if_necessary(
-        &mut self,
-        loop_: &UwsLoop,
-        vm: *mut VirtualMachine,
-    ) {
-        if loop_.should_enable_date_header_timer() {
-            // `is_date_timer_active()` is private to mod.rs; inline.
-            if self.date_header_timer.event_loop_timer.state != EventLoopTimerState::ACTIVE {
-                // SAFETY: caller contract guarantees `vm` is valid.
-                unsafe {
-                    self.date_header_timer.enable(
-                        vm,
-                        // Be careful to avoid adding extra calls to bun.timespec.now()
-                        // when it's not needed.
-                        &Timespec::now(TimespecMockMode::ForceRealTime),
-                    );
-                }
-            }
-        } else {
-            // don't un-schedule it here.
-            // it's better to wake up an extra 1 time after a second idle
-            // than to have to check a date potentially on every single HTTP request.
         }
     }
 
@@ -449,59 +418,6 @@ impl All {
         bun_jsc::mark_binding!();
         Self::clear_timer(id, global_this, Kind::SetInterval)?;
         Ok(JSValue::UNDEFINED)
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Method bodies on canonical sibling types (`mod.rs` definitions).
-// ════════════════════════════════════════════════════════════════════════════
-
-// `TimeoutObject::{init, from_js}` and `ImmediateObject::{init, from_js}` now
-// live in `super::{timeout_object, immediate_object}`; the inherent `init`
-// constructor and the `JsClass`-derived `from_js` are re-exported via
-// `super::{TimeoutObject, ImmediateObject}`.
-
-impl DateHeaderTimer {
-    /// Schedule the "Date" header timer.
-    ///
-    /// The logic handles two scenarios:
-    /// 1. If the timer was recently updated (< 1 second ago), just reschedule it
-    /// 2. If the timer is stale (> 1 second since last update), update the date
-    ///    immediately and reschedule
-    ///
-    /// # Safety
-    /// `vm` must point to the live per-thread `VirtualMachine`; its `uws_loop()`
-    /// must outlive this call.
-    unsafe fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
-        debug_assert!(self.event_loop_timer.state != EventLoopTimerState::ACTIVE);
-
-        // `EventLoopTimer.next` is the lower-tier `ElTimespec` stub
-        // (same `{sec,nsec}` layout) until bun_event_loop switches to bun_core::Timespec.
-        let last_update = Timespec {
-            sec: self.event_loop_timer.next.sec,
-            nsec: self.event_loop_timer.next.nsec,
-        };
-        let elapsed = now.duration(&last_update).ms();
-
-        // If the last update was more than 1 second ago, the date is stale
-        if elapsed >= 1000 {
-            // Update the date immediately since it's stale
-            // updateDate() is an expensive function.
-            // SAFETY: `vm` is the live per-thread VM; `uws_loop()` returns its
-            // owned uws loop, which outlives this call.
-            unsafe { (*(*vm).uws_loop()).update_date() };
-
-            let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-            // SAFETY: single JS thread; nothing `All::update` touches overlaps
-            // `date_header_timer`, which `self` aliases (raw-ptr-per-field
-            // re-entry pattern, see jsc_hooks.rs).
-            unsafe { (*Self::timer_all()).update(elt, &now.add_ms(1000)) };
-        } else {
-            // The date was updated recently, just reschedule for the next second
-            let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-            // SAFETY: see above — disjoint-field access on `All`.
-            unsafe { (*Self::timer_all()).insert(elt) };
-        }
     }
 }
 

@@ -19,10 +19,12 @@
 #define UWS_LOOPDATA_H
 
 #include <cstdint>
+#include <cstdio>
 #include <ctime>
 #include <functional>
 #include <map>
 #include <mutex>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -70,7 +72,6 @@ public:
     LoopData() {
         corkSlots[0].buffer = new char[CORK_BUFFER_SIZE];
         corkSlots[1].buffer = new char[CORK_BUFFER_SIZE];
-        updateDate();
     }
 
     ~LoopData() {
@@ -166,8 +167,46 @@ public:
         return nullptr;
     }
 
-    void updateDate() {
-        time_t now = time(0);
+    /* "Date: <IMF-fixdate>\r\n" for the second in which this is called. The readers are the
+     * writeMark() of each HTTP version, so a response that writes a Date carries the second it
+     * is written in. Nothing refreshes the text in between: a loop that writes no response
+     * never formats it. */
+    std::string_view dateHeaderLine() {
+        time_t now = currentSecond();
+        /* != and not <: the wall clock can step back. */
+        if (now != dateSecond) [[unlikely]] {
+            formatDate(now);
+        }
+        return {dateLine, DATE_LINE_LENGTH};
+    }
+
+    /* The 29-byte IMF-fixdate inside dateHeaderLine(). */
+    std::string_view dateHeaderValue() {
+        return dateHeaderLine().substr(DATE_VALUE_OFFSET, DATE_VALUE_LENGTH);
+    }
+
+private:
+    static constexpr unsigned int DATE_VALUE_OFFSET = 6;
+    static constexpr unsigned int DATE_VALUE_LENGTH = 29;
+    static constexpr unsigned int DATE_LINE_LENGTH = DATE_VALUE_OFFSET + DATE_VALUE_LENGTH + 2;
+
+    /* Always a matching pair, from construction on. */
+    time_t dateSecond = 0;
+    char dateLine[DATE_LINE_LENGTH + 1] = "Date: Thu, 01 Jan 1970 00:00:00 GMT\r\n";
+
+    static time_t currentSecond() {
+#if defined(__linux__) && !(defined(__GLIBC__) && defined(__x86_64__))
+        /* The second the kernel keeps in the vDSO. time() returns it only on x86-64 glibc;
+         * musl, and glibc before 2.31 on aarch64, read the full clock for time(). */
+        struct timespec now;
+        if (clock_gettime(CLOCK_REALTIME_COARSE, &now) == 0) [[likely]] {
+            return now.tv_sec;
+        }
+#endif
+        return time(nullptr);
+    }
+
+    void formatDate(time_t now) {
         struct tm tstruct = {};
 #ifdef _WIN32
         gmtime_s(&tstruct, &now);
@@ -181,7 +220,7 @@ public:
             "Jan", "Feb", "Mar", "Apr", "May", "Jun",
             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
         };
-        snprintf(date, 32, "%.3s, %.2u %.3s %.4u %.2u:%.2u:%.2u GMT",
+        snprintf(dateLine, sizeof(dateLine), "Date: %.3s, %.2u %.3s %.4u %.2u:%.2u:%.2u GMT\r\n",
             wday_name[tstruct.tm_wday],
             tstruct.tm_mday % 99,
             mon_name[tstruct.tm_mon],
@@ -189,10 +228,10 @@ public:
             tstruct.tm_hour % 99,
             tstruct.tm_min % 99,
             tstruct.tm_sec % 99);
+        dateSecond = now;
     }
 
-    char date[32];
-
+public:
     /* Good 16k for SSL perf. */
     static constexpr unsigned int CORK_BUFFER_SIZE = 128 * 1024;
     /* A longer write is not copied into the cork buffer: it goes out behind it in one vectored write. */

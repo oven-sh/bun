@@ -46,8 +46,6 @@
 extern const size_t Bun__lock__size;
 #endif
 
-extern void Bun__internal_ensureDateHeaderTimerIsEnabled(struct us_loop_t *loop);
-
 #ifdef LIBUS_USE_LIBUV
 
 void sweep_timer_cb(struct us_internal_callback_t *cb);
@@ -59,7 +57,6 @@ void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_timer_count++;
     if (loop->data.sweep_timer_count == 1) {
         us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb, LIBUS_TIMEOUT_GRANULARITY * 1000, LIBUS_TIMEOUT_GRANULARITY * 1000);
-        Bun__internal_ensureDateHeaderTimerIsEnabled(loop);
     }
 }
 
@@ -84,7 +81,6 @@ void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_timer_count++;
     if (loop->data.sweep_timer_count == 1) {
         loop->data.sweep_next_tick_ns = (long long) us_internal_monotonic_ns() + LIBUS_TIMEOUT_GRANULARITY_NS;
-        Bun__internal_ensureDateHeaderTimerIsEnabled(loop);
     }
 }
 

@@ -1125,9 +1125,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         match self.io() {
             // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
             Io::Socket => usize::try_from(self.tcp.get().write(bytes)).ok(),
-            // Like a socket, a tunnel that refuses a write took 0 bytes: `handle_tunnel_writable` follows
-            // (a renegotiation ended) or `handle_tunnel_close` (a read failed, its data comes first).
-            Io::Tunnel(tunnel) => Some(WebSocketProxyTunnel::write(tunnel, bytes).unwrap_or(0)),
+            Io::Tunnel(tunnel) => match WebSocketProxyTunnel::write(tunnel, bytes) {
+                Ok(wrote) => Some(wrote),
+                // Like a socket, a tunnel that refuses a write took 0 bytes: `handle_tunnel_writable` follows
+                // (a renegotiation ended) or `handle_tunnel_close` (a read failed, its data comes first).
+                Err(_) => Some(0),
+            },
             Io::Stream => {
                 self.cpp_websocket()?.stream_write(bytes);
                 Some(bytes.len())

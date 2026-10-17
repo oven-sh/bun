@@ -42,8 +42,8 @@ pub const SHARED_STRING_MIN_LEN: usize = 64;
 /// What [`YAML::parse_shared`] returns.
 pub struct Parsed {
     pub root: Expr,
-    /// A string node of [`SHARED_STRING_MIN_LEN`] bytes or more can be reached from more than one
-    /// place of `root`: an alias refers to it, or a `<<` copied a property that has it.
+    /// A string node of [`SHARED_STRING_MIN_LEN`] bytes or more may be reached from more than one
+    /// place of `root`: an alias refers to it, or to what a `<<` copies a property with it out of.
     pub shares_long_strings: bool,
 }
 
@@ -1757,6 +1757,7 @@ fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr, long_keys: Option<&MergeKeyMemo>)
 }
 
 /// Encoding-independent companion to [`yaml_merge_key_expr_eql`].
+#[inline]
 fn yaml_merge_key_expr_hash(
     key: &Expr,
     long_keys: &mut Option<Box<MergeKeyMemo>>,
@@ -1766,7 +1767,7 @@ fn yaml_merge_key_expr_hash(
         ast::ExprData::EBoolean(b) => 1 + b.value as u64,
         ast::ExprData::ENumber(n) => yaml_merge_key_number_bits(n.value()),
         ast::ExprData::EString(s) if MergeKeyMemo::remembers(s) => {
-            long_keys.get_or_insert_default().hash(*s)?
+            MergeKeyMemo::hash(long_keys, *s)?
         }
         ast::ExprData::EString(s) => s.hash(),
         ast::ExprData::EArray(a) => a.as_ptr() as usize as u64,
@@ -1812,27 +1813,29 @@ impl MergeKeyMemo {
         Some(l == r)
     }
 
+    /// `s.hash()`, read from the text once per node. The first key allocates the memo.
     #[inline(never)]
-    fn hash(&mut self, s: ast::StoreRef<E::String>) -> Result<u64, AllocError> {
+    fn hash(memo: &mut Option<Box<Self>>, s: ast::StoreRef<E::String>) -> Result<u64, AllocError> {
+        let memo = memo.get_or_insert_default();
         let node = s.as_ptr().cast_const();
-        if let Some((hash, _)) = self.nodes.get(&node) {
+        if let Some((hash, _)) = memo.nodes.get(&node) {
             return Ok(*hash);
         }
         let hash = s.hash();
-        let same_hash = self.by_hash.get_or_put(hash)?.value_ptr;
+        let same_hash = memo.by_hash.get_or_put(hash)?.value_ptr;
         let text = match same_hash
             .iter()
-            .find(|text| self.texts[**text as usize].data == s.data)
+            .find(|text| memo.texts[**text as usize].data == s.data)
         {
             Some(text) => *text,
             None => {
-                let text = self.texts.len() as u32;
+                let text = memo.texts.len() as u32;
                 same_hash.push(text);
-                self.texts.push(s);
+                memo.texts.push(s);
                 text
             }
         };
-        self.nodes.put(node, (hash, text))?;
+        memo.nodes.put(node, (hash, text))?;
         Ok(hash)
     }
 }
@@ -2290,8 +2293,9 @@ pub struct Parser<'i, Enc: Encoding> {
 
     pub(crate) explicit_document_start_line: Option<Line>,
 
-    /// The node of each anchor and the stack it took to parse it; see `parse_node`.
-    pub(crate) anchors: StringHashMap<(Expr, usize)>,
+    /// The node of each anchor, the stack it took to parse it (see `parse_node`), and what
+    /// `shares_long_string` says of the node.
+    pub(crate) anchors: StringHashMap<(Expr, usize, bool)>,
     /// Anchored collections enclosing the current position, innermost last.
     /// Pushed/popped only by `parse_collection`.
     pub(crate) open_collections: Vec<OpenCollection>,
@@ -3365,35 +3369,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             _ => false,
         };
 
-        if is_merge_key {
-            self.reject_open_merge_source(&value)?;
-            let own = props.list.len();
-            match &value.data {
-                ast::ExprData::EObject(value_obj) => {
-                    props.merge(
-                        value_obj.properties.slice(),
-                        &mut self.merge_props_budget,
-                        &mut self.long_merge_keys,
-                    )?;
-                    self.note_merged(&props.list.slice()[own..]);
-                    return Ok(());
-                }
-                ast::ExprData::EArray(value_arr) => {
-                    for item in value_arr.items.slice() {
-                        if let ast::ExprData::EObject(item_obj) = &item.data {
-                            self.reject_open_merge_source(item)?;
-                            props.merge(
-                                item_obj.properties.slice(),
-                                &mut self.merge_props_budget,
-                                &mut self.long_merge_keys,
-                            )?;
-                        }
-                    }
-                    self.note_merged(&props.list.slice()[own..]);
-                    return Ok(());
-                }
-                _ => {}
-            }
+        if is_merge_key && self.merge_entry(props, &value)? {
+            return Ok(());
         }
 
         Ok(props.append(G::Property {
@@ -3403,16 +3380,34 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         })?)
     }
 
-    /// A property that a `<<` appended is a property of its source too, so its key and its value
-    /// are reached from both.
-    fn note_merged(&mut self, merged: &[G::Property]) {
-        self.shares_long_strings = self.shares_long_strings
-            || merged.iter().any(|property| {
-                [property.key, property.value]
-                    .iter()
-                    .flatten()
-                    .any(is_long_string)
-            });
+    /// `true` when `value` is what a `<<` merges, and it is now merged into `props`.
+    /// Not inlined: `append_entry` runs for every entry of every mapping.
+    #[inline(never)]
+    fn merge_entry(&mut self, props: &mut MappingProps, value: &Expr) -> Result<bool, ParseError> {
+        self.reject_open_merge_source(value)?;
+        match &value.data {
+            ast::ExprData::EObject(value_obj) => {
+                props.merge(
+                    value_obj.properties.slice(),
+                    &mut self.merge_props_budget,
+                    &mut self.long_merge_keys,
+                )?;
+            }
+            ast::ExprData::EArray(value_arr) => {
+                for item in value_arr.items.slice() {
+                    if let ast::ExprData::EObject(item_obj) = &item.data {
+                        self.reject_open_merge_source(item)?;
+                        props.merge(
+                            item_obj.properties.slice(),
+                            &mut self.merge_props_budget,
+                            &mut self.long_merge_keys,
+                        )?;
+                    }
+                }
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
     }
 
     fn reject_open_merge_source(&mut self, node: &Expr) -> Result<(), ParseError> {
@@ -3467,6 +3462,26 @@ fn collection_id(node: &Expr) -> Option<usize> {
 
 fn is_long_string(node: &Expr) -> bool {
     matches!(&node.data, ast::ExprData::EString(s) if s.data.len() >= SHARED_STRING_MIN_LEN)
+}
+
+/// Whether an alias of `node` gives a long string a second place: `node` is one, or it is what a
+/// `<<` copies such a key or value out of (a mapping, or a sequence of mappings).
+fn shares_long_string(node: &Expr) -> bool {
+    fn has_long_string(mapping: &E::Object) -> bool {
+        mapping.properties.slice().iter().any(|property| {
+            [property.key, property.value]
+                .iter()
+                .flatten()
+                .any(is_long_string)
+        })
+    }
+    match &node.data {
+        ast::ExprData::EObject(mapping) => has_long_string(mapping),
+        ast::ExprData::EArray(sequence) => sequence.items.slice().iter().any(
+            |item| matches!(&item.data, ast::ExprData::EObject(mapping) if has_long_string(mapping)),
+        ),
+        _ => is_long_string(node),
+    }
 }
 
 /// Collection node payloads. The node is allocated when its opening token is
@@ -3536,8 +3551,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     #[allow(clippy::needless_pass_by_value)]
     fn bind_anchor(&mut self, anchor: PendingAnchor, node: Expr) -> Result<(), AllocError> {
         let stack = self.close_anchor(&anchor);
-        self.anchors
-            .put(Enc::key_bytes(anchor.name.slice(self.input)), (node, stack))
+        self.anchors.put(
+            Enc::key_bytes(anchor.name.slice(self.input)),
+            (node, stack, shares_long_string(&node)),
+        )
     }
 
     /// Parses a collection node: it is allocated (empty) before `body` parses
@@ -3578,9 +3595,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// resolves exactly as it would without cycle support. Only a name that
     /// would otherwise be unresolved is looked up among the enclosing
     /// collections still being parsed (innermost first): a cyclic alias.
-    fn resolve_alias(&mut self, name: StringRange) -> Result<(Expr, usize), ParseError> {
+    fn resolve_alias(&mut self, name: StringRange) -> Result<(Expr, usize, bool), ParseError> {
         if self.written.is_some() {
-            return Ok((Expr::init(E::Boolean { value: false }, Loc::EMPTY), 0));
+            return Ok((
+                Expr::init(E::Boolean { value: false }, Loc::EMPTY),
+                0,
+                false,
+            ));
         }
         let name = name.slice(self.input);
         if let Some(anchored) = self.anchors.get(Enc::key_bytes(name)) {
@@ -3599,7 +3620,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             CyclicAliases::Reject => Err(ParseError::CyclicAlias),
             CyclicAliases::Allow => {
                 self.has_cyclic_alias = true;
-                Ok((node, 0))
+                Ok((node, 0, false))
             }
         }
     }
@@ -4135,8 +4156,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     }
 
-                    let (mut copy, stack) = self.resolve_alias(alias)?;
-                    self.shares_long_strings |= is_long_string(&copy);
+                    let (mut copy, stack, shares_long_string) = self.resolve_alias(alias)?;
+                    self.shares_long_strings |= shares_long_string;
 
                     self.least_stack_left = stack_left
                         .checked_sub(stack)

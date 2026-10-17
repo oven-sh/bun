@@ -213,6 +213,50 @@ timestamp: 2024-01-15 10:30:00.123456789 -05:00
 canonical: 2024-01-15T10:30:00.123456789Z
 `;
 
+// Docker Compose style: one anchored mapping merged into every service
+const mergeKeysYaml = `
+x-defaults: &defaults
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+  networks:
+    - backend
+  environment:
+    NODE_ENV: production
+    LOG_LEVEL: info
+  deploy:
+    resources:
+      limits:
+        memory: 512M
+
+services:
+${Array.from(
+  { length: 50 },
+  (_, i) => `  service${i}:
+    <<: *defaults
+    image: registry.example.com/team/service${i}:1.${i}.0
+    ports:
+      - "${3000 + i}:3000"
+`,
+).join("")}`;
+
+// One long string that many nodes refer to by alias
+const aliasedStringYaml = `
+notice: &notice >-
+  Licensed under the Apache License, Version 2.0 (the "License"); you may not
+  use this file except in compliance with the License. You may obtain a copy
+  of the License at http://www.apache.org/licenses/LICENSE-2.0
+packages:
+${Array.from(
+  { length: 100 },
+  (_, i) => `  - name: package-${i}
+    version: 1.${i}.0
+    notice: *notice
+`,
+).join("")}`;
+
 // Parse benchmarks
 group("parse small YAML", () => {
   if (typeof Bun !== "undefined" && Bun.YAML) {
@@ -339,6 +383,38 @@ group("parse YAML with dates", () => {
 
   bench("yaml.parse", () => {
     globalThis.result = yaml.parse(datesYaml);
+  });
+});
+
+group("parse YAML with merge keys", () => {
+  if (typeof Bun !== "undefined" && Bun.YAML) {
+    bench("Bun.YAML.parse", () => {
+      globalThis.result = Bun.YAML.parse(mergeKeysYaml);
+    });
+  }
+
+  bench("js-yaml.load", () => {
+    globalThis.result = jsYaml.load(mergeKeysYaml);
+  });
+
+  bench("yaml.parse", () => {
+    globalThis.result = yaml.parse(mergeKeysYaml, { merge: true });
+  });
+});
+
+group("parse YAML with an aliased long string", () => {
+  if (typeof Bun !== "undefined" && Bun.YAML) {
+    bench("Bun.YAML.parse", () => {
+      globalThis.result = Bun.YAML.parse(aliasedStringYaml);
+    });
+  }
+
+  bench("js-yaml.load", () => {
+    globalThis.result = jsYaml.load(aliasedStringYaml);
+  });
+
+  bench("yaml.parse", () => {
+    globalThis.result = yaml.parse(aliasedStringYaml, { maxAliasCount: -1 });
   });
 });
 

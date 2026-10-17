@@ -5662,25 +5662,44 @@ describe("a small document does not make the parser read one key or one string a
     30_000,
   );
 
-  test("a long string that an alias or a merge key shares is one JS string", () => {
-    const text = Buffer.alloc(100_000, "x").toString();
+  test.each<{
+    name: string;
+    text: (long: string, count: number) => string;
+    value: (parsed: any) => unknown;
+    expected: (long: string, count: number) => unknown;
+  }>([
+    {
+      name: "that many aliases refer to",
+      text: (long, count) => `x: &x ${long}\nb: [${repeat("*x,", count)}]\n`,
+      value: parsed => parsed.b,
+      expected: (long, count) => new Array(count).fill(long),
+    },
+    {
+      name: "in a mapping that many merge keys refer to",
+      text: (long, count) => `s: &s {k: ${long}}\nt:\n${repeat("  - {<<: *s}\n", count)}`,
+      value: parsed => parsed.t,
+      expected: (long, count) => new Array(count).fill({ k: long }),
+    },
+    {
+      name: "in a sequence of mappings that many merge keys refer to",
+      text: (long, count) => `s: &s [{j: 1}, {k: ${long}}]\nt:\n${repeat("  - {<<: *s}\n", count)}`,
+      value: parsed => parsed.t,
+      expected: (long, count) => new Array(count).fill({ j: 1, k: long }),
+    },
+  ])("a long string $name is one JS string", ({ text, value, expected }) => {
+    const long = Buffer.alloc(100_000, "x").toString();
     const count = 200;
+    const input = text(long, count);
+
+    Bun.gc(true);
+    const before = heapStats().extraMemorySize;
+    const parsed = YAML.parse(input);
+    Bun.gc(true);
     // The bytes that strings hold outside the JS heap, more than before the parse.
-    function parse(input: string) {
-      Bun.gc(true);
-      const before = heapStats().extraMemorySize;
-      const parsed = YAML.parse(input) as any;
-      Bun.gc(true);
-      return { parsed, grown: heapStats().extraMemorySize - before };
-    }
+    const grown = heapStats().extraMemorySize - before;
 
-    const aliased = parse(`x: &x ${text}\nb: [${repeat("*x,", count)}]\n`);
-    expect(aliased.parsed.b).toEqual(new Array(count).fill(text));
-    expect(aliased.grown).toBeLessThan((count * text.length) / 10);
-
-    const merged = parse(`s: &s {k: ${text}}\nt:\n${repeat("  - {<<: *s}\n", count)}`);
-    expect(merged.parsed.t).toEqual(new Array(count).fill({ k: text }));
-    expect(merged.grown).toBeLessThan((count * text.length) / 10);
+    expect(value(parsed)).toEqual(expected(long, count));
+    expect(grown).toBeLessThan((count * long.length) / 10);
   });
 });
 

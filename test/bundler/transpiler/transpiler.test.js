@@ -2330,6 +2330,220 @@ export default class {
       trimUnusedImports: true,
     });
 
+    describe("a name that a re-export exports", () => {
+      const replace = (entries, options) => ({ exports: { replace: entries }, ...options });
+      const printed = stdout => ({ stdout, stderr: "", exitCode: 0, signalCode: null });
+
+      // [options, source, printed module, exports that scan() reports]
+      const rows = [
+        [
+          replace({ ReadStream: "x" }),
+          `export { ReadStream, WriteStream } from "node:fs"`,
+          `export var ReadStream = "x";\nexport { WriteStream } from "node:fs";\n`,
+          ["ReadStream", "WriteStream"],
+        ],
+        [
+          replace({ a: 1, c: 3 }),
+          `export { a, b, c } from "x"`,
+          `export var a = 1;\nexport var c = 3;\nexport { b } from "x";\n`,
+          ["a", "b", "c"],
+        ],
+        [
+          replace({ bb: 1 }),
+          `export { a as bb, b } from "x"`,
+          `export var bb = 1;\nexport { b } from "x";\n`,
+          ["b", "bb"],
+        ],
+        [replace({ a: 1 }), `export { a as bb } from "x"`, `export { a as bb } from "x";\n`, ["bb"]],
+        [
+          replace({ b: 1 }),
+          `export { "s t" as b, c } from "x"`,
+          `export var b = 1;\nexport { c } from "x";\n`,
+          ["b", "c"],
+        ],
+        [
+          replace({ abc: 1 }),
+          `export { \\u0061bc, c } from "x"`,
+          `export var abc = 1;\nexport { c } from "x";\n`,
+          ["abc", "c"],
+        ],
+        [
+          replace({ a: 1 }),
+          `export { default as a, b } from "x"`,
+          `export var a = 1;\nexport { b } from "x";\n`,
+          ["a", "b"],
+        ],
+        [
+          replace({ default: 1 }),
+          `export { default, b } from "x"`,
+          `export default 1;\nexport { b } from "x";\n`,
+          ["b", "default"],
+        ],
+        [
+          replace({ default: 1 }),
+          `export { a as default, b } from "x"`,
+          `export default 1;\nexport { b } from "x";\n`,
+          ["b", "default"],
+        ],
+        [
+          replace({ a: ["default", 1] }),
+          `export { a, b } from "x"`,
+          `export default 1;\nexport { b } from "x";\n`,
+          ["b", "default"],
+        ],
+        // The entry that makes `export default` is the only entry that applies to it.
+        [
+          replace({ a: ["default", 1], default: 2 }),
+          `export { a, b } from "x"`,
+          `export default 1;\nexport { b } from "x";\n`,
+          ["b", "default"],
+        ],
+        [
+          replace({ a: ["default", 1], default: ["N", 2] }),
+          `export { a, b } from "x"`,
+          `export default 1;\nexport { b } from "x";\n`,
+          ["b", "default"],
+        ],
+        [
+          replace({ a: ["N", true] }),
+          `export { a, b } from "x"`,
+          `export var N = true;\nexport { b } from "x";\n`,
+          ["N", "b"],
+        ],
+        [
+          { exports: { eliminate: ["bb", "default"] } },
+          `export { a as bb, c, default } from "x"`,
+          `export { c } from "x";\n`,
+          ["c"],
+        ],
+        [replace({ ns: 1 }), `export * as ns from "x"`, `export var ns = 1;\n`, ["ns"]],
+        [replace({ default: 1 }), `export * as default from "x"`, `export default 1;\n`, ["default"]],
+        [replace({ ns: ["default", 1] }), `export * as ns from "x"`, `export default 1;\n`, ["default"]],
+        // An entry that eliminates or injects does not declare the name of the re-export.
+        [{ exports: { eliminate: ["ns"] } }, `const ns = 1; export * as ns from "x"`, `const ns = 1;\n`, []],
+        [
+          replace({ ns: ["N", 2] }),
+          `const ns = 1; export * as ns from "x"`,
+          `const ns = 1;\nexport var N = 2;\n`,
+          ["N"],
+        ],
+        [
+          replace({ ReadStream: 1 }, { minify: { identifiers: true } }),
+          `const local = f(); g(local); export { ReadStream, WriteStream } from "node:fs"`,
+          `const e = f();\ng(e);\nexport var ReadStream = 1;\nexport { WriteStream } from "node:fs";\n`,
+          ["ReadStream", "WriteStream"],
+        ],
+        [
+          replace({ a: 1 }, { treeShaking: false }),
+          `export { a, b } from "x"`,
+          `export var a = 1;\nexport { b } from "x";\n`,
+          ["a", "b"],
+        ],
+      ];
+
+      // [options, source, exports of the printed module]
+      // The lowering of a top-level `using` prints helper names, so these rows compare what the module exports.
+      const rowsWithUsing = [
+        [
+          replace({ default: 1, b: 2 }),
+          `using r = null; export { a as default, b } from "./x.mjs"`,
+          { b: 2, default: 1 },
+        ],
+        [replace({ default: 1 }), `await using r = null; export * as default from "./x.mjs"`, { default: 1 }],
+        [replace({ a: ["default", 1] }), `using r = null; export { a, b } from "./x.mjs"`, { b: "b", default: 1 }],
+      ];
+
+      // [options, source, message of the error]. An import of the name is a collision for both loaders.
+      const rowsThatThrow = [
+        [
+          replace({ a: 1 }),
+          `import { a } from "x"; export { a, b } from "x"; export const t = a`,
+          `"a" has already been declared`,
+        ],
+        [
+          replace({ ns: 1 }),
+          `import { ns } from "y"; export * as ns from "x"; export const t = ns`,
+          `"ns" has already been declared`,
+        ],
+      ];
+
+      // [options, source, exports of the printed module]. The comment of a row is what it does today.
+      const rowsThatCannotBind = [
+        // prints: export var class = 1;
+        [replace({ class: 1 }), `export { a as class, b } from "x"`, ["b", "class"]],
+        // throws: "bb" has already been declared
+        [replace({ bb: 1 }), `let bb = 2; export { a as bb } from "x"`, ["bb"]],
+        // prints: export var default = 1;
+        [replace({ g: ["default", 1] }), `export function g() {}`, ["default"]],
+        // prints: export const default = 1;
+        [replace({ x: ["default", 1] }), `export const x = 5`, ["default"]],
+      ];
+
+      // The first row aborted the process, so the rows run in one subprocess. It prints one line for each test.
+      let subprocess;
+      const run = () =>
+        (subprocess ??= (async () => {
+          using dir = tempDir("exports-replace-reexport", {
+            "x.mjs": `export const a = "a", b = "b"; export default "x";`,
+          });
+          const print = async (rows, rowsWithUsing, rowsThatThrow, rowsThatCannotBind, dir) => {
+            const modules = [];
+            for (const [options, source] of rows) {
+              const transpiler = new Bun.Transpiler({ loader: "ts", ...options });
+              modules.push([transpiler.transformSync(source), transpiler.scan(source).exports]);
+            }
+            const [options, source] = rows[0];
+            modules.push(new Bun.Transpiler({ loader: "js", ...options }).transformSync(source));
+            modules.push(await new Bun.Transpiler({ loader: "ts", ...options }).transform(source));
+            for (const [i, [options, source]] of rowsWithUsing.entries()) {
+              const file = require("path").join(dir, "module-" + i + ".mjs");
+              await Bun.write(file, new Bun.Transpiler({ loader: "ts", ...options }).transformSync(source));
+              modules.push({ ...(await import(file)) });
+            }
+            for (const loader of ["ts", "js"]) {
+              for (const [options, source] of rowsThatThrow) {
+                try {
+                  modules.push([new Bun.Transpiler({ loader, ...options }).transformSync(source)]);
+                } catch (error) {
+                  modules.push(error.message);
+                }
+              }
+            }
+            console.log(JSON.stringify(modules));
+
+            const names = rowsThatCannotBind.map(([options, source]) => {
+              try {
+                const module = new Bun.Transpiler({ loader: "ts", ...options }).transformSync(source);
+                return new Bun.Transpiler({ loader: "ts" }).scan(module).exports;
+              } catch (error) {
+                return error.message;
+              }
+            });
+            console.log(JSON.stringify(names));
+          };
+          const args = [rows, rowsWithUsing, rowsThatThrow, rowsThatCannotBind, String(dir)];
+          return await bunRun(["-e", `await (${print})(...${JSON.stringify(args)})`]);
+        })());
+
+      it("prints the export under its exported name", async () => {
+        const modules = rows.map(([, , module, names]) => [module, names]);
+        const exported = rowsWithUsing.map(([, , exported]) => exported);
+        const messages = rowsThatThrow.map(([, , message]) => message);
+        const result = await run();
+        expect({ ...result, stdout: result.stdout.split("\n")[0] }).toEqual(
+          printed(JSON.stringify([...modules, rows[0][2], rows[0][2], ...exported, ...messages, ...messages])),
+        );
+      });
+
+      it.failing("a name that the module cannot bind", async () => {
+        const result = await run();
+        const [, names] = result.stdout.split("\n");
+        // A subprocess that did not print the names is not the failure that this test expects.
+        if (result.exitCode !== 0 || names === undefined) return;
+        expect(names).toBe(JSON.stringify(rowsThatCannotBind.map(([, , names]) => names)));
+      });
+    });
+
     it("a deletes dead exports and any imports only referenced in dead regions", () => {
       const out = transpiler.transformSync(`
     import {getUserById} from './my-database';
@@ -2343,6 +2557,129 @@ export default class {
       return <div id='user'>{user.name}</div>;
     }
   `);
+    });
+
+    describe("an export with no initializer", () => {
+      const eliminate = (names, options) => ({ exports: { eliminate: names }, ...options });
+      const replace = (entries, options) => ({ exports: { replace: entries }, ...options });
+      const printed = stdout => ({ stdout, stderr: "", exitCode: 0, signalCode: null });
+      const expected = rows => rows.map(([, , module, names]) => [module, module, names]);
+      const print = async rows => {
+        const modules = [];
+        for (const [options, source] of rows) {
+          const transpiler = new Bun.Transpiler({ loader: "ts", ...options });
+          const module = transpiler.transformSync(source);
+          modules.push([module, await transpiler.transform(source), transpiler.scan(source).exports]);
+        }
+        return modules;
+      };
+      const ns = `var NS;\n((NS) => {})(NS ||= {});\n`;
+
+      // [options, source, printed module, exports that scan() reports]
+      const rowsThatEliminate = [
+        [eliminate(["A"]), `export let A`, ``, []],
+        [eliminate(["A"]), `export var A: number`, ``, []],
+        [eliminate(["A"], { loader: "js" }), `export let A; A = 1;`, `A = 1;\n`, []],
+        [eliminate(["A"]), `export let A, B = 1`, `export let B = 1;\n`, ["B"]],
+        [eliminate(["A", "B"], { treeShaking: false }), `export let A, B`, ``, []],
+        [eliminate(["A"], { deadCodeElimination: false }), `export let A`, ``, []],
+        [eliminate(["A"]), `namespace NS { export let A }`, ns, []],
+        [eliminate(["A"]), `namespace NS { export declare const A: number }`, ns, []],
+      ];
+      const sourcesAfterALoad = ["export let A", "export let A = 5", "export let B"];
+
+      // `eliminate` aborted the process, so these inputs run in one subprocess. It prints one line for each test.
+      let subprocess;
+      const run = () =>
+        (subprocess ??= (async () => {
+          using dir = tempDir("exports-no-initializer", {
+            "other.cjs": Array.from({ length: 50 }, (_, i) => `exports.v${i} = () => ["v", ${i}].join("-");`).join(
+              "\n",
+            ),
+          });
+          const script = async (print, rows, sources, other) => {
+            console.log(JSON.stringify(await print(rows)));
+
+            const transpiler = new Bun.Transpiler({ loader: "ts", exports: { replace: { A: "bar", B: 1 } } });
+            require(other);
+            console.log(JSON.stringify(sources.map(source => transpiler.transformSync(source))));
+          };
+          const args = [rowsThatEliminate, sourcesAfterALoad, join(String(dir), "other.cjs")];
+          return await bunRun(["-e", `await (${script})(${print}, ...${JSON.stringify(args)})`]);
+        })());
+
+      it("eliminate", async () => {
+        const result = await run();
+        expect({ ...result, stdout: result.stdout.split("\n")[0] }).toEqual(
+          printed(JSON.stringify(expected(rowsThatEliminate))),
+        );
+      });
+
+      it("replace", async () => {
+        const rows = [
+          [replace({ A: 1 }), `export let A`, `export let A = 1;\n`, ["A"]],
+          [replace({ A: "bar" }), `export let A`, `export let A = "bar";\n`, ["A"]],
+          [replace({ A: "bar" }, { loader: "js" }), `export var A`, `export var A = "bar";\n`, ["A"]],
+          [replace({ A: ["N", "bar"] }), `export let A`, `export let N = "bar";\n`, ["N"]],
+          [replace({ A: 1 }), `export let A, B`, `export let A = 1;\nexport let B;\n`, ["A", "B"]],
+          [
+            replace({ B: 1 }, { treeShaking: false }),
+            `export let A, B, C`,
+            `export let A, B = 1, C;\n`,
+            ["A", "B", "C"],
+          ],
+          // The write of the module comes after the replacement.
+          [replace({ A: 1 }), `export let A; A = 2;`, `export let A = 1;\nA = 2;\n`, ["A"]],
+          // As with an initializer, the replaced export ends the prefix of constants to inline.
+          [
+            replace({ A: 1 }, { inline: true }),
+            `export let A; const B = 2; f(B)`,
+            `export let A = 1;\nconst B = 2;\nf(B);\n`,
+            ["A"],
+          ],
+          // A namespace member with no value prints what it prints with no `exports` option.
+          [replace({ A: 1 }), `namespace NS { export let A }`, ns, []],
+          [replace({ A: ["N", 1] }), `namespace NS { export declare const A: number }`, ns, []],
+          [
+            replace({ A: ["N", 1] }),
+            `namespace NS { let N; export let A }`,
+            `var NS;\n((NS) => {\n  let N;\n})(NS ||= {});\n`,
+            [],
+          ],
+        ];
+        expect(await print(rows)).toEqual(expected(rows));
+      });
+
+      it("a member of a namespace is not an export of the module", async () => {
+        const member = `var NS;\n((NS) => {\n  NS.A = 1;\n})(NS ||= {});\n`;
+        const rows = [
+          [eliminate(["A"]), `namespace NS { export let A = 1 }`, member, []],
+          [replace({ A: 2 }), `namespace NS { export let A = 1 }`, member, []],
+          [replace({ A: ["N", 2] }), `namespace NS { export const A = 1 }`, member, []],
+          [
+            eliminate(["A"]),
+            `namespace NS { export function A() { return f() } }`,
+            `var NS;\n((NS) => {\n  function A() {\n    return f();\n  }\n  NS.A = A;\n})(NS ||= {});\n`,
+            [],
+          ],
+          [
+            replace({ K: 1 }),
+            `namespace NS { export class K { m() { return f() } } }`,
+            `var NS;\n((NS) => {\n\n  class K {\n    m() {\n      return f();\n    }\n  }\n  NS.K = K;\n})(NS ||= {});\n`,
+            [],
+          ],
+          [eliminate(["A"]), `export namespace NS { export let A = 1 } export let A = 2`, `export ${member}`, ["NS"]],
+        ];
+        expect(await print(rows)).toEqual(expected(rows));
+      });
+
+      it("replace with a string, after the load of another module", async () => {
+        const module = `export let A = "bar";\n`;
+        const result = await run();
+        expect({ ...result, stdout: result.stdout.split("\n")[1] }).toEqual(
+          printed(JSON.stringify([module, module, `export let B = 1;\n`])),
+        );
+      });
     });
 
     it("deletes dead exports and any imports only referenced in dead regions", () => {
@@ -2403,6 +2740,116 @@ export default class {
       expect(output.includes("__N_SSG")).toBe(true);
       expect(output.includes("localVarToReplace")).toBe(true);
       expect(output.includes("localVarToRemove")).toBe(false);
+    });
+
+    it("string replacement values survive other modules being loaded after the transpiler is created", async () => {
+      // Release builds only reuse the AST store slot after a few dozen string declarations.
+      const resetLines = [];
+      for (let i = 0; i < 300; i++) {
+        resetLines.push(`const s${i} = "other string ${i}";`);
+      }
+      resetLines.push("module.exports = { s0, s299 };");
+
+      using dir = tempDir("transpiler-replace-string-values", {
+        "reset.cjs": resetLines.join("\n"),
+        "reset.json": `{}`,
+        "entry.mjs": `
+          const transpiler = new Bun.Transpiler({
+            exports: {
+              replace: {
+                foo: "bar",
+                getStaticProps: ["__N_SSG", "ssg"],
+                default: "dflt",
+              },
+            },
+          });
+
+          require("./reset.cjs");
+          await import("./reset.json");
+
+          console.log(
+            JSON.stringify([
+              transpiler.transformSync("export const foo = 1;"),
+              transpiler.transformSync("export function getStaticProps() {}"),
+              transpiler.transformSync("export default 1;"),
+              await transpiler.transform("export const foo = 1;"),
+              await transpiler.transform("export function getStaticProps() {}"),
+              await transpiler.transform("export default 1;"),
+            ]),
+          );
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        'export const foo = "bar";\n',
+        'export var __N_SSG = "ssg";\n',
+        'export default "dflt";\n',
+        'export const foo = "bar";\n',
+        'export var __N_SSG = "ssg";\n',
+        'export default "dflt";\n',
+      ]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("exports.eliminate", () => {
+    // Side-effect-free `export class` / `export default` statements are hoisted to
+    // the top of the file, but eliminating one leaves no part behind to hoist.
+    // [options, source, printed module]
+    const keep = `export const keep = 1;\n`;
+    const eliminate = names => ({ exports: { eliminate: names } });
+    const inject = options => ({ exports: { replace: { default: ["N", 1] } }, ...options });
+    const hoistable = [
+      [eliminate(["A"]), `export class A {}\n${keep}`, keep],
+      [eliminate(["default"]), `export default class A {}\n${keep}`, keep],
+      [eliminate(["default"]), `export default class {}\n${keep}`, keep],
+      [eliminate(["default"]), `export default function A() {}\n${keep}`, keep],
+      [eliminate(["default"]), `export default () => {};\n${keep}`, keep],
+      [eliminate(["default"]), `export default 42;\n${keep}`, keep],
+      // An entry that injects takes the export away too, and its own export stays.
+      [inject(), `export default 42;\n${keep}`, `export var N = 1;\n${keep}`],
+      [inject(), `export default class A {}\n${keep}`, `export var N = 1;\n${keep}`],
+      [inject(), `export default function A() {}\n${keep}`, `export var N = 1;\n${keep}`],
+      [inject(), `interface T {}\nexport default T;\n${keep}`, `export var N = 1;\n${keep}`],
+      [
+        inject({ deadCodeElimination: false }),
+        `interface T {}\nexport default T;\n${keep}`,
+        `export var N = 1;\n${keep}`,
+      ],
+    ];
+
+    // Each of these aborted the process, so they run in one subprocess.
+    it("takes a hoistable export away", async () => {
+      const print = rows =>
+        rows.map(([options, source]) => new Bun.Transpiler({ loader: "ts", ...options }).transformSync(source));
+      const result = await bunRun(["-e", `console.log(JSON.stringify((${print})(${JSON.stringify(hoistable)})))`]);
+      expect(result).toEqual({
+        stdout: JSON.stringify(hoistable.map(([, , module]) => module)),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    const reordered = [
+      ["class declaration", ["A"], `console.log("one");\nconsole.log("two");\nexport class A {}\n`],
+      ["default class", ["default"], `console.log("one");\nconsole.log("two");\nexport default class A {}\n`],
+    ];
+
+    describe.each(reordered)("hoistable %s", (_label, names, source) => {
+      it("keeps statement order when eliminated", () => {
+        const out = new Bun.Transpiler({ loader: "ts", exports: { eliminate: names } }).transformSync(source);
+        expect(out).toBe(`console.log("one");\nconsole.log("two");\n`);
+      });
     });
   });
 

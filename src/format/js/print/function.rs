@@ -11,7 +11,8 @@ use crate::js::utils::statement_body::write_space_before_body;
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::typecast::is_cast_target;
 use crate::prelude::*;
-use crate::{format_args, write};
+use crate::{best_fitting, format_args, write};
+use bun_core::strings;
 
 #[derive(Copy, Clone, Debug, Default)]
 pub(crate) struct FormatFunctionOptions {
@@ -81,19 +82,12 @@ pub(crate) fn write_function<'a>(
             if !can_group_function_parameters(func) {
                 return write!(f, [format_parameters, format_return_type]);
             }
-            let (format_parameters, format_return_type) = (
-                (&format_parameters).memoized(),
-                (&format_return_type).memoized(),
+            write_parameters_and_return_type(
+                func,
+                &(&format_parameters).memoized(),
+                &(&format_return_type).memoized(),
+                f,
             );
-            // The parameters have to be formatted before the return type, which
-            // `should_group_function_parameters` may do.
-            format_parameters.inspect(f);
-            let group_parameters = should_group_function_parameters(func, &format_return_type, f);
-            match group_parameters {
-                true => write!(f, group(&format_parameters)),
-                false => write!(f, format_parameters),
-            }
-            write!(f, format_return_type);
         }))
     );
 
@@ -237,19 +231,72 @@ impl Spanned for FormatFunctionBody<'_> {
     }
 }
 
-/// Whether the parameters are a group of their own, so that the return type breaks first.
-pub(crate) fn should_group_function_parameters<'a>(
+/// Writes the parameters and the return type, which are in a group. Prettier's `shouldGroupFunctionParameters`: the
+/// parameters are a group of their own, so that the return type breaks first, if that is an object type or will break.
+///
+/// ```ts
+/// function a(
+///   b: string,
+/// ): C<{
+///   d: number;
+/// }> {}
+/// ```
+///
+/// is what Prettier and oxfmt make of a return type that is on one line and does not fit. Now that the object type is broken
+/// it will break, so they make `function a(b: string): C<{` of that. Here it is that at once.
+pub(crate) fn write_parameters_and_return_type<'a>(
     func: Func<'a>,
-    formatted_return_type: &Memoized<impl Format<'a>>,
+    parameters: &Memoized<impl Format<'a>>,
+    return_type: &Memoized<impl Format<'a>>,
     f: &mut Formatter<'a>,
-) -> bool {
-    can_group_function_parameters(func)
-        && func.return_type().is_some_and(|return_type| {
-            matches!(
-                return_type.kind(),
-                TypeKind::Object(_) | TypeKind::Mapped(_)
-            ) || formatted_return_type.inspect(f).will_break()
-        })
+) {
+    // The parameters have to be formatted before the return type.
+    let will_parameters_break = parameters.inspect(f).will_break();
+    let Some(ty) = func
+        .return_type()
+        .filter(|_| can_group_function_parameters(func))
+    else {
+        return write!(f, [parameters, return_type]);
+    };
+    if matches!(ty.kind(), TypeKind::Object(_) | TypeKind::Mapped(_))
+        || return_type.inspect(f).will_break()
+    {
+        return write!(f, [group(parameters), return_type]);
+    }
+    match will_parameters_break || !can_depend_on_what_breaks(func, ty, f) {
+        true => write!(f, [parameters, return_type]),
+        false => group_parameters_if_object_type_breaks(parameters, return_type, f),
+    }
+}
+
+/// Whether something in the return type `ty` of `func` stays expanded once it is broken, and the parameters do not.
+fn can_depend_on_what_breaks<'a>(func: Func<'a>, ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
+    // Everything that stays expanded has braces.
+    let can_stay_expanded = strings::contains_char(f.source_text().text_for(&ty.span()), b'{');
+    // `(/* comment */⏎a: A)`: once the line break after the comment is printed, the parameters will break.
+    let stay_expanded = !f.is_quiet()
+        && (f.comments())
+            .comments_in_span(FormatFormalParameters(func).span())
+            .iter()
+            .any(|comment| comment.has_newline_after());
+    can_stay_expanded && !stay_expanded
+}
+
+/// Apart, so that its variables are not on the stack while the return type is formatted.
+#[inline(never)]
+fn group_parameters_if_object_type_breaks<'a>(
+    parameters: &dyn Format<'a>,
+    return_type: &dyn Format<'a>,
+    f: &mut Formatter<'a>,
+) {
+    write!(
+        f,
+        best_fitting!(
+            format_args!(parameters, return_type),
+            format_args!(group(parameters), return_type)
+        )
+        .with_fallback(Fallback::FlattestIfStable)
+    );
 }
 
 /// What it takes, whatever the return type is written as.

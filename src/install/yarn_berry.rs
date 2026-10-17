@@ -300,7 +300,7 @@ fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnR
                 let Some(in_catalog) = catalogs.get(group).and_then(|g| g.get(&**name)) else {
                     bail!(
                         log,
-                        "packageExtensions \"{}\" in .yarnrc.yml adds \"{}@{}\", and the catalog has no \"{}\"",
+                        "packageExtensions \"{}\" in .yarnrc.yml adds \"{}@{}\", but the catalog has no \"{}\"",
                         shown(&extension.key),
                         shown(name),
                         shown(range),
@@ -948,7 +948,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             } else {
                 if protocol == b"portal:" && !silent {
                     bun_core::warn!(
-                        "\"{}@portal:{}\" is migrated as \"file:{}\"; bun installs a copy of the folder instead of linking it (make it a workspace to keep it linked)",
+                        "migrating \"{}@portal:{}\" as \"file:{}\": folder is copied, not linked (make it a workspace to keep it linked)",
                         shown(name),
                         shown(path),
                         shown(&joined),
@@ -1102,7 +1102,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 .collect();
             bail!(
                 log,
-                "yarn.lock patches {} packages with several files each ({}); bun applies one patch per package — merge the files of each into one",
+                "yarn.lock applies several patch files to {} packages ({}). bun supports one per package, merge them",
                 several.len(),
                 names.join(", "),
             );
@@ -1339,7 +1339,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                         if !accepted {
                             bail!(
                                 log,
-                                "\"{}\" is in several dependency groups of \"{}\"; yarn installs the range \"{}\" for all of them, and \"{}\" does not accept what yarn.lock pins for it",
+                                "\"{}\" is in several dependency groups of \"{}\": yarn uses \"{}\" for all, but yarn.lock version does not satisfy \"{}\"",
                                 shown(name),
                                 shown(owner_name),
                                 shown(literal),
@@ -1354,7 +1354,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 _ => {
                     bail!(
                         log,
-                        "yarn.lock has no entry for \"{}@{}\", a dependency of \"{}\"",
+                        "yarn.lock missing \"{}@{}\", a dependency of \"{}\"",
                         shown(name),
                         shown(original_literal),
                         shown(owner_name),
@@ -1390,7 +1390,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             if !url.is_empty() && !lockfile::bun_lock::url_is_under_registry(url, &configured) {
                 bail!(
                     log,
-                    "yarn.lock fetches \"{}@{}\" from {}, which is not under the registry bun is configured with ({}); the integrity of a package comes from that registry",
+                    "yarn.lock fetches \"{}@{}\" from {}, outside the configured registry ({}): cannot get integrity",
                     shown(name),
                     res.fmt(string_bytes!(this), bun_core::fmt::PathSep::Posix),
                     shown(url),

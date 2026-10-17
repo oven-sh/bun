@@ -1055,7 +1055,7 @@ test.concurrent("add/remove --filter updates bun.lock for a workspace outside th
 
   await runOk(
     ["add", "--filter", "x", "y@workspace:*"],
-    'note: skipped the dependencies and scripts of 1 workspace outside the project: "../x"\n',
+    'note: skipping dependencies and scripts of 1 workspace outside the project: "../x"\n',
   );
   expect(await x()).toStrictEqual({ name: "x", version: "1.0.0", dependencies: { y: "workspace:*" } });
   expect(await lockedX()).toStrictEqual({ name: "x", version: "1.0.0", dependencies: { y: "workspace:*" } });
@@ -2049,7 +2049,7 @@ test.concurrent("a local path that does not exist relative to the cwd fails and 
   // Relative to packages/api this would exist; paths are relative to the cwd (the root) instead.
   const { stderr, exitCode } = await run(["add", "../../vendor/foo", "--filter", "api"], dir);
   expect(stderr).toStartWith(
-    'error: Could not find package.json for "file:../../vendor/foo" dependency "../../../../vendor/foo"\n',
+    'error: package.json not found for "file:../../vendor/foo" dependency "../../../../vendor/foo"\n',
   );
   expect(exitCode).toBe(1);
 
@@ -2236,9 +2236,7 @@ test.concurrent("a link: path that does not exist fails with the per-target spel
   const before = await allPackageJsonTexts(dir);
 
   const { stderr, exitCode } = await run(["add", "link:./vendor/foo", "--filter", "api"], dir);
-  expect(stderr).toContain(
-    'error: Could not find directory "./vendor/foo" for linked dependency "link:../../vendor/foo"',
-  );
+  expect(stderr).toContain('error: directory "./vendor/foo" not found for linked dependency "link:../../vendor/foo"');
   expect(exitCode).toBe(1);
 
   expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
@@ -2820,7 +2818,7 @@ test.concurrent("a catalog: range that resolves to nothing names the missing cat
 
   {
     const { stderr, exitCode } = await run(["add", "a-dep@catalog:", "--filter", "api"], dir);
-    expect(stderr).toBe("error: a-dep@catalog: is not in the catalog\n  bun add --catalog a-dep\n");
+    expect(stderr).toBe("error: a-dep@catalog: not in catalog\n  bun add --catalog a-dep\n");
     expect(exitCode).toBe(1);
   }
 
@@ -2830,6 +2828,6 @@ test.concurrent("a catalog: range that resolves to nothing names the missing cat
   // The same package.json state reached by hand fails the same way under bun install.
   await write(pkgPath(dir, "api"), JSON.stringify({ name: "api", dependencies: { "a-dep": "catalog:" } }));
   const { stderr, exitCode } = await run(["install"], dir);
-  expect(stderr).toBe("error: a-dep@catalog: is not in the catalog\n  bun add --catalog a-dep\n");
+  expect(stderr).toBe("error: a-dep@catalog: not in catalog\n  bun add --catalog a-dep\n");
   expect(exitCode).toBe(1);
 });

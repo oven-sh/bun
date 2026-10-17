@@ -466,39 +466,35 @@ async function runOneFile(
 ) {
   const path = require("node:path");
   const absolute = path.resolve(opts.cwd as string, file);
-  // Node's getRunArgs: the flags this process runs with, then execArgv, the path,
-  // and argv. The flags go before `test`, where they are the child's
-  // process.execArgv. A `bun test` caller has its own after `test`, so the
-  // child has those there too. execArgv is then given again after them: the
-  // last value of a flag counts, and the option has the last word.
   fileFlags ??= $newRustFunction("jest.rs", "jsNodeTestFileFlags", 1) as FileFlags;
   let [beforeTest, afterTest] = fileFlags(opts.cwd as string);
   const execArgv = opts.execArgv as string[];
-  // With -e or -p the child evaluates a script, and what follows `test` is the script's.
-  let evaluates = false;
-  // Bun takes one CA store flag, so the one of the option is the child's.
+  let isTestRun = true;
   let choosesCAStore = false;
   for (let i = 0; i < execArgv.length; i++) {
     const arg = execArgv[i];
-    evaluates ||= arg === "-e" || arg === "-p" || arg === "-pe" || arg === "--eval" || arg === "--print";
+    // As Command::which(): an argument that is not `-…`, or that is `-e…`, is the command in place of `test`.
+    isTestRun &&= arg[0] === "-" && arg[1] !== "e";
     choosesCAStore ||= isCAStoreFlag(arg);
   }
+  // Bun takes one CA store flag, so the one of the option is the child's.
   if (choosesCAStore) {
     beforeTest = withoutCAStoreFlags(beforeTest);
     afterTest = withoutCAStoreFlags(afterTest);
   }
-  const args = evaluates
-    ? [process.execPath, ...beforeTest, ...afterTest, ...execArgv, "test", absolute, ...(opts.argv as string[])]
-    : [
-        process.execPath,
-        ...beforeTest,
-        ...execArgv,
-        "test",
-        ...afterTest,
-        absolute,
-        ...(afterTest.length > 0 ? execArgv : []),
-        ...(opts.argv as string[]),
-      ];
+  // The flags that follow `test` are for a test run, not for a child that evaluates a script (-e, -p).
+  if (!isTestRun) afterTest = [];
+  // Node's getRunArgs. After flags that follow `test`, execArgv is given again to have the last word.
+  const args = [
+    process.execPath,
+    ...beforeTest,
+    ...execArgv,
+    "test",
+    ...afterTest,
+    absolute,
+    ...(afterTest.length > 0 ? execArgv : []),
+    ...(opts.argv as string[]),
+  ];
   const fileStarted = Date.now();
   const fileCounts = makeRunCounts();
 

@@ -588,10 +588,7 @@ pub(crate) fn js_node_test_mark_result(
     Ok(JSValue::UNDEFINED)
 }
 
-/// Reached only from `node:test`'s `run()`, once for each file: `[before, after]`,
-/// the flags of the caller that go before `test` and after it in the command
-/// line of the file's `bun test` process. The argument is the `cwd` option of
-/// `run()`.
+/// `run()` of `node:test` calls this for each file with its `cwd`: see `node_test_file_flags`.
 pub(crate) fn js_node_test_file_flags(
     global: &JSGlobalObject,
     callframe: &CallFrame,

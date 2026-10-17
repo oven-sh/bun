@@ -431,10 +431,7 @@ impl ConvertedTable {
         self.converted
     }
 
-    /// Reads the command line again, as `ComptimeClap::parse_with_table` reads
-    /// it with this table and `opt`, and calls `each` with every argument in
-    /// the order typed. The iterator is not the one of startup, so this is
-    /// another copy of the parser and startup keeps its own.
+    /// Uses `SliceIterator`, not startup's iterator: startup keeps its own copy of the parser.
     #[cold]
     #[inline(never)]
     pub(crate) fn walk_typed(
@@ -462,9 +459,7 @@ impl ConvertedTable {
             let read = &left[..left.len() - stream.iter.remain.len()];
             let is_positional =
                 |param: &Param<usize>| param.names.long.is_none() && param.names.short.is_none();
-            // Of what was read, the argument is the last one. It is the last
-            // two when its value is an argument of its own, and none when it
-            // is a later flag of a chain (`-abc`).
+            // The last 1 of `read` is this argument: 2 with a separate value, 0 later in `-abc`.
             let own = match &arg {
                 None => 0,
                 Some(arg) if is_positional(arg.param) => 1,

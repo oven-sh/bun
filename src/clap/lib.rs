@@ -454,22 +454,17 @@ impl<Id: 'static> Args<Id> {
 
 /// One argument of the command line, as [`walk_typed`] reads it.
 pub struct Typed<'p> {
-    /// The flag, the option or the positional. `None` at the end of the
-    /// command line.
+    /// `None` at the end of the command line.
     pub param: Option<&'p Param<usize>>,
     /// The value of an option, or the positional itself.
     pub value: Option<&'static [u8]>,
-    /// The arguments between the one before and this one. No param names them,
-    /// so the parser passes over them: `--unknown`, `--unknown=value`, and the
-    /// `--` that ends the flags.
+    /// The arguments before this one that no param names: `--unknown[=value]`, `--`.
     pub skipped: &'static [&'static [u8]],
     /// How many positionals are in front of this argument.
     pub positionals: usize,
 }
 
-/// Reads the command line again, as [`parse_with_table`] reads it with the
-/// same `table` and `opt`, and calls `each` with every argument in the order
-/// typed. A flag that was given twice is two arguments.
+/// [`parse_with_table`] again: calls `each` with every argument in the order typed.
 pub fn walk_typed(
     table: &'static ConvertedTable,
     opt: ParseOptions<'_>,

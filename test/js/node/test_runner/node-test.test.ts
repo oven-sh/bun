@@ -930,7 +930,12 @@ describe("run() starts each file with the runtime flags of its caller", () => {
           import { test } from "bun:test";
           import { probe } from "./probe.mjs";
           test("run() in a test", async () => {
-            console.log("RESULT " + JSON.stringify(await probe()));
+            const [ofFile, ofScript] = await Promise.all([
+              probe(),
+              // The child evaluates this and runs no file.
+              probe({ execArgv: ["-p", "JSON.stringify(process.execArgv.filter(it => it.startsWith('--'))) + ' ' + globalThis.PRELOADED"] }),
+            ]);
+            console.log("RESULT " + JSON.stringify({ ofFile, ofScript }));
           }, 60_000);
         `,
         "setup.mjs": `
@@ -949,27 +954,37 @@ describe("run() starts each file with the runtime flags of its caller", () => {
       // which fork() hands on: a helper that was given this preload would fail, because
       // bun:test is only for a test run.
       const held = { preloaded: "by bun test" };
-      expect(flags).toMatchObject({ probes: [{ ...held, execArgv: ["--smol"] }], fail: 0, exitCode: 0 });
-      expect(config).toMatchObject({ probes: [{ ...held, execArgv: [] }], fail: 0, exitCode: 0 });
+      expect(flags.ofFile).toMatchObject({ probes: [{ ...held, execArgv: ["--smol"] }], fail: 0 });
+      expect(config.ofFile).toMatchObject({ probes: [{ ...held, execArgv: [] }], fail: 0 });
+      // A child that evaluates a script is not a test run. It is given what is in front of
+      // `test`, and not what is after it: this preload is for a test run.
+      expect(flags.ofScript).toEqual({ probes: [], stdout: [`["--smol"] undefined`], fail: 0 });
+      expect(config.ofScript).toEqual({ probes: [], stdout: [`[] undefined`], fail: 0 });
+      expect({ flags: flags.exitCode, config: config.exitCode }).toEqual({ flags: 0, config: 0 });
     },
     60_000,
   );
 
   test.concurrent(
-    "bun test <flags> <file>: the execArgv option has the last word, and a script of the option is under the flags",
+    "bun test <flags> <file>: the execArgv option has the last word, and a script of the option is not given the flags",
     async () => {
-      const { ofFile, ofScript, exitCode } = await result(
+      // What a script of the option has: a flag of the caller, and its own arguments.
+      const seen = `JSON.stringify([typeof RUN_FLAG, process.argv.slice(1).map(it => it.endsWith("probe.test.mjs") ? "the file" : it)])`;
+      const { ofFile, printed, evaluated, dashed, exitCode } = await result(
         {
           "outer.test.mjs": `
             import { test } from "bun:test";
             import { probe } from "./probe.mjs";
             test("run() in a test", async () => {
-              const [ofFile, ofScript] = await Promise.all([
+              const [ofFile, printed, evaluated, dashed] = await Promise.all([
                 probe({ execArgv: ["--title=from-run", "--define=RUN_FLAG:2"] }),
-                // The child evaluates this and runs no file.
-                probe({ execArgv: ["-p", "process.title + ' ' + globalThis.PRELOADED"] }),
+                // The child evaluates these and runs no file.
+                probe({ execArgv: ["-p", ${JSON.stringify(seen)}] }),
+                probe({ execArgv: [${JSON.stringify(`-e=console.log(${seen})`)}] }),
+                // No argument here is read as the command, so this child is \`bun test\`.
+                probe({ execArgv: ["-p", "-1"] }),
               ]);
-              console.log("RESULT " + JSON.stringify({ ofFile, ofScript }));
+              console.log("RESULT " + JSON.stringify({ ofFile, printed, evaluated, dashed }));
             }, 60_000);
           `,
         },
@@ -988,7 +1003,36 @@ describe("run() starts each file with the runtime flags of its caller", () => {
         ],
         fail: 0,
       });
-      expect(ofScript).toEqual({ probes: [], stdout: ["from-the-command-line true"], fail: 0 });
+      // These flags follow `test`, so they are for a test run. What follows `test` in the
+      // child is the script's: `test` and the file, as before.
+      const ofScript = { probes: [], stdout: [`["undefined",["test","the file"]]`], fail: 0 };
+      expect({ printed, evaluated }).toEqual({ printed: ofScript, evaluated: ofScript });
+      expect(dashed).toMatchObject({ probes: [{ execArgv: ["-p", "-1"], defined: 1, preloaded: true }], fail: 0 });
+      expect(exitCode).toBe(0);
+    },
+    60_000,
+  );
+
+  test.concurrent(
+    "--disallow-code-generation-from-strings=strict after `test`: a script of the execArgv option is under it too",
+    async () => {
+      // Only `=strict` refuses node:vm, and the flag in front of `test` does not say `strict`.
+      const flag = "--disallow-code-generation-from-strings";
+      const vm = `(() => { try { return require("node:vm").runInNewContext("1 + 1"); } catch (error) { return error.name; } })()`;
+      const { ofScript, exitCode } = await result(
+        {
+          "outer.test.mjs": `
+            import { test } from "bun:test";
+            import { probe } from "./probe.mjs";
+            test("run() in a test", async () => {
+              const ofScript = await probe({ execArgv: ["-p", ${JSON.stringify(vm)}] });
+              console.log("RESULT " + JSON.stringify({ ofScript }));
+            }, 60_000);
+          `,
+        },
+        [bunExe(), flag, "test", `${flag}=strict`, "./outer.test.mjs"],
+      );
+      expect(ofScript).toEqual({ probes: [], stdout: ["EvalError"], fail: 0 });
       expect(exitCode).toBe(0);
     },
     60_000,

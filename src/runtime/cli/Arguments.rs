@@ -718,9 +718,7 @@ fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
     }
 }
 
-/// How `cmd` reads its command line. Every field is written out, so that a new
-/// one is decided here for `parse` and for `node_test_file_flags`, which reads
-/// the command line again.
+/// How `cmd` reads its command line: `parse` and `node_test_file_flags` must read it alike.
 #[inline(always)]
 fn parse_options(
     cmd: CommandTag,
@@ -744,15 +742,8 @@ fn parse_options(
 }
 
 // ─── the runtime flags of a file that `run()` of `node:test` starts ──────────
-// `run()` starts a `bun test` process for each file, and gives it the runtime
-// flags that this process was given (Node.js: "Child process option
-// inheritance"). Startup keeps nothing for that: the command line is read again
-// when a file starts, in the order it was typed.
 
-/// The flags that `bun <file>`, `bun run` and `bun test` share
-/// (`BASE_RUNTIME_TRANSPILER_PARAMS`) and that a file of `run()` is given when
-/// its caller was given them. Every shared flag is in this list or in
-/// `WITHHELD_FROM_NODE_TEST_FILE`: the build fails for one that is in neither.
+/// The shared flags that a file of `run()` is given when its caller was given them.
 const HANDED_ON_TO_NODE_TEST_FILE: &[&[u8]] = &[
     b"--env-file",
     b"--no-env-file",
@@ -867,12 +858,10 @@ const WITHHELD_FROM_NODE_TEST_FILE: &[&[u8]] = &[
     b"--cwd",
 ];
 
-/// Started as `node`, Bun reads these as Node.js does, or not at all. The child
-/// would read them as Bun does.
+/// Started as `node`, Bun reads these as Node.js does or not at all. The child reads them as Bun.
 const WITHHELD_WHEN_STARTED_AS_NODE: &[&[u8]] = &[b"--loader", b"-i"];
 
-/// Their values name files that the caller looked for from the directory it
-/// started in. A child that starts in another directory is given where they are.
+/// Flags with a path that is relative to the startup directory: resolved for a child elsewhere.
 const PATHS_FROM_STARTUP_DIRECTORY: &[&[u8]] = &[
     b"--env-file",
     b"--config",
@@ -973,10 +962,9 @@ const _: () = {
     }
 };
 
-/// The command this process was started as, if it is one that reads the shared
-/// flags from its command line. A compiled executable is none: its arguments
-/// are its program's, and `run()` there starts the executable again.
+/// The command this process was started as, if it reads the shared flags from its command line.
 fn started_as() -> Option<CommandTag> {
+    // The arguments of a compiled executable are its program's.
     if bun_standalone_graph::Graph::get().is_some() {
         return None;
     }
@@ -991,13 +979,7 @@ fn started_as() -> Option<CommandTag> {
     .find(|tag| tag.char() == started)
 }
 
-/// Writes the flag `param` with `value` as one argument, `--name` or
-/// `--name=value`: the first argument of a command line that does not start
-/// with `-` is read as the command, so a value is never an argument of its own.
-///
-/// `startup_directory` is given when the child starts in another directory.
-/// A relative path in `PATHS_FROM_STARTUP_DIRECTORY` is then written as the
-/// caller resolved it.
+/// One argument, `--name[=value]`: a value of its own could be read as the command.
 fn write_flag(
     param: &clap::Param<usize>,
     value: Option<&[u8]>,
@@ -1022,8 +1004,7 @@ fn write_flag(
     flag.push(b'=');
     let directory = startup_directory.filter(|_| count_in(PATHS_FROM_STARTUP_DIRECTORY, names) > 0);
     match directory {
-        // The env loader opens each item of a list as it is typed, and splits
-        // the list at each comma: a directory with a comma cannot be written.
+        // The env loader splits its value at commas: a directory with a comma cannot be written.
         Some(directory) if is_named(names, b"--env-file") => {
             if strings::contains_char(directory, b',') {
                 flag.extend_from_slice(value);
@@ -1040,9 +1021,7 @@ fn write_flag(
                 }
             }
         }
-        // The others are joined to the directory as the caller joined them. A
-        // module can have `file://` in front of its path, and a package name
-        // is not a path.
+        // A module can have `file://` in front of its path, and a package name is not a path.
         Some(directory) => {
             let is_module = count_in(MODULES_FROM_STARTUP_DIRECTORY, names) > 0;
             let path = match value.strip_prefix(b"file://".as_slice()) {
@@ -1067,9 +1046,7 @@ fn write_flag(
     flag.into_boxed_slice()
 }
 
-/// What the thread that calls `run()` runs with, as its VM has it. The command
-/// line of the process does not say all of it: a `Worker` has an `execArgv` of
-/// its own.
+/// What the thread that calls `run()` runs with: a `Worker` has an `execArgv` of its own.
 #[derive(Copy, Clone)]
 pub(crate) struct NodeTestCaller<'a> {
     pub no_addons: bool,
@@ -1078,14 +1055,7 @@ pub(crate) struct NodeTestCaller<'a> {
     pub startup_directory: Option<&'a [u8]>,
 }
 
-/// The flags of `caller` for one file of `run()` from `node:test`, as Node.js's
-/// `getRunArgs` gives them: the arguments that go before `test` and after it in
-/// `bun <before> <execArgv> test <after> <file>`, in the order the caller was
-/// given them. `child_directory` is the `cwd` option of `run()`.
-///
-/// `after` is for a caller that is `bun test` itself. What it was given after
-/// `test` is not in its `process.execArgv`, so it is not in the child's either:
-/// node:tls reads flags there, and `fork()` hands that list on.
+/// The caller's flags for one file of `run()`, in typed order: `[before, after]` of its `test`.
 #[cold]
 #[inline(never)]
 pub(crate) fn node_test_file_flags(
@@ -1098,17 +1068,13 @@ pub(crate) fn node_test_file_flags(
         return [before, after];
     };
     let is_test = cmd == CommandTag::TestCommand;
-    // The coordinator of `bun test --parallel` wrote the command line of each
-    // worker, from its bunfig too: nobody gave a worker those flags. With one
-    // file the same command starts no worker, and the number of files must not
-    // decide what a child is given.
+    // The `--parallel` coordinator wrote a worker's argv. One file is given what two are.
     let is_parallel = is_test
         && bun_options_types::context::try_get()
             .is_some_and(|ctx| ctx.test_options.test_worker || ctx.test_options.parallel > 0);
 
     if !is_parallel {
-        // Where the child starts, as the OS resolves it: `link/..` is the
-        // directory above the target of the link.
+        // As the OS resolves it: `link/..` is the directory above the target of the link.
         let mut resolved = bun_paths::path_buffer_pool::get();
         let child_directory =
             bun_sys::realpath(&bun_core::ZBox::from_bytes(child_directory), &mut resolved)
@@ -1117,11 +1083,10 @@ pub(crate) fn node_test_file_flags(
             .startup_directory
             .filter(|directory| *directory != child_directory);
         let walked = clap::walk_typed(tag_table(cmd), parse_options(cmd, None), &mut |arg| {
+            // A flag after `test` is not in `process.execArgv`. The child has it after `test` too.
             let is_after_test = is_test && arg.positionals > 0;
             if !is_after_test {
-                // Node.js also hands on what its parser does not know. node:net
-                // reads such flags from `process.execArgv`. A flag that only
-                // `bun test` has is not one: the caller passed over it.
+                // Node.js also hands on what its parser does not know: node:net reads such flags.
                 for token in arg.skipped {
                     let name = strings::split_once_char(token, b'=').map_or(*token, |it| it.0);
                     if name.len() > 2
@@ -1167,9 +1132,7 @@ pub(crate) fn node_test_file_flags(
                 }
             }
         };
-    // These are what the caller runs under, wherever its command line says so.
-    // They go before `test`: there they also hold for a child that the
-    // `execArgv` option makes evaluate a script.
+    // What the caller runs under goes before `test`: it holds for a child that evaluates too.
     for flag in [
         caller.no_addons.then_some(&b"--no-addons"[..]),
         caller.no_ffi_cc.then_some(&b"--no-ffi-cc"[..]),
@@ -1178,13 +1141,7 @@ pub(crate) fn node_test_file_flags(
     .into_iter()
     .flatten()
     {
-        let name = strings::split_once_char(flag, b'=').map_or(flag, |it| it.0);
-        let is_before = before.iter().any(|given| {
-            given
-                .strip_prefix(name)
-                .is_some_and(|rest| matches!(rest, [] | [b'=', ..]))
-        });
-        if !is_before {
+        if !before.iter().any(|given| **given == *flag) {
             before.push(flag.into());
         }
     }

@@ -5355,6 +5355,54 @@ describe("css tests", () => {
     minify_test(":host(.foo) {color:red}", ":host(.foo){color:red}");
     minify_test("::slotted(span) {color:red", "::slotted(span){color:red}");
     minify_test("custom-element::part(foo) {color:red}", "custom-element::part(foo){color:red}");
+
+    // ::marker can follow ::before and ::after.
+    // https://drafts.csswg.org/css-pseudo-4/#marker-pseudo
+    minify_test("::before::marker {color:red}", ":before::marker{color:red}");
+    minify_test("::after::marker {color:red}", ":after::marker{color:red}");
+    minify_test("li::before::marker {color:red}", "li:before::marker{color:red}");
+    minify_test(":before::marker {color:red}", ":before::marker{color:red}");
+    minify_test(":after::marker {color:red}", ":after::marker{color:red}");
+    minify_test("::BEFORE::MARKER {color:red}", ":before::marker{color:red}");
+    minify_test("::part(x)::before::marker {color:red}", "::part(x):before::marker{color:red}");
+    minify_test("::slotted(x)::after::marker {color:red}", "::slotted(x):after::marker{color:red}");
+    minify_test("a::before, b::after::marker {color:red}", "a:before,b:after::marker{color:red}");
+    minify_test("a { &::before::marker {color:red} }", "a{&:before::marker{color:red}}");
+    prefix_test("li { &::before::marker {color:red} }", "li:before::marker { color: red; }", { chrome: 100 << 16 });
+    // The nested form prints as `li:before::marker`, and that output parses again.
+    prefix_test("li::before { &::marker {color:red} }", "li:before::marker { color: red; }", { chrome: 100 << 16 });
+    minify_test("li:before::marker {color:red}", "li:before::marker{color:red}");
+    minify_test("::before:hover {color:red}", ":before:hover{color:red}");
+
+    // No other pseudo-element can follow ::before, ::after or ::marker, and
+    // ::marker must come directly after ::before or ::after.
+    test.each([
+      ["::before::before", "Token is not allowed in this state"],
+      ["::before::after", "Token is not allowed in this state"],
+      ["::after::after", "Token is not allowed in this state"],
+      ["::marker::before", "Token is not allowed in this state"],
+      ["::marker::marker", "Token is not allowed in this state"],
+      ["::before::details-content", "Token is not allowed in this state"],
+      ["::before::unknown-thing", "Token is not allowed in this state"],
+      ["::before::markers", "Token is not allowed in this state"],
+      ["::before::marke", "Token is not allowed in this state"],
+      ["::before::-webkit-marker", "Token is not allowed in this state"],
+      ["::before::marker(x)", "Token is not allowed in this state"],
+      ["::before::marker::marker", "Token is not allowed in this state"],
+      ["::before::marker::before", "Token is not allowed in this state"],
+      ["::before:hover::marker", "Token is not allowed in this state"],
+      ["::before:has(::marker)", "Token is not allowed in this state"],
+      ["::first-line::marker", "Token is not allowed in this state"],
+      ["::part(x)::marker::before", "Token is not allowed in this state"],
+      ["::slotted(x)::before::marker::marker", "Token is not allowed in this state"],
+      // What follows ::before::marker gets the errors that follow any pseudo-element.
+      ["::before::marker.x", "Unexpected selector after pseudo-element: ."],
+      ["::before::marker:first-child", "Invalid pseudo-class after pseudo-element"],
+      ["::before::marker > a", "Unexpected selector after pseudo-element: >"],
+    ])("ERROR: %s {color:red}", (selector, message) => {
+      expect(() => minify_test_with_options(`${selector} {color:red}`, "")).toThrow(message);
+    });
+
     minify_test(".sm\\:text-5xl { font-size: 3rem }", ".sm\\:text-5xl{font-size:3rem}");
     minify_test("a:has(> img) {color:red}", "a:has(>img){color:red}");
     minify_test("dt:has(+ dt) {color:red}", "dt:has(+dt){color:red}");

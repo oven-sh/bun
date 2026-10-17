@@ -719,7 +719,7 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
 
     loop {
         let result: SimpleSelectorParseResult<Impl> = {
-            let ret = parse_one_simple_selector::<Impl>(parser, input, state)?;
+            let ret = parse_one_simple_selector::<Impl>(parser, input, state, builder)?;
             match ret {
                 Some(result) => result,
                 None => break,
@@ -2620,7 +2620,7 @@ bitflags::bitflags! {
         /// `::part`) already.
         ///
         /// If so, then other pseudo-elements and most other selectors are
-        /// disallowed.
+        /// disallowed, except `::marker` directly after `::before` or `::after`.
         const AFTER_PSEUDO_ELEMENT = 1 << 3;
 
         /// Whether we've parsed a non-stateful pseudo-element (again, as-in
@@ -3213,6 +3213,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: &mut SelectorParsingState,
+    builder: &SelectorBuilder<Impl>,
 ) -> CResult<Option<SimpleSelectorParseResult<Impl>>> {
     type S<Impl> = SimpleSelectorParseResult<Impl>;
 
@@ -3273,6 +3274,18 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
             let is_pseudo_element = !is_single_colon || is_css2_pseudo_element(name);
             if is_pseudo_element {
                 if !state.allows_pseudos() {
+                    // `li::before::marker`: https://drafts.csswg.org/css-pseudo-4/#marker-pseudo
+                    if !is_functional
+                        && matches!(
+                            builder.last_simple_selector(),
+                            Some(GenericComponent::PseudoElement(
+                                PseudoElement::Before | PseudoElement::After
+                            ))
+                        )
+                        && strings::eql_case_insensitive_ascii_check_length(name, b"marker")
+                    {
+                        return Ok(Some(S::PseudoElement(PseudoElement::Marker)));
+                    }
                     return Err(input.new_custom_error(
                         SelectorParseErrorKind::InvalidState.into_default_parser_error(),
                     ));

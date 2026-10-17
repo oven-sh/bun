@@ -561,7 +561,17 @@ fn spawn(
             // No startup window — targets are Target.createTarget'd, not the
             // default about:blank. Saves one tab and the visual-complete wait.
             c"--no-startup-window".as_ptr(),
+            // Shared memory files in the temp dir instead of /dev/shm, which Docker
+            // caps at 64MB (a third 1280x720 tab kills Chrome). Playwright and
+            // puppeteer both ship this.
+            c"--disable-dev-shm-usage".as_ptr(),
         ];
+        // With the sandbox on, Chrome exits at startup when it is root
+        // (crbug.com/638180), which is what it inherits from a root Bun.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if bun_sys::c::geteuid() == 0 {
+            argv.push(c"--no-sandbox".as_ptr());
+        }
         // User extras last so they can override built-in flags (Chrome's
         // CommandLine last-wins for duplicate switches). Memory is the caller's
         // CString Vector — lives until Bun__Chrome__ensure returns, after which

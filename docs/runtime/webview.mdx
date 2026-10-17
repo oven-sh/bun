@@ -156,8 +156,10 @@ When spawning, Bun passes a minimal flag set:
 --no-default-browser-check --disable-gpu --disable-extensions
 --disable-background-networking --disable-background-timer-throttling
 --disable-backgrounding-occluded-windows --disable-renderer-backgrounding
---disable-ipc-flooding-protection --no-startup-window
+--disable-ipc-flooding-protection --no-startup-window --disable-dev-shm-usage
 ```
+
+`--disable-dev-shm-usage` makes Chrome put its shared memory files in the temporary directory instead of `/dev/shm`, which Docker limits to 64 MB by default. On Linux, Bun also passes `--no-sandbox` when it runs as root, because Chrome does not start as root with its sandbox enabled. If you run Bun as another user in a container that does not let Chrome set up its sandbox, pass `argv: ["--no-sandbox"]` yourself.
 
 Append your own with `argv` — Chrome resolves duplicate switches last-wins, so you can override any default:
 

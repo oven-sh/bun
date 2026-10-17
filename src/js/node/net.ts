@@ -1180,7 +1180,7 @@ const ServerHandlers = {
     if (typeof cb !== "function") return false;
     const wire = Buffer.isBuffer(protocolsWire) ? protocolsWire : Buffer.from(protocolsWire);
     const protocols: string[] = [];
-    for (let i = 0; i + 1 <= wire.length;) {
+    for (let i = 0; i + 1 <= wire.length; ) {
       const n = wire[i];
       protocols.push(wire.toString("latin1", i + 1, i + 1 + n));
       i += 1 + n;
@@ -1905,7 +1905,12 @@ function kConnectTcp(self, addressType, req, address, port) {
   $debug("SocketHandle.kConnectTcp", addressType, address, port);
   const handle = self._handle as DialHandle;
   beginDial(self, req);
-  const err = addressType === 6 ? handle.connect6(req, address, port) : handle.connect(req, address, port);
+  let err;
+  try {
+    err = addressType === 6 ? handle.connect6(req, address, port) : handle.connect(req, address, port);
+  } finally {
+    req.dispatching = false;
+  }
   return endDial(req, err);
 }
 
@@ -1913,7 +1918,13 @@ function kConnectPipe(self, req, address) {
   $debug("SocketHandle.kConnectPipe");
   const handle = self._handle as DialHandle;
   beginDial(self, req);
-  return endDial(req, handle.connect(req, address));
+  let err;
+  try {
+    err = handle.connect(req, address);
+  } finally {
+    req.dispatching = false;
+  }
+  return endDial(req, err);
 }
 
 function beginDial(self, req) {
@@ -1928,14 +1939,14 @@ function beginDial(self, req) {
   // Node's TCPWrap returns errno for sync uv_*_connect failure and defers
   // oncomplete; the native connect instead fires connectError inside the
   // call. Bracket it so connectError hands the errno back through req.errno
-  // instead of re-entering.
+  // instead of re-entering. The caller clears it in a finally: a replacement
+  // that throws after it dialed must not leave a later connectError stashed.
   req.dispatching = true;
 }
 
 // `err` is what the handle's connect returned: 0 from Bun's, an errno or
 // undefined from a replacement.
 function endDial(req, err) {
-  req.dispatching = false;
   const errno = req.errno;
   if (errno !== undefined) {
     req.errno = undefined;
@@ -3380,6 +3391,9 @@ function internalConnect(self, options, address, port?, addressType?, localAddre
 
   $debug("connect: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
   self.emit("connectionAttempt", address, port, addressType);
+  // A listener that destroy()s the socket leaves no handle to dial with. Node
+  // throws on the null handle; the socket already emitted 'close', so return.
+  if (!self.connecting) return;
 
   if (addressType === 6 || addressType === 4) {
     if (self.blockList?.check(address, `ipv${addressType}`)) {
@@ -3499,6 +3513,8 @@ function internalConnectMultiple(context, canceled?) {
 
   $debug("connect/multiple: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
   self.emit("connectionAttempt", address, port, addressType);
+  // See internalConnect.
+  if (!self.connecting) return;
 
   // const req = new TCPConnectWrap();
   const req: ConnectReq = {};
@@ -3526,9 +3542,9 @@ function internalConnectMultiple(context, canceled?) {
     return;
   }
 
-  // The if(err) above covers sync failure; this catches a sync open or a
-  // destroy() from a 'connectionAttempt' listener. Arming the timer now
-  // would capture a stale handle and overwrite the next attempt's kTimeout.
+  // The if(err) above covers sync failure; this catches a sync open. Arming
+  // the timer now would capture a stale handle and overwrite the next
+  // attempt's kTimeout.
   if (!self.connecting || context.current !== current + 1) {
     return;
   }

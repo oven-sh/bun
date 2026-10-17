@@ -3291,6 +3291,15 @@ impl<const SSL: bool> NewSocket<SSL> {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
+        // A TLS engine over a user Duplex has no transport of its own to redial.
+        if matches!(
+            this.socket.get().socket,
+            uws::InternalSocket::UpgradedDuplex(_)
+        ) {
+            return Err(global.throw(format_args!(
+                "Cannot connect a socket that is bound to a stream"
+            )));
+        }
         let [req, address, port] = callframe.arguments_as_array::<3>();
         if !address.is_string() {
             return Err(

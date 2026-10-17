@@ -3601,15 +3601,16 @@ describe("connect through the handle", () => {
       const { promise, resolve, reject } = Promise.withResolvers<{ thisValue: unknown; req: any; args: unknown[] }>();
       socket.on("error", reject);
       socket.on("connect", () => reject(new Error("the replacement was bypassed")));
+      let methods: string[] = [];
       socket.once("connectionAttempt", () => {
-        expect(typeof socket._handle.connect).toBe("function");
-        expect(typeof socket._handle.connect6).toBe("function");
+        methods = [typeof socket._handle.connect, typeof socket._handle.connect6];
         socket._handle[method] = function (req, ...args) {
           resolve({ thisValue: this, req, args });
         };
       });
       socket.connect(options);
       const { thisValue, req, args } = await promise;
+      expect(methods).toEqual(["function", "function"]);
       expect(thisValue).toBe(socket._handle);
       expect(args).toEqual(expected);
       expect(socket.connecting).toBe(true);
@@ -3717,6 +3718,62 @@ describe("connect through the handle", () => {
       expect(socket._handle).toBe(passthrough!._handle);
     } finally {
       socket.destroy();
+      server.close();
+    }
+  });
+
+  it("a replacement that throws after it dialed does not hide the connect error", async () => {
+    // The throw leaves connect() as an uncaught exception, like Node: run it in a child.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const net = require("node:net");
+        process.on("uncaughtException", error => console.log("uncaught:", error.message));
+        const socket = new net.Socket();
+        socket.once("connectionAttempt", () => {
+          const original = socket._handle.connect;
+          socket._handle.connect = function (req, address, port) {
+            original.call(this, req, address, port);
+            throw new Error("replacement failed");
+          };
+        });
+        socket.on("error", error => console.log("error:", error.code));
+        socket.connect({ host: "127.0.0.1", port: 1 });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "uncaught: replacement failed\nerror: ECONNREFUSED\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("destroy() from a 'connectionAttempt' listener makes no connection", async () => {
+    const connections: Socket[] = [];
+    const server = createServer(connection => connections.push(connection)).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const socket = new Socket();
+    socket.once("connectionAttempt", () => socket.destroy());
+    socket.connect(server.address().port, "127.0.0.1");
+    await once(socket, "close");
+    // A probe dialed after the destroyed socket: once the server accepted it,
+    // a connection from the destroyed socket would be in the list before it.
+    const probe = createConnection(server.address().port, "127.0.0.1");
+    try {
+      await once(probe, "connect");
+      while (!connections.some(connection => connection.remotePort === probe.localPort)) {
+        await once(server, "connection");
+      }
+      expect(connections).toHaveLength(1);
+    } finally {
+      probe.destroy();
       server.close();
     }
   });

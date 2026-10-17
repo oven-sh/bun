@@ -350,14 +350,18 @@ main().then(
       expect(r.tempRewritten).toBe(true);
       expect(r.spawnPiped).toBe(true);
       // The container's cwd is workDir; the native variants resolve it to the
-      // same final path the host sees. The Node-ported component walk stays
-      // at EPERM: it lstats the drive root, which the container cannot read.
+      // same final path the host sees. The fallback for the denied DOS volume
+      // name answers only on the system volume, so a temp directory on another
+      // drive still gets EPERM. The Node-ported component walk stays at EPERM
+      // everywhere: it lstats the drive root, which the container cannot read.
       const hostRealpath = realpathSync.native(workDir);
+      const systemDrive = (process.env.SystemDrive ?? "C:").toUpperCase();
+      const nativeExpected = hostRealpath.toUpperCase().startsWith(systemDrive + "\\") ? hostRealpath : "EPERM";
       expect(r.realpath).toEqual({
         sync: "EPERM",
-        native: hostRealpath,
-        nativeCallback: hostRealpath,
-        promises: hostRealpath,
+        native: nativeExpected,
+        nativeCallback: nativeExpected,
+        promises: nativeExpected,
       });
       // Namespace denial vs name collision both surface as ERROR_ACCESS_DENIED;
       // stock uv_pipe_bind2 maps that to EADDRINUSE. Tighten to EACCES once

@@ -321,15 +321,13 @@ impl<'a> Fixer<'a> {
             .peekable();
         while let Some(comment) = comments.next() {
             if is_about_the_next_line(&comment) {
-                // `// eslint-disable-next-line` above `/// <reference path="a" />` is about that line. `// @ts-ignore` is about
-                // the next line that has code.
+                // `// eslint-disable-next-line` above `/// <reference path="a" />` is about that line. The other words are about
+                // the next code: `// @ts-ignore`, `// prettier-ignore`.
+                let is_about_any_line = [&b"disable-next-line"[..], b"deno-lint-ignore"]
+                    .iter()
+                    .any(|it| strings::contains(comment.text(), it));
                 match comments.peek() {
-                    Some(next)
-                        if is_about_the_file(next)
-                            && !strings::contains(comment.text(), b"@ts-") =>
-                    {
-                        continue;
-                    }
+                    Some(next) if is_about_any_line && is_about_the_file(next) => continue,
                     _ => break,
                 }
             }

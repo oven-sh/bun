@@ -1453,9 +1453,16 @@ describe("backpressure", () => {
       key: readFileSync(path.join(keysDir, "agent1-key.pem")),
     };
     type RequestListener = (req: http.IncomingMessage, res: http.ServerResponse) => void;
+    type ServerOptions = { keepAliveTimeout?: number; keepAliveTimeoutBuffer?: number };
+    // `timeout` is server.timeout. It is set before the server takes a connection.
+    function withTimeout<T extends { setTimeout(ms: number): unknown }>(server: T, timeout?: number) {
+      if (timeout !== undefined) server.setTimeout(timeout);
+      return server;
+    }
     const transports = {
       http: {
-        createServer: (listener: RequestListener) => http.createServer(listener),
+        createServer: (listener: RequestListener, options: ServerOptions = {}, timeout?: number) =>
+          withTimeout(http.createServer(options, listener), timeout),
         async connect(port: number) {
           const sock = net.connect(port, "127.0.0.1");
           sock.on("error", () => {});
@@ -1464,7 +1471,8 @@ describe("backpressure", () => {
         },
       },
       https: {
-        createServer: (listener: RequestListener) => https.createServer(tlsOptions, listener),
+        createServer: (listener: RequestListener, options: ServerOptions = {}, timeout?: number) =>
+          withTimeout(https.createServer({ ...tlsOptions, ...options }, listener), timeout),
         async connect(port: number) {
           const sock = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
           sock.on("error", () => {});
@@ -1475,8 +1483,8 @@ describe("backpressure", () => {
       // The next two are served from JS, over the socket the server is given. The http.Server
       // of the first never listens: a net.Server accepts its connections.
       'emit("connection")': {
-        createServer(listener: RequestListener) {
-          const server = http.createServer(listener);
+        createServer(listener: RequestListener, options: ServerOptions = {}, timeout?: number) {
+          const server = withTimeout(http.createServer(options, listener), timeout);
           return net.createServer(socket => void server.emit("connection", socket));
         },
         async connect(port: number) {
@@ -1487,8 +1495,11 @@ describe("backpressure", () => {
         },
       },
       "http2 allowHTTP1": {
-        createServer: (listener: RequestListener) =>
-          http2.createSecureServer({ ...tlsOptions, allowHTTP1: true }, listener as never),
+        createServer: (listener: RequestListener, options: ServerOptions = {}, timeout?: number) =>
+          withTimeout(
+            http2.createSecureServer({ ...tlsOptions, allowHTTP1: true, ...options } as never, listener as never),
+            timeout,
+          ),
         async connect(port: number) {
           const sock = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
           sock.on("error", () => {});
@@ -1609,6 +1620,61 @@ describe("backpressure", () => {
           upload.sock.destroy();
         }
       });
+
+      // Node's connectionListenerInternal, resOnFinish and resetSocketTimeout: the socket has server.timeout
+      // while a request is in flight, and keepAliveTimeout + keepAliveTimeoutBuffer between two requests.
+      it.each([
+        [
+          "the keep-alive timeout and its buffer",
+          { keepAliveTimeout: 10000, keepAliveTimeoutBuffer: 500 },
+          undefined,
+          [0, 10500, 0, 10500],
+        ],
+        [
+          "server.setTimeout()",
+          { keepAliveTimeout: 10000, keepAliveTimeoutBuffer: 500 },
+          7000,
+          [7000, 10500, 7000, 10500],
+        ],
+        ["keepAliveTimeout: 0", { keepAliveTimeout: 0 }, 7000, [7000, 7000, 7000, 7000]],
+      ] as const)("sets the socket timeout for %s", async (_, options, timeout, expected) => {
+        const timeouts: [string, number][] = [];
+        const second = Promise.withResolvers<void>();
+        await using server = transport.createServer(
+          (req, res) => {
+            timeouts.push([`request ${req.url}`, req.socket.timeout ?? 0]);
+            res.on("finish", () => {
+              timeouts.push([`finish ${req.url}`, req.socket.timeout ?? 0]);
+              if (req.url === "/second") second.resolve();
+            });
+            res.end("ok");
+          },
+          options,
+          timeout,
+        );
+        await once(server.listen(0, "127.0.0.1"), "listening");
+
+        const sock = await transport.connect((server.address() as AddressInfo).port);
+        try {
+          let responses = 0;
+          sock.on("data", chunk => {
+            const before = responses;
+            responses += chunk.toString("latin1").split("HTTP/1.1 200").length - 1;
+            // The second request leaves when the first response has arrived: it is not pipelined.
+            if (before === 0 && responses === 1) sock.write("GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
+          });
+          sock.write("GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n");
+          await second.promise;
+          expect(timeouts).toEqual([
+            ["request /first", expected[0]],
+            ["finish /first", expected[1]],
+            ["request /second", expected[2]],
+            ["finish /second", expected[3]],
+          ]);
+        } finally {
+          sock.destroy();
+        }
+      });
     });
 
     // A stopped socket reads nothing, so it does not see the FIN of a client that
@@ -1659,50 +1725,6 @@ describe("backpressure", () => {
           sock.end();
           await closed.promise;
           expect(events).toEqual(["stopped", "finish", "timeout"]);
-        } finally {
-          sock.destroy();
-        }
-      });
-
-      // The keep-alive timeout covers the idle time between two requests. It must be gone
-      // when the next request is dispatched, or a slow handler would lose its connection.
-      it("ends the keep-alive timeout when the next request on the connection arrives", async () => {
-        const timeouts: Record<string, number[]> = {};
-        const second = Promise.withResolvers<void>();
-        await using server = transport.createServer((req, res) => {
-          const socket = req.socket as net.Socket & { calls?: number[] };
-          if (!socket.calls) {
-            const calls: number[] = (socket.calls = []);
-            const setTimeout = socket.setTimeout;
-            socket.setTimeout = function (ms: number, ...rest: any[]) {
-              calls.push(ms);
-              return setTimeout.call(this, ms, ...rest);
-            } as typeof socket.setTimeout;
-          }
-          timeouts[`at request ${req.url}`] = [...socket.calls];
-          res.on("finish", () => {
-            timeouts[`after ${req.url} finished`] = [...socket.calls!];
-            if (req.url === "/second") second.resolve();
-          });
-          res.end("ok");
-        });
-        await once(server.listen(0, "127.0.0.1"), "listening");
-
-        const sock = await transport.connect((server.address() as AddressInfo).port);
-        try {
-          let responses = 0;
-          sock.on("data", chunk => {
-            responses += chunk.toString("latin1").split("HTTP/1.1 200").length - 1;
-            // The second request leaves only when the first response has arrived: it is not pipelined.
-            if (responses === 1) sock.write("GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
-          });
-          sock.write("GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n");
-          await second.promise;
-          // The keep-alive timeout is keepAliveTimeout + keepAliveTimeoutBuffer: 5000 + 1000 ms.
-          expect({
-            armedWhileSecondIsDispatched: timeouts["at request /second"].at(-1) === 6000,
-            armedOnceIdleAgain: timeouts["after /second finished"].at(-1) === 6000,
-          }).toEqual({ armedWhileSecondIsDispatched: false, armedOnceIdleAgain: true });
         } finally {
           sock.destroy();
         }

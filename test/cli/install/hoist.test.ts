@@ -2260,6 +2260,23 @@ describe.concurrent("a folder that no bun.lock placed stays", () => {
     }
   });
 
+  // A bun.lock of an older bun does not say which dependencies are bundled. It places `dep` at the root alone.
+  test("below a package, from its tarball: bun prune", async () => {
+    const own = JSON.stringify({ name: "dep", version: "1.0.0", from: "the tarball" });
+    using server = await serveGraph(
+      { dep: { "1.0.0": {} }, ships: { "1.0.0": { dependencies: { dep: "^1.0.0" } } } },
+      { "ships-1.0.0": { "node_modules/dep/package.json": own } },
+    );
+    using tmp = tempDir("hoist-own-folder-prune", {
+      "bunfig.toml": bunfig(server),
+      "package.json": JSON.stringify({ name: "root", dependencies: { ships: "1.0.0" } }),
+    });
+    const dir = String(tmp);
+    await run(dir, "install");
+    await run(dir, "prune");
+    expect(await file(join(dir, "node_modules", "ships", "node_modules", "dep", "package.json")).text()).toBe(own);
+  });
+
   test("in a member's node_modules and below a package, by hand", async () => {
     using server = await serveGraph({
       d: { "1.0.0": {}, "2.0.0": {} },

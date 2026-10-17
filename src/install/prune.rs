@@ -1209,6 +1209,8 @@ fn plan_hoisted(
         manager.crash();
     }
 
+    let cache = crate::package_manager::directories::try_get_cache_directory(manager).ok();
+    let manager: &PackageManager = manager;
     let quiet = manager.options.log_level == LogLevel::Silent;
     let lockfile: &Lockfile = &manager.lockfile;
     let hoisted = HoistedTree::init(lockfile, quiet);
@@ -1287,6 +1289,8 @@ fn plan_hoisted(
                         || !hoisted.is_installed(tree_id, alias)
                         || !hoisted.owners_installed(tree_id)
                         || !hoisted.removable(tree_id, entry.alias, &nested_path)
+                        // A bun.lock of an older Bun does not say which dependencies are bundled.
+                        || cache.is_some_and(|cache| may_ship(manager, cache, pkg_id, entry.alias))
                 },
                 plan,
             );
@@ -1323,7 +1327,7 @@ fn plan_hoisted(
         };
         if visited.is_set(pkg_id)
             || selection.is_some_and(|sel| !sel.selected.is_set(pkg_id))
-            || is_pruned_workspace(&*manager, pkg_id)
+            || is_pruned_workspace(manager, pkg_id)
         {
             continue;
         }

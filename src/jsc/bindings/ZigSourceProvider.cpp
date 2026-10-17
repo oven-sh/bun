@@ -55,8 +55,16 @@ void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider)
 }
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(const BunString* sourceURL);
+extern "C" bool BunTest__writesCoverageReport();
 extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
 extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
+
+// A text of one line needs none: an empty CommonJS file runs as one, and it reports no line.
+static bool needsFinalLineTerminator(const String& text)
+{
+    auto isLineTerminator = [](char16_t unit) { return JSC::isLineTerminator(unit); };
+    return !text.isEmpty() && !isLineTerminator(text[text.length() - 1]) && text.contains(isLineTerminator);
+}
 
 Ref<SourceProvider> SourceProvider::create(
     Zig::GlobalObject* globalObject,
@@ -81,6 +89,9 @@ Ref<SourceProvider> SourceProvider::create(
     if (isCodeCoverageEnabled && !isBuiltin) {
         BunString sourceURLBunString = Bun::toString(sourceURLString);
         shouldGenerateCodeCoverage = BunTest__shouldGenerateCodeCoverage(&sourceURLBunString);
+        // The report of `bun test --coverage` reads a text as lines that end with a terminator.
+        if (shouldGenerateCodeCoverage && needsFinalLineTerminator(string) && BunTest__writesCoverageReport())
+            string = makeString(string, '\n');
     }
 
     const auto getSourceOrigin = [&]() -> SourceOrigin {

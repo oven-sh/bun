@@ -827,10 +827,10 @@ impl ByteRangeMapping {
                 // functions that have executed have non-executable lines in them and thats fine.
                 if !did_fn_execute {
                     let end = max_line.min(line_count);
-                    line_hits_slice[min_line as usize..end as usize].fill(0);
                     for line in min_line..end {
                         executable_lines.set(line as usize);
                         lines_which_have_executed.unset(line as usize);
+                        line_hits_slice[line as usize] = 0;
                     }
                 }
 

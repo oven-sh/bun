@@ -3365,29 +3365,29 @@ describe.concurrent("a write statement that is left on its first row", () => {
     ["BEGIN", "COMMIT", "cannot commit - no transaction is active"],
     ["SAVEPOINT s", "RELEASE s", "no such savepoint: s"],
   ])("inside the user's %s", (begin, commit, noTransaction) => {
-    test("collected: it stays part of the transaction", async () => {
-      const kept = {
-        ...printed({
-          inTheCollection: 0,
-          inTransaction: true,
-          ended: "did not throw",
-          asked: true,
-          after: { rows: 2, found: 2, plain: 1 },
-        }),
-        file: { rows: 2, found: 2, check: "ok" },
-      };
-      // macOS loads the system's SQLite. With that of macOS 15 the end of the statement rolls the whole transaction back.
-      const rolledBack = {
-        ...printed({ inTheCollection: 0, inTransaction: false, ended: noTransaction, asked: true, after: nothing }),
-        file: { rows: 0, found: 0, check: "ok" },
-      };
-      expect(isMacOS ? [kept, rolledBack] : [kept]).toContainEqual(
+    test("collected: all of the transaction is kept, or none where the index is written as the statement ends", async () => {
+      const begun = `
+        const db = open("fts5");
+        db.exec("${begin}; INSERT INTO plain VALUES (1); INSERT INTO ft VALUES ('hello earlier')");
+        let calls = 0;
+      `;
+      // macOS loads the system's SQLite. Does this one need the authorizer when a statement ends inside a transaction?
+      const { stdout: needsTheAuthorizer, ...control } = await inChild(`
+        ${begun}
+        const rows = db.prepare(insert).iterate();
+        rows.next();
+        db.setAuthorizer(() => (calls++, constants.SQLITE_OK));
+        rows.return();
+        console.log(calls > 0);
+      `);
+      expect(control).toEqual({ stderr: "", signalCode: null, exitCode: 0 });
+      expect(isMacOS ? ["false", "true"] : ["false"]).toContain(needsTheAuthorizer);
+
+      expect(
         await inChild(
           `
-          const db = open("fts5");
-          db.exec("${begin}; INSERT INTO plain VALUES (1); INSERT INTO ft VALUES ('hello earlier')");
+          ${begun}
           leave(db);
-          let calls = 0;
           db.setAuthorizer(() => (calls++, constants.SQLITE_OK));
           collect();
           const inTheCollection = calls;
@@ -3397,7 +3397,61 @@ describe.concurrent("a write statement that is left on its first row", () => {
         `,
           counts,
         ),
+      ).toEqual(
+        needsTheAuthorizer === "true"
+          ? {
+              ...printed({
+                inTheCollection: 0,
+                inTransaction: false,
+                ended: noTransaction,
+                asked: true,
+                after: nothing,
+              }),
+              file: { rows: 0, found: 0, check: "ok" },
+            }
+          : {
+              ...printed({
+                inTheCollection: 0,
+                inTransaction: true,
+                ended: "did not throw",
+                asked: true,
+                after: { rows: 2, found: 2, plain: 1 },
+              }),
+              file: { rows: 2, found: 2, check: "ok" },
+            },
       );
+    });
+
+    // A defect. This has to turn round once a collected statement is ended where the authorizer can be asked.
+    // After a later statement with a journal of its own, the index is written as the first one ends.
+    test("collected after a later INSERT ... RETURNING: the transaction is gone, and the next write commits by itself", async () => {
+      expect(
+        await inChild(
+          `
+          const db = open("fts5");
+          db.exec("${begin}; INSERT INTO plain VALUES (1); INSERT INTO ft VALUES ('hello earlier')");
+          leave(db);
+          db.prepare("INSERT INTO ft VALUES ('hello later') RETURNING 1").all();
+          let calls = 0;
+          db.setAuthorizer(() => (calls++, constants.SQLITE_OK));
+          collect();
+          const inTheCollection = calls;
+          const inTransaction = db.isTransaction;
+          db.exec("INSERT INTO plain VALUES (2)");
+          const undone = thrownBy(() => db.exec("${begin === "BEGIN" ? "ROLLBACK" : "ROLLBACK TO s"}"));
+          console.log(JSON.stringify({ inTheCollection, inTransaction, undone, after: committed() }));
+        `,
+          counts,
+        ),
+      ).toEqual({
+        ...printed({
+          inTheCollection: 0,
+          inTransaction: false,
+          undone: begin === "BEGIN" ? "cannot rollback - no transaction is active" : noTransaction,
+          after: { rows: 0, found: 0, plain: 1 },
+        }),
+        file: { rows: 0, found: 0, check: "ok" },
+      });
     });
 
     test("collected with the DatabaseSync: the transaction is rolled back", async () => {

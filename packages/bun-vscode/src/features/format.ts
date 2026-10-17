@@ -108,12 +108,10 @@ export function registerFormatter(context: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel("Bun Formatter");
   context.subscriptions.push(output);
 
-  const provider: vscode.DocumentFormattingEditProvider & vscode.DocumentRangeFormattingEditProvider = {
+  const provider: vscode.DocumentFormattingEditProvider = {
     provideDocumentFormattingEdits: (document, _options, token) => formatWithBun(document, token, output),
-    provideDocumentRangeFormattingEdits: (document, _range, _options, token) => formatWithBun(document, token, output),
   };
   context.subscriptions.push(
     vscode.languages.registerDocumentFormattingEditProvider(SELECTOR, provider),
-    vscode.languages.registerDocumentRangeFormattingEditProvider(SELECTOR, provider),
   );
 }

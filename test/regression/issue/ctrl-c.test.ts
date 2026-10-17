@@ -81,8 +81,9 @@ test.skipIf(isWindows)("verify that we forward SIGINT from parent to child in bu
 // a package.json script, and as a file, each with and without --bun.
 // `long-running` stands in for a dev server such as vite: it prints a line when
 // it is up, then idles with no SIGINT handler, so the signal must terminate it.
-// It is a `file:` dependency: `bun install` links it into node_modules/.bin like
-// a registry package, without a request to a registry.
+// It answers SIGUSR2 with one more line. It is a `file:` dependency: `bun install`
+// links it into node_modules/.bin like a registry package, without a request to
+// a registry.
 //
 // No test changes the project directory, so all of them share one install.
 let projectDir: string;
@@ -108,6 +109,7 @@ beforeAll(() => {
     }),
     // The timer only limits how long a stray process outlives a failed test.
     "long-running-src/cli.js": `#!/usr/bin/env node
+if (process.platform !== "win32") process.on("SIGUSR2", () => console.log("long-running got SIGUSR2"));
 console.log("long-running is ready");
 setTimeout(() => {}, 60_000);
 `,
@@ -145,12 +147,34 @@ for (const mode of [
       killSignal: "SIGKILL",
     });
 
-    // wait for the bin to start
     const reader = proc.stdout.getReader();
-    await reader.read(); // wait for first bit of stdout
-    reader.releaseLock();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    const waitForLine = async (line: string) => {
+      while (!stdout.includes(line)) {
+        const chunk = await Promise.race([reader.read(), proc.exited]);
+        if (typeof chunk === "number" || chunk.done) {
+          const state = { stdout, exitCode: proc.exitCode, signalCode: proc.signalCode };
+          throw new Error(`bun ended before ${JSON.stringify(line)}: ${JSON.stringify(state)}`);
+        }
+        stdout += decoder.decode(chunk.value, { stream: true });
+      }
+    };
+
+    // wait for the bin to start
+    await waitForLine("long-running is ready");
 
     expect(proc.killed).toBe(false);
+
+    if (!isWindows) {
+      // `bun run` has the pid of its child only when the spawn returns. A signal
+      // that comes before that goes a different way, and these cases are not
+      // about it. So first wait until a signal has gone through to the bin.
+      // The `dev` cases need a shell that execs the script, as bash does.
+      process.kill(proc.pid, "SIGUSR2");
+      await waitForLine("long-running got SIGUSR2");
+    }
+    reader.releaseLock();
 
     // send sigint
     process.kill(proc.pid, "SIGINT");

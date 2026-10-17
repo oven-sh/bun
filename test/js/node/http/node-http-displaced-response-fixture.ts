@@ -438,7 +438,6 @@ if (suite === "displaced") {
       "resume",
       "pause",
       "pauseReads",
-      "notifyWhenReadParsed",
       "flushHeaders",
       "end",
       "write",

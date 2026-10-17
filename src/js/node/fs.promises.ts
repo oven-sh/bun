@@ -309,6 +309,18 @@ const exports = {
   readdir: asyncWrap(fs.readdir, "readdir"),
   readFile: async function (fileHandleOrFdOrPath, ...args) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
+    const options = args[0];
+    if (typeof options === "object" && options !== null) {
+      const flag = options.flag;
+      if (flag !== undefined) {
+        // Node: `options.flag || 'r'` https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1928
+        return _readFile(fileHandleOrFdOrPath, {
+          encoding: options.encoding,
+          signal: options.signal,
+          flag: flag || "r",
+        });
+      }
+    }
     return _readFile(fileHandleOrFdOrPath, ...args);
   },
   writeFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _writeFile>) {
@@ -1614,8 +1626,8 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
   let signal: AbortSignal | null = null;
   if (typeof optionsOrEncoding === "object") {
     encoding = optionsOrEncoding?.encoding ?? (encoding || "utf8");
-    // Node: `options.flag || 'w'`. Every falsy flag is the default.
-    flag = optionsOrEncoding?.flag || flag || "w";
+    // Node: `options.flag || 'w'` https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1889
+    flag = optionsOrEncoding?.flag || "w";
     mode = optionsOrEncoding?.mode ?? (mode || 0o666);
     signal = optionsOrEncoding?.signal ?? null;
     if (signal?.aborted) {

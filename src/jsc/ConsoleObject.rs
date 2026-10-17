@@ -2924,10 +2924,7 @@ pub mod formatter {
         }
     }
 
-    /// Where the opening bracket of an array stands while
-    /// `PropertyIteratorCtx` walks its named properties. An array with no
-    /// elements holds the bracket back until a property prints, so one with
-    /// nothing to print is still `[]`.
+    /// The opening bracket of an array while its named properties print. `Pending`: not written.
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub(crate) enum ArrayOpen {
         /// An object, or an array whose first element wrote the bracket.
@@ -2947,8 +2944,7 @@ pub mod formatter {
         pub(crate) parent: JSValue,
     }
 
-    // One of these sits in the frame of every `print_object` and `print_array`
-    // level of a nested print.
+    // Lives in the frame of every nested `print_object` and `print_array`.
     const _: () = assert!(core::mem::size_of::<PropertyIteratorCtx<'_, '_, true>>() == 48);
 
     impl<'a, 'b, const C: bool> PropertyIteratorCtx<'a, 'b, C> {
@@ -2984,9 +2980,7 @@ pub mod formatter {
             Ok(())
         }
 
-        /// `handle_first_property` for an array with no elements: writes the
-        /// bracket `print_array` held back, by the rule it uses before a
-        /// first element.
+        /// Writes the bracket that `print_array` held back for an array with no elements.
         #[cold]
         #[inline(never)]
         fn open_array(&mut self) {
@@ -4336,8 +4330,7 @@ pub mod formatter {
                 let mut empty_start: Option<u32> = None;
                 'first: {
                     if len == 0 {
-                        // Only named properties follow. The first one that
-                        // prints writes the bracket (`open_array`).
+                        // `open_array` writes the bracket with the first property.
                         break 'first;
                     }
                     let element = value.get_direct_index(self.global_this, 0)?;
@@ -4519,8 +4512,7 @@ pub mod formatter {
                     // Hoist field reads before `formatter: self` reborrows the
                     // whole `*self` (struct-literal field order is not eval
                     // order in the borrow checker's eyes once `self` is moved).
-                    // With no elements, `open_array` decides the line break:
-                    // the check here would reset the line length it reads.
+                    // `open_array` reads the line length of an empty array: do not reset it.
                     let always_newline = len != 0
                         && !self.single_line
                         && (self.always_newline_scope || self.good_time_for_a_new_line());

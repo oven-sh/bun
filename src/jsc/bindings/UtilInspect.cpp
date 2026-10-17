@@ -68,14 +68,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
 }
 
-// The first read of the array printer. It runs no JS.
-//   UINT64_MAX   not an ArrayType cell: an arguments object or Array.prototype
-//                (an instance of an Array subclass is ArrayType)
-//   low 32 bits  the length
-//   bit 32       the array has no elements and has an enumerable named (non-index) property
-// The property walk decides which named properties print. An empty array whose named
-// properties are all deleted or non-enumerable has a clear bit, so it stays `[]`.
-// `constructor` does not count: the walk never prints that key.
+// The length, plus bit 32 when the array is empty and has an enumerable named key. UINT64_MAX: not an ArrayType cell.
 extern "C" uint64_t Bun__JSArray__lengthAndNamedKeys(JSC::EncodedJSValue encodedValue)
 {
     static constexpr uint64_t namedKeys = 1ULL << 32;
@@ -95,7 +88,7 @@ extern "C" uint64_t Bun__JSArray__lengthAndNamedKeys(JSC::EncodedJSValue encoded
     structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
         if ((entry.attributes() & PropertyAttribute::DontEnum) || PropertyName(entry.key()).isPrivateName())
             return true;
-        if (entry.key() == vm.propertyNames->constructor.impl())
+        if (entry.key() == vm.propertyNames->constructor.impl()) // the property walk never prints it
             return true;
         found = true;
         return false;

@@ -2582,9 +2582,7 @@ impl JSValue {
             index => Some(index as u32),
         }
     }
-    /// Length of an `Array`, and whether it has no elements and has an
-    /// enumerable named (non-index) property. One call, no JS runs.
-    /// `None` for any other value (an arguments object, `Array.prototype`).
+    /// For an `Array`: its length, and whether it is empty and has an enumerable named property.
     pub(crate) fn array_length_and_named_keys(self) -> Option<(u32, bool)> {
         unsafe extern "C" {
             safe fn Bun__JSArray__lengthAndNamedKeys(this: JSValue) -> u64;

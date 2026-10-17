@@ -132,11 +132,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
         script->setDouble("scriptId"_s, static_cast<double>(sourceID));
         script->setDouble("sourceLength"_s, static_cast<double>(provider->source().length()));
 
+        // JSC's ranges include their last character; V8's end after it.
         auto blockArray = JSON::Array::create();
         for (const auto& block : blocks) {
             auto range = JSON::Array::create();
             range->pushInteger(block.m_startOffset);
-            range->pushInteger(block.m_endOffset);
+            range->pushInteger(block.m_endOffset + 1);
             range->pushDouble(static_cast<double>(block.m_executionCount));
             blockArray->pushValue(WTF::move(range));
         }
@@ -151,7 +152,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
                 continue;
             auto range = JSON::Array::create();
             range->pushDouble(static_cast<double>(std::get<1>(functionRange)));
-            range->pushDouble(static_cast<double>(std::get<2>(functionRange)));
+            range->pushDouble(static_cast<double>(std::get<2>(functionRange)) + 1);
             range->pushBoolean(std::get<0>(functionRange));
             functionArray->pushValue(WTF::move(range));
         }

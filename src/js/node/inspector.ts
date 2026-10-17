@@ -307,18 +307,10 @@ function buildScriptCoverageList(
       url = pathToFileURL(url).href;
     }
 
-    // JSC's ranges include their last character; V8's end after it. What is empty or inverted
-    // after that is text JSC has between two adjacent functions: V8 never emits
-    // startOffset === endOffset, and @bcoe/v8-coverage recurses forever on one.
-    // Outer functions before nested ones, so a stack-based sweep below sees enclosing ranges first.
-    const functions = script.functions
-      .map(([start, end, executed]): [number, number, boolean] => [start, end + 1, executed])
-      .filter(([start, end]) => start >= 0 && end > start)
-      .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
-    const blocks = script.blocks
-      .map(([start, end, count]): [number, number, number] => [start, end + 1, count])
-      .filter(([start, end]) => start >= 0 && end > start)
-      .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+    // Outer ranges before nested ones, so a stack-based sweep below sees
+    // enclosing ranges first.
+    const functions = script.functions.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+    const blocks = script.blocks.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
 
     // Assign each basic block to the innermost function range containing it.
     const blocksPerFunction: Array<Array<[number, number, number]>> = functions.map(() => []);
@@ -359,8 +351,6 @@ function buildScriptCoverageList(
     const entries: object[] = [];
 
     // As in V8, a range is listed only where its count is not that of the range it is in.
-    // ast-v8-to-istanbul takes a range to include the character after it, which a range
-    // that only repeats its parent's count would give to the function that starts there.
     const toRanges = (outer: [number, number, number], inner: Array<[number, number, number]>) => {
       const ranges: Array<{ startOffset: number; endOffset: number; count: number }> = [];
       const enclosing: typeof ranges = [];

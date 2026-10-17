@@ -28,8 +28,9 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
     basicBlocks.reserveCapacity(functionRanges.size() + basicBlocks.size());
 
     for (const auto& functionRange : functionRanges) {
+        // A generator or an async function is one function, and a static block is none.
         auto parseMode = std::get<3>(functionRange);
-        if (JSC::isProgramOrModuleParseMode(parseMode) || !JSC::FunctionHasExecutedCache::isFunctionInSource(parseMode))
+        if (JSC::isProgramOrModuleParseMode(parseMode) || JSC::isGeneratorOrAsyncFunctionBodyParseMode(parseMode) || parseMode == JSC::SourceParseMode::ClassStaticBlockMode)
             continue;
         BasicBlockRange range;
         range.m_hasExecuted = std::get<0>(functionRange);

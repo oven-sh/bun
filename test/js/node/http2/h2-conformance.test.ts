@@ -798,6 +798,148 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
       raw.close();
     }
   });
+
+  /** Answers the client's first request with SETTINGS and PUSH_PROMISE(1 -> 2), then `extra`. */
+  async function promiseStream2(raw: RawH2Server, extra: Buffer[] = []) {
+    await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+    const promised = Buffer.alloc(4);
+    promised.writeUInt32BE(2, 0);
+    // [:method GET, :scheme http, :path /, :authority localhost], no dynamic table.
+    const block = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+    raw.socket!.write(
+      Buffer.concat([
+        encodeFrame(FrameType.SETTINGS, 0, 0),
+        encodeFrame(FrameType.SETTINGS, 0x1, 0),
+        encodeFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, 1, Buffer.concat([promised, block])),
+        ...extra,
+      ]),
+    );
+  }
+
+  function goawayFrame(lastStreamId: number, code: number): Buffer {
+    const payload = Buffer.alloc(8);
+    payload.writeUInt32BE(lastStreamId, 0);
+    payload.writeUInt32BE(code, 4);
+    return encodeFrame(FrameType.GOAWAY, 0, 0, payload);
+  }
+
+  /** Connects a client whose first request gets a pushed stream, and records that stream's events. */
+  function connectAndObservePush(raw: RawH2Server) {
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    const sessionClosed = Promise.withResolvers<void>();
+    const announced = Promise.withResolvers<http2.ClientHttp2Stream>();
+    client.on("close", () => {
+      sessionClosed.resolve();
+      // A no-op once the push was announced. Before that, the test cannot go on.
+      announced.reject(new Error("the session closed before the push was announced"));
+    });
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    req.resume();
+    const seen = { error: null as string | null, aborted: false, body: "" };
+    const pushedClosed = Promise.withResolvers<void>();
+    client.on("stream", pushed => {
+      pushed.on("error", (e: NodeJS.ErrnoException) => (seen.error = e.code ?? e.message));
+      pushed.on("aborted", () => (seen.aborted = true));
+      pushed.on("data", (d: Buffer) => (seen.body += d.toString()));
+      pushed.on("close", () => pushedClosed.resolve());
+      announced.resolve(pushed);
+    });
+    return {
+      client,
+      seen,
+      announced: announced.promise,
+      pushedClosed: pushedClosed.promise,
+      sessionClosed: sessionClosed.promise,
+    };
+  }
+
+  // The pushed stream is open (reserved) when the session goes away. node destroys it with the
+  // rest of the session's streams: 'close' always, plus the session error when there is one.
+  const teardowns: Array<{
+    how: string;
+    teardown: (client: http2.ClientHttp2Session, raw: RawH2Server) => unknown;
+    // Left empty where bun and node do not agree yet on the code a plain destroy() reports.
+    expected: { error?: string | null; rstCode?: number };
+  }> = [
+    { how: "session.destroy()", teardown: client => client.destroy(), expected: {} },
+    {
+      how: "session.destroy(err)",
+      teardown: client => client.destroy(new Error("boom")),
+      expected: { error: "boom", rstCode: ErrorCode.INTERNAL_ERROR },
+    },
+    {
+      how: "a GOAWAY that carries an error code",
+      teardown: (_, raw) => raw.socket!.write(goawayFrame(1, ErrorCode.ENHANCE_YOUR_CALM)),
+      expected: { error: "ERR_HTTP2_SESSION_ERROR", rstCode: ErrorCode.ENHANCE_YOUR_CALM },
+    },
+    {
+      how: "the peer closing the connection",
+      teardown: (_, raw) => raw.socket!.end(),
+      expected: { error: null, rstCode: ErrorCode.CANCEL },
+    },
+  ];
+  test.each(teardowns)("$how destroys a pushed stream that is still open", async ({ teardown, expected }) => {
+    const raw = await RawH2Server.listen();
+    const { client, seen, announced, pushedClosed, sessionClosed } = connectAndObservePush(raw);
+    try {
+      await promiseStream2(raw);
+      const pushed = await announced;
+      teardown(client, raw);
+      await sessionClosed;
+      // By the time the session reports 'close', the pushed stream is destroyed.
+      expect(pushed.destroyed).toBe(true);
+      await pushedClosed;
+      expect({ error: seen.error, aborted: seen.aborted, rstCode: pushed.rstCode }).toMatchObject({
+        aborted: false,
+        ...expected,
+      });
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("a session destroyed while a pushed stream handles the peer's reset does not report that stream twice", async () => {
+    const raw = await RawH2Server.listen();
+    const { client, seen, announced, pushedClosed } = connectAndObservePush(raw);
+    try {
+      await promiseStream2(raw);
+      const pushed = await announced;
+      // RST_STREAM(CANCEL) is already closing the stream when this listener runs. The teardown it
+      // starts must leave the stream to that reset: no 'error' on top of it.
+      pushed.on("aborted", () => client.destroy());
+      const code = Buffer.alloc(4);
+      code.writeUInt32BE(ErrorCode.CANCEL, 0);
+      raw.socket!.write(encodeFrame(FrameType.RST_STREAM, 0, 2, code));
+      await pushedClosed;
+      expect({ error: seen.error, rstCode: pushed.rstCode }).toEqual({ error: null, rstCode: ErrorCode.CANCEL });
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("a graceful GOAWAY leaves a pushed stream above its last-stream-id running", async () => {
+    const raw = await RawH2Server.listen();
+    const { client, seen, announced, pushedClosed } = connectAndObservePush(raw);
+    try {
+      // GOAWAY(last-stream-id 0) refuses the request on stream 1. Stream 2 is the server's own:
+      // the last-stream-id does not cover it (RFC 9113 6.8), so its response still arrives.
+      await promiseStream2(raw, [
+        encodeFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 2, Buffer.from([0x88])), // :status 200
+        goawayFrame(0, ErrorCode.NO_ERROR),
+        encodeFrame(FrameType.DATA, 0x1 /* END_STREAM */, 2, Buffer.from("pushed body")),
+      ]);
+      await announced;
+      await pushedClosed;
+      expect(seen).toEqual({ error: null, aborted: false, body: "pushed body" });
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
 });
 
 describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {

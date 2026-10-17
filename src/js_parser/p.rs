@@ -324,6 +324,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) imports_to_convert_from_require: List<'a, DeferredImportNamespace>,
     /// Each local the parse pass saw declared as `x = require("pkg")`, and whether it then saw `x` assigned.
     pub(crate) require_locals: HashMap<Ref, bool>,
+    /// A bit for the name of each key of `require_locals`: an assignment to another name stops at it.
+    pub(crate) require_local_names: u64,
     pub(crate) imports_to_convert_from_dynamic_import: List<'a, DeferredImportNamespace>,
     pub(crate) dynamic_import_aliases: bun_ast::ast_result::DynamicImportAliases,
     /// User-declared locals holding an `import()` / `require()` namespace
@@ -1871,14 +1873,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 _ => true,
             };
         if may_become_import {
+            let name = self.symbols[local.inner_index() as usize].original_name;
+            self.require_local_names |= Self::require_local_name_bit(name.slice());
             self.require_locals.insert(local, false);
         }
+    }
+
+    #[inline]
+    fn require_local_name_bit(name: &[u8]) -> u64 {
+        1 << ((usize::from(name.first().copied().unwrap_or(0)) + name.len()) & 63)
     }
 
     /// After the first `note_require_local`, marks each such local that `target` assigns. A default in a pattern marks itself.
     #[inline]
     pub(crate) fn note_assign_target(&mut self, target: Expr) {
-        if !self.require_locals.is_empty() {
+        if self.require_local_names != 0 {
             self.note_assigned_require_locals(target);
         }
     }
@@ -1889,6 +1898,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match target.data {
             js_ast::ExprData::EIdentifier(id) => {
                 let name = self.load_name_from_ref(id.ref_);
+                if self.require_local_names & Self::require_local_name_bit(name) == 0 {
+                    return;
+                }
                 let hash = Scope::get_member_hash(name);
                 let mut scope = Some(self.current_scope);
                 // A name that an inner scope declares below this assignment is not a member yet: this errs to "assigned".
@@ -1922,7 +1934,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// After the first `note_require_local`: a call of the identifier `eval` can assign every variable its scope sees.
     #[inline]
     pub(crate) fn note_direct_eval(&mut self, target: Expr) {
-        if !self.require_locals.is_empty() {
+        if self.require_local_names != 0 {
             self.note_direct_eval_below_require_local(target);
         }
     }
@@ -9945,6 +9957,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             runtime_imports: RuntimeImports::default(),
             imports_to_convert_from_require: BumpVec::new_in(arena),
             require_locals: HashMap::default(),
+            require_local_names: 0,
             imports_to_convert_from_dynamic_import: BumpVec::new_in(arena),
             dynamic_import_aliases: Default::default(),
             dynamic_import_namespace_locals: Default::default(),

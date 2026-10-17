@@ -11,7 +11,7 @@ pub use parents::{bind_for_format_in, try_bind_for_format_in};
 use crate::atom::{Atom, known};
 use crate::hir::*;
 use crate::session::{Arena, ArenaHashMap, ArenaHashSet, ArenaVec, vec_from_iter_in};
-use crate::util::{FxBuild, FxHashMap, FxHashSet};
+use crate::util::{FxBuild, FxHashMap, FxHashSet, SharedSort};
 use smallvec::SmallVec;
 
 define_id!(SymbolId, ScopeId, TableId, FlowId);
@@ -806,6 +806,176 @@ pub enum Flow {
     },
 }
 
+impl Flow {
+    /// A range of `edges`, which is `BoundIn::flow_edges`, or a single node.
+    pub fn antecedents<'a>(&'a self, edges: &'a [FlowId]) -> &'a [FlowId] {
+        match self {
+            Flow::Unreachable => &[],
+            &Flow::Label { start, len } | &Flow::Loop { start, len } => {
+                &edges[start as usize..(start + len) as usize]
+            }
+            Flow::Start { outer: before, .. }
+            | Flow::StartInvoked { outer: before, .. }
+            | Flow::Reduce { before, .. }
+            | Flow::ArrayMutation { before, .. }
+            | Flow::Cond { before, .. }
+            | Flow::Switch { before, .. }
+            | Flow::Assign { before, .. }
+            | Flow::Call { before, .. } => std::slice::from_ref(before),
+        }
+    }
+}
+
+/// TypeScript's limit on nested `getTypeAtFlowNode` calls. At this depth it gives up and reports TS2563.
+pub const MAX_FLOW_DEPTH: u32 = 2000;
+
+/// One `Flow::Loop` node, as `measure_flow` sees it.
+struct Loop {
+    label: u32,
+    /// The last node of the loop body.
+    end: u32,
+    /// Length of the longest path through the loop body.
+    body: u32,
+    /// The most depth that a loop nested in this one can add.
+    nested: u32,
+}
+
+/// Computes `BoundIn::flow_depth` and `BoundIn::has_loop_types_that_depend_on_order`.
+///
+/// A flow walk goes backward through the graph. At a loop label it also follows the back edge, which walks the loop body
+/// again while the first pass over that body is still on the stack. Nested loops stack up the same way, so a node inside
+/// three loops can be on the stack four times. The bound is the longest path without back edges, plus one body length
+/// for each level of loop nesting.
+fn measure_flow(flow: &[Flow], edges: &[FlowId]) -> (u32, bool) {
+    // Longest backward path from each node, ignoring back edges. A back edge points to a higher index, and so does `NONE`.
+    let mut below = vec![0u32; flow.len()];
+    let (mut loops, mut reduced): (Vec<Loop>, Vec<(u32, u32)>) = (Vec::new(), Vec::new());
+    let mut longest = 0;
+    for (i, node) in flow.iter().enumerate() {
+        let before = node.antecedents(edges).iter();
+        let before = before.filter(|it| it.idx() < i);
+        below[i] = 1 + before.map(|it| below[it.idx()]).max().unwrap_or(0);
+        longest = longest.max(below[i]);
+        match *node {
+            Flow::Loop { .. } => loops.push(Loop {
+                label: i as u32,
+                end: i as u32,
+                body: 0,
+                nested: 0,
+            }),
+            Flow::Reduce { label, .. } => reduced.push((label.0, i as u32)),
+            _ => {}
+        }
+    }
+    if loops.is_empty() {
+        return (longest, false);
+    }
+    for it in &mut loops {
+        let back = flow[it.label as usize].antecedents(edges).iter();
+        for back in back.filter(|back| back.is_some() && back.0 > it.label) {
+            it.end = it.end.max(back.0);
+            it.body = (it.body).max(below[back.idx()].saturating_sub(below[it.label as usize]));
+        }
+    }
+    let depends_on_order = has_loop_types_that_depend_on_order(flow, edges, &loops, reduced);
+    // For each loop label, the most depth that following its back edge can add.
+    let mut deeper_from: Vec<(u32, u32)> = Vec::new();
+    let mut open: Vec<Loop> = Vec::new();
+    let mut close = |open: &mut Vec<Loop>| {
+        let Some(it) = open.pop() else { return };
+        // The walk visits the label once more before it notices that the loop is already in progress.
+        let deeper = it.body.saturating_add(it.nested.max(1));
+        deeper_from.push((it.label, deeper));
+        if let Some(outer) = open.last_mut() {
+            outer.nested = outer.nested.max(deeper);
+        }
+    };
+    for it in loops {
+        while open.last().is_some_and(|outer| outer.end < it.label) {
+            close(&mut open);
+        }
+        open.push(it);
+    }
+    while !open.is_empty() {
+        close(&mut open);
+    }
+    let deepest = deeper_from.iter().map(|it| it.1).max().unwrap_or(0);
+    if longest.saturating_add(deepest) < MAX_FLOW_DEPTH {
+        return (longest + deepest, depends_on_order);
+    }
+    // The longest path and the deepest loop may be in different functions, which makes that sum too high. It only matters
+    // near the limit, so only then pair each loop with the longest path that really leads to its label.
+    // `above[i]`: the longest path from any node back to `i`, not counting `i`.
+    let mut above = vec![0u32; flow.len()];
+    for (i, node) in flow.iter().enumerate().rev() {
+        for before in node.antecedents(edges).iter().filter(|it| it.idx() < i) {
+            above[before.idx()] = above[before.idx()].max(above[i] + 1);
+        }
+    }
+    let through_loops = deeper_from
+        .iter()
+        .map(|it| it.1.saturating_add(above[it.0 as usize] + 1));
+    let deepest = longest.max(through_loops.max().unwrap_or(0));
+    (deepest, depends_on_order)
+}
+
+/// Computes `BoundIn::has_loop_types_that_depend_on_order`. `loops` is sorted by label. `reduced` holds the label and the
+/// index of each `Flow::Reduce`.
+fn has_loop_types_that_depend_on_order(
+    flow: &[Flow],
+    edges: &[FlowId],
+    loops: &[Loop],
+    mut reduced: Vec<(u32, u32)>,
+) -> bool {
+    // Each `finally` block as a range: from the label at its start to the first node after it.
+    reduced.shared_sort_unstable();
+    reduced.dedup_by_key(|it| it.0);
+    let mut blocks = reduced.iter().peekable();
+    let mut blocks_in_loops: Vec<(u32, u32)> = Vec::new();
+    let (mut end_of_loops, mut end_of_blocks) = (0, 0);
+    for it in loops {
+        while let Some(&block) = blocks.next_if(|block| block.0 < it.label) {
+            if block.0 <= end_of_loops {
+                blocks_in_loops.push(block);
+            }
+            end_of_blocks = end_of_blocks.max(block.1);
+        }
+        if it.label < end_of_blocks {
+            return true;
+        }
+        end_of_loops = end_of_loops.max(it.end);
+    }
+    blocks_in_loops.extend(blocks.filter(|block| block.0 <= end_of_loops));
+    if blocks_in_loops.is_empty() {
+        return false;
+    }
+    // `block_of[i]`: index + 1 of the innermost block that contains node `i`, or 0. The block's own label counts as inside:
+    // in `finally { if (f()) break; }` the condition makes no flow node, so the edge out of the block starts at the label.
+    let mut block_of = vec![0u32; flow.len()];
+    let (mut open, mut next): (Vec<u32>, u32) = (Vec::new(), 0);
+    for (i, block) in (0..).zip(&mut block_of) {
+        while (open.last()).is_some_and(|&it| blocks_in_loops[it as usize].1 <= i) {
+            open.pop();
+        }
+        if (blocks_in_loops.get(next as usize)).is_some_and(|it| it.0 == i) {
+            open.push(next);
+            next += 1;
+        }
+        *block = open.last().map_or(0, |it| it + 1);
+    }
+    let leaves_block = |from: &FlowId, to: u32| match block_of.get(from.idx()) {
+        None | Some(0) => false,
+        Some(&block) => {
+            let (label, behind) = blocks_in_loops[block as usize - 1];
+            to <= label || behind <= to
+        }
+    };
+    flow.iter().zip(0..).any(|(node, i)| {
+        matches!(node, Flow::Label { .. } | Flow::Loop { .. })
+            && (node.antecedents(edges).iter()).any(|from| leaves_block(from, i))
+    })
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct FnInfo {
     pub owner: FnOwner,
@@ -1048,9 +1218,14 @@ pub struct BoundIn<S: Storage> {
     /// `FlowFlagsShared`, a bit for each node of `flow`: it is the antecedent of more than one
     /// node.
     pub flow_shared: S::List<u64>,
-    /// Number of flow nodes the binder encountered. `flow` omits the labels that nothing follows,
-    /// and has a single start node for all the functions without a body.
-    pub flow_places: u32,
+    /// Upper bound on how deep `getTypeAtFlowNode` calls can nest in a walk of `flow`. See
+    /// [`can_reach_flow_depth_limit`](Self::can_reach_flow_depth_limit).
+    pub flow_depth: u32,
+    /// TypeScript caches the type of a reference at a loop label, from whichever walk gets there first. A walk that starts
+    /// after a `finally` block sees fewer antecedents for that block than other walks do. If such a walk can fill the cache,
+    /// the cached type depends on which reference was checked first. That is possible if the loop is inside the block, or
+    /// if the block is inside the loop and something jumps or throws out of it.
+    pub has_loop_types_that_depend_on_order: bool,
     /// From here on: only from [`bind_for_lint_in`], empty otherwise.
     ///
     /// For each expression `2 * ExprTag + 1` if it is a `Dot`, an `Index` or a `Call` whose `Chain` is
@@ -1730,6 +1905,17 @@ impl Bound<'_> {
         &self.flow_edges[start as usize..(start + len) as usize]
     }
 
+    /// Whether a walk of `flow` can hit `MAX_FLOW_DEPTH`. `>=` leaves room for the one extra condition node that
+    /// `checkIfExpressionRefinesParameter` makes up.
+    pub fn can_reach_flow_depth_limit(&self) -> bool {
+        self.flow_depth >= MAX_FLOW_DEPTH
+    }
+
+    /// Whether the type of a reference can depend on which references were checked before.
+    pub fn has_types_that_depend_on_order(&self) -> bool {
+        self.can_reach_flow_depth_limit() || self.has_loop_types_that_depend_on_order
+    }
+
     /// The scope at which `NameResolver.Resolve` can start its lookup of `name` from `scope`. If no
     /// scope in between declares the name, that is the nearest enclosing scope whose symbol has
     /// exports, which may come from elsewhere, or the file scope. Valid for a `lookup` that is
@@ -1921,7 +2107,8 @@ impl BoundBuilder {
             flow,
             flow_edges,
             flow_shared,
-            flow_places,
+            flow_depth,
+            has_loop_types_that_depend_on_order,
             expr_kinds,
             expr_kind_counts,
             kind_counts,
@@ -2013,7 +2200,8 @@ impl BoundBuilder {
         flow.clear();
         flow_edges.clear();
         flow_shared.clear();
-        *flow_places = Default::default();
+        *flow_depth = Default::default();
+        *has_loop_types_that_depend_on_order = Default::default();
         expr_kinds.clear();
         expr_kind_counts.clear();
         kind_counts.clear();
@@ -2151,7 +2339,8 @@ impl BoundBuilder {
             flow: copy_to_arena(&mut self.flow, arena),
             flow_edges: copy_to_arena(&mut self.flow_edges, arena),
             flow_shared: copy_to_arena(&mut self.flow_shared, arena),
-            flow_places: self.flow_places,
+            flow_depth: self.flow_depth,
+            has_loop_types_that_depend_on_order: self.has_loop_types_that_depend_on_order,
             expr_kinds: copy_to_arena(&mut self.expr_kinds, arena),
             expr_kind_counts: copy_to_arena(&mut self.expr_kind_counts, arena),
             kind_counts: copy_to_arena(&mut self.kind_counts, arena),
@@ -2317,7 +2506,8 @@ impl Bound<'_> {
             flow: Fixed::shared(&self.flow),
             flow_edges: Fixed::shared(&self.flow_edges),
             flow_shared: Fixed::shared(&self.flow_shared),
-            flow_places: self.flow_places,
+            flow_depth: self.flow_depth,
+            has_loop_types_that_depend_on_order: self.has_loop_types_that_depend_on_order,
             expr_kinds: Fixed::shared(&self.expr_kinds),
             expr_kind_counts: Fixed::shared(&self.expr_kind_counts),
             kind_counts: Fixed::shared(&self.kind_counts),

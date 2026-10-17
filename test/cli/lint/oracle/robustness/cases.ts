@@ -25,6 +25,8 @@ export type Case = {
   /** Comments that disable nothing are errors. */
   reportsUnusedDirectives?: boolean;
   args?: string[];
+  /** `compilerOptions` of a `tsconfig.json`. Without them there is none. */
+  compilerOptions?: Record<string, unknown>;
   /** How many lines of `-f unix` name each rule, or what else the output is to match. */
   reports?: Record<string, number>;
   /** Or else the output matches this: how much fits on the stack decides which of the two. */
@@ -478,6 +480,8 @@ export const cases: Case[] = [
     // Each of the three is reported, if `b` and `p` have their types.
     const three = "await b;\nx = b as number;\np;\n";
     const conditions = (n: number, name = "x") => rep(`if (a) { ${name} = 1; }\n`, n);
+    const loop = (n: number) =>
+      `declare function must(v: unknown): asserts v;\nlet y: string | number | undefined = 0;\nwhile (b) {\nif (a) { y = "s"; }\n${rep("must(b);\n", n)}const z = y;\n}\n`;
     const warning =
       /This file is too large for control flow analysis\. Reports from rules that need type information may be wrong or incomplete\./;
     const [awaited, asserted, floating] = ["await-thenable", "no-unnecessary-type-assertion", "no-floating-promises"];
@@ -529,16 +533,55 @@ export const cases: Case[] = [
         matches: warning,
         exitCode: 1,
       },
+      // The body of a loop is walked twice: from `y` to the start of the loop, and from the end of the loop to its start again. No
+      // rule asks about `y`.
+      {
+        ...common,
+        name: "a loop of 996 statements stays under the control flow limit",
+        text: () => head + three + loop(996),
+        reports: all,
+        lacks: warning,
+        exitCode: 1,
+      },
+      {
+        ...common,
+        name: "a loop of 997 statements hits the control flow limit and warns",
+        text: () => head + three + loop(997),
+        reports: all,
+        matches: warning,
+        exitCode: 1,
+      },
+      {
+        ...common,
+        name: "a `// @ts-nocheck` file over the control flow limit warns too",
+        text: () => "// @ts-nocheck\n" + head + three + conditions(1_100),
+        reports: all,
+        matches: warning,
+        exitCode: 1,
+      },
+      {
+        ...common,
+        name: "400 small functions with loops stay under the control flow limit",
+        text: () =>
+          head +
+          seq(400, i => `function f${i}() { let y: number = 0;\nwhile (a) {\n${conditions(20, "y")}}\ny as number; }\n`) +
+          three,
+        reports: { ...all, [`@typescript-eslint/${asserted}`]: 401 },
+        lacks: warning,
+        exitCode: 1,
+      },
     ];
   })(),
 
-  // ── TypeScript keeps the type of a reference at the start of a loop. For a loop in a `finally` block, what it keeps depends on who asks
-  // first: from behind the block there are fewer ways into it. `no-floating-promises` asks about the last statement. ──
-  {
-    name: "a loop in a `finally` block: a rule that asks behind the block does not change what another is told in it",
-    file: "a.ts",
-    text: () =>
-      `declare const a: boolean; let x = 0;
+  // ── TypeScript keeps the type of a reference at the start of a loop. With a `finally` block, what it keeps depends on who asks first:
+  // from behind the block there are fewer ways into it. `no-floating-promises` asks about the last statement. ──
+  ...((): Case[] => {
+    const common = {
+      rules: { "typescript/no-floating-promises": "error", "typescript/no-unnecessary-condition": "error" },
+      reports: {},
+      exitCode: 0,
+    };
+    const loopInBlock = `let x = 0;
 try {
   try {
     while (a) {}
@@ -549,12 +592,66 @@ try {
   a && (x = 1);
 }
 export { x };
-`,
-    rules: { "typescript/no-floating-promises": "error", "typescript/no-unnecessary-condition": "error" },
-    args: typed,
-    reports: {},
-    exitCode: 0,
-  },
+`;
+    const blockInLoop = (before: string, jump: string, after: string) => `declare function c(): boolean;
+declare const d: boolean;
+declare function mayThrow(): void;
+let x: string | undefined = undefined;
+while (c()) {
+  if (x) {}
+  ${before}
+    try {
+      if (c()) { x = "s"; mayThrow(); x = undefined; }
+    } finally {
+      ${jump};
+    }
+    x && mayThrow();
+  ${after}
+}
+export {};
+`;
+    const flags = [[], ["--type-check"]];
+    return [
+      {
+        ...common,
+        name: "a loop in a `finally` block: no false report when another rule asks about the code after the block first",
+        file: "a.ts",
+        text: () => `declare const a: boolean; ${loopInBlock}`,
+        args: typed,
+      },
+      // `d` can be narrowed, so there is a flow node for the condition. For `c()` there is none.
+      ...["if (c()) ", "if (d) "].flatMap(condition =>
+        [
+          ["", "continue", ""],
+          ["block: {", "break block", "}"],
+          ["(() => {", "return", "})();"],
+        ].map(([before, jump, after]) => ({
+          ...common,
+          name: `a \`finally\` block in a loop, left by \`${condition}${jump}\`: no false report before the block`,
+          file: "a.ts",
+          text: () => blockInLoop(before, condition + jump, after),
+          args: typed,
+        })),
+      ),
+      // They are checked all the same, and nothing is reported about the types in them.
+      ...flags.map(flag => ({
+        ...common,
+        name: `a loop in a \`finally\` block in a \`// @ts-nocheck\` file${flag.length ? `, with ${flag}` : ""}`,
+        file: "a.ts",
+        text: () => `// @ts-nocheck\ndeclare const a: boolean; ${loopInBlock}export const wrong: number = "";\n`,
+        args: [...typed, ...flag],
+      })),
+      ...flags.map(flag => ({
+        ...common,
+        name: `a loop in a \`finally\` block in a JavaScript file without \`checkJs\`${flag.length ? `, with ${flag}` : ""}`,
+        file: "a.js",
+        text: () =>
+          `/** @type {boolean} */ const a = globalThis.a; ${loopInBlock}/** @type {number} */ export const wrong = "";\n`,
+        compilerOptions: { allowJs: true, checkJs: false, strict: true, noEmit: true },
+        args: [...typed, ...flag],
+      })),
+    ];
+  })(),
 
   // ── the type checker runs out of stack while it answers a rule, and no file is checked before it is linted ──
   {

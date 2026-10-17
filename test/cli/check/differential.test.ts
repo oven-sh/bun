@@ -200,6 +200,52 @@ differential.each(loopShapes)("a variable in a loop that is assigned back: %s", 
   expect(onlyBunReports).toEqual([]);
 });
 
+// A walk that nests 2,000 deep ends with TS2563. A statement in a loop can be in progress once more for each loop around it.
+// In a debug build the stack can run out before.
+test.concurrent.skipIf(!tsc || isDebug || isASAN)(
+  "the limit of control flow analysis, in and behind loops",
+  async () => {
+    const declarations = `declare const c: boolean, b: number; declare function must(v: unknown): asserts v;`;
+    const many = (n: number) => Buffer.alloc(9 * n, "must(b); ").toString();
+    // It is narrower than declared, or no walk goes on from the start of a loop to its end.
+    const x = `let x: string | number | undefined = 0;`;
+    // With the number of statements from which on TypeScript gives up.
+    const shapes: [number, (n: number) => string][] = [
+      [997, n => `${x} while (b) { if (c) { x = "s"; } ${many(n)}x; }`],
+      [663, n => `${x} while (b) { if (c) { x = "s"; } ${many(n)}while (c) { ${many(n)}x; } }`],
+      [
+        495,
+        n =>
+          `${x} p: while (b) { if (c) { x = "s"; } q: while (c) { while (c) { ${many(n)}x; if (c) continue p; if (b) continue q; } } }`,
+      ],
+      [998, n => `${x} while (b) { if (c) { x = "s"; } ${many(n)}} ${many(n)}x;`],
+      [1996, n => `let x = null! as string | number | undefined; while (b) { if (c) { x = "s"; } ${many(n)}x; }`],
+      [
+        499,
+        n =>
+          `while (b) { function g() { ${x} while (b) { if (c) { x = "s"; } ${many(n)}} ${many(3 * n)}x; } must(b); }`,
+      ],
+    ];
+    // A file each: how deep a walk can get is worked out for a file.
+    const sizes = shapes.flatMap(([limit, shape], index) =>
+      [limit - 1, limit].map(n => [`${index}-${n}.ts`, shape(n)]),
+    );
+    using dir = tempDir("bun-check-differential", {
+      "tsconfig.json": tsconfig,
+      ...Object.fromEntries(sizes.map(([name, body]) => [name, `${declarations}\nexport function f() { ${body} }\n`])),
+    });
+    const root = String(dir);
+    const [theirs, ours] = await Promise.all([
+      linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+      linesOf([bunExe(), "check"], root, root),
+    ]);
+    expect(theirs.map(line => line.replace(/\(.*(TS\d+).*/, " $1")).sort()).toEqual(
+      shapes.map(([limit], index) => `${index}-${limit}.ts TS2563`),
+    );
+    expect(ours.filter(line => line.includes(": error ")).sort()).toEqual(theirs.sort());
+  },
+);
+
 differential(
   "narrowing: the reference, the guard, the control flow around it, and what happens before the use",
   async () => {

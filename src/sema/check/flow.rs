@@ -8,7 +8,8 @@ use super::related::Place;
 use super::shape::UntypedProperty;
 use super::*;
 use crate::bind::{
-    Decl, Flow, FlowId, FlowTarget, FnOwner, MemberOwner, Parent, PatParent, SymbolId, UNREACHABLE,
+    Decl, Flow, FlowId, FlowTarget, FnOwner, MAX_FLOW_DEPTH, MemberOwner, Parent, PatParent,
+    SymbolId, UNREACHABLE,
 };
 use crate::util::SharedSort;
 use smallvec::{SmallVec, smallvec};
@@ -594,25 +595,6 @@ impl About {
         self.chains
             .iter()
             .any(|chain| chain.0 == root && (chain.1 == 0 || chain.1 == first))
-    }
-}
-
-/// `getTypeAtFlowNode`: the invocation that finds this many in progress bails out.
-pub(super) const MAX_FLOW_DEPTH: u32 = 2000;
-
-/// The antecedents of `node`: a range of edges, or a single node.
-fn antecedents<'a>(bound: &'a Bound, node: &'a Flow) -> &'a [FlowId] {
-    match node {
-        Flow::Unreachable => &[],
-        &Flow::Label { start, len } | &Flow::Loop { start, len } => bound.edges(start, len),
-        Flow::Start { outer: before, .. }
-        | Flow::StartInvoked { outer: before, .. }
-        | Flow::Reduce { before, .. }
-        | Flow::ArrayMutation { before, .. }
-        | Flow::Cond { before, .. }
-        | Flow::Switch { before, .. }
-        | Flow::Assign { before, .. }
-        | Flow::Call { before, .. } => std::slice::from_ref(before),
     }
 }
 
@@ -5015,87 +4997,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Not in tsgo. Whether a walk of the control flow of `file` can nest `MAX_FLOW_DEPTH` deep. What is in progress at any time
-    /// is a path backward through the graph and, from each loop label whose back edge the walk took, a path through the body
-    /// of that loop. It does not leave the body before it is back at the label, so these loops are in each other.
-    pub(super) fn can_reach_flow_depth_limit(&self, file: FileId) -> bool {
-        struct Loop {
-            /// The last node of its body.
-            end: usize,
-            /// The longest path through its body, and through the bodies of loops in each other in it.
-            body: u32,
-            nested: u32,
-        }
-        let bound = self.bound(file);
-        // A walk nests at most once per flow node.
-        if bound.flow_places <= MAX_FLOW_DEPTH {
-            return false;
-        }
-        // The longest path from each node backward, without back edges: they lead to a higher number.
-        let mut lengths = vec![0u32; bound.flow.len()];
-        for (i, node) in bound.flow.iter().enumerate() {
-            let before = antecedents(bound, node).iter();
-            let before = before.filter(|it| it.is_some() && it.idx() < i);
-            lengths[i] = 1 + before.map(|it| lengths[it.idx()]).max().unwrap_or(0);
-        }
-        let (mut open, mut deepest): (Vec<Loop>, u32) = (Vec::new(), 0);
-        let mut close = |open: &mut Vec<Loop>| {
-            let Some(it) = open.pop() else { return };
-            // The label is entered once more, to find that it is in progress.
-            let all = it.body + it.nested + 1;
-            match open.last_mut() {
-                Some(outer) => outer.nested = outer.nested.max(all),
-                None => deepest = deepest.max(all),
-            }
-        };
-        for (i, node) in bound.flow.iter().enumerate() {
-            while open.last().is_some_and(|it| it.end < i) {
-                close(&mut open);
-            }
-            if let Flow::Loop { .. } = node {
-                let back = || {
-                    antecedents(bound, node)
-                        .iter()
-                        .filter(|it| it.is_some() && it.idx() > i)
-                };
-                if let Some(end) = back().map(|it| it.idx()).max() {
-                    let longest = back().map(|it| lengths[it.idx()]).max().unwrap_or(0);
-                    open.push(Loop {
-                        end,
-                        body: longest.saturating_sub(lengths[i]),
-                        nested: 0,
-                    });
-                }
-            }
-        }
-        while !open.is_empty() {
-            close(&mut open);
-        }
-        lengths.iter().max().copied().unwrap_or(0) + deepest >= MAX_FLOW_DEPTH
-    }
-
-    /// Not in tsgo. Whether `file` has a loop in a `finally` block. The type of a reference at its label is cached by the walk
-    /// that comes there first, from in the block or from behind it, for which the block has fewer antecedents. See
-    /// `FlowMemo::is_in_finally_block`.
-    pub(super) fn has_loop_in_finally_block(&self, file: FileId) -> bool {
-        let flow = &self.bound(file).flow;
-        // From the label at the start of each block to the node behind it.
-        let mut blocks: Vec<(u32, u32)> = (flow.iter().zip(0..))
-            .filter_map(|(node, i)| match node {
-                Flow::Reduce { label, .. } => Some((label.0, i)),
-                _ => None,
-            })
-            .collect();
-        blocks.shared_sort_unstable();
-        let (mut blocks, mut end) = (blocks.into_iter().peekable(), 0);
-        flow.iter().zip(0..).any(|(node, i)| {
-            while let Some((_, reduce)) = blocks.next_if(|it| it.0 < i) {
-                end = end.max(reduce);
-            }
-            matches!(node, Flow::Loop { .. }) && i < end
-        })
-    }
-
     /// Not in tsgo. The symbols of `file` that some node of its flow graph refers to: a condition
     /// (`note_test`, as for `is_test_about`), a `switch`, an assignment target, the expression of a
     /// `for in`. Nothing else can change the type of a reference rooted at a name, except an
@@ -5123,7 +5024,7 @@ impl<'p, 's> Checker<'p, 's> {
                 &mut FirstNarrowingNodes(&mut first_nodes, i as u32, ResolvesKey::Never, false);
             let mut resolves_in_call = ResolvesKey::Never;
             let mut takes_union = false;
-            let before = antecedents(bound, &node);
+            let before = node.antecedents(&bound.flow_edges);
             // The start of a function and a declaration, other than that of a `for in`, add no
             // invocation of `getTypeAtFlowNode`: its loop goes on to the antecedent.
             let invocations = match node {

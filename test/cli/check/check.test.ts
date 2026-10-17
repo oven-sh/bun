@@ -728,6 +728,20 @@ describe.concurrent("bun check", () => {
     });
   });
 
+  // From `x` to the start of the loop, and from the end of the loop to its start again: 2,000 levels with half as many flow nodes.
+  // In a debug build the stack can run out before.
+  test.skipIf(isDebug || isASAN)("a loop body counts twice toward the control flow limit", async () => {
+    const loop = (statements: number) =>
+      `export {};\ndeclare const c: boolean, b: number;\ndeclare function must(v: unknown): asserts v;\n` +
+      `let x: string | number | undefined = 0;\nwhile (b) {\n  if (c) x = "s";\n${repeat("  must(b);\n", statements)}  x;\n}\n`;
+    using dir = project({ "below.ts": loop(996), "over.ts": loop(997) });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe(
+      "over.ts(1,1): error TS2563: The containing function or module body is too large for control flow analysis.",
+    );
+    expect(exitCode).toBe(1);
+  });
+
   // The time was cubic and worse: 16 s for 1,000 lines in a release build, where it now takes 0.2 s.
   test("an array without a type that is filled line by line", async () => {
     const n = isDebug || isASAN ? 200 : 1000;

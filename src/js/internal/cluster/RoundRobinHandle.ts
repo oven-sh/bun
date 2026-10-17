@@ -110,6 +110,12 @@ export default class RoundRobinHandle {
     return this.all.has(worker.id);
   }
 
+  // The descriptor that the listener of this handle holds, -1 before it listens and after remove() closed it.
+  get fd() {
+    const fd = this.server?._handle?.fd;
+    return typeof fd === "number" ? fd : -1;
+  }
+
   // With the channel still up the unacked newconn is settled by its ack; once it is gone, a crashed worker's goes to another worker and a disconnected worker's (already settled by it) is dropped.
   remove(worker, channelGone = false) {
     if (channelGone) {

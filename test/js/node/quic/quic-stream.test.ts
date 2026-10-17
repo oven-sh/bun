@@ -381,13 +381,12 @@ describe("QuicStream.opened", () => {
   const serverOptions = {
     sni: { "*": { keys: [key], certs: [cert] } },
     alpn: "quic-test",
-    transportParams: { maxIdleTimeout: 1, initialMaxStreamsBidi: 1 },
+    transportParams: { initialMaxStreamsBidi: 1 },
   };
   const clientOptions = {
     alpn: "quic-test",
     servername: "localhost",
     verifyPeer: "manual",
-    transportParams: { maxIdleTimeout: 1 },
   } as SessionOptions;
 
   // The server echoes FIN so that the first stream fully closes and the
@@ -482,14 +481,12 @@ describe("QuicStream.onstopsending", () => {
       {
         sni: { "*": { keys: [key], certs: [cert] } },
         alpn: "quic-test",
-        transportParams: { maxIdleTimeout: 1 },
       },
     );
     const client = await connect(server.address!, {
       alpn: "quic-test",
       servername: "localhost",
       verifyPeer: "manual",
-      transportParams: { maxIdleTimeout: 1 },
     } as SessionOptions);
     await client.opened;
 
@@ -536,14 +533,12 @@ describe("QuicStream.onstopsending", () => {
       {
         sni: { "*": { keys: [key], certs: [cert] } },
         alpn: "quic-test",
-        transportParams: { maxIdleTimeout: 1 },
       },
     );
     const client = await connect(server.address!, {
       alpn: "quic-test",
       servername: "localhost",
       verifyPeer: "manual",
-      transportParams: { maxIdleTimeout: 1 },
     } as SessionOptions);
     await client.opened;
 
@@ -575,14 +570,12 @@ describe("QuicStream.onstopsending", () => {
       {
         sni: { "*": { keys: [key], certs: [cert] } },
         alpn: "quic-test",
-        transportParams: { maxIdleTimeout: 1 },
       },
     );
     const client = await connect(server.address!, {
       alpn: "quic-test",
       servername: "localhost",
       verifyPeer: "manual",
-      transportParams: { maxIdleTimeout: 1 },
     } as SessionOptions);
     client.closed.catch(() => {});
     await client.opened;

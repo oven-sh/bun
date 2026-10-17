@@ -717,6 +717,32 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
   });
+  itBundled("minify/InlineSingleObjectPropertyNonAscii", {
+    files: {
+      "/entry.js": /* js */ `
+        // key "\\u00c3\\u00a9" is the two-char string "Ã©"; accessor .é is one char "é".
+        // The UTF-8 bytes of "é" (0xC3 0xA9) numerically match the key's UTF-16 code
+        // units, but the strings are different and this must NOT be inlined.
+        const a = ({ "\\u00c3\\u00a9": 0x1001 }).é;
+        // key is "é" via escape; accessor is "é". Same string, should inline.
+        const b = ({ "\\u00e9": 0x2002 }).é;
+        // key is a literal "é"; accessor is "é". Same string, should inline.
+        const c = ({ "é": 0x3003 }).é;
+        // ascii baseline still inlines.
+        const d = ({ "e": 0x4004 }).e;
+        console.log(JSON.stringify([a, b, c, d]));
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('var a = { "\\xC3\\xA9": 4097 }.\\u{e9};');
+      api.expectFile("/out.js").toContain("console.log(JSON.stringify([a, 8194, 12291, 16388]));");
+    },
+    run: {
+      stdout: "[null,8194,12291,16388]",
+    },
+  });
   itBundled("minify/ForAndWhileLoopsWithMissingBlock", {
     files: {
       "/entry.js": /* js */ `
@@ -1823,6 +1849,7 @@ describe("bundler", () => {
         export function ifBranchWithSideEffect(w, u) { let keep = g(); return w ? keep : u; }
         export function optionalCallArg() { let keep = g(); return f?.(keep); }
         export function callTargetChangingThis(o) { let keep = o.m; return keep(); }
+        export function templateTagChangingThis(o) { let keep = o.m; return keep\`x\`; }
         export function objectValueAfterComputedKey() { let keep = g(); return { [k()]: 1, v: keep }; }
         export function templatePartAfterSideEffect() { let keep = g(); return \`\${h()}-\${keep}\`; }
       `,
@@ -1857,7 +1884,7 @@ describe("bundler", () => {
       }
       // indexTarget and indexIndex both end up here.
       expect(code.match(/return v\[i\];/g)).toHaveLength(2);
-      expect(code.match(/let keep = /g)).toHaveLength(10);
+      expect(code.match(/let keep = /g)).toHaveLength(11);
     },
   });
 

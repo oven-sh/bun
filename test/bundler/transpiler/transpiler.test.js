@@ -257,6 +257,156 @@ describe("Bun.Transpiler", () => {
       ]);
       expect(exitCode).toBe(0);
     });
+    it("bails out when the access is a template tag, which receives the object as `this`", () => {
+      ts.expectPrintedMin_("x = ({ f: h }).f`x`", "x = { f: h }.f`x`");
+      ts.expectPrintedMin_('x = ({ f: h })["f"]`x`', "x = { f: h }.f`x`");
+      ts.expectPrintedMin_('x = ({ "a-b": h })["a-b"]`x`', 'x = { "a-b": h }["a-b"]`x`');
+      ts.expectPrintedMin_("x = ({ é: h }).é`x`", "x = { é: h }.é`x`");
+      ts.expectPrintedMin_('x = ({ "é": h }).é`x`', 'x = { "é": h }.é`x`');
+      // The object arrives through a single-use local, and another tag follows it.
+      ts.expectPrintedMin_(
+        "function f() { const o = { f: h }; return !o.f`x` + g`y`; }",
+        "function f() {\n  return !{ f: h }.f`x` + g`y`;\n}",
+      );
+    });
+    it("does not substitute a single-use local into a template tag when it holds a property access", () => {
+      for (const kept of [
+        "function f(o) {\n  const t = o.f;\n  return t`x`;\n}",
+        "function f(o, k) {\n  const t = o[k];\n  return t`x`;\n}",
+        "function f(a) {\n  const t = a?.f;\n  return t`x`;\n}",
+      ]) {
+        ts.expectPrintedMin_(kept, kept);
+      }
+      ts.expectPrintedMin_(
+        'function f() { const o = { f: h }; const t = o.f; return "" + t`x`; }',
+        'function f() {\n  const t = { f: h }.f;\n  return "" + t`x`;\n}',
+      );
+      ts.expectPrintedMin_("function f(h) { const t = h; return t`x`; }", "function f(h) {\n  return h`x`;\n}");
+    });
+    it.concurrent("gives a template tag the `this` that the source gives it", async () => {
+      const src = `
+        function getThis() { return this; }
+        var tools = { tag: getThis };
+        function check(label, fn, expected) {
+          var got;
+          try { got = "=> " + fn(); } catch (e) { got = e.constructor.name; }
+          console.log(label + ": " + (got === expected ? "ok" : got + " (want " + expected + ")"));
+        }
+        // A tag that is a property access receives the object.
+        check("literal",          () => ({ f: getThis }).f\`x\`.f === getThis, "=> true");
+        check("literal, local",   () => { const o = { f: getThis }; return o.f\`x\`.f === getThis; }, "=> true");
+        // A tag that is a local does not, whatever the local holds.
+        check("alias",            () => { const t = tools.tag; return t\`x\` === tools; }, "=> false");
+        check("alias, index",     () => { const k = "tag", t = tools[k]; return t\`x\` === tools; }, "=> false");
+        check("alias, ?.",        () => { const t = tools?.tag; return t\`x\` === tools; }, "=> false");
+        check("alias of literal", () => { const o = { f: getThis }; const t = o.f; return !t\`x\`?.f; }, "=> true");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim().split("\n")).toEqual([
+        "literal: ok",
+        "literal, local: ok",
+        "alias: ok",
+        "alias, index: ok",
+        "alias, ?.: ok",
+        "alias of literal: ok",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    // A string key with a non-ASCII character is stored as UTF-16. The name of
+    // the access is UTF-8. `twin(name)` has one character for each UTF-8 byte
+    // of `name` ("é" gives "Ã©"), so it is a different string with the same
+    // numbers.
+    describe("with a non-ASCII string key", () => {
+      const twin = name => Buffer.from(name).toString("latin1");
+      const escaped = s =>
+        s
+          .split("")
+          .map(unit => "\\u" + unit.charCodeAt(0).toString(16).padStart(4, "0"))
+          .join("");
+      // 2, 2, 3 and 4 UTF-8 bytes.
+      const names = ["é", "α", "中", "𠮷"];
+
+      it("keeps the access when the key is the twin of the name", () => {
+        for (const name of names) {
+          const key = twin(name);
+          const kept = `x = { "${key}": 1 }.${name}`;
+          ts.expectPrintedMin_(`x = ({ "${key}": 1 }).${name}`, kept);
+          ts.expectPrintedMin_(`x = ({ "${escaped(key)}": 1 }).${name}`, kept);
+        }
+        const key = twin("é");
+        ts.expectPrintedMin_(`x = ({ "${key}": 1 })?.é`, `x = { "${key}": 1 }.é`);
+        ts.expectPrintedMin_(`x = ({ "${key}": 1 }).\\u00e9`, `x = { "${key}": 1 }.é`);
+        ts.expectPrintedMin_(`x = typeof ({ "${key}": 1 }).é`, `x = typeof { "${key}": 1 }.é`);
+        ts.expectPrintedMin_(`x = ({ "${key}": 1 }).é.toString()`, `x = { "${key}": 1 }.é.toString()`);
+        // The object arrives through a single-use local.
+        ts.expectPrintedMin_(
+          `function f() { const o = { "${key}": 1 }; return +o.é; }`,
+          `function f() {\n  return +{ "${key}": 1 }.é;\n}`,
+        );
+      });
+      it("folds when the key is the same string as the name", () => {
+        for (const name of names) {
+          ts.expectPrintedMin_(`x = ({ "${name}": 1 }).${name}`, "x = 1");
+          ts.expectPrintedMin_(`x = ({ "${escaped(name)}": 1 }).${name}`, "x = 1");
+          ts.expectPrintedMin_(`x = ({ ${name}: 1 }).${name}`, "x = 1");
+        }
+        ts.expectPrintedMin_('x = ({ "é": 1 }).\\u00e9', "x = 1");
+        ts.expectPrintedMin_('x = ({ "é": 1 })?.é', "x = 1");
+        ts.expectPrintedMin_('function f() { const o = { "é": 1 }; return +o.é; }', "function f() {\n  return 1;\n}");
+      });
+      it("keeps an index that a define injects when the key is its twin", () => {
+        const withDefine = new Bun.Transpiler({ loader: "ts", minify: { syntax: true }, define: { K: '"é-x"' } });
+        const key = twin("é") + "-x";
+        expect(withDefine.transformSync(`x = ({ "${key}": 1 })[K]`)).toBe(`x = { "${key}": 1 }["é-x"];\n`);
+      });
+      it.concurrent("gives the value of the property read when bun runs a file", async () => {
+        const key = twin("é");
+        const codePoint = name => "U+" + name.codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
+        // [label, expression, printed result]
+        const rows = [
+          ...names.map(name => [`twin ${codePoint(name)}`, `({ "${twin(name)}": 1 }).${name}`, "undefined"]),
+          ["twin ?.", `({ "${key}": 1 })?.é`, "undefined"],
+          ["twin escaped name", `({ "${key}": 1 }).\\u00e9`, "undefined"],
+          ["twin typeof", `typeof ({ "${key}": 1 }).é`, "undefined"],
+          ["twin method call", `({ "${key}": 1 }).é.toString()`, "TypeError"],
+          [
+            "twin through a single-use local",
+            `(() => { const o = { "${key}": 1 }; return typeof o.é; })()`,
+            "undefined",
+          ],
+          ...names.map(name => [`same ${codePoint(name)}`, `({ "${name}": 1 }).${name}`, "1"]),
+          ["same as a tag", '({ "é": getThis }).é`x`.é === getThis', "true"],
+        ];
+        using dir = tempDir("inline-non-ascii-key", {
+          "index.js": `
+            function getThis() { return this; }
+            function check(label, fn) {
+              var got;
+              try { got = String(fn()); } catch (e) { got = e.constructor.name; }
+              console.log(label + ": " + got);
+            }
+            ${rows.map(([label, expression]) => `check(${JSON.stringify(label)}, () => ${expression});`).join("\n")}
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "index.js"],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim().split("\n")).toEqual(rows.map(([label, , result]) => `${label}: ${result}`));
+        expect(exitCode).toBe(0);
+      });
+    });
     it("bails out on optional-chain index into enum", () => {
       const pre = "enum Foo { A }\nenum Bar { 'a-b' = 1 }\n";
       const lastLine = out => out.trimEnd().split("\n").at(-1);

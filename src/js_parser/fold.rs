@@ -8,10 +8,7 @@ use bun_ast::ast_result::CommonJSNamedExport;
 use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
 
 // ── local EString shims ────────────────────────────────────────────────────
-// E.rs currently carries two `impl EString` blocks (live + round-C draft) with
-// overlapping inherent methods, so calls like `EString::init`/`javascript_length`
-// /`eql_bytes` are E0034-ambiguous from here. These thin wrappers go through
-// public fields directly and are removed once E.rs is deduped.
+// Equivalent to `EString::init` / `EString::javascript_length`.
 #[inline]
 fn e_string_init(data: &[u8]) -> E::EString {
     E::EString {
@@ -34,16 +31,6 @@ fn e_string_javascript_length(s: &E::EString) -> Option<u32> {
     }
     // UTF-16: `data.len()` stores the u16 element count (see EString::init_utf16).
     Some(s.data.len() as u32)
-}
-
-#[inline]
-fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
-    if !s.is_utf16 {
-        s.data == other
-    } else {
-        let s16 = s.slice16();
-        s16.len() == other.len() && s16.iter().zip(other).all(|(&c, &b)| c == b as u16)
-    }
 }
 
 // File-split mixin pattern: a direct `impl P` block.
@@ -569,21 +556,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // To avoid thinking too much about edgecases, only do this for:
                             //   1) Objects with a single property
                             //   2) Not a method, not a computed property
+                            //   3) Not a call target or template tag ("this" would change)
                             if obj.properties.len_u32() == 1
                                 && !identifier_opts.is_delete_target()
                                 && identifier_opts.assign_target() == js_ast::AssignTarget::None
                                 && !identifier_opts.is_call_target()
+                                && !identifier_opts.is_template_tag()
                             {
                                 let prop: &G::Property = &obj.properties.slice()[0];
                                 if let (Some(value), Some(key)) = (prop.value, prop.key) {
                                     if prop.flags.len() == 0
-                                        && matches!(key.data, js_ast::ExprData::EString(_))
-                                        && e_string_eql_bytes(
-                                            &key.data
-                                                .e_string()
-                                                .expect("infallible: variant checked"),
-                                            name,
-                                        )
+                                        && let js_ast::ExprData::EString(key_str) = key.data
+                                        && key_str.eql_bytes(name)
                                         && name != b"__proto__"
                                         && value.can_be_inlined_from_property_access()
                                     {

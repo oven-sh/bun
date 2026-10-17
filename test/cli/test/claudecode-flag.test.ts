@@ -22,17 +22,23 @@ beforeAll(() => {
 
 // `AGENT` is the explicit override: any truthy value turns the quiet output on,
 // and a falsy value turns it off even when an agent-specific variable is set.
+// An agent-specific variable set to a falsy value also turns it off.
 const agentEnvCases: [env: Record<string, string>, quiet: boolean][] = [
   [{ AGENT: "1" }, true],
   [{ AGENT: "crush" }, true],
   [{ AGENT: "0" }, false],
   [{ AGENT: "false" }, false],
+  [{ AGENT: "" }, false],
   [{ AGENT: "crush", CLAUDECODE: "1" }, true],
   [{ AGENT: "0", AI_AGENT: "pi" }, false],
   [{ AGENT: "false", CLAUDECODE: "1" }, false],
+  [{ AGENT: "", CLAUDECODE: "1" }, false],
   [{ AI_AGENT: "pi" }, true],
   [{ AI_AGENT: "claude-code_2-1-284_agent" }, true],
+  [{ AI_AGENT: "claude-code_2-1-284_agent", CLAUDECODE: "1" }, true],
+  [{ AI_AGENT: "claude-code_2-1-284_agent", CLAUDECODE: "0" }, false],
   [{ AI_AGENT: "" }, false],
+  [{ AI_AGENT: "", CLAUDECODE: "1" }, false],
   [{ GEMINI_CLI: "1" }, true],
   [{ CODEX_THREAD_ID: "019a8f1e-2a3b-7c4d-8e5f-0123456789ab" }, true],
   [{ CODEX_CI: "1" }, true],

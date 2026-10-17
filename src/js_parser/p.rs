@@ -385,14 +385,14 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) ts_infer_constraint_backtracks: Vec<u32>,
 
     /// Outcomes of `is_type_script_arrow_return_type_after_question_and_before_colon`,
-    /// keyed by the byte offset of the `:` shifted left by one, with the low bit set
+    /// keyed by the byte offset of the `:` and the parser state that the attempt reads (`memo_key` there), shifted left by one, with the low bit set
     /// when the attempt parsed an arrow function. The outcome depends only on the
-    /// source from that offset on, so the real parse that follows a discarded
+    /// key, so the real parse that follows a discarded
     /// attempt can reuse it. Without this memo every nested
     /// `a ? (b) : c => <body> : e` inside the body is parsed once by the attempt and
     /// once for real, which is exponential in the nesting depth. Kept sorted for
     /// binary search.
-    pub(crate) ts_conditional_arrow_attempts: Vec<u32>,
+    pub(crate) ts_conditional_arrow_attempts: Vec<u64>,
 
     /// When this flag is enabled, we attempt to fold all expressions that
     /// TypeScript would consider to be "constant expressions". This flag is

@@ -8,6 +8,7 @@ import { once } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as util from "node:util";
+import * as dnstools from "../test/common/dns";
 
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
@@ -179,10 +180,11 @@ describe("TXT records with several character strings", () => {
   const answers = [
     { type: "TXT", entries: ["v=spf1 ", "-all"], ttl: 60 },
     { type: "TXT", entries: ["second record"], ttl: 60 },
+    { type: "TXT", entries: ["v=DKIM1; ", "k=rsa; ", "p=third"], ttl: 60 },
   ];
+  const expected = [["v=spf1 ", "-all"], ["second record"], ["v=DKIM1; ", "k=rsa; ", "p=third"]];
 
   async function withTxtServer(fn) {
-    const dnstools = require("../test/common/dns");
     const server = dgram.createSocket("udp4");
     server.on("message", (msg, { address, port }) => {
       const parsed = dnstools.parseDNSPacket(msg);
@@ -210,20 +212,17 @@ describe("TXT records with several character strings", () => {
 
   test("resolveTxt returns one inner array per record", async () => {
     const records = await withTxtServer(resolver => resolver.resolveTxt("example.test"));
-    expect(records).toEqual([["v=spf1 ", "-all"], ["second record"]]);
+    expect(records).toEqual(expected);
   });
 
   test("resolve(name, 'TXT') returns one inner array per record", async () => {
     const records = await withTxtServer(resolver => resolver.resolve("example.test", "TXT"));
-    expect(records).toEqual([["v=spf1 ", "-all"], ["second record"]]);
+    expect(records).toEqual(expected);
   });
 
   test("resolveAny returns one TXT entry per record", async () => {
     const records = await withTxtServer(resolver => resolver.resolveAny("example.test"));
-    expect(records).toEqual([
-      { type: "TXT", entries: ["v=spf1 ", "-all"] },
-      { type: "TXT", entries: ["second record"] },
-    ]);
+    expect(records).toEqual(expected.map(entries => ({ type: "TXT", entries })));
   });
 });
 

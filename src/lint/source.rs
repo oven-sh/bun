@@ -107,8 +107,6 @@ pub enum LineBreaks {
     EcmaScript,
     /// `\n`, `\r\n` and `\r`.
     Newlines,
-    /// `\n`, `\r\n`, `\r` and form feed.
-    NewlinesAndFormFeeds,
 }
 
 impl LineBreaks {
@@ -123,7 +121,6 @@ impl LineBreaks {
                             && !contains(text, "\u{2029}".as_bytes())
                 }
                 LineBreaks::Newlines => true,
-                LineBreaks::NewlinesAndFormFeeds => !contains_char(text, 0x0C),
             }
     }
 
@@ -134,7 +131,6 @@ impl LineBreaks {
             _ if is_plain => return bun_core::strings::line_starts(text),
             LineBreaks::EcmaScript => return bun_sema::check::compute_ecma_line_starts(text),
             LineBreaks::Newlines => b"\r\n",
-            LineBreaks::NewlinesAndFormFeeds => b"\r\n\x0C",
         };
         let (mut starts, mut at) = (vec![0], 0);
         while let Some(found) = text

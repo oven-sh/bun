@@ -83,7 +83,6 @@ const {
   StringPrototypeTrim,
   Symbol,
   SyntaxError,
-  globalThis,
 } = primordials;
 
 // These five are cheap enough to live outside loadImpl, so a library that

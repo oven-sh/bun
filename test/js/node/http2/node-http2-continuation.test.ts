@@ -32,13 +32,10 @@ const TLS_OPTIONS = { ca: CA_CERT };
 const H2_CLIENT_OPTIONS = {
   ...TLS_OPTIONS,
   rejectUnauthorized: false,
-  // Node.js uses top-level maxHeaderListPairs
   maxHeaderListPairs: 2000,
   settings: {
     // Allow receiving up to 256KB of header data
     maxHeaderListSize: 256 * 1024,
-    // Bun reads maxHeaderListPairs from settings
-    maxHeaderListPairs: 2000,
   },
 };
 

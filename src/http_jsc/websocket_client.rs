@@ -202,6 +202,8 @@ pub struct WebSocket<const SSL: bool> {
     /// (or until `resume()` if an `open` listener paused the socket), or bytes from a
     /// re-entrant `feed`, held until the outer `feed` finishes.
     initial_data: Cell<Option<Box<InitialData>>>,
+    /// The size of the frames that listeners sent after the connection was gone. See `count_unsendable`.
+    unsendable_bytes: Cell<usize>,
     /// A `feed` call is on the stack.
     parsing: Cell<bool>,
     options: ConnectedOptions,
@@ -1385,6 +1387,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub(crate) fn buffered_amount(&self) -> usize {
         self.send_buffer.borrow().readable_length()
             + self.tunnel().map_or(0, |t| t.buffered_amount())
+            + self.unsendable_bytes.get()
     }
 
     /// Set whether this connection keeps the process alive. Nothing re-refs it automatically.
@@ -1456,15 +1459,17 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         let kind = FrameKind::from_ffi(op, flags, !this.options.is_server);
         if !this.has_tcp() {
-            return this.queue_unsendable(Copy::Bytes(slice), kind);
+            return this.count_unsendable(Copy::Bytes(slice), kind);
         }
         this.send_frame(Copy::Bytes(slice), slice.len(), kind);
     }
 
     /// The connection is gone, and `finish` runs once what had arrived is parsed. What a listener
-    /// sends until then stays in the queue, so `bufferedAmount` counts it as unsent.
-    fn queue_unsendable(&self, bytes: Copy<'_>, kind: FrameKind) {
-        self.send_data(bytes, false, kind);
+    /// sends until then can't leave, so it's only counted: `bufferedAmount` reports it as unsent.
+    fn count_unsendable(&self, bytes: Copy<'_>, kind: FrameKind) {
+        let (frame_size, _) = bytes.frame_and_content_len(kind.masked);
+        self.unsendable_bytes
+            .set(self.unsendable_bytes.get().saturating_add(frame_size));
     }
 
     /// An inline frame skips the send queue and the compressor.
@@ -1524,7 +1529,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             Copy::Latin1(str.slice())
         };
         if !this.has_tcp() {
-            return this.queue_unsendable(whole, kind);
+            return this.count_unsendable(whole, kind);
         }
 
         // fast path: small frame, no backpressure, attempt to send without allocating
@@ -1604,6 +1609,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             payload_length_frame_bytes: Cell::new([0u8; 8]),
             payload_length_frame_len: Cell::new(0),
             initial_data: Cell::new(None),
+            unsendable_bytes: Cell::new(0),
             parsing: Cell::new(false),
             options: *options,
             deflate: RefCell::new(

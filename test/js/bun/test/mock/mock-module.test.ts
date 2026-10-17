@@ -6142,6 +6142,48 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
     });
   });
 
+  // What a factory's imports were linked to the original for is evicted when the factory ends, once nothing is loading it.
+  // Each load that settled used to add a reaction to every load still pending: twice the walks of the registry per load.
+  test("modules to evict wait for many loads at once", async () => {
+    const loads = 40;
+    const files: Record<string, string> = {
+      "rate.ts": `export const rate = "real";`,
+      "chain.ts": `import { shared } from "./shared"; export { shared };`,
+      "shared.ts": `import { rate } from "./rate"; export const shared = () => rate;`,
+      "many.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        const started = Promise.withResolvers();
+        vi.mock("./rate", async () => {
+          const chain = import("./chain");
+          started.resolve();
+          await chain;
+          return { rate: "mock" };
+        });
+        const late = [];
+        for (let i = 0; i < ${loads}; i++) {
+          late.push(Promise.withResolvers());
+          vi.doMock("./late" + i, async () => (await late[i].promise, { late: -i }));
+        }
+        test("every load ends", async () => {
+          const rate = import("./rate");
+          await started.promise;
+          const pending = late.map((_, i) => import("./uses" + i));
+          expect((await rate).rate).toBe("mock");
+          for (const { resolve } of late) {
+            resolve();
+            await new Promise(resolve => setImmediate(resolve));
+          }
+          expect((await Promise.all(pending)).map(uses => uses.late)).toEqual(late.map((_, i) => -i));
+        });
+      `,
+    };
+    for (let i = 0; i < loads; i++) {
+      files[`late${i}.ts`] = `export const late = ${i};`;
+      files[`uses${i}.ts`] = `import { shared } from "./shared"; export { late } from "./late${i}"; export { shared };`;
+    }
+    await expectFixturesToPass(files, 1);
+  });
+
   test("every file that imports the module that mocks gets the mock", async () => {
     const file = `
       import { price } from "./mocks-tax";

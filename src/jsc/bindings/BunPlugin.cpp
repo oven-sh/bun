@@ -2123,14 +2123,12 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         }
         loader->clearAll();
     }
-    // Keys that were already waiting have a reaction on their load, so don't add a second one.
     UncheckedKeyHashSet<JSC::JSPromise*> awaited;
     WTF::ListHashSet<String> stay;
     for (auto& key : keys) {
         if (JSC::JSPromise* pendingLoad = loading.get(key)) {
             stay.add(key);
-            if (evict.hasLoadSettled || !waitedFor.contains(key))
-                awaited.add(pendingLoad);
+            awaited.add(pendingLoad);
             continue;
         }
         bool leavesRegistry = !staysInRegistry.contains(key), leavesRequireCache = !staysInRequireCache.contains(key);
@@ -2187,11 +2185,17 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     }
     plugins.modulesToEvictOnceLoaded = WTF::move(stay);
 
-    if (awaited.isEmpty())
-        return;
-    JSC::JSFunction* didSettle = JSC::JSFunction::create(vm, globalObject, 0, String(), jsFunctionEvictModulesThatHaveLoaded, ImplementationVisibility::Private);
-    for (auto* pendingLoad : awaited)
+    // This runs again each time one of the loads settles. A second reaction on those still pending would double the runs with every load.
+    auto alreadyAwaited = std::exchange(plugins.loadsOfModulesToEvict, {});
+    JSC::JSFunction* didSettle = nullptr;
+    for (auto* pendingLoad : awaited) {
+        plugins.loadsOfModulesToEvict.add(pendingLoad, JSC::Weak<JSC::JSPromise> { pendingLoad });
+        if (auto previous = alreadyAwaited.find(pendingLoad); previous != alreadyAwaited.end() && previous->value.get() == pendingLoad)
+            continue;
+        if (!didSettle)
+            didSettle = JSC::JSFunction::create(vm, globalObject, 0, String(), jsFunctionEvictModulesThatHaveLoaded, ImplementationVisibility::Private);
         pendingLoad->performPromiseThenWithContext(vm, globalObject, didSettle, didSettle, jsUndefined(), jsUndefined());
+    }
 }
 
 static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Vector<String>&& modules)

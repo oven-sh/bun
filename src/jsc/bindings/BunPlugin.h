@@ -5,6 +5,8 @@
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Strong.h>
+#include <JavaScriptCore/Weak.h>
+#include <JavaScriptCore/WeakInlines.h>
 #include <wtf/ListHashSet.h>
 #include "helpers.h"
 
@@ -110,6 +112,8 @@ public:
         WTF::UncheckedKeyHashSet<String> modulesThatMocked = {};
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};
+        // The pending loads they wait for. Each has one reaction that evicts them. Weak: a load that never settles must not keep its global object.
+        WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};
         // The mock a fetch in flight keeps resolving to, even if the mock is replaced or removed meanwhile (keepModuleMockOfLoadInFlight).
         VirtualModuleMap moduleMocksBeingLoaded = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.

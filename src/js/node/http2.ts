@@ -6435,6 +6435,8 @@ function closeAllSessions(server: Http2Server | Http2SecureServer) {
 const {
   connectionListenerHTTP1,
   closeIdleHttp1Connections,
+  setupHttp1ConnectionsTracking,
+  clearHttp1ConnectionsTracking,
   kHttp1Connections,
 } = require("internal/http1_server_fallback");
 
@@ -6645,6 +6647,7 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
   declare keepAliveTimeoutBuffer: number | undefined;
   declare headersTimeout: number | undefined;
   declare requestTimeout: number | undefined;
+  declare connectionsCheckingInterval: number | undefined;
   declare maxHeadersCount: number | null;
   declare maxRequestsPerSocket: number | undefined;
   declare maxHeaderSize: number | undefined;
@@ -6671,6 +6674,8 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
       this.keepAliveTimeoutBuffer = http1Options.keepAliveTimeoutBuffer ?? 1000;
       this.headersTimeout = http1Options.headersTimeout ?? 60000;
       this.requestTimeout = http1Options.requestTimeout ?? 300000;
+      this.connectionsCheckingInterval = http1Options.connectionsCheckingInterval ?? 30000;
+      this.on("listening", setupHttp1ConnectionsTracking);
       this.maxHeadersCount = http1Options.maxHeadersCount ?? null;
       this.maxRequestsPerSocket = http1Options.maxRequestsPerSocket ?? 0;
       const joinDuplicateHeaders = http1Options.joinDuplicateHeaders;
@@ -6717,7 +6722,10 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3475-L3487
   close(callback?: (err?: Error) => void) {
     super.close(callback);
-    if (this[bunSocketServerOptions]?.allowHTTP1 === true) this.closeIdleConnections();
+    if (this[bunSocketServerOptions]?.allowHTTP1 === true) {
+      clearHttp1ConnectionsTracking(this);
+      this.closeIdleConnections();
+    }
     closeAllSessions(this);
   }
   closeIdleConnections() {

@@ -1,7 +1,7 @@
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
 // Used by http2's `allowHTTP1` ALPN fallback and http's `server.emit("connection", socket)`.
 // See https://github.com/nodejs/node/blob/main/lib/_http_server.js connectionListener.
-const { STATUS_CODES, kPendingCallbacks } = require("internal/http");
+const { STATUS_CODES, kPendingCallbacks, headerStateSymbol, NodeHTTPHeaderState } = require("internal/http");
 const { SafeSet } = require("internal/primordials");
 const AsyncContextFrame = require("internal/async_context_frame");
 
@@ -9,6 +9,11 @@ const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
 // Node's last_message_start_: from the first byte of a request to its end, closeIdleConnections() leaves the connection alone.
 const kHttp1MessageOpen = Symbol("http1MessageOpen");
+// The 'error' listener of the connection. The request-timeout sweep reports through it, like Node's onRequestTimeout.
+const kHttp1OnError = Symbol("http1OnError");
+// Node's ConnectionsList::Expired reports a message once.
+const kHttp1TimeoutReported = Symbol("http1TimeoutReported");
+const kHttp1ConnectionsCheckingInterval = Symbol("http1ConnectionsCheckingInterval");
 const reportError = globalThis.reportError;
 
 function rethrowUncaught(err) {
@@ -386,6 +391,8 @@ function connectionListenerHTTP1(server, socket, options) {
   connections.add(socket);
   socket[kHttp1ActiveRequests] = 0;
   socket[kHttp1MessageOpen] = false;
+  socket[kHttp1TimeoutReported] = false;
+  socket[kHttp1OnError] = onHttp1SocketErrorListener;
   // readStart() leaves a socket alone while the pipelining read gate holds it.
   socket._paused = false;
   const canTimeOut = typeof socket.setTimeout === "function";
@@ -421,6 +428,7 @@ function connectionListenerHTTP1(server, socket, options) {
   let flushedUrl = "";
   parser[kOnMessageBegin] = function onHttp1MessageBegin() {
     socket[kHttp1MessageOpen] = true;
+    socket[kHttp1TimeoutReported] = false;
   };
 
   parser[kOnHeaders] = function onHttp1Headers(headers, url) {
@@ -618,14 +626,19 @@ function connectionListenerHTTP1(server, socket, options) {
     if (!server.emit("clientError", err, socket)) {
       if (socket.writable && !socket.destroyed) {
         const code = err?.code;
-        socket.write(
-          code === "HPE_HEADER_OVERFLOW"
-            ? "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
-            : code === "HPE_CHUNK_EXTENSIONS_OVERFLOW"
-              ? "HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\n\r\n"
-              : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
-          "latin1",
-        );
+        if (code !== "ERR_HTTP_REQUEST_TIMEOUT") {
+          socket.write(
+            code === "HPE_HEADER_OVERFLOW"
+              ? "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
+              : code === "HPE_CHUNK_EXTENSIONS_OVERFLOW"
+                ? "HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\n\r\n"
+                : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
+            "latin1",
+          );
+        } else if (socket._httpMessage?.[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
+          // Like Node's socketOnError: no raw response once the response in flight has written its head.
+          socket.write("HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n", "latin1");
+        }
       }
       socket.destroy(err);
     }
@@ -657,6 +670,7 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.removeListener("end", onHttp1SocketEnd);
       socket.removeListener("drain", onHttp1SocketDrain);
       socket.removeListener("timeout", onHttp1SocketTimeout);
+      socket[kHttp1OnError] = undefined;
       connections.delete(socket);
       try {
         parser.close();
@@ -764,6 +778,54 @@ function connectionListenerHTTP1(server, socket, options) {
   });
 }
 
+// Node's ConnectionsList::Expired and checkConnections, for the connections that are served from JS:
+// a message that is older than headersTimeout with its headers incomplete, or older than requestTimeout.
+function expireHttp1Connections(server, headersTimeout, requestTimeout) {
+  const connections = server[kHttp1Connections];
+  if (!connections || connections.size === 0) return;
+  if (requestTimeout > 0 && headersTimeout > requestTimeout) {
+    const swapped = headersTimeout;
+    headersTimeout = requestTimeout;
+    requestTimeout = swapped;
+  }
+  let expired;
+  for (const socket of connections) {
+    const parser = socket.parser;
+    if (!parser || socket[kHttp1TimeoutReported]) continue;
+    // 0 between two messages: the keep-alive timeout covers that time.
+    const age = parser.duration();
+    if (
+      (headersTimeout > 0 && age > headersTimeout && !parser.headersCompleted()) ||
+      (requestTimeout > 0 && age > requestTimeout)
+    ) {
+      socket[kHttp1TimeoutReported] = true;
+      (expired ??= []).push(socket);
+    }
+  }
+  if (expired === undefined) return;
+  for (let i = 0; i < expired.length; i++) {
+    expired[i][kHttp1OnError]?.($ERR_HTTP_REQUEST_TIMEOUT("Request timeout"));
+  }
+}
+
+// Node's setupConnectionsTracking and httpServerPreClose, for a server whose HTTP/1 connections are all served from JS.
+function setupHttp1ConnectionsTracking(this: any) {
+  clearInterval(this[kHttp1ConnectionsCheckingInterval]);
+  const interval = setInterval(checkHttp1Connections.bind(this), this.connectionsCheckingInterval ?? 30_000);
+  interval.unref();
+  this[kHttp1ConnectionsCheckingInterval] = interval;
+}
+
+function checkHttp1Connections(this: any) {
+  const { headersTimeout, requestTimeout } = this;
+  if (headersTimeout === 0 && requestTimeout === 0) return;
+  expireHttp1Connections(this, headersTimeout, requestTimeout);
+}
+
+function clearHttp1ConnectionsTracking(server) {
+  clearInterval(server[kHttp1ConnectionsCheckingInterval]);
+}
+
 function closeIdleHttp1Connections(server) {
   const connections = server[kHttp1Connections];
   if (!connections) return;
@@ -786,5 +848,8 @@ export default {
   connectionListenerHTTP1,
   closeIdleHttp1Connections,
   closeAllHttp1Connections,
+  expireHttp1Connections,
+  setupHttp1ConnectionsTracking,
+  clearHttp1ConnectionsTracking,
   kHttp1Connections,
 };

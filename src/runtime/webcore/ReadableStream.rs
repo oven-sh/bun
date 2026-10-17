@@ -221,6 +221,7 @@ impl ReadableStream {
                 if let Some(size) = blobby.max_size {
                     blob.size.set(size as webcore::blob::SizeType);
                 }
+                blob.name_detached.set(blobby.name_detached);
                 // it should be lazy, file shouldn't have opened yet.
                 debug_assert!(!blobby.started.get());
                 webcore::blob::Any::Blob(blob)
@@ -550,6 +551,7 @@ impl ReadableStream {
                         } else {
                             None
                         },
+                        name_detached: blob.is_file_or_view(),
                         lazy: bun_jsc::JsCell::new(webcore::file_reader::Lazy::Blob(store.clone())),
                         ..Default::default()
                     },

@@ -164,7 +164,7 @@ impl FileRoute {
                     !blob.is_heap_allocated(),
                     "expected blob not to be heap-allocated"
                 );
-                *body_value = BodyValue::Blob(blob.dupe());
+                *body_value = BodyValue::Blob(blob.dupe_with_identity());
                 let headers = headers_from(response.get_init_headers(), &blob);
                 let status_code = response.status_code();
 

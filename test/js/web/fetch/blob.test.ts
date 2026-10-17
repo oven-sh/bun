@@ -1,8 +1,10 @@
+import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, isASAN, tempDir } from "harness";
 import type { BlobPropertyBag } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import path from "node:path";
+import v8 from "node:v8";
 
 test("blob: imports have sourcemapped stacktraces", async () => {
   const blob = new Blob(
@@ -161,6 +163,30 @@ test("blob: can be imported", async () => {
   expect(async () => {
     await import(url);
   }).toThrow();
+});
+
+test("blob: the type picks the loader when the name has no known extension", async () => {
+  const json = '{"a":1}';
+  const type = "application/json";
+  const form = new FormData();
+  form.append("entry", new Blob([json], { type }));
+  const blobs = {
+    unnamed: new Blob([json], { type }),
+    named: new File([json], "data", { type }),
+    // FormData names this entry "blob".
+    entry: form.get("entry") as File,
+    extension: new File(["export default 2"], "mod.js", { type }),
+  };
+  const loaded: Record<string, unknown> = {};
+  for (const [key, blob] of Object.entries(blobs)) {
+    const url = URL.createObjectURL(blob);
+    loaded[key] = await import(url).then(
+      module => module.default,
+      error => error.name,
+    );
+    URL.revokeObjectURL(url);
+  }
+  expect(loaded).toEqual({ unnamed: { a: 1 }, named: { a: 1 }, entry: { a: 1 }, extension: 2 });
 });
 
 test("blob: can reliable get type from fetch #10072", async () => {
@@ -949,6 +975,219 @@ describe("Blob from ArrayBuffer-like values", () => {
       new DataView(new Uint8Array([0x67, 0x68]).buffer),
     ]);
     expect(await blob.text()).toBe("abcdefgh");
+  });
+});
+
+// https://w3c.github.io/FileAPI/#slice-method-algo
+describe("a Blob made from a File is a plain Blob", () => {
+  const makeFile = () => new File(["0123456789"], "report.pdf", { type: "application/pdf", lastModified: 1234 });
+  class SubFile extends File {}
+  const describeBlob = (blob: Blob) => ({
+    isFile: blob instanceof File,
+    isBlob: blob instanceof Blob,
+    name: (blob as any).name,
+    lastModified: (blob as any).lastModified,
+  });
+  // A plain Blob's `lastModified` is not part of this contract, so compare with one.
+  const plainBlob = describeBlob(new Blob(["x"]));
+
+  const producers: [label: string, make: (file: File) => Blob | Promise<Blob>, text: string][] = [
+    ["file.slice(0, 5)", file => file.slice(0, 5), "01234"],
+    ["file.slice()", file => file.slice(), "0123456789"],
+    ["file.slice(0, 5, 'text/plain')", file => file.slice(0, 5, "text/plain"), "01234"],
+    ["file.slice(0, 5).slice(1)", file => file.slice(0, 5).slice(1), "1234"],
+    ["file.slice(0, 0)", file => file.slice(0, 0), ""],
+    ["file.slice(20)", file => file.slice(20), ""],
+    ["file.slice(3, 1)", file => file.slice(3, 1), ""],
+    ["Blob.prototype.slice.call(file, 2)", file => Blob.prototype.slice.call(file, 2), "23456789"],
+    ["a File subclass: slice(0, 5)", () => new SubFile(["0123456789"], "sub.pdf").slice(0, 5), "01234"],
+    ["structuredClone(file).slice(0, 5)", file => structuredClone(file).slice(0, 5), "01234"],
+    ["structuredClone(file.slice(0, 5))", file => structuredClone(file.slice(0, 5)), "01234"],
+    [
+      "a FormData entry: slice(0, 5)",
+      file => {
+        const form = new FormData();
+        form.append("file", file);
+        return (form.get("file") as File).slice(0, 5);
+      },
+      "01234",
+    ],
+    [
+      "a Bun.Archive entry: slice(0, 5)",
+      async () => (await new Bun.Archive({ "a.txt": "0123456789" }).files()).get("a.txt")!.slice(0, 5),
+      "01234",
+    ],
+    ["new Blob([file])", file => new Blob([file]), "0123456789"],
+    ["new Blob([file], { type })", file => new Blob([file], { type: "text/plain" }), "0123456789"],
+    ["new Blob([file.slice(0, 5)])", file => new Blob([file.slice(0, 5)]), "01234"],
+    ["new Response(file).blob()", file => new Response(file).blob(), "0123456789"],
+    ["new Response(file).clone().blob()", file => new Response(file).clone().blob(), "0123456789"],
+    [
+      "new Request(url, { body: file }).blob()",
+      file => new Request("http://example.com/", { method: "POST", body: file }).blob(),
+      "0123456789",
+    ],
+    [
+      "new Request(request).blob()",
+      file => new Request(new Request("http://example.com/", { method: "POST", body: file })).blob(),
+      "0123456789",
+    ],
+    [
+      "fetch(URL.createObjectURL(file)).blob()",
+      async file => {
+        const url = URL.createObjectURL(file);
+        try {
+          return await (await fetch(url)).blob();
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      },
+      "0123456789",
+    ],
+  ];
+
+  test.each(producers)("%s", async (_, make, text) => {
+    const file = makeFile();
+    const blob = await make(file);
+    expect({ ...describeBlob(blob), text: await blob.text() }).toEqual({ ...plainBlob, text });
+    // The source File keeps its own identity.
+    expect(describeBlob(file)).toEqual({ isFile: true, isBlob: true, name: "report.pdf", lastModified: 1234 });
+  });
+
+  test("new File([file.slice(0, 5)], name) is a File with the new name", async () => {
+    const part = new File([makeFile().slice(0, 5)], "part-0", { lastModified: 7 });
+    expect({ ...describeBlob(part), text: await part.text() }).toEqual({
+      isFile: true,
+      isBlob: true,
+      name: "part-0",
+      lastModified: 7,
+      text: "01234",
+    });
+  });
+
+  test("a File over Bun.file(): its views have no name, and never the path", async () => {
+    using dir = tempDir("blob-file-view", { "disk-secret.csv": "0123456789" });
+    const diskPath = path.join(String(dir), "disk-secret.csv");
+    const wrapped = new File([Bun.file(diskPath)], "public.csv");
+
+    const renamed = wrapped.slice(0, 5) as Blob & { name?: string };
+    renamed.name = "renamed";
+    renamed.name = undefined;
+    const bodyReadAsStream = new Response(wrapped);
+    bodyReadAsStream.body;
+    const views: Record<string, Blob> = {
+      "slice": wrapped.slice(0, 5),
+      "slice of slice": wrapped.slice(0, 5).slice(1),
+      "new Blob([file])": new Blob([wrapped]),
+      "Response.blob()": await new Response(wrapped).blob(),
+      "Response.blob() after .body was read": await bodyReadAsStream.blob(),
+      "Response(file.stream()).blob()": await new Response(wrapped.stream()).blob(),
+      "Response(slice.stream()).blob()": await new Response(wrapped.slice(0, 5).stream()).blob(),
+      "structuredClone(slice)": structuredClone(wrapped.slice(0, 5)),
+      "bun:jsc deserialize(serialize(slice))": deserialize(serialize(wrapped.slice(0, 5))),
+      "node:v8 deserialize(serialize(slice))": v8.deserialize(v8.serialize(wrapped.slice(0, 5))),
+      "structuredClone(new Blob([file]))": structuredClone(new Blob([wrapped])),
+      "slice named through the setter, then unnamed": renamed,
+    };
+    for (const [label, view] of Object.entries(views)) {
+      expect({ label, isFile: view instanceof File, name: (view as any).name }).toEqual({
+        label,
+        isFile: false,
+        name: undefined,
+      });
+    }
+    expect(await views.slice.text()).toBe("01234");
+
+    const form = new FormData();
+    form.append("chunk", wrapped.slice(0, 5));
+    form.append("whole", wrapped);
+    expect((await new Response(form).text()).match(/filename="[^"]*"/g)).toEqual([
+      'filename="blob"',
+      'filename="public.csv"',
+    ]);
+
+    // The File itself keeps its name, also across structuredClone.
+    expect([wrapped.name, structuredClone(wrapped).name]).toEqual(["public.csv", "public.csv"]);
+  });
+
+  test("a File record serialized before version 5 still deserializes", async () => {
+    // A version 4 record of new File(["0123456789"], "report.pdf", { type: "application/pdf", lastModified: 1234 }).
+    const version4 = Buffer.from(
+      "0e000000fe0400000000000000000f0000006170706c69636174696f6e2f70646601010a000000" +
+        "30313233343536373839000000000100000000004893400a0000007265706f72742e706466",
+      "hex",
+    );
+    const file = deserialize(version4) as File;
+    expect({ ...describeBlob(file), type: file.type, text: await file.text() }).toEqual({
+      isFile: true,
+      isBlob: true,
+      name: "report.pdf",
+      lastModified: 1234,
+      type: "application/pdf",
+      text: "0123456789",
+    });
+  });
+
+  test("Bun.serve sends a File body's name as the Content-Disposition filename, and none for a Blob made from it", async () => {
+    using dir = tempDir("blob-file-view-serve", { "on-disk.bin": "0123456789" });
+    const file = makeFile();
+    // Each Response is also a route, which takes the body and gives the Response a copy back.
+    const reusedStatic = new Response(file);
+    const reusedFile = new Response(new File([Bun.file(path.join(String(dir), "on-disk.bin"))], "download.bin"));
+
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      routes: { "/static-route": reusedStatic, "/file-route": reusedFile },
+      fetch(req) {
+        switch (new URL(req.url).pathname) {
+          case "/file":
+            return new Response(file);
+          case "/clone":
+            return new Response(file).clone();
+          case "/reused-static":
+            return reusedStatic.clone();
+          case "/reused-file":
+            return reusedFile.clone();
+          case "/array-body":
+            return new Response([makeFile()]);
+          case "/slice":
+            return new Response(file.slice(0, 5));
+          case "/blob":
+            return new Response(new Blob([file]));
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    const seen: Record<string, [string | null, string]> = {};
+    for (const pathname of ["/file", "/clone", "/reused-static", "/reused-file", "/array-body", "/slice", "/blob"]) {
+      const res = await fetch(server.url.origin + pathname);
+      seen[pathname] = [res.headers.get("content-disposition"), await res.text()];
+    }
+    expect(seen).toEqual({
+      "/file": ['filename="report.pdf"', "0123456789"],
+      "/clone": ['filename="report.pdf"', "0123456789"],
+      "/reused-static": ['filename="report.pdf"', "0123456789"],
+      "/reused-file": ['filename="download.bin"', "0123456789"],
+      "/array-body": ['filename="report.pdf"', "0123456789"],
+      "/slice": [null, "01234"],
+      "/blob": [null, "0123456789"],
+    });
+  });
+
+  test("names that are not a File's are kept: a Bun.file() slice, and a Blob named through the setter", () => {
+    using dir = tempDir("blob-file-view-kept", { "data.txt": "0123456789" });
+    const diskPath = path.join(String(dir), "data.txt");
+    const named = new Blob(["abc"]) as Blob & { name?: string };
+    named.name = "set-by-setter.txt";
+    expect({
+      bunFileSlice: Bun.file(diskPath).slice(0, 5).name,
+      setterNamedSlice: (named.slice(0, 1) as any).name,
+    }).toEqual({
+      bunFileSlice: diskPath,
+      setterNamedSlice: "set-by-setter.txt",
+    });
   });
 });
 

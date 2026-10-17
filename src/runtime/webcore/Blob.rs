@@ -112,7 +112,8 @@ pub(crate) use bun_jsc::webcore_types::{Blob, BlobContentType, ClosingState, MAX
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
 /// 4: Added the blob's `size` to file-backed stores so a sliced Bun.file()
 ///    keeps its window's end across structuredClone/postMessage
-const SERIALIZATION_VERSION: u8 = 4;
+/// 5: Added the `name_detached` byte, so a view of a File has no name after a clone
+const SERIALIZATION_VERSION: u8 = 5;
 
 pub(crate) use bun_jsc::generated::JSBlob as js;
 
@@ -770,6 +771,8 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(0)?;
             }
         }
+
+        writer.write_int_le::<u8>(self.name_detached.get() as u8)?;
         Ok(())
     }
 
@@ -1922,7 +1925,7 @@ impl BlobExt for Blob {
         if self.name.get().tag() != bun_core::Tag::Dead {
             return Some(self.name.get());
         }
-        if let Some(path) = self.store_path() {
+        if let Some(path) = self.store_name() {
             self.name.set(BunString::clone_utf8(path));
             return Some(self.name.get());
         }
@@ -1958,19 +1961,17 @@ impl BlobExt for Blob {
 
     fn get_loader(&self, jsc_vm: &VirtualMachine) -> Option<bun_ast::Loader> {
         use bun_resolver::fs::PathResolverExt as _;
-        if let Some(filename) = self.get_file_name() {
-            let current_path = bun_resolver::fs::Path::init(&filename);
-            return Some(
-                current_path
-                    .loader(&jsc_vm.transpiler.options.loaders)
-                    .unwrap_or(bun_ast::Loader::Tsx),
-            );
-        } else if let Some(mime_type) = self.get_mime_type_or_content_type() {
-            return Some(bun_ast::Loader::from_mime_type(mime_type));
-        } else {
-            // Be maximally permissive.
-            return Some(bun_ast::Loader::Tsx);
+        let from_extension = self.get_file_name().and_then(|filename| {
+            bun_resolver::fs::Path::init(&filename).loader(&jsc_vm.transpiler.options.loaders)
+        });
+        if let Some(loader) = from_extension {
+            return Some(loader);
         }
+        if let Some(mime_type) = self.get_mime_type_or_content_type() {
+            return Some(bun_ast::Loader::from_mime_type(mime_type));
+        }
+        // Be maximally permissive.
+        Some(bun_ast::Loader::Tsx)
     }
 
     // TODO: Move this to a separate `File` object or BunFile
@@ -3110,6 +3111,7 @@ impl BlobExt for Blob {
                                     ),
                                     charset: Cell::new(blob.charset.get()),
                                     is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
+                                    name_detached: Cell::new(blob.name_detached.get()),
                                     ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),
@@ -3934,6 +3936,12 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         if version == 3 {
             break 'versions;
         }
+
+        if version == 4 {
+            break 'versions;
+        }
+
+        blob.name_detached.set(reader.read_int_le::<u8>()? != 0);
     }
 
     debug_assert!(
@@ -4002,23 +4010,24 @@ pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob
     )
 }
 
+/// `path_str` is the FormData entry's filename, or Dead for a Blob that is not an entry.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) {
     this.is_jsdom_file.set(true);
-    if !path_str.is_empty() && this.get_file_name().is_none() {
+    if path_str.tag() != bun_core::Tag::Dead {
         this.name.set(path_str.clone());
     }
 }
 
+/// A FormData entry and the value `get()` returns keep the `File` identity.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
-    Blob::new(this.dupe_with_content_type(true))
+    Blob::new(this.dupe_with_identity())
 }
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
-    this.get_name_string()
-        .map_or(BunString::EMPTY, Clone::clone)
+    this.get_name_string().map_or(BunString::DEAD, Clone::clone)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

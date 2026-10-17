@@ -1012,7 +1012,8 @@ impl Value {
             if let Some(blob) = value.as_class_ref::<Blob>() {
                 return Ok(Value::Blob(
                     // We must preserve "type" so that DOMFormData and the "type" field are preserved.
-                    blob.dupe_with_content_type(true),
+                    // The body keeps the File: its name is the filename Bun.serve sends.
+                    blob.dupe_with_identity(),
                 ));
             }
 
@@ -1586,7 +1587,7 @@ impl Value {
                 self.to_readable_stream(cx)?;
                 return self.tee(cx, None);
             }
-            return Ok(Value::Blob(b.dupe_with_content_type(false)));
+            return Ok(Value::Blob(b.dupe_with_identity()));
         }
 
         if let Value::WTFStringImpl(s) = *self {
@@ -2200,6 +2201,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         let blob_ptr = Blob::new(value.use_());
         // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.
         let blob = unsafe { &mut *blob_ptr };
+        // https://fetch.spec.whatwg.org/#dom-body-blob returns a Blob, not the File the body was made from.
+        blob.strip_file_identity();
         if blob.content_type().is_empty() {
             if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
                 // `fetch_headers` is a live C++ FetchHeaders handle;

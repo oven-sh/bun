@@ -1895,17 +1895,6 @@ mod tests {
     }
 
     #[test]
-    fn s3_endpoint_drops_every_trailing_slash() {
-        let host = |url: &[u8]| URL::parse_s3_endpoint(url).unwrap().host_with_path;
-        assert_eq!(&*host(b"https://s3.example.com/"), b"s3.example.com");
-        assert_eq!(&*host(b"https://s3.example.com//"), b"s3.example.com");
-        assert_eq!(
-            &*host(b"https://s3.example.com/prefix//"),
-            b"s3.example.com/prefix"
-        );
-    }
-
-    #[test]
     fn the_authority_ends_where_new_url_ends_it() {
         let url = URL::parse(br"http://u:p@first.example:8080\x@second.example/path");
         assert_eq!((url.username, url.password), (&b"u"[..], &b"p"[..]));

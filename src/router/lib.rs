@@ -124,7 +124,7 @@ impl Router {
     }
 }
 
-pub const BANNED_DIRS: [&[u8]; 1] = [b"node_modules"];
+const BANNED_DIRS: [&[u8]; 1] = [b"node_modules"];
 
 struct RouteIndex {
     route: Box<Route>,

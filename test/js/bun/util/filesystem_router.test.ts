@@ -1,7 +1,20 @@
 import { FileSystemRouter } from "bun";
+import { dlopen, ptr } from "bun:ffi";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectRssDeltaBelow,
+  isASAN,
+  isLinux,
+  isMacOS,
+  isWindows,
+  libcPathForDlopen,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -461,6 +474,203 @@ it("reload() works with new dirs/files", () => {
   createTree(dir, ["test/test2/index.ts"]);
   router.reload();
   expect(router.match("/test/test2")!.name).toBe("/test/test2");
+});
+
+it("reload() finds a directory that was deleted and created again", () => {
+  const { dir } = make(["a/b/one.tsx", "keep.tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  expect(Object.keys(router.routes).sort()).toEqual(["/a/b/one", "/keep"]);
+
+  rmSync(`${dir}/a`, { recursive: true, force: true });
+  router.reload();
+  expect(Object.keys(router.routes)).toEqual(["/keep"]);
+
+  createTree(dir, ["a/b/two.tsx"]);
+  router.reload();
+  expect(Object.keys(router.routes).sort()).toEqual(["/a/b/two", "/keep"]);
+  expect(router.match("/a/b/one")).toBe(null);
+  expect(router.match("/a/b/two")!.filePath).toBe(`${dir}/a/b/two.tsx`);
+
+  // Nothing changed since the last load.
+  router.reload();
+  expect(Object.keys(router.routes).sort()).toEqual(["/a/b/two", "/keep"]);
+});
+
+it("reload() throws while the root directory is gone and lists it again when it is back", () => {
+  const { dir } = make(["a/b/one.tsx", "keep.tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  const held = router.match("/a/b/one")!;
+
+  rmSync(dir, { recursive: true, force: true });
+  expect(() => router.reload()).toThrow("Unable to find directory");
+  // A failed reload() keeps the last route table.
+  expect(Object.keys(router.routes).sort()).toEqual(["/a/b/one", "/keep"]);
+  expect(held.filePath).toBe(`${dir}/a/b/one.tsx`);
+  expect(() => router.reload()).toThrow("Unable to find directory");
+
+  createTree(dir, ["a/b/two.tsx"]);
+  router.reload();
+  expect(Object.keys(router.routes)).toEqual(["/a/b/two"]);
+  expect(router.match("/a/b/two")!.filePath).toBe(`${dir}/a/b/two.tsx`);
+});
+
+it("reload() finds what is new in a directory that the resolver cached before the router listed it", () => {
+  const { dir } = make(["keep.tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  expect(Object.keys(router.routes)).toEqual(["/keep"]);
+
+  // Each failed lookup leaves a "not found" record for the directory.
+  expect(() => Bun.resolveSync("./n/one.tsx", dir)).toThrow();
+  expect(() => Bun.resolveSync("./n/m/two.tsx", dir)).toThrow();
+  createTree(dir, ["n/one.tsx", "n/m/two.tsx"]);
+
+  // This lookup leaves a listing of `seen` that has only `one.tsx`.
+  createTree(dir, ["seen/one.tsx"]);
+  expect(Bun.resolveSync("./seen/one.tsx", dir).replaceAll("\\", "/")).toBe(`${dir}/seen/one.tsx`);
+  createTree(dir, ["seen/two.tsx"]);
+
+  router.reload();
+  expect(Object.keys(router.routes).sort()).toEqual(["/keep", "/n/m/two", "/n/one", "/seen/one", "/seen/two"]);
+  expect(router.match("/n/m/two")!.filePath).toBe(`${dir}/n/m/two.tsx`);
+});
+
+// Replay a failure with BUN_FSR_RELOAD_SEED=<seed>.
+it("reload() lists what is on disk after random changes to the directories", () => {
+  const seed = Number(process.env.BUN_FSR_RELOAD_SEED ?? 3) >>> 0;
+  let state = seed;
+  const int = (n: number) => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return Math.floor((((t ^ (t >>> 14)) >>> 0) / 4294967296) * n);
+  };
+  const { dir } = make(["keep.tsx"]);
+
+  // directory ("" is the root, "/d0/d2") -> names of the route files in it
+  const tree = new Map<string, Set<string>>([["", new Set(["keep"])]]);
+  const anyDir = () => [...tree.keys()][int(tree.size)];
+  const ops = [
+    function touch() {
+      const parent = anyDir();
+      const name = `f${int(3)}`;
+      fs.writeFileSync(`${dir}${parent}/${name}.tsx`, "");
+      tree.get(parent)!.add(name);
+      return `touch ${parent}/${name}.tsx`;
+    },
+    function makeDirs() {
+      let child = anyDir();
+      for (let i = 1 + int(2); i > 0 && child.split("/").length < 4; i--) {
+        child += `/d${int(3)}`;
+        if (!tree.has(child)) tree.set(child, new Set());
+      }
+      mkdirSync(dir + child, { recursive: true });
+      return `mkdir -p ${child}`;
+    },
+    function removeDir() {
+      const gone = anyDir();
+      if (!gone) return "nothing";
+      rmSync(dir + gone, { recursive: true, force: true });
+      for (const key of [...tree.keys()]) if (key === gone || key.startsWith(gone + "/")) tree.delete(key);
+      return `rm -rf ${gone}`;
+    },
+    // What a failed import leaves in the resolver's cache for a directory.
+    function failedResolve() {
+      const from = `${anyDir()}/d${int(3)}`;
+      expect(() => Bun.resolveSync("./missing.tsx", dir + from)).toThrow();
+      return `resolve in ${from}`;
+    },
+  ];
+
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  const history: string[] = [];
+  for (let round = 0; round < 100; round++) {
+    const steps: string[] = [];
+    for (let i = 1 + int(3); i > 0; i--) steps.push(ops[int(ops.length)]());
+    history.push(steps.join("; "));
+    router.reload();
+    const onDisk = Object.fromEntries(
+      [...tree].flatMap(([parent, names]) =>
+        [...names].map(name => [`${parent}/${name}`, `${dir}${parent}/${name}.tsx`]),
+      ),
+    );
+    const context = { seed, round, last: history.slice(-4) };
+    expect({ ...context, routes: router.routes }).toEqual({ ...context, routes: onDisk });
+  }
+});
+
+it("reload() in a loop keeps one directory record per route directory", async () => {
+  using dir = tempDir("fsr-reload-once-rss", {});
+  const pages = path.join(String(dir), "pages");
+  mkdirSync(pages);
+  for (let i = 0; i < 50; i++) {
+    mkdirSync(path.join(pages, "d" + i));
+    fs.writeFileSync(path.join(pages, "d" + i, "index.tsx"), "");
+  }
+  // The resolver never frees the record of a directory it read. Two reads of each
+  // directory per reload() keep 40 MiB here, one read keeps 21 MiB.
+  const code = /* ts */ `
+    const router = new Bun.FileSystemRouter({ dir: ${JSON.stringify(pages)}, style: "nextjs" });
+    const reload = (count) => {
+      for (let i = 0; i < count; i++) router.reload();
+      Bun.gc(true);
+    };
+    reload(20);
+    const before = process.memoryUsage.rss();
+    reload(100);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+  `;
+  await expectRssDeltaBelow(["-e", code], { release: 30, debug: 32 });
+});
+
+it.skipIf(!isLinux)("reload() opens each route directory once", () => {
+  using dir = tempDir("fsr-reload-once-inotify", { "pages/index.tsx": "", "pages/sub/page.tsx": "" });
+  const pages = path.join(String(dir), "pages");
+  const libc = dlopen(libcPathForDlopen(), {
+    inotify_init1: { args: ["int"], returns: "int" },
+    inotify_add_watch: { args: ["int", "ptr", "u32"], returns: "int" },
+    read: { args: ["int", "ptr", "usize"], returns: "isize" },
+    close: { args: ["int"], returns: "int" },
+  });
+  const IN_ACCESS = 0x1;
+  const IN_OPEN = 0x20;
+  const IN_NONBLOCK = 0o4000;
+  const fd = libc.symbols.inotify_init1(IN_NONBLOCK);
+  try {
+    expect(fd).toBeGreaterThan(-1);
+    // IN_ACCESS keeps two opens of one directory from being merged into one queued event.
+    const watch = (p: string) => libc.symbols.inotify_add_watch(fd, ptr(Buffer.from(p + "\0")), IN_OPEN | IN_ACCESS);
+    const router = new Bun.FileSystemRouter({ dir: pages, style: "nextjs" });
+    const watched = { root: watch(pages), sub: watch(path.join(pages, "sub")) };
+    const buf = new Uint8Array(1 << 16);
+    const view = new DataView(buf.buffer);
+    const opens = () => {
+      const counts = { root: 0, sub: 0 };
+      for (;;) {
+        const length = Number(libc.symbols.read(fd, ptr(buf), buf.length));
+        if (length <= 0) break;
+        for (let offset = 0; offset < length;) {
+          const descriptor = view.getInt32(offset, true);
+          const mask = view.getUint32(offset + 4, true);
+          const nameLength = view.getUint32(offset + 12, true);
+          // No name: the event is about the watched directory itself.
+          if (nameLength === 0 && mask & IN_OPEN) {
+            if (descriptor === watched.root) counts.root++;
+            if (descriptor === watched.sub) counts.sub++;
+          }
+          offset += 16 + nameLength;
+        }
+      }
+      return counts;
+    };
+    router.reload();
+    expect(opens()).toEqual({ root: 1, sub: 1 });
+    router.reload();
+    expect(opens()).toEqual({ root: 1, sub: 1 });
+    expect(Object.keys(router.routes).sort()).toEqual(["/", "/sub/page"]);
+  } finally {
+    libc.symbols.close(fd);
+    libc.close();
+  }
 });
 
 it(".query works with dynamic routes, including params", () => {

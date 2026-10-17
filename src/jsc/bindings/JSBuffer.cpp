@@ -80,6 +80,7 @@
 #include <wtf/UnalignedAccess.h>
 #include <JavaScriptCore/ArrayConstructor.h>
 #include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSGenericTypedArrayViewConstructorInlines.h>
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/StringObject.h>
@@ -850,22 +851,26 @@ JSC_DEFINE_HOST_FUNCTION(constructFastBuffer, (JSGlobalObject * lexicalGlobalObj
         if (tryGetAsIndex(bufferOrLength, length))
             RELEASE_AND_RETURN(scope, JSValue::encode(allocBuffer(lexicalGlobalObject, length)));
 
+        auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+        auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(bufferOrLength);
+        // For a value that is not an ArrayBuffer the constructor takes one argument. JSC has its body for a known Structure.
+        if (!jsBuffer)
+            RELEASE_AND_RETURN(scope, JSValue::encode(JSC::operationConstructGenericTypedArrayViewWithOneArgumentImpl<JSC::JSUint8Array>(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), bufferOrLength)));
+
         // A view that is in range of an attached ArrayBuffer needs none of the constructor's argument coercion.
-        if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(bufferOrLength)) {
-            RefPtr<ArrayBuffer> buffer = jsBuffer->impl();
-            size_t offset = 0;
-            bool hasLength = !lengthValue.isUndefined();
-            if ((offsetValue.isUndefined() || tryGetAsIndex(offsetValue, offset)) && (!hasLength || tryGetAsIndex(lengthValue, length)) && !buffer->isDetached()) {
-                size_t byteLength = buffer->byteLength();
-                if (offset <= byteLength && (!hasLength || length <= byteLength - offset)) {
-                    // With no length, the view of a resizable or growable buffer tracks its length.
-                    std::optional<size_t> viewLength;
-                    if (hasLength)
-                        viewLength = length;
-                    else if (!buffer->isResizableOrGrowableShared())
-                        viewLength = byteLength - offset;
-                    return createBufferView(scope, defaultGlobalObject(lexicalGlobalObject), lexicalGlobalObject, WTF::move(buffer), offset, viewLength);
-                }
+        RefPtr<ArrayBuffer> buffer = jsBuffer->impl();
+        size_t offset = 0;
+        bool hasLength = !lengthValue.isUndefined();
+        if ((offsetValue.isUndefined() || tryGetAsIndex(offsetValue, offset)) && (!hasLength || tryGetAsIndex(lengthValue, length)) && !buffer->isDetached()) {
+            size_t byteLength = buffer->byteLength();
+            if (offset <= byteLength && (!hasLength || length <= byteLength - offset)) {
+                // With no length, the view of a resizable or growable buffer tracks its length.
+                std::optional<size_t> viewLength;
+                if (hasLength)
+                    viewLength = length;
+                else if (!buffer->isResizableOrGrowableShared())
+                    viewLength = byteLength - offset;
+                return createBufferView(scope, globalObject, lexicalGlobalObject, WTF::move(buffer), offset, viewLength);
             }
         }
     }

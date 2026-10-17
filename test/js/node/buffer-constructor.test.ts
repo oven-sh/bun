@@ -696,34 +696,77 @@ describe("Buffer[Symbol.species]", () => {
     );
   });
 
-  test("throws what the Uint8Array constructor throws", () => {
-    const thrown = (construct: () => unknown) => {
+  test("gives and throws what the Uint8Array constructor gives and throws", () => {
+    // The bytes and the byteOffset, or the name and the message of the error.
+    const outcome = (construct: () => Uint8Array) => {
       try {
-        construct();
-        return "no error";
+        const view = construct();
+        return `${Array.from(view).join(",")} at ${view.byteOffset}`;
       } catch (error: any) {
         return `${error.name}: ${error.message}`;
       }
     };
+    // prettier-ignore
+    const accepted: (() => unknown[])[] = [
+      () => [],
+      () => [undefined],
+      () => [null],
+      () => [true],
+      () => ["3"],
+      () => [1.5],
+      () => [[1, 2, 300]],
+      () => [[1, , 3]],
+      () => [["1", "x", { valueOf() { return 7; } }]],
+      () => [Object.assign([1, 2], { *[Symbol.iterator]() { yield 9; } })],
+      () => [new Proxy([1, 2], {})],
+      () => [new Set([4, 5])],
+      () => [{ *[Symbol.iterator]() { yield 1; yield 2; } }],
+      () => [{ length: 2, 0: 5 }],
+      () => [{ length: "2", 0: 5 }],
+      () => [(function (..._: number[]) { return arguments; })(1, 2)],
+      () => [new Uint16Array([258, 3])],
+      () => [new Float64Array([1.5, 300])],
+      () => [Buffer.from("hi")],
+      () => [new DataView(arrayBuffer())],
+      () => [new String("12")],
+      () => [function (_a: unknown, _b: unknown) {}],
+      () => [[1, 2, 3], 1, 2],
+      () => [new Uint8Array([7, 8, 9]), 1, 1],
+      () => [arrayBuffer(), "2", "3"],
+      () => [arrayBuffer(), 1.5],
+      () => [arrayBuffer(), null, null],
+      () => [arrayBuffer(), undefined, 2],
+      () => [new SharedArrayBuffer(3)],
+    ];
     const rejected: (() => unknown[])[] = [
       () => [detachedArrayBuffer()],
       () => [detachedArrayBuffer(), 0],
       () => [detachedArrayBuffer(), 0, 0],
       () => [detachedArrayBuffer(), double(0), double(0)],
+      () => [new Uint8Array(detachedArrayBuffer())],
+      () => [new BigInt64Array([1n])],
+      () => [1n],
+      () => [Symbol("x")],
       () => [-1],
       () => [double(-1)],
       () => [-(2 ** 31) - 1],
       () => [2 ** 53],
+      () => [Infinity],
       () => [arrayBuffer(), 9],
       () => [arrayBuffer(), 0, 9],
+      () => [arrayBuffer(), -1],
       () => [arrayBuffer(), 2 ** 32, 2 ** 32],
       () => [new ArrayBuffer(4, { maxByteLength: 8 }), 5],
       () => [new ArrayBuffer(4, { maxByteLength: 8 }), 0, 5],
     ];
-    const actual = rejected.map(args => thrown(() => new FastBuffer(...args())));
-    const expected = rejected.map(args => thrown(() => new (Uint8Array as any)(...args())));
+    const shapes = [...accepted, ...rejected];
+    const actual = shapes.map(args => outcome(() => new FastBuffer(...args())));
+    const expected = shapes.map(args => outcome(() => new (Uint8Array as any)(...args())));
     assert.deepStrictEqual(actual, expected);
-    assert.ok(!actual.includes("no error"));
+    assert.deepStrictEqual(
+      actual.map(result => result.includes("Error: ")),
+      shapes.map((_, index) => index >= accepted.length),
+    );
   });
 
   test("is a class: it needs `new` and a subclass gets its own prototype", () => {

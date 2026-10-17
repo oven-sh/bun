@@ -28,6 +28,7 @@ const columns = {
   mood_array: "pg_temp.mood[]",
 };
 const everyColumn = Object.keys(columns).join(" ");
+const builtinArrays = "int4_array float4_array text_array jsonb_array";
 const iso = "2024-01-02T03:04:05.678Z";
 const textBytes = (text: string) => "\\x" + Buffer.from(text).toString("hex");
 
@@ -35,7 +36,7 @@ const textBytes = (text: string) => "\\x" + Buffer.from(text).toString("hex");
 // A column that is not named refuses the value.
 type Cells = Record<string, string>;
 // The last element is what differs with `prepare: false`: Bind is written before the server has described the
-// statement, unless the text of a value depends on the type (an array, an Int32Array, an own toString).
+// statement, unless the text of a value depends on the type (an array, an Int32Array, an object that converts itself).
 // A string is then sent as it is, also to json and jsonb.
 const matrix: [label: string, value: () => unknown, cells: Cells, unprepared?: Cells][] = [
   [
@@ -240,25 +241,92 @@ const matrix: [label: string, value: () => unknown, cells: Cells, unprepared?: C
   [
     "{ a: 1 }",
     () => ({ a: 1 }),
-    { '{"a":1}': "text json", '{"a": 1}': "jsonb", ERR_INVALID_ARG_TYPE: "bytea" },
-    { [textBytes('{"a":1}')]: "bytea" },
+    { '{"a":1}': "text json", '{"a": 1}': "jsonb", ERR_INVALID_ARG_TYPE: "bytea " + builtinArrays },
+    { [textBytes('{"a":1}')]: "bytea", rejected: builtinArrays },
+  ],
+  [
+    // The client does not know that mood[] is an array, nor any type when it has not asked for them.
+    "{}",
+    () => ({}),
+    { "{}": "text json jsonb mood_array", ERR_INVALID_ARG_TYPE: "bytea " + builtinArrays },
+    { [textBytes("{}")]: "bytea", "{}": builtinArrays },
   ],
   [
     "an object with toJSON",
     () => ({ toJSON: () => ({ b: 2 }) }),
-    { '{"b":2}': "text json", '{"b": 2}': "jsonb", ERR_INVALID_ARG_TYPE: "bytea" },
-    { [textBytes('{"b":2}')]: "bytea" },
+    { '{"b":2}': "text json", '{"b": 2}': "jsonb", ERR_INVALID_ARG_TYPE: "bytea " + builtinArrays },
+    { [textBytes('{"b":2}')]: "bytea", rejected: builtinArrays },
   ],
   [
     "an object without a prototype",
     () => Object.assign(Object.create(null), { a: 1 }),
-    { '{"a":1}': "text json", '{"a": 1}': "jsonb", ERR_INVALID_ARG_TYPE: "bytea" },
-    { [textBytes('{"a":1}')]: "bytea" },
+    { '{"a":1}': "text json", '{"a": 1}': "jsonb", ERR_INVALID_ARG_TYPE: "bytea " + builtinArrays },
+    { [textBytes('{"a":1}')]: "bytea", rejected: builtinArrays },
+  ],
+  [
+    "an object with valueOf",
+    () => ({ c: 12, valueOf: () => 12 }),
+    { '{"c":12}': "text json", '{"c": 12}': "jsonb", ERR_INVALID_ARG_TYPE: "bytea " + builtinArrays },
+    { [textBytes('{"c":12}')]: "bytea", rejected: builtinArrays },
+  ],
+  [
+    "a Symbol.toPrimitive that is undefined",
+    () => ({ a: 1, [Symbol.toPrimitive]: undefined }),
+    { '{"a":1}': "text json", '{"a": 1}': "jsonb", ERR_INVALID_ARG_TYPE: "bytea " + builtinArrays },
+    { [textBytes('{"a":1}')]: "bytea", rejected: builtinArrays },
+  ],
+  [
+    "a Symbol.toPrimitive that is null",
+    () => ({ a: 1, [Symbol.toPrimitive]: null }),
+    { '{"a":1}': "text json", '{"a": 1}': "jsonb", ERR_INVALID_ARG_TYPE: "bytea " + builtinArrays },
+    { [textBytes('{"a":1}')]: "bytea", rejected: builtinArrays },
   ],
   [
     "an object with toString",
     () => ({ toString: () => "7" }),
     { 7: "text int4 int8 float4 float8 numeric", "{}": "json jsonb", ERR_INVALID_ARG_TYPE: "bytea" },
+  ],
+  [
+    "an object with valueOf and toString",
+    () => ({ valueOf: () => 12, toString: () => "s12" }),
+    { s12: "text", "{}": "json jsonb", ERR_INVALID_ARG_TYPE: "bytea" },
+  ],
+  [
+    "an object with Symbol.toPrimitive",
+    () => ({ [Symbol.toPrimitive]: () => "7" }),
+    { 7: "text int4 int8 float4 float8 numeric", "{}": "json jsonb", ERR_INVALID_ARG_TYPE: "bytea" },
+  ],
+  [
+    "a Symbol.toPrimitive that minds the hint",
+    () => ({ cents: 1200, [Symbol.toPrimitive]: (hint: string) => (hint === "number" ? 12 : "12.00") }),
+    {
+      "12.00": "text numeric",
+      12: "float4 float8",
+      '{"cents":1200}': "json",
+      '{"cents": 1200}': "jsonb",
+      ERR_INVALID_ARG_TYPE: "bytea",
+    },
+  ],
+  [
+    "Symbol.toPrimitive and toJSON",
+    () => ({ [Symbol.toPrimitive]: () => "p12", toJSON: () => ({ j: 12 }) }),
+    { p12: "text", '{"j":12}': "json", '{"j": 12}': "jsonb", ERR_INVALID_ARG_TYPE: "bytea" },
+  ],
+  [
+    "a Symbol.toPrimitive that gives an array literal",
+    () => ({ [Symbol.toPrimitive]: () => "{1,2}" }),
+    { "{1,2}": "text " + builtinArrays, "{}": "json jsonb", ERR_INVALID_ARG_TYPE: "bytea" },
+  ],
+  [
+    "a Symbol.toPrimitive that gives a date",
+    () => ({ [Symbol.toPrimitive]: () => "2024-01-02" }),
+    {
+      "2024-01-02": "text date",
+      "2024-01-02 00:00:00": "timestamp",
+      "2024-01-02 00:00:00+00": "timestamptz",
+      "{}": "json jsonb",
+      ERR_INVALID_ARG_TYPE: "bytea",
+    },
   ],
   [
     "a URL",
@@ -314,6 +382,186 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
           );
       }
       expect(actual).toEqual(expected);
+    });
+
+    describe("an object that converts itself", () => {
+      // It goes as String(value), whatever the type of the parameter is. What `select $1::type::text` gives for one
+      // that converts itself to the first element; null: the server refuses that text.
+      const types = ["text", "int2", "int4", "int8", "oid", "float4", "float8", "numeric", "bool"];
+      const conversions: [primitive: unknown, ...stored: (string | null)[]][] = [
+        [12, "12", "12", "12", "12", "12", "12", "12", "12", null],
+        [12.5, "12.5", null, null, null, null, "12.5", "12.5", "12.5", null],
+        [-12.7, "-12.7", null, null, null, null, "-12.7", "-12.7", "-12.7", null],
+        [-0, "0", "0", "0", "0", "0", "0", "0", "0", "false"],
+        [2147483647, "2147483647", null, "2147483647", "2147483647", "2147483647", "2.1474836e+09", "2147483647", "2147483647", null], // prettier-ignore
+        [2147483648, "2147483648", null, null, "2147483648", "2147483648", "2.1474836e+09", "2147483648", "2147483648", null], // prettier-ignore
+        [1e20, "100000000000000000000", null, null, null, null, "1e+20", "1e+20", "100000000000000000000", null],
+        [1e21, "1e+21", null, null, null, null, "1e+21", "1e+21", "1000000000000000000000", null],
+        [Infinity, "Infinity", null, null, null, null, "Infinity", "Infinity", "Infinity", null],
+        [NaN, "NaN", null, null, null, null, "NaN", "NaN", "NaN", null],
+        ["12", "12", "12", "12", "12", "12", "12", "12", "12", null],
+        ["12.00", "12.00", null, null, null, null, "12", "12", "12.00", null],
+        [" 12 ", " 12 ", "12", "12", "12", "12", "12", "12", "12", null],
+        ["", "", null, null, null, null, null, null, null, null],
+        ["0x10", "0x10", null, null, null, null, "16", "16", null, null],
+        ["1e3", "1e3", null, null, null, null, "1000", "1000", "1000", null],
+        ["abc", "abc", null, null, null, null, null, null, null, null],
+        [true, "true", null, null, null, null, null, null, null, "true"],
+        [null, "null", null, null, null, null, null, null, null, null],
+        [undefined, "undefined", null, null, null, null, null, null, null, null],
+        [12n, "12", "12", "12", "12", "12", "12", "12", "12", null],
+      ];
+
+      describe.each<[string, (primitive: unknown) => object]>([
+        ["Symbol.toPrimitive", primitive => ({ [Symbol.toPrimitive]: () => primitive })],
+        ["toString", primitive => ({ toString: () => primitive })],
+      ])("%s", (_, convertsTo) => {
+        test.each(types)("into %s", async type => {
+          const stored: [string, unknown][] = [];
+          for (const [primitive] of conversions) {
+            stored.push([
+              Bun.inspect(primitive),
+              await sql.unsafe(`select $1::${type}::text as v`, [convertsTo(primitive)]).then(
+                ([{ v }]) => v,
+                err => (refusals.has(err.errno) ? null : (err.errno ?? err.code ?? String(err))),
+              ),
+            ]);
+          }
+          expect(stored).toEqual(conversions.map(row => [Bun.inspect(row[0]), row[types.indexOf(type) + 1]]));
+        });
+      });
+
+      /** What was called for a parameter of each type of `columns`. */
+      async function calls(make: (log: string[]) => object) {
+        const logs: Record<string, string> = {};
+        for (const [name, type] of Object.entries(columns)) {
+          const log: string[] = [];
+          await sql.unsafe(`select $1::${type} as v`, [make(log)]).catch(() => {});
+          logs[name] = log.join(" ");
+        }
+        return logs;
+      }
+      // JSON.stringify asks for neither, and bytea takes no object.
+      const everywhere = (log: string) =>
+        Object.fromEntries(Object.keys(columns).map(name => [name, /^(json|jsonb|bytea)$/.test(name) ? "" : log]));
+
+      test("Symbol.toPrimitive is called once, with the hint string", async () => {
+        expect(await calls(log => ({ [Symbol.toPrimitive]: (hint: string) => (log.push(hint), "12") }))).toEqual(
+          everywhere("string"),
+        );
+      });
+
+      test("toString is called once", async () => {
+        expect(await calls(log => ({ toString: () => (log.push("toString"), "12") }))).toEqual(everywhere("toString"));
+      });
+
+      test.each<[string, (log: string[]) => object, string]>([
+        ["alone", log => ({ valueOf: () => (log.push("valueOf"), 12) }), ""],
+        [
+          "next to toString",
+          log => ({ valueOf: () => (log.push("valueOf"), 12), toString: () => (log.push("toString"), "12") }),
+          "toString",
+        ],
+        [
+          "next to Symbol.toPrimitive",
+          log => ({
+            valueOf: () => (log.push("valueOf"), 12),
+            [Symbol.toPrimitive]: () => (log.push("toPrimitive"), "12"),
+          }),
+          "toPrimitive",
+        ],
+      ])("valueOf is never called: %s", async (_, make, log) => {
+        expect(await calls(make)).toEqual(everywhere(log));
+      });
+
+      const boom = new Error("boom");
+      test.each<[string, object, unknown]>([
+        [
+          "throws",
+          {
+            [Symbol.toPrimitive]() {
+              throw boom;
+            },
+          },
+          boom,
+        ],
+        ["returns an object", { [Symbol.toPrimitive]: () => ({}) }, expect.any(TypeError)],
+        ["is not callable", { [Symbol.toPrimitive]: 1 }, expect.any(TypeError)],
+      ])("a Symbol.toPrimitive that %s rejects the query, and only that", async (_, value, error) => {
+        const [{ pid }] = await sql`select pg_backend_pid() as pid`;
+        for (const type of ["text", "int4", "float8", "numeric"]) {
+          expect(
+            await sql.unsafe(`select $1::${type} as v`, [value]).then(
+              rows => rows,
+              err => err,
+            ),
+          ).toEqual(error);
+        }
+        expect(await sql`select pg_backend_pid() as pid`).toEqual([{ pid }]);
+      });
+
+      class Money {
+        constructor(public cents: number) {}
+        [Symbol.toPrimitive](hint: string) {
+          return hint === "number" ? this.cents / 100 : (this.cents / 100).toFixed(2);
+        }
+      }
+
+      test("in sql() for an insert and an update, and in a comparison", async () => {
+        await sql`create temp table if not exists prices (id int, label text, ratio float8, amount numeric)`;
+        await sql`delete from prices`;
+        expect(
+          await sql`insert into prices ${sql({ id: 1, label: new Money(1250), ratio: new Money(1250) })} returning label, ratio`,
+        ).toEqual([{ label: "12.50", ratio: 12.5 }]);
+        expect(await sql`update prices set ${sql({ label: new Money(999) })} where id = 1 returning label`).toEqual([
+          { label: "9.99" },
+        ]);
+        expect(await sql`select id from prices where label = ${new Money(999)}`).toEqual([{ id: 1 }]);
+      });
+
+      test("into numeric", async () => {
+        expect(await sql`select ${new Money(1250)}::numeric as amount`).toEqual([{ amount: "12.50" }]);
+      });
+    });
+
+    // '{}' is also the literal of an empty array.
+    describe("an object that goes as JSON is no array", () => {
+      const outcome = (text: string, values: unknown[]) =>
+        sql.unsafe(text, values).then(
+          ([{ v }]) => v,
+          err => `${err.code}: ${err.message}`,
+        );
+      class Methods {
+        valueOf() {
+          return 12;
+        }
+      }
+
+      // With `prepare: false` it takes another parameter that asks the server for the types.
+      test.each<[string, unknown, string]>([
+        ["{}", {}, "an instance of Object"],
+        ["{ a: undefined }", { a: undefined }, "an instance of Object"],
+        ["an instance with methods only", new Methods(), "an instance of Methods"],
+        ["a toJSON that returns {}", { toJSON: () => ({}) }, "an instance of Object"],
+        ["{ a: 1 }", { a: 1 }, "an instance of Object"],
+      ])("%s", async (_, value, received) => {
+        for (const type of ["int4", "text", "jsonb"]) {
+          expect(await outcome(`select $2::${type}[]::text as v, $1::int4[] as other`, [[1], value])).toBe(
+            `ERR_INVALID_ARG_TYPE: Query parameter $2 of type ${type}[] must be an Array, Int32Array or string. Received ${received}`,
+          );
+        }
+      });
+
+      test("what is an array goes on working", async () => {
+        expect([
+          await outcome("select $1::int4[]::text as v", ["{}"]),
+          await outcome("select $1::int4[]::text as v", [[]]),
+          await outcome("select $1::int4[]::text as v", [{ toString: () => "{1,2}" }]),
+          await outcome("select $1::int4[]::text as v", [{ [Symbol.toPrimitive]: () => "{1,2}" }]),
+          await outcome("select $1::jsonb::text as v", [{}]),
+          await outcome("select $1::text as v", [{}]),
+        ]).toEqual(["{}", "{}", "{1,2}", "{1,2}", "{}", "{}"]);
+      });
     });
 
     test.each<[unknown, string, string]>([

@@ -1,6 +1,16 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
 
 const crontabPath = Bun.which("crontab");
 const hasCrontab = !!crontabPath && isLinux;
@@ -144,6 +154,12 @@ describe("Bun.cron API", () => {
     expect(() => Bun.cron("./test.ts", "* * *", "test-bad")).toThrow(/cron expression/i);
     expect(() => Bun.cron("./test.ts", "* * * * * *", "test-bad")).toThrow(/cron expression/i);
     expect(() => Bun.cron("./test.ts", "abc * * * *", "test-bad")).toThrow(/cron expression/i);
+  });
+
+  test("throws for a schedule with no future occurrence, like the in-process form", () => {
+    // The check runs before any OS backend is called, so it applies on every platform.
+    expect(() => Bun.cron("./test.ts", "0 0 30 2 *", "feb30")).toThrow(/no future occurrences/);
+    expect(() => Bun.cron("0 0 30 2 *", () => {})).toThrow(/no future occurrences/);
   });
 
   test("throws with percent sign in path", async () => {
@@ -1773,5 +1789,264 @@ describe("Bun.cron.parse", () => {
     const fromNumber = Bun.cron.parse("30 * * * *", ms)!;
     const fromDate = Bun.cron.parse("30 * * * *", new Date(ms))!;
     expect(fromNumber.getTime()).toBe(fromDate.getTime());
+  });
+});
+
+// ==========================================================================
+// crontab read-modify-write, against a crontab(1) stand-in on PATH
+// ==========================================================================
+
+// The stand-in keeps the crontab in $BUN_TEST_CRONTAB_FILE and appends every
+// invocation to $BUN_TEST_CRONTAB_LOG, so a test can assert what bun ran
+// without touching the real user crontab. The spawned bun gets a PATH with
+// only the stub directory, so a missing stub can never fall through to a real
+// crontab(1). The stub sets its own PATH for cat/cp/rm.
+const CRONTAB_STUB = `#!/bin/sh
+PATH=/usr/bin:/bin
+printf '%s\\n' "$*" >> "$BUN_TEST_CRONTAB_LOG"
+case "$1" in
+  -l)
+    if [ -n "$BUN_TEST_CRONTAB_HOLD" ]; then
+      while [ ! -e "$BUN_TEST_CRONTAB_HOLD" ]; do sleep 0.01 2>/dev/null || sleep 1; done
+    fi
+    if [ -n "$BUN_TEST_CRONTAB_FAIL_LIST_ONCE" ] && [ ! -e "$BUN_TEST_CRONTAB_FAIL_LIST_ONCE" ]; then
+      touch "$BUN_TEST_CRONTAB_FAIL_LIST_ONCE"
+      echo "crontab: pam_start: transient failure" >&2
+      exit 1
+    fi
+    if [ -e "$BUN_TEST_CRONTAB_FILE" ]; then
+      cat "$BUN_TEST_CRONTAB_FILE"
+      exit 0
+    fi
+    if [ "$LC_ALL" = C ]; then
+      echo "no crontab for user" >&2
+    else
+      echo "crontab: Datei oder Verzeichnis nicht gefunden" >&2
+    fi
+    exit 1
+    ;;
+  -r) rm -f "$BUN_TEST_CRONTAB_FILE" ;;
+  -) cat > "$BUN_TEST_CRONTAB_FILE" ;;
+  *) cp "$1" "$BUN_TEST_CRONTAB_FILE" ;;
+esac
+`;
+
+const WORKER_TS = `export default { scheduled() {} };\n`;
+
+describe.skipIf(!isLinux)("crontab read-modify-write (stub crontab)", () => {
+  function stubDir(files: Record<string, string> = {}) {
+    const dir = tempDir("bun-cron-stub", {
+      "bin/crontab": CRONTAB_STUB,
+      "w.ts": WORKER_TS,
+      ...files,
+    });
+    chmodSync(join(String(dir), "bin", "crontab"), 0o755);
+    return dir;
+  }
+
+  function stubEnv(dir: string, extra: Record<string, string> = {}) {
+    return {
+      ...bunEnv,
+      PATH: join(dir, "bin"),
+      BUN_TEST_CRONTAB_FILE: join(dir, "crontab.txt"),
+      BUN_TEST_CRONTAB_LOG: join(dir, "crontab.log"),
+      ...extra,
+    };
+  }
+
+  async function runInDir(dir: string, code: string, extra: Record<string, string> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      cwd: dir,
+      env: stubEnv(dir, extra),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  function readStub(dir: string): string {
+    const p = join(dir, "crontab.txt");
+    return existsSync(p) ? readFileSync(p, "utf8") : "";
+  }
+
+  function readLog(dir: string): string[] {
+    const p = join(dir, "crontab.log");
+    return existsSync(p) ? readFileSync(p, "utf8").trim().split("\n") : [];
+  }
+
+  test.concurrent("concurrent registrations all land, in call order", async () => {
+    using dir = stubDir();
+    const { stdout, stderr, exitCode } = await runInDir(
+      String(dir),
+      `await Promise.all([0, 1, 2, 3, 4, 5].map(i => Bun.cron("./w.ts", "@hourly", "c" + i)));
+       console.log("all 6 resolved");`,
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("all 6 resolved\n");
+    expect(exitCode).toBe(0);
+    const markers = readStub(String(dir))
+      .split("\n")
+      .filter(l => l.startsWith("# bun-cron: "));
+    expect(markers).toEqual(["c0", "c1", "c2", "c3", "c4", "c5"].map(t => `# bun-cron: ${t}`));
+  });
+
+  test.concurrent("concurrent removes and a register do not lose each other's work", async () => {
+    using dir = stubDir({
+      "crontab.txt": ["r0", "r1", "r2", "r3"]
+        .map(t => `# bun-cron: ${t}\n0 * * * * '/x/bun' run --cron-title=${t} --cron-period='0 * * * *' '/x/w.ts'\n`)
+        .join(""),
+    });
+    const { stderr, exitCode } = await runInDir(
+      String(dir),
+      `await Promise.all([
+         Bun.cron.remove("r0"), Bun.cron.remove("r1"),
+         Bun.cron("./w.ts", "@daily", "added"),
+         Bun.cron.remove("r2"), Bun.cron.remove("r3"),
+       ]);`,
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const markers = readStub(String(dir))
+      .split("\n")
+      .filter(l => l.startsWith("# bun-cron: "));
+    expect(markers).toEqual(["# bun-cron: added"]);
+  });
+
+  test.concurrent("a crontab -l failure that is not 'no crontab' rejects and leaves the crontab alone", async () => {
+    const existing = "MAILTO=ops\n0 1 * * * /usr/local/bin/nightly\n";
+    using dir = stubDir({ "crontab.txt": existing });
+    const { stdout, stderr, exitCode } = await runInDir(
+      String(dir),
+      `try { await Bun.cron("./w.ts", "@hourly", "x"); console.log("resolved"); }
+       catch (e) { console.log("rejected: " + e.message); }`,
+      { BUN_TEST_CRONTAB_FAIL_LIST_ONCE: join(String(dir), "failed-once") },
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("rejected: crontab: pam_start: transient failure\n");
+    expect(exitCode).toBe(0);
+    expect(readStub(String(dir))).toBe(existing);
+    expect(readLog(String(dir))).toEqual(["-l"]);
+  });
+
+  test.concurrent("'no crontab for user' still counts as an empty crontab, in any locale", async () => {
+    using dir = stubDir();
+    // The stub prints a translated message unless LC_ALL=C. bun pins the locale of the crontab it spawns.
+    const { stderr, exitCode } = await runInDir(String(dir), `await Bun.cron("./w.ts", "@hourly", "first");`, {
+      LC_ALL: "de_DE.UTF-8",
+    });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(readStub(String(dir))).toContain("# bun-cron: first\n0 * * * * ");
+  });
+
+  test.concurrent("only the bun command under a marker is removed, blank lines are kept", async () => {
+    const existing = [
+      "# bun-cron: t1",
+      "0 2 * * * /bin/true USER-A",
+      "",
+      "0 3 * * * /bin/true USER-B",
+      "  # bun-cron: t1  ",
+      "0 4 * * * /bin/true USER-C",
+      "# bun-cron: t1",
+      "0 5 * * * '/x/bun' run --cron-title=t1 --cron-period='0 5 * * *' '/x/w.ts'",
+      "# bun-cron: t10",
+      "0 6 * * * '/x/bun' run --cron-title=t10 --cron-period='0 6 * * *' '/x/w.ts'",
+      "",
+    ].join("\n");
+    using dir = stubDir({ "crontab.txt": existing });
+    const { stderr, exitCode } = await runInDir(String(dir), `await Bun.cron("./w.ts", "@hourly", "t1");`);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const lines = readStub(String(dir)).split("\n");
+    expect(lines.slice(0, 7)).toEqual([
+      "0 2 * * * /bin/true USER-A",
+      "",
+      "0 3 * * * /bin/true USER-B",
+      "0 4 * * * /bin/true USER-C",
+      "# bun-cron: t10",
+      "0 6 * * * '/x/bun' run --cron-title=t10 --cron-period='0 6 * * *' '/x/w.ts'",
+      "# bun-cron: t1",
+    ]);
+    expect(lines[7]).toContain("--cron-title=t1 --cron-period='0 * * * *'");
+    expect(lines.slice(8)).toEqual([""]);
+  });
+
+  test.concurrent("removing a title that is not registered does not rewrite the crontab", async () => {
+    const existing = "# a\n\n0 1 * * * /bin/true\n\n# b\n";
+    using dir = stubDir({ "crontab.txt": existing });
+    const { stderr, exitCode } = await runInDir(String(dir), `await Bun.cron.remove("nope");`);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(readStub(String(dir))).toBe(existing);
+    expect(readLog(String(dir))).toEqual(["-l"]);
+  });
+
+  test.concurrent("removing from an empty crontab does not install one", async () => {
+    using dir = stubDir();
+    const { stderr, exitCode } = await runInDir(String(dir), `await Bun.cron.remove("nope");`);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(existsSync(join(String(dir), "crontab.txt"))).toBe(false);
+    expect(readLog(String(dir))).toEqual(["-l"]);
+  });
+
+  test.concurrent("a long queue of jobs that fail before they spawn rejects each one", async () => {
+    using dir = stubDir();
+    // The first job's `crontab -l` is held in the stub until a release file appears. Once the stub
+    // has logged the call (so /bin/sh has the script open), the stub is deleted and 2000 jobs are
+    // queued behind the first. PATH holds only the stub dir, so after the release the first job's
+    // install step and every queued job fail inside start(), and the queue drains them in a loop.
+    // Nothing can reach a real crontab(1).
+    const log = join(String(dir), "crontab.log");
+    const release = join(String(dir), "release");
+    const { stdout, stderr, exitCode } = await runInDir(
+      String(dir),
+      `import { existsSync, rmSync, writeFileSync } from "node:fs";
+       const first = Bun.cron("./w.ts", "@hourly", "first");
+       while (!existsSync(${JSON.stringify(log)})) await Bun.sleep(1);
+       rmSync(${JSON.stringify(join(String(dir), "bin", "crontab"))});
+       const rest = Array.from({ length: 2000 }, (_, i) => (i % 2 ? Bun.cron("./w.ts", "@hourly", "q" + i) : Bun.cron.remove("q" + i)));
+       writeFileSync(${JSON.stringify(release)}, "");
+       const results = await Promise.allSettled([first, ...rest]);
+       const reasons = new Set(results.map(r => r.status + ":" + (r.reason?.message ?? "")));
+       console.log([...reasons].join(","));`,
+      { BUN_TEST_CRONTAB_HOLD: release },
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("rejected:crontab not found in PATH\n");
+    expect(exitCode).toBe(0);
+    expect(readLog(String(dir))).toEqual(["-l"]);
+  });
+
+  test.concurrent("rejects a bun executable path that contains a line break", async () => {
+    using dir = stubDir();
+    const evilDir = join(String(dir), "evil\n* * * * * touch INJECTED #");
+    mkdirSync(evilDir);
+    const evilBun = join(evilDir, "bun");
+    try {
+      linkSync(bunExe(), evilBun);
+    } catch {
+      copyFileSync(bunExe(), evilBun);
+    }
+    await using proc = Bun.spawn({
+      cmd: [
+        evilBun,
+        "-e",
+        `try { await Bun.cron("./w.ts", "@hourly", "nl"); console.log("resolved"); }
+         catch (e) { console.log("rejected: " + e.message); }`,
+      ],
+      cwd: String(dir),
+      env: stubEnv(String(dir)),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toMatch(/^rejected: Bun executable path '.*' contains characters/s);
+    expect(exitCode).toBe(0);
+    expect(existsSync(join(String(dir), "crontab.txt"))).toBe(false);
+    expect(readLog(String(dir))).toEqual([]);
   });
 });

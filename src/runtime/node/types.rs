@@ -1075,10 +1075,7 @@ impl PathLikeExt for PathLike<'_> {
                 false,
             >(s, &mut b[..])
             .len();
-            // A relative path whose components cancel out (".", "./",
-            // "sub/..") names the cwd. Kernel32 rejects an empty path, so
-            // hand it the cwd itself, as a resolved absolute path. An empty
-            // input stays empty so the caller's ENOENT still fires.
+            // ".", "./", "sub/.." normalize to nothing: that is the cwd.
             let normal_len = if normal_len == 0 && !s.is_empty() {
                 match bun_sys::getcwd(&mut b[..]) {
                     Ok(len) => len,

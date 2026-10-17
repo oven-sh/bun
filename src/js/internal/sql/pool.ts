@@ -499,6 +499,8 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   public queue: Array<OnConnected | Reservation> = [];
 
   public totalQueries: number = 0;
+  /// `connectionInfo` is `sql.options`, which anybody can write to.
+  readonly #max: number;
   /// Which form of the password logged in last, see Login. undefined: none has yet.
   public saslprep: boolean | undefined;
   /// One login is finding out which form the server has. Nothing else is dialed until it has settled.
@@ -554,6 +556,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     super();
     this.connectionInfo = connectionInfo;
+    this.#max = connectionInfo.max;
     this.ownerGraphFrame = AsyncContextFrame.currentGraphFrame();
     this.callbackAsyncContext =
       connectionInfo.onconnect || connectionInfo.onclose ? AsyncContextFrame.current() : undefined;
@@ -578,11 +581,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   }
 
   createQueryHandle(sql: string, values: unknown[], flags: number) {
-    if (
-      !(flags & SQLQueryFlags.allowUnsafeTransaction) &&
-      this.connectionInfo.max !== 1 &&
-      isUnsafeTransactionStart(sql)
-    ) {
+    if (!(flags & SQLQueryFlags.allowUnsafeTransaction) && this.#max !== 1 && isUnsafeTransactionStart(sql)) {
       throw this.error("UNSAFE_TRANSACTION", "Only use sql.begin, sql.reserved or max: 1");
     }
     // sql.unsafe(text, 0): parts.map(sql.unsafe) passes the index
@@ -673,7 +672,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     }
     while (
       !this.#dialsHeld &&
-      connections.length < this.connectionInfo.max &&
+      connections.length < this.#max &&
       this.#closing === null &&
       (retry ? this.#connecting() === 0 : start || this.#connecting() < this.queue.length)
     ) {
@@ -755,7 +754,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
         // An even share of the demand over `max` connections.
         // A reservation ahead gets a dial that is on its way, or one connection has to drain for it.
         const connection = this.#leastBusy(
-          Math.ceil((queue.length + this.totalQueries) / this.connectionInfo.max),
+          Math.ceil((queue.length + this.totalQueries) / this.#max),
           reservationsAhead && Math.max(reservationsAhead - this.#connecting(), 0),
         );
         if (connection === null) {
@@ -803,7 +802,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       connection.flags |= PooledConnectionFlags.prepared;
     }
     // On a pool of one connection a transaction by hand is in order, see createQueryHandle().
-    if (reserved || this.connectionInfo.max !== 1) {
+    if (reserved || this.#max !== 1) {
       if (connection.connection.inTransaction !== true) {
         connection.flags &= ~PooledConnectionFlags.prepared;
       } else if (!(connection.flags & PooledConnectionFlags.prepared)) {

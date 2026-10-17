@@ -4779,11 +4779,12 @@ test.concurrent(
         "lazy.test.js": `
         import { beforeEach, expect, test, vi } from "bun:test";
         beforeEach(() => vi.resetModules());
+        let isStillWaiting = true;
         test("the factory never settles", async () => {
           const called = Promise.withResolvers();
           vi.doMock("./host.js", () => (called.resolve(), new Promise(() => {})));
           const { open } = await import("./opener.js");
-          void open();
+          void open().finally(() => (isStillWaiting = false));
           await called.promise;
         });
         test("the real module, with one of its imports mocked", async () => {
@@ -4798,9 +4799,14 @@ test.concurrent(
           const { open } = await import("./opener.js");
           expect(await open()).toBe("mock " + n);
         });
+        // If it woke up, it would load the real module, and whichever test was running would get that one.
+        test("the first test's import() is still waiting", async () => {
+          await new Promise(resolve => setImmediate(resolve));
+          expect(isStillWaiting).toBe(true);
+        });
       `,
       },
-      4,
+      5,
     );
   },
 );

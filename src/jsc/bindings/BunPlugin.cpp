@@ -4033,9 +4033,10 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
 {
     // A fetch in flight for a mock that has since been replaced still waits for the old factory.
     // A new import of that module, or of one that waits for it, ends the wait, and everyone gets what the module is now.
-    // Once vi.resetModules() has dropped that fetch, nothing waits for the factory. If it never settles, it would otherwise
+    // Once vi.resetModules() has dropped that fetch, no module waits for the factory. If it never settles, it would otherwise
     // count as running until the file ends, and whatever its file imports meanwhile would get the original.
-    Vector<Zig::JSModuleMock*, 1> replaced;
+    // The import() that called it stays pending, as in Vitest. Waking it would load the module at a time no test chose.
+    Vector<Zig::JSModuleMock*, 1> replaced, unawaited;
     for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
         auto* mock = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get());
         String mocked = mock->specifier->tryGetValue().data;
@@ -4044,11 +4045,15 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
         auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), mocked));
         bool isFetchInFlight = entry && !entry->record();
         Vector<String> unfinished;
-        if (!isFetchInFlight || mocked == key || Zig::isWaitingForModule(globalObject, running, key, mocked, unfinished))
+        if (!isFetchInFlight)
+            unawaited.append(mock);
+        else if (mocked == key || Zig::isWaitingForModule(globalObject, running, key, mocked, unfinished))
             replaced.append(mock);
     }
     for (auto* mock : replaced)
         mock->giveUp(globalObject);
+    for (auto* mock : unawaited)
+        mock->abandon(globalObject);
 
     // A module that is still loading can't be running import(), so `importer` is exactly that module and not a factory's copy of it.
     auto* importerEntry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), importer));

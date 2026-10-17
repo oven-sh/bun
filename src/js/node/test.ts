@@ -425,7 +425,7 @@ function reportCancelledFile(
     column: 1,
     file: absolute,
   };
-  const error = makeTestFailure("test did not finish before its parent and was cancelled", "cancelledByParent");
+  const error = new TestFailure("test did not finish before its parent and was cancelled", "cancelledByParent");
   const details = { __proto__: null, duration_ms: 0, type: "test", error };
   reporter.enqueue({ __proto__: null, ...fileNode });
   reporter.dequeue({ __proto__: null, ...fileNode });
@@ -568,7 +568,7 @@ async function runOneFile(
     }
 
     if (fileFailed) {
-      error = makeTestFailure(stderrText.trim() || `Test file failed with exit code ${exitCode}`, "testCodeFailure");
+      error = new TestFailure(stderrText.trim() || `Test file failed with exit code ${exitCode}`, "testCodeFailure");
     } else {
       reporter.summary({
         __proto__: null,
@@ -607,14 +607,17 @@ async function runOneFile(
   }
 }
 
-function rebuildError(serialized: any, depth = 0): Error {
+function rebuildError(serialized: any, depth = 0): unknown {
+  if ("value" in serialized) return serialized.value;
   const { message, stack, name, code, failureType, cause } = serialized;
   const error = new Error(message);
   error.stack = stack;
   if (name !== undefined && name !== "Error") error.name = name;
   if (code !== undefined) (error as any).code = code;
   if (failureType !== undefined) (error as any).failureType = failureType;
+  // An ERR_TEST_FAILURE has an own `cause`, also when the test threw undefined.
   if (cause !== undefined && depth < 8) (error as any).cause = rebuildError(cause, depth + 1);
+  else if (code === "ERR_TEST_FAILURE") (error as any).cause = undefined;
   return error;
 }
 
@@ -693,6 +696,15 @@ function serializeRunError(error: unknown, depth = 0) {
       name: (error as Error).name,
       cause: cause !== undefined && depth < 8 ? serializeRunError(cause, depth + 1) : undefined,
     };
+  }
+  // A thrown value that JSON carries as it is.
+  if (
+    error === null ||
+    typeof error === "string" ||
+    typeof error === "boolean" ||
+    (typeof error === "number" && error - error === 0)
+  ) {
+    return { __proto__: null, value: error };
   }
   return { __proto__: null, message: String(error), stack: undefined, code: undefined, name: "Error" };
 }
@@ -1390,11 +1402,153 @@ function buildContextAssert(node: TestNode, ctx: TestContext) {
 // Test plan
 // -----------------------------------------------------------------------------
 
-function makeTestFailure(message: string, failureType?: string) {
-  const error = new Error(message);
-  (error as { code?: string }).code = "ERR_TEST_FAILURE";
-  if (failureType !== undefined) (error as { failureType?: string }).failureType = failureType;
-  return error;
+let inspect: ((value: unknown, opts?: object) => string) | undefined;
+const isError = Error.isError;
+const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeTrimStart = String.prototype.trimStart;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+const StringPrototypeIncludes = String.prototype.includes;
+
+type PrintedFailure = Error & { code?: string; failureType?: string; cause?: unknown };
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1802-L1816
+class TestFailure extends Error {
+  // True when `cause` is a value that user code threw. The private fields are also the brand (Node's kIsNodeError).
+  #thrown = false;
+  // True when that user code was a hook.
+  #inHook = false;
+  // The Error that bun:test prints, when its stack has to keep the frames of the user code that the runner threw into.
+  #printed: PrintedFailure | undefined = undefined;
+  code = "ERR_TEST_FAILURE";
+  failureType = "";
+  cause: unknown = undefined;
+
+  constructor(cause: unknown, failureType: string, thrown = false) {
+    let message: unknown;
+    try {
+      message = (cause as { message?: unknown } | null | undefined)?.message ?? cause;
+      if (typeof message !== "string") {
+        inspect ??= require("internal/util/inspect").inspect;
+        try {
+          message = inspect!(message);
+        } catch {
+          message = inspect!(message, { customInspect: false });
+        }
+      }
+    } catch {
+      // A `message` getter or a proxy that throws. Node does not finish the test here.
+      message = "test failed";
+    }
+    // No frames, and no call to a user's Error.prepareStackTrace: the frames would all be frames of node:test.
+    const limit = Error.stackTraceLimit;
+    try {
+      Error.stackTraceLimit = 0;
+    } catch {}
+    super(message as string);
+    try {
+      Error.stackTraceLimit = limit;
+    } catch {}
+    Object.$defineProperty(this, "stack", {
+      __proto__: null,
+      value: `Error [ERR_TEST_FAILURE]: ${message}`,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+    this.failureType = failureType;
+    this.cause = cause;
+    this.#thrown = thrown;
+  }
+
+  // Node's class has this getter too (errors.js:485-487).
+  get ["constructor"]() {
+    return Error;
+  }
+
+  toString() {
+    return `${this.name} [ERR_TEST_FAILURE]: ${this.message}`;
+  }
+
+  static is(value: unknown): value is TestFailure {
+    return value !== null && typeof value === "object" && #thrown in value;
+  }
+
+  // Test.run(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1413-L1421
+  static from(err: unknown): TestFailure {
+    return TestFailure.is(err) ? err : new TestFailure(err, "testCodeFailure", true);
+  }
+
+  // The error of a hook, as TestHook.run() stores it.
+  static fromHook(err: unknown): TestFailure {
+    const failure = TestFailure.from(err);
+    failure.#inHook = true;
+    return failure;
+  }
+
+  // Test.runHook(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1263-L1279
+  static hook(kind: string, err: unknown): TestFailure {
+    const own = TestFailure.is(err) ? err : undefined;
+    const failure = new TestFailure(`failed running ${kind} hook`, "hookFailed", own === undefined || own.#thrown);
+    failure.cause = own === undefined ? err : own.cause;
+    failure.#inHook = true;
+    return failure;
+  }
+
+  // A failure that the runner throws into user code. Its stack keeps the frames of that code, as on Node.
+  static inUserCode(message: string, failureType: string): TestFailure {
+    const failure = new TestFailure(message, failureType);
+    const printed: PrintedFailure = new Error(message);
+    failure.#printed = printed;
+    Object.$defineProperty(failure, "stack", {
+      __proto__: null,
+      get() {
+        let frames = "";
+        try {
+          const { stack } = printed;
+          const lines = typeof stack === "string" ? StringPrototypeSplit.$call(stack, "\n") : [];
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (!StringPrototypeStartsWith.$call(StringPrototypeTrimStart.$call(line), "at ")) continue;
+            if (!StringPrototypeIncludes.$call(line, "(node:test:")) frames += "\n" + line;
+          }
+        } catch {}
+        return `Error [ERR_TEST_FAILURE]: ${message}${frames}`;
+      },
+      set(value: unknown) {
+        Object.$defineProperty(this, "stack", {
+          __proto__: null,
+          value,
+          writable: true,
+          enumerable: false,
+          configurable: true,
+        });
+      },
+      enumerable: false,
+      configurable: true,
+    });
+    return failure;
+  }
+
+  // bun:test prints the value that the test threw, as Node's reporters do, and never the ERR_TEST_FAILURE itself.
+  static printable(failure: unknown, firstSubtestError?: unknown): unknown {
+    if (!TestFailure.is(failure)) return failure;
+    const { cause, failureType } = failure;
+    if (failure.#thrown) {
+      if (cause != null) return cause;
+      // done(null) and done(undefined) mean that the test passed.
+      const nullish: PrintedFailure = new Error(failure.#inHook ? "hook failed" : "test failed");
+      nullish.code = "ERR_TEST_FAILURE";
+      return nullish;
+    }
+    const printed: PrintedFailure =
+      failure.#printed ??
+      new Error(failureType === "hookFailed" && typeof cause === "string" ? cause : failure.message);
+    printed.code = "ERR_TEST_FAILURE";
+    printed.failureType = failureType;
+    const printedCause = failureType === "subtestsFailed" ? firstSubtestError : isError(cause) ? cause : undefined;
+    if (printedCause !== undefined) printed.cause = printedCause;
+    return printed;
+  }
 }
 
 class TestPlan {
@@ -1434,7 +1588,7 @@ class TestPlan {
       return;
     }
     if (wait === false || wait === undefined || actual > expected) {
-      throw makeTestFailure(`plan expected ${expected} assertions but received ${actual}`);
+      throw new TestFailure(`plan expected ${expected} assertions but received ${actual}`, "testCodeFailure");
     }
     return new Promise((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1442,7 +1596,10 @@ class TestPlan {
         timer = realSetTimeout(() => {
           this.#pending = undefined;
           reject(
-            makeTestFailure(`plan timed out after ${wait}ms with ${this.actual} assertions when expecting ${expected}`),
+            new TestFailure(
+              `plan timed out after ${wait}ms with ${this.actual} assertions when expecting ${expected}`,
+              "testTimeoutFailure",
+            ),
           );
         }, wait);
         // Not unref'd: count()/cancel()/the timer callback always clear it, and
@@ -1729,7 +1886,7 @@ class TestContext {
   plan(count: number, options: { wait?: boolean | number } = kEmptyObject) {
     const node = this.#node;
     if (node.plan !== null) {
-      throw makeTestFailure("cannot set plan more than once");
+      throw TestFailure.inUserCode("cannot set plan more than once", "testCodeFailure");
     }
     node.plan = new TestPlan(count, options);
   }
@@ -1996,33 +2153,26 @@ function applyExpectFailure(node: TestNode, failure: unknown): unknown {
   if (failure !== undefined) {
     const validation = expectation.match;
     if (validation !== undefined) {
-      // Only a wrapped test-code failure has an inner cause to validate; a bare
-      // ERR_TEST_FAILURE (a timeout, a plan mismatch) has none and is itself
-      // the error to check.
-      const wrapped = failure as { code?: string; failureType?: string; cause?: unknown };
-      const unwrap =
-        wrapped?.code === "ERR_TEST_FAILURE" &&
-        wrapped.failureType === "testCodeFailure" &&
-        wrapped.cause !== undefined;
-      const errorToCheck = unwrap ? wrapped.cause : failure;
+      const errorToCheck =
+        TestFailure.is(failure) && failure.failureType === "testCodeFailure" && failure.cause ? failure.cause : failure;
       try {
         nodeAssert.throws(() => {
           throw errorToCheck;
         }, validation);
       } catch (e) {
-        const error = makeTestFailure(
+        const mismatch = new TestFailure(
           "The test failed, but the error did not match the expected validation",
           "testCodeFailure",
         );
-        (error as { cause?: unknown }).cause = e;
-        return error;
+        mismatch.cause = e;
+        return mismatch;
       }
     }
     return undefined;
   }
 
   if (node.skipped) return undefined;
-  return makeTestFailure("test was expected to fail but passed", "expectedFailure");
+  return new TestFailure("test was expected to fail but passed", "expectedFailure");
 }
 
 function validateTestOptions(options: TestOptions): { ownTags: string[] | undefined } {
@@ -2101,7 +2251,7 @@ function invokeWithDoneCallback(fn: Function, arg: unknown) {
     const done = (err?: unknown) => {
       if (doneCalled) {
         // Node throws into the caller when the callback is invoked again.
-        throw makeTestFailure("callback invoked multiple times");
+        throw TestFailure.inUserCode("callback invoked multiple times", "multipleCallbackInvocations");
       }
       doneCalled = true;
       // A done() call made before the function returned is deferred, and one
@@ -2123,7 +2273,8 @@ function invokeWithDoneCallback(fn: Function, arg: unknown) {
       // Node fails the test but still awaits the returned promise, so hooks
       // and later tests never race a still-running body.
       returnedPromise = true;
-      const fail = () => reject(makeTestFailure("passed a callback but also returned a Promise"));
+      const fail = () =>
+        reject(new TestFailure("passed a callback but also returned a Promise", "callbackAndPromisePresent"));
       (result as Promise<unknown>).then(fail, fail);
       return;
     }
@@ -2154,7 +2305,10 @@ function createStopController(timeout: number | undefined) {
   const promise = new Promise<never>((_, reject) => {
     // Not unref'd: dispose() always clears it, and on Windows an unref'd timer
     // alone under bun:test leaves the uws loop inactive so auto_tick busy-spins.
-    timer = realSetTimeout(() => reject(makeTestFailure(`test timed out after ${timeout}ms`)), timeout);
+    timer = realSetTimeout(
+      () => reject(new TestFailure(`test timed out after ${timeout}ms`, "testTimeoutFailure")),
+      timeout,
+    );
   });
   // Swallow the rejection when nothing is racing it anymore.
   promise.catch(() => {});
@@ -2184,7 +2338,10 @@ async function raceWithTimeoutAndSignal(
     if (typeof timeout === "number" && Number.isFinite(timeout)) {
       racers.push(
         new Promise<never>((_, reject) => {
-          timer = realSetTimeout(() => reject(makeTestFailure(`test timed out after ${timeout}ms`)), timeout);
+          timer = realSetTimeout(
+            () => reject(new TestFailure(`test timed out after ${timeout}ms`, "testTimeoutFailure")),
+            timeout,
+          );
         }),
       );
     }
@@ -2219,8 +2376,14 @@ async function runHook(hook: Hook, owner: TestNode, arg: unknown) {
       await raceWithTimeoutAndSignal(run, timeout, signal);
     }
   } catch (err) {
-    // A hook that throws a nullish value must still fail the owning test.
-    throw err ?? makeTestFailure("hook failed");
+    // Node stores the reason of an abort as it is, with this failure type (test.js:1058-1062), and wraps what the hook threw.
+    if (typeof err === "object" && err !== null && signal !== undefined && signal.aborted && err === signal.reason) {
+      try {
+        (err as { failureType?: string }).failureType = "testAborted";
+      } catch {}
+      throw err;
+    }
+    throw TestFailure.fromHook(err);
   }
 }
 
@@ -2257,8 +2420,10 @@ async function runOwnBeforeHooks(node: TestNode) {
     const { before } = owner.hooks;
     if (before.length === 0) continue;
     const arg = owner.isSuite ? owner.getSuiteCtx() : owner.getCtx();
-    for (const hook of before) {
-      await runBeforeHookOnce(hook, owner, arg);
+    try {
+      for (const hook of before) await runBeforeHookOnce(hook, owner, arg);
+    } catch (err) {
+      throw TestFailure.hook("before", err);
     }
   }
 }
@@ -2288,7 +2453,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       }
     }
   } catch (err) {
-    failure = err;
+    failure = TestFailure.hook("beforeEach", err);
   }
 
   if (failure === undefined) {
@@ -2307,8 +2472,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       try {
         await (stop === undefined ? runBody() : Promise.race([stop.promise, runBody()]));
       } catch (err) {
-        // A body that throws or rejects with a nullish value must still fail.
-        failure = err ?? makeTestFailure("test failed");
+        failure = TestFailure.from(err);
       }
 
       // A before hook created while the test was running failed (Node fails the
@@ -2331,7 +2495,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
             await (stop === undefined ? drain : Promise.race([stop.promise, drain]));
           }
         } catch (err) {
-          failure = err;
+          failure = TestFailure.from(err);
         }
       }
     } finally {
@@ -2339,16 +2503,9 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       node.plan?.cancel();
     }
 
-    const { failedSubtests, firstSubtestError } = node;
+    const { failedSubtests } = node;
     if (failure === undefined && failedSubtests > 0) {
-      const error = makeTestFailure(
-        `${failedSubtests} subtest${failedSubtests > 1 ? "s" : ""} failed`,
-        "subtestsFailed",
-      );
-      if (firstSubtestError !== undefined) {
-        (error as { cause?: unknown }).cause = firstSubtestError;
-      }
-      failure = error;
+      failure = new TestFailure(`${failedSubtests} subtest${failedSubtests > 1 ? "s" : ""} failed`, "subtestsFailed");
     }
   }
 
@@ -2371,7 +2528,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       try {
         await runHook(hook, ancestor, ctx);
       } catch (err) {
-        if (!acceptedXfail) failure ??= err;
+        if (!acceptedXfail) failure ??= TestFailure.hook("afterEach", err);
       }
     }
   }
@@ -2380,14 +2537,14 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     try {
       await runHook(hook, node, ctx);
     } catch (err) {
-      if (!acceptedXfail) failure ??= err;
+      if (!acceptedXfail) failure ??= TestFailure.hook("after", err);
     }
   }
 
   try {
     node.mockTracker?.reset();
   } catch (err) {
-    if (!acceptedXfail) failure ??= err;
+    if (!acceptedXfail) failure ??= TestFailure.from(err);
   }
 
   node.passed = failure === undefined;
@@ -2408,14 +2565,14 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo:
       await runOwnBeforeHooks(parent);
       failure = await executeTestNode(child, fn);
     } catch (err) {
-      failure = err;
+      failure = TestFailure.from(err);
     }
     // Check the child's own todo declaration (options.todo or test.todo(...)),
     // not the inherited todoFlag: a subtest that threw must still fail a
     // {todo:true} parent so bun:test under --todo reports Todo (failure rolls up).
     if (failure !== undefined && !ownTodo && !child.skipped) {
       parent.failedSubtests++;
-      parent.firstSubtestError ??= failure;
+      parent.firstSubtestError ??= TestFailure.printable(failure, child.firstSubtestError);
     }
   };
   const result = (parent.subtestChain = parent.subtestChain.then(run));
@@ -2424,7 +2581,9 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo:
 
 function recordSuiteFailure(suite: TestNode, err: unknown) {
   suite.failedSubtests++;
-  suite.firstSubtestError ??= err ?? makeTestFailure("suite failed");
+  suite.firstSubtestError ??= TestFailure.printable(
+    err == null ? new TestFailure("suite failed", "testCodeFailure") : TestFailure.from(err),
+  );
 }
 
 // Awaits a node's subtest chain, including links appended while waiting.
@@ -2466,7 +2625,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
       try {
         await runHook(hook, suite, suite.getSuiteCtx());
       } catch (err) {
-        recordSuiteFailure(suite, err);
+        recordSuiteFailure(suite, TestFailure.hook("after", err));
       }
     }
     suite.finished = true;
@@ -2484,7 +2643,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
         error: suite.passed
           ? undefined
           : serializeRunError(
-              makeTestFailure(
+              new TestFailure(
                 `${suite.failedSubtests} subtest${suite.failedSubtests > 1 ? "s" : ""} failed`,
                 "subtestsFailed",
               ),
@@ -2554,7 +2713,7 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
         } else if (node.todoFlag && !declaredTodo && (runChildReporterEnabled || !todoBefore)) {
           markCurrentResult(true, done);
         } else {
-          done(failure);
+          done(failure === undefined ? undefined : TestFailure.printable(failure, node.firstSubtestError));
           return;
         }
         done(undefined);
@@ -2817,7 +2976,7 @@ function before(arg0: unknown, arg1: unknown) {
   beforeAll((done: (error?: unknown) => void) => {
     Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
       () => done(),
-      err => done(err ?? new Error("before hook failed")),
+      err => done(TestFailure.printable(TestFailure.hook("before", err))),
     );
   });
 }
@@ -2833,7 +2992,7 @@ function after(arg0: unknown, arg1: unknown) {
   afterAll((done: (error?: unknown) => void) => {
     Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
       () => done(),
-      err => done(err ?? new Error("after hook failed")),
+      err => done(TestFailure.printable(TestFailure.hook("after", err))),
     );
   });
 }

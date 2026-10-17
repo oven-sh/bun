@@ -4158,18 +4158,6 @@ mod windows_impl {
         let to_w = bun_paths::string_paths::to_nt_path(&mut wt, to.as_bytes());
         super::windows::rename_at_w(from_dir, from_w, to_dir, to_w, true)
     }
-    pub(crate) fn renameat2(
-        from_dir: Fd,
-        from: &ZStr,
-        to_dir: Fd,
-        to: &ZStr,
-        mode: RenameMode,
-    ) -> Maybe<()> {
-        // `renameat2` collapses to `renameat` on windows; the
-        // `noreplace`/`exchange` modes are not honored by NTFS rename.
-        let _ = mode;
-        renameat(from_dir, from, to_dir, to)
-    }
     pub fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
         // Convert to NT path and call `DeleteFileBun`;
         // `remove_dir = flags & AT_REMOVEDIR != 0`.
@@ -9022,21 +9010,13 @@ pub fn exists(path: &[u8]) -> bool {
     let z = ZStr::from_buf(&buf.0[..], path.len());
     exists_z(z)
 }
-/// `moveFileZ`. Routes through
-/// [`renameat_concurrently_without_fallback`] (renameat2 NOREPLACE → EXCHANGE →
-/// delete-tree + rename); on EISDIR removes the dest dir and
-/// retries; on EXDEV falls back to the slow open+copy path. Only opens the
-/// source inside the EXDEV branch.
+/// `moveFileZ`: a plain rename. EISDIR removes an empty dest dir and retries, EXDEV takes the slow open+copy path.
 pub fn move_file_z(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
-    match renameat_concurrently_without_fallback(from_dir, filename, to_dir, destination) {
+    match renameat(from_dir, filename, to_dir, destination) {
         Ok(()) => Ok(()),
         // allow over-writing an empty directory
         Err(e) if e.get_errno() == E::EISDIR => {
-            #[cfg(unix)]
-            // SAFETY: destination is NUL-terminated.
-            let _ = unsafe {
-                libc::unlinkat(to_dir.native(), destination.as_ptr(), libc::AT_REMOVEDIR)
-            };
+            let _ = rmdirat(to_dir, destination);
             renameat(from_dir, filename, to_dir, destination)
         }
         Err(e) if e.get_errno() == E::EXDEV => {
@@ -9102,107 +9082,6 @@ pub fn renameat_z(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr
     let from_dir = from_dir.as_fd();
     let to_dir = to_dir.as_fd();
     renameat(from_dir, from, to_dir, to)
-}
-
-/// Option struct for [`renameat_concurrently`];
-/// callers can build it inline.
-#[derive(Default, Clone, Copy)]
-pub struct RenameatConcurrentlyOptions {
-    pub move_fallback: bool,
-}
-/// Alias: `bun_install` call sites spell this `RenameOptions`.
-pub type RenameOptions = RenameatConcurrentlyOptions;
-
-/// `moveFileZSlowMaybe`. Thin wrapper
-/// (`renameatConcurrently` falls back through here).
-#[inline]
-pub(crate) fn move_file_z_slow_maybe(
-    from_dir: Fd,
-    filename: &ZStr,
-    to_dir: Fd,
-    destination: &ZStr,
-) -> Maybe<()> {
-    move_file_z_slow(from_dir, filename, to_dir, destination)
-}
-
-/// `renameatConcurrently`. Tries an atomic NOREPLACE rename,
-/// then EXCHANGE, then a racy delete-tree + rename. With `move_fallback` set,
-/// an EXDEV result falls through to a slow open/copy.
-/// After an EXCHANGE, `from` holds the tree that was at `to`.
-pub fn renameat_concurrently(
-    from_dir_fd: Fd,
-    from: &ZStr,
-    to_dir_fd: Fd,
-    to: &ZStr,
-    opts: RenameatConcurrentlyOptions,
-) -> Maybe<()> {
-    match renameat_concurrently_without_fallback(from_dir_fd, from, to_dir_fd, to) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            if opts.move_fallback && e.get_errno() == E::EXDEV {
-                bun_core::output::debug_warn(
-                    "renameatConcurrently() failed with E.XDEV, falling back to moveFileZSlowMaybe()",
-                );
-                return move_file_z_slow_maybe(from_dir_fd, from, to_dir_fd, to);
-            }
-            Err(e)
-        }
-    }
-}
-
-/// `renameatConcurrentlyWithoutFallback`.
-pub(crate) fn renameat_concurrently_without_fallback(
-    from_dir_fd: Fd,
-    from: &ZStr,
-    to_dir_fd: Fd,
-    to: &ZStr,
-) -> Maybe<()> {
-    'attempt: {
-        {
-            // Happy path: the folder doesn't exist in the cache dir, so we can
-            // just rename it. We don't need to delete anything.
-            let err = match renameat2(from_dir_fd, from, to_dir_fd, to, RenameMode::NoReplace) {
-                // if ENOENT don't retry
-                Err(err) => {
-                    if err.get_errno() == E::ENOENT {
-                        return Err(err);
-                    }
-                    err
-                }
-                Ok(()) => break 'attempt,
-            };
-
-            // Windows doesn't have any equivalent of renameat with swap
-            #[cfg(not(windows))]
-            {
-                // Fallback path: the folder exists in the cache dir, it might be in a strange state
-                // let's attempt to atomically replace it with the temporary folder's version
-                if matches!(err.get_errno(), E::EEXIST | E::ENOTEMPTY | E::EOPNOTSUPP) {
-                    match renameat2(from_dir_fd, from, to_dir_fd, to, RenameMode::Exchange) {
-                        Err(_) => {}
-                        Ok(()) => break 'attempt,
-                    }
-                }
-            }
-            #[cfg(windows)]
-            {
-                let _ = err;
-            }
-        }
-
-        //  sad path: let's try to delete the folder and then rename it
-        if to_dir_fd.is_valid() {
-            let _ = Dir::borrow(&to_dir_fd).delete_tree(to.as_bytes());
-        } else {
-            let _ = delete_tree_absolute(to.as_bytes());
-        }
-        match renameat(from_dir_fd, from, to_dir_fd, to) {
-            Err(err) => return Err(err),
-            Ok(()) => {}
-        }
-    }
-
-    Ok(())
 }
 
 /// `eventfd(initval, flags)` — kernel notification fd. Linux native (Android
@@ -9523,52 +9402,6 @@ bun_core::link_impl_OutputSink! {
 // (former `__bun_uws_stat_file` provider deleted — body moved DOWN into
 // `bun_uws_sys::socket_context::stat_for_digest`, which calls `libc::stat`
 // directly. uws_sys already links libc; the cross-crate hook bought nothing.)
-
-#[cfg(test)]
-mod owned_handle_tests {
-    use super::*;
-
-    /// `renameat_concurrently_without_fallback` falls back to `delete_tree` +
-    /// retry when the destination exists. The `delete_tree` is run via a `Dir`
-    /// borrowed from the caller's `to_dir_fd`; if it took ownership instead,
-    /// `to_dir_fd` would be closed out from under the caller.
-    #[test]
-    fn renameat_concurrently_does_not_close_caller_fd() {
-        let _g = crate::file::tests::FD_TEST_LOCK.lock();
-        let mut tmp = std::env::temp_dir().as_os_str().as_encoded_bytes().to_vec();
-        tmp.extend_from_slice(b"/bun_sys_renameat_test");
-        // Set up: create a dir tree with `from/sub`, `to/sub`.
-        let _ = open_dir_at(Fd::cwd(), &tmp).map(close);
-        let _ = mkdir_recursive_at(Fd::cwd(), &tmp);
-        let root = open_dir_at(Fd::cwd(), &tmp).expect("open root");
-        let _ = mkdir_recursive_at(root, b"from/sub");
-        let _ = mkdir_recursive_at(root, b"to/sub");
-        let to_dir = open_dir_at(root, b"to").expect("open to");
-
-        // The dest `to/sub` exists, so the rename must `delete_tree` it first.
-        renameat_concurrently(
-            root,
-            bun_core::zstr!("from/sub"),
-            to_dir,
-            bun_core::zstr!("sub"),
-            RenameatConcurrentlyOptions {
-                move_fallback: true,
-            },
-        )
-        .expect("rename");
-
-        // The caller's `to_dir` must still be valid after the rename.
-        assert!(
-            fstat(to_dir).is_ok(),
-            "to_dir closed by renameat_concurrently"
-        );
-
-        // Cleanup.
-        let _ = close(to_dir);
-        let _ = close(root);
-        let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));
-    }
-}
 
 #[cfg(all(test, windows))]
 mod normalize_path_windows_tests {

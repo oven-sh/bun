@@ -166,15 +166,7 @@ pub(crate) fn write_pending_patch(
         Output::err(e, "failed to write patch to temp file", ());
         Global::crash();
     }
-    if let Err(e) = sys::renameat_concurrently(
-        tmpdir,
-        tempfile_name,
-        Fd::cwd(),
-        &patch.path,
-        sys::RenameOptions {
-            move_fallback: true,
-        },
-    ) {
+    if let Err(e) = sys::move_file_z(tmpdir, tempfile_name, Fd::cwd(), &patch.path) {
         Output::err(e, "failed renaming patch file to patches dir", ());
         Global::crash();
     }

@@ -1138,6 +1138,53 @@ describe.concurrent.each([
     const patchKey = await expectPatchFlowWorks(String(dir), env, "pkg-to-patch");
     expect(patchKey).toBe("pkg-to-patch@./dep.tgz");
   });
+
+  // The patch file is written under the temp dir and renamed into patches/.
+  // Nothing of the previous patch file stays under the temporary name.
+  test("committing a patch a second time leaves nothing behind in the temp dir", async () => {
+    await using dir = tempDir("patch-commit-twice", {
+      "package.json": JSON.stringify({
+        name: "test-patch-twice",
+        dependencies: { "pkg-to-patch": "file:./dep.tgz" },
+      }),
+      "tarball-src": {
+        "package": {
+          "package.json": JSON.stringify({ name: "pkg-to-patch", version: "1.0.0" }),
+          "index.js": `module.exports = "original";\n`,
+        },
+      },
+      "tmp/.keep": "",
+    });
+
+    await using tarProc = Bun.spawn({
+      cmd: ["tar", "-czf", join(String(dir), "dep.tgz"), "-C", join(String(dir), "tarball-src"), "package"],
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(await tarProc.exited).toBe(0);
+
+    const tmp = join(String(dir), "tmp");
+    const env = { ...projectEnv(String(dir)), BUN_TMPDIR: tmp, TMPDIR: tmp, TEMP: tmp, TMP: tmp };
+
+    await expectPatchFlowWorks(String(dir), env, "pkg-to-patch");
+    expect(readdirSync(tmp)).toEqual([".keep"]);
+
+    {
+      const { stderr, exitCode } = await runBun(String(dir), env, "patch", "pkg-to-patch");
+      expect(exitCode, `bun patch failed: ${stderr}`).toBe(0);
+    }
+    await Bun.write(join(String(dir), "node_modules", "pkg-to-patch", "index.js"), `module.exports = "again";\n`);
+    {
+      const { stderr, exitCode } = await runBun(String(dir), env, "patch", "--commit", "pkg-to-patch");
+      expect(exitCode, `bun patch --commit failed: ${stderr}`).toBe(0);
+    }
+
+    const pkg = await Bun.file(join(String(dir), "package.json")).json();
+    const [, patchPath] = Object.entries(pkg.patchedDependencies)[0] as [string, string];
+    expect(await Bun.file(join(String(dir), patchPath)).text()).toContain('+module.exports = "again";');
+    expect(readdirSync(tmp)).toEqual([".keep"]);
+  });
 });
 
 // bundled-transitive@1.0.0 bundles no-deps@1.0.0 and has a regular dependency on one-dep@1.0.0. The

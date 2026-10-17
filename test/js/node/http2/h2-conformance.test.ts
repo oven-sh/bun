@@ -308,6 +308,28 @@ describe("frame structure (checklist §2,§3)", () => {
     expect(goawayErrorCode(goaway)).toBe(ErrorCode.PROTOCOL_ERROR);
     c.destroy();
   });
+
+  // nghttp2's session_detect_idle_stream: the same connection error for every frame type.
+  test.each([
+    ["DATA", encodeFrame(FrameType.DATA, 0, 3, Buffer.from("x"))],
+    ["WINDOW_UPDATE", encodeFrame(FrameType.WINDOW_UPDATE, 0, 3, Buffer.from([0, 0, 0, 100]))],
+    ["WINDOW_UPDATE with a 0 increment", encodeFrame(FrameType.WINDOW_UPDATE, 0, 3, Buffer.alloc(4))],
+  ])("%s on an idle stream is a PROTOCOL_ERROR (§5.1)", async (_, early) => {
+    const c = await RawH2.connect(port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      // Stream 1 is answered. Stream 3 is above it and has no HEADERS yet.
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
+      c.send(early);
+      const goaway = await c.waitForGoaway();
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.PROTOCOL_ERROR);
+      expect(c.frames.filter(f => f.type === FrameType.RST_STREAM)).toEqual([]);
+    } finally {
+      c.destroy();
+    }
+  });
 });
 
 describe("stream-id rules (checklist §3)", () => {
@@ -2587,6 +2609,58 @@ describe("frames on a stream that the client closed", () => {
         await twoRoundTrips(raw);
       }
       expect(id).toBe(601);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+});
+
+// nghttp2's session_detect_idle_stream. node sends its GOAWAY with INTERNAL_ERROR from JavaScript.
+describe("a frame on a stream that was never opened ends the client session (RFC 9113 §5.1)", () => {
+  const promise = (parent: number, promised: number) => {
+    const id = Buffer.alloc(4);
+    id.writeUInt32BE(promised, 0);
+    const block = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+    return encodeFrame(FrameType.PUSH_PROMISE, END_HEADERS, parent, Buffer.concat([id, block]));
+  };
+  const headers = (id: number) => encodeFrame(FrameType.HEADERS, END_HEADERS, id, RESPONSE_200);
+  const windowUpdate = (id: number, increment: number) => {
+    const payload = Buffer.alloc(4);
+    payload.writeUInt32BE(increment, 0);
+    return encodeFrame(FrameType.WINDOW_UPDATE, 0, id, payload);
+  };
+  // The client has request stream 1 open. 99 is above it, and no PUSH_PROMISE reserved 2.
+  const cases: [string, Buffer, number[]][] = [
+    ["HEADERS on an id above every request", headers(99), []],
+    ["HEADERS on an id that no PUSH_PROMISE reserved", headers(2), []],
+    ["DATA", encodeFrame(FrameType.DATA, 0, 99, Buffer.from("x")), []],
+    ["WINDOW_UPDATE", windowUpdate(99, 100), []],
+    ["WINDOW_UPDATE with a 0 increment", windowUpdate(99, 0), []],
+    ["PUSH_PROMISE on a parent above every request", promise(99, 2), []],
+    ["PUSH_PROMISE of an id below one promised before", Buffer.concat([promise(1, 4), promise(1, 2)]), [4]],
+  ];
+
+  test.each(cases)("%s", async (_, frames, pushed) => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    const sessionError = once(client, "error");
+    const streams: number[] = [];
+    client.on("stream", stream => {
+      streams.push(stream.id!);
+      stream.on("error", () => {});
+    });
+    try {
+      client.request({ ":path": "/" }).on("error", () => {});
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      await twoRoundTrips(raw);
+      raw.socket!.write(frames);
+      const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.PROTOCOL_ERROR);
+      const [err] = await sessionError;
+      expect({ code: err.code, streams }).toEqual({ code: "ERR_HTTP2_ERROR", streams: pushed });
     } finally {
       client.destroy();
       raw.close();

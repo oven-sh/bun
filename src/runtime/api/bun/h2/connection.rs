@@ -996,8 +996,14 @@ impl Connection {
                 );
                 return true;
             }
-            if self.is_closed_stream(sink, hdr.stream_id) {
-                return false;
+            match self.streams.get(&hdr.stream_id).map(|s| s.state) {
+                Some(state) if self.is_closed_entry(sink, hdr.stream_id, state) => return false,
+                Some(_) => {}
+                None => match self.no_entry(sink, hdr.stream_id) {
+                    NoEntry::Live => {}
+                    NoEntry::Closed => return false,
+                    NoEntry::Idle => return self.idle_stream_error(sink),
+                },
             }
             // Locally-initiated stream RST: close the engine entry and tell the embedder, the
             // same as handle_data's Rst path, so the JS stream learns it was reset and the
@@ -1033,6 +1039,8 @@ impl Connection {
                 sink.on_stream_reset(hdr.stream_id, ErrorCode::FlowControlError.as_u32());
                 return false;
             }
+        } else if self.is_idle(sink, hdr.stream_id) {
+            return self.idle_stream_error(sink);
         }
         sink.on_window_update(hdr.stream_id, increment);
         false
@@ -1097,6 +1105,9 @@ impl Connection {
             NoEntry::Live
         };
         let opens = self.is_server && absent == NoEntry::Idle;
+        if absent == NoEntry::Idle && !opens {
+            return self.idle_stream_error(sink);
+        }
         let refused = opens && !sink.can_open_stream();
         let mut disposition = if refused {
             BlockDisposition::Refused
@@ -1530,11 +1541,9 @@ impl Connection {
                     self.open_local_stream(hdr.stream_id);
                 }
                 NoEntry::Closed => discard = true,
-                // §5.1: DATA for a stream nobody opened is a STREAM_CLOSED error.
                 NoEntry::Idle => {
-                    self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
-                    sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
-                    discard = true;
+                    self.idle_stream_error(sink);
+                    return StreamedDataStart::Fatal;
                 }
             }
         }
@@ -1645,12 +1654,10 @@ impl Connection {
                 && !sink.is_local_stream(stream_id))
     }
 
-    /// RFC 9113 §5.1: a frame on a closed stream is dropped, as nghttp2 does.
-    fn is_closed_stream(&self, sink: &impl Sink, stream_id: u32) -> bool {
-        match self.streams.get(&stream_id).map(|s| s.state) {
-            Some(state) => self.is_closed_entry(sink, stream_id, state),
-            None => self.no_entry(sink, stream_id) == NoEntry::Closed,
-        }
+    /// RFC 9113 §5.1: a frame on an idle stream is a connection error of type PROTOCOL_ERROR.
+    fn idle_stream_error(&mut self, sink: &impl Sink) -> bool {
+        self.send_go_away(sink, ErrorCode::ProtocolError, b"frame on idle stream");
+        true
     }
 
     /// The entry of a stream the embedder opened, whose HEADERS this engine never saw go out.
@@ -1732,12 +1739,7 @@ impl Connection {
                     self.open_local_stream(hdr.stream_id);
                 }
                 NoEntry::Closed => return false,
-                // §5.1: DATA for a stream nobody opened is a STREAM_CLOSED error.
-                NoEntry::Idle => {
-                    self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
-                    sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
-                    return false;
-                }
+                NoEntry::Idle => return self.idle_stream_error(sink),
             }
         }
         let recv_limit = self
@@ -1845,11 +1847,7 @@ impl Connection {
                 NoEntry::Live => self.open_local_stream(hdr.stream_id).state = State::Closed,
                 // §5.1: a late RST_STREAM on a closed stream MUST be tolerated.
                 NoEntry::Closed => return false,
-                // §5.1: RST_STREAM on an idle stream is a connection PROTOCOL_ERROR.
-                NoEntry::Idle => {
-                    self.send_go_away(sink, ErrorCode::ProtocolError, b"RST_STREAM on idle stream");
-                    return true;
-                }
+                NoEntry::Idle => return self.idle_stream_error(sink),
             },
         }
         sink.on_stream_reset(hdr.stream_id, code_raw);
@@ -1919,15 +1917,19 @@ impl Connection {
             payload[off + 3],
         ]) & 0x7fff_ffff;
         off += 4;
-        // §5.1.1 / §8.4: server-initiated streams use even ids, never 0, and
-        // cannot be reused.
-        if promised == 0 || promised & 1 == 1 || self.streams.contains_key(&promised) {
+        // §5.1.1 / §8.4: server-initiated streams use even ids, never 0, and each is above every
+        // id promised before.
+        if promised == 0 || promised & 1 == 1 || promised <= self.last_peer_stream_id {
             self.send_go_away(
                 sink,
                 ErrorCode::ProtocolError,
                 b"PUSH_PROMISE invalid promised stream id",
             );
             return true;
+        }
+        // A closed parent is not checked: the push is reserved and announced as before.
+        if self.is_idle(sink, hdr.stream_id) {
+            return self.idle_stream_error(sink);
         }
 
         // Reserve the promised (even) stream.
@@ -1941,9 +1943,7 @@ impl Connection {
         if promised > self.last_stream_id {
             self.last_stream_id = promised;
         }
-        if promised > self.last_peer_stream_id {
-            self.last_peer_stream_id = promised;
-        }
+        self.last_peer_stream_id = promised;
 
         self.header_block.clear();
         self.header_block.extend_from_slice(&payload[off..end]);
@@ -2515,6 +2515,8 @@ mod tests {
 
         // Client receives it: on_push_promise(parent=1, promised=2) then the request headers.
         let csink = CaptureSink::default();
+        csink.local.borrow_mut().push(1);
+        csink.started.set(1);
         let mut client = Connection::new(false, Settings::default());
         client.preface_received = wire::CONNECTION_PREFACE.len();
         let fed = client.receive(&csink, &bytes);
@@ -2863,5 +2865,69 @@ mod tests {
         assert!(!c.receive(&sink, &frames).fatal);
         let seen: Vec<u32> = sink.altsvc.borrow().iter().map(|a| a.0).collect();
         assert_eq!(seen, vec![3]);
+    }
+
+    #[test]
+    fn a_frame_on_an_idle_stream_is_a_connection_error() {
+        let block = response_block();
+        let idle_frames = |id: u32| {
+            [
+                frame(FrameType::Headers, wire::flags::END_HEADERS, id, &block),
+                frame(FrameType::Data, wire::flags::END_STREAM, id, b""),
+                frame(FrameType::WindowUpdate, 0, id, &[0, 0, 0, 100]),
+                frame(FrameType::WindowUpdate, 0, id, &[0, 0, 0, 0]),
+            ]
+        };
+        // Client: stream 5 above its requests, and stream 2 that no PUSH_PROMISE reserved.
+        for id in [5, 2] {
+            for late in idle_frames(id) {
+                let sink = CaptureSink::default();
+                let mut c = client_with_streams(&sink, &[1, 3]);
+                assert!(c.receive(&sink, &late).fatal);
+                assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
+                assert!(sink.opens.borrow().is_empty());
+                assert_eq!(c.last_stream_id, 0);
+            }
+        }
+        // Server: HEADERS on stream 3 opens it, any other frame on it comes too early.
+        for early in &idle_frames(3)[1..] {
+            let sink = CaptureSink::default();
+            let mut c = server();
+            let request = frame(FrameType::Headers, END, 1, &request_block());
+            assert!(!c.receive(&sink, &request).fatal);
+            assert!(c.receive(&sink, early).fatal);
+            assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
+        }
+    }
+
+    #[test]
+    fn push_promise_needs_a_new_promised_id_and_an_opened_parent() {
+        let push = |parent: u32, promised: u32| {
+            let mut payload = promised.to_be_bytes().to_vec();
+            payload.extend_from_slice(&request_block());
+            frame(
+                FrameType::PushPromise,
+                wire::flags::END_HEADERS,
+                parent,
+                &payload,
+            )
+        };
+        let sink = CaptureSink::default();
+        let mut c = client_with_streams(&sink, &[1, 3]);
+        assert!(!c.receive(&sink, &push(1, 4)).fatal);
+        // A closed parent still gets its push.
+        evict(&sink, &mut c, 3);
+        assert!(!c.receive(&sink, &push(3, 6)).fatal);
+        assert_eq!(*sink.pushes.borrow(), vec![(1, 4), (3, 6)]);
+        assert_eq!(c.last_peer_stream_id, 6);
+
+        for bad in [push(1, 6), push(1, 2), push(5, 8)] {
+            let sink = CaptureSink::default();
+            let mut c = client_with_streams(&sink, &[1, 3]);
+            assert!(!c.receive(&sink, &push(1, 6)).fatal);
+            assert!(c.receive(&sink, &bad).fatal);
+            assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
+            assert_eq!(*sink.pushes.borrow(), vec![(1, 6)]);
+        }
     }
 }

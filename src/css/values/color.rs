@@ -2945,11 +2945,6 @@ impl From<HWB> for SRGB {
 }
 
 // SRGBLinear
-impl From<SRGBLinear> for PredefinedColor {
-    fn from(rgb: SRGBLinear) -> PredefinedColor {
-        PredefinedColor::SrgbLinear(rgb)
-    }
-}
 impl From<SRGBLinear> for SRGB {
     fn from(rgb_: SRGBLinear) -> SRGB {
         let rgb = rgb_.resolve_missing();
@@ -2990,11 +2985,6 @@ impl From<SRGBLinear> for XYZd65 {
 }
 
 // P3
-impl From<P3> for PredefinedColor {
-    fn from(rgb: P3) -> PredefinedColor {
-        PredefinedColor::DisplayP3(rgb)
-    }
-}
 impl From<P3> for XYZd65 {
     fn from(p3_: P3) -> XYZd65 {
         // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L91
@@ -3030,11 +3020,6 @@ impl From<P3> for XYZd65 {
 }
 
 // A98
-impl From<A98> for PredefinedColor {
-    fn from(rgb: A98) -> PredefinedColor {
-        PredefinedColor::A98(rgb)
-    }
-}
 impl From<A98> for XYZd65 {
     fn from(a98_: A98) -> XYZd65 {
         // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L181
@@ -3081,11 +3066,6 @@ impl From<A98> for XYZd65 {
 }
 
 // ProPhoto
-impl From<ProPhoto> for PredefinedColor {
-    fn from(rgb: ProPhoto) -> PredefinedColor {
-        PredefinedColor::Prophoto(rgb)
-    }
-}
 impl From<ProPhoto> for XYZd50 {
     fn from(prophoto_: ProPhoto) -> XYZd50 {
         // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L118
@@ -3137,11 +3117,6 @@ impl From<ProPhoto> for XYZd50 {
 }
 
 // Rec2020
-impl From<Rec2020> for PredefinedColor {
-    fn from(rgb: Rec2020) -> PredefinedColor {
-        PredefinedColor::Rec2020(rgb)
-    }
-}
 impl From<Rec2020> for XYZd65 {
     fn from(rec2020_: Rec2020) -> XYZd65 {
         // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L235
@@ -3194,11 +3169,6 @@ impl From<Rec2020> for XYZd65 {
 }
 
 // XYZd50
-impl From<XYZd50> for PredefinedColor {
-    fn from(rgb: XYZd50) -> PredefinedColor {
-        PredefinedColor::XyzD50(rgb)
-    }
-}
 impl From<XYZd50> for LAB {
     fn from(xyz_: XYZd50) -> LAB {
         // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L332
@@ -3308,11 +3278,6 @@ impl From<XYZd50> for ProPhoto {
 }
 
 // XYZd65
-impl From<XYZd65> for PredefinedColor {
-    fn from(rgb: XYZd65) -> PredefinedColor {
-        PredefinedColor::XyzD65(rgb)
-    }
-}
 impl From<XYZd65> for XYZd50 {
     fn from(xyz_: XYZd65) -> XYZd50 {
         // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L319

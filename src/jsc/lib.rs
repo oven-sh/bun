@@ -1365,6 +1365,12 @@ pub trait LogJsc {
         global: &JSGlobalObject,
         message: core::fmt::Arguments<'_>,
     ) -> JsResult<JSValue>;
+    /// The value to throw for this log: `to_js` if its `errors` counter is above zero, else `None`.
+    fn errors_to_js(
+        &self,
+        global: &JSGlobalObject,
+        message: core::fmt::Arguments<'_>,
+    ) -> JsResult<Option<JSValue>>;
     fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
     /// Unlike `to_js`, always produces an `AggregateError`.
     fn to_js_aggregate_error(
@@ -1407,6 +1413,17 @@ impl LogJsc for bun_ast::Log {
                 global.create_aggregate_error(&errors_stack[..count], message)
             }
         }
+    }
+    #[inline]
+    fn errors_to_js(
+        &self,
+        global: &JSGlobalObject,
+        message: core::fmt::Arguments<'_>,
+    ) -> JsResult<Option<JSValue>> {
+        if !self.has_errors() {
+            return Ok(None);
+        }
+        self.to_js(global, message).map(Some)
     }
     fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         JSValue::create_array_from_iter(global, self.msgs.iter(), |msg| msg_to_js(msg, global))

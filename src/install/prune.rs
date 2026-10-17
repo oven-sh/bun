@@ -1417,6 +1417,17 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
 
     let old_deps = before.buffers.dependencies.as_slice();
     let old_buf = before.buffers.string_bytes.as_slice();
+    // A workspace is the same one if it is in the same folder. Its name can change.
+    let old_member_folders: Vec<(Box<[u8]>, usize)> = (0..old.folders.len())
+        .filter(|&old_idx| old.trees[old_idx].parent == 0 && is_member_tree(before, old_idx))
+        .filter_map(|old_idx| {
+            let folder = workspace_node_modules(before, tree_owner(before, old_idx))?;
+            Some((folder, old_idx))
+        })
+        .collect();
+    let member_folders: Vec<Box<[u8]>> = (0..after.packages.len())
+        .filter_map(|id| workspace_node_modules(after, id as PackageID))
+        .collect();
     let mut plan = Plan::default();
     for old_idx in 0..old.folders.len() {
         let old_path = old.path(old_idx);
@@ -1424,10 +1435,11 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
             continue;
         }
         let old_tree = &old.trees[old_idx];
-        // The `node_modules` of a workspace, also of one that has another name by now.
+        // The `node_modules` of a workspace is left to the loop below.
         if old_tree.parent == 0
-            && (is_member_tree(before, old_idx)
-                || contains(&workspace_names, old_tree.folder_name(old_deps, old_buf)))
+            && (contains(&workspace_names, old_tree.folder_name(old_deps, old_buf))
+                || (old_member_folders.iter())
+                    .any(|(folder, tree)| *tree == old_idx && member_folders.contains(folder)))
         {
             continue;
         }
@@ -1583,8 +1595,12 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
                     .filter(|&id| is_member_tree(hoisted.lockfile, id as usize))
             })
         };
-        let old_rows: &[(&[u8], PackageID)] = match tree_of_member(&old, &old_paths) {
-            Some(id) => old.expected(id as usize),
+        let old_tree = (old_member_folders.iter())
+            .find(|(folder, _)| *folder == folder_path)
+            .map(|&(_, old_idx)| old_idx)
+            .or_else(|| tree_of_member(&old, &old_paths).map(|id| id as usize));
+        let old_rows: &[(&[u8], PackageID)] = match old_tree {
+            Some(old_idx) => old.expected(old_idx),
             None => &[],
         };
         let surviving = tree_of_member(&new, &new_paths);

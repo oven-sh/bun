@@ -2131,21 +2131,48 @@ test.concurrent("a nested copy that stays keeps the dependency that it loads fro
   expect(await run(dir, "--no-install", "-p", "require('n')")).toBe("1.0.0\n");
 });
 
-test.concurrent("a workspace that gets another name keeps the copy in its node_modules", async () => {
-  using server = await serveGraph({ y: { "1.0.0": {}, "2.0.0": {} } });
-  using tmp = tempDir("hoist-renamed-workspace", {
-    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
-    "package.json": JSON.stringify({ name: "app", workspaces: ["pk/*"] }),
-    "pk/one/package.json": JSON.stringify({ name: "one", dependencies: { y: "1.0.0" } }),
-    "pk/two/package.json": JSON.stringify({ name: "two", dependencies: { y: "2.0.0" } }),
-  });
-  const dir = String(tmp);
-  await run(dir, "install");
-  expect(layout(dir, "pk/two")).toEqual(["y@1.0.0", "pk/two/y@2.0.0"]);
+// `pk/two/node_modules/y` is judged by what bun.lock now places in that folder, whatever the workspace is called.
+describe.concurrent("the copy in the node_modules of a workspace", () => {
+  async function project() {
+    const server = await serveGraph({ y: { "1.0.0": {}, "2.0.0": {} } });
+    const tmp = tempDir("hoist-renamed-workspace", {
+      "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+      "package.json": JSON.stringify({ name: "app", workspaces: ["pk/*"] }),
+      "pk/one/package.json": JSON.stringify({ name: "one", dependencies: { y: "1.0.0" } }),
+      "pk/two/package.json": JSON.stringify({ name: "two", dependencies: { y: "2.0.0" } }),
+    });
+    const dir = String(tmp);
+    await run(dir, "install");
+    expect(layout(dir, "pk/two")).toEqual(["y@1.0.0", "pk/two/y@2.0.0"]);
+    return {
+      dir,
+      [Symbol.dispose]() {
+        tmp[Symbol.dispose]();
+        server[Symbol.dispose]();
+      },
+    };
+  }
 
-  await write(join(dir, "pk", "two", "package.json"), JSON.stringify({ name: "zwei", dependencies: { y: "2.0.0" } }));
-  await run(dir, "install");
-  expect(layout(dir, "pk/two")).toEqual(["y@1.0.0", "pk/two/y@2.0.0"]);
+  test("stays if the workspace gets another name", async () => {
+    using app = await project();
+    await write(join(app.dir, "pk/two/package.json"), JSON.stringify({ name: "zwei", dependencies: { y: "2.0.0" } }));
+    await run(app.dir, "install");
+    expect(layout(app.dir, "pk/two")).toEqual(["y@1.0.0", "pk/two/y@2.0.0"]);
+  });
+
+  test("goes if the workspace gets another name and the version at the top", async () => {
+    using app = await project();
+    await write(join(app.dir, "pk/two/package.json"), JSON.stringify({ name: "zwei", dependencies: { y: "1.0.0" } }));
+    await run(app.dir, "install");
+    expect(layout(app.dir, "pk/two")).toEqual(["y@1.0.0"]);
+  });
+
+  test("goes if the folder is no workspace anymore", async () => {
+    using app = await project();
+    await write(join(app.dir, "package.json"), JSON.stringify({ name: "app", workspaces: ["pk/one"] }));
+    await run(app.dir, "install");
+    expect(layout(app.dir, "pk/two")).toEqual(["y@1.0.0"]);
+  });
 });
 
 // `x/node_modules/n` is from the older bun. The same run installs `y/node_modules/n`, the same package.

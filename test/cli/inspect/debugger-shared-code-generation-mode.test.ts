@@ -21,6 +21,7 @@ type Child = {
   readUntil: (pattern: RegExp) => Promise<RegExpMatchArray>;
   /** Attaches an inspector client and activates breakpoints, which makes JSC generate all code again. */
   attachDebugger: () => Promise<{
+    /** Resolves with the result of the reply. Rejects on an error reply, and when the socket closes first. */
     send: (method: string, params?: Record<string, unknown>) => Promise<any>;
     pauses: unknown[];
   }>;
@@ -72,20 +73,37 @@ async function withChild(name: string, files: Record<string, string>, run: (chil
         await opened.promise;
 
         let nextId = 0;
-        const replies = new Map<number, (message: any) => void>();
+        const replies = new Map<
+          number,
+          { method: string; resolve: (result: any) => void; reject: (e: Error) => void }
+        >();
         const pauses: unknown[] = [];
+        let closed: Error | undefined;
+        const fail = (what: string) => {
+          closed ??= new Error(`inspector socket ${what}, stderr: ${JSON.stringify(stderr)}`);
+          for (const { reject } of replies.values()) reject(closed);
+          replies.clear();
+        };
+        socket.addEventListener("error", () => fail("failed"));
+        socket.addEventListener("close", event => fail(`closed (${event.code})`));
         const send = (method: string, params: Record<string, unknown> = {}) =>
-          new Promise<any>(resolve => {
+          new Promise<any>((resolve, reject) => {
+            if (closed) return reject(closed);
             const id = ++nextId;
-            replies.set(id, resolve);
+            replies.set(id, { method, resolve, reject });
             socket.send(JSON.stringify({ id, method, params }));
           });
         socket.addEventListener("message", event => {
           const message = JSON.parse(String(event.data));
-          if (typeof message.id === "number") replies.get(message.id)?.(message);
-          else if (message.method === "Debugger.paused") {
+          if (typeof message.id === "number") {
+            const reply = replies.get(message.id);
+            replies.delete(message.id);
+            if (message.error) reply?.reject(new Error(`${reply.method}: ${JSON.stringify(message.error)}`));
+            else reply?.resolve(message.result);
+          } else if (message.method === "Debugger.paused") {
             pauses.push(message.params?.callFrames?.[0]?.location);
-            send("Debugger.resume");
+            // Not awaited: the child may exit before the reply is relayed.
+            socket.send(JSON.stringify({ id: ++nextId, method: "Debugger.resume" }));
           }
         });
         await Promise.all([
@@ -132,6 +150,40 @@ ${exit}
     child.resume();
     const [result, exitCode] = await Promise.all([child.readUntil(/<result [^>]*>/), child.exited]);
     expect(result[0]).toBe("<result h0 c5>");
+    expect(exitCode).toBe(0);
+  });
+});
+
+test.concurrent("a generator of a vm.Script resumes after the debugger is turned off again", async () => {
+  const files = {
+    "child.mjs": `import vm from "node:vm";
+const script = new vm.Script("(async function* gen(tag) { let n = 0; while (true) { const got = yield tag + n; n += got; } })");
+const context = vm.createContext({});
+const hostGenerator = script.runInThisContext()("h"); // made, never started
+const contextGenerator = script.runInContext(context)("c");
+await contextGenerator.next();                        // suspended at its first yield
+const stdin = Bun.stdin.stream().getReader();
+process.stderr.write("<suspended>\\n");
+await stdin.read();                                   // the debugger activates meanwhile
+const inContext = await contextGenerator.next(5);     // the context resumes first, in code of its own kind
+const host = await hostGenerator.next();              // the host starts with the debugger on
+process.stderr.write("<first " + host.value + " " + inContext.value + ">\\n");
+await stdin.read();                                   // breakpoints are turned off meanwhile
+const hostAgain = await hostGenerator.next(7);        // the host resumes in code for the debugger
+const inContextAgain = await contextGenerator.next(1);
+process.stderr.write("<result " + hostAgain.value + " " + inContextAgain.value + ">\\n");
+${exit}
+`,
+  };
+  await withChild("vm-generator-off", files, async child => {
+    await child.readUntil(/<suspended>/);
+    const debug = await child.attachDebugger();
+    child.resume();
+    const first = await child.readUntil(/<first [^>]*>/);
+    await debug.send("Debugger.setBreakpointsActive", { active: false });
+    child.resume();
+    const [result, exitCode] = await Promise.all([child.readUntil(/<result [^>]*>/), child.exited]);
+    expect([first[0], result[0]]).toEqual(["<first h0 c5>", "<result h7 c6>"]);
     expect(exitCode).toBe(0);
   });
 });
@@ -194,7 +246,7 @@ ${exit}
       const debug = await child.attachDebugger();
       // Line 2 (zero-based) is "const doubled = x * 2;".
       const breakpoint = await debug.send("Debugger.setBreakpointByUrl", { url: filename, lineNumber: 2 });
-      expect(breakpoint.result?.breakpointId).toEqual(expect.any(String));
+      expect(breakpoint.breakpointId).toEqual(expect.any(String));
       child.resume();
       const [host, exitCode] = await Promise.all([child.readUntil(/<host [^>]*>/), child.exited]);
       expect(host[0]).toBe("<host 42>");

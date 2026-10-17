@@ -2,6 +2,7 @@ use core::ffi::{CStr, c_uint};
 
 use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
+use bun_core::String as BunString;
 
 pub(crate) struct EVP {
     pub ctx: boringssl::EVP_MD_CTX,
@@ -35,6 +36,7 @@ impl AlgorithmExt for Algorithm {
             Algorithm::Blake2s256 => c"blake2s256",
             Algorithm::Md4 => c"md4",
             Algorithm::Md5 => c"md5",
+            Algorithm::Md5Sha1 => c"md5-sha1",
             Algorithm::Ripemd160 => c"ripemd160",
             Algorithm::Sha1 => c"sha1",
             Algorithm::Sha224 => c"sha224",
@@ -49,21 +51,19 @@ impl AlgorithmExt for Algorithm {
             Algorithm::Sha3_512 => c"sha3-512",
             Algorithm::Shake128 => c"shake128",
             Algorithm::Shake256 => c"shake256",
-            // upstream enum is `#[non_exhaustive]`; the variant set is closed in
-            // practice.
-            _ => unreachable!("unhandled EVP algorithm variant"),
         }
     }
 }
 
 /// Stable iteration order over every `Algorithm` variant — the lowered enum is
-/// foreign + `#[non_exhaustive]`, so we can't derive an iterator for it.
-pub(crate) const ALL: [Algorithm; 19] = [
+/// foreign, so we can't derive an iterator for it.
+pub(crate) const ALL: [Algorithm; 20] = [
     Algorithm::Blake2b256,
     Algorithm::Blake2b512,
     Algorithm::Blake2s256,
     Algorithm::Md4,
     Algorithm::Md5,
+    Algorithm::Md5Sha1,
     Algorithm::Ripemd160,
     Algorithm::Sha1,
     Algorithm::Sha224,
@@ -83,7 +83,7 @@ pub(crate) const ALL: [Algorithm; 19] = [
 /// Algorithm names joined as `"'a', 'b', … 'y' or 'z'"` (declaration order),
 /// for "must be one of" error messages.
 pub(crate) const ALGORITHM_ONE_OF: &str = "'blake2b256', 'blake2b512', 'blake2s256', 'md4', 'md5', \
-'ripemd160', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'sha512-224', 'sha512-256', \
+'md5-sha1', 'ripemd160', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'sha512-224', 'sha512-256', \
 'sha3-224', 'sha3-256', 'sha3-384', 'sha3-512', 'shake128' or 'shake256'";
 
 bun_core::comptime_string_map! {
@@ -92,6 +92,7 @@ bun_core::comptime_string_map! {
     static ALGORITHM_MAP: Algorithm = {
         b"md4" => Algorithm::Md4,
         b"md5" => Algorithm::Md5,
+        b"md5-sha1" => Algorithm::Md5Sha1,
         b"sha1" => Algorithm::Sha1,
         b"sha-1" => Algorithm::Sha1,
         b"sha128" => Algorithm::Sha1,
@@ -99,7 +100,6 @@ bun_core::comptime_string_map! {
         b"sha256" => Algorithm::Sha256,
         b"sha384" => Algorithm::Sha384,
         b"sha512" => Algorithm::Sha512,
-        b"rmd160" => Algorithm::Ripemd160,
         b"sha-224" => Algorithm::Sha224,
         b"sha-256" => Algorithm::Sha256,
         b"sha-384" => Algorithm::Sha384,
@@ -126,23 +126,113 @@ bun_core::comptime_string_map! {
         b"sha-512_256" => Algorithm::Sha512_256,
     };
 }
-// Aliases the Zig table listed but never wired up:
-// b"md5-sha1" => .@"MD5-SHA1",
-// b"dsa-sha" => .@"DSA-SHA",
-// b"dsa-sha1" => .@"DSA-SHA1",
-// b"ecdsa-with-sha1" => .@"ecdsa-with-SHA1",
-// b"rsa-md5" => .@"RSA-MD5",
-// b"rsa-sha1" => .@"RSA-SHA1",
-// b"rsa-sha1-2" => .@"RSA-SHA1-2",
-// b"rsa-sha224" => .@"RSA-SHA224",
-// b"rsa-sha256" => .@"RSA-SHA256",
-// b"rsa-sha384" => .@"RSA-SHA384",
-// b"rsa-sha512" => .@"RSA-SHA512",
-// b"rsa-ripemd160" => .@"RSA-RIPEMD160",
+/// A digest name node accepts that is not an `Algorithm` tag. Node reads these
+/// from OpenSSL's object table (the signature OIDs and legacy spellings that
+/// `EVP_add_digest` registers as aliases). BoringSSL has no such table, so this
+/// array is the one place in bun that knows them. A `listed` name appears in
+/// `crypto.getHashes()`, in node's spelling. `dss1` is accepted on input only:
+/// node resolves it in `ncrypto` but does not list it.
+///
+/// `RSA-SHA3-*` and `RSA-SHA512/*` are listed because node lists them. They
+/// name a digest, not a working RSA signature: BoringSSL has no PKCS#1 v1.5
+/// prefix for SHA-3 or SHA-512/t, so `sign` with those digests fails unless the
+/// padding is PSS. The canonical names behave the same.
+struct DigestAlias {
+    name: &'static str,
+    algorithm: Algorithm,
+    listed: bool,
+}
 
-/// ASCII-case-insensitive name → `Algorithm`.
+#[rustfmt::skip]
+static DIGEST_ALIASES: &[DigestAlias] = &[
+    DigestAlias { name: "RSA-MD5", algorithm: Algorithm::Md5, listed: true },
+    DigestAlias { name: "RSA-RIPEMD160", algorithm: Algorithm::Ripemd160, listed: true },
+    DigestAlias { name: "RSA-SHA1", algorithm: Algorithm::Sha1, listed: true },
+    DigestAlias { name: "RSA-SHA1-2", algorithm: Algorithm::Sha1, listed: true },
+    DigestAlias { name: "RSA-SHA224", algorithm: Algorithm::Sha224, listed: true },
+    DigestAlias { name: "RSA-SHA256", algorithm: Algorithm::Sha256, listed: true },
+    DigestAlias { name: "RSA-SHA3-224", algorithm: Algorithm::Sha3_224, listed: true },
+    DigestAlias { name: "RSA-SHA3-256", algorithm: Algorithm::Sha3_256, listed: true },
+    DigestAlias { name: "RSA-SHA3-384", algorithm: Algorithm::Sha3_384, listed: true },
+    DigestAlias { name: "RSA-SHA3-512", algorithm: Algorithm::Sha3_512, listed: true },
+    DigestAlias { name: "RSA-SHA384", algorithm: Algorithm::Sha384, listed: true },
+    DigestAlias { name: "RSA-SHA512", algorithm: Algorithm::Sha512, listed: true },
+    DigestAlias { name: "RSA-SHA512/224", algorithm: Algorithm::Sha512_224, listed: true },
+    DigestAlias { name: "RSA-SHA512/256", algorithm: Algorithm::Sha512_256, listed: true },
+    DigestAlias { name: "id-rsassa-pkcs1-v1_5-with-sha3-224", algorithm: Algorithm::Sha3_224, listed: true },
+    DigestAlias { name: "id-rsassa-pkcs1-v1_5-with-sha3-256", algorithm: Algorithm::Sha3_256, listed: true },
+    DigestAlias { name: "id-rsassa-pkcs1-v1_5-with-sha3-384", algorithm: Algorithm::Sha3_384, listed: true },
+    DigestAlias { name: "id-rsassa-pkcs1-v1_5-with-sha3-512", algorithm: Algorithm::Sha3_512, listed: true },
+    DigestAlias { name: "md5WithRSAEncryption", algorithm: Algorithm::Md5, listed: true },
+    DigestAlias { name: "ripemd", algorithm: Algorithm::Ripemd160, listed: true },
+    DigestAlias { name: "ripemd160WithRSA", algorithm: Algorithm::Ripemd160, listed: true },
+    DigestAlias { name: "rmd160", algorithm: Algorithm::Ripemd160, listed: true },
+    DigestAlias { name: "sha1WithRSAEncryption", algorithm: Algorithm::Sha1, listed: true },
+    DigestAlias { name: "sha224WithRSAEncryption", algorithm: Algorithm::Sha224, listed: true },
+    DigestAlias { name: "sha256WithRSAEncryption", algorithm: Algorithm::Sha256, listed: true },
+    DigestAlias { name: "sha384WithRSAEncryption", algorithm: Algorithm::Sha384, listed: true },
+    DigestAlias { name: "sha512WithRSAEncryption", algorithm: Algorithm::Sha512, listed: true },
+    DigestAlias { name: "sha512-224WithRSAEncryption", algorithm: Algorithm::Sha512_224, listed: true },
+    DigestAlias { name: "sha512-256WithRSAEncryption", algorithm: Algorithm::Sha512_256, listed: true },
+    DigestAlias { name: "ssl3-md5", algorithm: Algorithm::Md5, listed: true },
+    DigestAlias { name: "ssl3-sha1", algorithm: Algorithm::Sha1, listed: true },
+    DigestAlias { name: "dss1", algorithm: Algorithm::Sha1, listed: false },
+];
+
+/// ASCII-case-insensitive name → `Algorithm`. Every digest-name input in bun
+/// resolves here: `node:crypto` (through `Bun__Crypto__digestByName`),
+/// `Bun.CryptoHasher` and `Bun.CSRF`.
 pub(crate) fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
-    ALGORITHM_MAP.get_ascii_case_insensitive(bytes).copied()
+    if let Some(algorithm) = ALGORITHM_MAP.get_ascii_case_insensitive(bytes) {
+        return Some(*algorithm);
+    }
+    DIGEST_ALIASES
+        .iter()
+        .find(|alias| alias.name.as_bytes().eq_ignore_ascii_case(bytes))
+        .map(|alias| alias.algorithm)
+}
+
+/// `crypto.getHashes()`: every name with an `EVP_MD` that node lists too, in
+/// byte order like node. `Blake2b256` is bun-only. `blake2s256` has no
+/// `EVP_MD`, so `pbkdf2`/`hkdf` cannot take it and node's tests that push every
+/// listed name through them would fail. `shake128`/`shake256` stay unlisted
+/// until bun has DEP0198 and cSHAKE, which node's tests gate on that listing.
+pub(crate) fn node_hash_names() -> &'static [BunString] {
+    static NAMES: std::sync::OnceLock<Vec<BunString>> = std::sync::OnceLock::new();
+    NAMES
+        .get_or_init(|| {
+            let mut names: Vec<&'static [u8]> = ALL
+                .iter()
+                .filter(|algorithm| {
+                    **algorithm != Algorithm::Blake2b256 && algorithm.md().is_some()
+                })
+                .map(|algorithm| algorithm.tag_cstr().to_bytes())
+                .chain(
+                    DIGEST_ALIASES
+                        .iter()
+                        .filter(|alias| alias.listed)
+                        .map(|alias| alias.name.as_bytes()),
+                )
+                .collect();
+            names.sort_unstable();
+            names.into_iter().map(BunString::static_).collect()
+        })
+        .as_slice()
+}
+
+/// `ncrypto::getDigestByName`. Null when the name is unknown or the digest has
+/// no `EVP_MD` (`blake2s256`, `shake128`, `shake256`).
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Crypto__digestByName(
+    name: *const u8,
+    len: usize,
+) -> *const boringssl::EVP_MD {
+    // SAFETY: caller passes a valid (ptr, len) byte slice that outlives the call.
+    let name = unsafe { bun_core::ffi::slice(name, len) };
+    match lookup_ignore_case(name).and_then(Algorithm::md) {
+        Some(md) => md,
+        None => core::ptr::null(),
+    }
 }
 
 impl EVP {

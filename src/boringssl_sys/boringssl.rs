@@ -681,6 +681,7 @@ unsafe extern "C" {
     // ── EVP digest getters (infallible, return static singletons) ────────
     pub safe fn EVP_md4() -> *const EVP_MD;
     pub safe fn EVP_md5() -> *const EVP_MD;
+    pub safe fn EVP_md5_sha1() -> *const EVP_MD;
     pub safe fn EVP_ripemd160() -> *const EVP_MD;
     pub safe fn EVP_sha1() -> *const EVP_MD;
     pub safe fn EVP_sha224() -> *const EVP_MD;

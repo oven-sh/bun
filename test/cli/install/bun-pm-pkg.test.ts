@@ -505,33 +505,6 @@ describe.concurrent("bun pm pkg", () => {
       expect(output).toBe('"a\\u001B[1mb\\u000B"\n');
     });
 
-    it("should write every code unit of a string that it sets into a file with a comment", async () => {
-      // The argument of one spawn is at most 32,767 characters on Windows.
-      const unitsPerValue = isWindows ? 0x1000 : 0x2000;
-      const valuesPerSpawn = isWindows ? 1 : 8;
-      const strings = Array.from({ length: 0x10000 / unitsPerValue }, (_, i) =>
-        Array.from({ length: unitsPerValue }, (_, j) => String.fromCharCode(i * unitsPerValue + j)).join(""),
-      );
-      const escaped = (string: string) =>
-        `"${Array.from({ length: string.length }, (_, i) => "\\u" + string.charCodeAt(i).toString(16).padStart(4, "0")).join("")}"`;
-      using dir = tempDir("pm-pkg-units", { "package.json": `{\n  // kept\n  "name": "n"\n}\n` });
-
-      for (let first = 0; first < strings.length; first += valuesPerSpawn) {
-        const values = strings
-          .slice(first, first + valuesPerSpawn)
-          .map((string, i) => `s${first + i}=${escaped(string)}`);
-        const { error, code } = await runPmPkg(["set", ...values, "--json"], String(dir));
-        expect(error).toBe("");
-        expect(code).toBe(0);
-      }
-      const raw = await readRaw(String(dir));
-      expect(raw).toStartWith(`{\n  // kept\n  "name": "n",\n  "s0": "`);
-      expect(Bun.JSONC.parse(raw)).toEqual({
-        name: "n",
-        ...Object.fromEntries(strings.map((string, i) => [`s${i}`, string])),
-      });
-    });
-
     it("should treat values as strings without --json flag", async () => {
       using dir = makeTestDir();
       const { code } = await runPmPkg(
@@ -1690,7 +1663,7 @@ describe.concurrent("bun pm pkg", () => {
       // The parser finds its tokens 8,192 bytes at a time. The root ends in the last two bytes of the first part.
       for (const end of [8190, 8191]) {
         const head = `{\n  "name": "app",\n  "description": "`;
-        const packageJson = `${head}${"d".repeat(end - head.length - 3)}"\n}\n// the end\n`;
+        const packageJson = `${head}${"d".repeat(end - head.length - 2)}"\n}\n// the end\n`;
         expect(packageJson.indexOf("}")).toBe(end);
         using dir = tempDir("pm-pkg-text-tail", { "package.json": packageJson });
         expect(await runPmPkg(["set", "license=MIT"], String(dir))).toEqual({ output: "", error: "", code: 0 });
@@ -1766,4 +1739,34 @@ describe.concurrent("bun pm pkg", () => {
       expect((await readPkg(dir))[""]).toBeUndefined();
     });
   });
+});
+
+// Not in the concurrent group above: it is heavy on a debug build.
+describe("bun pm pkg set", () => {
+  it("should write every code unit of a string that it sets into a file with a comment", async () => {
+    // The argument of one spawn is at most 32,767 characters on Windows.
+    const unitsPerValue = isWindows ? 0x1000 : 0x2000;
+    const valuesPerSpawn = isWindows ? 1 : 8;
+    const strings = Array.from({ length: 0x10000 / unitsPerValue }, (_, i) =>
+      Array.from({ length: unitsPerValue }, (_, j) => String.fromCharCode(i * unitsPerValue + j)).join(""),
+    );
+    const escaped = (string: string) =>
+      `"${Array.from({ length: string.length }, (_, i) => "\\u" + string.charCodeAt(i).toString(16).padStart(4, "0")).join("")}"`;
+    using dir = tempDir("pm-pkg-units", { "package.json": `{\n  // kept\n  "name": "n"\n}\n` });
+
+    for (let first = 0; first < strings.length; first += valuesPerSpawn) {
+      const values = strings
+        .slice(first, first + valuesPerSpawn)
+        .map((string, i) => `s${first + i}=${escaped(string)}`);
+      const { error, code } = await runPmPkg(["set", ...values, "--json"], String(dir));
+      expect(error).toBe("");
+      expect(code).toBe(0);
+    }
+    const raw = await readRaw(String(dir));
+    expect(raw).toStartWith(`{\n  // kept\n  "name": "n",\n  "s0": "`);
+    expect(Bun.JSONC.parse(raw)).toEqual({
+      name: "n",
+      ...Object.fromEntries(strings.map((string, i) => [`s${i}`, string])),
+    });
+  }, 30_000);
 });

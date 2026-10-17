@@ -1,9 +1,9 @@
 import { spawn } from "bun";
 import { expect, setDefaultTimeout } from "bun:test";
-import { test } from "../aot/supported";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "../aot/supported";
 
 setDefaultTimeout(60_000);
 
@@ -30,7 +30,14 @@ function walk(steps: number): number {
 console.log(JSON.stringify({ pid: process.pid, walked: walk(1000), maps: readFileSync("/proc/self/maps", "utf8") }));
 `,
   "tsconfig.json": JSON.stringify({
-    compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext", "dom"] },
+    compilerOptions: {
+      strict: true,
+      module: "esnext",
+      moduleResolution: "bundler",
+      target: "esnext",
+      types: [],
+      lib: ["esnext", "dom"],
+    },
   }),
 };
 
@@ -46,7 +53,13 @@ async function ran(env: Record<string, string>) {
   const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
   expect(buildErrors).not.toContain("error");
   expect(buildExitCode).toBe(0);
-  await using run = spawn({ cmd: [join(dir, "app")], cwd: dir, env: { ...bunEnv, ...env }, stdout: "pipe", stderr: "pipe" });
+  await using run = spawn({
+    cmd: [join(dir, "app")],
+    cwd: dir,
+    env: { ...bunEnv, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);

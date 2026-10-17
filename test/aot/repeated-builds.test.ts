@@ -40,12 +40,24 @@ describe("compile/aot/repeated builds", () => {
         const found = new Map<string, number>();
         let next = 0;
         const lane = async (number: number) => {
-          const executable = join(root, program.replaceAll(/[^a-z]+/g, "-"), String(number), isWindows ? "program.exe" : "program");
+          const executable = join(
+            root,
+            program.replaceAll(/[^a-z]+/g, "-"),
+            String(number),
+            isWindows ? "program.exe" : "program",
+          );
           mkdirSync(dirname(executable), { recursive: true });
           while (next++ < builds) {
             // More threads than most machines have cores: they get in each other's way more often.
-            const build = await spawned([bunExe(), "build", "--compile", "--aot", path, "--outfile", executable], dirname(path), { ...bunEnv, WTF_numberOfProcessorCores: "32" });
-            const outcome = build.exitCode === 0 && !build.signal ? new Bun.CryptoHasher("sha256").update(await Bun.file(executable).bytes()).digest("hex") : `exit code ${build.exitCode} ${build.signal ?? ""} ${build.stderr.slice(0, 300)}`;
+            const build = await spawned(
+              [bunExe(), "build", "--compile", "--aot", path, "--outfile", executable],
+              dirname(path),
+              { ...bunEnv, WTF_numberOfProcessorCores: "32" },
+            );
+            const outcome =
+              build.exitCode === 0 && !build.signal
+                ? new Bun.CryptoHasher("sha256").update(await Bun.file(executable).bytes()).digest("hex")
+                : `exit code ${build.exitCode} ${build.signal ?? ""} ${build.stderr.slice(0, 300)}`;
             found.set(outcome, (found.get(outcome) ?? 0) + 1);
             rmSync(executable, { force: true });
           }

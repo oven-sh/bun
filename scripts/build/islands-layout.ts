@@ -39,7 +39,11 @@ export function readPlan(path: string | undefined, features: string[]): Plan | u
 }
 
 export function writePlan(path: string, plan: Plan): void {
-  const lines = [planHeader, ...plan.doors.map(name => "door " + name), ...plan.islands.flatMap(island => ["island " + island.features, ...island.names])];
+  const lines = [
+    planHeader,
+    ...plan.doors.map(name => "door " + name),
+    ...plan.islands.flatMap(island => ["island " + island.features, ...island.names]),
+  ];
   writeFileSync(path, lines.join("\n") + "\n", "latin1");
 }
 
@@ -58,13 +62,17 @@ export function rangesThatCanGo(graph: Layout, analysis: Needs, isMovable: (outp
     run = [];
   };
   for (let node = 0; node < graph.address.length; node++) {
-    const features = isMovable(graph.output[node]!) && !analysis.core.has(node) ? analysis.neededBy.get(node) : undefined;
+    const features =
+      isMovable(graph.output[node]!) && !analysis.core.has(node) ? analysis.neededBy.get(node) : undefined;
     if (features === undefined) {
       close();
       continue;
     }
     const start = graph.address[node]!;
-    const isNextToTheLast = node > 0 && graph.output[node - 1] === graph.output[node] && start - (graph.address[node - 1]! + graph.size[node - 1]!) < graph.alignment[node]!;
+    const isNextToTheLast =
+      node > 0 &&
+      graph.output[node - 1] === graph.output[node] &&
+      start - (graph.address[node - 1]! + graph.size[node - 1]!) < graph.alignment[node]!;
     if (!isNextToTheLast) close();
     const last = run.at(-1);
     if (last?.features === features) last.end = start + graph.size[node]!;
@@ -100,7 +108,8 @@ export function wholePages(ranges: Range[]): number {
   const holes: number[] = [];
   let start = -1;
   let end = -1;
-  const close = () => void holes.push(Math.max(0, Math.floor(end / pageSize) * pageSize - Math.ceil(start / pageSize) * pageSize));
+  const close = () =>
+    void holes.push(Math.max(0, Math.floor(end / pageSize) * pageSize - Math.ceil(start / pageSize) * pageSize));
   for (const range of ranges) {
     if (range.start === end) end = range.end;
     else {

@@ -34,11 +34,16 @@ impl Args {
         list
     }
     fn layout(cap: usize) -> std::alloc::Layout {
-        std::alloc::Layout::from_size_align(size_of::<ArgsHead>() + cap * size_of::<V>(), align_of::<ArgsHead>()).expect("a list of values")
+        std::alloc::Layout::from_size_align(
+            size_of::<ArgsHead>() + cap * size_of::<V>(),
+            align_of::<ArgsHead>(),
+        )
+        .expect("a list of values")
     }
     pub fn capacity(&self) -> usize {
         // SAFETY: the head is initialized as long as there is a block.
-        self.0.map_or(0, |head| unsafe { head.as_ref() }.cap as usize)
+        self.0
+            .map_or(0, |head| unsafe { head.as_ref() }.cap as usize)
     }
     pub fn reserve(&mut self, more: usize) {
         let (len, cap) = (self.len(), self.capacity());
@@ -51,13 +56,24 @@ impl Args {
         // SAFETY: the block was allocated with `layout(cap)`. The new size is not 0.
         let block = unsafe {
             match self.0 {
-                Some(head) => std::alloc::realloc(head.as_ptr().cast(), Args::layout(cap), Args::layout(new_cap).size()),
+                Some(head) => std::alloc::realloc(
+                    head.as_ptr().cast(),
+                    Args::layout(cap),
+                    Args::layout(new_cap).size(),
+                ),
                 None => std::alloc::alloc(Args::layout(new_cap)),
             }
         };
-        let Some(head) = NonNull::new(block).map(NonNull::cast::<ArgsHead>) else { std::alloc::handle_alloc_error(Args::layout(new_cap)) };
+        let Some(head) = NonNull::new(block).map(NonNull::cast::<ArgsHead>) else {
+            std::alloc::handle_alloc_error(Args::layout(new_cap))
+        };
         // SAFETY: the block has room for a head.
-        unsafe { head.write(ArgsHead { len: len as u32, cap: new_cap as u32 }) };
+        unsafe {
+            head.write(ArgsHead {
+                len: len as u32,
+                cap: new_cap as u32,
+            })
+        };
         self.0 = Some(head);
     }
     fn set_len(&mut self, len: usize) {
@@ -77,7 +93,13 @@ impl Args {
         self.reserve(values.len());
         let head = self.0.expect("room was made");
         // SAFETY: there is room for `values.len()` more behind the first `len`. `values` is borrowed, so it is no part of this list.
-        unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), head.as_ptr().add(1).cast::<V>().add(len), values.len()) };
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                values.as_ptr(),
+                head.as_ptr().add(1).cast::<V>().add(len),
+                values.len(),
+            )
+        };
         self.set_len(len + values.len());
     }
     pub fn pop(&mut self) -> Option<V> {
@@ -139,7 +161,12 @@ impl std::ops::Deref for Args {
     fn deref(&self) -> &[V] {
         match self.0 {
             // SAFETY: `len` values behind the head are initialized.
-            Some(head) => unsafe { std::slice::from_raw_parts(head.as_ptr().add(1).cast::<V>(), head.as_ref().len as usize) },
+            Some(head) => unsafe {
+                std::slice::from_raw_parts(
+                    head.as_ptr().add(1).cast::<V>(),
+                    head.as_ref().len as usize,
+                )
+            },
             None => &[],
         }
     }
@@ -149,7 +176,12 @@ impl std::ops::DerefMut for Args {
     fn deref_mut(&mut self) -> &mut [V] {
         match self.0 {
             // SAFETY: `len` values behind the head are initialized, and the list is borrowed mutably.
-            Some(head) => unsafe { std::slice::from_raw_parts_mut(head.as_ptr().add(1).cast::<V>(), head.as_ref().len as usize) },
+            Some(head) => unsafe {
+                std::slice::from_raw_parts_mut(
+                    head.as_ptr().add(1).cast::<V>(),
+                    head.as_ref().len as usize,
+                )
+            },
             None => &mut [],
         }
     }
@@ -247,7 +279,10 @@ impl IntoIterator for Args {
     type Item = V;
     type IntoIter = ArgsIntoIter;
     fn into_iter(self) -> ArgsIntoIter {
-        ArgsIntoIter { list: self, next: 0 }
+        ArgsIntoIter {
+            list: self,
+            next: 0,
+        }
     }
 }
 
@@ -278,10 +313,19 @@ pub struct Strs {
 
 impl Strs {
     pub fn with_capacity(strings: usize) -> Strs {
-        Strs { bytes: Vec::new(), ends: Vec::with_capacity(strings), hashes: Vec::with_capacity(strings), ids: hashbrown::HashTable::with_capacity(strings), has_unindexed_strings: false }
+        Strs {
+            bytes: Vec::new(),
+            ends: Vec::with_capacity(strings),
+            hashes: Vec::with_capacity(strings),
+            ids: hashbrown::HashTable::with_capacity(strings),
+            has_unindexed_strings: false,
+        }
     }
     pub fn with_capacities(strings: usize, bytes: usize) -> Strs {
-        Strs { bytes: Vec::with_capacity(bytes), ..Strs::with_capacity(strings) }
+        Strs {
+            bytes: Vec::with_capacity(bytes),
+            ..Strs::with_capacity(strings)
+        }
     }
     pub fn hash_of(bytes: &[u8]) -> u64 {
         std::hash::BuildHasher::hash_one(&rustc_hash::FxBuildHasher, bytes)
@@ -290,7 +334,10 @@ impl Strs {
         self.intern_hashed(Strs::hash_of(bytes), bytes)
     }
     pub fn intern_hashed(&mut self, hash: u64, bytes: &[u8]) -> StrId {
-        assert!(!self.has_unindexed_strings, "a string table without an index cannot be searched");
+        assert!(
+            !self.has_unindexed_strings,
+            "a string table without an index cannot be searched"
+        );
         if let Some(&id) = self.ids.find(hash, |&id| self.get(id) == bytes) {
             return id;
         }
@@ -299,7 +346,9 @@ impl Strs {
     pub fn add(&mut self, hash: u64, bytes: &[u8]) -> StrId {
         let id = StrId::new(self.ends.len());
         self.bytes.extend_from_slice(bytes);
-        self.ends.push(u32::try_from(self.bytes.len()).expect("the strings of a program are under 4 GB"));
+        self.ends.push(
+            u32::try_from(self.bytes.len()).expect("the strings of a program are under 4 GB"),
+        );
         self.hashes.push(hash);
         let hashes = &self.hashes;
         self.ids.insert_unique(hash, id, |&id| hashes[id.idx()]);
@@ -309,12 +358,20 @@ impl Strs {
         self.bytes.reserve_exact(bytes);
     }
     pub fn unindexed_with_capacities(strings: usize, bytes: usize) -> Strs {
-        Strs { bytes: Vec::with_capacity(bytes), ends: Vec::with_capacity(strings), hashes: Vec::with_capacity(strings), ids: hashbrown::HashTable::new(), has_unindexed_strings: true }
+        Strs {
+            bytes: Vec::with_capacity(bytes),
+            ends: Vec::with_capacity(strings),
+            hashes: Vec::with_capacity(strings),
+            ids: hashbrown::HashTable::new(),
+            has_unindexed_strings: true,
+        }
     }
     pub fn add_unindexed(&mut self, hash: u64, bytes: &[u8]) {
         debug_assert!(self.has_unindexed_strings);
         self.bytes.extend_from_slice(bytes);
-        self.ends.push(u32::try_from(self.bytes.len()).expect("the strings of a program are under 4 GB"));
+        self.ends.push(
+            u32::try_from(self.bytes.len()).expect("the strings of a program are under 4 GB"),
+        );
         self.hashes.push(hash);
     }
     pub fn add_all(&mut self, bytes: &[u8], lengths: &[u32], hashes: &[u64]) {
@@ -323,15 +380,21 @@ impl Strs {
         for (&length, &hash) in lengths.iter().zip(hashes) {
             end += length as usize;
             let id = StrId::new(self.ends.len());
-            self.ends.push(u32::try_from(end).expect("the strings of a program are under 4 GB"));
+            self.ends
+                .push(u32::try_from(end).expect("the strings of a program are under 4 GB"));
             self.hashes.push(hash);
             let hashes = &self.hashes;
             self.ids.insert_unique(hash, id, |&id| hashes[id.idx()]);
         }
     }
     pub fn find(&self, bytes: &[u8]) -> Option<StrId> {
-        assert!(!self.has_unindexed_strings, "a string table without an index cannot be searched");
-        self.ids.find(Strs::hash_of(bytes), |&id| self.get(id) == bytes).copied()
+        assert!(
+            !self.has_unindexed_strings,
+            "a string table without an index cannot be searched"
+        );
+        self.ids
+            .find(Strs::hash_of(bytes), |&id| self.get(id) == bytes)
+            .copied()
     }
     #[inline]
     pub fn hash(&self, id: StrId) -> u64 {
@@ -339,7 +402,11 @@ impl Strs {
     }
     #[inline]
     pub fn get(&self, id: StrId) -> &[u8] {
-        let start = if id.0 == 0 { 0 } else { self.ends[id.idx() - 1] as usize };
+        let start = if id.0 == 0 {
+            0
+        } else {
+            self.ends[id.idx() - 1] as usize
+        };
         &self.bytes[start..self.ends[id.idx()] as usize]
     }
     pub fn len(&self) -> usize {
@@ -391,7 +458,15 @@ pub struct Field {
 
 impl Field {
     pub fn new(name: StrId, declared: TyId, flags: u16) -> Field {
-        Field { name, declared, flags, literals: Vec::new(), type_text: StrId::NONE, single_function: FuncId::NONE, single_function_flags: 0 }
+        Field {
+            name,
+            declared,
+            flags,
+            literals: Vec::new(),
+            type_text: StrId::NONE,
+            single_function: FuncId::NONE,
+            single_function_flags: 0,
+        }
     }
 }
 
@@ -474,14 +549,18 @@ impl Layout {
     pub const FIELD_INDEX_THRESHOLD: usize = 32;
 
     pub fn field(&self, name: StrId) -> Option<u32> {
-        self.fields.iter().position(|f| f.name == name).map(|i| i as u32)
+        self.fields
+            .iter()
+            .position(|f| f.name == name)
+            .map(|i| i as u32)
     }
 
     pub fn fields_by_name(&self) -> FieldsByName {
         if self.fields.len() < Layout::FIELD_INDEX_THRESHOLD {
             return FieldsByName(None);
         }
-        let mut by_name = rustc_hash::FxHashMap::with_capacity_and_hasher(self.fields.len(), Default::default());
+        let mut by_name =
+            rustc_hash::FxHashMap::with_capacity_and_hasher(self.fields.len(), Default::default());
         for (index, field) in self.fields.iter().enumerate() {
             by_name.entry(field.name).or_insert(index as u32);
         }
@@ -609,60 +688,163 @@ pub enum Op {
 
     GlobalGet(GlobalId),
     GlobalSet(GlobalId, V),
-    FreeGet { name: StrId, is_typeof: bool },
-    FreeSet { name: StrId, value: V },
+    FreeGet {
+        name: StrId,
+        is_typeof: bool,
+    },
+    FreeSet {
+        name: StrId,
+        value: V,
+    },
 
     New(LayoutId),
-    NewWith { layout: LayoutId, name: StrId, value: V },
-    FieldGet { obj: V, layout: LayoutId, field: u32 },
-    FieldSet { obj: V, layout: LayoutId, field: u32, value: V },
-    Closure { func: FuncId, captures: Args },
-    ClosureOnce { func: FuncId, captures: Args, env: V, field: u32 },
+    NewWith {
+        layout: LayoutId,
+        name: StrId,
+        value: V,
+    },
+    FieldGet {
+        obj: V,
+        layout: LayoutId,
+        field: u32,
+    },
+    FieldSet {
+        obj: V,
+        layout: LayoutId,
+        field: u32,
+        value: V,
+    },
+    Closure {
+        func: FuncId,
+        captures: Args,
+    },
+    ClosureOnce {
+        func: FuncId,
+        captures: Args,
+        env: V,
+        field: u32,
+    },
 
-    PropGet { obj: V, name: StrId },
-    PropSet { obj: V, name: StrId, value: V },
-    PropHas { obj: V, name: StrId },
-    PropDelete { obj: V, name: StrId },
-    ElemGet { obj: V, key: V },
-    ElemSet { obj: V, key: V, value: V },
-    ElemHas { obj: V, key: V },
-    ElemDelete { obj: V, key: V },
+    PropGet {
+        obj: V,
+        name: StrId,
+    },
+    PropSet {
+        obj: V,
+        name: StrId,
+        value: V,
+    },
+    PropHas {
+        obj: V,
+        name: StrId,
+    },
+    PropDelete {
+        obj: V,
+        name: StrId,
+    },
+    ElemGet {
+        obj: V,
+        key: V,
+    },
+    ElemSet {
+        obj: V,
+        key: V,
+        value: V,
+    },
+    ElemHas {
+        obj: V,
+        key: V,
+    },
+    ElemDelete {
+        obj: V,
+        key: V,
+    },
 
     NewArray(Args),
     NewObject,
 
-    Binary { op: BinOp, a: V, b: V },
-    Unary { op: UnOp, a: V },
-    Relational { op: RelOp, a: V, b: V },
-    StrictEq { a: V, b: V },
-    LooseEq { a: V, b: V },
+    Binary {
+        op: BinOp,
+        a: V,
+        b: V,
+    },
+    Unary {
+        op: UnOp,
+        a: V,
+    },
+    Relational {
+        op: RelOp,
+        a: V,
+        b: V,
+    },
+    StrictEq {
+        a: V,
+        b: V,
+    },
+    LooseEq {
+        a: V,
+        b: V,
+    },
     Not(V),
     Truthy(V),
     TypeOf(V),
-    InstanceOf { value: V, of: V },
+    InstanceOf {
+        value: V,
+        of: V,
+    },
     ToStr(V),
     ToKey(V),
     IsNullish(V),
-    IsInstance { value: V, layout: LayoutId },
+    IsInstance {
+        value: V,
+        layout: LayoutId,
+    },
     StrConcat(Args),
 
     IterOpen(V),
-    IterHas { iter: V, index: V },
-    IterGet { iter: V, index: V },
+    IterHas {
+        iter: V,
+        index: V,
+    },
+    IterGet {
+        iter: V,
+        index: V,
+    },
     IterClose(V),
     IterCloseForThrow(V),
 
-    Call { callee: V, this: V, args: Args },
-    Construct { callee: V, args: Args },
-    CallMethod { obj: V, name: StrId, args: Args },
-    CallDirect { func: FuncId, args: Args },
+    Call {
+        callee: V,
+        this: V,
+        args: Args,
+    },
+    Construct {
+        callee: V,
+        args: Args,
+    },
+    CallMethod {
+        obj: V,
+        name: StrId,
+        args: Args,
+    },
+    CallDirect {
+        func: FuncId,
+        args: Args,
+    },
 
-    Coerce { value: V, to: TyId, why: CoerceReason },
+    Coerce {
+        value: V,
+        to: TyId,
+        why: CoerceReason,
+    },
     Caught,
     CaughtException,
     Poll,
     UnlikelyHint,
-    Operation { which: Operation, args: Args },
+    Operation {
+        which: Operation,
+        args: Args,
+    },
     Yield(V),
     ResumeMode,
     ExternalModule(StrId),
@@ -677,18 +859,36 @@ pub struct Target {
 
 impl Target {
     pub fn new(block: BlockId) -> Target {
-        Target { block, args: Args::new() }
+        Target {
+            block,
+            args: Args::new(),
+        }
     }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Term {
     Jump(Target),
-    Branch { cond: V, then: Target, otherwise: Target },
-    Switch { value: V, cases: Vec<(i64, Target)>, default: Target },
+    Branch {
+        cond: V,
+        then: Target,
+        otherwise: Target,
+    },
+    Switch {
+        value: V,
+        cases: Vec<(i64, Target)>,
+        default: Target,
+    },
     Return(V),
-    Throw { value: V, unwind: Option<Target>, pos: u32 },
-    Invoke { normal: Target, unwind: Target },
+    Throw {
+        value: V,
+        unwind: Option<Target>,
+        pos: u32,
+    },
+    Invoke {
+        normal: Target,
+        unwind: Target,
+    },
     Unreachable,
 }
 
@@ -727,7 +927,13 @@ impl Value {
 
     #[inline]
     pub fn new(def: Def, pos: u32, ty: TyId) -> Value {
-        Value { def, pos, ty, prediction_and_flags: 0, signature: TyId::NONE }
+        Value {
+            def,
+            pos,
+            ty,
+            prediction_and_flags: 0,
+            signature: TyId::NONE,
+        }
     }
 
     #[inline]
@@ -751,8 +957,16 @@ impl Value {
             Prediction::ByKey(property) => (3, property.0),
             Prediction::Field(ty) => (4, ty.0),
         };
-        let packed = if index < 1 << Self::INDEX_BITS { kind << Self::INDEX_BITS | index } else { 0 };
-        self.prediction_and_flags = self.prediction_and_flags & (Self::KEEPS_UNCONVERTIBLE_OBJECTS | Self::IS_KNOWN_INITIALIZED | Self::IS_IN_TAIL_POSITION) | packed;
+        let packed = if index < 1 << Self::INDEX_BITS {
+            kind << Self::INDEX_BITS | index
+        } else {
+            0
+        };
+        self.prediction_and_flags = self.prediction_and_flags
+            & (Self::KEEPS_UNCONVERTIBLE_OBJECTS
+                | Self::IS_KNOWN_INITIALIZED
+                | Self::IS_IN_TAIL_POSITION)
+            | packed;
     }
 
     #[inline]
@@ -762,7 +976,12 @@ impl Value {
 
     #[inline]
     pub fn set_is_known_initialized(&mut self, is_known_initialized: bool) {
-        self.prediction_and_flags = self.prediction_and_flags & !Self::IS_KNOWN_INITIALIZED | if is_known_initialized { Self::IS_KNOWN_INITIALIZED } else { 0 };
+        self.prediction_and_flags = self.prediction_and_flags & !Self::IS_KNOWN_INITIALIZED
+            | if is_known_initialized {
+                Self::IS_KNOWN_INITIALIZED
+            } else {
+                0
+            };
     }
 
     #[inline]
@@ -782,7 +1001,12 @@ impl Value {
 
     #[inline]
     pub fn set_is_in_tail_position(&mut self, is_in_tail_position: bool) {
-        self.prediction_and_flags = self.prediction_and_flags & !Self::IS_IN_TAIL_POSITION | if is_in_tail_position { Self::IS_IN_TAIL_POSITION } else { 0 };
+        self.prediction_and_flags = self.prediction_and_flags & !Self::IS_IN_TAIL_POSITION
+            | if is_in_tail_position {
+                Self::IS_IN_TAIL_POSITION
+            } else {
+                0
+            };
     }
 }
 
@@ -834,7 +1058,11 @@ impl Func {
         self.flags & flag != 0
     }
     pub fn param_cast_reason(&self, index: usize) -> CoerceReason {
-        if self.annotated.get(index) == Some(&true) { CoerceReason::Cast } else { CoerceReason::Store }
+        if self.annotated.get(index) == Some(&true) {
+            CoerceReason::Cast
+        } else {
+            CoerceReason::Store
+        }
     }
     #[inline]
     pub fn ty(&self, v: V) -> TyId {
@@ -851,7 +1079,8 @@ impl Func {
     pub fn add_param(&mut self, block: BlockId, ty: TyId) -> V {
         let index = self.blocks[block.idx()].params.len() as u32;
         let v = V::new(self.values.len());
-        self.values.push(Value::new(Def::Param(block, index), 0, ty));
+        self.values
+            .push(Value::new(Def::Param(block, index), 0, ty));
         self.blocks[block.idx()].params.push(v);
         v
     }
@@ -910,8 +1139,12 @@ impl Op {
             | Op::IterCloseForThrow(a)
             | Op::Yield(a)
             | Op::Await(a) => f(*a),
-            Op::FieldSet { obj: a, value: b, .. }
-            | Op::PropSet { obj: a, value: b, .. }
+            Op::FieldSet {
+                obj: a, value: b, ..
+            }
+            | Op::PropSet {
+                obj: a, value: b, ..
+            }
             | Op::ElemGet { obj: a, key: b }
             | Op::ElemHas { obj: a, key: b }
             | Op::ElemDelete { obj: a, key: b }
@@ -930,7 +1163,11 @@ impl Op {
                 f(*key);
                 f(*value);
             }
-            Op::Closure { captures: args, .. } | Op::NewArray(args) | Op::StrConcat(args) | Op::Operation { args, .. } | Op::CallDirect { args, .. } => args.iter().copied().for_each(f),
+            Op::Closure { captures: args, .. }
+            | Op::NewArray(args)
+            | Op::StrConcat(args)
+            | Op::Operation { args, .. }
+            | Op::CallDirect { args, .. } => args.iter().copied().for_each(f),
             Op::ClosureOnce { captures, env, .. } => {
                 captures.iter().copied().for_each(&mut f);
                 f(*env);
@@ -951,7 +1188,10 @@ impl Op {
 impl Term {
     pub fn for_each_operand(&self, mut f: impl FnMut(V)) {
         match self {
-            Term::Branch { cond: value, .. } | Term::Switch { value, .. } | Term::Return(value) | Term::Throw { value, .. } => f(*value),
+            Term::Branch { cond: value, .. }
+            | Term::Switch { value, .. }
+            | Term::Return(value)
+            | Term::Throw { value, .. } => f(*value),
             Term::Jump(_) | Term::Invoke { .. } | Term::Unreachable => {}
         }
         self.for_each_target(|target| target.args.iter().copied().for_each(&mut f));
@@ -966,7 +1206,9 @@ impl Term {
                 }
             }
             Term::Jump(t) => f(t),
-            Term::Branch { then, otherwise, .. } => {
+            Term::Branch {
+                then, otherwise, ..
+            } => {
                 f(then);
                 f(otherwise);
             }
@@ -991,7 +1233,9 @@ impl Term {
                 }
             }
             Term::Jump(t) => f(t),
-            Term::Branch { then, otherwise, .. } => {
+            Term::Branch {
+                then, otherwise, ..
+            } => {
                 f(then);
                 f(otherwise);
             }

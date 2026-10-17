@@ -2,8 +2,8 @@
 // `--aot-type-errors=log` must name every change that the default mode refuses: when the program ran in place (`bun run --aot`, `bun test --aot`) it neither refused nor reported them, so a suite that
 // failed by default passed in log mode with an empty log.
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "./supported";
 
 const program = `
 class Store {
@@ -51,7 +51,9 @@ for (const [name, attempt] of attempts) {
 `;
 const files = {
   "program.ts": program,
-  "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext", moduleResolution: "bundler", types: [] } }),
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: { strict: true, target: "esnext", module: "esnext", moduleResolution: "bundler", types: [] },
+  }),
 };
 const refusedLines = [13, 14, 16, 17, 19, 20, 21, 22, 24];
 
@@ -61,7 +63,13 @@ async function run(cwd: string, args: string[]) {
   const lines = (stdout + stderr).split("\n").filter(Boolean);
   return {
     said: lines.filter(line => !line.startsWith("[aot]")),
-    records: [...new Set(lines.filter(line => line.startsWith("[aot] type-error")).map(line => line.split(" ").slice(3, 5).join(" ").replace(/:\d+$/, "")))],
+    records: [
+      ...new Set(
+        lines
+          .filter(line => line.startsWith("[aot] type-error"))
+          .map(line => line.split(" ").slice(3, 5).join(" ").replace(/:\d+$/, "")),
+      ),
+    ],
     exitCode,
   };
 }
@@ -78,8 +86,15 @@ test("bun run --aot --aot-type-errors=log reports every change to a class's prot
 test("bun run --aot names the class in what it refuses, before the class has an instance", async () => {
   using dir = tempDir("class-prototype-writes", files);
   const { said } = await run(String(dir), ["run", "--aot", "./program.ts"]);
-  expect(said).toContain("Object.defineProperty, a new symbol: Cannot change [Symbol.iterator] of Store.prototype: classes are fixed in a program compiled with --aot");
+  expect(said).toContain(
+    "Object.defineProperty, a new symbol: Cannot change [Symbol.iterator] of Store.prototype: classes are fixed in a program compiled with --aot",
+  );
   expect(said).toContain("replace a method: done");
-  expect(said.slice(-4)).toEqual(["assignment, seen: 1", "Object.defineProperty, a new name, seen: done", "Object.assign, seen: done", "replace a method, seen: done"]);
+  expect(said.slice(-4)).toEqual([
+    "assignment, seen: 1",
+    "Object.defineProperty, a new name, seen: done",
+    "Object.assign, seen: done",
+    "replace a method, seen: done",
+  ]);
   expect(said.join("\n")).not.toContain("built-ins are locked");
 });

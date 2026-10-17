@@ -1358,11 +1358,16 @@ impl<'a> Resolver<'a> {
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
                 // What the executable holds is not looked for on the disk.
-                let is_require = matches!(kind, ast::ImportKind::Require | ast::ImportKind::RequireResolve);
+                let is_require = matches!(
+                    kind,
+                    ast::ImportKind::Require | ast::ImportKind::RequireResolve
+                );
                 let preserves_source_paths = graph.preserves_source_paths();
                 if preserves_source_paths
                     && let Some(path) = match self.custom_dir_paths {
-                        Some(folders) => folders.iter().find_map(|folder| graph.resolution(folder.to_utf8().slice(), import_path, is_require)),
+                        Some(folders) => folders.iter().find_map(|folder| {
+                            graph.resolution(folder.to_utf8().slice(), import_path, is_require)
+                        }),
                         None => graph.resolution(source_dir, import_path, is_require),
                     }
                 {
@@ -1378,7 +1383,9 @@ impl<'a> Resolver<'a> {
                 }
                 if !preserves_source_paths
                     && let Some(file_name) = match self.custom_dir_paths {
-                        Some(folders) => folders.iter().find_map(|folder| graph.entry_point_at(folder.to_utf8().slice(), import_path, is_require)),
+                        Some(folders) => folders.iter().find_map(|folder| {
+                            graph.entry_point_at(folder.to_utf8().slice(), import_path, is_require)
+                        }),
                         None => graph.entry_point_at(source_dir, import_path, is_require),
                     }
                 {
@@ -4518,13 +4525,18 @@ impl<'a> Resolver<'a> {
             let queue_top_safe_path: &[u8] = qt_safe_path.slice();
             queue_slice_len -= 1;
 
-            let may_skip_opening = !queue_top.fd.is_valid() && !self.store_fd && !self.care_about_bin_folder;
+            let may_skip_opening =
+                !queue_top.fd.is_valid() && !self.store_fd && !self.care_about_bin_folder;
             let has_current_entries = may_skip_opening
                 && matches!(
                     rfs!().entries.get(queue_top_unsafe_path),
                     Some(Fs::file_system::real_fs::EntriesOption::Entries(entries)) if entries.generation >= self.generation
                 );
-            let shared_listing = if has_current_entries || !may_skip_opening { None } else { crate::fs_full::list_from_source(queue_top_unsafe_path) };
+            let shared_listing = if has_current_entries || !may_skip_opening {
+                None
+            } else {
+                crate::fs_full::list_from_source(queue_top_unsafe_path)
+            };
             let open_dir: FD = if queue_top.fd.is_valid() {
                 queue_top.fd
             } else if has_current_entries || shared_listing.is_some() {
@@ -4617,7 +4629,9 @@ impl<'a> Resolver<'a> {
                             //   ...
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
-                            if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) && err != crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG) {
+                            if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                                && err != crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
+                            {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
                                     let _ = self.log_mut().add_error_fmt(
@@ -6743,10 +6757,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// `DirInfo::enclosing_tsconfig_json`, for this resolver.
-    pub fn enclosing_tsconfig_json(
-        &mut self,
-        dir_info: &DirInfo::DirInfo,
-    ) -> Option<TSConfigRef> {
+    pub fn enclosing_tsconfig_json(&mut self, dir_info: &DirInfo::DirInfo) -> Option<TSConfigRef> {
         match self.tsconfig_override() {
             Some(it) => it.map(TSConfigRef::Override),
             None => dir_info

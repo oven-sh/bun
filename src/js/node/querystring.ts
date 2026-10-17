@@ -396,7 +396,15 @@ function parse(qs, sep, eq, options) {
 }
 
 // parseInto() for a separator and an assignment of one code unit each.
-function parseWithCodes(obj, qs: string, sepCode: number, eqCode: number, pairs: number, decode, customDecode: boolean): void {
+function parseWithCodes(
+  obj,
+  qs: string,
+  sepCode: number,
+  eqCode: number,
+  pairs: number,
+  decode,
+  customDecode: boolean,
+): void {
   const len = qs.length;
   let lastPos = 0;
   let sawEq = false;
@@ -487,7 +495,15 @@ function parseWithCodes(obj, qs: string, sepCode: number, eqCode: number, pairs:
   addKeyVal(obj, key, value, keyEncoded, valEncoded, decode);
 }
 
-function parseInto(obj, qs: string, sepCodes: number[], eqCodes: number[], pairs: number, decode, customDecode: boolean): void {
+function parseInto(
+  obj,
+  qs: string,
+  sepCodes: number[],
+  eqCodes: number[],
+  pairs: number,
+  decode,
+  customDecode: boolean,
+): void {
   const sepLen = sepCodes.length;
   const eqLen = eqCodes.length;
   const len = qs.length;

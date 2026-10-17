@@ -66,7 +66,12 @@ pub(super) const AOT_RULES: [&str; 5] = [
 /// The line of `presets.txt` for `name`. Release builds embed the file compressed and inflate it on first use.
 fn parse(name: &[u8]) -> Option<Vec<Json>> {
     if name == b"bun/aot" {
-        let warn = |rule: &&str| ([b"bun/", rule.as_bytes()].concat(), Json::String(b"warn".to_vec()));
+        let warn = |rule: &&str| {
+            (
+                [b"bun/", rule.as_bytes()].concat(),
+                Json::String(b"warn".to_vec()),
+            )
+        };
         let rules = Json::Object(AOT_RULES.iter().map(warn).collect());
         return Some(vec![Json::Object(vec![(b"rules".to_vec(), rules)])]);
     }

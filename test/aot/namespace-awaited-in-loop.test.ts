@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./supported";
 
 const programs: Record<string, string> = {
   "a namespace object": `
@@ -37,7 +37,10 @@ test.concurrent.each(Object.keys(programs))(
       stderr: "pipe",
     });
     const [, buildErrors, buildCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    expect({ buildErrors: buildErrors.split("\n").filter(line => line.startsWith("error")), buildCode }).toEqual({ buildErrors: [], buildCode: 0 });
+    expect({ buildErrors: buildErrors.split("\n").filter(line => line.startsWith("error")), buildCode }).toEqual({
+      buildErrors: [],
+      buildCode: 0,
+    });
     await using ran = Bun.spawn({ cmd: [outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, , exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
     expect({ stdout, exitCode }).toEqual({ stdout: "2\n", exitCode: 0 });

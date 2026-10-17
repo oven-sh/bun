@@ -264,7 +264,11 @@ impl<'s> Checker<'_, 's> {
             cfg!(bun_asan) || left >= TASK_STACK,
             "the thread has too little stack for a task"
         );
-        self.set_stack_limit(if cfg!(bun_asan) { TASK_STACK.min(left) } else { TASK_STACK });
+        self.set_stack_limit(if cfg!(bun_asan) {
+            TASK_STACK.min(left)
+        } else {
+            TASK_STACK
+        });
         #[cfg(bun_data_race_for_testing)]
         {
             static mut TASKS: u64 = 0;

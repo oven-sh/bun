@@ -1,19 +1,30 @@
 import { describe, expect, test } from "bun:test";
-import { closeSync, constants, openSync, readFileSync, writeSync } from "node:fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { closeSync, constants, openSync, readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../../../aot/run-programs";
 
 const settle = `await new Promise(resolve => setTimeout(resolve, 20));`;
 const hint = "(Use `EXE --trace-warnings ...` to show where the warning was created)\n";
-const normalize = (text: string) => text.replace(/\(node:\d+\)/g, "(node:PID)").replace(/\(Use `[^` ]+ --trace-warnings/g, "(Use `EXE --trace-warnings");
+const normalize = (text: string) =>
+  text.replace(/\(node:\d+\)/g, "(node:PID)").replace(/\(Use `[^` ]+ --trace-warnings/g, "(Use `EXE --trace-warnings");
 
-type Case = { source: string; env?: Record<string, string>; shell?: (command: string, folder: string) => string; stdout?: string; stderr?: string | RegExp; file?: string; exitCode?: number; mayUseInterpreter?: true };
+type Case = {
+  source: string;
+  env?: Record<string, string>;
+  shell?: (command: string, folder: string) => string;
+  stdout?: string;
+  stderr?: string | RegExp;
+  file?: string;
+  exitCode?: number;
+  mayUseInterpreter?: true;
+};
 const cases: Record<string, Case> = {
   "prints to descriptor 2": {
     source: `process.emitWarning("first"); process.emitWarning("second", "CustomWarning", "W1"); process.emitWarning("third", { detail: "more" }); ${settle} console.log("done");`,
     stdout: "done\n",
-    stderr: "(node:PID) Warning: first\n" + hint + "(node:PID) [W1] CustomWarning: second\n(node:PID) Warning: third\nmore\n",
+    stderr:
+      "(node:PID) Warning: first\n" + hint + "(node:PID) [W1] CustomWarning: second\n(node:PID) Warning: third\nmore\n",
   },
   "a listener hears it and it is still printed": {
     source: `process.on("warning", warning => console.log("heard", warning.name, warning.message)); process.emitWarning("both"); ${settle}`,
@@ -144,8 +155,16 @@ const cases: Record<string, Case> = {
 
 async function run(cmd: string[], folder: string, it: Case, extraEnv: Record<string, string>) {
   const command = it.shell ? ["/bin/sh", "-c", it.shell(cmd.map(part => `'${part}'`).join(" "), folder)] : cmd;
-  const env = Object.fromEntries(Object.entries(it.env ?? {}).map(([name, value]) => [name, value.replace("$FOLDER", folder)]));
-  await using proc = Bun.spawn({ cmd: command, cwd: folder, env: { ...bunEnv, ...env, ...extraEnv }, stdout: "pipe", stderr: "pipe" });
+  const env = Object.fromEntries(
+    Object.entries(it.env ?? {}).map(([name, value]) => [name, value.replace("$FOLDER", folder)]),
+  );
+  await using proc = Bun.spawn({
+    cmd: command,
+    cwd: folder,
+    env: { ...bunEnv, ...env, ...extraEnv },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   if (it.stdout !== undefined) expect(stdout).toBe(it.stdout);
   if (typeof it.stderr === "string") expect(normalize(stderr)).toBe(it.stderr);
@@ -160,19 +179,55 @@ describe.skipIf(isWindows).concurrent("the default warning printer", () => {
       using folder = tempDir("warning-printer", { "program.mjs": it.source });
       await run([bunExe(), "program.mjs"], String(folder), it, {});
     });
-    test.skipIf(!!unsupported)(`--aot: ${name}`, async () => {
-      using folder = tempDir("warning-printer-aot", { "program.mjs": it.source });
-      await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", "program.mjs", "--outfile", "program"], cwd: String(folder), env: bunEnv, stdout: "ignore", stderr: "pipe" });
-      expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
-      await run([join(String(folder), "program")], String(folder), it, it.mayUseInterpreter ? {} : { BUN_JSC_crashIfInterpreterIsUsed: "1" });
-    }, 120_000);
+    test.skipIf(!!unsupported)(
+      `--aot: ${name}`,
+      async () => {
+        using folder = tempDir("warning-printer-aot", { "program.mjs": it.source });
+        await using build = Bun.spawn({
+          cmd: [bunExe(), "build", "--compile", "--aot", "program.mjs", "--outfile", "program"],
+          cwd: String(folder),
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({
+          stderr: expect.not.stringMatching(/^error\b/m),
+          exitCode: 0,
+        });
+        await run(
+          [join(String(folder), "program")],
+          String(folder),
+          it,
+          it.mayUseInterpreter ? {} : { BUN_JSC_crashIfInterpreterIsUsed: "1" },
+        );
+      },
+      120_000,
+    );
   }
 
-  const goesOn = (size: number) => `setTimeout(() => console.log("the timer ran"), 1); process.emitWarning("x".repeat(${size})); await new Promise(resolve => setTimeout(resolve, 30)); console.log("the program went on"); process.exit(0);`;
+  const goesOn = (size: number) =>
+    `setTimeout(() => console.log("the timer ran"), 1); process.emitWarning("x".repeat(${size})); await new Promise(resolve => setTimeout(resolve, 30)); console.log("the program went on"); process.exit(0);`;
   const pipes = [
-    { name: "a pipe that nobody reads does not stop the program: a large warning", source: goesOn(1_000_000), stdout: "the timer ran\nthe program went on\n", exitCode: 0 },
-    { name: "a pipe that nobody reads does not stop the program: a small warning and the pipe is full already", source: goesOn(10), isFull: true, stdout: "the timer ran\nthe program went on\n", exitCode: 0 },
-    { name: "a pipe whose reader is gone raises SIGPIPE as often as before", source: `process.on("SIGPIPE", () => console.log("SIGPIPE")); process.emitWarning("nobody listens"); ${settle} console.log("done");`, isReaderGone: true, stdout: "SIGPIPE\nSIGPIPE\nSIGPIPE\ndone\n", exitCode: 1 },
+    {
+      name: "a pipe that nobody reads does not stop the program: a large warning",
+      source: goesOn(1_000_000),
+      stdout: "the timer ran\nthe program went on\n",
+      exitCode: 0,
+    },
+    {
+      name: "a pipe that nobody reads does not stop the program: a small warning and the pipe is full already",
+      source: goesOn(10),
+      isFull: true,
+      stdout: "the timer ran\nthe program went on\n",
+      exitCode: 0,
+    },
+    {
+      name: "a pipe whose reader is gone raises SIGPIPE as often as before",
+      source: `process.on("SIGPIPE", () => console.log("SIGPIPE")); process.emitWarning("nobody listens"); ${settle} console.log("done");`,
+      isReaderGone: true,
+      stdout: "SIGPIPE\nSIGPIPE\nSIGPIPE\ndone\n",
+      exitCode: 1,
+    },
   ];
   for (const { name, source, isFull, isReaderGone, stdout, exitCode } of pipes) {
     for (const mode of unsupported ? ["plain"] : ["plain", "--aot"]) {
@@ -181,19 +236,34 @@ describe.skipIf(isWindows).concurrent("the default warning printer", () => {
         const cwd = String(folder);
         let cmd = [bunExe(), "program.mjs"];
         if (mode === "--aot") {
-          await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", "program.mjs", "--outfile", "program"], cwd, env: bunEnv, stdout: "ignore", stderr: "pipe" });
-          expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+          await using build = Bun.spawn({
+            cmd: [bunExe(), "build", "--compile", "--aot", "program.mjs", "--outfile", "program"],
+            cwd,
+            env: bunEnv,
+            stdout: "ignore",
+            stderr: "pipe",
+          });
+          expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({
+            stderr: expect.not.stringMatching(/^error\b/m),
+            exitCode: 0,
+          });
           cmd = [join(cwd, "program")];
         }
         expect(Bun.spawnSync(["mkfifo", join(cwd, "pipe")]).exitCode).toBe(0);
         const readerThatNeverReads = openSync(join(cwd, "pipe"), constants.O_RDWR | constants.O_NONBLOCK);
         const descriptor2 = openSync(join(cwd, "pipe"), constants.O_WRONLY);
         try {
-          if (isFull) expect(() => { while (true) writeSync(readerThatNeverReads, Buffer.alloc(512, "y")); }).toThrow(expect.objectContaining({ code: "EAGAIN" }));
+          if (isFull)
+            expect(() => {
+              while (true) writeSync(readerThatNeverReads, Buffer.alloc(512, "y"));
+            }).toThrow(expect.objectContaining({ code: "EAGAIN" }));
           if (isReaderGone) closeSync(readerThatNeverReads);
           await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: descriptor2 });
           const outcome = await Promise.race([proc.exited, Bun.sleep(30_000).then(() => "it stands still")]);
-          expect({ outcome, stdout: outcome === "it stands still" ? "" : await proc.stdout.text() }).toEqual({ outcome: exitCode, stdout });
+          expect({ outcome, stdout: outcome === "it stands still" ? "" : await proc.stdout.text() }).toEqual({
+            outcome: exitCode,
+            stdout,
+          });
         } finally {
           closeSync(descriptor2);
           if (!isReaderGone) closeSync(readerThatNeverReads);
@@ -204,27 +274,52 @@ describe.skipIf(isWindows).concurrent("the default warning printer", () => {
 
   for (const mode of unsupported ? ["plain"] : ["plain", "--aot"]) {
     test(`${mode}: descriptor 2 is a terminal`, async () => {
-      using folder = tempDir("warning-printer-terminal", { "program.mjs": `process.emitWarning("on a terminal"); ${settle} console.log("done");` });
+      using folder = tempDir("warning-printer-terminal", {
+        "program.mjs": `process.emitWarning("on a terminal"); ${settle} console.log("done");`,
+      });
       const cwd = String(folder);
       let cmd = [bunExe(), "program.mjs"];
       if (mode === "--aot") {
-        await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", "program.mjs", "--outfile", "program"], cwd, env: bunEnv, stdout: "ignore", stderr: "pipe" });
-        expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+        await using build = Bun.spawn({
+          cmd: [bunExe(), "build", "--compile", "--aot", "program.mjs", "--outfile", "program"],
+          cwd,
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({
+          stderr: expect.not.stringMatching(/^error\b/m),
+          exitCode: 0,
+        });
         cmd = [join(cwd, "program")];
       }
       const chunks: Buffer[] = [];
       const closed = Promise.withResolvers<void>();
-      const proc = Bun.spawn({ cmd, cwd, env: { ...bunEnv, ...(mode === "--aot" ? { BUN_JSC_crashIfInterpreterIsUsed: "1" } : {}) }, terminal: { data: (_, data) => void chunks.push(Buffer.from(data)), exit: () => closed.resolve() } });
+      const proc = Bun.spawn({
+        cmd,
+        cwd,
+        env: { ...bunEnv, ...(mode === "--aot" ? { BUN_JSC_crashIfInterpreterIsUsed: "1" } : {}) },
+        terminal: { data: (_, data) => void chunks.push(Buffer.from(data)), exit: () => closed.resolve() },
+      });
       const exitCode = await proc.exited;
       await closed.promise;
-      expect(normalize(Buffer.concat(chunks).toString().replaceAll("\r\n", "\n"))).toBe("(node:PID) Warning: on a terminal\n" + hint + "done\n");
+      expect(normalize(Buffer.concat(chunks).toString().replaceAll("\r\n", "\n"))).toBe(
+        "(node:PID) Warning: on a terminal\n" + hint + "done\n",
+      );
       expect(exitCode).toBe(0);
     }, 120_000);
   }
 
   test("plain: --no-warnings", async () => {
-    using folder = tempDir("warning-printer", { "program.mjs": `process.emitWarning("quiet"); ${settle} console.log("done");` });
-    await run([bunExe(), "--no-warnings", "program.mjs"], String(folder), { source: "", stdout: "done\n", stderr: "" }, {});
+    using folder = tempDir("warning-printer", {
+      "program.mjs": `process.emitWarning("quiet"); ${settle} console.log("done");`,
+    });
+    await run(
+      [bunExe(), "--no-warnings", "program.mjs"],
+      String(folder),
+      { source: "", stdout: "done\n", stderr: "" },
+      {},
+    );
   });
 
   test("plain: a node:worker_threads worker prints through its parent", async () => {
@@ -232,6 +327,11 @@ describe.skipIf(isWindows).concurrent("the default warning printer", () => {
       "worker.mjs": `process.emitWarning("in the worker"); ${settle}`,
       "program.mjs": `import { Worker } from "node:worker_threads"; const worker = new Worker(new URL("./worker.mjs", import.meta.url)); await new Promise(resolve => worker.on("exit", resolve)); console.log("done");`,
     });
-    await run([bunExe(), "program.mjs"], String(folder), { source: "", stdout: "done\n", stderr: "(node:PID) Warning: in the worker\n" + hint }, {});
+    await run(
+      [bunExe(), "program.mjs"],
+      String(folder),
+      { source: "", stdout: "done\n", stderr: "(node:PID) Warning: in the worker\n" + hint },
+      {},
+    );
   });
 });

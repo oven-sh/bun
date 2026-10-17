@@ -2,7 +2,14 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";
 
-const options = { target: "ESNext", module: "Preserve", moduleResolution: "bundler", types: [] as string[], strict: true, outDir: "./dist" };
+const options = {
+  target: "ESNext",
+  module: "Preserve",
+  moduleResolution: "bundler",
+  types: [] as string[],
+  strict: true,
+  outDir: "./dist",
+};
 
 async function run(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });

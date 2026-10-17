@@ -319,13 +319,15 @@ impl Finished<'_> {
             buffered: _,
             pairs_compared,
         } = self;
-        (diagnostics.is_empty() && listings.is_empty() && assignments_walked.is_empty() && pairs_compared.is_empty()).then(
-            || {
-                order_dependent_variances
-                    .iter()
-                    .map(|it| (it.sym, it.variances))
-            },
-        )
+        (diagnostics.is_empty()
+            && listings.is_empty()
+            && assignments_walked.is_empty()
+            && pairs_compared.is_empty())
+        .then(|| {
+            order_dependent_variances
+                .iter()
+                .map(|it| (it.sym, it.variances))
+        })
     }
 
     /// Whether `Program::validate` can find the task invalid.

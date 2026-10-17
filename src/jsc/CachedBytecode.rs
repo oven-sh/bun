@@ -499,7 +499,10 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_set_prepared_typed_program(
     }
 }
 
-pub fn start_typed_program(program: &[u8], waits_for_strings: bool) -> bun_ast::type_tags::EarlyEngine {
+pub fn start_typed_program(
+    program: &[u8],
+    waits_for_strings: bool,
+) -> bun_ast::type_tags::EarlyEngine {
     crate::initialize(crate::InitializeOptions::default());
     let (address, size) = (program.as_ptr() as usize, program.len());
     let (sender, receiver) = std::sync::mpsc::channel::<Vec<u8>>();
@@ -510,20 +513,28 @@ pub fn start_typed_program(program: &[u8], waits_for_strings: bool) -> bun_ast::
             // SAFETY: `EarlyEngine` joins this thread when it is finished or dropped, and whoever
             // holds it drops it ahead of the bytes: see `ProgramFacts::engine`.
             let prepared = unsafe { Bun__AOT__readTypedProgram(address as *const u8, size) };
-            let strings = if waits_for_strings { receiver.recv().ok() } else { Some(Vec::new()) };
+            let strings = if waits_for_strings {
+                receiver.recv().ok()
+            } else {
+                Some(Vec::new())
+            };
             if let Some(strings) = strings {
                 // SAFETY: `prepared` is never null and only this thread has it. C++ copies what it
                 // takes from `strings`.
-                unsafe { Bun__AOT__optimizeTypedProgram(prepared, strings.as_ptr(), strings.len()) };
+                unsafe {
+                    Bun__AOT__optimizeTypedProgram(prepared, strings.as_ptr(), strings.len())
+                };
             }
             prepared as usize
         })
         .expect("failed to spawn the AOT engine thread");
     // SAFETY: `EarlyEngine` calls this with what the thread returned, once, and only if nobody took
     // it with `finish`.
-    bun_ast::type_tags::EarlyEngine::new(thread, waits_for_strings.then_some(sender), |prepared| unsafe {
-        Bun__AOT__discardTypedProgram(prepared as *mut core::ffi::c_void)
-    })
+    bun_ast::type_tags::EarlyEngine::new(
+        thread,
+        waits_for_strings.then_some(sender),
+        |prepared| unsafe { Bun__AOT__discardTypedProgram(prepared as *mut core::ffi::c_void) },
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -666,7 +677,13 @@ pub(crate) fn __bun_jsc_check_module_syntax(
     // source it makes of `text` is gone when it returns. It writes `message` and `offset` only
     // where it returns false.
     let is_valid = unsafe {
-        Bun__checkModuleSyntax(&source_url, &text, is_module, &raw mut message, &raw mut offset)
+        Bun__checkModuleSyntax(
+            &source_url,
+            &text,
+            is_module,
+            &raw mut message,
+            &raw mut offset,
+        )
     };
     (!is_valid).then(|| (message.to_owned_slice(), offset))
 }
@@ -755,7 +772,11 @@ pub(crate) fn __bun_jsc_build_program_data(
         unsafe {
             let out = &mut *ctx.cast::<Vec<u8>>();
             out.reserve(size);
-            bun_core::copy_in_parallel(out.spare_capacity_mut().as_mut_ptr().cast::<u8>(), bytes, size);
+            bun_core::copy_in_parallel(
+                out.spare_capacity_mut().as_mut_ptr().cast::<u8>(),
+                bytes,
+                size,
+            );
             out.set_len(out.len() + size);
         };
     }

@@ -13,10 +13,15 @@ import {
   type Needs,
 } from "../../scripts/build/islands-layout.ts";
 
-type Section = [size: number, neededBy: string | "stays", options?: { output?: string; gap?: number; alignment?: number }];
+type Section = [
+  size: number,
+  neededBy: string | "stays",
+  options?: { output?: string; gap?: number; alignment?: number },
+];
 
 function laidOut(sections: Section[], start = 0x200000): Layout & Needs {
-  const result = { address: [], size: [], alignment: [], output: [], core: new Set(), neededBy: new Map() } as Layout & Needs;
+  const result = { address: [], size: [], alignment: [], output: [], core: new Set(), neededBy: new Map() } as Layout &
+    Needs;
   let address = start;
   sections.forEach(([size, neededBy, options = {}], node) => {
     address += options.gap ?? 0;
@@ -33,7 +38,11 @@ function laidOut(sections: Section[], start = 0x200000): Layout & Needs {
 
 const isMovable = (output: string) => output === ".text" || output === ".rodata";
 const stretches = (layout: Layout & Needs) =>
-  rangesThatCanGo(layout, layout, isMovable).map(({ start, end, features }) => [start - 0x200000, end - 0x200000, features]);
+  rangesThatCanGo(layout, layout, isMovable).map(({ start, end, features }) => [
+    start - 0x200000,
+    end - 0x200000,
+    features,
+  ]);
 
 describe("the stretches of an executable that can go", () => {
   test("sections that lie together are one stretch for each set of features, and the stretches abut", () => {
@@ -77,9 +86,15 @@ describe("the stretches of an executable that can go", () => {
   });
 
   test("a run shorter than a page is not listed", () => {
-    expect(stretches(laidOut([[pageSize - 16, "tools"], [0x40, "stays"], [pageSize, "tools"]]))).toEqual([
-      [pageSize + 0x30, 2 * pageSize + 0x30, "tools"],
-    ]);
+    expect(
+      stretches(
+        laidOut([
+          [pageSize - 16, "tools"],
+          [0x40, "stays"],
+          [pageSize, "tools"],
+        ]),
+      ),
+    ).toEqual([[pageSize + 0x30, 2 * pageSize + 0x30, "tools"]]);
   });
 
   test("bytes that no section accounts for end a run", () => {

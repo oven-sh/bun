@@ -62,55 +62,68 @@ const probed = Bun.spawnSync({
 });
 const hasIslands = !probed.stderr.toString().includes("nothing can be left out of this Bun");
 
-describe.skipIf(!hasIslands || !!unsupported)("--compile --aot --compile-trim-runtime leaves out what the program does not name", () => {
-  async function build(folder: string, entry: string, outfile: string, without?: string) {
-    const built = await run(
-      [bunExe(), "build", "--compile", "--aot", "--compile-trim-runtime", entry, "--outfile", outfile],
-      folder,
-      { ...bunEnv, BUN_TRIM_RUNTIME_WITHOUT: without },
-    );
-    expect(built.stderr).not.toContain("error:");
-    expect(built.exitCode).toBe(0);
-    return statSync(join(folder, outfile)).size;
-  }
+describe.skipIf(!hasIslands || !!unsupported)(
+  "--compile --aot --compile-trim-runtime leaves out what the program does not name",
+  () => {
+    async function build(folder: string, entry: string, outfile: string, without?: string) {
+      const built = await run(
+        [bunExe(), "build", "--compile", "--aot", "--compile-trim-runtime", entry, "--outfile", outfile],
+        folder,
+        { ...bunEnv, BUN_TRIM_RUNTIME_WITHOUT: without },
+      );
+      expect(built.stderr).not.toContain("error:");
+      expect(built.exitCode).toBe(0);
+      return statSync(join(folder, outfile)).size;
+    }
 
-  test("a program that names none of them has none of them", async () => {
-    using dir = tempDir("compile-trim-runtime-by-use", files);
-    const folder = String(dir);
-    const byUse = await build(folder, "hello.ts", "hello");
-    const byName = await build(folder, "hello.ts", "hello-without", Object.keys(features).join(","));
-    expect(byUse).toBe(byName);
-    expect(await run([join(folder, "hello")], folder)).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
-  });
-
-  for (const [name, feature] of Object.entries(features)) {
-    test(`${name}: a program that names it keeps it; without it the executable says so`, async () => {
+    test("a program that names none of them has none of them", async () => {
       using dir = tempDir("compile-trim-runtime-by-use", files);
       const folder = String(dir);
-      const env = { ...bunEnv, FOLDER: folder };
-      const kept = await build(folder, `uses-${name}.ts`, "kept");
-      const leftOut = await build(folder, `uses-${name}.ts`, "left-out", name);
-      expect(leftOut).toBeLessThan(kept);
-      expect(await run([join(folder, "kept")], folder, env)).toEqual({ stdout: feature.prints, stderr: "", exitCode: 0 });
-      const refused = await run([join(folder, "left-out")], folder, env);
-      expect(refused.stderr).toContain("this executable was built with --compile-trim-runtime, " + feature.leftOut);
-      expect(refused.exitCode).toBe(70);
+      const byUse = await build(folder, "hello.ts", "hello");
+      const byName = await build(folder, "hello.ts", "hello-without", Object.keys(features).join(","));
+      expect(byUse).toBe(byName);
+      expect(await run([join(folder, "hello")], folder)).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
     });
-  }
 
-  test("a program that evaluates text keeps all of them", async () => {
-    using dir = tempDir("compile-trim-runtime-by-use", files);
-    const folder = String(dir);
-    await build(folder, "evaluates.ts", "evaluates");
-    expect(await run([join(folder, "evaluates")], folder)).toEqual({ stdout: "function function\n", stderr: "", exitCode: 0 });
-  });
+    for (const [name, feature] of Object.entries(features)) {
+      test(`${name}: a program that names it keeps it; without it the executable says so`, async () => {
+        using dir = tempDir("compile-trim-runtime-by-use", files);
+        const folder = String(dir);
+        const env = { ...bunEnv, FOLDER: folder };
+        const kept = await build(folder, `uses-${name}.ts`, "kept");
+        const leftOut = await build(folder, `uses-${name}.ts`, "left-out", name);
+        expect(leftOut).toBeLessThan(kept);
+        expect(await run([join(folder, "kept")], folder, env)).toEqual({
+          stdout: feature.prints,
+          stderr: "",
+          exitCode: 0,
+        });
+        const refused = await run([join(folder, "left-out")], folder, env);
+        expect(refused.stderr).toContain("this executable was built with --compile-trim-runtime, " + feature.leftOut);
+        expect(refused.exitCode).toBe(70);
+      });
+    }
 
-  test("a route that asks for the development server by an option gets a TypeError that says why", async () => {
-    using dir = tempDir("compile-trim-runtime-by-use", files);
-    const folder = String(dir);
-    await build(folder, "styled-route.ts", "styled-route");
-    const ran = await run([join(folder, "styled-route")], folder, { ...bunEnv, FOLDER: folder });
-    expect(ran.stdout).toContain("style: this executable was built with --compile-trim-runtime, without the bundler and the development server");
-    expect(ran.exitCode).toBe(0);
-  });
-});
+    test("a program that evaluates text keeps all of them", async () => {
+      using dir = tempDir("compile-trim-runtime-by-use", files);
+      const folder = String(dir);
+      await build(folder, "evaluates.ts", "evaluates");
+      expect(await run([join(folder, "evaluates")], folder)).toEqual({
+        stdout: "function function\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("a route that asks for the development server by an option gets a TypeError that says why", async () => {
+      using dir = tempDir("compile-trim-runtime-by-use", files);
+      const folder = String(dir);
+      await build(folder, "styled-route.ts", "styled-route");
+      const ran = await run([join(folder, "styled-route")], folder, { ...bunEnv, FOLDER: folder });
+      expect(ran.stdout).toContain(
+        "style: this executable was built with --compile-trim-runtime, without the bundler and the development server",
+      );
+      expect(ran.exitCode).toBe(0);
+    });
+  },
+);

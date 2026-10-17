@@ -47,6 +47,8 @@ public:
 
     DECLARE_EXPORT_INFO;
     bool m_reportOnUncaughtException = false;
+    // [message, handle, ...] that arrived while 'message' had no listener, like Node's kPendingMessages.
+    WriteBarrier<JSArray> m_pendingMessages;
 
     static void destroy(JSC::JSCell* cell)
     {

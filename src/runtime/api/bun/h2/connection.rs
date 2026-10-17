@@ -658,10 +658,7 @@ impl Connection {
         }
         self.replenish_buf = buf;
         // Evict closed streams so the map (and this scan) stay bounded on long-lived connections.
-        // A late DATA/RST/WINDOW_UPDATE for an evicted id takes the unknown-stream path, which
-        // answers RST_STREAM(STREAM_CLOSED) - the 5.1 closed-state behavior. A late HEADERS for an
-        // evicted id re-opens a fresh entry on a server (parity check applies); that matches how
-        // trailers-after-close are treated as a new block by the legacy parser as well.
+        // On a server a late HEADERS for an evicted id re-opens a fresh entry (parity check applies).
         let mut evict = std::mem::take(&mut self.evict_buf);
         evict.clear();
         for (id, s) in self.streams.iter() {
@@ -951,6 +948,9 @@ impl Connection {
     ) -> bool {
         let increment =
             u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) & 0x7fff_ffff;
+        if hdr.stream_id != 0 && self.is_closed_stream(sink, hdr.stream_id) {
+            return false;
+        }
         // §6.9.1: a 0 increment is an error (connection error on stream 0).
         if increment == 0 {
             if hdr.stream_id == 0 {
@@ -1496,8 +1496,10 @@ impl Connection {
         let recv_limit = self
             .acked_local_initial_window
             .max(self.local_settings.initial_window_size) as i64;
-        let mut discard = false;
+        let closed = self.is_closed_stream(sink, hdr.stream_id);
+        let mut discard = closed;
         match self.streams.get_mut(&hdr.stream_id) {
+            _ if closed => {}
             None => {
                 self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
                 sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
@@ -1575,6 +1577,19 @@ impl Connection {
         }
     }
 
+    fn has_existed(&self, sink: &impl Sink, stream_id: u32) -> bool {
+        stream_id <= self.last_stream_id || stream_id <= sink.highest_started_stream_id()
+    }
+
+    /// RFC 9113 §5.1 closed state: frames on such a stream are dropped, as nghttp2 does.
+    fn is_closed_stream(&self, sink: &impl Sink, stream_id: u32) -> bool {
+        match self.streams.get(&stream_id) {
+            Some(s) => s.state == State::Closed,
+            // A stream the embedder opened has no entry here until its first inbound frame.
+            None => !sink.is_local_stream(stream_id) && self.has_existed(sink, stream_id),
+        }
+    }
+
     fn handle_data(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         let mut off = 0usize;
         let mut end = payload.len();
@@ -1633,11 +1648,14 @@ impl Connection {
             s.state = State::Open;
             self.streams.insert(hdr.stream_id, s);
         }
+        if self.is_closed_stream(sink, hdr.stream_id) {
+            return false;
+        }
         let recv_limit = self
             .acked_local_initial_window
             .max(self.local_settings.initial_window_size) as i64;
         let decision = match self.streams.get_mut(&hdr.stream_id) {
-            // §5.1: DATA for an unknown/closed stream is a STREAM_CLOSED error.
+            // §5.1: DATA for a stream nobody opened is a STREAM_CLOSED error.
             None => DataDecision::Rst(ErrorCode::StreamClosed),
             Some(s) => {
                 if !stream::can_receive_data(s.state) {
@@ -1760,10 +1778,7 @@ impl Connection {
         // closed, not idle — a late RST_STREAM on it MUST be tolerated. Anything at or
         // below the highest stream id either layer has started has existed; the embedder's
         // mark covers locally-initiated streams this engine never saw HEADERS for.
-        if on_idle
-            && (hdr.stream_id <= self.last_stream_id
-                || hdr.stream_id <= sink.highest_started_stream_id())
-        {
+        if on_idle && self.has_existed(sink, hdr.stream_id) {
             return false;
         }
         if on_idle {
@@ -2047,9 +2062,7 @@ impl Connection {
     /// The outbound half does not run through this engine yet, so without this hook a
     /// completed request's entry would linger as HalfClosedRemote forever — the map (and
     /// the per-batch replenish/evict scans) would grow by one entry per request. Removal
-    /// has the same observable behavior as scan-eviction of a Closed stream: late frames
-    /// for the id take the unknown-stream path (RST STREAM_CLOSED, the §5.1 closed-state
-    /// answer) and, on a server, a late HEADERS re-opens a fresh entry.
+    /// has the same observable behavior as scan-eviction of a Closed stream.
     pub(crate) fn close_stream(&mut self, stream_id: u32) {
         self.streams.remove(&stream_id);
     }

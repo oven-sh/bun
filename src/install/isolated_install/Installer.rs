@@ -17,8 +17,8 @@ use crate::bin_real;
 use crate::cache_publish::{RenameError, RenameRetry};
 use crate::lockfile::package;
 use crate::package_install::{
-    BUN_TAG, Method as InstallMethod, Staging, StagingLock, StagingPath, Summary as InstallSummary,
-    rename_staging_into_place,
+    BUN_TAG, LinkRefusal, Method as InstallMethod, Staging, StagingLock, StagingPath,
+    Summary as InstallSummary, link_refusal, rename_staging_into_place,
 };
 use crate::package_manager_real::Command;
 use crate::postinstall_optimizer;
@@ -1608,7 +1608,7 @@ impl<'a> Installer<'a> {
                 bun_core::handle_oom(Hardlinker::init(folder_dir, src, dest, skip_dirnames));
             match hardlinker.link() {
                 Ok(()) => true,
-                Err(err) if needs_copy(&err) => false,
+                Err(err) if link_refusal(&err) != LinkRefusal::Fail => false,
                 Err(err) => {
                     print_link_error(
                         "hardlink package folder",
@@ -1827,9 +1827,16 @@ impl<'a> Installer<'a> {
                         let Err(err) = hardlinker.link() else {
                             break 'backend Ok(());
                         };
-                        if needs_copy(&err) {
-                            backend = self.set_backend(InstallMethod::Copyfile);
-                            continue 'backend;
+                        match link_refusal(&err) {
+                            LinkRefusal::Fail => {}
+                            LinkRefusal::CopyPackage => {
+                                backend = InstallMethod::Copyfile;
+                                continue 'backend;
+                            }
+                            LinkRefusal::CopyEveryPackage => {
+                                backend = self.set_backend(InstallMethod::Copyfile);
+                                continue 'backend;
+                            }
                         }
                         print_link_error(
                             "hardlink package",
@@ -3014,14 +3021,6 @@ pub(crate) fn remove_link(path: &ZStr) -> sys::Result<()> {
         }
     }
     sys::unlink(path)
-}
-
-/// EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
-fn needs_copy(hardlink_err: &sys::Error) -> bool {
-    matches!(
-        hardlink_err.get_errno(),
-        sys::Errno::EXDEV | sys::Errno::EACCES | sys::Errno::EPERM
-    )
 }
 
 fn os_path(path: &[paths::OSPathChar]) -> bun_core::fmt::FormatOSPath<'_> {

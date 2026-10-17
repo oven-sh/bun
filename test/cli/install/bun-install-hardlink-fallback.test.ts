@@ -2,9 +2,12 @@
 // hard links and fail linkat with EACCES or EPERM instead of EXDEV. The
 // hardlink install backend must fall back to copying files, like it already
 // does for EXDEV. https://github.com/oven-sh/bun/issues/36852
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
-import { cpSync, readdirSync, statSync } from "node:fs";
+// Other file systems answer ENOTSUP or ENOSYS, and a file that has as many
+// links as its file system allows answers EMLINK.
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, isMusl, isWindows, tempDir } from "harness";
+import { cpSync, linkSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { constants } from "node:os";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -29,7 +32,7 @@ int link(const char *oldpath, const char *newpath) {
 
 // bun-musl is statically linked, so LD_PRELOAD cannot intercept linkat.
 describe.skipIf(!isLinux || isMusl || !cc)("hardlink backend falls back to copyfile", () => {
-  for (const errno of ["EACCES", "EPERM"]) {
+  for (const errno of ["EACCES", "EPERM", "EMLINK", "ENOTSUP", "ENOSYS"]) {
     for (const linker of ["hoisted", "isolated"]) {
       test.concurrent(`linkat fails with ${errno}, ${linker} linker`, async () => {
         using dir = tempDir(`hardlink-${errno}-${linker}`, {
@@ -100,9 +103,9 @@ describe.skipIf(!isLinux || isMusl || !cc)("hardlink backend falls back to copyf
 
 // A folder dependency is linked from its own directory, not from the cache.
 describe.skipIf(!isLinux || isMusl || !cc)("hardlink backend, folder dependency that cannot be hardlinked", () => {
-  // `linkat` fails with EXDEV when `fail` (a C expression over `calls`,
+  // `linkat` fails with `errno` when `fail` (a C expression over `calls`,
   // `oldpath`, `newpath`) is true. Other calls go to the real `linkat`.
-  const shimC = (fail: string) => /* c */ `
+  const shimC = (fail: string, errno = "EXDEV") => /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
@@ -113,7 +116,7 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
   static int calls = 0;
   calls++;
   if (${fail}) {
-    errno = EXDEV;
+    errno = ${errno};
     return -1;
   }
   int (*real)(int, const char *, int, const char *, int) = dlsym(RTLD_NEXT, "linkat");
@@ -121,7 +124,7 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
 }
 `;
 
-  async function installWithShim(dir: string, projectDir: string, expectedInstalled: string) {
+  async function installWithShim(dir: string, projectDir: string, expectedInstalled: string, errno = "EXDEV") {
     {
       await using compile = Bun.spawn({
         cmd: [cc!, "-shared", "-fPIC", "-o", "shim.so", "shim.c", "-ldl"],
@@ -151,20 +154,23 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("EXDEV");
+    expect(stderr).not.toContain(errno);
     expect(stdout).toContain(expectedInstalled);
     expect(exitCode).toBe(0);
   }
 
   // The folder is on another file system: only this package falls back to
   // copying. Packages from the cache keep using hardlinks.
-  for (const spec of ["file:./aaa-local", "file:../aaa-local"]) {
-    test.concurrent(`does not switch the remaining packages to copyfile (${spec})`, async () => {
-      // Packages install in name order: `aaa-local` hits EXDEV before `zzz-bar`
+  // ENOTSUP, ENOSYS: a file system that has no hard links at all.
+  for (const [spec, errno] of ["file:./aaa-local", "file:../aaa-local"].flatMap(spec =>
+    ["EXDEV", "ENOTSUP", "ENOSYS"].map(errno => [spec, errno]),
+  )) {
+    test.concurrent(`does not switch the remaining packages to copyfile (${spec}, ${errno})`, async () => {
+      // Packages install in name order: `aaa-local` is refused before `zzz-bar`
       // is linked from the cache.
       const local = spec === "file:./aaa-local" ? "project/aaa-local" : "aaa-local";
       using dir = tempDir("hardlink-xdev-folder", {
-        "shim.c": shimC(`strstr(oldpath, "xdev-marker") || strstr(newpath, "xdev-marker")`),
+        "shim.c": shimC(`strstr(oldpath, "xdev-marker") || strstr(newpath, "xdev-marker")`, errno),
         "project/package.json": JSON.stringify({
           name: "hardlink-xdev-folder-test",
           dependencies: { "aaa-local": spec, "zzz-bar": "file:./bar-0.0.2.tgz" },
@@ -175,7 +181,7 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
       const projectDir = join(String(dir), "project");
       cpSync(join(import.meta.dir, "bar-0.0.2.tgz"), join(projectDir, "bar-0.0.2.tgz"));
 
-      await installWithShim(String(dir), projectDir, "2 packages installed");
+      await installWithShim(String(dir), projectDir, "2 packages installed", errno);
 
       // The folder was copied, its source is as it was: nlink === 1.
       expect(statSync(join(projectDir, "node_modules", "aaa-local", "xdev-marker.js")).nlink).toBe(1);
@@ -216,6 +222,243 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
       }
     },
   );
+});
+
+const { EDQUOT, EIO, ENOMEM, ENOSPC, EROFS } = constants.errno;
+
+// LINK_SHIM_ERRNO=n      every linkat fails with errno n
+// LINK_SHIM_MAX_LINKS=n  a file system where a file can have n links: one more fails with EMLINK
+const limitShimC = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags) {
+  int (*real)(int, const char *, int, const char *, int) = dlsym(RTLD_NEXT, "linkat");
+  const char *refusal = getenv("LINK_SHIM_ERRNO");
+  const char *max = getenv("LINK_SHIM_MAX_LINKS");
+  struct stat st;
+  if (refusal) {
+    errno = atoi(refusal);
+    return -1;
+  }
+  int rc = real(olddirfd, oldpath, newdirfd, newpath, flags);
+  // Like the kernel: EEXIST and ENOENT are reported before the link count is looked at.
+  if (rc == 0 && max && fstatat(newdirfd, newpath, &st, AT_SYMLINK_NOFOLLOW) == 0 && st.st_nlink > (nlink_t)atoi(max)) {
+    unlinkat(newdirfd, newpath, 0);
+    errno = EMLINK;
+    return -1;
+  }
+  return rc;
+}
+`;
+
+// A tarball of a package with these files and a package.json.
+function tarball(name: string, files: Record<string, string>) {
+  return new Bun.Archive(
+    {
+      "package/package.json": JSON.stringify({ name, version: "1.0.0" }),
+      ...Object.fromEntries(Object.entries(files).map(([path, content]) => [`package/${path}`, content])),
+    },
+    { compress: "gzip" },
+  ).bytes();
+}
+
+// The files below `dir`, the cache tag too.
+function filesOf(dir: string) {
+  return [...new Bun.Glob("**").scanSync({ cwd: dir, onlyFiles: true, dot: true })].sort();
+}
+
+// The link count of every file below `dir`, by relative path.
+function linkCounts(dir: string) {
+  return Object.fromEntries(filesOf(dir).map(file => [file.replaceAll("\\", "/"), statSync(join(dir, file)).nlink]));
+}
+
+// The cache directory of the package `name`.
+function cachedPackage(cache: string, name: string) {
+  for (const packageJson of new Bun.Glob("*/package.json").scanSync({ cwd: cache, absolute: true })) {
+    if (JSON.parse(readFileSync(packageJson, "utf8")).name === name) return join(packageJson, "..");
+  }
+  throw new Error(`${name} is not in the cache`);
+}
+
+const packageFiles = { "index.js": "module.exports = 1;\n", "lib/a.txt": "a\n", "lib/b.txt": "b\n" };
+
+describe.skipIf(!isLinux || isMusl || !cc)("hardlink backend, a link that the file system refuses", () => {
+  let shimDir: ReturnType<typeof tempDir> | undefined;
+  let shimPath = "";
+
+  beforeAll(async () => {
+    shimDir = tempDir("hardlink-limit-shim", { "shim.c": limitShimC });
+    shimPath = join(String(shimDir), "shim.so");
+    await using compile = Bun.spawn({
+      cmd: [cc!, "-shared", "-fPIC", "-o", "shim.so", "shim.c", "-ldl"],
+      cwd: String(shimDir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [compileOut, compileErr, compileExit] = await Promise.all([
+      compile.stdout.text(),
+      compile.stderr.text(),
+      compile.exited,
+    ]);
+    if (compileExit !== 0) {
+      throw new Error(`shim compile failed: ${compileOut}${compileErr}`);
+    }
+  });
+
+  afterAll(() => {
+    shimDir?.[Symbol.dispose]();
+  });
+
+  async function install(cwd: string, linker: string, shim?: Record<string, number>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--backend", "hardlink", "--linker", linker],
+      cwd,
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(cwd, "cache"),
+        ...(shim && {
+          ...Object.fromEntries(Object.entries(shim).map(([key, value]) => [key, String(value)])),
+          LD_PRELOAD: [shimPath, bunEnv.LD_PRELOAD].filter(Boolean).join(":"),
+        }),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // A copy fails for the same reason, so these stay errors.
+  const fatal: [name: string, errno: number, linker: string][] = [
+    ["ENOSPC", ENOSPC, "hoisted"],
+    ["ENOSPC", ENOSPC, "isolated"],
+    ["EDQUOT", EDQUOT, "isolated"],
+    ["EIO", EIO, "isolated"],
+    ["EROFS", EROFS, "isolated"],
+    ["ENOMEM", ENOMEM, "isolated"],
+  ];
+  for (const [name, errno, linker] of fatal) {
+    test.concurrent(`${name} still fails the package, ${linker} linker`, async () => {
+      using dir = tempDir(`hardlink-${name}-${linker}`, {
+        "package.json": JSON.stringify({
+          name: "hardlink-fallback-test",
+          dependencies: { bar: "file:./bar-0.0.2.tgz" },
+        }),
+      });
+      cpSync(join(import.meta.dir, "bar-0.0.2.tgz"), join(String(dir), "bar-0.0.2.tgz"));
+
+      const { stderr, exitCode } = await install(String(dir), linker, { LINK_SHIM_ERRNO: errno });
+      expect(stderr).toContain(`${name}: `);
+      expect(stderr).toMatch(/fail.* bar/);
+      expect(exitCode).toBe(1);
+    });
+  }
+
+  // Every install adds one link to each file of a cached package, so all of its files reach the
+  // limit together. The package is copied. The backend stays: the other packages still link.
+  for (const linker of ["hoisted", "isolated"]) {
+    test.concurrent(
+      `a package at the link limit is copied and the other packages still link, ${linker} linker`,
+      async () => {
+        // More packages than threads, and a full one at each end of the name order: whichever
+        // end is linked first, most of the others start after a link was refused.
+        const full = ["a-full", "zz-full"];
+        const others = Array.from({ length: 6 }, (_, i) => `m-other-${i}`);
+        using dir = tempDir(`hardlink-limit-${linker}`, {
+          "package.json": JSON.stringify({
+            name: "hardlink-fallback-test",
+            dependencies: Object.fromEntries([...full, ...others].map(name => [name, `file:./${name}.tgz`])),
+          }),
+        });
+        for (const name of [...full, ...others]) {
+          await Bun.write(join(String(dir), `${name}.tgz`), await tarball(name, packageFiles));
+        }
+
+        // Fill the cache, then give each file of the full packages a second link, as another project does.
+        expect((await install(String(dir), linker)).exitCode).toBe(0);
+        rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
+        mkdirSync(join(String(dir), "other-project"));
+        for (const name of full) {
+          const cached = cachedPackage(join(String(dir), "cache"), name);
+          for (const [i, file] of filesOf(cached).entries()) {
+            linkSync(join(cached, file), join(String(dir), "other-project", `${name}-${i}`));
+          }
+        }
+
+        const { stdout, stderr, exitCode } = await install(String(dir), linker, {
+          LINK_SHIM_MAX_LINKS: 2,
+          UV_THREADPOOL_SIZE: 2,
+        });
+        expect(stderr).not.toContain("EMLINK");
+        expect(stdout).toContain("8 packages installed");
+        const counts = (nlink: number) =>
+          Object.fromEntries(
+            [".bun-tag", "package.json", ...Object.keys(packageFiles)].sort().map(file => [file, nlink]),
+          );
+        const installed = (names: string[]) => names.map(name => linkCounts(join(String(dir), "node_modules", name)));
+        expect(installed(full)).toEqual(full.map(() => counts(1)));
+        expect(installed(others)).toEqual(others.map(() => counts(2)));
+        expect(exitCode).toBe(0);
+      },
+    );
+  }
+});
+
+// No injection: NTFS refuses one more link to a file that has 1023 of them.
+test.skipIf(!isWindows)("a package at the NTFS link limit is copied, isolated linker", async () => {
+  using dir = tempDir("hardlink-ntfs-limit", {
+    "package.json": JSON.stringify({
+      name: "hardlink-fallback-test",
+      dependencies: { pkg: "file:./pkg.tgz" },
+    }),
+  });
+  await Bun.write(join(String(dir), "pkg.tgz"), await tarball("pkg", packageFiles));
+  const install = async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--linker", "isolated"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+
+  expect((await install()).exitCode).toBe(0);
+  rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
+
+  // Every file of the package, as the installs of many projects leave them.
+  const cached = cachedPackage(join(String(dir), "cache"), "pkg");
+  mkdirSync(join(String(dir), "links"));
+  let atLimit = 0;
+  const files = filesOf(cached);
+  files.forEach((file, f) => {
+    for (let i = 0; i < 1100; i++) {
+      try {
+        linkSync(join(cached, file), join(String(dir), "links", `${f}-${i}`));
+      } catch {
+        atLimit++;
+        break;
+      }
+    }
+  });
+
+  const { stdout, stderr, exitCode } = await install();
+  expect(stderr).not.toContain("failed to link");
+  expect(stdout).toContain("1 package installed");
+  // A file system other than NTFS may have no such limit. The install works on it too.
+  if (atLimit === files.length) {
+    expect(Object.values(linkCounts(join(String(dir), "node_modules", "pkg")))).toEqual(files.map(() => 1));
+  }
+  expect(exitCode).toBe(0);
 });
 
 // This is what the kernel does for a file system without symlinks: the path is looked up first.

@@ -560,7 +560,7 @@ impl JSBundleCompletionTask {
                         Err(err) => {
                             return CompileResult::fail_fmt(format_args!(
                                 "{}: writing sourcemap file {}",
-                                bstr::BStr::new(err.msg().unwrap_or(err.name())),
+                                bstr::BStr::new(err.msg().unwrap_or_else(|| err.name())),
                                 bun_core::fmt::quote(&sourcemap_full_path),
                             ));
                         }

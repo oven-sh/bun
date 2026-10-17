@@ -84,7 +84,7 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
     // In a URL, `?` and `#` end the path and `%` starts an escape.
     if (/[[\]:*?#%]/.test(relative)) {
       throw new Error(
-        `"${display(file)}": a page cannot have "[", ":", "*", "?", "#" or "%" in its path. Its URL must be fixed.`,
+        `"${display(file)}": a page cannot have "[", "]", ":", "*", "?", "#" or "%" in its path. Its URL must be fixed.`,
       );
     }
     const route = routeOfPage(relative);

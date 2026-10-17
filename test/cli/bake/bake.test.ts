@@ -153,7 +153,12 @@ test.concurrent.each([
   {
     name: "a page with a [param]",
     files: { "app/pages/blog/[slug].html": page },
-    error: `"app/pages/blog/[slug].html": a page cannot have "[", ":", "*", "?", "#" or "%" in its path. Its URL must be fixed.`,
+    error: `"app/pages/blog/[slug].html": a page cannot have "[", "]", ":", "*", "?", "#" or "%" in its path. Its URL must be fixed.`,
+  },
+  {
+    name: "a page with a ] in its name",
+    files: { "app/pages/a]b.html": page },
+    error: `"app/pages/a]b.html": a page cannot have "[", "]", ":", "*", "?", "#" or "%" in its path. Its URL must be fixed.`,
   },
   // `:` is not allowed in a file name on Windows.
   ...(isWindows
@@ -162,7 +167,7 @@ test.concurrent.each([
         {
           name: "a page with a :param",
           files: { "app/pages/users/:id.html": page },
-          error: `"app/pages/users/:id.html": a page cannot have "[", ":", "*", "?", "#" or "%" in its path. Its URL must be fixed.`,
+          error: `"app/pages/users/:id.html": a page cannot have "[", "]", ":", "*", "?", "#" or "%" in its path. Its URL must be fixed.`,
         },
       ]),
   {

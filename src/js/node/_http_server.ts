@@ -324,6 +324,7 @@ function Server(options, callback): void {
   this[kListenerGeneration] = undefined;
   this[tlsSymbol] = null;
   this.noDelay = true;
+  let tlsContextOptions, pfxExtraCAs, serverName;
   if (typeof options === "function") {
     callback = options;
     options = {};
@@ -344,34 +345,30 @@ function Server(options, callback): void {
       tlsOptions = tlsHelpers.processPfxOptions(options);
     }
 
-    let cert = tlsOptions.cert;
+    // A falsy key, cert or ca counts as absent: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1431-L1454
+    let cert = tlsOptions.cert || undefined;
     if (cert) {
       tlsHelpers.throwOnInvalidTLSArray("options.cert", cert);
     }
 
-    let key = tlsOptions.key;
+    let key = tlsOptions.key || undefined;
     if (key) {
       tlsHelpers.throwOnInvalidTLSArray("options.key", key);
     }
 
-    let ca = tlsOptions.ca;
-    // PKCS#12-embedded CAs extend the trust set; the server path hands raw
-    // {key, cert, ca} to the native config and has no addCACert hook, so fold
-    // them into `ca` (mirrors tls.Server.setSecureContext).
-    const pfxExtraCAs = tlsOptions._pfxExtraCACerts;
-    if (pfxExtraCAs?.length) {
-      ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
-    }
+    let ca = tlsOptions.ca || undefined;
     if (ca) {
       tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
     }
+    // PKCS#12-embedded CAs extend the trust set: node:tls folds them into `ca` when it builds the context.
+    pfxExtraCAs = tlsOptions._pfxExtraCACerts;
 
     let passphrase = options.passphrase || undefined;
     if (passphrase && typeof passphrase !== "string") {
       throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
     }
 
-    let serverName = options.servername;
+    serverName = options.servername;
     if (serverName && typeof serverName !== "string") {
       throw $ERR_INVALID_ARG_TYPE("options.servername", "string", serverName);
     }
@@ -382,20 +379,20 @@ function Server(options, callback): void {
     }
 
     if (tlsHelpers) {
-      const { secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
       // A falsy value counts as absent: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1423-L1518
       const secureProtocol = options.secureProtocol || undefined;
-      const minVersionOption = options.minVersion || undefined;
-      const maxVersionOption = options.maxVersion || undefined;
+      const minVersion = options.minVersion || undefined;
+      const maxVersion = options.maxVersion || undefined;
       const sessionTimeout = options.sessionTimeout || undefined;
+      const ciphers = options.ciphers || undefined;
       tlsHelpers.validateSecureContextOptions({
         ...options,
         secureProtocol,
-        minVersion: minVersionOption,
-        maxVersion: maxVersionOption,
+        minVersion,
+        maxVersion,
         sessionTimeout,
         passphrase,
-        ciphers: options.ciphers || undefined,
+        ciphers,
         clientCertEngine: options.clientCertEngine || undefined,
         ticketKeys: options.ticketKeys || undefined,
         // BoringSSL has no DHE suites to apply it to.
@@ -406,39 +403,41 @@ function Server(options, callback): void {
         tlsHelpers.throwOnInvalidTLSArray("options.crl", crl);
       }
       if (options.honorCipherOrder !== false) secureOptions |= tlsHelpers.SSL_OP_CIPHER_SERVER_PREFERENCE;
-      // secureProtocol, or else minVersion/maxVersion, as the integer range the native layer applies; 0 keeps its defaults.
-      let minVersion, maxVersion;
-      const ciphers = options.ciphers ? tlsHelpers.stripTls13CipherNames(options.ciphers) : undefined;
-      const range = secureProtocolToVersionRange(secureProtocol);
-      if (range) {
-        minVersion = range[0];
-        maxVersion = range[1];
-      } else {
-        minVersion = tlsStringToProtocolVersion(ciphers?.tls13Only ? "TLSv1.3" : minVersionOption);
-        maxVersion = tlsStringToProtocolVersion(maxVersionOption);
-      }
-      this[tlsSymbol] = normalizeServerTls({
-        serverName,
-        key: tlsHelpers.normalizePemKeyOption(key, passphrase),
+      tlsContextOptions = normalizeServerTls({
+        __proto__: null,
+        key,
         cert,
         ca,
         crl,
-        sessionTimeout: sessionTimeout ?? 0,
-        sigalgs: options.sigalgs,
-        ecdhCurve: options.ecdhCurve ?? require("node:tls").DEFAULT_ECDH_CURVE,
         passphrase,
+        ciphers,
+        sigalgs: options.sigalgs,
+        ecdhCurve: options.ecdhCurve,
+        sessionTimeout,
         secureOptions,
+        secureProtocol,
         minVersion,
         maxVersion,
-        ciphers: ciphers?.cipherList || undefined,
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
       });
     }
   }
 
-  this[optionsSymbol] = options;
   storeHTTPOptions.$call(this, options);
+
+  if (tlsContextOptions) {
+    // After the HTTP options, as in Node: https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L92-L93
+    const { kCreateServerContext } = require("internal/tls");
+    this[tlsSymbol] = {
+      __proto__: null,
+      secureContext: require("node:tls")[kCreateServerContext](tlsContextOptions, pfxExtraCAs),
+      requestCert: tlsContextOptions.requestCert,
+      serverName,
+    };
+  }
+  // listen() needs these. They are set last, so that a server whose context did not build cannot listen without TLS.
+  this[optionsSymbol] = options;
 
   if (callback) this.on("request", callback);
   return this;
@@ -638,7 +637,8 @@ Server.prototype.listen = function () {
 
       const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
-        tls = normalizeServerTls({ __proto__: null, ...otherTLS });
+        // Read by this call. Only the constructor names a context.
+        tls = normalizeServerTls({ __proto__: null, ...otherTLS, secureContext: undefined });
       }
     } else if (typeof arg0 === "string" && !(Number(arg0) >= 0)) {
       // (path[...][, cb])
@@ -721,6 +721,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
+      // The context this server was constructed with carries its client-certificate policy: the listener gets it alone.
+      const secureContext = tls.secureContext;
+      if (secureContext) tls = { __proto__: null, secureContext };
     }
     this[serverSymbol] = Bun.serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default

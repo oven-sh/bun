@@ -1,6 +1,7 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
+use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
 use bun_core::ZStr;
 use bun_http_types::Method::Method;
 
@@ -115,6 +116,16 @@ impl<const SSL: bool> App<SSL> {
         } else {
             Some(app.cast::<Self>())
         }
+    }
+
+    /// A TLS app that serves `ctx` as it is and writes nothing to it. `None` for an app without TLS.
+    pub fn create_with_ssl_ctx(ctx: &OwnedSslCtx) -> Option<*mut Self> {
+        if !SSL {
+            return None;
+        }
+        // SAFETY: `ctx` owns a live SSL_CTX, which C up-refs before it stores the pointer.
+        let app = unsafe { c::uws_create_app_with_ssl_ctx(ctx.as_ptr()) };
+        Some(app.cast::<Self>())
     }
 
     /// # Safety
@@ -534,6 +545,7 @@ pub mod c {
             user_data: *mut c_void,
         );
         pub(crate) fn uws_create_app(ssl: i32, options: BunSocketContextOptions) -> *mut uws_app_t;
+        pub(crate) fn uws_create_app_with_ssl_ctx(ssl_ctx: *mut SSL_CTX) -> *mut uws_app_t;
         pub(crate) fn uws_app_destroy(ssl: i32, app: *mut uws_app_t);
         pub(crate) safe fn uws_app_set_flags(
             ssl: i32,

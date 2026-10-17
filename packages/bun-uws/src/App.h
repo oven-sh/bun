@@ -103,9 +103,10 @@ struct TemplatedApp {
 private:
     /* The app always owns at least one http context, but creates websocket contexts on demand */
     HttpContext<SSL> *httpContext;
-    /* Shared SSL_CTX for every accepted socket. nullptr for plain HTTP. Built
-     * once in the constructor; the listener up_ref's it; SSL_CTX_free in dtor. */
+    /* Shared SSL_CTX for every accepted socket, nullptr for plain HTTP. Built or adopted in the constructor, freed in the dtor. */
     struct ssl_ctx_st *sslCtx = nullptr;
+    /* An adopted SSL_CTX also serves its owner's other users: the app never writes to it. */
+    bool sslCtxIsAdopted = false;
     /* SNI: the tree hangs off the listen socket, but addServerName() is allowed
      * before listen(). Queue them and replay onto each us_listen_socket_t. */
     struct PendingServerName {
@@ -314,6 +315,17 @@ private:
         }
         httpContext = HttpContext<SSL>::create(Loop::get(), options.request_cert, options.reject_unauthorized);
     }
+
+    /* Adopts a context its owner built: one more reference, no build, and the client-certificate policy of `ctx`. */
+    TemplatedApp(struct ssl_ctx_st *ctx) {
+        static_assert(SSL, "only a TLS app serves an SSL_CTX");
+        us_internal_ssl_ctx_up_ref(ctx);
+        sslCtx = ctx;
+        sslCtxIsAdopted = true;
+        int requestCert = 0, rejectUnauthorized = 0;
+        us_ssl_ctx_get_client_cert_policy(ctx, &requestCert, &rejectUnauthorized);
+        httpContext = HttpContext<SSL>::create(Loop::get(), requestCert, rejectUnauthorized);
+    }
 public:
 
     static TemplatedApp<SSL>* create(SocketContextOptions options = {}) {
@@ -323,6 +335,10 @@ public:
             return nullptr;
         }
         return app;
+    }
+
+    static TemplatedApp<SSL>* create(struct ssl_ctx_st *ctx) {
+        return new TemplatedApp<SSL>(ctx);
     }
 
     bool constructorFailed() {
@@ -390,6 +406,7 @@ public:
     void attachHttp2(Http2Context *ctx, bool allowHttp1) {
         ctx->attach(httpContext->getSocketContextData(), allowHttp1);
         if constexpr (SSL) {
+            ASSERT(!sslCtxIsAdopted);
             us_ssl_ctx_enable_http2_alpn(sslCtx, allowHttp1);
             /* Bun attaches before addServerName(), which enables ALPN itself;
              * this covers embedders that add names first. */

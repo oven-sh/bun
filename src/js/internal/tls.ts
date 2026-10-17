@@ -275,6 +275,9 @@ function validateSecureContextOptions(options) {
 
 const SSL_OP_CIPHER_SERVER_PREFERENCE = 0x00400000;
 
+// The key under which node:tls keeps the builder of a server's context, for node:http.
+const kCreateServerContext = Symbol("kCreateServerContext");
+
 let NativeSecureContext;
 
 /**
@@ -472,6 +475,7 @@ function tlsHandshakeError(verifyError) {
 
 export {
   SSL_OP_CIPHER_SERVER_PREFERENCE,
+  kCreateServerContext,
   nodeClientTlsKeys,
   nodeClientTlsToNative,
   normalizePemKeyOption,

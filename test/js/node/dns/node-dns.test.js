@@ -8,6 +8,7 @@ import { once } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as util from "node:util";
+import * as dnstools from "../test/common/dns";
 
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
@@ -171,6 +172,58 @@ test("dns.resolveTxt (txt.socketify.dev)", () => {
     }
   });
   return promise;
+});
+
+// A TXT record can hold several character strings (RFC 1035 3.3.14). Node
+// returns one inner array per record with one string per character string.
+describe("TXT records with several character strings", () => {
+  const answers = [
+    { type: "TXT", entries: ["v=spf1 ", "-all"], ttl: 60 },
+    { type: "TXT", entries: ["second record"], ttl: 60 },
+    { type: "TXT", entries: ["v=DKIM1; ", "k=rsa; ", "p=third"], ttl: 60 },
+  ];
+  const expected = [["v=spf1 ", "-all"], ["second record"], ["v=DKIM1; ", "k=rsa; ", "p=third"]];
+
+  async function withTxtServer(fn) {
+    const server = dgram.createSocket("udp4");
+    server.on("message", (msg, { address, port }) => {
+      const parsed = dnstools.parseDNSPacket(msg);
+      const domain = parsed.questions[0].domain;
+      server.send(
+        dnstools.writeDNSPacket({
+          id: parsed.id,
+          questions: parsed.questions,
+          answers: answers.map(answer => ({ domain, ...answer })),
+        }),
+        port,
+        address,
+      );
+    });
+    server.bind(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const resolver = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
+      resolver.setServers([`127.0.0.1:${server.address().port}`]);
+      return await fn(resolver);
+    } finally {
+      server.close();
+    }
+  }
+
+  test("resolveTxt returns one inner array per record", async () => {
+    const records = await withTxtServer(resolver => resolver.resolveTxt("example.test"));
+    expect(records).toEqual(expected);
+  });
+
+  test("resolve(name, 'TXT') returns one inner array per record", async () => {
+    const records = await withTxtServer(resolver => resolver.resolve("example.test", "TXT"));
+    expect(records).toEqual(expected);
+  });
+
+  test("resolveAny returns one TXT entry per record", async () => {
+    const records = await withTxtServer(resolver => resolver.resolveAny("example.test"));
+    expect(records).toEqual(expected.map(entries => ({ type: "TXT", entries })));
+  });
 });
 
 test("dns.resolveSoa (bun.sh)", () => {

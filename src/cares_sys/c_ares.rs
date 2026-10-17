@@ -7,7 +7,7 @@
 
 #[cfg(windows)]
 use core::ffi::c_short;
-use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
+use core::ffi::{c_char, c_int, c_uchar, c_uint, c_ushort, c_void};
 use core::ptr;
 
 #[cfg(windows)]
@@ -1200,22 +1200,30 @@ impl AresReply for struct_ares_mx_reply {
     }
 }
 
+/// One node per TXT character string. `record_start` marks the first string of each record.
 #[repr(C)]
-pub struct struct_ares_txt_reply {
-    pub next: *mut struct_ares_txt_reply,
+pub struct struct_ares_txt_ext {
+    pub next: *mut struct_ares_txt_ext,
     pub(crate) txt: *mut u8,
     pub(crate) length: usize,
+    pub(crate) record_start: c_uchar,
 }
 
-impl AresReply for struct_ares_txt_reply {
+impl AresReply for struct_ares_txt_ext {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
         // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
-        unsafe { ares_parse_txt_reply(abuf, alen, out) }
+        unsafe { ares_parse_txt_reply_ext(abuf, alen, out) }
     }
 }
 
-impl struct_ares_txt_reply {
-    /// Safe view of the c-ares-owned TXT record bytes.
+impl struct_ares_txt_ext {
+    /// True on the first character string of each TXT record, the list head included.
+    #[inline]
+    pub fn is_record_start(&self) -> bool {
+        self.record_start != 0
+    }
+
+    /// Safe view of the c-ares-owned TXT character string bytes.
     #[inline]
     pub fn txt_bytes(&self) -> &[u8] {
         if self.txt.is_null() {
@@ -1269,7 +1277,7 @@ pub struct struct_any_reply {
     pub aaaa_reply: Option<Box<hostent_with_ttls>>,
     pub mx_reply: *mut struct_ares_mx_reply,
     pub ns_reply: *mut struct_hostent,
-    pub txt_reply: *mut struct_ares_txt_reply,
+    pub txt_reply: *mut struct_ares_txt_ext,
     pub srv_reply: *mut struct_ares_srv_reply,
     pub ptr_reply: *mut struct_hostent,
     pub naptr_reply: *mut struct_ares_naptr_reply,
@@ -1373,7 +1381,7 @@ impl struct_any_reply {
         }
 
         // SAFETY: see `ares_parse_mx_reply` call above.
-        result = unsafe { ares_parse_txt_reply(abuf, alen, &raw mut reply.txt_reply) };
+        result = unsafe { ares_parse_txt_reply_ext(abuf, alen, &raw mut reply.txt_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -1513,10 +1521,10 @@ unsafe extern "C" {
         alen: c_int,
         mx_out: *mut *mut struct_ares_mx_reply,
     ) -> c_int;
-    pub fn ares_parse_txt_reply(
+    pub fn ares_parse_txt_reply_ext(
         abuf: *const u8,
         alen: c_int,
-        txt_out: *mut *mut struct_ares_txt_reply,
+        txt_out: *mut *mut struct_ares_txt_ext,
     ) -> c_int;
     pub fn ares_parse_naptr_reply(
         abuf: *const u8,

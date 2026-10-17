@@ -7,8 +7,7 @@ use bun_core::env_var;
 use bun_core::{self, Environment, Global};
 use bun_jsc::{EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult};
 
-// Materializes the array on first access through `Bun__Process__createArgv`
-// below, which returns zero with the exception pending.
+// Filled on first access by `Bun__Process__createArgv` below. Zero means a pending exception.
 unsafe extern "C" {
     safe fn Bun__Process__getArgv(global: &JSGlobalObject) -> JSValue;
 }

@@ -160,6 +160,14 @@ unsigned int us_socket_ssl_spill_pending(struct us_socket_t *s) {
     return 0;
 }
 
+int us_socket_buffer_size(struct us_socket_t *s, int is_recv, int size, int *out) {
+    return bsd_socket_buffer_size(us_poll_fd(&s->p), is_recv, size, out);
+}
+
+int us_socket_ssl_spill_dropped(struct us_socket_t *s) {
+    return s->ssl && s->ssl_spill_dropped;
+}
+
 int us_connecting_socket_is_closed(struct us_connecting_socket_t *c) {
     return c->closed;
 }

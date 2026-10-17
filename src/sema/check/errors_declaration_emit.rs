@@ -3725,10 +3725,22 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             self.result_has_external_module_indicator = true;
             text.extend_from_slice(b" from ");
             match from_expression {
-                // `rewriteModuleSpecifier` leaves what is not a string literal as it is.
+                // `rewriteModuleSpecifier` leaves what is not a string literal as it is. This is the
+                // source from the expression to where its innermost parentheses close, in as many
+                // parentheses as it has. A missing expression starts at the next token and ends
+                // before it, so it has no text.
                 Some(&(_, e)) if e.is_some() => {
-                    let (start, end) = (hir[e].pos, self.c.end_of_expr(self.file(), e));
-                    text.extend_from_slice(&hir.text[start as usize..end as usize]);
+                    let around = parentheses_around(hir, e);
+                    let end = match around.first() {
+                        // They end after the expression: at their `)`.
+                        Some(innermost) if innermost.2 > hir[e].end => innermost.2 - 1,
+                        _ => hir[e].end,
+                    };
+                    let start = start_inside_parentheses(hir, e);
+                    let inside = hir.text.get(start as usize..end as usize);
+                    text.resize(text.len() + around.len(), b'(');
+                    text.extend_from_slice(inside.unwrap_or_default());
+                    text.resize(text.len() + around.len(), b')');
                 }
                 Some(_) => {}
                 None => text.extend_from_slice(&self.module_specifier_text(s, spec)),

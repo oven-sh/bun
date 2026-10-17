@@ -18613,5 +18613,77 @@
       "generated_131.ts": "export {}\ntype Json = string | Json[];\ntype ValidateJSON<T> = ((...args: Array<any>) => any) extends T ? never : { [K in keyof T]: ValidateJSON<T[K]> };\ntype Check<T> = T extends ValidateJSON<T> ? { a?: 1 } : { a?: 2 };\ntype Box<T> = { v: T };\ntype Opt<T> = T extends string ? { s: T } : { n: T };\ndeclare function take(data: Json): void;\ndeclare function takeN(data: number): void;\ndeclare const j: Json;\ndeclare class C<T = unknown> { constructor(p0: (x: T) => void, p1: Check<T[]>, ...r: T[]); value: T }\nnew C<Json>(1, j).value;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"target\": \"es2022\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"lib\": [\"es2022\"], \"jsx\": \"preserve\" } }\n"
     }
+  },
+  "export-from-without-a-module-specifier-where-declarations-are-emitted": {
+    "files": {
+      "between.ts": "export const b = 1;\nexport * from\nexport const c = 2;\n",
+      "cast.js": "export * from /** @type {any} */ ( )\n",
+      "from.ts": "export * from\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var console: { log(...args: unknown[]): void };\n",
+      "m.ts": "export const a = 1;\n",
+      "named.ts": "export { a } from // which module\n",
+      "namespace.ts": "export * as ns from\r\n",
+      "star.ts": "export *\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"noEmit\": true, \"declaration\": true, \"allowJs\": true } }\n",
+      "type.ts": "export type *\n"
+    }
+  },
+  "export-from-without-a-module-specifier-in-a-referenced-project": {
+    "files": {
+      "app/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var console: { log(...args: unknown[]): void };\n",
+      "app/main.ts": "import \"../lib/star\";\nimport \"../lib/namespace\";\nimport \"../lib/named\";\nimport \"../lib/type\";\nimport \"../lib/between\";\nexport const planted: number = \"x\";\n",
+      "app/tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"composite\": true }, \"references\": [{ \"path\": \"../lib\" }] }\n",
+      "lib/between.ts": "export const b = 1;\nexport * from\nexport const c = 2;\n",
+      "lib/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var console: { log(...args: unknown[]): void };\n",
+      "lib/m.ts": "export const a = 1;\n",
+      "lib/named.ts": "export { a } from // which module\n",
+      "lib/namespace.ts": "export * as ns from\r\n",
+      "lib/star.ts": "export *\n",
+      "lib/tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"composite\": true } }\n",
+      "lib/type.ts": "export type *\n",
+      "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./lib\" }, { \"path\": \"./app\" }] }\n"
+    },
+    "build": true
+  },
+  "export-from-a-module-specifier-in-parentheses-in-a-referenced-project": {
+    "files": {
+      "app/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var console: { log(...args: unknown[]): void };\n",
+      "app/main.ts": "import \"../lib/closed\";\nimport \"../lib/nested\";\nimport \"../lib/open\";\nimport \"../lib/half\";\nimport \"../lib/lines\";\nimport \"../lib/operand\";\nexport const planted: number = \"x\";\n",
+      "app/tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"composite\": true }, \"references\": [{ \"path\": \"../lib\" }] }\n",
+      "lib/closed.ts": "export * from (\"./m\")\n",
+      "lib/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var console: { log(...args: unknown[]): void };\n",
+      "lib/half.ts": "export * from ((\"./m\")\n",
+      "lib/lines.ts": "export * from (\n  \"./m\" // the module\n)\n",
+      "lib/m.ts": "export const a = 1;\n",
+      "lib/nested.ts": "export { a } from ((  \"./m\"  ));\n",
+      "lib/open.ts": "export * from (\"./m\"\n",
+      "lib/operand.ts": "export * from (1 + (2))\n",
+      "lib/tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"composite\": true } }\n",
+      "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./lib\" }, { \"path\": \"./app\" }] }\n"
+    },
+    "build": true
+  },
+  "export-from-parentheses-with-an-expression-that-is-not-whole-in-a-referenced-project": {
+    "files": {
+      "app/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var console: { log(...args: unknown[]): void };\n",
+      "app/main.ts": "import \"../lib/empty\";\nimport \"../lib/twice\";\nimport \"../lib/comment\";\nimport \"../lib/open\";\nimport \"../lib/binary\";\nimport \"../lib/space\";\nimport \"../lib/comma\";\nimport \"../lib/dot\";\nimport \"../lib/half\";\nimport \"../lib/arrow\";\nimport \"../lib/block\";\nexport const planted: number = \"x\";\n",
+      "app/tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"composite\": true }, \"references\": [{ \"path\": \"../lib\" }] }\n",
+      "lib/arrow.ts": "export * from (x => a +\n)\n",
+      "lib/binary.ts": "export * from (a +\n)\n",
+      "lib/block.ts": "declare module \"x\" {\n    export * from (a.\n    )\n}\n",
+      "lib/comma.ts": "export * from (a,\n)\n",
+      "lib/comment.ts": "export * from ( /* none */ )\n",
+      "lib/dot.ts": "export * from (a.\n)\n",
+      "lib/empty.ts": "export * from ()\n",
+      "lib/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var console: { log(...args: unknown[]): void };\n",
+      "lib/half.ts": "export * from ((a +\n)\n",
+      "lib/m.ts": "export const a = 1;\n",
+      "lib/open.ts": "export * from (\n",
+      "lib/space.ts": "export * from (a + )\n",
+      "lib/tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"composite\": true } }\n",
+      "lib/twice.ts": "export * from (())\n",
+      "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./lib\" }, { \"path\": \"./app\" }] }\n"
+    },
+    "build": true
   }
 }

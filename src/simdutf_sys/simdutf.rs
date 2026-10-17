@@ -282,3 +282,9 @@ pub mod base64 {
         }
     }
 }
+
+/// False when no compiled-in kernel runs on this CPU: simdutf's
+/// `unsupported_implementation` stub returns false for every query.
+pub fn has_any_implementation() -> bool {
+    validate::ascii(b"a")
+}

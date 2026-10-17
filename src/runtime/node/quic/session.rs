@@ -920,9 +920,12 @@ impl QuicSession {
             }
             let runs_js = match &event {
                 SessionEvent::PeerClose { .. } | SessionEvent::Closed => false,
-                SessionEvent::StreamClosed { stream } => self
-                    .live_stream(*stream)
-                    .is_some_and(|s| s.is_announce_suppressed() || !self.defers_stream_close(s)),
+                SessionEvent::StreamClosed { stream } => {
+                    !self.conn.get().is_null()
+                        || self
+                            .live_stream(*stream)
+                            .is_some_and(|s| s.is_announce_suppressed() || !s.closed_by_conn())
+                }
                 _ => true,
             };
             if runs_js {

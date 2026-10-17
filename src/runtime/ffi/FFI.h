@@ -64,6 +64,7 @@ typedef enum {
 } napi_status;
 BUN_FFI_IMPORT void* NapiHandleScope__open(void* napi_env, bool detached);
 BUN_FFI_IMPORT void NapiHandleScope__close(void* napi_env, void* handleScope);
+BUN_FFI_IMPORT bool NapiEnv__throwPendingException(void* napi_env);
 BUN_FFI_IMPORT extern struct NapiEnv Bun__thisFFIModuleNapiEnv;
 #endif
 

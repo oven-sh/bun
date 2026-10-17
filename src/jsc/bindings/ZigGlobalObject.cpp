@@ -3751,6 +3751,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         Bun::evictModuleThatNothingFetches(globalObject, resolvedKey);
         RETURN_IF_EXCEPTION(scope, {});
     }
+    if (isImportCall) [[unlikely]]
+        globalObject->onLoadPlugins.keyOfImportCall = resolved;
     return resolvedKey;
 }
 
@@ -3842,7 +3844,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     ASSERT(result);
     if (globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
-        Bun::didStartDynamicImport(globalObject, result);
+        Bun::didStartDynamicImport(globalObject, result, std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {}));
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     return result;

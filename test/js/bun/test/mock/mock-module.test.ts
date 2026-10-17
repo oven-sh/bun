@@ -4811,6 +4811,34 @@ test.concurrent(
   },
 );
 
+test.concurrent(
+  "an import() gets the exports of the mock it started under, however late the factory settles",
+  async () => {
+    await expectFixturesToPass(
+      {
+        "part.js": `export const part = "real part";`,
+        "host.js": `export const host = "real host";`,
+        "opener.js": `export const open = async () => (await import("./host.js")).host;`,
+        "late.test.js": `
+        import { expect, test, vi } from "bun:test";
+        test("the mock is removed and something else is imported while the factory waits", async () => {
+          const called = Promise.withResolvers(), gate = Promise.withResolvers();
+          vi.doMock("./host.js", async () => (called.resolve(), await gate.promise, { host: "mock" }));
+          const { open } = await import("./opener.js");
+          const opened = open();
+          await called.promise;
+          vi.doUnmock("./host.js");
+          await import("./part.js");
+          gate.resolve();
+          expect(await opened).toBe("mock");
+        });
+      `,
+      },
+      1,
+    );
+  },
+);
+
 test.concurrent("evicting modules calls no accessor of module.children", async () => {
   await expectFixturesToPass(
     {

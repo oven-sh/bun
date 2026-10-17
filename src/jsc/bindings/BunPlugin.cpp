@@ -477,6 +477,8 @@ public:
     void abandon(Zig::GlobalObject* globalObject);
     // Stops waiting for a pending factory: fulfills run()'s promise, so waiters continue with whatever the module is now.
     void giveUp(Zig::GlobalObject* globalObject);
+    // The factory no longer counts as running. If it settles, whatever still waits for it gets its exports.
+    void detach(Zig::GlobalObject* globalObject);
     bool isHoisted() const { return function == ModuleMockFunction::ViMock || function == ModuleMockFunction::JestMock; }
     bool isOfVitest() const { return function == ModuleMockFunction::ViMock || function == ModuleMockFunction::ViDoMock; }
 
@@ -1258,6 +1260,12 @@ void JSModuleMock::giveUp(Zig::GlobalObject* globalObject)
         return;
     abandon(globalObject);
     pending->fulfill(globalObject->vm(), jsUndefined());
+}
+
+void JSModuleMock::detach(Zig::GlobalObject* globalObject)
+{
+    for (auto& module : stopRunning(globalObject, this))
+        globalObject->onLoadPlugins.modulesToEvictOnceLoaded.add(module);
 }
 
 static bool readsExportsOfModule(JSC::JSGlobalObject* globalObject, JSObject* object, const String& key, UncheckedKeyHashSet<JSObject*>& seen)
@@ -2938,6 +2946,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalOb
     evict.exceptPackages = !callFactoriesAgain;
     evictModulesAndTheirImporters(globalObject, WTF::move(evict));
     RETURN_IF_EXCEPTION(scope, {});
+    // As in Vitest, vi.dynamicImportSettled() doesn't wait for what was being loaded before.
+    globalObject->mockModule.dynamicImports.clear();
 
     // Replace the mocks instead of resetting them, because modules already linked to one keep reading from it.
     if (auto* virtualModules = callFactoriesAgain ? globalObject->onLoadPlugins.virtualModules : nullptr) {
@@ -4017,6 +4027,14 @@ bool moduleMockImportsByKey(Zig::GlobalObject* globalObject, const String& key)
     return mock && mock->importsOriginal;
 }
 
+bool isModuleMockWaitingForFactory(Zig::GlobalObject* globalObject, const String& key)
+{
+    auto* mock = Zig::registeredModuleMock(globalObject, key);
+    if (!mock)
+        mock = dynamicDowncast<Zig::JSModuleMock>(globalObject->onLoadPlugins.moduleMocksBeingLoaded.get(key).get());
+    return mock && mock->state == Zig::JSModuleMock::State::Running;
+}
+
 // Vitest loads packages outside the module graph it mocks, so a module in node_modules gets the original of what vi.mock() mocked.
 // Jest's mocks reach packages too.
 String keyOfImportByPackage(Zig::GlobalObject* globalObject, const String& key, const String& importer)
@@ -4035,7 +4053,7 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
     // A new import of that module, or of one that waits for it, ends the wait, and everyone gets what the module is now.
     // Once vi.resetModules() has dropped that fetch, no module waits for the factory. If it never settles, it would otherwise
     // count as running until the file ends, and whatever its file imports meanwhile would get the original.
-    // The import() that called it stays pending, as in Vitest. Waking it would load the module at a time no test chose.
+    // The import() that called it keeps waiting for it, as in Vitest. Waking it would load the module at a time no test chose.
     Vector<Zig::JSModuleMock*, 1> replaced, unawaited;
     for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
         auto* mock = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get());
@@ -4053,7 +4071,7 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
     for (auto* mock : replaced)
         mock->giveUp(globalObject);
     for (auto* mock : unawaited)
-        mock->abandon(globalObject);
+        mock->detach(globalObject);
 
     // A module that is still loading can't be running import(), so `importer` is exactly that module and not a factory's copy of it.
     auto* importerEntry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), importer));

@@ -1147,6 +1147,29 @@ describe.concurrent("vi.dynamicImportSettled", () => {
     });
   });
 
+  // Vitest looks for the modules in its cache that are being evaluated. vi.resetModules() empties the cache, and a factory isn't a module.
+  test("doesn't wait for a mock's factory, or for an import from before vi.resetModules()", async () => {
+    const { stderr, exitCode } = await run(["test", "./left.test.ts"], {
+      "never.ts": `await new Promise(() => {});`,
+      "mocked.ts": `export {};`,
+      "left.test.ts": `
+        import { test, vi } from "bun:test";
+        test("a mock's factory", async () => {
+          vi.doMock("./mocked.ts", () => new Promise(() => {}));
+          void import("./mocked.ts");
+          await vi.dynamicImportSettled();
+        });
+        test("an import from before vi.resetModules()", async () => {
+          void import("./never.ts");
+          vi.resetModules();
+          await vi.dynamicImportSettled();
+        });
+      `,
+    });
+    expect(results(stderr)).toEqual(["(pass) a mock's factory", "(pass) an import from before vi.resetModules()"]);
+    expect(exitCode).toBe(0);
+  });
+
   test.serial("does not retain the imports that have settled", async () => {
     await import("node:path");
     Bun.gc(true);

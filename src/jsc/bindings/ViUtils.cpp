@@ -1,5 +1,6 @@
 #include "root.h"
 
+#include "BunPlugin.h"
 #include "BunProcess.h"
 #include "JSMockFunction.h"
 #include "ZigGlobalObject.h"
@@ -266,20 +267,26 @@ static JSPromise* pendingDynamicImport(Zig::GlobalObject* globalObject)
     if (!dynamicImports)
         return nullptr;
     auto* imports = uncheckedDowncast<JSMap>(dynamicImports);
-    auto* iterator = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), imports, IterationKind::Keys);
+    auto* iterator = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), imports, IterationKind::Entries);
     JSPromise* pending = nullptr;
-    while (JSValue import = iterator->nextWithAdvance(vm).key) {
+    while (true) {
+        auto [import, value] = iterator->nextWithAdvance(vm);
+        if (!import)
+            break;
         auto* promise = uncheckedDowncast<JSPromise>(import);
         if (promise->status() != JSPromise::Status::Pending) {
             JSC__JSMap__remove(imports, globalObject, JSValue::encode(import));
             RETURN_IF_EXCEPTION(scope, nullptr);
-        } else if (!pending)
+            continue;
+        }
+        // Vitest only waits for modules, and a factory isn't one.
+        if (!pending && !(value.isString() && isModuleMockWaitingForFactory(globalObject, asString(value)->tryGetValue())))
             pending = promise;
     }
     return pending;
 }
 
-void didStartDynamicImport(Zig::GlobalObject* globalObject, JSPromise* import)
+void didStartDynamicImport(Zig::GlobalObject* globalObject, JSPromise* import, const String& key)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -290,7 +297,7 @@ void didStartDynamicImport(Zig::GlobalObject* globalObject, JSPromise* import)
         pendingDynamicImport(globalObject);
         RETURN_IF_EXCEPTION(scope, );
     }
-    RELEASE_AND_RETURN(scope, JSC__JSMap__set(imports, globalObject, JSValue::encode(import), JSValue::encode(jsUndefined())));
+    RELEASE_AND_RETURN(scope, JSC__JSMap__set(imports, globalObject, JSValue::encode(import), JSValue::encode(key.isNull() ? jsUndefined() : jsString(vm, key))));
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsViFulfillUnlessImporting);

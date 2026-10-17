@@ -22,7 +22,8 @@ class JSMockFunction;
 JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool leaveOriginalAlone = false);
 
 // For `vi.dynamicImportSettled()`. `import` is the module loader's own promise for an `import()`, not the one script gets.
-void didStartDynamicImport(Zig::GlobalObject*, JSC::JSPromise* import);
+// `key` is null unless there are module mocks.
+void didStartDynamicImport(Zig::GlobalObject*, JSC::JSPromise* import, const String& key);
 
 // Wrapper to scope a bunch of GlobalObject properties related to mocks
 class JSMockModule final {
@@ -64,7 +65,7 @@ public:
     JSC::WriteBarrier<JSC::Unknown> envsOfPreload;
     JSC::WriteBarrier<JSC::Unknown> globalsOfPreload;
 
-    // A JSMap keyed by the promises given to didStartDynamicImport(). Settled ones get swept.
+    // A JSMap from the promises given to didStartDynamicImport() to their keys. Settled ones get swept.
     JSC::WriteBarrier<JSC::Unknown> dynamicImports;
 
     // True until the first test starts. A preload, or a beforeAll() of one, can only run before that.

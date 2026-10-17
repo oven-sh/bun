@@ -1696,20 +1696,18 @@ fn can_have_run_scripts(lockfile: &Lockfile, alias: &[u8], pkg_id: PackageID) ->
     lockfile.has_trusted_dependency(alias, name.slice(&lockfile.buffers.string_bytes), res)
 }
 
-/// Whether the package's tarball contains `node_modules/<alias>`. `None` if that is unknown,
-/// because the package is not from npm or is not in the cache.
-fn tarball_has(
-    manager: &PackageManager,
-    cache: sys::Fd,
-    pkg_id: PackageID,
-    alias: &[u8],
-) -> Option<bool> {
+/// Returns true if `node_modules/<alias>` may be part of the package itself and must be kept.
+/// Package managers only pack `node_modules` for bundled dependencies, which the caller has ruled
+/// out, so a registry package needs a cache entry that has the folder. No cache entry means no: a
+/// package that is already installed is never downloaded again, so the entry would never appear.
+fn may_ship(manager: &PackageManager, cache: sys::Fd, pkg_id: PackageID, alias: &[u8]) -> bool {
     let lockfile: &Lockfile = &manager.lockfile;
     let res = &lockfile.packages.items_resolution()[pkg_id as usize];
     match res.tag {
-        ResolutionTag::Workspace => return Some(false),
+        ResolutionTag::Workspace => return false,
         ResolutionTag::Npm => {}
-        _ => return None,
+        // A git checkout, a folder or a local tarball can hold anything.
+        _ => return true,
     }
     let name = lockfile.packages.items_name()[pkg_id as usize];
     let entry: Box<[u8]> = crate::package_manager::cached_npm_package_folder_name(
@@ -1720,12 +1718,8 @@ fn tarball_has(
     )
     .as_bytes()
     .into();
-    let is_folder =
-        |path: &[u8]| sys::directory_exists_at(cache, ZStr::from_slice_with_nul(&zname(path))).ok();
-    if is_folder(&join(&join(&entry, b"node_modules"), alias))? {
-        return Some(true);
-    }
-    is_folder(&entry)?.then_some(false)
+    let shipped = zname(&join(&join(&entry, b"node_modules"), alias));
+    sys::directory_exists_at(cache, ZStr::from_slice_with_nul(&shipped)).unwrap_or(true)
 }
 
 /// The path of a tree's `node_modules`, relative to the project root.
@@ -1801,7 +1795,7 @@ fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)
                 let name_hash = bun_semver::semver_string::Builder::string_hash(entry.alias);
                 entry.kind != EntryKind::Directory
                     || !only_older.contains(&name_hash)
-                    || tarball_has(manager, cache, owner, entry.alias) != Some(false)
+                    || may_ship(manager, cache, owner, entry.alias)
             },
             &mut plan,
         );

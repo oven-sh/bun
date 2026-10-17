@@ -1879,7 +1879,20 @@ describe.concurrent("a node_modules that an older bun laid for a run that leaves
       leftOut: { devDependencies: { b: "^2.0.0" } },
       atOnce: true,
     },
-  ])("$title", async ({ args, leftOut, member, atOnce }) => {
+    // `n` stays installed, so it is never downloaded again and never gets a cache entry.
+    {
+      title: "--production, without the older bun's cache",
+      args: ["--production"],
+      leftOut: { devDependencies: { b: "^2.0.0" } },
+      noCache: true,
+    },
+    {
+      title: "a package for another os, without the older bun's cache",
+      args: [],
+      leftOut: { optionalDependencies: { "a-os": "1.0.0" } },
+      noCache: true,
+    },
+  ])("$title", async ({ args, leftOut, member, atOnce, noCache }) => {
     const graph: Record<string, Record<string, object>> = {
       m: { "1.0.0": { dependencies: { b: "^1.0.0" } } },
       n: { "1.0.0": { dependencies: { b: "^2.0.0" } } },
@@ -1915,6 +1928,7 @@ describe.concurrent("a node_modules that an older bun laid for a run that leaves
     // What an older bun lays with these arguments is what every bun lays when package.json lacks what they leave out.
     await run(dir, "install");
     expect(layout(dir)).toEqual(["b@1.0.0", ...(member ? [] : ["m@1.0.0"]), "n@1.0.0", "n/b@2.0.0"]);
+    if (noCache) rmSync(join(dir, ".bun-cache"), { recursive: true });
     await pull();
     if (!atOnce) await run(dir, "install", ...args);
 

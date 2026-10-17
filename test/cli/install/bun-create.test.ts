@@ -863,6 +863,29 @@ describe.concurrent("template given as a path", () => {
       expect(exitCode).toBe(1);
     },
   );
+
+  const long = (length: number) => Buffer.alloc(length, "x").toString();
+  it.skipIf(!isPosix).each([
+    ["one name of 5000 bytes", ["tpl", long(5000)]],
+    ["a name of 5000 bytes in a folder", ["tpl", "d/" + long(5000)]],
+    ["25 folders of 200 bytes", ["tpl", (long(200) + "/").repeat(25)]],
+    ["named after a 4090-byte template path", ["/" + long(4090)]],
+  ])("refuses a destination longer than a path: %s", async (_, args) => {
+    using dir = tempDir("create-long-destination", {
+      "home/.keep": "",
+      "proj/keep.js": "mine",
+      "templates/tpl/package.json": JSON.stringify({ name: "tpl" }),
+    });
+    const root = String(dir);
+
+    const { err, exitCode } = await create(join(root, "proj"), args, {
+      HOME: join(root, "home"),
+      BUN_CREATE_DIR: join(root, "templates"),
+    });
+
+    expect(err).toBe("error: destination too long\n");
+    expect(exitCode).toBe(1);
+  });
 });
 
 for (const [status, expected] of [

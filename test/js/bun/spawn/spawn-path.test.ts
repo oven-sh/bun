@@ -100,6 +100,9 @@ describe.skipIf(isWindows)("spawn with an empty PATH", () => {
       "hello": "#!/bin/sh\necho HELLO_FROM_CWD\n",
       "bin/hello": "#!/bin/sh\necho HELLO_FROM_BIN\n",
       "sub/hello": "#!/bin/sh\necho HELLO_FROM_SUB\n",
+      "probe.js": `console.log(process.env.PATH.endsWith(":"));
+        try { console.log(Bun.spawnSync({ cmd: ["hello"], stdout: "pipe" }).stdout.toString().trim()); }
+        catch (e) { console.log(e.code); }`,
     });
     chmodSync(path.join(String(dir), "hello"), 0o755);
     chmodSync(path.join(String(dir), "bin", "hello"), 0o755);
@@ -184,6 +187,24 @@ describe.skipIf(isWindows)("spawn with an empty PATH", () => {
     using dir = makeDir();
     expect(Bun.which("hello", { PATH: "", cwd: String(dir) })).toBeNull();
     expect(Bun.which("hello", { PATH: ":/nonexistent", cwd: String(dir) })).toBeNull();
+  });
+
+  test.concurrent("bun run with no PATH in its environ does not add a trailing empty segment", async () => {
+    using dir = makeDir();
+    const { PATH, ...envWithoutPath } = bunEnv;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "probe.js"],
+      env: envWithoutPath,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const [pathEndsWithDelimiter, spawnResult] = stdout.trim().split("\n");
+    expect(pathEndsWithDelimiter).toBe("false");
+    expect(spawnResult).toBe("ENOENT");
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("child_process.spawnSync with process.env.PATH = '' reports ENOENT", async () => {

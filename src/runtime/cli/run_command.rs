@@ -2014,7 +2014,13 @@ impl RunCommand {
             ));
             new_path.push(DELIMITER);
 
-            new_path.extend_from_slice(&path);
+            // With no PATH to append, the list must not end in a delimiter:
+            // execvp reads a trailing empty segment as the cwd.
+            if path.is_empty() {
+                new_path.pop();
+            } else {
+                new_path.extend_from_slice(&path);
+            }
         }
 
         Ok(new_path)

@@ -134,17 +134,19 @@ fn get_argv0(
             // The lookup stats `cwd/segment/bin`. A relative `cwd` option names
             // the child's directory after its chdir, so resolve it against the
             // parent's directory first, or the stat and the exec look at
-            // different files.
+            // different files. A cwd too long for a path buffer stays as is:
+            // the child's chdir reports it.
             let mut abs_cwd_buf;
             let cwd: &[u8] = if cwd.is_empty() || bun_paths::is_absolute(cwd) {
                 cwd
             } else {
                 abs_cwd_buf = bun_paths::path_buffer_pool::get();
-                bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+                bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
                     bun_resolver::fs::FileSystem::get().top_level_dir,
                     &mut abs_cwd_buf[..],
                     &[cwd],
                 )
+                .unwrap_or(cwd)
             };
             let Some(resolved) =
                 bun_which::which_for_spawn(&mut path_buf, path_to_use, cwd, argv0_to_use)

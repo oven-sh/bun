@@ -368,6 +368,7 @@ function connectionListenerHTTP1(server, socket, options) {
     resumeFallbackReadsOnDrain,
     finishDrainedResponse,
     kMustCloseConnection,
+    routeExpectation,
   } = http1ServerPipeline;
   const { allMethods } = process.binding("http_parser");
 
@@ -518,6 +519,8 @@ function connectionListenerHTTP1(server, socket, options) {
       // `_last`: onHttp1SocketEnd saw the client's FIN while this response owned the socket.
       if (this[kMustCloseConnection] || this._last) {
         if (typeof socket.destroySoon === "function") {
+          // Bun's net.Socket emits 'end' for its own destroySoon(). That is not the client's EOF.
+          socket.removeListener("end", onHttp1SocketEnd);
           socket.destroySoon();
         } else if (!socket.writableEnded) {
           socket.end();
@@ -548,23 +551,10 @@ function connectionListenerHTTP1(server, socket, options) {
       }
     }
 
-    // Node's parserOnIncoming Expect routing (the native dispatcher applies the
-    // same at _http_server.ts's DISPATCH_HAS_EXPECT branch).
+    // Node's parserOnIncoming Expect routing, shared with the native dispatcher.
     const expect = req.headers.expect;
     if (expect !== undefined && versionMajor === 1 && versionMinor === 1) {
-      if (continueExpression.test(String(expect))) {
-        if (server.listenerCount("checkContinue") > 0) {
-          server.emit("checkContinue", req, res);
-        } else {
-          res.writeContinue();
-          server.emit("request", req, res);
-        }
-      } else if (server.listenerCount("checkExpectation") > 0) {
-        server.emit("checkExpectation", req, res);
-      } else {
-        res.writeHead(417);
-        res.end();
-      }
+      routeExpectation(server, req, res, continueExpression.test(String(expect)));
       return 0;
     }
     server.emit("request", req, res);

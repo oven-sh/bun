@@ -901,17 +901,8 @@ describe("Bun.build", () => {
   //   throw new Error("test was not fully written");
   // });
 
-  // Two callers each await a build, write a new file into the directory that
-  // build listed, and await a build that imports it. A build that reuses the
-  // earlier listing fails to resolve the file ("missing") or, when an older file
-  // matches the same import, bundles the older one ("shadow": .ts comes before
-  // .js in the extension order). The listing used to stay until the bundle
-  // thread found its queue empty. One caller alone queues its next build before
-  // that on some rounds only, at a rate that depends on the machine. With two
-  // callers a build is queued behind nearly every build.
-  //
-  // Not concurrent: one bundle thread runs every Bun.build of this process, so
-  // these twelve builds would wait behind the builds of the tests around them.
+  // https://github.com/oven-sh/bun/pull/38212: a build that is queued behind another still reads its directories again.
+  // Not concurrent: the builds of the tests around it would sit between these on the one bundle thread.
   test("a build sees a file written before the call while a second caller builds", async () => {
     const rounds = [0, 1, 2];
     const files: Record<string, string> = { "package.json": `{}`, "first.js": `export default 1;\n` };
@@ -927,6 +918,7 @@ describe("Bun.build", () => {
       const bundled: string[] = [];
       for (const round of rounds) {
         await Bun.build({ entrypoints: [join(root, "first.js")] });
+        // "./replaced-N" resolves to replaced-N.ts before replaced-N.js, once the listing has the .ts.
         const added = form === "missing" ? `added-${round}.js` : `replaced-${round}.ts`;
         writeFileSync(join(root, added), `export default "new";\n`);
         const build = await Bun.build({ entrypoints: [join(root, `${form}-${round}.js`)], throw: false });
@@ -946,12 +938,8 @@ describe("Bun.build", () => {
     });
   });
 
-  // A script writes a file next to itself and then calls Bun.build for the first
-  // time. The runtime listed that directory, at generation 0, when it resolved
-  // the script. The first build of a process ran at generation 0 too when it was
-  // queued before the bundle thread first looked at its queue, and it then
-  // reused the runtime's listing. That happened in some runs only, but in every
-  // run on one CPU, so the process is pinned to one CPU where `taskset` works.
+  // https://github.com/oven-sh/bun/pull/38212: the first build of a process reads again what the runtime listed at startup.
+  // One CPU (`taskset`, where it works) makes a regression fail in every run. Not concurrent, to keep that CPU free.
   test("the first build of a process sees a file written after the runtime listed the directory", async () => {
     using dir = tempDir("first-build-sees-new-file", {
       "package.json": `{}`,
@@ -963,8 +951,12 @@ describe("Bun.build", () => {
         console.log(build.success ? "built" : build.logs[0].message);
       `,
     });
+    const pin: string[] = [];
     const taskset = isLinux ? Bun.which("taskset") : null;
-    const pin = taskset && Bun.spawnSync({ cmd: [taskset, "1", "true"] }).exitCode === 0 ? [taskset, "1"] : [];
+    if (taskset) {
+      await using probe = Bun.spawn({ cmd: [taskset, "1", "true"], stdio: ["ignore", "ignore", "ignore"] });
+      if ((await probe.exited) === 0) pin.push(taskset, "1");
+    }
     await using proc = Bun.spawn({
       cmd: [...pin, bunExe(), "driver.ts"],
       env: bunEnv,
@@ -1031,14 +1023,7 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  // The bundle thread hands every build a resolver generation, and a build
-  // re-reads the directory listings cached by builds of an older generation. The
-  // generation used to advance only when the thread found its queue empty, so as
-  // long as other Bun.build() calls kept the queue non-empty, every build reused
-  // the listings read by the first one and never saw files created or removed
-  // since. The driver keeps the queue non-empty deterministically: behind every
-  // app build it queues a build that parks the thread in an async onLoad until
-  // the next app build has been queued.
+  // https://github.com/oven-sh/bun/pull/38212: a build reads its directories again even when the bundle thread's queue never drains.
   test.concurrent("rebuilding sees directory changes while other builds keep the bundle thread busy", async () => {
     using dir = tempDir("rebuild-while-bundle-thread-busy", {
       "package.json": `{}`,
@@ -1046,10 +1031,7 @@ describe("Bun.build", () => {
         const parkedBuilds: ReturnType<typeof Bun.build>[] = [];
         let releaseParkedBuild = () => {};
 
-        // Queues a build whose onLoad does not return until the next call
-        // (or the final release below), then lets the previously parked build
-        // finish. Everything queued in between therefore sits behind a build the
-        // thread cannot finish yet, and the thread never sees an empty queue.
+        // Queues a build that waits in onLoad until the next call releases it, so the thread's queue is never empty.
         function parkBundleThread() {
           const gate = Promise.withResolvers<void>();
           parkedBuilds.push(
@@ -1108,8 +1090,7 @@ describe("Bun.build", () => {
     expect(JSON.parse(stdout)).toEqual({
       before: { success: false, messages: ['Could not resolve: "./mod.js"'] },
       afterAdd: { success: true, messages: [] },
-      // A listing still holding the removed file would fail later, while
-      // reading it ("File not found"), rather than here in the resolver.
+      // A stale listing would fail later, at the read ("File not found"), not here in the resolver.
       afterRemove: { success: false, messages: ['Could not resolve: "./mod.js"'] },
       parked: [true, true, true, true],
     });

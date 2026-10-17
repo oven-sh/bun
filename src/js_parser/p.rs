@@ -457,12 +457,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// populated before visit pass starts; `take()`n at each post-visit
     /// hook site so a `ReactCompilerHost(&mut P)` can borrow alongside it.
     pub(crate) react_compiler: Option<Box<bun_react_compiler::ReactCompilerState>>,
-    /// Binding name from the `S::Function` / `S::Local` / `S::ExportDefault`
-    /// statement currently being visited. Set in `visit_stmt`, consumed by
-    /// `visit_func` / arrow-visit one frame down.
+    /// The name that the `S::Function` / `S::Local` / `S::ExportDefault` statement being visited gives to the function
+    /// visited next. Consumed by `enter_react_compiler_candidate` one frame down.
     pub(crate) react_compiler_candidate_name: Option<js_ast::Ref>,
-    /// Set alongside `react_compiler_candidate_name` when the candidate
-    /// expression is a `memo(...)` / `forwardRef(...)` call.
+    /// The function visited next is the argument of a `memo(...)` / `forwardRef(...)` call.
     pub(crate) react_compiler_in_react_hoc: bool,
     /// See [`bun_react_compiler::PendingCompile`]. Set by `visit_func` /
     /// arrow-visit, consumed inside `visit_stmts` between visit and mangle.
@@ -472,6 +470,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) react_compiler_result: Option<bun_react_compiler::CompileResult>,
     /// Visiting a function that is handed to the React Compiler, which re-declares its locals as new symbols.
     pub(crate) react_compiler_may_replace_body: bool,
+    /// Functions the compiler outlined from a function that isn't at the top level. `visit_stmts` puts them after the
+    /// statement it is visiting.
+    pub(crate) react_compiler_outlined_from_nested: Vec<Stmt>,
 
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
@@ -9863,6 +9864,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_pending: None,
             react_compiler_result: None,
             react_compiler_may_replace_body: false,
+            react_compiler_outlined_from_nested: Vec::new(),
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             imported_mock_apis: Default::default(),

@@ -2213,9 +2213,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_object_keys_argument: p.has_import_meta && is_object_keys_call(&p.symbols, &e_),
                 ..Default::default()
             };
+            // Upstream only checks a function's immediate parent call, so the `fn` in `memo(forwardRef(fn))` counts too.
+            if p.react_compiler.is_some() && p.react_compiler_candidate_expr(&expr) == Some(true) {
+                p.react_compiler_in_react_hoc = true;
+            }
             for arg in &mut e_.args.slice_mut()[visited_args..] {
                 p.visit_expr_in_out(arg, arg_in);
                 arg_in = ExprIn::default();
+                p.react_compiler_candidate_name = None;
+                p.react_compiler_in_react_hoc = false;
             }
 
             // Restore saved state.
@@ -2670,8 +2676,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
         let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(e_.body.stmts.slice());
-        let prev_may_replace_body =
-            p.enter_react_compiler_candidate(None, e_.has_react_hooks_suppression, dupe);
+        let rc_candidate = p.enter_react_compiler_candidate(
+            false,
+            p.current_scope().parent == Some(p.module_scope),
+            e_.has_react_hooks_suppression,
+            e_.args.slice(),
+            e_.has_rest_arg,
+            dupe,
+        );
 
         let args_mut: &mut [G::Arg] = e_.args.slice_mut();
         p.visit_args(
@@ -2698,8 +2710,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             kind: crate::parser::StmtsKind::FnBody,
             ..Default::default()
         };
-        let rc_binding = p.react_compiler_candidate_name.take();
-        if rc_binding.is_some() {
+        if rc_candidate.is_taken {
             let mut flags = bun_ast::flags::FUNCTION_NONE;
             if e_.is_async {
                 flags |= bun_ast::flags::Function::IsAsync;
@@ -2715,8 +2726,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 flags,
                 body_loc: e_.body.loc,
                 args_loc: e_.body.loc,
-                binding: rc_binding,
-                in_react_hoc: core::mem::take(&mut p.react_compiler_in_react_hoc),
+                binding: rc_candidate.binding,
+                own_name: None,
+                in_react_hoc: rc_candidate.in_react_hoc,
+                is_top_level: rc_candidate.is_top_level,
             });
         }
         p.visit_stmts_and_prepend_temp_refs(&mut stmts_list, &mut temp_opts)
@@ -2727,14 +2740,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             e_.is_async = result.flags.contains(bun_ast::flags::Function::IsAsync);
             e_.has_rest_arg = result.flags.contains(bun_ast::flags::Function::HasRestArg);
             e_.prefer_expr = false;
-            if let Some(b) = rc_binding.filter(|r| *r != js_ast::Ref::NONE) {
+            if let Some(b) = rc_candidate.binding {
                 p.record_usage(b);
             }
         }
         p.pop_scope();
         p.pop_scope();
 
-        p.react_compiler_may_replace_body = prev_may_replace_body;
+        p.react_compiler_may_replace_body = rc_candidate.prev_may_replace_body;
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
 
         // Restore before any further `p.*` call so the stack-local pointer

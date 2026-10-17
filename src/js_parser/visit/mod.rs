@@ -115,10 +115,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let body_loc = func.body.loc;
         let body_stmts: &'a [Stmt] = func.body.stmts.slice();
-        let prev_may_replace_body = self.enter_react_compiler_candidate(
-            func.name.map(|n| n.ref_),
+        let rc_candidate = self.enter_react_compiler_candidate(
+            func.flags
+                .contains(flags::Function::IsUniqueFormalParameters),
+            self.current_scope == self.module_scope,
             func.flags
                 .contains(flags::Function::HasReactHooksSuppression),
+            func.args.slice(),
+            func.flags.contains(flags::Function::HasRestArg),
             body_stmts,
         );
 
@@ -142,19 +146,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut temp_opts = PrependTempRefsOpts {
             kind: StmtsKind::FnBody,
         };
-        let rc_binding = self.react_compiler_candidate_name.take();
-        if rc_binding.is_some() {
+        if rc_candidate.is_taken {
             self.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
                 args: func.args,
                 flags: func.flags,
                 body_loc,
                 args_loc: func.open_parens_loc,
-                binding: func
-                    .name
-                    .map(|n| n.ref_)
-                    .filter(|r| r.is_valid())
-                    .or(rc_binding),
-                in_react_hoc: core::mem::take(&mut self.react_compiler_in_react_hoc),
+                binding: rc_candidate.binding,
+                own_name: func.name.map(|n| n.ref_).filter(|r| r.is_valid()),
+                in_react_hoc: rc_candidate.in_react_hoc,
+                is_top_level: rc_candidate.is_top_level,
             });
         }
         self.visit_stmts_and_prepend_temp_refs(&mut stmts, &mut temp_opts)
@@ -163,7 +164,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(result) = self.react_compiler_result.take() {
             func.args = result.args;
             func.flags = result.flags;
-            if let Some(b) = rc_binding.filter(|r| *r != js_ast::Ref::NONE) {
+            if let Some(b) = rc_candidate.binding {
                 self.record_usage(b);
             }
         }
@@ -211,7 +212,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.pop_scope();
         self.pop_scope();
 
-        self.react_compiler_may_replace_body = prev_may_replace_body;
+        self.react_compiler_may_replace_body = rc_candidate.prev_may_replace_body;
         self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
         self.fn_only_data_visit = old_fn_only_data;
 
@@ -346,7 +347,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 if self.react_compiler.is_some()
-                    && self.current_scope == self.module_scope
                     && let BData::BIdentifier(id) = decl.binding.data
                     && let Some(in_hoc) = self.react_compiler_candidate_expr(&val)
                 {
@@ -1598,6 +1598,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     break 'list_getter &mut visited;
                 };
                 p.visit_and_append_stmt(list, stmt)?;
+                // Outlined functions can use variables from this scope, so they can't go at the end of the module.
+                visited.extend(p.react_compiler_outlined_from_nested.drain(..));
             }
 
             // Transform block-level function declarations into variable declarations
@@ -1777,12 +1779,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && p.react_compiler_may_replace_body
             && let Some(mut rc) = p.react_compiler.take()
         {
-            let name = pending
-                .binding
-                .filter(|r| *r != js_ast::Ref::NONE)
-                .map(|r| p.load_name_from_ref(r));
+            let name = pending.binding.map(|r| p.load_name_from_ref(r));
             // `Host::new_local` appends the locals of the compiled function here.
             let generated_len = p.current_scope().generated.len();
+            let outlined_len = rc.outlined_len();
             let compiled = {
                 let host = &mut crate::react_compiler_host::ReactCompilerHost::new(p);
                 bun_react_compiler::maybe_compile_pending(
@@ -1793,12 +1793,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     name,
                 )
             };
+            if !pending.is_top_level {
+                p.react_compiler_outlined_from_nested
+                    .extend(rc.take_outlined_from(outlined_len));
+            }
             p.react_compiler = Some(rc);
             if let Some((new_body, result)) = compiled {
                 stmts.clear();
                 stmts.extend(new_body);
                 p.react_compiler_result = Some(result);
-                p.drop_symbols_of_replaced_function(pending.binding);
+                p.drop_symbols_of_replaced_function(pending.own_name);
             } else {
                 p.current_scope_mut().generated.truncate(generated_len);
             }

@@ -257,8 +257,7 @@ impl Builtin {
         bun_core::ZStr::from_cstr(unsafe { core::ffi::CStr::from_ptr(p) })
     }
 
-    /// Construct a `Builtin` for `kind` and install it into the owning Cmd's
-    /// `exec` slot. The caller then calls `Builtin::start`.
+    /// Installs a `Builtin` for `kind` in the owning Cmd's `exec` slot.
     pub(crate) fn init(interp: &Interpreter, cmd: NodeId, kind: Kind) {
         use crate::shell::states::cmd::Exec;
 
@@ -280,11 +279,7 @@ impl Builtin {
         }));
     }
 
-    /// Writes a message of the shell about the command to the command's
-    /// stderr, and finishes the command with exit code 1. Before
-    /// `Cmd::apply_redirect` that is the stderr the command inherits: an
-    /// expansion error and a redirect that cannot be set up are reported
-    /// there. After it, it is the stderr that the redirect gave the command.
+    /// Writes the shell's message to the command's stderr. The command ends with exit code 1.
     pub(crate) fn cmd_write_failing_error(
         interp: &Interpreter,
         cmd: NodeId,
@@ -307,9 +302,7 @@ impl Builtin {
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);
             return interp.as_cmd(cmd).io.stderr.enqueue(child, &buf, safeguard);
         }
-        // No-IO path: the message goes to the captured buffer or the
-        // `> ${buffer}` target, and the command finishes synchronously
-        // (Cmd::on_io_writer_chunk's behaviour).
+        // No IOWriter: write to the captured buffer or the `> ${buffer}` target and finish now.
         let me = interp.as_cmd_mut(cmd);
         let shell = me.base.shell;
         // SAFETY: `shell` is `me.base.shell`, live for the Cmd's lifetime.
@@ -558,7 +551,3 @@ impl Builtin {
         Self::done(interp, cmd, exit_code)
     }
 }
-
-// Cleanup: every `Impl` variant owns its state via `Box`/`Vec`/`Arc`. So
-// cleanup is fully covered by `Drop` on `Box<Builtin>` (called from
-// `Cmd::deinit`). No explicit deinit needed.

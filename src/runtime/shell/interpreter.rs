@@ -1118,8 +1118,7 @@ impl Interpreter {
         self.root_io.get()
     }
 
-    /// The stdout or stderr of this process, when `writer` is the writer that
-    /// `setup_io_before_run` made on a copy of it.
+    /// `Fd::stdout()` or `Fd::stderr()` when `writer` is the shell's own writer on that stream.
     pub(crate) fn process_stream(&self, writer: &std::sync::Arc<IOWriter>) -> Option<Fd> {
         use crate::shell::io::OutKind;
         let io = self.root_io();
@@ -1173,9 +1172,7 @@ impl Interpreter {
         Some(crate::jsc::JSGlobalObject::opaque_ref(g))
     }
 
-    /// The `${...}` object number `idx` of the script, and the global it
-    /// lives in. `None` when the script has no such object: its text can
-    /// spell any number.
+    /// The `${...}` object number `idx` and its global. `None`: the script has no such object.
     pub(crate) fn js_object(
         &self,
         idx: u32,

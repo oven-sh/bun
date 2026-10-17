@@ -1,8 +1,7 @@
 //! Carries stdin/stdout/stderr for a state node.
 //!
 //! `IO` is a plain `Clone` value; `IOReader`/`IOWriter` are `Arc`-refcounted.
-//! A command turns the `IO` it inherits into a [`CmdIO`] and applies its
-//! redirect to that.
+//! A command applies its redirect to a [`CmdIO`] made from the `IO` it inherits.
 
 use std::sync::Arc;
 
@@ -105,14 +104,7 @@ impl OutKind {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// CmdIO
-// ──────────────────────────────────────────────────────────────────────────
-
-/// stdin, stdout and stderr of one command. `Cmd::init` builds it from the
-/// `IO` that the command inherits. `Cmd::apply_redirect` then points the
-/// redirected streams at their target. A builtin, a child process and the
-/// shell's own messages about the command all use these streams.
+/// The streams of one command. `Cmd::apply_redirect` points them at the target of its redirect.
 pub(crate) struct CmdIO {
     pub(crate) stdin: CmdIn,
     pub(crate) stdout: CmdOut,
@@ -129,8 +121,7 @@ pub(crate) enum CmdIn {
     ArrayBuf(Box<PinnedArrayBuffer>),
     /// `< ${blob}` or `< ${response}` for a builtin.
     Blob(Box<webcore::Blob>),
-    /// `< ${object}` for a command that is not a builtin: the index of the
-    /// object in `Interpreter::jsobjs`. The spawn reads it.
+    /// `< ${object}` for a child process: the index of the object in `Interpreter::jsobjs`.
     Js(u32),
     Ignore,
 }
@@ -141,15 +132,13 @@ pub(crate) enum CmdOut {
     Fd(OutFd),
     /// The captured buffer of the shell env: `_buffered_stdout` or `_buffered_stderr`.
     Buf(IoKind),
-    /// `> file` for a command that is not a builtin: the file, or a copy of
-    /// the fd of a `Bun.file(fd)`. The fd stays blocking, as a child needs it.
+    /// `> file` or `> ${Bun.file(fd)}` for a child process: an fd that stays blocking.
     File(bun_sys::File),
     /// The fd of the `File` that the other stream owns: `&> file`.
     BorrowedFd(Fd),
     /// `> ${buffer}` for a builtin.
     ArrayBuf(Box<ArrayBufSink>),
-    /// `> ${buffer}` for a command that is not a builtin: the index of the
-    /// buffer in `Interpreter::jsobjs`. The spawn pins it.
+    /// `> ${buffer}` for a child process: the index of the buffer in `Interpreter::jsobjs`.
     JsBuf(u32),
     Ignore,
 }
@@ -199,10 +188,7 @@ impl From<IO> for CmdIO {
 }
 
 impl CmdIO {
-    /// Maps the streams onto the stdio of a child process. `shellio` keeps the
-    /// `IOWriter` of a captured stream, so that `PipeReader` can also write
-    /// what it reads to it. `redirect_stdout`/`redirect_stderr` get the pin of
-    /// a `> ${buffer}` target.
+    /// Maps the streams onto the stdio of a child process.
     #[inline]
     pub(crate) fn to_subproc_stdio(
         &self,
@@ -222,9 +208,7 @@ impl CmdIO {
         } else {
             // `2>&1` or `1>&2`: the child gets the one stream on stdout.
             match &stdio[1] {
-                // `Dup2` on Windows is a pipe that this process reads for the
-                // child (`spawn_process_windows`), and only a captured stdout
-                // has a reader. An fd goes to the child on both streams.
+                // Windows: `Dup2` is a pipe that only a captured stdout reads.
                 Stdio::Fd(fd) if cfg!(windows) => Stdio::Fd(*fd),
                 _ => Stdio::Dup2(Dup2 {
                     out: StdioKind::Stderr,
@@ -235,10 +219,7 @@ impl CmdIO {
         Ok(())
     }
 
-    /// `PinnedArrayBuffer::drop`'s unpin would write to a `JSC::ArrayBuffer`
-    /// impl the heap sweep already deleted; see
-    /// `ShellSubprocess::defuse_array_buffer_unpins`. VM-shutdown finalizer
-    /// only.
+    /// VM-shutdown finalizer only; see `ShellSubprocess::defuse_array_buffer_unpins`.
     #[cfg(not(windows))]
     pub(crate) fn defuse_array_buf_pins(&mut self) {
         if let CmdIn::ArrayBuf(buf) = &mut self.stdin {
@@ -270,8 +251,7 @@ impl CmdIn {
                 };
                 match JsObject::from_value(value) {
                     Some(JsObject::ArrayBuffer(value)) => {
-                        // The child gets the bytes that the buffer holds now.
-                        // An empty buffer is EOF, as in `Stdio::extract_blob`.
+                        // A copy of the bytes now. Empty is EOF, as in `Stdio::extract_blob`.
                         if let Some(buf) = value.as_array_buffer(global)
                             && !buf.byte_slice().is_empty()
                         {
@@ -310,9 +290,7 @@ impl CmdOut {
         }
     }
 
-    /// The same stream again: for `2>&1` and `1>&2`, and for the other stream
-    /// of `&> file`. A `Buf` keeps its target, so stderr after `2>&1` appends
-    /// to the stdout buffer.
+    /// The same stream again: for `2>&1`, `1>&2` and the other stream of `&> file`.
     pub(crate) fn dup(&self) -> CmdOut {
         match self {
             CmdOut::Fd(fd) => CmdOut::Fd(fd.clone()),
@@ -342,8 +320,7 @@ impl CmdOut {
         }
     }
 
-    /// The buffer that gets the output of a child when the pipe it wrote to
-    /// closes: the JS-side capture of an `Fd`, or the shell env's buffer.
+    /// Where the output that a child wrote to a pipe is captured.
     pub(crate) fn capture_buf(&self, shell: &mut ShellExecEnv) -> Option<*mut Vec<u8>> {
         match self {
             CmdOut::Fd(fd) => fd.captured,
@@ -352,15 +329,7 @@ impl CmdOut {
         }
     }
 
-    /// Writes `buf` without an `IOWriter`: to the captured buffer, to the
-    /// `> ${buffer}` target, or nowhere.
-    ///
-    /// Returns `Err(ENOSPC)` when an ArrayBuffer target is already full.
-    /// **WARNING**: caller must have checked `needs_io() == None` first.
-    ///
-    /// # Safety
-    /// `shell` must point to the live `ShellExecEnv` of the command that owns
-    /// this stream (`cmd.base.shell`); only dereferenced for [`CmdOut::Buf`].
+    /// `needs_io()` must be `None`. Safety: `shell` is the live env of the owning `Cmd`.
     pub(crate) unsafe fn write_no_io_to(
         &mut self,
         shell: *mut ShellExecEnv,
@@ -374,16 +343,12 @@ impl CmdOut {
                 panic!("write_no_io called on fd output; caller must check needs_io()")
             }
             CmdOut::Buf(target) => {
-                // Writes go straight through to `buffered_{stdout,stderr}`.
-                // SAFETY: caller contract — shell env outlives the Cmd node
-                // (single-threaded); the buffer is a live `ShellExecEnv` Bufio.
+                // SAFETY: caller contract: `shell` is live, and so is its buffer.
                 unsafe { (*env_buf(&mut *shell, *target)).append_slice(buf) };
                 Ok(buf.len())
             }
             CmdOut::ArrayBuf(sink) => {
-                // `len = buf.len` stays usize so `i + len > byte_len` is
-                // computed at usize width and cannot overflow; only the
-                // stored cursor is u32.
+                // usize arithmetic: only the stored cursor is u32.
                 let idx = sink.i as usize;
                 let total = sink.buf.byte_len;
                 if idx >= total {
@@ -405,11 +370,7 @@ impl CmdOut {
         }
     }
 
-    /// Queue `buf` on this stream's IOWriter and arrange for `child`'s
-    /// `on_io_writer_chunk` to fire when the chunk completes. Delegates to
-    /// `fd.writer.enqueue` passing `fd.captured` as the tee bytelist.
-    ///
-    /// `_safeguard` proves the caller checked `needs_io()`.
+    /// Queues `buf` on the IOWriter; `child` gets `on_io_writer_chunk` when it completes.
     pub(crate) fn enqueue(
         &self,
         child: io_writer::ChildPtr,
@@ -422,8 +383,7 @@ impl CmdOut {
         }
     }
 
-    /// Format with the optional `"{kind}: "` prefix and enqueue on the
-    /// underlying IOWriter.
+    /// Formats with the optional `"{kind}: "` prefix and enqueues on the IOWriter.
     pub(crate) fn enqueue_fmt(
         &self,
         child: io_writer::ChildPtr,
@@ -437,10 +397,7 @@ impl CmdOut {
         }
     }
 
-    /// A stream that writes to `fd` and closes it. The fd keeps the blocking
-    /// mode that it has, which its other users share. A FIFO, a socket or a
-    /// tty that is full is waited for with a poll, so it does not stop this
-    /// thread.
+    /// A stream that writes to `fd` and closes it. The blocking mode of the fd is not changed.
     pub(crate) fn writer(interp: &Interpreter, fd: Fd) -> CmdOut {
         let writer = IOWriter::init(
             fd,
@@ -457,9 +414,7 @@ impl CmdOut {
         })
     }
 
-    /// Makes the stderr that `Cmd::apply_redirect` set up for a child process
-    /// into one that the shell itself can write to: the command did not start,
-    /// and the shell reports that on it. `Err`: a JS error is thrown.
+    /// Makes a stderr set up for a child writable by the shell. `Err`: a JS error is thrown.
     pub(crate) fn make_writable(&mut self, interp: &Interpreter) -> JsResult<()> {
         match self {
             CmdOut::Fd(_) | CmdOut::Buf(_) | CmdOut::ArrayBuf(_) | CmdOut::Ignore => {}
@@ -514,13 +469,7 @@ impl CmdOut {
                     if fd != Fd::INVALID {
                         Stdio::Fd(fd)
                     } else {
-                        // Windows: fd was moved to libuv. The shell's own
-                        // stdout and stderr writers are on the streams of
-                        // this process, which the child gets by name: after
-                        // `2>&1` or `1>&2` the stream is not at its own slot.
-                        // Another writer is inherited, as before. On POSIX
-                        // `IOWriter::fd()` is always the live fd, so this
-                        // branch is unreachable.
+                        // Windows: libuv owns the fd now. Name the process stream if it is one.
                         match interp.process_stream(&val.writer) {
                             Some(fd) => Stdio::Fd(fd),
                             None => Stdio::Inherit,

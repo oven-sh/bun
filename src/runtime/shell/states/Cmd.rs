@@ -88,8 +88,7 @@ impl Redirected {
     fn set_out(&mut self, streams: (bool, bool), out: CmdOut) {
         match streams {
             (true, true) => {
-                // stderr owns a `File`: the message about a command that does
-                // not start is then written with no copy of the fd.
+                // stderr owns a `File`, so `make_writable` needs no copy of the fd.
                 self.stdout = Some(out.dup());
                 self.stderr = Some(out);
             }
@@ -123,11 +122,7 @@ impl RedirectError {
     }
 }
 
-/// Whether a redirect to a target is for stdout and for stderr.
-///
-/// A target after `2>&1` or `1>&2` comes from the parser reading the next
-/// word as one. A child gets both streams on the target. A builtin gets only
-/// the stream that the flags name.
+/// Which of (stdout, stderr) go to the target. A child gets both for a target after `2>&1`.
 fn out_streams(flags: ast::RedirectFlags, form: ExecForm) -> (bool, bool) {
     let both = matches!(form, ExecForm::Spawn) && flags.duplicate_out();
     (flags.stdout() || both, flags.stderr() || both)
@@ -244,8 +239,7 @@ impl BufferedIoClosed {
     ///
     /// `readable` is the subprocess's `stdout`/`stderr` `Readable`; if it was
     /// a pipe its buffered bytes are taken (ownership moves into
-    /// `state.Closed`) and also copied to `capture`, the buffer that holds
-    /// the captured output of the stream (`CmdOut::capture_buf`).
+    /// `state.Closed`) and also copied to `capture` (`CmdOut::capture_buf`).
     fn close_out(
         slot: &mut Option<BufferedIoState>,
         readable: &mut Readable,
@@ -260,9 +254,7 @@ impl BufferedIoClosed {
         };
         if let Some(capture) = capture {
             let the_slice = pipe.slice();
-            // SAFETY: `capture` points into `ShellExecEnv::_buffered_*`,
-            // which the owning Cmd's `base.shell` (or an env above it) keeps
-            // live for the duration of the command. Single-threaded.
+            // SAFETY: `capture` is a buffer of a live `ShellExecEnv` (`CmdOut::capture_buf`).
             unsafe { (*capture).append_slice(the_slice) };
         }
         // SAFETY: `Arc<PipeReader>` interior mutability — the shell is
@@ -377,10 +369,8 @@ impl Cmd {
     }
 
     /// IOWriter completion callback for the error message written in
-    /// `WaitingWriteErr`: finish the Cmd with exit code 1. A write to the
-    /// inherited stderr that failed is thrown. A write to the stderr that the
-    /// redirect gave the command is not: like the output of a builtin, the
-    /// message is lost and the script goes on.
+    /// `WaitingWriteErr`: throw if the write to the inherited stderr failed, else finish the Cmd
+    /// with exit code 1.
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
@@ -499,8 +489,8 @@ impl Cmd {
         Yield::Next(this)
     }
 
-    /// Applies the redirect, then resolves argv[0] to a builtin or falls
-    /// through to subprocess spawn (still gated).
+    /// Resolves argv[0] to a builtin or falls through to subprocess spawn
+    /// (still gated).
     fn transition_to_exec(interp: &Interpreter, this: NodeId) -> Yield {
         // NUL-terminate every arg so builtins can borrow them as `*const c_char`.
         for a in &mut interp.as_cmd_mut(this).args {
@@ -520,8 +510,6 @@ impl Cmd {
         let builtin = first_arg.as_deref().and_then(BuiltinKind::from_argv0);
 
         // The redirect comes before the search for the command (POSIX 2.9.1).
-        // So every exit below has the redirected streams, and a redirect that
-        // fails is the only thing the command reports.
         let form = match builtin {
             Some(_) => ExecForm::Builtin,
             None => ExecForm::Spawn,
@@ -531,8 +519,7 @@ impl Cmd {
         }
 
         let Some(first_arg) = first_arg else {
-            // Exit with the exit code from a sole command-substitution
-            // (stashed by `child_done` from `Expansion::out_exit_code`), else 0.
+            // The exit code of a sole command substitution (stashed by `child_done`), else 0.
             let me = interp.as_cmd(this);
             let exit = me.exit_code.unwrap_or(0);
             let parent = me.base.parent;
@@ -759,14 +746,7 @@ impl Cmd {
         Yield::suspended()
     }
 
-    /// Performs the redirect of the command (`> file`, `< ${blob}`, `2>&1`, …)
-    /// on its `io`. Every user of the streams comes after it: a builtin, the
-    /// spawn of a child process, and the shell's message about a command that
-    /// does not start.
-    ///
-    /// `Some`: the redirect failed. `io` is as inherited, and the yield
-    /// finishes the command: the message is queued on the inherited stderr,
-    /// or a JS error is thrown.
+    /// Applies the redirect to `io`. `Some`: it failed, and the yield ends the command.
     fn apply_redirect(
         interp: &Interpreter,
         this: NodeId,
@@ -779,8 +759,7 @@ impl Cmd {
             None => {
                 let io = &interp.as_cmd(this).io;
                 let mut redirected = Redirected::default();
-                // The lexer keeps the stream that both become: `2>&1` is
-                // `STDOUT`, `1>&2` is `STDERR`.
+                // The flag names the stream that both become: `2>&1` is `STDOUT`.
                 if flags.stdout() {
                     redirected.stderr = Some(io.stdout.dup());
                 }
@@ -847,9 +826,7 @@ impl Cmd {
         RedirectError::Message(message)
     }
 
-    /// The redirect names a file by its path: open it. A builtin reads it
-    /// through an `IOReader` and writes it through an `IOWriter`. A child
-    /// process gets the fd.
+    /// Opens the path that the redirect names, for a builtin or for a child process.
     fn redirect_to_path(
         interp: &Interpreter,
         this: NodeId,
@@ -915,9 +892,7 @@ impl Cmd {
             use bun_sys::FdExt as _;
             fd.make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail)?
         };
-        // Honor the `pollable` computed by `open_for_writing_impl` on
-        // POSIX so a FIFO/socket target (whose fd is now O_NONBLOCK)
-        // takes the pollable path; Windows keeps the async writer.
+        // POSIX polls a FIFO or socket target (now O_NONBLOCK). Windows keeps the async writer.
         let writer = IOWriter::init(
             fd,
             io_writer::Flags {
@@ -1005,8 +980,7 @@ impl Cmd {
             JsObject::Response(response) => {
                 let body = response.get_body_value();
                 body.to_blob_if_possible();
-                // Only a body that is a file is taken. A target that is
-                // rejected below keeps its body.
+                // Take only a body that is a file: a rejected target keeps its body.
                 let file = match &*body {
                     crate::webcore::body::Value::Blob(blob) => blob_file(blob),
                     _ => None,
@@ -1072,8 +1046,7 @@ impl Cmd {
             if let Exec::Subproc(sub) = &me.exec
                 && !sub.child.is_null()
             {
-                // SAFETY: `child` is the live heap::alloc'd subprocess;
-                // the call only writes its own fields.
+                // SAFETY: `child` is the live subprocess; the call only writes its own fields.
                 unsafe { ShellSubprocess::defuse_array_buffer_unpins(sub.child) };
             }
         }
@@ -1186,8 +1159,7 @@ impl Cmd {
             self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
         }
         if let Exec::Subproc(sub) = &mut self.exec {
-            // Raw deref keeps the borrow disjoint from `sub.buffered_closed` below.
-            // SAFETY: `child` is the live subprocess owned by this Cmd.
+            // SAFETY: `child` is this Cmd's live subprocess; the raw deref keeps `sub` borrowable.
             let child = unsafe { &mut *sub.child };
             let (out, slot, readable, stdio) = match kind {
                 OutKind::Stdout => (
@@ -1203,8 +1175,6 @@ impl Cmd {
                     StdioKind::Stderr,
                 ),
             };
-            // The stream the command has says where its output is captured:
-            // the JS-side buffer, or the buffer of the shell env.
             BufferedIoClosed::close_out(slot, readable, out.capture_buf(self.base.shell_mut()));
             child.close_io(stdio);
         }

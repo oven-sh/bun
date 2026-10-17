@@ -137,8 +137,7 @@ impl Yes {
         safeguard: OutputNeedsIOSafeGuard,
     ) -> Yield {
         let child = ChildPtr::new(cmd, WriterTag::Builtin);
-        // `stdout` and the builtin are disjoint fields of the `Cmd` —
-        // split-borrow so the tiled buffer is enqueued zero-copy.
+        // Split-borrow the Cmd's stdout and the builtin: the tiled buffer is enqueued zero-copy.
         let (stdout, yes) = Self::split_stdout_state(interp.as_cmd_mut(cmd));
         stdout.enqueue(child, &yes.buffer[..yes.buffer_used], safeguard)
     }

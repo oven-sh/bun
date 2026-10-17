@@ -439,9 +439,7 @@ pub mod ast {
             const STDOUT        = 1 << 1;
             const STDERR        = 1 << 2;
             const APPEND        = 1 << 3;
-            /// Set with the stream that both streams become:
-            /// 2>&1 === stdout=true and duplicate_out=true
-            /// 1>&2 === stderr=true and duplicate_out=true
+            /// `2>&1` is STDOUT | DUPLICATE_OUT and `1>&2` is STDERR | DUPLICATE_OUT.
             const DUPLICATE_OUT = 1 << 4;
         }
     }

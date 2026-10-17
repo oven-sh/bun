@@ -17,6 +17,7 @@ import {
   startOriginBehindCorruptingProxy,
   startRecordingProxy,
   startRenegotiatingWssServer,
+  TLS_RECORD,
 } from "../../web/websocket/proxy-test-utils";
 import { closedPort, createPeer, nextEvent, runScript, scriptTimeout } from "./ws-raw-peer";
 
@@ -490,36 +491,50 @@ describe("ws package wss:// through HTTP proxy (TLS tunnel)", () => {
 
   test.skipIf(!nodeExe())("a message sent during a TLS renegotiation arrives after it", async () => {
     await using origin = await startRenegotiatingWssServer("behind a message");
-    const records = forwardRecordsTogether(2);
-    using recorded = await startRecordingProxy({ onTargetData: records.onTargetData });
+    // "renegotiating" and the request to renegotiate. The listener runs once the client has answered the request.
+    const request = forwardRecordsTogether(2);
+    // The end of the origin's handshake and "after renegotiation".
+    const finished = forwardRecordsTogether(3, TLS_RECORD.changeCipherSpec);
+    using recorded = await startRecordingProxy({
+      onTargetData: (chunk, forward) => request.onTargetData(chunk, bytes => finished.onTargetData(bytes, forward)),
+    });
     const ws = new WebSocket(`wss://127.0.0.1:${origin.port}`, {
       proxy: `http://127.0.0.1:${recorded.port}`,
       tls: { ca: tlsCerts.cert },
     } as ClientOptions);
-    const events = wsEvents(ws);
+    const events: unknown[] = [];
     ws.on("open", () => {
-      records.hold();
+      request.hold();
+      finished.hold();
       ws.send("ready");
     });
-    const sent = Promise.withResolvers<{ error: Error | null | undefined; stillQueued: number }>();
-    let queued = false;
     ws.on("message", (data: Buffer) => {
+      events.push(data.toString());
       if (data.toString() === "renegotiating") {
-        ws.send("sent during the renegotiation", error => sent.resolve({ error, stillQueued: ws.bufferedAmount }));
-        queued = ws.bufferedAmount > 0;
+        ws.send("sent during the renegotiation", error => events.push({ error, queued: ws.bufferedAmount }));
+        events.push({ queued: ws.bufferedAmount });
       }
-      if (data.toString() === "after renegotiation") ws.close(1000);
+      if (data.toString() === "sent during the renegotiation") ws.close(1000);
     });
-    expect({ events: await events, together: records.forwarded[0], queued, sent: await sent.promise }).toEqual({
+    events.push(await once(ws, "close"));
+    const { changeCipherSpec, handshake, applicationData } = TLS_RECORD;
+    expect({
+      events,
+      request: request.forwarded[0].types,
+      finished: finished.forwarded.map(({ types }) => types).filter(types => types.includes(changeCipherSpec)),
+    }).toEqual({
       events: [
         "renegotiating",
-        "sent during the renegotiation",
+        // The frame: a 2-byte header, the mask and the payload.
+        { queued: 2 + 4 + "sent during the renegotiation".length },
+        // As on a socket, what came in with the end of the handshake is delivered before the write is retried.
         "after renegotiation",
-        { close: [1000, Buffer.alloc(0)] },
+        { error: null, queued: 0 },
+        "sent during the renegotiation",
+        [1000, Buffer.alloc(0)],
       ],
-      together: { complete: 2, trailing: 0 },
-      queued: true,
-      sent: { error: null, stillQueued: 0 },
+      request: [applicationData, handshake],
+      finished: [expect.arrayContaining([changeCipherSpec, handshake, applicationData])],
     });
   });
 });
@@ -763,7 +778,17 @@ describe("ws package with HttpsProxyAgent", () => {
           }),
         }),
       })),
-      // hpagent sets `host` and `connection` itself too.
+      {
+        where: "`Host` on an HttpsProxyAgent",
+        winner: "the target as Host, and the other headers",
+        options: port => ({
+          agent: new HttpsProxyAgent(`http://${valid}@127.0.0.1:${port}`, {
+            headers: { Host: "other.example", "X-Kept": "yes" },
+          }),
+        }),
+        kept: { "x-kept": "yes" },
+      },
+      // hpagent sets `connection` itself too.
       {
         where: "`Proxy-Authorization`, `Host` and `connection` in hpagent's `proxyRequestOptions.headers`",
         winner: "the URL's credentials, the target as Host, and the other headers",
@@ -786,6 +811,23 @@ describe("ws package with HttpsProxyAgent", () => {
           agent: hpagent(`http://127.0.0.1:${port}`, { headers: { "proxy-authorization": basic(valid) } }),
         }),
       },
+      {
+        where: "a symbol key in hpagent's `proxyRequestOptions.headers`",
+        winner: "the other headers",
+        options: port => ({
+          agent: hpagent(`http://${valid}@127.0.0.1:${port}`, {
+            headers: { [Symbol("ignored")]: "x", "X-Kept": "yes" } as http.OutgoingHttpHeaders,
+          }),
+        }),
+        kept: { "x-kept": "yes" },
+      },
+      ...[7, true, "text"].map(headers => ({
+        where: `\`proxyRequestOptions.headers: ${JSON.stringify(headers)}\``,
+        winner: "no extra header",
+        options: (port: number) => ({
+          agent: hpagent(`http://${valid}@127.0.0.1:${port}`, { headers } as {}),
+        }),
+      })),
       // Bun-only: https-proxy-agent itself can't read a Headers object.
       {
         where: "a Headers object on an HttpsProxyAgent",

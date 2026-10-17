@@ -27,6 +27,7 @@ import {
   startRawWssServer,
   startRecordingProxy,
   startRenegotiatingWssServer,
+  TLS_RECORD,
 } from "./proxy-test-utils";
 // Use dynamic require to avoid linter removing the import
 const { HttpsProxyAgent } = require("https-proxy-agent") as {
@@ -721,7 +722,8 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
       await once(origin, "listening");
       const originPort = (origin.address() as AddressInfo).port;
 
-      // Once the client is open, the server sends exactly two TLS records: the frames, then the close_notify alert.
+      // Once the client is open, the server sends exactly two TLS records: the frames, then the close_notify alert,
+      // which TLS 1.3 encrypts as application data.
       const records = forwardRecordsTogether(2);
       using recorded = await startRecordingProxy({ tls: scheme === "https", onTargetData: records.onTargetData });
 
@@ -737,7 +739,7 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
         events: serverClose,
         requests: [connectRequest(originPort)],
         // One write to the client carried the record with the frames and the alert.
-        forwarded: [{ complete: 2, trailing: 0 }],
+        forwarded: [{ types: [TLS_RECORD.applicationData, TLS_RECORD.applicationData], trailing: 0 }],
       });
     });
   });
@@ -857,16 +859,16 @@ describe.concurrent.skipIf(!harness.nodeExe())("wss:// origin that renegotiates"
         ws.send("sent during the renegotiation");
         queued = ws.bufferedAmount > 0;
       }
-      if (event.data === "after renegotiation") ws.close(1000);
+      if (event.data === "sent during the renegotiation") ws.close(1000);
     });
     expect({ events: await clientEvents(ws), together: records.forwarded[0], queued }).toEqual({
       events: [
         "renegotiating",
-        "sent during the renegotiation",
         "after renegotiation",
+        "sent during the renegotiation",
         { code: 1000, reason: "", wasClean: true },
       ],
-      together: { complete: 2, trailing: 0 },
+      together: { types: [TLS_RECORD.applicationData, TLS_RECORD.handshake], trailing: 0 },
       queued: true,
     });
   });

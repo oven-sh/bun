@@ -250,24 +250,27 @@ export function connectRequest(port: number, headers: Record<string, string> = {
   };
 }
 
-/** The complete TLS records in `bytes`, and the bytes left over behind them. */
+export const TLS_RECORD = { changeCipherSpec: 20, alert: 21, handshake: 22, applicationData: 23 } as const;
+
+/** The types of the complete TLS records in `bytes`, and how many bytes are left over behind them. */
 export function tlsRecords(bytes: Buffer) {
-  let complete = 0;
+  const types: number[] = [];
   let offset = 0;
   while (offset + 5 <= bytes.length) {
     const next = offset + 5 + bytes.readUInt16BE(offset + 3);
     if (next > bytes.length) break;
+    types.push(bytes[offset]);
     offset = next;
-    complete++;
   }
-  return { complete, trailing: bytes.length - offset };
+  return { types, trailing: bytes.length - offset };
 }
 
 /**
  * An `onTargetData` for a proxy with one connection. After `hold()`, it waits for `count` complete TLS
  * records from the target and forwards them in one write, so the client decrypts them in one read.
+ * With `firstType`, it counts from the first record of that type and lets the records before it pass.
  */
-export function forwardRecordsTogether(count: number) {
+export function forwardRecordsTogether(count: number, firstType?: number) {
   let held: Buffer | null = null;
   let holding = false;
   const forwarded: ReturnType<typeof tlsRecords>[] = [];
@@ -282,9 +285,17 @@ export function forwardRecordsTogether(count: number) {
       let bytes = chunk;
       if (held !== null) {
         held = Buffer.concat([held, chunk]);
-        if (tlsRecords(held).complete < count) return;
-        bytes = held;
-        held = null;
+        const { types, trailing } = tlsRecords(held);
+        const first = firstType === undefined ? 0 : types.indexOf(firstType);
+        if (first === -1) {
+          bytes = held.subarray(0, held.length - trailing);
+          held = held.subarray(bytes.length);
+          if (bytes.length === 0) return;
+        } else {
+          if (types.length - first < count) return;
+          bytes = held;
+          held = null;
+        }
       }
       if (holding) forwarded.push(tlsRecords(bytes));
       forward(bytes);
@@ -308,7 +319,7 @@ export async function startOriginBehindCorruptingProxy(scheme: "http" | "https",
     },
     afterUpgrade: Buffer.concat(messages.map(message => encodeFrame(OP.text, message))),
   });
-  const corruptRecord = Buffer.from([0x17, 3, 3, 0, 20, ...Buffer.alloc(20, 7)]);
+  const corruptRecord = Buffer.from([TLS_RECORD.applicationData, 3, 3, 0, 20, ...Buffer.alloc(20, 7)]);
   const proxy = await startRecordingProxy({
     tls: scheme === "https",
     onTargetData(chunk, forward) {
@@ -373,7 +384,7 @@ export async function startRawWssServer(
  * renegotiation) it sends "after renegotiation", then replies to the client's next
  * frame (its Close frame) with Close 1000. With "behind a message" it sends
  * "renegotiating" right before it asks for the renegotiation, and echoes one more
- * short frame before "after renegotiation". It runs in real node because a
+ * short frame after "after renegotiation". It runs in real node because a
  * BoringSSL server cannot renegotiate, so skip the test when `nodeExe()` is null.
  */
 export async function startRenegotiatingWssServer(when: "before the 101" | "after the 101" | "behind a message") {
@@ -391,15 +402,18 @@ export async function startRenegotiatingWssServer(when: "before the 101" | "afte
             const renegotiate = then =>
               socket.renegotiate({ rejectUnauthorized: false }, err => (err ? socket.destroy(err) : then()));
             const send = payload => socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), Buffer.from(payload)]));
+            const closeOnNextFrame = () => socket.once("data", () => socket.end(Buffer.from([0x88, 0x02, 0x03, 0xe8])));
             const greet = () => {
               send("after renegotiation");
-              socket.once("data", () => socket.end(Buffer.from([0x88, 0x02, 0x03, 0xe8])));
+              closeOnNextFrame();
             };
-            const echoThenGreet = () =>
+            const greetThenEcho = () => {
+              send("after renegotiation");
               socket.once("data", frame => {
                 send(frame.subarray(6).map((byte, i) => byte ^ frame[2 + (i % 4)]));
-                greet();
+                closeOnNextFrame();
               });
+            };
             let head = "";
             const onHead = chunk => {
               head += chunk.toString("latin1");
@@ -418,7 +432,7 @@ export async function startRenegotiatingWssServer(when: "before the 101" | "afte
               } else if (process.env.WHEN === "behind a message") {
                 socket.once("data", () => {
                   send("renegotiating");
-                  renegotiate(echoThenGreet);
+                  renegotiate(greetThenEcho);
                 });
                 answer();
               } else {

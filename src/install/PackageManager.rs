@@ -1425,13 +1425,15 @@ fn configure_env_for_scripts_run(
             )
             .is_ok()
             {
-                // The Windows arm leaves `bun_path` empty.
-                if bun_path.is_empty()
-                    && let Ok(self_path) = bun_core::self_exe_path()
-                {
-                    bun_path = self_path.as_bytes();
+                // `NODE` is the shim, which runs as `node`, not the bun binary, which runs as
+                // `bun`. Without a shim, the `node` of PATH.
+                let mut node_file: Vec<u8> = Vec::new();
+                if let Some(dir) = node_shim_path.strip_suffix(&[bun_paths::DELIMITER]) {
+                    node_file.extend_from_slice(dir);
+                    node_file.extend_from_slice(bun_paths::path_literal!("/node").as_bytes());
+                    node_file.extend_from_slice(std::env::consts::EXE_SUFFIX.as_bytes());
                 }
-                let _ = this.env_mut().load_node_js_config(paths_fs, bun_path)?;
+                let _ = this.env_mut().load_node_js_config(paths_fs, &node_file)?;
             }
         }
     }

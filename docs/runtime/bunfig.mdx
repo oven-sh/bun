@@ -1213,7 +1213,7 @@ See [Minimum release age](/pm/cli/install#minimum-release-age).
 
 ## `bun run`
 
-The `[run]` section configures the `bun run` command. These settings also apply to the `bun` command when running a file, script, or executable.
+The `[run]` section configures the `bun run` command. These settings also apply to the `bun` command when running a file, script, or executable. `run.bun` also applies to the lifecycle scripts that the package manager commands run.
 
 For `bun run`, Bun only loads the local project's `bunfig.toml` automatically (it doesn't check for a global `.bunfig.toml`).
 
@@ -1239,7 +1239,7 @@ shell = "bun"
 
 ### `run.bun` - auto alias `node` to `bun`
 
-When `true`, Bun prepends `$PATH` with a `node` symlink that points to the `bun` binary for all scripts or executables invoked by `bun run` or `bun`, and for the lifecycle scripts that `bun install`, `bun add`, `bun update`, `bun pm trust`, `bun pm pack`, `bun pm version` and `bun publish` run.
+When `true`, Bun prepends `$PATH` with a `node` symlink that points to the `bun` binary for all scripts or executables invoked by `bun run` or `bun`, and for the lifecycle scripts that the package manager commands run (`bun install` and the other install commands, `bun pm trust`, `bun pm pack`, `bun pm version` and `bun publish`).
 
 A script that runs `node` runs `bun` instead, with no changes to the script. This works recursively, so a script that runs another script that runs `node` also runs `bun`. The alias also applies to shebangs that point to `node`.
 
@@ -1271,6 +1271,8 @@ The same flag makes the lifecycle scripts of `bun install` run `node` as `bun`:
 ```sh
 bun install --bun
 ```
+
+In a workspace, `bun install` reads the `bunfig.toml` of the workspace root, and `bun run` reads the one of the directory it runs in. Set `run.bun` at the root to cover both.
 
 Set to `false` to disable the `node` symlink.
 

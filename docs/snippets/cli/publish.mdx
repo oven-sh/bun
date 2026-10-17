@@ -177,6 +177,11 @@ bun publish --cafile ./ca-cert.pem
   Skip lifecycle scripts during packing and publishing
 </ParamField>
 
+<ParamField path="--bun" type="boolean">
+  Run lifecycle scripts with bun as <code>node</code>, like <code>bun run --bun</code> and <code>run.bun</code> in{" "}
+  <code>bunfig.toml</code>. Alias: <code>-b</code>
+</ParamField>
+
 <ParamField path="--trust" type="boolean">
   Add packages to trustedDependencies and run their scripts
 </ParamField>

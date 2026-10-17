@@ -102,13 +102,13 @@ Bun reads the value like `ignore-scripts=<value>` in `.npmrc`, and ignores an em
 
 ## `--bun`
 
-A lifecycle script runs `node` from `$PATH`. When there is no `node`, the script runs `bun` as `node`. To run `bun` as `node` even when `node` exists, like `bun run --bun`, use the `--bun` flag:
+A lifecycle script runs `node` from `$PATH`. When there is no `node`, the script runs `bun` as `node`, ahead of any `node` that a dependency links into `node_modules/.bin`. To run `bun` as `node` even when `node` exists, like `bun run --bun`, use the `--bun` flag:
 
 ```bash terminal icon="terminal"
 bun install --bun
 ```
 
-To make this the default for a project, set [`run.bun`](/runtime/bunfig#run-bun-auto-alias-node-to-bun) in `bunfig.toml`. It applies to `bun run` and to lifecycle scripts:
+To make this the default for a project, set [`run.bun`](/runtime/bunfig#run-bun-auto-alias-node-to-bun) in `bunfig.toml`. It applies to `bun run` and to lifecycle scripts. In a workspace, `bun install` reads the `bunfig.toml` of the workspace root.
 
 ```toml bunfig.toml icon="settings"
 [run]

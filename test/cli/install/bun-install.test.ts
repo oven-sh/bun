@@ -25,7 +25,7 @@ import {
   toHaveBins,
 } from "harness";
 import { connect, createServer, type AddressInfo, type Socket as NetSocket } from "net";
-import { basename, join, relative, resolve, sep } from "path";
+import { basename, delimiter, join, relative, resolve, sep } from "path";
 import {
   createTestContext,
   destroyTestContext,
@@ -16856,6 +16856,13 @@ describe.concurrent("the flags of the runtime that take no value", () => {
 describe.concurrent("node in lifecycle scripts", () => {
   const probe = `node -e "console.log('Bun is ' + typeof Bun)"`;
   const realNode = Bun.which("node", { PATH: env.PATH ?? "" });
+  // The PATH without any `node`, for the fallback that makes bun `node`.
+  const noNode = {
+    PATH: (env.PATH ?? "")
+      .split(delimiter)
+      .filter(dir => !Bun.which("node", { PATH: dir }))
+      .join(delimiter),
+  };
   const project = (files: Record<string, string> = {}, pkg: Record<string, unknown> = {}) =>
     tempDir("install-lifecycle-node", {
       "package.json": JSON.stringify({ name: "foo", version: "0.0.1", scripts: { prepare: probe }, ...pkg }),
@@ -16865,12 +16872,33 @@ describe.concurrent("node in lifecycle scripts", () => {
   function ranIn({ stdout, stderr, exitCode }: Awaited<ReturnType<typeof bunIn>>) {
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
-    return stdout.match(/^Bun is (\w+)$/m)?.[1] ?? stdout;
+    return stdout.match(/^Bun is (.*)$/m)?.[1] ?? stdout;
   }
 
   it("is the node of PATH by default", async () => {
     using dir = project();
     expect(ranIn(await bunIn(String(dir), ["install"]))).toBe(realNode ? "undefined" : "object");
+  });
+
+  it("is bun when PATH has no node", async () => {
+    using dir = project();
+    expect(ranIn(await bunIn(String(dir), ["install"], noNode))).toBe("object");
+  });
+
+  it("sets NODE to the node that runs", async () => {
+    const probe = `node -e "console.log('NODE=' + process.env.NODE)" && "$NODE" -e "console.log('Bun is ' + typeof Bun + ' as ' + require('path').basename(process.argv0, '.exe'))"`;
+    using dir = project({}, { scripts: { prepare: probe } });
+    const node = (stdout: string) => stdout.match(/^NODE=(.*)$/m)?.[1];
+
+    const withBun = await bunIn(String(dir), ["install", "--bun"]);
+    expect(node(withBun.stdout)).toMatch(/[\\/]bun-node[^\\/]*[\\/]node(\.exe)?$/);
+    expect(ranIn(withBun)).toBe("object as node");
+
+    if (realNode) {
+      const plain = await bunIn(String(dir), ["install"]);
+      expect(node(plain.stdout)).toBe(realNode);
+      expect(ranIn(plain)).toBe("undefined as node");
+    }
   });
 
   it.each([
@@ -16917,8 +16945,15 @@ describe.concurrent("node in lifecycle scripts", () => {
       using dir = project(files, pkg);
       expect(ranIn(await bunIn(String(dir), ["install"]))).toBe("fake");
     }
-    using dir = project(files, pkg);
-    expect(ranIn(await bunIn(String(dir), ["install", "--bun"]))).toBe("object");
+    {
+      using dir = project(files, pkg);
+      expect(ranIn(await bunIn(String(dir), ["install", "--bun"]))).toBe("object");
+    }
+    if (!isWindows) {
+      // The same when there is no `node` at all: the fallback orders PATH like `--bun`.
+      using dir = project(files, pkg);
+      expect(ranIn(await bunIn(String(dir), ["install"], noNode))).toBe("object");
+    }
   });
 });
 

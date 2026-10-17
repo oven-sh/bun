@@ -89,7 +89,8 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
     return ImportMetaObject::createFromSpecifier(globalObject, specifier);
 }
 
-WTF::URL ImportMetaObject::urlOfSpecifier(const String& specifier)
+// Inline, so that createFromSpecifier() (once for each module) does not pay a call for the sharing.
+ALWAYS_INLINE static URL fileURLOfSpecifier(const String& specifier)
 {
     auto index = specifier.find('?');
     URL url;
@@ -103,9 +104,14 @@ WTF::URL ImportMetaObject::urlOfSpecifier(const String& specifier)
     return url;
 }
 
+WTF::URL ImportMetaObject::urlOfSpecifier(const String& specifier)
+{
+    return fileURLOfSpecifier(specifier);
+}
+
 ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
 {
-    return create(globalObject, urlOfSpecifier(specifier).string());
+    return create(globalObject, fileURLOfSpecifier(specifier).string());
 }
 
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)

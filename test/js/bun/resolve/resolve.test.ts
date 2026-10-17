@@ -338,6 +338,37 @@ it.skipIf(isWindows)("file url whose path does not percent-decode to UTF-8 is an
   expect({ stdout: fromStatement.stdout, exitCode: fromStatement.exitCode }).toEqual({ stdout: "", exitCode: 1 });
 });
 
+// Bun makes the file: URL of a module from its path and writes "%25" for a "%". So this URL converts back to
+// the path: each reader of import.meta and of the importer of an import() depends on that.
+it("a module in a directory whose name has a % that is not a UTF-8 escape knows its own path", async () => {
+  using dir = tempDir("fileurl", {
+    "50%deposit/entry.mjs": `
+      import { basename, sep } from "node:path";
+      const sibling = await import("./sibling.mjs");
+      process.stdout.write(JSON.stringify({
+        url: import.meta.url.slice(-"/50%25deposit/entry.mjs".length),
+        path: import.meta.path === import.meta.dir + sep + "entry.mjs",
+        dir: basename(import.meta.dir),
+        sibling: sibling.default,
+      }));
+    `,
+    "50%deposit/sibling.mjs": `export default import.meta.file;`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: join(String(dir), "50%deposit"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ url: "/50%25deposit/entry.mjs", path: true, dir: "50%deposit", sibling: "sibling.mjs" }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // "file:" is not the name of a package. The error names the module as it is written.
 it("file: specifier that does not resolve is named in the error", () => {
   for (const specifier of ["file:/does/not/exist.mjs", "file:does-not-exist.mjs", "file://%zz/does-not-exist.mjs"]) {

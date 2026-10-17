@@ -293,6 +293,7 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     [":method with non-token bytes", baseHeaders("/hello", "GET{}")],
     [":path with HTAB", baseHeaders("/sta\ttic")],
     [":path with SP", baseHeaders("/a b")],
+    [":path with SP in bytes 9 to 16", baseHeaders("/static/file name.txt")],
     [":path with a control byte", baseHeaders("/hello\x01")],
     ["field name with trailing SP", [...baseHeaders("/hello"), ["x-a ", "1"]]],
     ["field name with trailing HTAB", [...baseHeaders("/hello"), ["x-a\t", "1"]]],

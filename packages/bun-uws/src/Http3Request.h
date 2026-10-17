@@ -56,6 +56,8 @@ struct Http3Request {
         return getDecodedQueryValue(key, query);
     }
 
+    std::string_view getCaseSensitiveMethod() { return method; }
+
     /* HttpRequest::getMethod() lowercases in place; we own no writable
      * buffer, so write into a per-request scratch instead. */
     std::string_view getMethod() {

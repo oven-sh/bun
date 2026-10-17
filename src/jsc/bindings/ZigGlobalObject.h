@@ -769,9 +769,7 @@ public:
     JSObject* nodeWorkerStdioPorts() { return m_nodeWorkerStdioPorts.get(); }
     void setNodeWorkerStdioPorts(JSObject* ports);
     void setNodeWorkerEnvironmentData(JSMap* data);
-    // node:worker_threads parentPort — the transferred MessagePort entangled with the parent
-    // Worker's public port. Messages it dispatches are mirrored onto globalEventScope so the
-    // Web Worker style (`self.onmessage` / global addEventListener) keeps working under a node Worker.
+    // node:worker_threads parentPort, registered so start() defers delivery until the entry settles.
     void setNodeParentPort(WebCore::MessagePort*);
     WebCore::MessagePort* nodeParentPort() const { return m_nodeParentPort.get(); }
     // A node worker's parentPort delivers nothing until the entry module has evaluated (node's

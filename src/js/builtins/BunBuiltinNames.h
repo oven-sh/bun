@@ -102,6 +102,7 @@ using namespace JSC;
     macro(internalRequire) \
     macro(isAbortSignal) \
     macro(isAbsolute) \
+    macro(isNodeWorkerThreadsWorker) \
     macro(isUncloneable) \
     macro(isUntransferable) \
     macro(join) \

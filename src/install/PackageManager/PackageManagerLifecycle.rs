@@ -17,6 +17,7 @@ use crate::bun_fs::FileSystem;
 use crate::bun_json;
 use crate::initialize_store;
 
+use super::add_remove_with_filter::root_package_json_path;
 use super::directories;
 use crate::dependency::Tag as DependencyVersionTag;
 use crate::lifecycle_script_runner::{
@@ -533,6 +534,7 @@ impl PackageManager {
                     resolutions[owner as usize].workspace().slice(buf),
                     b"/package.json",
                 ]),
+                _ if self.options.global => root_package_json_path(),
                 _ => Box::from(&b"package.json"[..]),
             };
             Output::flush();

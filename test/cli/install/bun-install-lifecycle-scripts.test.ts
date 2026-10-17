@@ -3572,6 +3572,7 @@ describe.concurrent("a dependency that Bun names after its own package gets no t
           spec: electronUrl(),
           argv: ["add", "-g", electronUrl()],
           env: { ...ctx.env, BUN_INSTALL: join(ctx.packageDir, "bun-install"), BUN_INSTALL_GLOBAL_DIR: globalDir },
+          advised: join(realpathSync(globalDir), "package.json"),
           dirs: [globalDir],
         };
       },

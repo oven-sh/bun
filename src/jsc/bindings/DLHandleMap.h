@@ -3,6 +3,7 @@
 #include "root.h"
 #include "v8/node.h"
 #include "napi.h"
+#include <JavaScriptCore/VM.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/Vector.h>
@@ -16,8 +17,21 @@
 
 namespace Bun {
 
+struct V8ModuleRegistration {
+    node::node_module* module;
+
+    // The live VM that last ran the init of a module that bindsToVM(). See claimForVM and vmDestroyed.
+    std::optional<JSC::VMIdentifier> owner;
+
+    // nm_register_func (NODE_MODULE, NAN) keeps its handles in statics: one live VM at a time. A rejected module runs nothing.
+    static bool bindsToVM(const node::node_module& mod)
+    {
+        return !mod.nm_context_register_func && mod.nm_register_func && mod.nm_version == REPORTED_NODEJS_ABI_VERSION;
+    }
+};
+
 // A module can be either V8 C++ style or NAPI style
-using DLModuleRegistration = std::variant<node::node_module*, napi_module*>;
+using DLModuleRegistration = std::variant<V8ModuleRegistration, napi_module*>;
 
 // Thread-safe map for tracking dlopen handles to module registrations.
 // This allows re-loading the same native module multiple times, matching Node.js behavior.
@@ -27,6 +41,8 @@ using DLModuleRegistration = std::variant<node::node_module*, napi_module*>;
 // its static constructors run and call node_module_register() or napi_module_register().
 // On subsequent loads, dlopen() returns the same handle but the constructors don't run again.
 // We use this map to look up and replay all saved registrations.
+//
+// Node.js refuses every second load of a module that bindsToVM(); Bun only refuses it while another live VM owns it (#23136).
 class DLHandleMap {
 public:
 #if OS(WINDOWS)
@@ -46,15 +62,19 @@ public:
         return *s_instance;
     }
 
-    // Add a V8 C++ module registration to the vector for this handle
-    void add(DLHandle handle, node::node_module* module)
+    // Add a V8 C++ module registration to the vector for this handle. `vm` just ran its init.
+    void add(DLHandle handle, node::node_module* module, JSC::VM& vm)
     {
         ASSERT(handle != nullptr);
         ASSERT(module != nullptr);
 
+        std::optional<JSC::VMIdentifier> owner;
+        if (V8ModuleRegistration::bindsToVM(*module))
+            owner = vm.identifier();
+
         WTF::Locker locker { m_lock };
         auto& registrations = m_map.ensure(handle, [] { return WTF::Vector<DLModuleRegistration>(); }).iterator->value;
-        registrations.append(DLModuleRegistration(module));
+        registrations.append(DLModuleRegistration(V8ModuleRegistration { module, owner }));
     }
 
     // Add a NAPI module registration to the vector for this handle
@@ -81,6 +101,53 @@ public:
         }
 
         return it->value;
+    }
+
+    // Makes `vm` own this handle's bindsToVM() modules before replaying them. False, and no change, while another live VM owns one.
+    bool claimForVM(DLHandle handle, JSC::VM& vm)
+    {
+        ASSERT(handle != nullptr);
+        auto identifier = vm.identifier();
+
+        WTF::Locker locker { m_lock };
+
+        auto it = m_map.find(handle);
+        ASSERT(it != m_map.end());
+        if (it == m_map.end()) {
+            return true;
+        }
+
+        auto& registrations = it->value;
+        for (auto& registration : registrations) {
+            auto* v8Module = std::get_if<V8ModuleRegistration>(&registration);
+            if (v8Module && v8Module->owner && *v8Module->owner != identifier) {
+                return false;
+            }
+        }
+
+        for (auto& registration : registrations) {
+            auto* v8Module = std::get_if<V8ModuleRegistration>(&registration);
+            if (v8Module && V8ModuleRegistration::bindsToVM(*v8Module->module)) {
+                v8Module->owner = identifier;
+            }
+        }
+
+        return true;
+    }
+
+    // Called once the VM no longer exists, so nothing can run the modules it owned any more.
+    void vmDestroyed(JSC::VMIdentifier identifier)
+    {
+        WTF::Locker locker { m_lock };
+
+        for (auto& registrations : m_map.values()) {
+            for (auto& registration : registrations) {
+                auto* v8Module = std::get_if<V8ModuleRegistration>(&registration);
+                if (v8Module && v8Module->owner == identifier) {
+                    v8Module->owner.reset();
+                }
+            }
+        }
     }
 
 private:

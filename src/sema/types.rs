@@ -1493,8 +1493,14 @@ impl<'s, V> Interned<'s, V> {
     }
 
     /// For `put`.
-    fn halves(&self) -> (&[GrowingPlaces<&'s Session>], &AppendVec<V, &'s Session>) {
-        (&self.shards[..], &self.items)
+    fn halves(
+        &self,
+    ) -> (
+        &[GrowingPlaces<&'s Session>],
+        &AppendVec<V, &'s Session>,
+        u32,
+    ) {
+        (&self.shards[..], &self.items, 0)
     }
 
     /// Assigns the next id to `item`, which must not be present yet. `spread`: its lookup hash.
@@ -4339,9 +4345,9 @@ enum Placed<V> {
 
 /// FOLLOW, for one kind: writes the surviving records into the shared store, at their ids. Returns
 /// those that are `Later`, in id order: the caller writes them. Also returns, for `check_joined`,
-/// the merged records, remapped.
+/// the merged records, remapped. `first` is the id of the first element of `items`.
 fn put<V: Send + Sync, A: Allocator + Clone + Sync>(
-    (shards, items): (&[GrowingPlaces<A>], &AppendVec<V, A>),
+    (shards, items, first): (&[GrowingPlaces<A>], &AppendVec<V, A>, u32),
     tasks: Vec<(Taken<V>, &Link)>,
     in_parallel: InParallel<'_>,
     settle: &(dyn Fn(V, &Link, u32) -> Placed<V> + Sync),
@@ -4392,7 +4398,7 @@ fn put<V: Send + Sync, A: Allocator + Clone + Sync>(
             };
             stored(id, &record);
             // SAFETY: the id is in the range that was reserved, and no other record has it.
-            unsafe { items.write(id, record) };
+            unsafe { items.write(id - first, record) };
         }
         // A counting sort by the shard.
         it.shards = vec![0; SHARDS + 1];
@@ -4435,13 +4441,13 @@ fn put<V: Send + Sync, A: Allocator + Clone + Sync>(
 /// In a debug build: a record that was merged with another must equal it. Otherwise two different
 /// contents have the same content hash.
 fn check_joined<V, A: Allocator + Clone>(
-    items: &AppendVec<V, A>,
+    (_, items, first): (&[GrowingPlaces<A>], &AppendVec<V, A>, u32),
     joined: Vec<(u32, V)>,
     is_same: impl Fn(&V, &V) -> bool,
 ) {
     for (id, record) in joined {
         assert!(
-            is_same(&record, items.get(id)),
+            is_same(&record, items.get(id - first)),
             "two records with one content hash differ"
         );
     }
@@ -4492,7 +4498,7 @@ impl<'s> TypeStore<'s> {
         let mut links = [
             number(
                 &mut of(&mut tasks, |it| &mut it.atoms),
-                atoms.halves().1.len(),
+                atoms.halves().2 + atoms.halves().1.len(),
                 in_parallel,
             ),
             number(
@@ -4549,7 +4555,7 @@ impl<'s> TypeStore<'s> {
             let spread = crate::atom::hash_of(&text);
             Placed::Indexed(text, spread)
         }, &|_, _| {});
-        check_joined(atoms.halves().1, joined, |a, b| **a == **b);
+        check_joined(atoms.halves(), joined, |a, b| **a == **b);
         let (_, joined) = put(
             self.components.halves(),
             components,
@@ -4561,7 +4567,7 @@ impl<'s> TypeStore<'s> {
             },
             &|_, _| {},
         );
-        check_joined(&self.components.items, joined, |a, b| a == b);
+        check_joined(self.components.halves(), joined, |a, b| a == b);
         let (_, joined) = put(
             self.mappers.halves(),
             mappers,
@@ -4574,7 +4580,7 @@ impl<'s> TypeStore<'s> {
             },
             &|_, _| {},
         );
-        check_joined(&self.mappers.items, joined, |a, b| a == b);
+        check_joined(self.mappers.halves(), joined, |a, b| a == b);
         let (_, joined) = put(
             self.sigs.halves(),
             sigs,
@@ -4586,7 +4592,7 @@ impl<'s> TypeStore<'s> {
             },
             &|_, _| {},
         );
-        check_joined(&self.sigs.items, joined, |a, b| a == b);
+        check_joined(self.sigs.halves(), joined, |a, b| a == b);
         debug_assert_eq!(self.summaries.len(), self.types.items.len());
         // SAFETY: every type that `put` stores has its summary written there, and every one that it leaves for later below.
         unsafe { self.summaries.reserve(stay[4] as u32) };
@@ -4637,7 +4643,7 @@ impl<'s> TypeStore<'s> {
             }
             self.types.shards[shard_of(spread)].extend(1, std::iter::once((spread, id)));
         }
-        check_joined(&self.types.items, joined, |a, b| a.created == b.created);
+        check_joined(self.types.halves(), joined, |a, b| a.created == b.created);
         (links, counts)
     }
 }

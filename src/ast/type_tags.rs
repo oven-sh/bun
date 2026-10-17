@@ -34,5 +34,6 @@ pub struct ProgramFacts {
     pub engine: Option<EarlyEngine>,
     pub typed: Option<Box<[u8]>>,
     pub entry_points: Box<[Box<[u8]>]>,
+    pub builtin_modules_of_entry_points: Vec<Vec<Box<[u8]>>>,
     pub tokens: Option<Box<[u8]>>,
 }

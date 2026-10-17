@@ -329,6 +329,16 @@ impl LintCommand {
                 ..Outcome::default()
             })
         }
+        if HAS_TEST_RUNNER && let [b"--print-markdown-trees", rest @ ..] = &args[..] {
+            run_and_exit(b"lint", None, |_| {
+                let trees = bun_lint_driver::for_tests::print_markdown_trees(rest);
+                Outcome {
+                    exit_code: u8::from(trees.is_none()),
+                    stdout: trees.unwrap_or_default(),
+                    ..Outcome::default()
+                }
+            })
+        }
         if HAS_TEST_RUNNER && let [b"--run-path-tests", rest @ ..] = &args[..] {
             run_and_exit(b"lint", None, |_| {
                 let answers = bun_lint_driver::for_tests::run_path_tests(rest);

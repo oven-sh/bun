@@ -649,7 +649,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (obj, name) = match hir[target].kind {
             ExprKind::Dot { obj, name, chain: Chain::No, .. } => (obj, FieldKey::Name(name)),
             ExprKind::Index { obj, index, chain: Chain::No } => match self.constant_symbol_named_by(file, index) {
-                Some(symbol) => (obj, FieldKey::Symbol(symbol.declaration)),
+                Some(symbol) => (obj, FieldKey::Symbol(symbol)),
                 None => return true,
             },
             _ => return true,

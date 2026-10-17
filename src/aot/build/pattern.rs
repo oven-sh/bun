@@ -163,7 +163,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 Some(written) => self.out.strs.intern(&written),
                 None => match self.c.constant_symbol_of_property(name) {
                     Some(symbol) => {
-                        let text = symbol.description.map_or(Vec::new(), |description| [b"[", self.c.atoms().bytes(description), b"]"].concat());
+                        let text = self.c.constant_symbol_description(symbol).map_or(Vec::new(), |description| [b"[", &description[..], b"]"].concat());
                         self.out.strs.intern(&text)
                     }
                     None => self.str(name),

@@ -784,7 +784,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if prop.flags.contains(PropFlags::METHOD) {
                 flags |= field_flags::METHOD;
             }
-            fields.push(Field::new(self.str(prop.name), TyId::NONE, flags));
+            let name = self.str(prop.name);
+            if is_named_by_constant_symbol && fields.iter().any(|field: &Field| field.name == name) {
+                return None;
+            }
+            fields.push(Field::new(name, TyId::NONE, flags));
         }
         for &(name, _) in self.c.undeclared_fields_for(ty).iter() {
             fields.push(Field::new(self.str(name), TyId::NONE, field_flags::OPTIONAL));

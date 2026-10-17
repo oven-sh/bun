@@ -43,6 +43,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     pub(crate) fn expr(&mut self, fx: &mut Fx, e: ExprId) -> V {
+        if let Some(value) = self.preevaluated_operand(fx, e) {
+            return value;
+        }
         if e.is_none() {
             return self.expr_inner(fx, e);
         }
@@ -145,53 +148,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn access_pos(&self, fx: &Fx, e: ExprId) -> u32 {
-        let hir = self.hir(fx.file);
-        match hir[self.skip_assertions(fx, e)].kind {
-            ExprKind::Dot { name_pos, .. } => name_pos,
-            ExprKind::Index { index, .. } => hir[index].pos,
-            _ => hir[e].pos,
-        }
+        crate::positions::access_pos(self.hir(fx.file), e)
     }
 
     fn object_pos(&self, fx: &Fx, e: ExprId) -> u32 {
-        let hir = self.hir(fx.file);
-        match hir[self.skip_assertions(fx, e)].kind {
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if !matches!(hir[obj].kind, ExprKind::Super) => self.last_pos(fx, obj),
-            _ => self.access_pos(fx, e),
-        }
+        crate::positions::object_pos(self.hir(fx.file), e)
     }
 
     pub(crate) fn last_pos(&self, fx: &Fx, e: ExprId) -> u32 {
-        let hir = self.hir(fx.file);
-        let e = self.skip_assertions(fx, e);
-        match hir[e].kind {
-            ExprKind::Dot { name_pos, .. } => name_pos,
-            ExprKind::Index { index, .. } => self.last_pos(fx, index),
-            ExprKind::Binary { right, .. } => self.last_pos(fx, right),
-            ExprKind::Assign { value, .. } => self.last_pos(fx, value),
-            ExprKind::Cond { no, .. } => self.last_pos(fx, no),
-            ExprKind::Unary { op: hir::UnOp::PostInc | hir::UnOp::PostDec, .. } => hir[e].end - 2,
-            ExprKind::Unary { operand, .. } | ExprKind::Await(operand) | ExprKind::Spread(operand) => self.last_pos(fx, operand),
-            ExprKind::New(call) if hir.text[hir[e].end as usize - 1] != b')' => self.last_pos(fx, hir[call].callee),
-            ExprKind::Fn(func) => self.last_pos_in_function(fx, func).unwrap_or(hir[e].end - 1),
-            ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Class(_) => hir[e].end - 1,
-            _ => hir[e].pos,
-        }
-    }
-
-    fn last_pos_in_function(&self, fx: &Fx, func: FnId) -> Option<u32> {
-        let hir = self.hir(fx.file);
-        let last = match hir[func].body {
-            hir::FnBody::Expr(body) => return Some(self.last_pos(fx, body)),
-            hir::FnBody::Block(body) => hir.ids(body).last()?,
-            hir::FnBody::None => return None,
-        };
-        match hir[last].kind {
-            hir::StmtKind::Expr(value) | hir::StmtKind::Throw(value) => Some(self.last_pos(fx, value)),
-            hir::StmtKind::Return(value) if value.is_some() => Some(self.last_pos(fx, value)),
-            hir::StmtKind::Return(_) => Some(hir[last].start),
-            _ => None,
-        }
+        crate::positions::last_pos(self.hir(fx.file), e)
     }
 
     pub(crate) fn pat_last_pos(&self, fx: &Fx, pat: hir::PatId) -> u32 {
@@ -633,14 +598,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let s = self.str(text);
             return self.emit(fx, Op::Str(s));
         }
-        let is_in_key_position = matches!(node.kind, ExprKind::Ident(_))
+        let is_in_key_position = matches!(node.kind, ExprKind::Ident(_) | ExprKind::Dot { .. })
             && match self.c.bound(fx.file).expr_parent[e.idx()] {
-                Parent::Expr(around) => is_key_name || matches!(hir[around].kind, ExprKind::Binary { op: hir::BinOp::In, left, .. } if left == e),
+                Parent::Expr(around) => matches!(hir[around].kind, ExprKind::Index { index: key, .. } | ExprKind::Binary { op: hir::BinOp::In, left: key, .. } if key == e),
                 Parent::PatKey(_) => true,
                 _ => false,
             };
         if is_in_key_position && let Some(symbol) = self.c.constant_symbol_named_by(fx.file, e) {
-            self.emit_tdz_check(fx, e);
+            if matches!(node.kind, ExprKind::Ident(_)) {
+                self.emit_tdz_check(fx, e);
+            }
             fx.b.pos = node.pos;
             let name = self.constant_symbol_name(symbol);
             let symbol_type = self.op_result_type(fx, &Op::Symbol(name));
@@ -1390,24 +1357,27 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn external_module(&mut self, fx: &mut Fx, specifier: Atom) -> V {
         let global = self.external_module_global(fx.file, specifier);
-        let known = self.emit(fx, Op::GlobalGet(global));
-        if !self.is_dropped_import(fx.file, specifier) {
-            return known;
+        if self.is_dropped_import(fx.file, specifier) {
+            self.load_external_module(fx, global, fx.file, specifier);
         }
+        self.emit(fx, Op::GlobalGet(global))
+    }
+
+    pub(crate) fn load_external_module(&mut self, fx: &mut Fx, global: GlobalId, importer: FileId, specifier: Atom) {
+        let known = self.emit(fx, Op::GlobalGet(global));
         let undefined = self.emit(fx, Op::Undefined);
         let is_missing = self.emit(fx, Op::StrictEq { a: known, b: undefined });
         let (first, there) = (fx.b.new_block(), fx.b.new_block());
         self.branch(fx, is_missing, first, there);
         fx.b.seal(first);
         fx.b.switch_to(first);
-        let requested = self.host_resolved_specifier(fx.file, specifier);
+        let requested = self.host_resolved_specifier(importer, specifier);
         let requested = self.str(requested);
         let namespace = self.emit_throwing(fx, Op::ExternalModule(requested));
         self.emit(fx, Op::GlobalSet(global, namespace));
         fx.b.jump(there);
         fx.b.seal(there);
         fx.b.switch_to(there);
-        self.emit(fx, Op::GlobalGet(global))
     }
 
     pub(crate) fn external_module_global(&mut self, file: FileId, specifier: Atom) -> GlobalId {
@@ -1833,6 +1803,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn dot(&mut self, fx: &mut Fx, e: ExprId, obj: ExprId, name: Atom, bail: BlockId) -> V {
+        self.lower_scalar_url(fx, e, |this, fx| this.dot_generic(fx, e, obj, name, bail))
+    }
+
+    fn dot_generic(&mut self, fx: &mut Fx, e: ExprId, obj: ExprId, name: Atom, bail: BlockId) -> V {
         let pos = self.hir(fx.file)[e].pos;
         fx.b.pos = self.object_pos(fx, e);
         if let Some(value) = self.exports_expression(fx, e) {
@@ -2394,7 +2368,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 if let PropKey::Computed(key) = hir[p].key {
                     self.emit_tdz_check(fx, key);
                 }
-                let given = if hir[p].kind == PropKind::Init { name } else { Atom::NONE };
+                let given = if hir[p].kind == PropKind::Init || matches!(hir[p].key, PropKey::Computed(_)) { name } else { Atom::NONE };
                 let name = self.str(name);
                 match layout.zip(by_name.as_ref()).and_then(|(layout, by_name)| Some((layout, by_name.get(&self.out.layouts[layout.idx()], name)?))) {
                     Some((layout, field)) => {
@@ -2451,7 +2425,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn literal_key(&mut self, file: FileId, p: PropId) -> PropKey {
         let prop = &self.hir(file)[p];
         match prop.key {
-            PropKey::Computed(key) if prop.kind == PropKind::Init => self.c.property_named_by_constant_symbol(file, key).map_or(prop.key, PropKey::Name),
+            PropKey::Computed(key) if matches!(prop.kind, PropKind::Init | PropKind::Method) => self.c.property_named_by_constant_symbol(file, key).map_or(prop.key, PropKey::Name),
             key => key,
         }
     }
@@ -2649,7 +2623,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         {
             return Some(layout);
         }
-        if fx.sink.is_some_and(|sink| sink.e == e && sink.want.id.is_none()) || self.ty_of(copied) == self.out.tys.anything {
+        if self.goes_into_untyped_place(fx, e) || self.ty_of(copied) == self.out.tys.anything {
             return None;
         }
         let mut later: Vec<Atom> = Vec::new();
@@ -2671,11 +2645,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         (self.does_spread_fit_layout_except(created, base, copied, &later) && self.do_props_fit_layout(fx, props, 1, created, base)).then_some(created)
     }
 
+    fn goes_into_untyped_place(&mut self, fx: &Fx, literal: ExprId) -> bool {
+        fx.sink.is_some_and(|sink| sink.e == literal && sink.want.id.is_none()) && self.c.literal_type_expected_of_callback(fx.file, literal).is_none()
+    }
+
     fn spread_clone_layout_after_names(&mut self, fx: &Fx, e: ExprId, props: Span<PropId>) -> Option<LayoutId> {
         let hir = self.hir(fx.file);
         let number_before = props.iter().len().checked_sub(1).filter(|&ahead| ahead > 0)?;
         let spread = props.iter().nth(number_before)?;
-        if !fx.is_typed || hir[spread].kind != PropKind::Spread || self.is_explicitly_dynamic(fx, e) || !self.c.has_declared_type(fx.file, e) || fx.sink.is_some_and(|sink| sink.e == e && sink.want.id.is_none()) {
+        if !fx.is_typed || hir[spread].kind != PropKind::Spread || self.is_explicitly_dynamic(fx, e) || !self.c.has_declared_type(fx.file, e) || self.goes_into_untyped_place(fx, e) {
             return None;
         }
         let copied = self.c.type_of_expr(fx.file, hir[spread].value);
@@ -3812,6 +3790,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn call(&mut self, fx: &mut Fx, e: ExprId, call: CallId, bail: BlockId) -> V {
+        self.lower_scalar_url(fx, e, |this, fx| this.call_generic(fx, e, call, bail))
+    }
+
+    fn call_generic(&mut self, fx: &mut Fx, e: ExprId, call: CallId, bail: BlockId) -> V {
         let hir = self.hir(fx.file);
         let c = &hir[call];
         let pos = hir[e].pos;
@@ -4345,6 +4327,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn new_expression(&mut self, fx: &mut Fx, e: ExprId, call: CallId) -> V {
+        self.lower_scalar_url(fx, e, |this, fx| this.new_expression_generic(fx, e, call))
+    }
+
+    fn new_expression_generic(&mut self, fx: &mut Fx, e: ExprId, call: CallId) -> V {
         let hir = self.hir(fx.file);
         let c = &hir[call];
         fx.b.pos = self.last_pos(fx, c.callee);
@@ -5015,14 +5001,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         is_global.then_some(operand)
     }
 
-    fn skip_assertions(&self, fx: &Fx, mut e: ExprId) -> ExprId {
-        let hir = self.hir(fx.file);
-        loop {
-            e = match hir[e].kind {
-                ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) => expr,
-                _ => return e,
-            };
-        }
+    fn skip_assertions(&self, fx: &Fx, e: ExprId) -> ExprId {
+        crate::positions::skip_assertions(self.hir(fx.file), e)
     }
 
     fn folded_import_meta_member(&mut self, fx: &mut Fx, e: ExprId, obj: ExprId, name: Atom) -> Option<V> {

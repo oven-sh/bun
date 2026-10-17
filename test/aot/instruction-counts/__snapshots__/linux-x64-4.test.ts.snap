@@ -1,10 +1,10 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`makes a record of sixteen fields, twelve of them born undefined, and stores to three of those 1`] = `
-"typed, function: 46.78 instructions (kernel 25.32, stub AllocateTypedObject 18, the runtime 2.15, elsewhere 1.19, module 0.12), 323 bytes
-typed, module level: 45.69 instructions (module 24.35, stub AllocateTypedObject 18, the runtime 2.15, elsewhere 1.19), 1579 bytes
-untyped, function: 126.39 instructions (kernel 57.26, stub NewObjectFromDescriptor4 53.86, the runtime 14.49, elsewhere 0.65, module 0.12), 796 bytes
-untyped, module level: 123.94 instructions (module 55.26, stub NewObjectFromDescriptor4 53.86, the runtime 14.17, elsewhere 0.65), 1823 bytes"
+"typed, function: 43.38 instructions (kernel 25.32, stub AllocateTypedObject 18, module 0.12, the runtime -0.06), 323 bytes
+typed, module level: 42.35 instructions (module 24.35, stub AllocateTypedObject 18), 1579 bytes
+untyped, function: 129.40 instructions (kernel 57.26, stub NewObjectFromDescriptor4 53.86, the runtime 16.32, elsewhere 1.83, module 0.12), 796 bytes
+untyped, module level: 127.55 instructions (module 55.26, stub NewObjectFromDescriptor4 53.86, the runtime 16.59, elsewhere 1.83), 1823 bytes"
 `;
 
 exports[`formats an amount of money with an Intl.NumberFormat whose locale and options are constants 1`] = `

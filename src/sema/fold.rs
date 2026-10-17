@@ -725,7 +725,9 @@ fn compare(op: BinOp, a: &Constant, b: &Constant) -> Option<bool> {
 
 fn calculate(op: BinOp, a: &Constant, b: &Constant) -> Option<Constant> {
     if let (BinOp::Add, Constant::String(a), Constant::String(b)) = (op, a, b) {
-        return Some(Constant::String([&a[..], &b[..]].concat()));
+        let mut text = [&a[..], &b[..]].concat();
+        crate::check::combine_surrogate_pairs(&mut text);
+        return Some(Constant::String(text));
     }
     let (&Constant::Number(a), &Constant::Number(b)) = (a, b) else { return None };
     let to_int32 = |number: f64| if number.is_finite() { (number.trunc() % 4294967296.0) as i64 as i32 } else { 0 };

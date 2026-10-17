@@ -66,10 +66,11 @@ export function eagerTierUpSweep(part: number, parts: number) {
         () =>
           slot(async () => {
             const options: { env?: Record<string, string> } = existsSync(withoutExtension(path) + ".json") ? JSON.parse(readFileSync(withoutExtension(path) + ".json", "utf8")) : {};
-            const env = { ...bunEnv, ...options.env };
+            const env = { ...bunEnv, ...options.env, BUN_JSC_crashIfInterpreterIsUsed: undefined };
             const cmd = [bunExe(), "run", "--aot", path];
             const byDefault = await spawned(cmd, join(path, ".."), env);
             const eager = await spawned(cmd, join(path, ".."), { ...env, ...eagerTierUp });
+            expect(byDefault.signal).toBeNull();
             expect({ signal: eager.signal, ...told(eager) }).toEqual({ signal: byDefault.signal, ...told(byDefault) });
           }),
         600_000,

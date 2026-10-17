@@ -354,6 +354,16 @@
     "untyped": 126.0,
     "jit": 70.0
   },
+  "host-classes/url-pathname": {
+    "typed": 898.4,
+    "untyped": 902.5,
+    "jit": 1708.9
+  },
+  "host-classes/url-three-search-params": {
+    "typed": 2066.5,
+    "untyped": 2063.4,
+    "jit": 6807.5
+  },
   "keyed/symbol": {
     "typed": 467.0,
     "untyped": 498.7,

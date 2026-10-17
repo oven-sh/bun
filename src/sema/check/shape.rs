@@ -6498,6 +6498,13 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return Some(ty);
         }
+        if self.queries_out_of_order() {
+            return self.base_constraint_within_budget(ty);
+        }
+        self.resolved_base_constraint_without_budget(ty)
+    }
+
+    pub(super) fn resolved_base_constraint_without_budget(&mut self, ty: TypeId) -> Option<TypeId> {
         // A call from outside starts a new stack.
         let around = std::mem::take(&mut self.constraint_stack);
         let result = self.next_base_constraint(ty);

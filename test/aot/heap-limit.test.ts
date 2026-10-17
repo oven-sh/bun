@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { describe, test } from "./supported";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { withoutCoreDump } from "./run-programs";
 
 // An ahead-of-time compiled program keeps most references between objects in 32 bits, so its objects live in one reserved range of
 // address space. Each Worker has a range of its own. These tests shrink the ranges to see what happens at their end.
@@ -88,7 +89,7 @@ describe.skipIf(isWindows).concurrent("the address space for objects of a compil
   test("a program that keeps more objects alive than fit stops and says why", async () => {
     using folder = tempDir("aot-heap-limit", { "program.ts": keepsEverything });
     const program = await build(String(folder));
-    const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
+    const { stdout, stderr, exitCode } = await run(withoutCoreDump([program]), String(folder), smallHeap);
     expect(stderr).toContain("FATAL: MarkedBlocks fill the 64 MB of address space");
     expect(stderr).toMatch(/Bun (has run|ran) out of memory/);
     expect(stderr).not.toContain("This indicates a bug in Bun");

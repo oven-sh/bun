@@ -64,13 +64,15 @@ L2 did not have either. At most four, or perf takes turns (counted=MULTIPLEXED).
 COPIES: the pages of an executable file stay where they are in the page cache for as long as the file lives, so all processes of one
 file share one placement of its code in physical memory, and two files with the same bytes can differ by some percent in cycles.
 Every start therefore runs a copy of the executable that was made for it, in /dev/shm, under a path of the same length for every column.
+cp makes the copy: were it written by this process, a child that another column's thread forks meanwhile would hold it open for writing, and
+the kernel refuses to execute such a file ("Text file busy").
 GUESTS: every window compares the time the kernel charged to the column's cores (user, nice and system in /proc/stat) with the time
 it charged to the column's processes. What is left over ran for somebody else. A window in which that is more than 1% of those cores is
 left out of the rate; guests is the largest share in a window that was kept, windows_void how many were left out, and a start
 without a clean window has void=yes: table.py and pairs.py print no number for it.
 postgres_busy, carrier_busy, client_busy: the share of their cores that Postgres, the carrier and the client used during the
 rounds. Where one of them is above 0.9 the server was not the limit and the row says limit=<which>."""
-import fcntl, hashlib, html, json, os, re, resource, shutil, signal, socket, statistics, subprocess, sys, threading, time
+import fcntl, hashlib, html, json, os, re, resource, signal, socket, statistics, subprocess, sys, threading, time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'servers', 'measure'))
 import layers
@@ -303,7 +305,7 @@ class Server:
             env['PORT'] = str(self.port)
             log = open(os.path.join(self.folder, 'server.log'), 'wb')
             first = None
-            shutil.copy(self.binary, self.copy)
+            subprocess.run(['cp', self.binary, self.copy], check=True)
             t0 = time.perf_counter()
             self.processes = [subprocess.Popen(['taskset', '-c', pin] + launcher + [self.copy], env=env, stdout=log, stderr=log, stdin=subprocess.DEVNULL, cwd=self.folder) for pin in pins]
             while time.perf_counter() - t0 < 30 and not self.dead():

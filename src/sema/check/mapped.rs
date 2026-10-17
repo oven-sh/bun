@@ -3318,7 +3318,7 @@ impl<'p, 's> Checker<'p, 's> {
 
 /// `CombineSurrogatePairs`: a lone high surrogate immediately before a lone low one combines with
 /// it into one character. Each is three bytes (`EncodeJSStringRune`).
-pub(super) fn combine_surrogate_pairs(text: &mut Vec<u8>) {
+pub(crate) fn combine_surrogate_pairs(text: &mut Vec<u8>) {
     let mut at = 0;
     while at + 6 <= text.len() {
         let [

@@ -1,6 +1,6 @@
 // A string buffer region is never begun inside another, and an attempt that is rejected leaves no mark on the regions that stay.
-// IR= 1 builds CallBuiltin StringAppendBegin
-// IR= 1 builds : int = Integer 256$
+// IR= 1 abandons CallBuiltin StringAppendBegin
+// IR= 0 builds CallBuiltin StringAppendBegin
 // IR= 0 builds : int = Integer 257$
 function loose(value: unknown): any { return value; }
 function check(i: number): string { if (i === 2) throw new Error("stop"); return "ok"; }

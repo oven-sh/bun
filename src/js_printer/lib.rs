@@ -700,7 +700,7 @@ pub mod analyze_transpiled_module {
             StringID(idx)
         }
 
-        pub(crate) fn request_module(
+        pub fn request_module(
             &mut self,
             import_record_path: StringID,
             fetch_parameters: FetchParameters,

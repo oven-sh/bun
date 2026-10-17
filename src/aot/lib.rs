@@ -11,6 +11,7 @@ pub mod ir;
 pub mod link;
 mod operands;
 mod names;
+mod positions;
 pub mod prelude;
 mod print;
 mod verify;
@@ -48,6 +49,7 @@ pub struct EngineProgram {
     pub explained: Vec<String>,
     pub typedness: Typedness,
     pub tokens: Option<Box<[u8]>>,
+    pub builtin_modules_of_entry_points: Vec<Vec<Box<[u8]>>>,
 }
 
 pub const REQUIRE_SPECIFIER_PREFIX: &[u8] = b"\0require ";
@@ -399,6 +401,9 @@ impl<'a> Translation<'a> {
         let problems = linked.problems.iter().map(shown).collect();
         let skipped_builtin_modules = linked.skipped_builtin_modules.iter().map(|(id, problem)| (*id, shown(problem))).collect();
         let skipped_builtin_functions = linked.skipped_builtin_functions.iter().map(|(id, problem)| (*id, shown(problem))).collect();
+        if let Some(scopes) = program.rule_scopes.get() {
+            scopes.retain_beyond_baseline(program.files, &mut linked.found);
+        }
         let is_error = |found: &bun_sema::check::CompilerDiagnostic| match rules::Rule::of_code(found.code) {
             Some(rule) => program.rule_scopes.get().is_some_and(|scopes| scopes.severity(rule, found.file, found.start) == rules::Severity::Deny),
             None => !matches!(found.code, 100019 | 100020),
@@ -409,6 +414,10 @@ impl<'a> Translation<'a> {
     }
 
     pub fn finish_for_engine(&self, program: &Checked<'_>, in_parallel: InParallel<'_>, errors: &[(FileId, u32)], on_written: &dyn Fn(&[u8])) -> EngineProgram {
+        let builtin_modules_of_entry_points = match &self.begun.read().as_ref().expect(NOT_STARTED_MESSAGE).translating {
+            Some((shared, _)) => build::builtin_modules_of_entry_points(&mut program.checker(), shared),
+            None => Vec::new(),
+        };
         let (Translated { program: mut linked, problems, kept_errors, always_fails, explained, typedness, .. }, name_table) = self.finish_before_renaming(program, in_parallel, errors);
         let written = if kept_errors.contains(&true) || always_fails {
             Err(Vec::new())
@@ -421,7 +430,7 @@ impl<'a> Translation<'a> {
         };
         let tokens = name_table.map(|name_table| names::as_json(&name_table).into_boxed_slice());
         release(linked, in_parallel);
-        EngineProgram { written, kept_errors, explained, typedness, tokens }
+        EngineProgram { written, kept_errors, explained, typedness, tokens, builtin_modules_of_entry_points }
     }
 }
 

@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { withoutCoreDump } from "./run-programs";
 
 // BUN_JSC_crashIfInterpreterIsUsed=1 makes a compiled program crash instead of silently running bytecode. It covers regular
 // expressions too: a literal of the program must have its machine code in the file that was built.
@@ -20,7 +21,7 @@ async function compileAndRun(source: string) {
   const results = [];
   for (const crashIfInterpreterIsUsed of ["0", "1"]) {
     await using proc = Bun.spawn({
-      cmd: [join(cwd, "app")],
+      cmd: withoutCoreDump([join(cwd, "app")]),
       cwd,
       env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: crashIfInterpreterIsUsed, BUN_ENABLE_CRASH_REPORTING: "0" },
       stdout: "pipe",

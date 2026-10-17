@@ -294,6 +294,10 @@ extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" void Bun__installCompilers();
 extern "C" void Bun__AOT__setImageCodec();
 extern "C" void Bun__AOT__setCachedGettersOfGeneratedClasses();
+#if ENABLE(AOT)
+extern "C" JSC::EncodedJSValue Response__createFromParts(JSC::JSGlobalObject*, JSC::EncodedJSValue body, JSC::EncodedJSValue status, JSC::EncodedJSValue statusText, JSC::EncodedJSValue headers, unsigned headerCount, const JSC::EncodedJSValue* headerNamesAndValues);
+extern "C" JSC::EncodedJSValue Response__createJSONFromParts(JSC::JSGlobalObject*, JSC::EncodedJSValue value, JSC::EncodedJSValue status, JSC::EncodedJSValue statusText, JSC::EncodedJSValue headers, unsigned headerCount, const JSC::EncodedJSValue* headerNamesAndValues);
+#endif
 extern "C" [[noreturn]] void Bun__outOfMemory();
 
 extern "C" bool Bun__AOTAudit__isEnforcing();
@@ -324,6 +328,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         Bun__AOT__setImageCodec();
 #if ENABLE(AOT)
         Bun__AOT__setCachedGettersOfGeneratedClasses();
+        JSC::AOT::Typed::setHostClassEntryPoints({ Response__createFromParts, Response__createJSONFromParts });
 #endif
         JSC::MarkedBlockCage::setExhaustionHandler(Bun__outOfMemory);
         JSC::initialize([&] {
@@ -2511,6 +2516,9 @@ void GlobalObject::finishCreation(VM& vm)
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSSQLStatementStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(WebCore::createJSSQLStatementStructure(init.owner));
+         } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSSQLDatabaseStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             init.set(WebCore::createJSSQLDatabaseStructure(init.owner));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_memoryFootprintStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(

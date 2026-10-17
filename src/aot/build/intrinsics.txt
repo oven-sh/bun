@@ -118,6 +118,7 @@ isArray	Value
 isArrayIterator	Call
 isAsyncDisposableStack	Call
 isCallable	Call
+isCheckedStructure	Call
 isConstructor	Call
 isDetached	Call
 isDisposableStack	Call
@@ -205,8 +206,11 @@ resolvePromiseWithFirstResolvingFunctionCallCheck	Call
 resolveSync	Call
 resolveSync	Member
 resumeGenerator	Call
+runTail	Member
 rust	Call
 set	Member
+setCheckedStructure	Call
+setColumnNameTransform	Member
 setIterationEntry	Call
 setIterationEntryKey	Call
 setIterationNext	Call
@@ -225,6 +229,7 @@ typedArrayLength	Call
 undefined	Value	hardened
 values	Member
 visibility	Value
+watchProperty	Call
 webStreamClosedPromise	Call
 webStreamControllerError	Call
 wrapForValidIteratorCreate	Call

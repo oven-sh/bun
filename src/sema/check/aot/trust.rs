@@ -65,6 +65,10 @@ fn has_entry(holder: &[u8], name: &[u8]) -> bool {
     names_of(holder).is_some_and(|names| names.contains(name))
 }
 
+pub fn is_typed_array_class(name: &[u8]) -> bool {
+    TYPED_ARRAYS.iter().any(|known| known.as_bytes() == name)
+}
+
 pub fn is_engine_global(name: &[u8]) -> bool {
     has_entry(b"", name) || names_of(name).is_some() || GLOBAL_VALUES.iter().chain(TYPED_ARRAYS).any(|known| known.as_bytes() == name)
 }

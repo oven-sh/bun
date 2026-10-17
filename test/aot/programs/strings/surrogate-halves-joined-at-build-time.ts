@@ -17,3 +17,10 @@ console.log(Joined.Pair === smile, Joined.Template === smile, (Joined.Apart as s
 const high: string = "\uD83D";
 const low: string = "\uDE42";
 console.log(high + low === smile, (high + low).length, (high + low).codePointAt(0)!.toString(16), `${high}${low}` === smile, [...(high + low)].length, high + low + high + low === smile + smile, high + high + low + low === high + smile + low);
+if ("\uD83D" + "\uDE42" === "🙂") console.log("if: the pair"); else console.log("if: not the pair");
+if ("\uD83D" + "\uDE42" !== "🙂") console.log("if not: not the pair"); else console.log("if not: the pair");
+if (high + low === smile) console.log("names: the pair"); else console.log("names: not the pair");
+console.log("\uD83D" + "\uDE42" === "🙂" ? "conditional: the pair" : "conditional: not the pair", ("\uD83D" + "\uDE42" === "🙂" && "and: the pair") || "and: not the pair");
+switch ("🙂") { case "\uD83D" + "\uDE42": console.log("case: the pair"); break; default: console.log("case: not the pair"); }
+switch ("\uD83D" + "\uDE42") { case "\uD83D\uDE42": console.log("escapes: the pair"); break; default: console.log("escapes: not the pair"); }
+while ("\uD83D" + "\uDE42" !== "🙂") { console.log("while: not the pair"); break; }

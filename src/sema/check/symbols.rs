@@ -277,10 +277,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if let Some((file, Decl::Var(_))) = value_declaration
             && self.files().module(file).builtin.is_some()
-            && let Some(symbol) = self.constant_symbol(sym)
-            && symbol.declaration != sym
+            && let Some(declaration) = self.declaration_of_constant_symbol(sym)
+            && declaration != sym
         {
-            return self.type_of_symbol(symbol.declaration);
+            return self.type_of_symbol(declaration);
         }
         // Before the query is entered: `lateBindMember` resolves the names of the other members,
         // which may re-enter this query.
@@ -4417,9 +4417,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// No type of a reference is stored, so its flow is walked again. `getResolvedSignature` stores
     /// its result, and the check of a function or a class is deferred.
     fn has_reference_without_flow_type(&mut self, file: FileId, node: Node) -> bool {
-        // A walk nests at most once per flow node.
         if self.flow_analysis_disabled.contains(&file)
-            || self.bound(file).flow_places <= super::flow::MAX_FLOW_DEPTH
+            || !self.bound(file).can_reach_flow_depth_limit()
         {
             return false;
         }

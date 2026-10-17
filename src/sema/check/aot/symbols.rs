@@ -2,7 +2,7 @@ use super::OnceLock;
 use crate::atom::{Atom, SYMBOL_NAME_PREFIX, known};
 use crate::bind::{AccessKind, Decl, Parent, PatParent, SymFlags, SymbolId};
 use crate::check::Checker;
-use crate::hir::{ExprId, ExprKind, ExprTag, File, Flags, PatId, PatKind, PatPropId, PropKey, PropKind, StmtKind, UnOp, VarKind};
+use crate::hir::{Chain, ExprId, ExprKind, ExprTag, File, Flags, PatId, PatKind, PatPropId, PropKey, PropKind, StmtKind, UnOp, VarKind};
 use crate::program::{FileId, Sym};
 use crate::util::FxHashSet;
 
@@ -22,24 +22,56 @@ fn skip_assertions(hir: &File, mut e: ExprId) -> ExprId {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub struct ConstantSymbol {
-    pub declaration: Sym,
-    pub description: Option<Atom>,
+pub enum WellKnownSymbol {
+    AsyncDispose,
+    Dispose,
+}
+
+impl WellKnownSymbol {
+    fn named(name: &[u8]) -> Option<WellKnownSymbol> {
+        match name {
+            b"asyncDispose" => Some(WellKnownSymbol::AsyncDispose),
+            b"dispose" => Some(WellKnownSymbol::Dispose),
+            _ => None,
+        }
+    }
+
+    fn name(self) -> &'static [u8] {
+        match self {
+            WellKnownSymbol::AsyncDispose => b"asyncDispose",
+            WellKnownSymbol::Dispose => b"dispose",
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum ConstantSymbol {
+    Created { declaration: Sym, description: Option<Atom> },
+    Registered(Atom),
+    WellKnown(WellKnownSymbol),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub enum FieldKey {
     Name(Atom),
-    Symbol(Sym),
+    Symbol(ConstantSymbol),
 }
 
 impl FieldKey {
-    pub(super) fn order(self) -> (bool, u32, u32) {
+    pub(super) fn order(self) -> (u8, u32, u32) {
         match self {
-            FieldKey::Name(name) => (false, name.0, 0),
-            FieldKey::Symbol(declaration) => (true, declaration.file.0, declaration.id.0),
+            FieldKey::Name(name) => (0, name.0, 0),
+            FieldKey::Symbol(ConstantSymbol::WellKnown(symbol)) => (1, symbol as u32, 0),
+            FieldKey::Symbol(ConstantSymbol::Registered(key)) => (2, key.0, 0),
+            FieldKey::Symbol(ConstantSymbol::Created { declaration, .. }) => (3, declaration.file.0, declaration.id.0),
         }
     }
+}
+
+#[derive(Copy, Clone)]
+struct HeldSymbol {
+    symbol: ConstantSymbol,
+    declaration: Sym,
 }
 
 impl<'p, 's> Checker<'p, 's> {
@@ -48,16 +80,17 @@ impl<'p, 's> Checker<'p, 's> {
         module.builtin.is_some() || !module.is_commonjs() && !self.preserves_source_paths()
     }
 
-    pub fn constant_symbol_created_by(&self, file: FileId, e: ExprId) -> Option<ConstantSymbol> {
+    fn symbol_initializing_constant(&self, file: FileId, e: ExprId) -> Option<HeldSymbol> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let ExprKind::Call(call) = hir[e].kind else { return None };
         let Parent::VarInit(declaration) = bound.expr_parent[e.idx()] else { return None };
         let declared = &hir[declaration];
-        if declared.kind != VarKind::Const || declared.flags.contains(Flags::AMBIENT) || !matches!(hir[declared.pat].kind, PatKind::Ident(_)) || !matches!(hir[hir[call].callee].kind, ExprKind::Ident(_)) {
+        if declared.kind != VarKind::Const || declared.flags.contains(Flags::AMBIENT) || !matches!(hir[declared.pat].kind, PatKind::Ident(_)) {
             return None;
         }
+        let is_registered = matches!(hir[hir[call].callee].kind, ExprKind::Dot { .. });
         let mut arguments = hir.ids(hir[call].args);
-        let description = match (arguments.next(), arguments.next()) {
+        let text = match (arguments.next(), arguments.next()) {
             (None, _) => None,
             (Some(only), None) => match hir[only].kind {
                 ExprKind::String(text) => Some(text),
@@ -65,29 +98,40 @@ impl<'p, 's> Checker<'p, 's> {
             },
             _ => return None,
         };
-        if !self.is_symbol_or_symbol_for_call(file, e) || !self.is_compiled(file) || !self.is_module_evaluated_once(file) || !self.is_evaluated_once(file, Parent::Expr(e)) {
+        if !self.is_symbol_or_symbol_for_call(file, e) || !self.is_compiled(file) {
             return None;
         }
-        Some(ConstantSymbol { declaration: self.files().sym(file, bound.pat_symbol[declared.pat.idx()]), description })
+        let declaration = self.files().sym(file, bound.pat_symbol[declared.pat.idx()]);
+        let symbol = match text {
+            Some(key) if is_registered => ConstantSymbol::Registered(key),
+            None if is_registered => return None,
+            description if self.is_module_evaluated_once(file) && self.is_evaluated_once(file, Parent::Expr(e)) => ConstantSymbol::Created { declaration, description },
+            _ => return None,
+        };
+        Some(HeldSymbol { symbol, declaration })
     }
 
-    pub fn constant_symbol(&self, sym: Sym) -> Option<ConstantSymbol> {
-        self.constant_symbol_held_by(sym, 0)
+    pub fn constant_symbol_created_by(&self, file: FileId, e: ExprId) -> Option<ConstantSymbol> {
+        self.symbol_initializing_constant(file, e).map(|held| held.symbol)
     }
 
-    fn constant_symbol_held_by(&self, sym: Sym, reexports: u8) -> Option<ConstantSymbol> {
+    pub fn declaration_of_constant_symbol(&self, sym: Sym) -> Option<Sym> {
+        self.constant_symbol_held_by(sym, 0).map(|held| held.declaration)
+    }
+
+    fn constant_symbol_held_by(&self, sym: Sym, reexports: u8) -> Option<HeldSymbol> {
         let (file, Decl::Var(pat)) = self.variable_declaration(sym)? else { return None };
         match self.bound(file).pat_parent[pat.idx()] {
             PatParent::Var(declaration) => {
                 let created_by = self.hir(file)[declaration].init.some()?;
-                self.constant_symbol_created_by(file, created_by).filter(|found| found.declaration == sym)
+                self.symbol_initializing_constant(file, created_by).filter(|held| held.declaration == sym)
             }
             PatParent::Prop(pattern, element) if reexports < MAX_REEXPORTS => self.constant_symbol_required_by(file, pattern, element, reexports + 1),
             _ => None,
         }
     }
 
-    fn constant_symbol_required_by(&self, file: FileId, pattern: PatId, element: PatPropId, reexports: u8) -> Option<ConstantSymbol> {
+    fn constant_symbol_required_by(&self, file: FileId, pattern: PatId, element: PatPropId, reexports: u8) -> Option<HeldSymbol> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else { return None };
         let (declared, element) = (&hir[declaration], &hir[element]);
@@ -161,10 +205,21 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn constant_symbol_named_by(&self, file: FileId, e: ExprId) -> Option<ConstantSymbol> {
-        self.constant_symbol_named_at(file, e, 0)
+        match self.well_known_symbol_kind_for_expr(file, e) {
+            Some(symbol) => Some(ConstantSymbol::WellKnown(symbol)),
+            None => self.constant_symbol_named_at(file, e, 0).map(|held| held.symbol),
+        }
     }
 
-    fn constant_symbol_named_at(&self, file: FileId, e: ExprId, reexports: u8) -> Option<ConstantSymbol> {
+    fn well_known_symbol_kind_for_expr(&self, file: FileId, e: ExprId) -> Option<WellKnownSymbol> {
+        let hir = self.hir(file);
+        let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[e].kind else { return None };
+        let symbol = WellKnownSymbol::named(self.atoms().bytes(name)).filter(|_| matches!(hir[obj].kind, ExprKind::Ident(known::Symbol)))?;
+        let global = self.files().global(known::Symbol, SymFlags::VALUE)?;
+        (self.resolve_identifier(file, obj, known::Symbol, true) == Ok(Some(global))).then_some(symbol)
+    }
+
+    fn constant_symbol_named_at(&self, file: FileId, e: ExprId, reexports: u8) -> Option<HeldSymbol> {
         let ExprKind::Ident(name) = self.hir(file)[e].kind else { return None };
         let named = self.resolve_identifier(file, e, name, true).ok().flatten()?;
         let named = if self.files().flags(named).contains(SymFlags::ALIAS) { self.files().resolve_alias(named)? } else { named };
@@ -176,49 +231,63 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let text = self.atoms().bytes(name).strip_prefix(SYMBOL_NAME_PREFIX)?;
+        if let Some(symbol) = WellKnownSymbol::named(text) {
+            return Some(ConstantSymbol::WellKnown(symbol));
+        }
         let declaration = text.rsplit(|&byte| byte == b'@').next()?;
         let mut numbers = std::str::from_utf8(declaration).ok()?.split('.').map(|number| number.parse::<u32>().ok());
         let (Some(Some(file)), Some(Some(id)), None) = (numbers.next(), numbers.next(), numbers.next()) else { return None };
-        let symbol = self.constant_symbol(Sym { file: FileId(file), id: SymbolId(id) })?;
-        (self.property_of_constant_symbol(symbol) == name).then_some(symbol)
+        let held = self.constant_symbol_held_by(Sym { file: FileId(file), id: SymbolId(id) }, 0)?;
+        (self.property_keyed_by_constant(held.declaration) == name).then_some(held.symbol)
     }
 
-    pub fn property_of_constant_symbol(&self, symbol: ConstantSymbol) -> Atom {
-        let Sym { file, id } = symbol.declaration;
-        let mut text = self.atoms().bytes(self.files().symbol(symbol.declaration).name).to_vec();
-        text.extend_from_slice(format!("@{}.{}", file.0, id.0).as_bytes());
+    fn property_keyed_by_constant(&self, declaration: Sym) -> Atom {
+        let mut text = self.atoms().bytes(self.files().symbol(declaration).name).to_vec();
+        text.extend_from_slice(format!("@{}.{}", declaration.file.0, declaration.id.0).as_bytes());
         self.atoms().symbol_name(&text)
     }
 
     pub fn property_named_by_constant_symbol(&self, file: FileId, e: ExprId) -> Option<Atom> {
-        self.constant_symbol_named_by(file, e).map(|symbol| self.property_of_constant_symbol(symbol))
+        match self.well_known_symbol_kind_for_expr(file, e) {
+            Some(symbol) => Some(self.atoms().symbol_name(symbol.name())),
+            None => self.constant_symbol_named_at(file, e, 0).map(|held| self.property_keyed_by_constant(held.declaration)),
+        }
     }
 
     pub fn constant_symbol_text(&self, symbol: ConstantSymbol) -> Vec<u8> {
-        let path = crate::util::spread_hash(self.files().module(symbol.declaration.file).file_name());
-        let mut text = vec![0xFC, b'v'];
-        text.extend_from_slice(format!("{path:x}.{}", symbol.declaration.id.0).as_bytes());
-        match symbol.description {
-            Some(description) => {
-                text.push(b':');
-                text.extend_from_slice(self.atoms().bytes(description));
+        match symbol {
+            ConstantSymbol::Created { declaration, description } => {
+                let path = crate::util::spread_hash(self.files().module(declaration.file).file_name());
+                let head = format!("v{path:x}.{}", declaration.id.0);
+                match description {
+                    Some(description) => [&[0xFC], head.as_bytes(), b":", self.atoms().bytes(description)].concat(),
+                    None => [&[0xFC], head.as_bytes(), b";"].concat(),
+                }
             }
-            None => text.push(b';'),
+            ConstantSymbol::Registered(key) => [&[0xFC], &b"r:"[..], self.atoms().bytes(key)].concat(),
+            ConstantSymbol::WellKnown(symbol) => [&[0xFC], &b"w:"[..], symbol.name()].concat(),
         }
-        text
+    }
+
+    pub fn constant_symbol_description(&self, symbol: ConstantSymbol) -> Option<Vec<u8>> {
+        match symbol {
+            ConstantSymbol::Created { description, .. } => description.map(|description| self.atoms().bytes(description).to_vec()),
+            ConstantSymbol::Registered(key) => Some(self.atoms().bytes(key).to_vec()),
+            ConstantSymbol::WellKnown(symbol) => Some([b"Symbol.", symbol.name()].concat()),
+        }
     }
 
     pub(super) fn field_key(&self, file: FileId, key: PropKey) -> Option<FieldKey> {
         match key {
             PropKey::Name(name) => Some(FieldKey::Name(name)),
-            PropKey::Computed(e) => self.constant_symbol_named_by(file, e).map(|symbol| FieldKey::Symbol(symbol.declaration)),
+            PropKey::Computed(e) => self.constant_symbol_named_by(file, e).map(FieldKey::Symbol),
             PropKey::Private(_) | PropKey::None => None,
         }
     }
 
     pub(super) fn field_key_of_property(&self, name: Atom) -> FieldKey {
         match self.constant_symbol_of_property(name) {
-            Some(symbol) => FieldKey::Symbol(symbol.declaration),
+            Some(symbol) => FieldKey::Symbol(symbol),
             None => FieldKey::Name(name),
         }
     }

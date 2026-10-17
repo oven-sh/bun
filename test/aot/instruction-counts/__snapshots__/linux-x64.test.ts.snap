@@ -1,17 +1,24 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`makes a Response from a string, a status and three headers 1`] = `
+"typed, function: 3547.50 instructions (the runtime 3351, kernel 103.90, stub ReadKnownCustomGetterByName 36, elsewhere 27, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub OperationValueWithInstance to operationAOTTypedNewResponse 2, module 0.60), 917 bytes
+typed, module level: 3528.15 instructions (the runtime 3351, module 85.15, stub ReadKnownCustomGetterByName 36, elsewhere 27, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub OperationValueWithInstance to operationAOTTypedNewResponse 2), 1867 bytes
+untyped, function: 3550.55 instructions (the runtime 3351, kernel 106.95, stub ReadKnownCustomGetterByName 36, elsewhere 27, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub OperationValueWithInstance to operationAOTTypedNewResponse 2, module 0.60), 990 bytes
+untyped, module level: 3528.15 instructions (the runtime 3351, module 85.15, stub ReadKnownCustomGetterByName 36, elsewhere 27, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub OperationValueWithInstance to operationAOTTypedNewResponse 2), 1867 bytes"
+`;
+
 exports[`replaces the values of four declared fields of a class instance through a parameter of type any 1`] = `
 "typed, function: 298.40 instructions (kernel 66.28, stub PutByNameStoresFieldCell32 62, stub PutByNameWithDirectColumnPreservingTwo 39, stub PutByNameStoresFieldCell32PreservingTwo 38, stub PutByNameStoresFieldInt32PreservingTwo 37, stub PutByNameStoresFieldBooleanPreservingTwo 35, stub PutByNameWithDirectColumn 13, stub WriteBarrier 8, module 0.12), 777 bytes
 typed, module level: 300.22 instructions (stub PutByNameStoresFieldCell32PreservingTwo 100, module 68.22, stub PutByNameWithDirectColumnPreservingTwo 52, stub PutByNameStoresFieldInt32PreservingTwo 37, stub PutByNameStoresFieldBooleanPreservingTwo 35, stub WriteBarrier 8), 2109 bytes
-untyped, function: 88.41 instructions (kernel 88.29, module 0.12), 1168 bytes
-untyped, module level: 88.26 instructions (module 88.26), 2820 bytes"
+untyped, function: 88.41 instructions (kernel 88.29, module 0.12), 1140 bytes
+untyped, module level: 88.26 instructions (module 88.26), 2792 bytes"
 `;
 
 exports[`makes a record of sixteen fields, twelve of them born undefined; a function reached through an array stores to three of those 1`] = `
-"typed, function: 111.66 instructions (kernel 39.20, a function without a name 27, stub AllocateTypedObject 18, stub CallValue2 12, stub TypedString 8, stub LeafUnboxNumberArgument1ToFPR0 4, the runtime 2.15, elsewhere 1.19, module 0.12), 321 bytes
-typed, module level: 109.49 instructions (module 37.15, a function without a name 27, stub AllocateTypedObject 18, stub CallValue2 12, stub TypedString 8, stub LeafUnboxNumberArgument1ToFPR0 4, the runtime 2.15, elsewhere 1.19), 1430 bytes
-untyped, function: 252.78 instructions (a function without a name 54, stub NewObjectFromDescriptor4 53.86, kernel 46.21, stub PutByNameWithDirectColumnPreservingTwo 27, the runtime 17.95, stub PutByNameWithDirectColumn 13, stub CallValue2 12, stub PutPropertiesWithStorage 9, stub TypedStringInRCX 8, stub WriteBarrier 8, outlined code 3, elsewhere 0.65, module 0.12), 420 bytes
-untyped, module level: 250.63 instructions (a function without a name 54, stub NewObjectFromDescriptor4 53.86, module 44.18, stub PutByNameWithDirectColumnPreservingTwo 27, the runtime 17.95, stub PutByNameWithDirectColumn 13, stub CallValue2 12, stub PutPropertiesWithStorage 9, stub TypedStringInRCX 8, stub WriteBarrier 8, outlined code 3, elsewhere 0.65), 1453 bytes"
+"typed, function: 108.32 instructions (kernel 39.20, a function without a name 27, stub AllocateTypedObject 18, stub CallValue2 12, stub TypedString 8, stub LeafUnboxNumberArgument1ToFPR0 4, module 0.12), 321 bytes
+typed, module level: 106.15 instructions (module 37.15, a function without a name 27, stub AllocateTypedObject 18, stub CallValue2 12, stub TypedString 8, stub LeafUnboxNumberArgument1ToFPR0 4), 1427 bytes
+untyped, function: 256.54 instructions (a function without a name 54, stub NewObjectFromDescriptor4 53.86, kernel 46.21, stub PutByNameWithDirectColumnPreservingTwo 27, the runtime 20.37, stub PutByNameWithDirectColumn 13, stub CallValue2 12, stub PutPropertiesWithStorage 9, stub TypedStringInRCX 8, stub WriteBarrier 8, outlined code 3, elsewhere 1.98, module 0.12), 420 bytes
+untyped, module level: 250.98 instructions (a function without a name 54, stub NewObjectFromDescriptor4 53.86, module 44.18, stub PutByNameWithDirectColumnPreservingTwo 27, the runtime 17.11, stub PutByNameWithDirectColumn 13, stub CallValue2 12, stub PutPropertiesWithStorage 9, stub TypedStringInRCX 8, stub WriteBarrier 8, outlined code 3, elsewhere 1.83), 1450 bytes"
 `;
 
 exports[`reads three fields that were born undefined and never stored, through a parameter of type any 1`] = `

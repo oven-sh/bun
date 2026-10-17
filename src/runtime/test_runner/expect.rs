@@ -471,6 +471,21 @@ impl Expect {
         }
     }
 
+    /// A Promise subclass can start its work in `then()`, as a `Bun.sql` query does.
+    fn call_then_if_pending(global_this: &JSGlobalObject, value: JSValue, promise: bun_jsc::AnyPromise) -> JsResult<()> {
+        if promise.status() != js_promise::Status::Pending {
+            return Ok(());
+        }
+        let Some(then) = value.get(global_this, "then")? else { return Ok(()) };
+        if !then.is_callable() {
+            return Ok(());
+        }
+        if let Some(derived) = then.call(global_this, value, &[])?.as_any_promise() {
+            derived.set_handled(global_this.vm());
+        }
+        Ok(())
+    }
+
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
@@ -488,6 +503,8 @@ impl Expect {
                 if let Some(promise) = value.as_any_promise() {
                     let vm = global_this.vm();
                     promise.set_handled(vm);
+
+                    Self::call_then_if_pending(global_this, value, promise)?;
 
                     // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
             global_this
@@ -869,6 +886,10 @@ impl Expect {
         }
 
         if let Some(promise) = return_value.as_any_promise() {
+            if let Err(err) = Self::call_then_if_pending(global_this, return_value, promise) {
+                scope.apply(vm);
+                return Err(err);
+            }
             let waited = vm.wait_for_promise(promise);
             scope.apply(vm);
             waited.map_err(|stopped| stopped.throw(global_this))?;

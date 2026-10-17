@@ -70,6 +70,8 @@
   "host-classes/request-url-reread-after-second-realm": 400000,
   "host-classes/request-url-reread-after-prototype-gains-name": 400000,
   "host-classes/response-status": 400000,
+  "host-classes/url-pathname": 400000,
+  "host-classes/url-three-search-params": 400000,
   "keyed/symbol": 1184176,
   "keyed/read-by-concatenated-key": 948660,
   "literal/computed-name-in-function": 1330344,

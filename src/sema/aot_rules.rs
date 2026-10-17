@@ -1,10 +1,16 @@
+use crate::check::CompilerDiagnostic;
 use crate::config::PathPattern;
 use crate::hir::{File, FileKind};
+use crate::json::Json;
 use crate::messages::Category;
 use crate::program::{FileId, Files};
+use crate::resolve::get_relative_path_from_directory;
+use crate::util::FxHashMap;
 use bun_core::strings;
+use bun_threading::Guarded;
+use std::collections::BTreeMap;
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 #[repr(u8)]
 pub enum Rule {
     UntypedFile,
@@ -12,6 +18,9 @@ pub enum Rule {
     LostLayout,
     UntypedBase,
     OpenLayout,
+    ExternalType,
+    ByName,
+    CanThrow,
     Interpreted,
 }
 
@@ -67,6 +76,27 @@ pub static RULES: [RuleInfo; Rule::COUNT] = [
         help: "a declared type can hold objects that typed code did not create, so every property access through it is checked",
     },
     RuleInfo {
+        rule: Rule::ExternalType,
+        name: "external-type",
+        codes: &[100029],
+        default: Severity::Allow,
+        help: "a declared type describes data from outside the type system (JSON.parse, a response body, JavaScript), so the compiler cannot rely on its shape",
+    },
+    RuleInfo {
+        rule: Rule::ByName,
+        name: "by-name",
+        codes: &[100030],
+        default: Severity::Allow,
+        help: "typed code reads a property or calls a method of an object whose layout the compiler does not know",
+    },
+    RuleInfo {
+        rule: Rule::CanThrow,
+        name: "can-throw",
+        codes: &[100028],
+        default: Severity::Allow,
+        help: "a value is checked against its type when the program runs, and the check can fail",
+    },
+    RuleInfo {
         rule: Rule::Interpreted,
         name: "interpreted",
         codes: &[100025],
@@ -78,7 +108,7 @@ pub static RULES: [RuleInfo; Rule::COUNT] = [
 pub const EVERY_RULE: &str = "all";
 
 impl Rule {
-    pub const COUNT: usize = 6;
+    pub const COUNT: usize = 9;
 
     pub fn info(self) -> &'static RuleInfo {
         &RULES[self as usize]
@@ -130,9 +160,55 @@ struct Setting {
     scope: Option<Box<[u8]>>,
 }
 
+pub type Counts = [u32; Rule::COUNT];
+
+#[derive(Default, Clone)]
+pub struct Baseline {
+    allowed: BTreeMap<Vec<u8>, Counts>,
+}
+
+impl Baseline {
+    pub fn from_json(json: &Json) -> Option<Baseline> {
+        let mut allowed = BTreeMap::new();
+        for (path, counts) in json.get(b"files")?.as_object()? {
+            let mut of_file = [0; Rule::COUNT];
+            for (rule, count) in counts.as_object()? {
+                let Json::Number(count) = count else { return None };
+                if let Some(rule) = Rule::named(rule) {
+                    of_file[rule as usize] = *count as u32;
+                }
+            }
+            allowed.insert(path.clone(), of_file);
+        }
+        Some(Baseline { allowed })
+    }
+
+    fn to_text(&self) -> Vec<u8> {
+        let mut text = b"{\n  \"version\": 1,\n  \"files\": {".to_vec();
+        for (index, (path, counts)) in self.allowed.iter().filter(|file| file.1.iter().any(|&count| count > 0)).enumerate() {
+            text.extend_from_slice(if index == 0 { b"\n    " } else { b",\n    " });
+            Json::String(path.clone()).stringify(&mut text);
+            text.extend_from_slice(b": { ");
+            for (position, (info, count)) in RULES.iter().zip(counts).filter(|rule| *rule.1 > 0).enumerate() {
+                text.extend_from_slice(format!("{}\"{}\": {count}", if position == 0 { "" } else { ", " }, info.name).as_bytes());
+            }
+            text.extend_from_slice(b" }");
+        }
+        text.extend_from_slice(b"\n  }\n}\n");
+        text
+    }
+}
+
+pub struct BaselineOutcome {
+    pub updated_text: Option<Vec<u8>>,
+    pub lower_counts: usize,
+}
+
 #[derive(Default, Clone)]
 pub struct Settings {
     settings: Vec<Setting>,
+    pub baseline: Option<Baseline>,
+    pub updates_baseline: bool,
 }
 
 pub struct UnknownRule {
@@ -220,6 +296,10 @@ pub struct Scopes {
     by_file: Vec<Severities>,
     pragmas: Vec<PragmaScope>,
     is_enabled: [bool; Rule::COUNT],
+    base: Vec<u8>,
+    baseline: Option<Baseline>,
+    updates_baseline: bool,
+    counts: Guarded<BTreeMap<Vec<u8>, Counts>>,
 }
 
 impl Scopes {
@@ -238,7 +318,8 @@ impl Scopes {
             apply(&mut outside_files, setting);
         }
         if settings.settings.iter().all(|setting| setting.scope.is_none()) {
-            return Scopes { outside_files, by_file: Vec::new(), pragmas, is_enabled: outside_files.map(|severity| is_denied_by_pragma || severity != Severity::Allow) };
+            let is_enabled = outside_files.map(|severity| is_denied_by_pragma || severity != Severity::Allow);
+            return Scopes { outside_files, by_file: Vec::new(), pragmas, is_enabled, base: base.to_vec(), baseline: settings.baseline.clone(), updates_baseline: settings.updates_baseline, counts: Default::default() };
         }
         let patterns: Vec<Option<PathPattern>> = settings.settings.iter().map(|setting| setting.scope.as_deref().map(|scope| PathPattern::new(scope, base, files.is_case_sensitive))).collect();
         let by_file: Vec<Severities> = (files.modules.iter())
@@ -253,7 +334,7 @@ impl Scopes {
             })
             .collect();
         let is_enabled = std::array::from_fn(|rule| is_denied_by_pragma || by_file.iter().any(|severities| severities[rule] != Severity::Allow));
-        Scopes { outside_files, by_file, pragmas, is_enabled }
+        Scopes { outside_files, by_file, pragmas, is_enabled, base: base.to_vec(), baseline: settings.baseline.clone(), updates_baseline: settings.updates_baseline, counts: Default::default() }
     }
 
     pub fn is_enabled(&self, rule: Rule) -> bool {
@@ -269,7 +350,78 @@ impl Scopes {
         }
     }
 
+    pub fn may_apply_in(&self, rule: Rule, file: FileId) -> bool {
+        self.by_file.get(file.idx()).unwrap_or(&self.outside_files)[rule as usize] != Severity::Allow || self.pragmas.iter().any(|pragma| pragma.file == file && pragma.severity != Severity::Allow && pragma.applies_to[rule as usize])
+    }
+
     pub fn severity_outside_files(&self, rule: Rule) -> Severity {
         self.outside_files[rule as usize]
+    }
+
+    pub fn baseline_key(&self, name: &[u8], is_case_sensitive: bool) -> Vec<u8> {
+        if name.starts_with(b"/") { get_relative_path_from_directory(&self.base, name, is_case_sensitive) } else { name.to_vec() }
+    }
+
+    fn has_baseline(&self) -> bool {
+        self.baseline.is_some() || self.updates_baseline
+    }
+
+    pub fn allowed_by_baseline(&self, rule: Rule, key: &[u8], count: u32) -> Option<u32> {
+        if !self.has_baseline() {
+            return Some(0);
+        }
+        self.counts.lock().entry(key.to_vec()).or_insert([0; Rule::COUNT])[rule as usize] += count;
+        let allowed = self.baseline.as_ref().and_then(|baseline| baseline.allowed.get(key)).map_or(0, |counts| counts[rule as usize]);
+        (!self.updates_baseline && count > allowed).then_some(allowed)
+    }
+
+    pub fn retain_beyond_baseline(&self, files: &Files<'_>, found: &mut Vec<CompilerDiagnostic>) {
+        if !self.has_baseline() {
+            return;
+        }
+        let mut counted: FxHashMap<(FileId, Rule), u32> = FxHashMap::default();
+        for finding in found.iter() {
+            if let Some(rule) = Rule::of_code(finding.code) {
+                *counted.entry((finding.file, rule)).or_default() += 1;
+            }
+        }
+        let verdicts: FxHashMap<(FileId, Rule), (u32, Option<u32>)> = (counted.into_iter())
+            .map(|((file, rule), count)| {
+                let key = self.baseline_key(files.module(file).file_name(), files.is_case_sensitive);
+                ((file, rule), (count, self.allowed_by_baseline(rule, &key, count)))
+            })
+            .collect();
+        found.retain_mut(|finding| {
+            let Some(rule) = Rule::of_code(finding.code) else { return true };
+            let (count, allowed) = verdicts[&(finding.file, rule)];
+            if let Some(allowed) = allowed.filter(|&allowed| allowed > 0) {
+                let args = vec![allowed.to_string().into_bytes(), count.to_string().into_bytes()];
+                finding.related.push(CompilerDiagnostic { file: finding.file, start: finding.start, end: finding.end, code: 100039, args, related: Vec::new() });
+            }
+            allowed.is_some()
+        });
+    }
+
+    pub fn baseline_outcome(&self) -> Option<BaselineOutcome> {
+        if !self.has_baseline() {
+            return None;
+        }
+        let counts = self.counts.lock();
+        let before = self.baseline.clone().unwrap_or_default();
+        let count_now = |path: &[u8], rule: usize| counts.get(path).map_or(0, |counts| counts[rule]);
+        let lower_counts = (before.allowed.iter()).map(|(path, allowed)| (0..Rule::COUNT).filter(|&rule| self.is_enabled[rule] && count_now(path, rule) < allowed[rule]).count()).sum();
+        let updated_text = self.updates_baseline.then(|| {
+            let mut updated = before.clone();
+            for path in counts.keys() {
+                updated.allowed.entry(path.clone()).or_insert([0; Rule::COUNT]);
+            }
+            for (path, allowed) in updated.allowed.iter_mut() {
+                for rule in (0..Rule::COUNT).filter(|&rule| self.is_enabled[rule]) {
+                    allowed[rule] = count_now(path, rule);
+                }
+            }
+            updated.to_text()
+        });
+        Some(BaselineOutcome { updated_text, lower_counts })
     }
 }

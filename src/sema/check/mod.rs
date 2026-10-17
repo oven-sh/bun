@@ -104,6 +104,7 @@ use errors_type_nodes::array_element_type_node;
 use errors_type_nodes::has_parse_diagnostics;
 use errors_type_nodes::start_of_type;
 pub use regexp_scanner::get_spelling_suggestion;
+pub(crate) use mapped::combine_surrogate_pairs;
 use regexp_scanner::spelling_suggestion;
 use shape::members_among;
 use sink::{Arg, Reported};
@@ -128,7 +129,7 @@ pub use aot::{NotInt32Reason, FlowNode, FlowSource, Int32Verdict, NumberFlow, Co
 pub use aot::{SubtypeAnswer, BuiltIn, Candidate, TruncatedSearch, KindsDeclared, Literal, SearchBarrier, Membership, FlowNotes, DataOrigin, Place, SubtypeQuery, LayoutUsage, FilePartition, UntypedReason};
 pub use aot::{Cause, FieldTypes, LoggingRelaxation, Sizes, Subtypes};
 pub use aot::{EvaluationTime, FirstStore, Primitive, ReferenceRead, Storage, kind};
-pub use aot::{Claim, is_engine_global};
+pub use aot::{Claim, is_engine_global, is_typed_array_class};
 pub use aot::{ConstantSymbol, FieldKey};
 pub use aot::{Constant, OtherKeys, Placeholder, PlanNode, Planned, PlannedMember, PlannedPrimitive, Rule, ValidationCall, ValidationPlan};
 pub use aot::locked_builtins;
@@ -227,6 +228,7 @@ pub struct Program<'s> {
     /// `Checker::referenced_properties` of all tasks. The task that checks the file of a
     /// declaration does not see what another one has marked, so `finish_file` takes back what it
     /// has reported. A union: it does not depend on which task comes first.
+    /// Tasks write to this set and the next one directly. Add any other such field to `has_notes_outside_finished`.
     properties_referenced_before: Guarded<crate::util::FxHashSet<Sym>>,
     /// What `check_external_emit_helpers_of_later_files` has reported, of all tasks. `finish_file`
     /// keeps the first of each. It does not depend on which task comes first.
@@ -1182,8 +1184,9 @@ pub enum Requested {
     /// `GetSyntacticDiagnostics`: the diagnostics of the parser and the scanner.
     Syntactic,
     /// The same, for a caller that then asks for the types it needs, as typescript-eslint and tsgolint do, and reads no
-    /// diagnostics. A file that can be too large for control flow analysis (2563) is checked as under `All`: the check
-    /// disables the analysis for one block at a time, and stores the types of the rest before anything asks.
+    /// diagnostics. A file that `has_types_that_depend_on_order` is checked in full, as under `All`. If it is too large for
+    /// control flow analysis (TS2563), that check turns the analysis off one block at a time, and stores the types of
+    /// everything else before any rule asks.
     Types,
     /// .. and `GetDeclarationDiagnostics`. The declaration transformer queries the checker only
     /// about what the file exports.

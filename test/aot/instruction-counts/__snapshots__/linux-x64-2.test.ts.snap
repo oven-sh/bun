@@ -1,17 +1,31 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`makes a Response from a string and a status 1`] = `
+"typed, function: 962.18 instructions (the runtime 819.58, kernel 50, stub ReadKnownCustomGetterByName 36, elsewhere 27, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub OperationValueWithInstance to operationAOTTypedNewResponse 2, module 0.60), 486 bytes
+typed, module level: 950.08 instructions (the runtime 819.58, module 38.50, stub ReadKnownCustomGetterByName 36, elsewhere 27, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub OperationValueWithInstance to operationAOTTypedNewResponse 2), 1414 bytes
+untyped, function: 964.23 instructions (the runtime 819.58, kernel 52.05, stub ReadKnownCustomGetterByName 36, elsewhere 27, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub OperationValueWithInstance to operationAOTTypedNewResponse 2, module 0.60), 532 bytes
+untyped, module level: 950.08 instructions (the runtime 819.58, module 38.50, stub ReadKnownCustomGetterByName 36, elsewhere 27, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub OperationValueWithInstance to operationAOTTypedNewResponse 2), 1414 bytes"
+`;
+
+exports[`reads three search parameters of a URL made from a string 1`] = `
+"typed, function: 2068.75 instructions (the runtime 1630, kernel 358.15, elsewhere 52, stub PlainOperationWithInstance 20, stub PlainOperationWithInstance to operationAOTTypedFindPlainQueryValue 6, stub PlainOperationWithInstance to operationAOTTypedScanPlainURL 2, module 0.60), 3187 bytes
+typed, module level: 6265.85 instructions (the runtime 5860.90, module 101.95, stub CallHostFunction1 81, stub CallMethodByName1 of 1259 81, stub FrontEndTypedConstruct 49, stub ReadKnownCustomGetterByName 36, stub CallValue1 27, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub OperationValueWithInstance to operationAOTTypedConstruct 2), 1967 bytes
+untyped, function: 2069.80 instructions (the runtime 1630, kernel 359.20, elsewhere 52, stub PlainOperationWithInstance 20, stub PlainOperationWithInstance to operationAOTTypedFindPlainQueryValue 6, stub PlainOperationWithInstance to operationAOTTypedScanPlainURL 2, module 0.60), 3392 bytes
+untyped, module level: 6275.40 instructions (the runtime 5860.90, module 111.50, stub CallHostFunction1 81, stub CallMethodByName1 of 1259 81, stub FrontEndTypedConstruct 49, stub ReadKnownCustomGetterByName 36, stub CallValue1 27, stub OperationValueWithInstance 14, stub GetByNameWithDirectColumnWithReceiverInRAX 13, stub OperationValueWithInstance to operationAOTTypedConstruct 2), 1975 bytes"
+`;
+
 exports[`reads four declared fields of a class instance through a parameter of type any 1`] = `
 "typed, function: 114.29 instructions (stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 42, kernel 29.17, stub GetByNameWithDirectColumnWithReceiverInRCX 14, stub ReadFieldCell32ByName 10, stub ReadFieldCell32ByNamePreservingTwo 7, stub ReadFieldInt32ByNamePreservingTwo 7, stub ReadFieldBooleanByNamePreservingTwo 5, module 0.12), 244 bytes
 typed, module level: 114.12 instructions (stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 56, module 29.12, stub ReadFieldCell32ByNamePreservingTwo 17, stub ReadFieldInt32ByNamePreservingTwo 7, stub ReadFieldBooleanByNamePreservingTwo 5), 1498 bytes
-untyped, function: 89.38 instructions (kernel 49.26, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 30, stub GetByNameWithDirectColumnWithReceiverInRCX 10, module 0.12), 480 bytes
+untyped, function: 89.38 instructions (kernel 49.26, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 30, stub GetByNameWithDirectColumnWithReceiverInRCX 10, module 0.12), 482 bytes
 untyped, module level: 87.26 instructions (module 47.26, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDX 40), 2073 bytes"
 `;
 
 exports[`makes a record of sixteen fields, twelve of them born undefined, and stores to three of those through a parameter of type any 1`] = `
-"typed, function: 2528.75 instructions (the runtime 2120.48, stub PutThroughSlotByName 157.11, kernel 81.29, stub PutByNameThroughSlotsPreservingTwo 46, stub PutByNameWithDirectColumnPreservingTwo 39, stub PutByNameStoresFieldCell32PreservingTwo 38, elsewhere 24.75, stub AllocateTypedObject 18, stub WriteBarrier 4, module 0.12), 872 bytes
-typed, module level: 2530.45 instructions (the runtime 2120.48, stub PutThroughSlotByName 157.11, module 83.25, stub PutByNameThroughSlotsPreservingTwo 46, stub PutByNameWithDirectColumnPreservingTwo 39, stub PutByNameStoresFieldCell32PreservingTwo 38, elsewhere 24.61, stub AllocateTypedObject 18, stub WriteBarrier 4), 1931 bytes
-untyped, function: 172.67 instructions (kernel 100.23, stub NewObjectFromDescriptor4 53.86, the runtime 17.81, elsewhere 0.65, module 0.12), 1115 bytes
-untyped, module level: 172.93 instructions (module 100.20, stub NewObjectFromDescriptor4 53.86, the runtime 18.21, elsewhere 0.65), 2155 bytes"
+"typed, function: 470.40 instructions (stub PutThroughSlotByName 243.78, kernel 81.29, stub PutByNameThroughSlotsPreservingTwo 46, stub PutByNameWithDirectColumnPreservingTwo 39, stub PutByNameStoresFieldCell32PreservingTwo 38, stub AllocateTypedObject 18, stub WriteBarrier 4, the runtime 0.14, module 0.12, elsewhere 0.07), 872 bytes
+typed, module level: 472.35 instructions (stub PutThroughSlotByName 243.78, module 83.25, stub PutByNameThroughSlotsPreservingTwo 46, stub PutByNameWithDirectColumnPreservingTwo 39, stub PutByNameStoresFieldCell32PreservingTwo 38, stub AllocateTypedObject 18, stub WriteBarrier 4, the runtime 0.25, elsewhere 0.07), 1931 bytes
+untyped, function: 172.37 instructions (kernel 100.23, stub NewObjectFromDescriptor4 53.86, the runtime 16.32, elsewhere 1.83, module 0.12), 1115 bytes
+untyped, module level: 176.32 instructions (module 100.20, stub NewObjectFromDescriptor4 53.86, the runtime 20.43, elsewhere 1.83), 2155 bytes"
 `;
 
 exports[`reads three fields that were born undefined, one of them stored since, through a parameter of type any 1`] = `

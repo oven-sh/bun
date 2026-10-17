@@ -277,4 +277,29 @@ for (const [title, next] of [
   for (const text of from(() => ({ value: `item ${count}`, done: count++ >= 100000 }))) length += (text as string).length;
   say("many", sum, length);
 }
+{
+  const makers: (() => Iterable<unknown>)[] = [];
+  for (let kind = 0; kind < 6; kind++) {
+    makers.push(() => {
+      let count = 0;
+      return from(() => {
+        const now = count++;
+        if (kind === 0) return { value: now, done: now >= 2 };
+        if (kind === 1) return { done: now >= 2, value: now };
+        if (kind === 2) return { a: 0, value: now, done: now >= 2 };
+        if (kind === 3) return { a: 0, b: 0, done: now >= 2, value: now };
+        if (kind === 4) return now >= 2 ? { done: true } : { value: now, done: false, last: 0 };
+        return Object.assign(Object.create(null), { value: now, done: now >= 2 });
+      });
+    });
+  }
+  let sum = 0;
+  for (let round = 0; round < 3000; round++) for (const value of makers[(round * 7) % 6]()) sum += (value as number) + 1;
+  const held: unknown[] = [];
+  for (let round = 0; round < 40; round++) {
+    for (let i = 0; i < 2000; i++) held[i % 50] = { ["shape" + ((round * 2000 + i) % 977)]: i };
+    for (const value of makers[round % 6]()) sum += (value as number) + 1;
+  }
+  say("six shapes of results in turn, and many other shapes made and dropped between", sum);
+}
 console.log(lines.join("\n"));

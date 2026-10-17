@@ -2447,6 +2447,29 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__cast_(JSC::EncodedJSValue JSValue0
     return WebCoreCast<WebCore::JSFetchHeaders, WebCore::FetchHeaders>(JSValue0);
 }
 
+extern "C" WebCore::FetchHeaders* WebCore__FetchHeaders__createFromNamesAndValues(JSC::JSGlobalObject* globalObject, unsigned count, const JSC::EncodedJSValue* namesAndValues)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!count)
+        return nullptr;
+    Vector<KeyValuePair<String, String>> record;
+    record.reserveInitialCapacity(count);
+    for (unsigned i = 0; i < count; ++i) {
+        String name = JSC::asString(JSC::JSValue::decode(namesAndValues[2 * i]))->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        String value = JSC::JSValue::decode(namesAndValues[2 * i + 1]).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        record.append(KeyValuePair<String, String>(WTF::move(name), WTF::move(value)));
+    }
+    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    WebCore::propagateException(*globalObject, scope, headers->fill(WebCore::FetchHeaders::Init(WTF::move(record))));
+    if (scope.exception()) {
+        headers->deref();
+        return nullptr;
+    }
+    return headers;
+}
+
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue argument0_)
 {
     EnsureStillAliveScope argument0 = JSC::JSValue::decode(argument0_);
@@ -6162,34 +6185,6 @@ CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC::EncodedJSValue timeValue)
     double number = date->internalNumber();
 
     return number;
-}
-
-extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnByValue(JSC::EncodedJSValue value, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue propertyValue)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSObject* object = JSValue::decode(value).getObject();
-    JSC::JSValue property = JSValue::decode(propertyValue);
-    uint32_t index;
-
-    PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
-    if (property.getUInt32(index)) {
-        bool hasSlot = object->getOwnPropertySlotByIndex(object, globalObject, index, slot);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!hasSlot)
-            return {};
-
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(slot.getValue(globalObject, index)));
-    } else {
-        auto propertyName = property.toPropertyKey(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!object->getOwnNonIndexPropertySlot(vm, object->structure(), propertyName, slot))
-            return {};
-
-        RETURN_IF_EXCEPTION(scope, {});
-
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(slot.getValue(globalObject, propertyName)));
-    }
 }
 
 extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__parseDate(JSC::JSGlobalObject* globalObject, const BunString* str)

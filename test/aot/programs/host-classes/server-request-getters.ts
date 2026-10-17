@@ -12,6 +12,15 @@ function describe(request: Request): string {
   return [tidy(first), first === again, request.method, headers === request.headers, request.headers.get("x-one"), request.signal === request.signal, request.body === request.body].join(" ");
 }
 
+function change(work: () => void): string {
+  try {
+    work();
+    return "";
+  } catch (error) {
+    return "refused: " + (error as Error).message + " | ";
+  }
+}
+
 function describeRoute(request: BunRequest<"/route/:id">): string {
   const first: unknown = request.url;
   const again: unknown = request.url;
@@ -24,36 +33,38 @@ const server = Bun.serve({
   routes: {
     "/route/:id": request => new Response(describeRoute(request)),
     "/shadow-the-prototype": request => {
-      Object.defineProperty(Object.getPrototypeOf(request), "url", { value: "of the prototype of a route's requests", configurable: true });
-      return new Response(describeRoute(request as unknown as BunRequest<"/route/:id">));
+      const refusal = change(() => Object.defineProperty(Object.getPrototypeOf(request), "url", { value: "of the prototype of a route's requests", configurable: true }));
+      return new Response(refusal + describeRoute(request as unknown as BunRequest<"/route/:id">));
     },
     "/clear-the-prototype": request => {
-      delete Object.getPrototypeOf(request).url;
-      return new Response(describeRoute(request as unknown as BunRequest<"/route/:id">));
+      const refusal = change(() => delete Object.getPrototypeOf(request).url);
+      return new Response(refusal + describeRoute(request as unknown as BunRequest<"/route/:id">));
     },
     "/shadow-the-method": request => {
-      Object.defineProperty(Object.getPrototypeOf(request), "method", { get: () => "SHADOWED", configurable: true });
-      return new Response(describeRoute(request as unknown as BunRequest<"/route/:id">));
+      const refusal = change(() => Object.defineProperty(Object.getPrototypeOf(request), "method", { get: () => "SHADOWED", configurable: true }));
+      return new Response(refusal + describeRoute(request as unknown as BunRequest<"/route/:id">));
     },
     "/clear-the-method": request => {
-      delete Object.getPrototypeOf(request).method;
-      return new Response(describeRoute(request as unknown as BunRequest<"/route/:id">));
+      const refusal = change(() => delete Object.getPrototypeOf(request).method);
+      return new Response(refusal + describeRoute(request as unknown as BunRequest<"/route/:id">));
     },
     "/put-a-prototype-in-between": request => {
       const ofRoutes = Object.getPrototypeOf(request);
-      Object.setPrototypeOf(
-        ofRoutes,
-        Object.create(Object.getPrototypeOf(ofRoutes), {
-          url: { value: "of an object put in between", configurable: true },
-          method: { value: "BETWEEN", configurable: true },
-        }),
+      const refusal = change(() =>
+        Object.setPrototypeOf(
+          ofRoutes,
+          Object.create(Object.getPrototypeOf(ofRoutes), {
+            url: { value: "of an object put in between", configurable: true },
+            method: { value: "BETWEEN", configurable: true },
+          }),
+        ),
       );
-      return new Response(describeRoute(request as unknown as BunRequest<"/route/:id">));
+      return new Response(refusal + describeRoute(request as unknown as BunRequest<"/route/:id">));
     },
     "/take-it-out-again": request => {
       const ofRoutes = Object.getPrototypeOf(request);
-      Object.setPrototypeOf(ofRoutes, Object.getPrototypeOf(Object.getPrototypeOf(ofRoutes)));
-      return new Response(describeRoute(request as unknown as BunRequest<"/route/:id">));
+      const refusal = change(() => Object.setPrototypeOf(ofRoutes, Object.getPrototypeOf(ofRoutes) === Request.prototype ? Request.prototype : Object.getPrototypeOf(Object.getPrototypeOf(ofRoutes))));
+      return new Response(refusal + describeRoute(request as unknown as BunRequest<"/route/:id">));
     },
   },
   fetch(request) {

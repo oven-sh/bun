@@ -8,7 +8,8 @@ use super::related::Place;
 use super::shape::UntypedProperty;
 use super::*;
 use crate::bind::{
-    Decl, Flow, FlowId, FlowTarget, FnOwner, MemberOwner, Parent, PatParent, SymbolId, UNREACHABLE,
+    Decl, Flow, FlowId, FlowTarget, FnOwner, MAX_FLOW_DEPTH, MemberOwner, Parent, PatParent,
+    SymbolId, UNREACHABLE,
 };
 use crate::util::SharedSort;
 use smallvec::{SmallVec, smallvec};
@@ -695,8 +696,6 @@ impl About {
     }
 }
 
-/// `getTypeAtFlowNode`: the invocation that finds this many in progress bails out.
-pub(super) const MAX_FLOW_DEPTH: u32 = 2000;
 const LONG_STRAIGHT_RUN: u32 = 32;
 
 /// See `first_unsettled_call`.
@@ -5133,23 +5132,7 @@ impl<'p, 's> Checker<'p, 's> {
             );
             let mut resolves_in_call = ResolvesKey::Never;
             let mut takes_union = false;
-            // Its antecedents: a range of edges, or a single node.
-            let before = match node {
-                Flow::Unreachable => &[][..],
-                Flow::Label { start, len } | Flow::Loop { start, len } => bound.edges(start, len),
-                Flow::Start {
-                    outer: ref before, ..
-                }
-                | Flow::StartInvoked {
-                    outer: ref before, ..
-                }
-                | Flow::Reduce { ref before, .. }
-                | Flow::ArrayMutation { ref before, .. }
-                | Flow::Cond { ref before, .. }
-                | Flow::Switch { ref before, .. }
-                | Flow::Assign { ref before, .. }
-                | Flow::Call { ref before, .. } => std::slice::from_ref(before),
-            };
+            let before = node.antecedents(&bound.flow_edges);
             // The start of a function and a declaration, other than that of a `for in`, add no
             // invocation of `getTypeAtFlowNode`: its loop goes on to the antecedent.
             let invocations = match node {

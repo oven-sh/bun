@@ -14,7 +14,7 @@ import { freshSeed } from "./fresh-seed";
 import { unsupported } from "./run-programs";
 
 const mutantCount = Number(process.env.AOT_FUZZ_MUTANTS) || 300;
-const seeds = process.env.AOT_FUZZ_SEED ? [Number(process.env.AOT_FUZZ_SEED)] : [1, freshSeed];
+const seeds = process.env.AOT_FUZZ_SEED ? [Number(process.env.AOT_FUZZ_SEED)] : freshSeed === undefined ? [1] : [1, freshSeed];
 
 function mulberry32(state: number) {
   return () => {

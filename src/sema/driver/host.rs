@@ -15,7 +15,6 @@ use bun_paths::{basename_posix, path_buffer_pool};
 use bun_sema::atom::Interner;
 use bun_sema::hir::{self, FileKind};
 use bun_sema::json::Json;
-use bun_sema::portable::SharedFile;
 use bun_sema::program::{Builtin, Module};
 use bun_sema::resolve::{
     Host, Kept, ModuleDetection, ParseOptions, Paths, Phase, ScriptKind, Spent, ancestors,
@@ -416,8 +415,8 @@ impl Listing {
 /// same few directories repeatedly, mostly for entries that do not exist.
 pub struct Disk {
     pub threads: usize,
-    /// `take_turns`
-    turns: OnceLock<bun_threading::Semaphore>,
+    /// `Some` while several programs are read through it at the same time.
+    pub(crate) shares: bun_threading::Guarded<Option<Arc<crate::Shares>>>,
     pub(crate) caches: crate::ThreadCaches,
     /// A thread of the pool has made it. The other threads of the pool can all be waiting for what it is made for, so
     /// nothing waits for them: not the threads either that the request starts to coordinate its projects.
@@ -443,7 +442,6 @@ pub struct Disk {
     /// See `Host::take_unreadable`.
     unreadable: bun_threading::Guarded<Vec<Vec<u8>>>,
     non_utf8: bun_threading::Guarded<FxHashSet<Vec<u8>>>,
-    shared: bun_threading::Guarded<Sharing>,
     /// See `AlreadyRead`. By `tspath.Path`: such a file is found however its name is spelled, like one on the disk.
     already_read: AlreadyRead,
     pub(crate) deferred_read: bun_threading::Guarded<Option<DeferredRead>>,
@@ -469,6 +467,7 @@ pub struct Disk {
     /// `Provided::file_jsx_options`, by `tspath.Path`.
     pub(crate) file_jsx_options: Vec<(Vec<u8>, FileJsxOptions)>,
     pub(crate) file_class_options: Vec<(Vec<u8>, ClassOptions)>,
+    pub(crate) is_without_bundler: bool,
     pub(crate) import_constants: FxHashMap<(Vec<u8>, Vec<u8>), Vec<u8>>,
     pub(crate) build_constants: Option<Arc<bun_sema::fold::BuildConstants>>,
     pub(crate) early_paths: Option<bun_threading::Guarded<std::sync::mpsc::Receiver<(Vec<u8>, Option<&'static [u8]>)>>>,
@@ -510,29 +509,6 @@ pub(crate) struct Compiled {
     pub(crate) builtin_modules: bun_threading::Guarded<Option<crate::builtins::Found>>,
     pub(crate) preserves_source_paths: bool,
     pub(crate) is_commonjs_code: FxHashMap<Vec<u8>, bool>,
-}
-
-/// `Host::share_declaration_files`
-#[derive(Default)]
-struct Sharing {
-    files: Option<Arc<Shared>>,
-    variants: u32,
-    /// The programs that are yet to `stay_loaded`.
-    programs: usize,
-}
-
-/// The declaration files that the programs of one check have loaded.
-#[derive(Default)]
-struct Shared {
-    /// What `Host::read` has returned, by path, and returns again. As it was: no library that is
-    /// kept anyway is copied.
-    read: ShardedMap<Vec<u8>, Cow<'static, [u8]>>,
-    /// The first text of a file that is not what was `read`, by path: a project has emitted it.
-    /// A program that is not given the file by that project finds the one on the disk.
-    emitted: ShardedMap<Vec<u8>, Box<[u8]>>,
-    /// `Host::shared_file`, by path, and then the variant and whether the text is `emitted`. Two
-    /// threads that find a file empty both load it, and neither waits.
-    files: ShardedMap<Vec<u8>, Arc<OnceLock<SharedFile>>>,
 }
 
 /// The text of files that the caller of the check has read, by path in the checker's format, as UTF-8, without a byte order
@@ -599,6 +575,7 @@ pub struct Provided {
     /// By path, as the caller has it.
     pub file_jsx_options: Vec<(Vec<u8>, FileJsxOptions)>,
     pub file_class_options: Vec<(Vec<u8>, ClassOptions)>,
+    pub is_without_bundler: bool,
     pub import_constants: Vec<((Vec<u8>, Vec<u8>), Vec<u8>)>,
     pub build_constants: Option<Arc<bun_sema::fold::BuildConstants>>,
     pub early_paths: Option<std::sync::mpsc::Receiver<(Vec<u8>, Option<&'static [u8]>)>>,
@@ -623,6 +600,7 @@ impl Provided {
             already_read: self.already_read.clone(),
             file_jsx_options: self.file_jsx_options.clone(),
             file_class_options: self.file_class_options.clone(),
+            is_without_bundler: self.is_without_bundler,
             import_constants: self.import_constants.clone(),
             build_constants: self.build_constants.clone(),
             without_builtin_modules: self.without_builtin_modules,
@@ -938,18 +916,6 @@ impl Disk {
         Some([modified.sec, modified.nsec, changed.sec, changed.nsec])
     }
 
-    /// From now on several programs are read through it at the same time. Each starts parallel regions of `threads` threads: of
-    /// all of them together, no more than `threads` work at a time.
-    pub(crate) fn take_turns(&self) {
-        self.turns.get_or_init(|| {
-            let turns = bun_threading::Semaphore::default();
-            for _ in 0..self.threads.max(1) {
-                turns.post();
-            }
-            turns
-        });
-    }
-
     /// `cwd`: the working directory, in the checker's path format.
     pub fn started_in(mut self, cwd: &[u8]) -> Self {
         self.working_directory = cwd.to_vec();
@@ -961,7 +927,7 @@ impl Disk {
         let case_sensitive = is_file_system_case_sensitive(project);
         Disk {
             threads,
-            turns: OnceLock::new(),
+            shares: bun_threading::Guarded::new(None),
             in_memory: InMemory::by_directory(&already_read, case_sensitive),
             already_read: match case_sensitive {
                 true => already_read,
@@ -974,7 +940,6 @@ impl Disk {
             keeps_byte_order_marks: false,
             extended_configs: Default::default(),
             paths: Default::default(),
-            shared: Default::default(),
             caches: Default::default(),
             is_of_a_thread_of_the_pool: !bun_threading::thread_pool::Thread::current().is_null(),
             case_sensitive,
@@ -1004,6 +969,7 @@ impl Disk {
             scripts_of_page: None,
             file_jsx_options: Vec::new(),
             file_class_options: Vec::new(),
+            is_without_bundler: false,
             import_constants: FxHashMap::default(),
             build_constants: None,
             early_paths: None,
@@ -1810,6 +1776,24 @@ fn unmarshal_fields(object: &ObjectJSON, has_duplicates: bool) -> Option<Json> {
 }
 
 /// `packagejson.Parse`. Bun's JSON parser, which makes the values, also takes what is no JSON.
+pub fn parse_json_object(text: &[u8]) -> Option<Json> {
+    use bun_parsers::json::ParsedJson;
+    if !is_valid(text) {
+        return None;
+    }
+    let session = bun_sema::session::Session::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(session.arena());
+    let _ast_scope = ast_memory_allocator.enter();
+    let source = bun_ast::Source::init_path_string(b"object.json".as_slice(), text);
+    let mut log = bun_ast::Log::init();
+    let parsed = ParsedJson::parse_json(&source, &mut log).ok()?;
+    let bun_ast::expr::Data::EObjectJSON(root) = parsed.root.data else {
+        return None;
+    };
+    let entries = root.get().properties().iter().map(|property| Some((property.key.slice().to_vec(), unmarshal_json_value(&property.value, false)?)));
+    Some(Json::Object(entries.collect::<Option<Vec<_>>>()?))
+}
+
 fn parse_package_json(arena: &Arena, text: &[u8]) -> Option<Json> {
     use bun_parsers::json::ParsedJson;
     if !is_valid(text) {
@@ -1891,74 +1875,6 @@ impl Disk {
             std::thread::sleep(Duration::from_micros(500));
         }
         None
-    }
-
-    /// `Host::read`
-    fn read_for_one_program(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
-        if !self.already_read.is_empty()
-            && let key = to_path(path, self.case_sensitive)
-            && let Some(text) = self.already_read.get(&*key)
-        {
-            let later = if text.is_empty() { self.deferred_read_sources().get(&*key) } else { None };
-            return Some(later.unwrap_or(text).clone());
-        }
-        if let Some(deferred) = self.deferred.get()
-            && let key = to_path(path, self.case_sensitive)
-            && let Some(text) = deferred.already_read.get(&*key)
-        {
-            let later = if text.is_empty() { self.installed_deferred_read_sources(deferred).get(&*key) } else { None };
-            return Some(later.unwrap_or(text).clone());
-        }
-        if let Some(contents) = self.bundler_source(path) {
-            return Some(Cow::Borrowed(contents));
-        }
-        let _reading = Spent::on(self, Phase::Read);
-        if is_bundled(path) {
-            let (libs, name) = self.bundled(path)?;
-            return (libs.read)(name);
-        }
-        if let Some(before_read) = &self.before_read {
-            before_read(path);
-        }
-        for_the_system(path)?;
-        if self.observed.is_some() {
-            self.observe(path);
-        }
-        let Split { parent, name } = split(path);
-        // Not of a configuration file or a `package.json`, which are read as JSON.
-        let keeps_mark = self.keeps_byte_order_marks && ScriptKind::from_file_name(path).is_some();
-        if name.is_empty() || Self::is_above_listings(parent) {
-            return read_at(path, keeps_mark);
-        }
-        let _early_read = if self.early_paths.is_some() { self.begin_early_read() } else { None };
-        let _turn = self.reading.as_ref().map(Turn::wait_for);
-        let mut reader = self.take_reader(parent);
-        // The second file read from a directory, and those after it, are opened relative to the directory. An absolute path makes
-        // the kernel look up every directory on the way again, and all threads contend on the ones near the root. For a single
-        // file, opening the directory costs that walk and more.
-        let read = if reader.directory != parent {
-            reader.handle = None;
-            reader.directory.clear();
-            reader.directory.extend_from_slice(parent);
-            None
-        } else {
-            if reader.handle.is_none() {
-                reader.handle = bun_sys::open_dir_absolute(to_native(parent))
-                    .ok()
-                    .map(bun_sys::Dir::from_fd);
-            }
-            let Reader { handle, buffer, .. } = &mut reader;
-            handle
-                .as_ref()
-                .map(|directory| read_file(directory.fd(), name, buffer))
-        };
-        let read = read.unwrap_or_else(|| {
-            let path = to_native(without_trailing_slash(path));
-            read_file(Fd::cwd(), path, &mut reader.buffer)
-        });
-        self.return_reader(reader);
-        fs_queries::record_query(fs_queries::Kind::Text, path, |hash| fs_queries::of_text(hash, read.as_deref()));
-        read.map(|bytes| decoded(bytes, keeps_mark))
     }
 }
 
@@ -2089,68 +2005,70 @@ impl Host for Disk {
             .map(|phase| Duration::from_nanos(self.times[phase as usize].load(Ordering::Relaxed)))
     }
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
-        let is_shared = is_declaration_file_name(path);
-        let shared = is_shared.then(|| self.shared.lock().files.clone());
-        let Some(shared) = shared.flatten() else {
-            return self.read_for_one_program(path);
-        };
-        if let Some(text) = shared.read.get_ref(path) {
-            return Some(text.clone());
+        if !self.already_read.is_empty()
+            && let key = to_path(path, self.case_sensitive)
+            && let Some(text) = self.already_read.get(&*key)
+        {
+            let later = if text.is_empty() { self.deferred_read_sources().get(&*key) } else { None };
+            return Some(later.unwrap_or(text).clone());
         }
-        let text = self.read_for_one_program(path)?;
-        shared.read.insert_ref(path.to_vec(), text.clone());
-        Some(text)
-    }
-    fn share_declaration_files(&self, variants: u32, programs: usize) {
-        if variants != 0 {
-            let mut shared = self.shared.lock();
-            shared.files.get_or_insert_default();
-            shared.variants |= variants;
-            shared.programs = shared.programs.saturating_add(programs);
+        if let Some(deferred) = self.deferred.get()
+            && let key = to_path(path, self.case_sensitive)
+            && let Some(text) = deferred.already_read.get(&*key)
+        {
+            let later = if text.is_empty() { self.installed_deferred_read_sources(deferred).get(&*key) } else { None };
+            return Some(later.unwrap_or(text).clone());
         }
-    }
-    fn stays_loaded(&self) {
-        let mut shared = self.shared.lock();
-        shared.programs = shared.programs.saturating_sub(1);
-        if shared.programs > 0 {
-            return;
+        if let Some(contents) = self.bundler_source(path) {
+            return Some(Cow::Borrowed(contents));
         }
-        let unused = std::mem::take(&mut *shared);
-        // Freed without the lock.
-        drop(shared);
-        drop(unused);
-    }
-    fn shared_file(
-        &self,
-        path: &[u8],
-        text: &[u8],
-        variant: u8,
-    ) -> Option<Arc<OnceLock<SharedFile>>> {
-        if !is_declaration_file_name(path) || self.script_kind(path).is_some() {
-            return None;
+        let _reading = Spent::on(self, Phase::Read);
+        if is_bundled(path) {
+            let (libs, name) = self.bundled(path)?;
+            return (libs.read)(name);
         }
-        let shared = {
-            let shared = self.shared.lock();
-            let is_of_several = shared.variants & 1 << (variant >> 1) != 0;
-            shared.files.clone().filter(|_| is_of_several)?
-        };
-        // A program can find on the disk what another gets from a project that it references.
-        let read = shared.read.get_ref(path);
-        let is_emitted = read.is_none_or(|read| **read != *text);
-        if is_emitted {
-            let first = match shared.emitted.get_ref(path) {
-                Some(text) => text,
-                None => shared.emitted.insert_ref(path.to_vec(), text.into()),
-            };
-            if **first != *text {
-                return None;
+        if let Some(before_read) = &self.before_read {
+            before_read(path);
+        }
+        for_the_system(path)?;
+        if self.observed.is_some() {
+            self.observe(path);
+        }
+        let Split { parent, name } = split(path);
+        // Config files and `package.json` are read as JSON, so they never keep the mark.
+        let keeps_mark = self.keeps_byte_order_marks && ScriptKind::from_file_name(path).is_some();
+        if name.is_empty() || Self::is_above_listings(parent) {
+            return read_at(path, keeps_mark);
+        }
+        let _early_read = if self.early_paths.is_some() { self.begin_early_read() } else { None };
+        let _turn = self.reading.as_ref().map(Turn::wait_for);
+        let mut reader = self.take_reader(parent);
+        // The second file read from a directory, and those after it, are opened relative to the directory. An absolute path makes
+        // the kernel look up every directory on the way again, and all threads contend on the ones near the root. For a single
+        // file, opening the directory costs that walk and more.
+        let read = if reader.directory != parent {
+            reader.handle = None;
+            reader.directory.clear();
+            reader.directory.extend_from_slice(parent);
+            None
+        } else {
+            if reader.handle.is_none() {
+                reader.handle = bun_sys::open_dir_absolute(to_native(parent))
+                    .ok()
+                    .map(bun_sys::Dir::from_fd);
             }
-        }
-        let key = [path, &[variant << 1 | u8::from(is_emitted)]].concat();
-        Some(Arc::clone(match shared.files.get_ref(&key[..]) {
-            Some(file) => file,
-            None => shared.files.insert_ref(key, Default::default()),
-        }))
+            let Reader { handle, buffer, .. } = &mut reader;
+            handle
+                .as_ref()
+                .map(|directory| read_file(directory.fd(), name, buffer))
+        };
+        let read = read.unwrap_or_else(|| {
+            let path = to_native(without_trailing_slash(path));
+            read_file(Fd::cwd(), path, &mut reader.buffer)
+        });
+        self.return_reader(reader);
+        fs_queries::record_query(fs_queries::Kind::Text, path, |hash| fs_queries::of_text(hash, read.as_deref()));
+        read.map(|bytes| decoded(bytes, keeps_mark))
     }
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
         let text = self.read(path).unwrap_or_else(|| {
@@ -2422,7 +2340,10 @@ impl Host for Disk {
         parse_package_json(arena, text)
     }
     fn loaded(&self) {
-        self.caches.drop_those_of_the_parser();
+        // Otherwise the threads go on to parse the files of the next program.
+        if self.shares.lock().is_none() {
+            self.caches.drop_those_of_the_parser();
+        }
     }
     fn build_constants(&self) -> Option<Arc<bun_sema::fold::BuildConstants>> {
         self.build_constants.clone().or_else(|| self.deferred.get()?.build_constants.clone())
@@ -2431,7 +2352,11 @@ impl Host for Disk {
         self.threads
     }
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
-        self.io_pool.as_deref().filter(|_| !self.is_early_pass)
+        // The threads that only read serve one load at a time.
+        match *self.shares.lock() {
+            Some(_) => None,
+            None => self.io_pool.as_deref().filter(|_| !self.is_early_pass),
+        }
     }
     fn with_helpers(&self, helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
         crate::for_each_with_helpers(&self.caches, helpers, count, run_of(count), work);
@@ -2440,13 +2365,11 @@ impl Host for Disk {
         if self.is_of_a_thread_of_the_pool {
             return self.with_helpers(0, count, work);
         }
-        crate::for_each_parallel_in_turns(
-            &self.caches,
-            self.threads,
-            count,
-            run_of(count),
-            self.turns.get(),
-            work,
-        );
+        let run = run_of(count);
+        let shares = self.shares.lock().clone();
+        match shares {
+            Some(shares) => crate::for_each_with_a_share(&self.caches, &shares, count, run, work),
+            None => crate::for_each_parallel_in_runs(&self.caches, self.threads, count, run, work),
+        }
     }
 }

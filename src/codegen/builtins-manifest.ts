@@ -247,6 +247,7 @@ for (const [id, file] of sourceFiles.entries()) {
 
 const firstTick = [
   "internal/process/next_tick_queue",
+  "internal/process/ticks",
   "internal/validators",
   "internal/shared",
   "internal/fixed_queue",

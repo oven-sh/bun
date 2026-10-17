@@ -800,6 +800,13 @@ _bun_check_completion() {
         '--timing[Print load and check times]' \
         '--cwd[Set the working directory]:cwd:_files -/' \
         '--no-script[Run the type checker even if the project has a check script]' \
+        '--aot[Also report what bun build --compile --aot would reject in these entry points]' \
+        '--aot-explain[With --aot\: print a report. throws lists every type check that can fail when the program runs]:report' \
+        '--aot-deny[With --aot\: fail where a rule finds something. --aot-deny=untyped-file,open-layout, or all]:rule' \
+        '--aot-warn[With --aot\: the same, as warnings]:rule' \
+        '--aot-allow[With --aot\: turn a rule off. Of two flags that name the same rule and file, the later one counts]:rule' \
+        '--aot-baseline[With --aot\: a file with the number of findings per rule and file that are accepted]:file:_files' \
+        '--aot-update-baseline[With --aot-baseline\: write the file anew from this build]' \
         '--help[Print this help menu]' \
         '-h[Print this help menu]' &&
         ret=0
@@ -822,6 +829,7 @@ _bun_lint_completion() {
         '--print-config[Print the config for a file and exit]:print-config:_files' \
         '--doctor[Show which rules run natively and which packages you can remove]' \
         '--allow-unsupported[Warn instead of failing when the config has a rule or file that is not supported]' \
+        '--aot[Also report what behaves differently when compiled with bun build --aot]' \
         '--staged[Only lint files that are staged in git]' \
         '--changed[Only lint files that differ from a branch or commit (default\: the default branch)]' \
         '--ignore-pattern[Skip files that match this pattern]:ignore-pattern' \

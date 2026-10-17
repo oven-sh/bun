@@ -852,7 +852,32 @@ impl Response {
         // SAFETY: `bun_vm()` returns a raw `*mut VirtualMachine` (PORTING.md
         // §raw-ptr) — borrow it for the duration of args parsing.
         let mut args = bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
+        let json_value = args.next_eat().unwrap_or_default();
+        Self::json_with_init(global_this, json_value, |response| {
+            if let Some(arg_init) = args.next_eat() {
+                if arg_init.is_undefined_or_null() {
+                    // no-op
+                } else if arg_init.is_number() {
+                    response.init.with_mut(|i| {
+                        i.status_code =
+                            u16::try_from(0.max(arg_init.to_int32()).min(i32::from(u16::MAX))).unwrap();
+                    });
+                } else {
+                    if let Some(init) = Init::init(global_this, arg_init)? {
+                        response.init.set(init);
+                    }
+                }
+            }
+            Ok(())
+        })
+    }
 
+    #[inline(always)]
+    fn json_with_init(
+        global_this: &JSGlobalObject,
+        json_value: JSValue,
+        set_init: impl FnOnce(&Response) -> JsResult<()>,
+    ) -> JsResult<JSValue> {
         // `Init`'s field drop glue releases its refs on `?`. `Body` has NO `Drop` and its
         // `WTFStringImpl` arm is a raw `*mut` (no drop glue), so wrap the
         // stack value in a scopeguard that calls `body.reset()`
@@ -868,7 +893,6 @@ impl Response {
             },
             |r| r.body.get().reset(),
         );
-        let json_value = args.next_eat().unwrap_or_default();
 
         if !json_value.is_empty() {
             // Validate top-level values that are not JSON serializable (Node.js compatibility)
@@ -904,20 +928,7 @@ impl Response {
             }
         }
 
-        if let Some(arg_init) = args.next_eat() {
-            if arg_init.is_undefined_or_null() {
-                // no-op
-            } else if arg_init.is_number() {
-                response.init.with_mut(|i| {
-                    i.status_code =
-                        u16::try_from(0.max(arg_init.to_int32()).min(i32::from(u16::MAX))).unwrap();
-                });
-            } else {
-                if let Some(init) = Init::init(global_this, arg_init)? {
-                    response.init.set(init);
-                }
-            }
-        }
+        set_init(&response)?;
 
         let headers_ref = response.get_or_create_headers(global_this)?;
         let json_mime = bun_http_types::MimeType::JSON;
@@ -1111,7 +1122,7 @@ impl Response {
                 }
             }
         }
-        let mut init: Init = 'brk: {
+        let init: Init = 'brk: {
             if arguments[1].is_undefined_or_null() {
                 break 'brk Init {
                     status_code: 200,
@@ -1127,12 +1138,29 @@ impl Response {
             )));
         };
 
+        let response = Self::from_body_and_init(global_this, arguments[0], init, Some(js_this))?;
+        // SAFETY: `response` is freshly boxed and uniquely owned by this fn
+        // until returned; reborrow for the trailing (infallible) setup.
+        let resp_ref = unsafe { &*response };
+
+        resp_ref.calculate_estimated_byte_size();
+        resp_ref.check_body_stream_ref(global_this);
+        Ok(response)
+    }
+
+    #[inline(always)]
+    fn from_body_and_init(
+        global_this: &JSGlobalObject,
+        body_value: JSValue,
+        mut init: Init,
+        js_this: Option<JSValue>,
+    ) -> JsResult<*mut Response> {
         let body: Body = 'brk: {
-            if arguments[0].is_undefined_or_null() {
+            if body_value.is_undefined_or_null() {
                 break 'brk Body::new(BodyValue::Null);
             }
             // `Body::extract` is a free fn re-exported as `body::extract`.
-            super::body::extract(global_this, arguments[0])?
+            super::body::extract(global_this, body_value)?
         };
         // `Body` has NO `Drop`; arm a guard so the
         // error returns below release the extracted body payload.
@@ -1161,23 +1189,70 @@ impl Response {
 
         // Disarm: all fallible ops have succeeded.
         let body = scopeguard::ScopeGuard::into_inner(body);
-        // Ownership transfers to the JSC wrapper (freed via `finalize`). The
-        // codegen constructor thunk receives this `*mut Response` and binds it
-        // to `js_this`.
-        let response = bun_core::heap::into_raw(Box::new(Response {
+        Ok(bun_core::heap::into_raw(Box::new(Response {
             body: JsCell::new(body),
             init: JsCell::new(init),
-            js_ref: JsCell::new(JsRef::init_weak(js_this)),
+            js_ref: JsCell::new(js_this.map_or_else(JsRef::empty, JsRef::init_weak)),
             ..Default::default()
-        }));
-        // SAFETY: `response` is freshly boxed and uniquely owned by this fn
-        // until returned; reborrow for the trailing (infallible) setup.
-        let resp_ref = unsafe { &*response };
-
-        resp_ref.calculate_estimated_byte_size();
-        resp_ref.check_body_stream_ref(global_this);
-        Ok(response)
+        })))
     }
+
+    fn from_parts(global_this: &JSGlobalObject, body_value: JSValue, parts: &InitParts) -> JsResult<JSValue> {
+        if body_value.is_object() && body_value.as_class_ref::<Blob>().is_some_and(|blob| blob.is_s3()) {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "new Response(s3File) do not support ResponseInit options",
+            )));
+        }
+        let init = Init::from_parts(global_this, parts)?;
+        let response = Self::from_body_and_init(global_this, body_value, init, None)?;
+        // SAFETY: `response` is freshly boxed; ownership transfers to the JSC wrapper.
+        Ok(unsafe { (*response).to_js(global_this) })
+    }
+}
+
+pub(crate) struct InitParts {
+    status: JSValue,
+    status_text: JSValue,
+    headers: JSValue,
+    header_count: u32,
+    header_names_and_values: *const JSValue,
+}
+
+/// # Safety
+/// `header_names_and_values` must point to `2 * header_count` values; each even one is a string.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn Response__createFromParts(
+    global_this: &JSGlobalObject,
+    body: JSValue,
+    status: JSValue,
+    status_text: JSValue,
+    headers: JSValue,
+    header_count: u32,
+    header_names_and_values: *const JSValue,
+) -> JSValue {
+    let parts = InitParts { status, status_text, headers, header_count, header_names_and_values };
+    bun_jsc::host_fn::to_js_host_call(global_this, || Response::from_parts(global_this, body, &parts))
+}
+
+/// # Safety
+/// `header_names_and_values` must point to `2 * header_count` values; each even one is a string.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn Response__createJSONFromParts(
+    global_this: &JSGlobalObject,
+    value: JSValue,
+    status: JSValue,
+    status_text: JSValue,
+    headers: JSValue,
+    header_count: u32,
+    header_names_and_values: *const JSValue,
+) -> JSValue {
+    let parts = InitParts { status, status_text, headers, header_count, header_names_and_values };
+    bun_jsc::host_fn::to_js_host_call(global_this, || {
+        Response::json_with_init(global_this, value, |response| {
+            response.init.set(Init::from_parts(global_this, &parts)?);
+            Ok(())
+        })
+    })
 }
 
 // We deliberately do NOT `impl Drop for Init` so struct-update
@@ -1217,6 +1292,63 @@ impl Init {
             status_text: self.status_text.clone(),
             method: self.method,
         })
+    }
+
+    fn from_parts(global_this: &JSGlobalObject, parts: &InitParts) -> JsResult<Init> {
+        let mut init = Init {
+            status_code: 200,
+            ..Default::default()
+        };
+        // SAFETY: `InitParts` is only made by the two exported functions, whose callers uphold the contract.
+        let filled = unsafe { FetchHeaders::create_from_names_and_values(global_this, parts.header_count, parts.header_names_and_values) }?;
+        // SAFETY: C++ returns a +1 ref or null.
+        init.headers = filled.map(|headers| unsafe { HeadersRef::adopt(headers) });
+        if !parts.headers.is_undefined() {
+            init.set_headers(global_this, parts.headers)?;
+        }
+        if !parts.status.is_undefined() {
+            init.set_status(global_this, parts.status)?;
+        }
+        let status_text = parts.status_text;
+        if !status_text.is_empty_or_undefined_or_null() && !(status_text.is_string() && !status_text.to_boolean()) {
+            init.status_text = status_text.to_bun_string(global_this)?;
+        }
+        Ok(init)
+    }
+
+    fn set_headers(&mut self, global_this: &JSGlobalObject, headers: JSValue) -> JsResult<()> {
+        // `JSValue::as_::<FetchHeaders>()` requires `JsClass`;
+        // FetchHeaders is a hand-bound opaque, so use its dedicated
+        // `cast()` (wraps `WebCore__FetchHeaders__cast_`).
+        if let Some(orig) = FetchHeaders::cast(headers) {
+            // `orig` is a live `WebCore::FetchHeaders*` borrowed from JS;
+            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+            let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
+            if !orig.is_empty() {
+                self.headers = orig.clone_this(global_this)?.map(|p| {
+                    // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
+                    // ownership of that ref is transferred into the `HeadersRef`.
+                    unsafe { HeadersRef::adopt(p) }
+                });
+            }
+        } else {
+            self.headers = HeadersRef::create_from_js(global_this, headers)?;
+        }
+        Ok(())
+    }
+
+    fn set_status(&mut self, global_this: &JSGlobalObject, status_value: JSValue) -> JsResult<()> {
+        let number = status_value.coerce_to_int64(global_this)?;
+        if (200 <= number && number < 600) || number == 101 {
+            self.status_code = (u32::try_from(number).expect("int cast")) as u16;
+        } else {
+            let err = global_this.create_range_error_instance(format_args!(
+                "The status provided ({}) must be 101 or in the range of [200, 599]",
+                number
+            ));
+            return Err(global_this.throw_value(err));
+        }
+        Ok(())
     }
 
     pub(crate) fn init(
@@ -1264,36 +1396,11 @@ impl Init {
         }
 
         if let Some(headers) = response_init.fast_get(global_this, BuiltinName::headers)? {
-            // `JSValue::as_::<FetchHeaders>()` requires `JsClass`;
-            // FetchHeaders is a hand-bound opaque, so use its dedicated
-            // `cast()` (wraps `WebCore__FetchHeaders__cast_`).
-            if let Some(orig) = FetchHeaders::cast(headers) {
-                // `orig` is a live `WebCore::FetchHeaders*` borrowed from JS;
-                // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
-                if !orig.is_empty() {
-                    result.headers = orig.clone_this(global_this)?.map(|p| {
-                        // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
-                        // ownership of that ref is transferred into the `HeadersRef`.
-                        unsafe { HeadersRef::adopt(p) }
-                    });
-                }
-            } else {
-                result.headers = HeadersRef::create_from_js(global_this, headers)?;
-            }
+            result.set_headers(global_this, headers)?;
         }
 
         if let Some(status_value) = response_init.fast_get(global_this, BuiltinName::status)? {
-            let number = status_value.coerce_to_int64(global_this)?;
-            if (200 <= number && number < 600) || number == 101 {
-                result.status_code = (u32::try_from(number).expect("int cast")) as u16;
-            } else {
-                let err = global_this.create_range_error_instance(format_args!(
-                    "The status provided ({}) must be 101 or in the range of [200, 599]",
-                    number
-                ));
-                return Err(global_this.throw_value(err));
-            }
+            result.set_status(global_this, status_value)?;
         }
 
         if let Some(status_text) =

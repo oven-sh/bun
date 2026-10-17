@@ -1230,6 +1230,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // newer; only `-mmacosx-version-min` decides what the binary runs on).
   let ld64StripSwap: { ld: string; strip: string } | undefined;
   if (darwinCross) {
+    if (webkit === "local") {
+      throw new BuildError("Cross-compiling for macOS requires the prebuilt WebKit", {
+        hint: "Drop --webkit=local or build on a macOS host.",
+      });
+    }
     crossTarget = `${arm64 ? "arm64" : "x86_64"}-apple-macosx`;
     osxDeploymentTarget = partial.osxDeploymentTarget ?? MIN_OSX_DEPLOYMENT_TARGET;
     osxSysroot = resolveMacosSdkPath(partial.macosSdk, cacheDir, cwd);

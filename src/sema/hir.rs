@@ -405,17 +405,6 @@ static CELLS_OF_NO_NODES: LazyCells = LazyCells {
     keyword_identifiers: OnceLock::new(),
 };
 
-impl<'s> Lazy<'s> {
-    /// Nothing is computed yet. `arena` is one of `session`.
-    pub(crate) fn new(arena: &'s Arena, session: &'s Session) -> Lazy<'s> {
-        Lazy {
-            session,
-            arena,
-            cells: session.keep(LazyCells::default()),
-        }
-    }
-}
-
 /// Copies `list` to a block of exactly its size in `arena`, and empties it. It retains its capacity.
 pub(crate) fn copy_to_arena<'s, T: Copy>(list: &mut Vec<T>, arena: &'s Arena) -> Fixed<'s, T> {
     let exact = Fixed::copied_in(arena, list);

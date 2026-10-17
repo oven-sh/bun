@@ -269,6 +269,11 @@ impl<'a> Parser<'a, '_> {
     fn load_aot(&mut self, aot: &Expr) -> crate::Result<()> {
         self.expect(aot, ExprTag::EObject)?;
         self.load_aot_rules(aot, &[])?;
+        if let Some(baseline) = aot.get(b"baseline") {
+            self.expect_string(&baseline)?;
+            let path = estring_to_owned(baseline.data.e_string().expect("infallible: variant checked").get(), self.bump);
+            self.ctx.bundler_options.aot_rules.push([b"aot.baseline=".as_slice(), &path[..]].concat().into_boxed_slice());
+        }
         let Some(overrides) = aot.get(b"overrides") else { return Ok(()) };
         self.expect(&overrides, ExprTag::EArray)?;
         let array = overrides.data.e_array().expect("infallible: variant checked");

@@ -1,7 +1,7 @@
 # The fuzz farm
 
-`farm.py` makes programs without end and runs each against several builds of Bun. CI runs a small part of the same thing with a new seed
-every time (`../generated-fresh-seeds-*.test.ts`, `../mutated-programs-*.test.ts`); this folder is for machines that have hours.
+`farm.py` makes programs without end and runs each against several builds of Bun. `AOT_FRESH_SEEDS=1` makes the tests run a small part of the same thing with a new seed
+(`../generated-fresh-seeds-*.test.ts`, `../mutated-programs-*.test.ts`); this folder is for machines that have hours.
 
 ```sh
 python3 test/aot/fuzz/farm.py config.json                 # round after round, until <out>/STOP exists

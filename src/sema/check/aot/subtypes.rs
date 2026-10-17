@@ -203,6 +203,7 @@ pub(super) struct Gathered {
     pub casts: Vec<(u32, u32)>,
     pub guards: Vec<(u32, u32)>,
     pub forced: Vec<(u32, u32)>,
+    pub unverified_overload_results: Vec<(u32, u32)>,
     pub tests: Vec<(u32, u32)>,
     pub vouched: Vec<(u32, Place)>,
     pub untyped_inflow_sites: Vec<(u32, Place)>,
@@ -811,6 +812,10 @@ impl Subtypes {
         self.gathered.forced.binary_search(&(from, to)).is_ok()
     }
 
+    fn may_satisfy_unverified_overload_result(&self, member: u32, from: u32, to: u32) -> bool {
+        member < self.nodes && self.gathered.unverified_overload_results.binary_search(&(from, to)).is_ok() && may_be_assignable_to(&self.gathered.facts[member as usize], &self.gathered.facts[to as usize])
+    }
+
     fn accepts_untyped(&self, view: u32) -> bool {
         self.is_accepting[view as usize]
     }
@@ -1315,7 +1320,12 @@ impl Subtypes {
             if is_forced && refuses.get(among_refused) == Some(&member) && has.get(among) != Some(&member) {
                 admitted.push(member);
             }
-            if opens && opened_by.is_none() && member < self.nodes && refuses.get(among_refused) == Some(&member) && has.get(among) != Some(&member) {
+            if opened_by.is_none()
+                && member < self.nodes
+                && refuses.get(among_refused) == Some(&member)
+                && has.get(among) != Some(&member)
+                && (opens || may_convert && self.may_satisfy_unverified_overload_result(member, from, to))
+            {
                 opened_by = Some(member);
             }
             let is_new = has.get(among) != Some(&member)
@@ -1589,6 +1599,7 @@ impl Subtypes {
         match verdict {
             Verdict::Refused if may_convert && self.is_forced(from, to) => _ = self.insert(to, member, Cause::Accepted(from)),
             Verdict::Refused if may_convert && member < self.nodes && self.relaxes_if_rejected.contains(&(from, to)) => self.relax_for_unconvertible_layout(to, member),
+            Verdict::Refused if may_convert && self.may_satisfy_unverified_overload_result(member, from, to) => self.relax_for_unconvertible_layout(to, member),
             Verdict::Asked(_) | Verdict::Refused => {}
             Verdict::Passes => _ = self.insert(to, member, Cause::Cast(from)),
             Verdict::Accepted => _ = self.insert(to, member, Cause::Accepted(from)),

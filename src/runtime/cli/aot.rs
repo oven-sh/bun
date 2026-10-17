@@ -1,4 +1,4 @@
-use bun_aot::rules::{EVERY_RULE, RULES, Settings, Severity};
+use bun_aot::rules::{Baseline, EVERY_RULE, RULES, Settings, Severity};
 use bun_core::{Global, pretty_errorln};
 use bun_options_types::compile_target::CompileTarget;
 
@@ -151,7 +151,7 @@ pub(crate) fn is_only_comments(mut text: &[u8]) -> bool {
     }
 }
 
-const BUILD_FLAGS: [&[u8]; 7] = [b"--aot", b"--aot-allow", b"--aot-deny", b"--aot-explain", b"--aot-huge-heap", b"--aot-type-errors", b"--aot-warn"];
+const BUILD_FLAGS: [&[u8]; 9] = [b"--aot", b"--aot-allow", b"--aot-baseline", b"--aot-deny", b"--aot-explain", b"--aot-huge-heap", b"--aot-type-errors", b"--aot-update-baseline", b"--aot-warn"];
 const RUN_FLAGS: [&[u8]; 4] = [b"--aot", b"--aot-audit", b"--aot-huge-heap", b"--aot-type-errors"];
 const RUN_INTERNAL_FLAGS: [&[u8]; 3] = [b"--aot-decode-crash-report", b"--aot-graph-fd", b"--aot-stamp"];
 const SHARED_INTERNAL_FLAGS: [&[u8]; 1] = [b"--aot-crash-if-interpreter-is-used"];
@@ -164,10 +164,15 @@ pub(crate) const RULE_PARAMS: &[bun_clap::Param<bun_clap::Help>] = &[
     ),
     bun_clap::parse_param!("--aot-warn <STR>...              With --aot: the same, as warnings"),
     bun_clap::parse_param!("--aot-allow <STR>...             With --aot: turn a rule off. Of two flags that name the same rule and file, the later one counts"),
+    bun_clap::parse_param!("--aot-baseline <STR>             With --aot: a file with the number of findings per rule and file that are accepted. Only a file that has more is reported"),
+    bun_clap::parse_param!("--aot-update-baseline            With --aot-baseline: write the file anew from this build"),
 ];
 
 const RULE_FLAGS: [(&[u8], Severity); 3] = [(b"--aot-allow", Severity::Allow), (b"--aot-deny", Severity::Deny), (b"--aot-warn", Severity::Warn)];
 const RULE_KEYS: [(&[u8], Severity); 3] = [(b"aot.allow", Severity::Allow), (b"aot.deny", Severity::Deny), (b"aot.warn", Severity::Warn)];
+const BASELINE_FLAG: &[u8] = b"--aot-baseline";
+const BASELINE_KEY: &[u8] = b"aot.baseline";
+const UPDATE_BASELINE_FLAG: &[u8] = b"--aot-update-baseline";
 
 pub(crate) fn rule_flags<'a>(args: impl Iterator<Item = &'a [u8]>) -> Vec<Box<[u8]>> {
     let mut written = Vec::new();
@@ -177,7 +182,9 @@ pub(crate) fn rule_flags<'a>(args: impl Iterator<Item = &'a [u8]>) -> Vec<Box<[u
             Some(at) => (&arg[..at], Some(&arg[at + 1..])),
             None => (arg, None),
         };
-        if RULE_FLAGS.iter().any(|flag| flag.0 == name)
+        if name == UPDATE_BASELINE_FLAG {
+            written.push(Box::from(name));
+        } else if (name == BASELINE_FLAG || RULE_FLAGS.iter().any(|flag| flag.0 == name))
             && let Some(value) = value.or_else(|| args.next())
         {
             written.push([name, b"=", value].concat().into_boxed_slice());
@@ -186,8 +193,41 @@ pub(crate) fn rule_flags<'a>(args: impl Iterator<Item = &'a [u8]>) -> Vec<Box<[u
     written
 }
 
+pub(crate) fn baseline_path(written: &[Box<[u8]>]) -> Option<&[u8]> {
+    written.iter().rev().find_map(|flag| {
+        let at = bun_core::strings::index_of_char_usize(flag, b'=')?;
+        (&flag[..at] == BASELINE_FLAG || &flag[..at] == BASELINE_KEY).then_some(&flag[at + 1..])
+    })
+}
+
+pub(crate) fn finish_baseline(written: &[Box<[u8]>], outcome: Option<bun_aot::rules::BaselineOutcome>) {
+    let (Some(path), Some(outcome)) = (baseline_path(written), outcome) else { return };
+    if let Some(text) = outcome.updated_text {
+        if let bun_sys::Result::Err(err) = bun_sys::File::write_file(bun_sys::Fd::cwd(), &bun_core::ZBox::from_bytes(path), &text) {
+            bun_core::Output::err(err, "could not write \"{}\"", (bstr::BStr::new(path),));
+            Global::exit(1);
+        }
+    } else if outcome.lower_counts > 0 {
+        let counts = if outcome.lower_counts == 1 { "count" } else { "counts" };
+        bun_core::note!("{} accepts more than this build found ({} {}). --aot-update-baseline lowers it", bstr::BStr::new(path), outcome.lower_counts, counts);
+    }
+}
+
 pub(crate) fn rule_settings(written: &[Box<[u8]>]) -> Result<Settings, String> {
     let mut settings = Settings::default();
+    settings.updates_baseline = written.iter().any(|flag| &flag[..] == UPDATE_BASELINE_FLAG);
+    match baseline_path(written) {
+        Some(path) => match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
+            Ok(text) => match bun_sema_driver::host::parse_json_object(&text).and_then(|json| Baseline::from_json(&json)) {
+                Some(baseline) => settings.baseline = Some(baseline),
+                None => return Err(format!("\"{}\" is not a baseline. --aot-update-baseline writes one", bstr::BStr::new(path))),
+            },
+            Err(_) if settings.updates_baseline => {}
+            Err(_) => return Err(format!("could not read the baseline \"{}\". --aot-update-baseline writes one", bstr::BStr::new(path))),
+        },
+        None if settings.updates_baseline => return Err("--aot-update-baseline requires --aot-baseline, or baseline in [aot] of bunfig.toml".to_owned()),
+        None => {}
+    }
     for flag in written {
         let at = bun_core::strings::index_of_char_usize(flag, b'=').unwrap_or(flag.len());
         let Some(&(name, severity)) = RULE_FLAGS.iter().chain(&RULE_KEYS).find(|known| known.0 == &flag[..at]) else { continue };

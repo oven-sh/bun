@@ -17,6 +17,8 @@ export type Options = {
   failsToday?: Record<number, string> | string;
   /** By seed: how `bun run --aot` departs from the executable today. */
   modeFailsToday?: Record<number, string>;
+  /** Seeds with which generated-fresh-seeds found a bug that is fixed. They always run. */
+  foundByFreshSeeds?: number[];
   /** Why generated-fresh-seeds does not give it seeds that nobody has looked at. */
   noFreshSeeds?: string;
 };
@@ -54,6 +56,7 @@ export const generators: [name: string, extension: "ts" | "js", options?: Option
   ["json-stringify-typed-values", "ts"],
   ["concatenated-keys", "ts"],
   ["appended-strings", "ts"],
+  ["long-concatenation-chains", "ts", { seeds: [3000, 20000] }],
   ["collected-keys", "ts"],
   ["numeric-looking-keys", "ts"],
   ["literals-escape-through-untyped-slots", "ts"],
@@ -109,6 +112,7 @@ export const generators: [name: string, extension: "ts" | "js", options?: Option
   ["well-typed-values-of-generic-types", "ts", { seeds: [46, 51, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 47, 48, 49, 50, 52, 53, 54] }],
   ["well-typed-values-of-unusual-types", "ts", { seeds: [25, 8, 0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99] }],
   ["function-own-stores", "ts", once],
+  ["typed-fields-widened-then-compared", "ts", once],
   ["throw-and-catch-pairs", "ts", { leftOut: [1, 10, 15, 23, 27] }],
   ["js-mutates-typed-objects", "ts", { seeds: [0, 2, 3, 4, 10, 23, 24, 25, 26, 27, 28, 33, 46, 48, 49, 50, 54, 56, 63, 69, 71, 72, 73, 77, 79, 86, 91, 92, 93, 99, 114, 115, 116, 122, 137, 138, 139, 145, 161, 168, 183, 184, 185, 191, 206, 207, 208, 214, 230, 253, 276, 299, 322, 341, 342, 343, 345, 349, 364, 365, 366, 368, 372, 391, 414, 437, 456, 457, 458, 460, 464, 478, 479, 480, 481, 482, 483, 487, 502, 503, 504, 506, 508, 510, 517, 525, 526, 527, 529, 531, 533, 540, 545, 546, 547, 552, 553, 568, 569, 570, 575, 576, 591, 592, 593, 598, 599, 621, 622, 637, 638, 639, 644, 645, 660, 661, 662, 667, 668], failsToday: { 502: W, 503: W, 504: W, 508: W, 510: W, 517: W, 525: W, 526: W, 527: W, 531: W, 533: W, 540: W } }],
   ["undefined-sentinel-among-numbers", "ts", orThrows],

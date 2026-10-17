@@ -232,6 +232,9 @@ fn needs(target: &Target) -> Needs {
     };
     let mut on = (config.js_rules.iter()).filter(|it| it.severity != Severity::Off);
     let route = target.route();
+    if route == Route::Language {
+        return Needs::Nothing;
+    }
     if route != Route::Native && config.language.wants_types {
         return Needs::Heavy;
     }
@@ -529,6 +532,14 @@ impl Run<'_> {
         if let Some(error) = config.error.as_ref().filter(|_| route != Route::Eslint) {
             return Err(Fatal(invalid_config(loader, &loaded, error)));
         }
+        if route == Route::Unsupported && config.route_as_it_is(&path) == Route::Eslint {
+            context.needs_eslint.lock().push((path, loaded.flavor));
+            return Ok(Linted {
+                results: Vec::new(),
+                files: 0,
+                listed: None,
+            });
+        }
         let shown = if path.ends_with(b"__placeholder__.js") {
             b"<text>".to_vec()
         } else {
@@ -551,7 +562,7 @@ impl Run<'_> {
             });
         }
         // With another parser it shows only when the text is read whether it can be read here.
-        if matches!(route, Route::Processor | Route::Eslint)
+        if matches!(route, Route::Processor | Route::Language | Route::Eslint)
             || config.language.parser == Parser::Other
         {
             let result = context.verify_processed_text(
@@ -563,8 +574,8 @@ impl Run<'_> {
                 &on_circular_fixes,
             );
             return Ok(Linted {
-                results: vec![result],
-                files: 1,
+                files: usize::from(result.is_some()),
+                results: result.into_iter().collect(),
                 listed: None,
             });
         }
@@ -674,51 +685,23 @@ impl Run<'_> {
                     }
                     _ => true,
                 });
-        if !unsupported.is_empty() {
-            let count = format!("{}", unsupported.len()).into_bytes();
-            let noun: &[u8] = if unsupported.len() == 1 {
-                b" file was"
-            } else {
-                b" files were"
-            };
-            // By what they are called, the most frequent first, and the first few.
-            let mut kinds: Vec<(&[u8], usize)> = Vec::new();
-            for target in &unsupported {
-                let name = paths::basename(&target.path);
-                let dot = strings::last_index_of_char(name, b'.').unwrap_or(0);
-                match kinds.iter_mut().find(|it| it.0 == &name[dot..]) {
-                    Some(kind) => kind.1 += 1,
-                    None => kinds.push((&name[dot..], 1)),
-                }
-            }
-            bun_lint::utils::sort::sort_by_key(&mut kinds, |it| std::cmp::Reverse(it.1));
-            let kinds: Vec<Vec<u8>> = (kinds.iter())
-                .map(|it| [format!("{} *", it.1).as_bytes(), it.0].concat())
-                .collect();
-            let first = unsupported.iter().take(3);
-            let first: Vec<Vec<u8>> = first
-                .map(|it| paths::relative(&self.environment.cwd, &it.path))
-                .collect();
-            let more: &[u8] = if unsupported.len() > 3 { b", .." } else { b"" };
-            let is_for_eslint = |it: &Target| match &it.status {
+        let (for_eslint, with_processor): (Vec<Target>, Vec<Target>) = (unsupported.into_iter())
+            .partition(|it| match &it.status {
                 Status::Matched(config) => config.route_as_it_is(&it.path) == Route::Eslint,
                 _ => false,
-            };
-            let hint: &[u8] = match unsupported.iter().any(is_for_eslint) {
-                true => b"\n  To lint other languages, install eslint: bun add -d eslint",
-                false => b"",
-            };
-            loader.cannot_do(&[
-                &count,
-                noun,
-                b" not linted because bun lint only supports JavaScript and TypeScript (",
-                &kinds.join(&b", "[..]),
-                b"): ",
-                &first.join(&b", "[..]),
-                more,
-                hint,
-            ]);
-        }
+            });
+        let because: &[u8] = b"only an ESLint config can have a processor";
+        let with_processor: Vec<Vec<u8>> = with_processor.into_iter().map(|it| it.path).collect();
+        not_linted(
+            loader,
+            &self.environment.cwd,
+            &with_processor,
+            [because; 2],
+            b"",
+        );
+        let for_eslint = for_eslint.into_iter().map(|it| (it.path, it.loaded.flavor));
+        context.needs_eslint.lock().extend(for_eslint);
+        let known_to_need_eslint = context.needs_eslint.lock().len();
         let on_circular_fixes = |path: &[u8]| warn_about_circular_fixes(loader, path);
         let mut results = Vec::with_capacity(supported.len());
         if let Some(inferred) = context.inferred {
@@ -873,9 +856,15 @@ impl Run<'_> {
         if let Some(error) = failure.get_mut().take() {
             return Err(error);
         }
+        // A comment in a file can turn on a rule that needs `eslint`, which only shows when the file is read.
+        let needs_eslint = context.needs_eslint.lock();
+        let found_late = needs_eslint.get(known_to_need_eslint..).unwrap_or_default();
+        let found_late: FxHashSet<&[u8]> = found_late.iter().map(|it| &it.0[..]).collect();
         let files = supported
             .iter()
-            .filter(|it| matches!(it.status, Status::Matched(_)))
+            .filter(|it| {
+                matches!(it.status, Status::Matched(_)) && !found_late.contains(&it.path[..])
+            })
             .count();
         Ok(Linted {
             results: std::mem::take(results.get_mut()),
@@ -912,7 +901,10 @@ impl Run<'_> {
             bun_lint_unicorn::RULES,
             bun_lint_react::RULES,
             bun_lint_jest::RULES,
-        ]);
+            bun_lint_json::RULES,
+            bun_lint_markdown::RULES,
+        ])
+        .with_languages(crate::rules::LANGUAGES);
         if let Some(rule) = &options.explain {
             match explain::explain(&registry, rule, environment, options.color) {
                 Ok(page) => self.out.stdout = page,
@@ -1032,7 +1024,7 @@ impl Run<'_> {
         let without_include = Guarded::new(Vec::new());
         let broken_fixes = Guarded::new(Vec::new());
         let handed_back = Guarded::new(Vec::new());
-        let unread = Guarded::new(Vec::new());
+        let (unread, needs_eslint) = (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
         let formatter = crate::fmt::ForRules::new(environment, options.of_bun_format.as_deref());
         // Only if it is asked for: to load the libraries and the types takes longer than to lint a small project. A file that
         // is linted with types has them anyway: `typed::OfFile`.
@@ -1052,6 +1044,7 @@ impl Run<'_> {
             broken_fixes: &broken_fixes,
             handed_back: &handed_back,
             unread: &unread,
+            needs_eslint: &needs_eslint,
             invalid_tsconfigs: &invalid_tsconfigs,
             memory: &memory,
             atoms: &atoms,
@@ -1290,6 +1283,25 @@ impl Run<'_> {
                 b"\n  To lint with that parser, install eslint: bun add -d eslint",
             ]);
         }
+        let mut needs_eslint = std::mem::take(&mut *needs_eslint.lock());
+        bun_lint::utils::sort::sort_by(&mut needs_eslint, |a, b| a.0.cmp(&b.0));
+        // Each pass of `--fix` finds the same blocks.
+        needs_eslint.dedup();
+        let of = |is_flat: bool| -> Vec<Vec<u8>> {
+            let all = needs_eslint.iter();
+            all.filter(|it| (it.1 == Flavor::Eslint) == is_flat)
+                .map(|it| it.0.clone())
+                .collect()
+        };
+        let because: [&[u8]; 2] = [
+            b"it needs eslint, which is not installed",
+            b"they need eslint, which is not installed",
+        ];
+        let hint = b"\n  Run bun add -d eslint";
+        not_linted(&loader, &environment.cwd, &of(true), because, hint);
+        // An `.eslintrc` has no languages, so it's a parser that reads such a file.
+        let because: &[u8] = b"the parser in your config only works with an eslint.config.js";
+        not_linted(&loader, &environment.cwd, &of(false), [because; 2], b"");
         let mut seen: Vec<&Arc<_>> = Vec::new();
         let results = linted.iter().flat_map(|it| &it.results);
         let configs = results.filter_map(|it| it.linted.as_ref());
@@ -1857,6 +1869,43 @@ struct Phases {
     checking: f64,
     linting: f64,
     formatting: f64,
+}
+
+/// Tells the user that the files at `paths` were not linted. `because`: why, for one file and for more than one.
+fn not_linted(loader: &Loader, cwd: &[u8], paths: &[Vec<u8>], because: [&[u8]; 2], hint: &[u8]) {
+    if paths.is_empty() {
+        return;
+    }
+    let is_one = paths.len() == 1;
+    // The extensions, the most frequent first, and the first few files.
+    let mut kinds: Vec<(&[u8], usize)> = Vec::new();
+    for path in paths {
+        let name = paths::basename(path);
+        let dot = strings::last_index_of_char(name, b'.').unwrap_or(0);
+        match kinds.iter_mut().find(|it| it.0 == &name[dot..]) {
+            Some(kind) => kind.1 += 1,
+            None => kinds.push((&name[dot..], 1)),
+        }
+    }
+    bun_lint::utils::sort::sort_by_key(&mut kinds, |it| std::cmp::Reverse(it.1));
+    let kinds: Vec<Vec<u8>> = (kinds.iter())
+        .map(|it| [format!("{} *", it.1).as_bytes(), it.0].concat())
+        .collect();
+    let first: Vec<Vec<u8>> = (paths.iter().take(3))
+        .map(|it| paths::relative(cwd, it))
+        .collect();
+    loader.cannot_do(&[
+        paths.len().to_string().as_bytes(),
+        if is_one { b" file was" } else { b" files were" },
+        b" not linted because ",
+        because[usize::from(!is_one)],
+        b" (",
+        &kinds.join(&b", "[..]),
+        b"): ",
+        &first.join(&b", "[..]),
+        if paths.len() > 3 { b", .." } else { b"" },
+        hint,
+    ]);
 }
 
 fn warn_about_circular_fixes(loader: &Loader, path: &[u8]) {

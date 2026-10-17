@@ -47,7 +47,88 @@ function genericWrapperUsedFromJavaScript(methods: number) {
   };
 }
 
+function builderHandedOutAsInterface(methods: number) {
+  const indexes = Array.from({ length: methods }, (_, index) => index);
+  return `type Code = "BAD" | "WORSE" | (string & {});
+interface Item { message?: string }
+type Entries = { [key in Code]?: Item };
+type Merged<First extends Entries, Second extends Entries> = keyof First extends never | keyof Second ? Second : Omit<First, keyof Second> & Second;
+interface Definition<Input, Known extends Entries> { input?: { type: Input }; known: Known }
+interface Plugin<Input, Known extends Entries> { marker?: { type: Known }; input?: { type: Input }; name: string }
+interface Narrow<Ctx extends object, Extra extends object, Input, Known extends Entries> {
+  definition: Definition<Input, Known>;
+  meta(...plugins: Plugin<Input, Known>[]): Narrow<Ctx, Extra, Input, Known>;
+${indexes.map(index => `  errors${index}<T extends Entries>(errors: T): Narrow<Ctx, Extra, Input, Merged<Known, T>>;\n`).join("")}}
+class Wide<Ctx extends object, Known extends Entries> {
+  definition: Definition<void, Known>;
+  constructor(definition: Definition<void, Known>) { this.definition = definition; }
+  meta(...plugins: Plugin<void, Known>[]): Wide<Ctx, Known> { return plugins.length > 99 ? new Wide(this.definition) : this; }
+${indexes.map(index => `  errors${index}<U extends Entries>(errors: U): Wide<Ctx, Merged<Known, U>> { return new Wide({ known: { ...this.definition.known, ...errors } }) as any; }\n`).join("")}  input<Input>(schema: Input): Narrow<Ctx, object, Input, Known> { const builder = new Wide({ ...this.definition }); return builder as any; }
+}
+console.log(typeof new Wide<object, {}>({ known: {} }).input(1));
+`;
+}
+
+function castsToDeferredRecursiveTypes(functions: number) {
+  const indexes = Array.from({ length: functions }, (_, index) => index);
+  return `type Tree = { left?: Tree; right?: Tree; value?: number };
+${indexes
+  .map(
+    index => `type Walk${index}<Node, Path extends unknown[]> = Node extends { left?: infer Left; right?: infer Right } ? Walk${index}<Left, [...Path, ${index}]> | Walk${index}<Right, [...Path, "r"]> : Path["length"];
+export function parse${index}<const Shape extends Tree>(content: unknown) { return content as Walk${index}<Shape, []>; }
+`,
+  )
+  .join("")}console.log(${indexes.map(index => `typeof parse${index}`).join(" + ") || '""'});
+`;
+}
+
+function builderInterfacesReturningOneAnother(steps: number) {
+  const indexes = Array.from({ length: steps }, (_, index) => index);
+  const uses = (result: string, extra: string) =>
+    indexes.map(index => `  use${index}<Out extends Bag, In extends Bag = MergedBag<Start, Added>>(step: (bag: In) => Out): ${result}<MergedStart<Start, Added, In>, MergedBag<Added, Out>${extra}>;\n`).join("");
+  return `type Bag = { [key: PropertyKey]: any };
+type OmitEach<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+type MergedStart<Start extends Bag, Out extends Bag, In extends Bag> = In extends any ? (Exclude<keyof In, keyof Start | keyof Out> extends never ? Start : Start & OmitEach<In, keyof Start | keyof Out>) : never;
+type MergedBag<Current extends Bag, Out extends Bag> = keyof Out extends never ? Current : OmitEach<Current, keyof Out> & Out;
+interface Middle<Start extends Bag, Added extends Bag> {
+${uses("Middle", "")}  input<Input>(schema: Input): Narrow<Start, Added, Input>;
+}
+interface Narrow<Start extends Bag, Added extends Bag, Input> {
+  schema: Input;
+${uses("Narrow", ", Input")}}
+class Wide<Start extends Bag> {
+  schema: unknown = undefined;
+${indexes.map(index => `  use${index}<Out extends Bag, In extends Bag = Start>(step: (bag: In) => Out): Middle<MergedStart<Start, object, In>, Out> { return (step.length > 9 ? this : new Wide()) as any; }\n`).join("")}  input<Input>(schema: Input): Narrow<Start, object, Input> { const builder = new Wide(); builder.schema = schema; return builder as any; }
+}
+console.log(typeof new Wide<{}>().input(1).schema);
+`;
+}
+
 export const shapes: Shape[] = [
+  {
+    name: "builder interfaces that return one another",
+    counted: "methods that merge two context arguments",
+    sizes: [4, 8, 16],
+    instructionsPerItem: 20_000_000,
+    bytesPerItem: 1024 * 1024,
+    write: count => ({ "main.ts": builderInterfacesReturningOneAnother(count) }),
+  },
+  {
+    name: "casts to a recursive conditional type of a type parameter",
+    counted: "functions with such a cast",
+    sizes: [1, 2, 4],
+    instructionsPerItem: 250_000_000,
+    bytesPerItem: 8 * 1024 * 1024,
+    write: count => ({ "main.ts": castsToDeferredRecursiveTypes(count) }),
+  },
+  {
+    name: "builder class handed out as an interface",
+    counted: "methods that wrap one type argument once more",
+    sizes: [6, 12, 18],
+    instructionsPerItem: 12_000_000,
+    bytesPerItem: 1024 * 1024,
+    write: count => ({ "main.ts": builderHandedOutAsInterface(count) }),
+  },
   {
     name: "generic class used from an untyped file",
     counted: "generic methods that mention the class applied to their own type parameter",

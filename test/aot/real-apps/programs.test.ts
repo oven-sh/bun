@@ -11,7 +11,7 @@ const programs: { file: string; shapeOf: string; expected: string; differs: Mode
   { file: "overload-wider-than-its-implementation.ts", shapeOf: "Redux Toolkit", expected: "made\n", differs: ["bun run --aot", "bun build --compile --aot"] },
   { file: "draft-proxy-stands-for-an-array.ts", shapeOf: "immer", expected: "true 2 true\n1,2\n", differs: ["bun run --aot", "bun build --compile --aot"] },
   { file: "cast-to-array-like-converts-primitives.ts", shapeOf: "es-toolkit", expected: "false false false true\n  a,b\n", differs: [] },
-  { file: "constructor-of-a-generator-object.ts", shapeOf: "Elysia", expected: "a string\nan array\nsomething else: object\nsomething else: object\nsomething else: undefined\n", differs: ["bun build --compile --aot"] },
+  { file: "constructor-of-a-generator-object.ts", shapeOf: "Elysia", expected: "a string\nan array\nsomething else: object\nsomething else: object\nsomething else: undefined\n", differs: [] },
   { file: "argument-bound-by-conditional-type-over-optional-member.ts", shapeOf: "the MCP SDK", expected: "true\n", differs: [] },
   { file: "conditional-bound-read-with-a-default.ts", shapeOf: "the MCP SDK", expected: '{"a":1}\n', differs: [] },
 ];

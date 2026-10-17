@@ -99,6 +99,17 @@ test("a comment inside the words of a declaration does not hide it", async () =>
   expect({ stdout: result.stdout, exitCode: result.exitCode }).toEqual({ stdout: "1\n", exitCode: 0 });
 });
 
+test("a file outside the bundle with code that never runs adds nothing to a module", async () => {
+  const result = await run({
+    "tsconfig.json": tsconfig(),
+    "src/rules.ts": `export class Rules {\n  known = 1;\n}\n`,
+    "tests/mixin.ts": `import { Rules } from "../src/rules";\ndeclare module "../src/rules" {\n  interface Rules {\n    custom(): number;\n  }\n}\nRules.prototype.custom = () => 2;\n`,
+    "src/main.ts": `import { Rules } from "./rules";\nconsole.log(new Rules().custom());\n`,
+  });
+  expect(result.stderr).toContain("TS2339");
+  expect(result.exitCode).not.toBe(0);
+});
+
 test("the words of a declaration in a string or a comment bring nothing into the program", async () => {
   const result = await run({
     "tsconfig.json": tsconfig(),
@@ -109,6 +120,24 @@ test("the words of a declaration in a string or a comment bring nothing into the
   expect(result.stderr).toContain("TS2353");
   expect(result.stderr).toContain("Cannot find name 'fromAComment'");
   expect(result.exitCode).not.toBe(0);
+});
+
+test("a declaration that differs from an earlier one in an unchecked declaration file does not stop the build", async () => {
+  const result = await run({
+    "tsconfig.json": tsconfig({ skipLibCheck: true }),
+    "node_modules/schema/package.json": JSON.stringify({ name: "schema", version: "1.0.0", main: "index.js", types: "index.d.ts" }),
+    "node_modules/schema/index.js": ``,
+    "node_modules/schema/index.d.ts": `export interface Options {\n  known?: number;\n}\n`,
+    "node_modules/published/package.json": JSON.stringify({ name: "published", version: "1.0.0", main: "index.js", types: "index.d.ts" }),
+    "node_modules/published/index.js": ``,
+    "node_modules/published/index.d.ts": `export {};\ndeclare module "schema" {\n  interface Options {\n    extra?: string;\n  }\n}\n`,
+    "src/aaa.d.ts": `import "published";\nexport {};\n`,
+    "src/options.ts": `export {};\ndeclare module "schema" {\n  interface Options {\n    extra?: string | number;\n  }\n}\n`,
+    "src/main.ts": `import "./options";\nimport type { Options } from "schema";\nconst options: Options = { known: 1 };\nconsole.log(options.known);\n`,
+  });
+  expect(result.stderr).not.toContain("error");
+  expect(result.stderr).toContain("TS2717");
+  expect({ stdout: result.stdout, exitCode: result.exitCode }).toEqual({ stdout: "1\n", exitCode: 0 });
 });
 
 test("a file outside the bundle that declares a global itself is in the program", async () => {

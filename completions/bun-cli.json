@@ -4692,6 +4692,45 @@
           "multiple": false
         },
         {
+          "name": "aot-deny",
+          "description": "With --aot: fail where a rule finds something. --aot-deny=untyped-file,open-layout, or all",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": true
+        },
+        {
+          "name": "aot-warn",
+          "description": "With --aot: the same, as warnings",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": true
+        },
+        {
+          "name": "aot-allow",
+          "description": "With --aot: turn a rule off. Of two flags that name the same rule and file, the later one counts",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": true
+        },
+        {
+          "name": "aot-baseline",
+          "description": "With --aot: a file with the number of findings per rule and file that are accepted",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "aot-update-baseline",
+          "description": "With --aot-baseline: write the file anew from this build",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "compile-function-source",
           "description": "With --compile --aot: keep the source text that Function.prototype.toString() returns (default: true)",
           "hasValue": false,

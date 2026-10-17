@@ -2,7 +2,7 @@ use super::nullish::{strip_casts, functions_called, targets_of};
 use crate::declared::{Declared, DeclaredTable, Part, prim};
 use crate::id::{FuncId, LayoutId, StrId, TyId, V};
 use crate::ir::{BinOp, Def, Func, FuncKind, Initialization, LayoutKind, MethodKind, NO_VARIABLE, Op, Operation, Prediction, Program, Target, Term, UnOp, CoerceReason, class_flags, field_flags, func_flags, method_flags};
-use bun_sema::check::is_engine_global;
+use bun_sema::check::{is_engine_global, is_typed_array_class};
 use bun_sema::check::locked_builtins::{self, Builtin, Change, global_object};
 use bun_sema::util::{InParallel, for_each_mut};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -1154,8 +1154,8 @@ impl<'a> Flow<'a> {
             &Op::ElemGet { obj, .. } => {
                 let receiver = self.val(index, func, facts, keys, obj, false);
                 let described = self.get(receiver);
-                let holds_numbers = !described.is_never() && !described.any_object && !described.any_function && described.parts.iter().all(|part| matches!(part, Part::Global(name, _) if self.program.strs.get(*name).ends_with(b"Array")));
-                if holds_numbers { Provenance::Trusted } else { Provenance::Unknown(Kind::Element) }
+                let is_typed_array = !described.is_never() && !described.any_object && !described.any_function && described.parts.iter().all(|part| matches!(part, Part::Global(name, _) if is_typed_array_class(self.program.strs.get(*name))));
+                if is_typed_array { Provenance::Trusted } else { Provenance::Unknown(Kind::Element) }
             }
             Op::IterGet { .. } => Provenance::Unknown(Kind::Element),
             Op::Call { callee, .. } => {
@@ -2137,7 +2137,7 @@ impl<'a> Report<'a, '_> {
 
     fn as_engine_type(&self, ty: &Declared) -> Declared {
         let strs = &self.flow.program.strs;
-        let is_distinguished = |name: &[u8]| matches!(name, b"Map" | b"Set" | b"WeakMap" | b"WeakSet" | b"WeakRef" | b"Promise" | b"RegExp" | b"Date" | b"Error" | b"ArrayBuffer" | b"SharedArrayBuffer" | b"DataView" | b"FinalizationRegistry") || name.ends_with(b"Array") && name.len() > 5 && global_object().has_replaceable(name);
+        let is_distinguished = |name: &[u8]| matches!(name, b"Map" | b"Set" | b"WeakMap" | b"WeakSet" | b"WeakRef" | b"Promise" | b"RegExp" | b"Date" | b"Error" | b"ArrayBuffer" | b"SharedArrayBuffer" | b"DataView" | b"FinalizationRegistry") || is_typed_array_class(name) && global_object().has_replaceable(name);
         if ty.parts.iter().all(|part| !matches!(part, Part::Global(name, _) if !is_distinguished(strs.get(*name)))) {
             return ty.clone();
         }
@@ -3366,6 +3366,25 @@ fn find(program: &Program, logs_type_errors: bool, in_parallel: InParallel<'_>) 
     let sites = finalize_sites(report.sites, &report.passing_sites, is_sure);
     let fine = Kind::ALL.iter().map(|&kind| (kind, report.fine.get(&kind).copied().unwrap_or(0))).collect();
     (sites, fine, rounds, report.always_throws, [prepared, settled - prepared, begun.elapsed().as_secs_f64() - settled])
+}
+
+pub(super) struct FallibleCheck {
+    pub(super) module: u32,
+    pub(super) pos: u32,
+    pub(super) what: String,
+    pub(super) origin: Option<(u32, u32, String)>,
+    pub(super) fix: &'static str,
+}
+
+pub(super) fn find_fallible_checks(program: &Program, logs_type_errors: bool, in_parallel: InParallel<'_>) -> Vec<FallibleCheck> {
+    let sites = find(program, logs_type_errors, in_parallel).0;
+    (sites.into_iter().filter(|site| site.tier != Tier::Typed && site.verdict != Verdict::Wrong && site.kind != Kind::Copy && site.name != "as-convert"))
+        .map(|site| {
+            let expectation = if site.expected.is_empty() { String::new() } else { format!("expected {}, may get {}", site.expected, site.shown()) };
+            let separator = if site.detail.is_empty() || expectation.is_empty() { "" } else { ": " };
+            FallibleCheck { module: site.module, pos: site.pos, what: format!("{}{separator}{expectation}", site.detail), fix: site.fix(), origin: site.origin.filter(|origin| origin.0 != u32::MAX && origin.1 != 0 && (origin.0, origin.1) != (site.module, site.pos)) }
+        })
+        .collect()
 }
 
 pub(super) fn explain(program: &Program, logs_type_errors: bool, as_json: bool, lists_all: bool, line_and_column: &dyn Fn(u32, u32) -> (u32, u32), in_parallel: InParallel<'_>) -> Vec<String> {

@@ -18,7 +18,7 @@ import { unsupported } from "./run-programs";
 
 const programCount = Number(process.env.AOT_FUZZ_PROGRAMS) || 20;
 const mutantsPerProgram = Number(process.env.AOT_FUZZ_MUTANTS_PER_PROGRAM) || 3;
-const seeds = process.env.AOT_FUZZ_SEED ? [Number(process.env.AOT_FUZZ_SEED)] : [1, freshSeed];
+const seeds = process.env.AOT_FUZZ_SEED ? [Number(process.env.AOT_FUZZ_SEED)] : freshSeed === undefined ? [1] : [1, freshSeed];
 
 function mulberry32(state: number) {
   return () => {

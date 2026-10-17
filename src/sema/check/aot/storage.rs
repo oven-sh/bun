@@ -132,6 +132,7 @@ pub(super) struct Shared {
     pub(super) stored_names: OnceLock<std::sync::Arc<Vec<u64>>>,
     pub(super) pairs_compared: bun_threading::Guarded<Vec<(super::Identity, super::Identity)>>,
     pub(super) records_reaching_javascript: bun_threading::Guarded<FxHashMap<super::Identity, super::flows::Place>>,
+    pub(super) external_marks: bun_threading::Guarded<FxHashMap<super::Identity, super::flows::ExternalMark>>,
     receiving_untyped_from_js: std::sync::OnceLock<FxHashSet<Sym>>,
     forwardable_imports: std::sync::OnceLock<FxHashMap<Sym, Vec<(FileId, ExprId)>>>,
     functions_receiving_component_props: OnceLock<FxHashSet<Sym>>,
@@ -3883,6 +3884,19 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (declared, is_annotated) = self.fn_result_type(declared_in, func);
         is_annotated && declared != self.sig_return(sig)
+    }
+
+    pub fn overload_implementation_result(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+        let sig = self.resolved_signature(file, e).sig?;
+        let (declared_in, func, _) = self.sig_decl(sig)?;
+        if !matches!(self.hir(declared_in)[func].body, FnBody::None) {
+            return None;
+        }
+        let (implemented_in, implementation) = self.implementation_for(declared_in, func)?;
+        if self.is_untyped_file(implemented_in) || !self.is_compiled(implemented_in) {
+            return None;
+        }
+        Some(self.return_type_of_fn(implemented_in, implementation))
     }
 
     pub fn generic_call_allocation(&mut self, file: FileId, e: ExprId) -> Option<FreshGraph> {

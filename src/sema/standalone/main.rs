@@ -113,33 +113,6 @@ fn run(args: &[String]) {
                     return;
                 };
                 let path = &files[i];
-                // --shared: the files that another program would not get as it parses and binds
-                // them itself (`SharedFile`), with and without their text.
-                if args.iter().any(|a| a == "--shared") {
-                    let options = bun_sema::resolve::ParseOptions::default();
-                    let text = disk.read_source(path.as_bytes());
-                    for keeps_text in [true, false] {
-                        let arena = session.arena();
-                        let mut file = disk.parse(arena, path.as_bytes(), &text, &atoms, options);
-                        if keeps_text {
-                            file.text.clone_from(&text);
-                        }
-                        let bound = bun_sema::bind::bind(&file, options.bind, &atoms, arena);
-                        let shared = bun_sema::portable::SharedFile::new(&file, &bound, &atoms);
-                        let difference = bun_sema::program::difference_for_another_program(
-                            &shared,
-                            &disk,
-                            options,
-                            path.as_bytes(),
-                            &file,
-                        );
-                        if let Some(field) = difference {
-                            let line = format!("{path}: {field} (text kept: {keeps_text})\n");
-                            dumped.lock().push(line);
-                        }
-                    }
-                    return;
-                }
                 let file = bun_sema_standalone::parse(session.arena(), path, &text, &atoms, false);
                 // Only parses and lowers: the cost is measured with `/usr/bin/time -l`.
                 if args.iter().any(|a| a == "--quiet") {
@@ -257,7 +230,7 @@ fn run(args: &[String]) {
             }
             // ECMAScript-exact unless asked otherwise: a type annotation promises nothing, and nothing throws because one is wrong.
             constants.features.extend(args.iter().filter_map(|a| a.strip_prefix("--feature=")).map(|flag| flag.as_bytes().to_vec()));
-            const OWN_FLAGS: [&str; 52] = ["--agent", "--all", "--aot", "--aot-allow", "--aot-deny", "--aot-explain", "--aot-out", "--aot-type-errors", "--aot-warn", "--audit-only", "--audit-sites-out", "--builtin-sources", "--checkers", "--chunk-bytes", "--declarations-out", "--define", "--error-types", "--every-stage", "--feature", "--file-cost", "--file-instructions", "--github", "--keep", "--keep-names", "--memory", "--min-tasks", "--minify", "--minify-identifiers", "--no-builtin-modules", "--no-color", "--only", "--order", "--own-paths", "--plain", "--progress", "--projects-at-once", "--removable", "--repeat", "--slices", "--snapshot", "--split-files", "--split-publishes-everything", "--split-tolerates", "--step-growth", "--task-instructions", "--test-globals", "--threads", "--timing", "--type-node-cost", "--warm-up-files", "--warm-up-max-bytes", "--width"];
+            const OWN_FLAGS: [&str; 54] = ["--agent", "--all", "--aot", "--aot-allow", "--aot-baseline", "--aot-deny", "--aot-explain", "--aot-out", "--aot-type-errors", "--aot-update-baseline", "--aot-warn", "--audit-only", "--audit-sites-out", "--builtin-sources", "--checkers", "--chunk-bytes", "--declarations-out", "--define", "--error-types", "--every-stage", "--feature", "--file-cost", "--file-instructions", "--github", "--keep", "--keep-names", "--memory", "--min-tasks", "--minify", "--minify-identifiers", "--no-builtin-modules", "--no-color", "--only", "--order", "--own-paths", "--plain", "--progress", "--projects-at-once", "--removable", "--repeat", "--slices", "--snapshot", "--split-files", "--split-publishes-everything", "--split-tolerates", "--step-growth", "--task-instructions", "--test-globals", "--threads", "--timing", "--type-node-cost", "--warm-up-files", "--warm-up-max-bytes", "--width"];
             const EXPLAINED: [&str; 18] = ["mutations", "builtins", "deferred", "errors", "fields", "foreign", "given", "integers", "joins", "progress", "react", "react-locations", "rows", "rules-json", "throws", "throws-all", "throws-all-json", "throws-json"];
             for rejected in &command_line.rejected {
                 let flag = text(&rejected.flag);
@@ -366,6 +339,9 @@ fn run(args: &[String]) {
                     std::process::exit(1);
                 }
             }
+            let baseline_path = args.iter().find_map(|a| a.strip_prefix("--aot-baseline="));
+            rules.updates_baseline = has("--aot-update-baseline");
+            rules.baseline = baseline_path.and_then(read_file).and_then(|text| bun_aot::rules::Baseline::from_json(&bun_sema_driver::host::parse_json_object(&text)?));
             let translation = bun_aot::Translation::new(&constants).explaining(explain).enforcing(rules);
             // `--aot-explain=react`, with or without `--aot`: what the React Compiler makes of the checker's tree of each `.jsx` and `.tsx` file: the candidates, the compiled functions with their scopes and slots, the bail-outs with their reasons.
             // `--aot-explain=react-locations`: the same, and each function is compiled again with its locations renumbered, which is to make no difference.
@@ -466,6 +442,12 @@ fn run(args: &[String]) {
                     error_line!("{problem}");
                 }
                 error_line!("aot: members: {}", translated.members);
+                if let (Some(path), Some(outcome)) = (baseline_path, program.rule_scopes.get().and_then(|scopes| scopes.baseline_outcome())) {
+                    error_line!("aot: baseline: {} counts are lower", outcome.lower_counts);
+                    if let Some(text) = outcome.updated_text {
+                        write_file_to_look_at(path, &text);
+                    }
+                }
                 let bun_aot::Typedness { reads, typed_reads, layouts, open_layouts, classes_without_layout, untyped_packages, untyped_files } = translated.typedness;
                 error_line!("aot: typedness: {typed_reads} of {reads} reads typed, {open_layouts} of {layouts} types open, {classes_without_layout} classes without a layout, {untyped_packages} packages and {untyped_files} files untyped");
                 for line in &translated.explained {
@@ -587,6 +569,7 @@ fn run(args: &[String]) {
                 checks_only_named: defaults.checks_only_named,
                 reads_sources_of_references: defaults.reads_sources_of_references,
                 current_directory_is_of_the_project: defaults.current_directory_is_of_the_project,
+                project_is_for_the_rest: defaults.project_is_for_the_rest,
                 reports_nothing_about_files: defaults.reports_nothing_about_files,
                 only_in_a_project_that_includes: defaults.only_in_a_project_that_includes,
                 refuses_broken_configurations: defaults.refuses_broken_configurations,

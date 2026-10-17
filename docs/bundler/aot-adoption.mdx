@@ -357,7 +357,7 @@ TypeError: Cannot change 'call$0' of Function.prototype: built-ins are locked in
 
 [`bun --aot-audit`](#1-audit-while-you-develop) reports these writes while your program still runs as usual, and the lint rule [`bun/aot-locked-builtin-write`](/lint/rules/bun/aot-locked-builtin-write) finds them in your own code. `Error.prototype` and the prototypes that inherit from it are not locked, and neither is what Bun or your program defines, such as `process`, `console` or `setTimeout`.
 
-Six prototypes that Bun defines are locked too: those of `Request`, `Response`, `Headers`, `Blob`, `URL` and `URLSearchParams`. The compiler relies on their getters and methods the way it relies on `Array.prototype.push`. The `TypeError` says what to do instead:
+Seven prototypes that Bun defines are locked too: those of `Request`, `Response`, `Headers`, `Blob`, `URL` and `URLSearchParams`, and the one between `Request.prototype` and the requests that the `routes` of `Bun.serve` receive (`BunRequest`; it has no global name, `Object.getPrototypeOf(request)` is the way to it). The compiler relies on their getters and methods the way it relies on `Array.prototype.push`. The `TypeError` says what to do instead:
 
 ```txt
 TypeError: Cannot change 'json' of Response.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Response or a wrapper function instead

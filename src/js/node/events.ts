@@ -1,3 +1,4 @@
+// @ts-check
 // Reimplementation of https://nodejs.org/api/events.html
 
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js
@@ -23,6 +24,7 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+const { kCapture, kShapeMode } = require("internal/event_emitter_symbols");
 const {
   validateObject,
   validateInteger,
@@ -41,11 +43,9 @@ let inspect: ((value: unknown, opts?: object) => string) | undefined;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const ReflectOwnKeys = Reflect.ownKeys;
 
-const kCapture = Symbol("kCapture");
 // Set when `_events` was preallocated (streams do this): removeListener then
 // writes `undefined` instead of `delete`, keeping one shared JSC Structure
 // so the (StructureID, name)-keyed megamorphic cache stays hot.
-const kShapeMode = Symbol("shapeMode");
 const kErrorMonitor = Symbol.for("events.errorMonitor");
 const kMaxEventTargetListeners = Symbol("events.maxEventTargetListeners");
 const kMaxEventTargetListenersWarned = Symbol("events.maxEventTargetListenersWarned");
@@ -216,7 +216,8 @@ function emitUnhandledRejectionOrErr(emitter, err, type, args) {
 // One body, and `args` is only ever read or spread in it: handed to another function as a value
 // the array would have to be made on every call, and a helper between here and the listener is a
 // level of inlining more.
-EventEmitterPrototype.emit = function emit(type, ...args) {
+type EmitterFields = import("internal/http").EmitterFields;
+EventEmitterPrototype.emit = function emit(this: EmitterFields, type, ...args) {
   $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
 
   if (type === "error") {
@@ -277,7 +278,7 @@ EventEmitterPrototype.emit = function emit(type, ...args) {
   return true;
 };
 
-function _addListener(target, type, fn, prepend) {
+function _addListener(target: EmitterFields, type, fn, prepend) {
   checkListener(fn);
   var events = target._events;
   if (!events) {
@@ -308,7 +309,7 @@ function _addListener(target, type, fn, prepend) {
   }
 }
 
-const addListener = function addListener(type, fn) {
+const addListener = function addListener(this: EmitterFields, type, fn) {
   _addListener(this, type, fn, false);
   return this;
 };

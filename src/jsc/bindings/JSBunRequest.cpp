@@ -292,6 +292,7 @@ Structure* createJSBunRequestStructure(JSC::VM& vm, Zig::GlobalObject* globalObj
 {
     auto prototypeStructure = JSBunRequestPrototype::createStructure(vm, globalObject, globalObject->JSRequestPrototype());
     auto* prototype = JSBunRequestPrototype::create(vm, globalObject, prototypeStructure);
+    globalObject->lockHostClassPrototype(prototype);
     return JSBunRequest::createStructure(vm, globalObject, prototype);
 }
 

@@ -58,8 +58,15 @@ test("bun --aot-audit reports the writes and lets them through", async () => {
   expect(audit.exitCode).toBe(0);
 }, 120_000);
 
-test("bun test --aot can spy on their methods, as bun test can", async () => {
+const declarations = { typeRoots: [join(import.meta.dir, "..", "..", "packages")], types: ["bun-types"], skipLibCheck: true };
+const compilerOptions = { target: "esnext", module: "preserve", moduleResolution: "bundler", noEmit: true, ...declarations };
+
+test.each([
+  ["without type declarations", {}],
+  ["with Bun's type declarations", { "tsconfig.json": JSON.stringify({ compilerOptions }) }],
+])("bun test --aot can spy on their methods, as bun test can, %s", async (_, configuration) => {
   using dir = tempDir("locked-host-prototypes-spies", {
+    ...configuration,
     "reads.ts": `
       export const header = (headers: Headers, name: string) => headers.get(name);
       export const param = (params: URLSearchParams, name: string) => params.get(name);

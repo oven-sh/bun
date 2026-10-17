@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "./supported";
 
@@ -18,13 +18,14 @@ async function run(cmd: string[], files: Record<string, string>) {
   using dir = tempDir("aot-diagnostic-rules", { "tsconfig.json": tsconfig, ...files });
   await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], cwd: String(dir), env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode, wroteExecutable: existsSync(join(String(dir), isWindows ? "app.exe" : "app")) };
+  const baseline = join(String(dir), "aot-baseline.json");
+  return { stdout, stderr, exitCode, wroteExecutable: existsSync(join(String(dir), isWindows ? "app.exe" : "app")), baseline: existsSync(baseline) ? readFileSync(baseline, "utf8") : null };
 }
 
 async function check(files: Record<string, string>, ...flags: string[]) {
-  const { stdout, stderr, exitCode } = await run(["check", "--aot", "--no-pretty", "--aot-explain=rules-json", ...flags, "main.ts"], files);
+  const { stdout, stderr, exitCode, baseline } = await run(["check", "--aot", "--no-pretty", "--aot-explain=rules-json", ...flags, "main.ts"], files);
   const findings = stdout.split("\n").filter(line => line.startsWith('{"rule"'));
-  return { findings: findings.flatMap(line => shown(JSON.parse(line))), stdout, stderr, exitCode };
+  return { findings: findings.flatMap(line => shown(JSON.parse(line))), stdout, stderr, exitCode, baseline };
 }
 
 const build = (files: Record<string, string>, ...flags: string[]) => run(["build", "--compile", "--aot", ...flags, "main.ts", "--outfile", "app"], files);
@@ -71,12 +72,14 @@ describe.concurrent("severities", () => {
   }, 60_000);
 
   test("all names every rule", async () => {
-    expect(await check(openPoint, "--aot-deny=all")).toMatchObject({ findings: pointIsOpen("deny"), exitCode: 1 });
+    const { findings, exitCode } = await check(openPoint, "--aot-deny=all");
+    expect({ findings: findings.slice(0, 2), exitCode }).toEqual({ findings: pointIsOpen("deny"), exitCode: 1 });
+    expect(new Set(findings.filter(line => line.startsWith("deny ")).map(line => line.split(" ")[1]))).toEqual(new Set(["open-layout", "can-throw"]));
   }, 60_000);
 
   test("of two flags that name a rule, the later one counts", async () => {
-    expect(await check(openPoint, "--aot-deny=all", "--aot-allow=open-layout")).toMatchObject({ findings: [], exitCode: 0 });
-    expect(await check(openPoint, "--aot-allow=open-layout", "--aot-deny", "all")).toMatchObject({ findings: pointIsOpen("deny"), exitCode: 1 });
+    expect(await check(openPoint, "--aot-deny=open-layout", "--aot-allow=all")).toMatchObject({ findings: [], exitCode: 0 });
+    expect(await check(openPoint, "--aot-allow=all", "--aot-deny", "open-layout")).toMatchObject({ findings: pointIsOpen("deny"), exitCode: 1 });
     expect(await check(openPoint, "--aot-deny=open-layout", "--aot-warn=lost-layout,open-layout")).toMatchObject({ findings: pointIsOpen("warn"), exitCode: 0 });
   }, 60_000);
 
@@ -104,8 +107,8 @@ describe.concurrent("severities", () => {
 
 describe.concurrent("flags", () => {
   test.each([
-    [["check", "--aot", "--aot-deny=open-layouts", "main.ts"], 'error: --aot-deny does not take "open-layouts". Did you mean open-layout? The rules are untyped-file, untyped-package, lost-layout, untyped-base, open-layout, interpreted, all\n'],
-    [["build", "--compile", "--aot", "--aot-warn=nothing-like-it", "main.ts", "--outfile", "app"], 'error: --aot-warn does not take "nothing-like-it". The rules are untyped-file, untyped-package, lost-layout, untyped-base, open-layout, interpreted, all\n'],
+    [["check", "--aot", "--aot-deny=open-layouts", "main.ts"], 'error: --aot-deny does not take "open-layouts". Did you mean open-layout? The rules are untyped-file, untyped-package, lost-layout, untyped-base, open-layout, external-type, by-name, can-throw, interpreted, all\n'],
+    [["build", "--compile", "--aot", "--aot-warn=nothing-like-it", "main.ts", "--outfile", "app"], 'error: --aot-warn does not take "nothing-like-it". The rules are untyped-file, untyped-package, lost-layout, untyped-base, open-layout, external-type, by-name, can-throw, interpreted, all\n'],
     [["check", "--aot-deny=all", "main.ts"], "error: --aot-deny requires --aot\n"],
     [["build", "--compile", "--aot-allow=all", "main.ts", "--outfile", "app"], "error: --aot-allow requires --aot\n"],
   ])("bun %j", async (cmd, message) => {
@@ -149,9 +152,9 @@ describe.concurrent("scopes", () => {
 
   test("// @aot-allow turns rules off for one declaration", async () => {
     const files = { "main.ts": openPoint["main.ts"].replace("interface Point", "export {};\n// @aot-allow lost-layout, open-layout\ninterface Point") };
-    expect(await check(files, "--aot-deny=all")).toMatchObject({ findings: [], exitCode: 0 });
+    expect(await check(files, "--aot-deny=lost-layout,open-layout")).toMatchObject({ findings: [], exitCode: 0 });
     const others = { "main.ts": openPoint["main.ts"].replace("interface Point", "export {};\n// @aot-allow lost-layout\ninterface Point") };
-    expect((await check(others, "--aot-deny=all")).exitCode).toBe(1);
+    expect((await check(others, "--aot-deny=lost-layout,open-layout")).exitCode).toBe(1);
   }, 60_000);
 });
 
@@ -163,7 +166,7 @@ describe.concurrent("bunfig.toml", () => {
   }, 120_000);
 
   test("a flag overrides the file", async () => {
-    const files = { ...openPoint, "bunfig.toml": `[aot]\ndeny = ["all"]\n` };
+    const files = { ...openPoint, "bunfig.toml": `[aot]\ndeny = ["open-layout"]\n` };
     expect(await check(files, "--aot-warn=open-layout")).toMatchObject({ findings: pointIsOpen("warn"), exitCode: 0 });
   }, 60_000);
 
@@ -176,7 +179,7 @@ describe.concurrent("bunfig.toml", () => {
   test("an unknown rule in the file is an error", async () => {
     const { stderr, exitCode } = await check({ ...openPoint, "bunfig.toml": `[aot]\nwarn = ["open-layuot"]\n` });
     expect({ said: stderr.split("\n")[0], exitCode }).toEqual({
-      said: 'error: aot.warn in bunfig.toml does not take "open-layuot". Did you mean open-layout? The rules are untyped-file, untyped-package, lost-layout, untyped-base, open-layout, interpreted, all',
+      said: 'error: aot.warn in bunfig.toml does not take "open-layuot". Did you mean open-layout? The rules are untyped-file, untyped-package, lost-layout, untyped-base, open-layout, external-type, by-name, can-throw, interpreted, all',
       exitCode: 1,
     });
   }, 60_000);
@@ -315,6 +318,18 @@ describe.concurrent("untyped-base", () => {
     });
   }, 60_000);
 
+  test("a class that has another reason too is still reported by this rule, because the other reason cannot give it a layout", async () => {
+    const local = `function make() {\n  return class Local extends Error {\n    code = 1;\n  };\n}\nexport const code = new (make())("a").code;\n`;
+    expect(await check({ "main.ts": local }, "--aot-deny=lost-layout,untyped-base")).toMatchObject({
+      findings: [
+        "deny untyped-base TS100027 main.ts:2:16 Class 'Local' extends a class from outside typed code, so it has no fixed layout and its instances are compiled as untyped objects.",
+        "  main.ts:1:10 It is declared inside this function, so a new class is created each time the function runs.",
+        "  main.ts:2:30 This base class is a built-in or comes from JavaScript.",
+      ],
+      exitCode: 1,
+    });
+  }, 60_000);
+
   test("is not what lost-layout reports", async () => {
     expect(await check({ "main.ts": source }, "--aot-deny=lost-layout")).toMatchObject({ findings: [], exitCode: 0 });
   }, 60_000);
@@ -334,6 +349,137 @@ describe.concurrent("open-layout", () => {
     expect(findings).toContain("deny open-layout TS100022 main.ts:4:11 'Person' can hold objects that typed code did not create, so every property access through it checks the object first.");
     expect(findings).toContain("deny open-layout TS100022 main.ts:1:11 'Named' can hold objects that typed code did not create, so every property access through it checks the object first.");
     expect(exitCode).toBe(1);
+  }, 60_000);
+});
+
+describe.concurrent("external-type", () => {
+  const isExternal = (severity: string, name: string, place: string) =>
+    `${severity} external-type TS100029 main.ts:${place} '${name}' describes data from outside the type system, so the compiler cannot rely on its shape: every property access through it is looked up by name or checked when the program runs.`;
+  const source = `interface Server {
+  port: number;
+}
+interface Config {
+  server: Server;
+  name: string;
+}
+interface Named {
+  name: string;
+  label?: string;
+}
+interface Made {
+  width: number;
+  height: number;
+}
+function nameOf(named: Named): string {
+  return named.name;
+}
+const config = JSON.parse('{"server":{"port":1},"name":"a"}') as Config;
+const made: Made = { width: 1, height: 2 };
+export const results = [config.server.port, nameOf(config), made.width];
+`;
+
+  test("the reasons lead from each type back to where the data enters", async () => {
+    expect(await check({ "main.ts": source }, "--aot-deny=external-type")).toMatchObject({
+      findings: [
+        isExternal("deny", "Server", "1:11"),
+        "  main.ts:1:11 'Server' is part of 'Config'.",
+        "  main.ts:19:16 A value from outside the type system is used as 'Config' here.",
+        isExternal("deny", "Config", "4:11"),
+        "  main.ts:19:16 A value from outside the type system is used as 'Config' here.",
+        isExternal("deny", "Named", "8:11"),
+        "  main.ts:21:52 A value from outside the type system is used as 'Named' here.",
+      ],
+      exitCode: 1,
+    });
+  }, 60_000);
+
+  test("types that only typed code creates are not reported", async () => {
+    const made = source.replace(`JSON.parse('{"server":{"port":1},"name":"a"}') as Config`, `{ server: { port: 1 }, name: "a" } satisfies Config`);
+    expect(await check({ "main.ts": made }, "--aot-deny=external-type")).toMatchObject({ findings: [], exitCode: 0 });
+  }, 60_000);
+
+  test("// @aot-strict on one type reports that type only", async () => {
+    const strict = source.replace("interface Server {", "export {};\n// @aot-strict\ninterface Server {");
+    expect(await check({ "main.ts": strict })).toMatchObject({
+      findings: [isExternal("deny", "Server", "3:11"), "  main.ts:3:11 'Server' is part of 'Config'.", "  main.ts:21:16 A value from outside the type system is used as 'Config' here."],
+      exitCode: 1,
+    });
+  }, 60_000);
+});
+
+describe.concurrent("by-name", () => {
+  const lookedUp = (name: string, place: string) => `deny by-name TS100030 main.ts:${place} '${name}' is looked up by name when the program runs: the compiler does not know the layout of the object.`;
+  const source = `interface Config {
+  server: { port: number };
+  name: string;
+}
+interface Made {
+  width: number;
+}
+interface Options {
+  [name: string]: number;
+}
+function describe(value: any): string {
+  return value.name + value.kind.label;
+}
+const config = JSON.parse('{"server":{"port":1},"name":"a"}') as Config;
+const raw = JSON.parse("{}");
+const made: Made = { width: 1 };
+const options: Options = { depth: 1 };
+export const results = [config.name, raw.items.length, raw.run(), made.width, describe(made), JSON.parse("{}").x, options.depth, Math.max(1, 2), "a".length];
+`;
+
+  test("the first access of each chain is reported, with why the layout is not known", async () => {
+    expect(await check({ "main.ts": source }, "--aot-deny=by-name")).toMatchObject({
+      findings: [
+        lookedUp("name", "12:16"),
+        "  main.ts:11:19 The object is declared here, and its type is 'any'.",
+        lookedUp("kind", "12:29"),
+        "  main.ts:11:19 The object is declared here, and its type is 'any'.",
+        lookedUp("name", "18:32"),
+        "  main.ts:14:16 A value from outside the type system is used as 'Config' here.",
+        lookedUp("items", "18:42"),
+        "  main.ts:15:7 The object is declared here, and its type is 'any'.",
+        lookedUp("run", "18:60"),
+        "  main.ts:15:7 The object is declared here, and its type is 'any'.",
+        lookedUp("x", "18:112"),
+        "  main.ts:18:95 The object is the result of this call, which returns 'any'.",
+        lookedUp("depth", "18:123"),
+        "  main.ts:8:11 'Options' has an index signature, so its objects are dictionaries and have no layout.",
+      ],
+      exitCode: 1,
+    });
+  }, 60_000);
+
+  test("objects that typed code creates, built-ins and strings are not reported", async () => {
+    const typed = `interface Made {\n  width: number;\n}\nconst made: Made = { width: 1 };\nexport const results = [made.width, Math.max(1, 2), "a".length, [1, 2].length, JSON.stringify(made)];\n`;
+    expect(await check({ "main.ts": typed }, "--aot-deny=by-name")).toMatchObject({ findings: [], exitCode: 0 });
+  }, 60_000);
+
+  test("it can be limited to one function", async () => {
+    const strict = source.replace("function describe(", "// @aot-strict\nfunction describe(");
+    const { findings, exitCode } = await check({ "main.ts": strict });
+    expect({ reported: findings.filter(line => line.startsWith("deny by-name")), exitCode }).toEqual({ reported: [lookedUp("name", "13:16"), lookedUp("kind", "13:29")], exitCode: 1 });
+  }, 60_000);
+});
+
+describe.concurrent("can-throw", () => {
+  const source = `interface Settings {\n  name: string;\n  retries: number;\n}\nfunction double(n: number): number {\n  return n * 2;\n}\nconst settings = JSON.parse('{"name":"a","retries":2}') as Settings;\nconst retries: number = settings.retries;\nexport const result = double(retries);\n`;
+
+  test("a check that can fail names where the value comes from and how to fix it", async () => {
+    expect(await check({ "main.ts": source }, "--aot-deny=can-throw")).toMatchObject({
+      findings: [
+        "deny can-throw TS100028 main.ts:9:25 This type check can fail when the program runs: expected number | undefined, may get any.",
+        "  main.ts:8:23 The value comes from JSON.parse(..).",
+        "  main.ts:9:25 To fix it: validate the value once, where it enters the program, and build a typed value from it.",
+      ],
+      exitCode: 1,
+    });
+  }, 60_000);
+
+  test("values that typed code made are not reported", async () => {
+    const made = source.replace(`JSON.parse('{"name":"a","retries":2}') as Settings`, `{ name: "a", retries: 2 } satisfies Settings`);
+    expect(await check({ "main.ts": made }, "--aot-deny=can-throw")).toMatchObject({ findings: [], exitCode: 0 });
   }, 60_000);
 });
 
@@ -380,6 +526,84 @@ export const results = [
     expect({ exitCode: removed.exitCode, wroteExecutable: removed.wroteExecutable }).toEqual({ exitCode: 0, wroteExecutable: true });
     expect((await check({ "main.ts": source }, "--aot-deny=interpreted")).exitCode).toBe(1);
   }, 120_000);
+});
+
+describe.concurrent("the baseline", () => {
+  const twoClasses = `function makeRow() {\n  return new (class Row {\n    value = 1;\n  })();\n}\nfunction makeCell() {\n  return new (class Cell {\n    value = 2;\n  })();\n}\nexport const values = [makeRow().value, makeCell().value];\n`;
+  const oneClass = twoClasses.replace(/function makeCell[^]*?\n}\n/, "").replace(", makeCell().value", "");
+  const accepting = (count: number) => `{\n  "version": 1,\n  "files": {\n    "main.ts": { "lost-layout": ${count} }\n  }\n}\n`;
+  const flags = ["--aot-deny=lost-layout", "--aot-baseline=aot-baseline.json"];
+
+  test("--aot-update-baseline writes the counts, and the run succeeds", async () => {
+    expect(await check({ "main.ts": twoClasses }, ...flags, "--aot-update-baseline")).toMatchObject({ findings: [], exitCode: 0, baseline: accepting(2) });
+  }, 60_000);
+
+  test("what the baseline accepts is silent", async () => {
+    expect(await check({ "main.ts": twoClasses, "aot-baseline.json": accepting(2) }, ...flags)).toMatchObject({ findings: [], exitCode: 0, baseline: accepting(2) });
+  }, 60_000);
+
+  test("a file with more findings than the baseline accepts has all of them reported", async () => {
+    expect(await check({ "main.ts": twoClasses, "aot-baseline.json": accepting(1) }, ...flags)).toMatchObject({
+      findings: [
+        "deny lost-layout TS100023 main.ts:2:21 Class 'Row' has no fixed layout, so its instances are compiled as untyped objects.",
+        "  main.ts:1:10 It is declared inside this function, so a new class is created each time the function runs.",
+        "  main.ts:2:21 The baseline allows 1 of these in this file, and there are 2.",
+        "deny lost-layout TS100023 main.ts:7:21 Class 'Cell' has no fixed layout, so its instances are compiled as untyped objects.",
+        "  main.ts:6:10 It is declared inside this function, so a new class is created each time the function runs.",
+        "  main.ts:7:21 The baseline allows 1 of these in this file, and there are 2.",
+      ],
+      exitCode: 1,
+    });
+  }, 60_000);
+
+  test("a file that is not in the baseline accepts nothing", async () => {
+    const files = { "main.ts": `export { values } from "./new";\n`, "new.ts": oneClass, "aot-baseline.json": accepting(2) };
+    expect(await check(files, ...flags)).toMatchObject({
+      findings: [
+        "deny lost-layout TS100023 new.ts:2:21 Class 'Row' has no fixed layout, so its instances are compiled as untyped objects.",
+        "  new.ts:1:10 It is declared inside this function, so a new class is created each time the function runs.",
+      ],
+      exitCode: 1,
+    });
+  }, 60_000);
+
+  test("counts that fell are mentioned, and the file is left alone", async () => {
+    const { findings, stderr, exitCode, baseline } = await check({ "main.ts": oneClass, "aot-baseline.json": accepting(2) }, ...flags);
+    expect(stderr).toContain("note: aot-baseline.json accepts more than this build found (1 count). --aot-update-baseline lowers it\n");
+    expect({ findings, exitCode, baseline }).toEqual({ findings: [], exitCode: 0, baseline: accepting(2) });
+  }, 60_000);
+
+  test("an update keeps the counts of rules that are off", async () => {
+    const before = `{\n  "version": 1,\n  "files": {\n    "main.ts": { "lost-layout": 2, "open-layout": 7 }\n  }\n}\n`;
+    const { baseline } = await check({ "main.ts": oneClass, "aot-baseline.json": before }, ...flags, "--aot-update-baseline");
+    expect(baseline).toBe(before.replace('"lost-layout": 2', '"lost-layout": 1'));
+  }, 60_000);
+
+  test("a package that is compiled untyped is counted under its name", async () => {
+    const updated = await check(packageWithTypeError, "--aot-deny=untyped-file", "--aot-baseline=aot-baseline.json", "--aot-update-baseline");
+    expect(updated).toMatchObject({ findings: [], exitCode: 0, baseline: `{\n  "version": 1,\n  "files": {\n    "typed": { "untyped-file": 1 }\n  }\n}\n` });
+    expect(await check({ ...packageWithTypeError, "aot-baseline.json": updated.baseline! }, "--aot-deny=untyped-file", "--aot-baseline=aot-baseline.json")).toMatchObject({ findings: [], exitCode: 0 });
+  }, 60_000);
+
+  test("a build reads it from bunfig.toml", async () => {
+    const bunfig = `[aot]\ndeny = ["lost-layout"]\nbaseline = "aot-baseline.json"\n`;
+    expect(await build({ "main.ts": twoClasses, "bunfig.toml": bunfig, "aot-baseline.json": accepting(2) })).toMatchObject({ exitCode: 0, wroteExecutable: true });
+    expect(await build({ "main.ts": twoClasses, "bunfig.toml": bunfig, "aot-baseline.json": accepting(1) })).toMatchObject({ exitCode: 1, wroteExecutable: false });
+    expect(await build({ "main.ts": twoClasses, "bunfig.toml": bunfig }, "--aot-update-baseline")).toMatchObject({ exitCode: 0, wroteExecutable: true, baseline: accepting(2) });
+  }, 180_000);
+
+  test.each([
+    [["--aot-baseline=aot-baseline.json"], 'error: could not read the baseline "aot-baseline.json". --aot-update-baseline writes one'],
+    [["--aot-update-baseline"], "error: --aot-update-baseline requires --aot-baseline, or baseline in [aot] of bunfig.toml"],
+  ])("bun check --aot %j", async (more, said) => {
+    const { stderr, exitCode } = await check({ "main.ts": oneClass }, ...more);
+    expect({ said: stderr.split("\n")[0], exitCode }).toEqual({ said, exitCode: 1 });
+  }, 60_000);
+
+  test("a file that is no baseline is an error", async () => {
+    const { stderr, exitCode } = await check({ "main.ts": oneClass, "aot-baseline.json": "[]" }, "--aot-baseline=aot-baseline.json");
+    expect({ said: stderr.split("\n")[0], exitCode }).toEqual({ said: 'error: "aot-baseline.json" is not a baseline. --aot-update-baseline writes one', exitCode: 1 });
+  }, 60_000);
 });
 
 describe.concurrent("the summary", () => {

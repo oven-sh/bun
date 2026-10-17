@@ -7,9 +7,9 @@ use crate::ir::{self, Def, Func, FuncKind, Layout, LayoutKind, Literal, NO_VARIA
 use bun_sema::aot_rules::{Rule, Severity};
 use bun_sema::atom::Atom;
 use bun_sema::check::task::Finished;
-use bun_sema::check::{SubtypeAnswer, Checker, CompilerDiagnostic, FieldKey, Identity, Int32Verdict, KindsDeclared, MethodStore, FlowNotes, NumberFlow, Program as Checked, SubtypeQuery, ReplacedMethods, compute_ecma_line_starts, expected_int32};
+use bun_sema::check::{SubtypeAnswer, Checker, CompilerDiagnostic, ConstantSymbol, FieldKey, Identity, Int32Verdict, KindsDeclared, MethodStore, FlowNotes, NumberFlow, Program as Checked, SubtypeQuery, ReplacedMethods, compute_ecma_line_starts, expected_int32};
 use bun_sema::hir::{self, ClassId, Flags, StmtKind};
-use bun_sema::program::{Builtin, FileId, LoadedBy, Sym};
+use bun_sema::program::{Builtin, FileId, LoadedBy};
 use bun_sema::resolve::get_relative_path_from_directory;
 use bun_sema::types::TypeId;
 use bun_sema::util::{InParallel, for_each_mut};
@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 
 mod exports;
 mod integer_ranges;
+mod by_name;
 mod interpreted;
 mod nullish;
 mod reads;
@@ -1938,7 +1939,7 @@ impl Finder<'_> {
         let out = &all.program.layouts[id.idx()];
         let lists_methods = local.kind != LayoutKind::Record;
         let is_alike = local.kind == out.kind
-            && (local.class_flags ^ out.class_flags) & !class_flags::MAY_HAVE_OTHER_PROTOTYPE == 0
+            && (local.class_flags ^ out.class_flags) & !(class_flags::MAY_HAVE_OTHER_PROTOTYPE | class_flags::HAS_NO_OWN_INSTANCES) == 0
             && local.fields.len() == out.fields.len()
             && (!lists_methods || local.methods.len() == out.methods.len())
             && local.static_fields.len() == out.static_fields.len()
@@ -3524,6 +3525,12 @@ fn link_with_helper_threads<'scope>(
     classes_as_values.retain(|class| class.is_some() && program.layouts[class.idx()].class_flags & class_flags::HAS_FIXED_LAYOUT != 0);
     classes_as_values.sort_unstable();
     classes_as_values.dedup();
+    for layout in (0..program.layouts.len()).map(LayoutId::new) {
+        let Some((file, class)) = classes[layout.idx()] else { continue };
+        if program.layouts[layout.idx()].class_flags & class_flags::HAS_FIXED_LAYOUT != 0 && classes_as_values.binary_search(&layout).is_err() && c.is_created_only_through_subclasses(file, class) {
+            program.layouts[layout.idx()].class_flags |= class_flags::HAS_NO_OWN_INSTANCES;
+        }
+    }
     let class_of = |layout: &LayoutId| classes[layout.idx()];
     let is_extending = |layout: &LayoutId| program.layouts[layout.idx()].class_flags & class_flags::HAS_UNTYPED_BASE != 0;
     let extending: Vec<(FileId, ClassId)> = (0..program.layouts.len()).map(LayoutId::new).filter(is_extending).filter_map(|layout| class_of(&layout)).collect();
@@ -3554,7 +3561,8 @@ fn link_with_helper_threads<'scope>(
     for name in implicit_stores.into_iter().filter_map(|(fragment, name)| program.strs.find(fragments[fragment as usize].strs.get(name))) {
         names.stored[name.idx()] = true;
     }
-    let function_keys: Vec<FuncKey> = included.iter().filter(|_| explain.mutations || explain.throws || explain.throws_json).map(|&(at, _)| fragments[at.fragment as usize].funcs[at.index as usize].key).collect();
+    let finds_fallible_checks = checked.rule_scopes.get().is_some_and(|scopes| scopes.is_enabled(Rule::CanThrow));
+    let function_keys: Vec<FuncKey> = included.iter().filter(|_| explain.mutations || explain.throws || explain.throws_json || finds_fallible_checks).map(|&(at, _)| fragments[at.fragment as usize].funcs[at.index as usize].key).collect();
     for (layout, _) in program.layouts.iter().zip(&is_runtime_layout).filter(|layout| *layout.1 && layout.0.kind != LayoutKind::Environment) {
         for field in layout.fields.iter().filter(|field| field.name.is_some()) {
             names.stored[field.name.idx()] = true;
@@ -3663,10 +3671,10 @@ fn link_with_helper_threads<'scope>(
         .filter(|&name| c.atoms().is_symbol_name(name))
         .map(|name| (name, c.constant_symbol_of_property(name).and_then(|symbol| strs.find(&c.constant_symbol_text(symbol)))))
         .collect();
-    let field_names_by_symbol: FxHashMap<Sym, StrId> = (membership.views.iter())
+    let field_names_by_symbol: FxHashMap<ConstantSymbol, StrId> = (membership.views.iter())
         .flat_map(|reach| reach.set_at_creation.iter())
         .filter_map(|&(key, _)| match key {
-            FieldKey::Symbol(declaration) => Some((declaration, strs.find(&c.constant_symbol_text(c.constant_symbol(declaration)?))?)),
+            FieldKey::Symbol(symbol) => Some((symbol, strs.find(&c.constant_symbol_text(symbol))?)),
             FieldKey::Name(_) => None,
         })
         .collect();
@@ -3699,7 +3707,7 @@ fn link_with_helper_threads<'scope>(
         for &(name, is_at_every_creation) in &reach.set_at_creation {
             let name = match name {
                 FieldKey::Name(name) => field_name(name),
-                FieldKey::Symbol(declaration) => field_names_by_symbol.get(&declaration).copied(),
+                FieldKey::Symbol(symbol) => field_names_by_symbol.get(&symbol).copied(),
             };
             if let Some(field) = name.and_then(|name| by_name.get(out, name)) {
                 out.fields[field as usize].flags |= if is_at_every_creation { field_flags::SET_AT_CREATION } else { field_flags::MAY_BE_SET_AT_CREATION };
@@ -3872,6 +3880,44 @@ fn link_with_helper_threads<'scope>(
         let is_left_out: Vec<bool> = views.iter().map(|view| is_runtime_layout.get(view.0.idx()).copied().unwrap_or(false)).collect();
         found.append(&mut c.find_open_layouts(&asked, &membership, &is_left_out, scopes));
     }
+    if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::ExternalType)) {
+        found.append(&mut checked.checker().find_external_types(scopes));
+    }
+    if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::ByName)) {
+        let is_wanted_module: Vec<bool> = modules.iter().map(|&file| scopes.may_apply_in(Rule::ByName, file)).collect();
+        let sites = by_name::find_sites(&program, &is_wanted_module, in_parallel);
+        let mut accesses = Vec::new();
+        for of_module in sites.chunk_by(|a, b| a.module == b.module) {
+            let file = modules[of_module[0].module as usize];
+            let (hir, atoms) = (checked.files.hir(file), &checked.files.atoms);
+            let is_site = |pos: u32, name: bun_sema::atom::Atom, is_call: bool| program.strs.find(atoms.bytes(name)).is_some_and(|name| of_module.binary_search(&by_name::Site { module: of_module[0].module, pos, name, is_call }).is_ok());
+            let members: Vec<(hir::ExprId, hir::ExprId, bun_sema::atom::Atom, u32)> = (hir.exprs.iter().enumerate())
+                .filter_map(|(index, node)| match node.kind {
+                    hir::ExprKind::Dot { obj, name, name_pos, .. } => Some((hir::ExprId(index as u32), obj, name, name_pos)),
+                    _ => None,
+                })
+                .filter(|&(member, _, name, name_pos)| is_site(crate::positions::object_pos(hir, member), name, false) || is_site(name_pos, name, true))
+                .collect();
+            let by_name: FxHashSet<hir::ExprId> = members.iter().map(|member| member.0).collect();
+            for (_, obj, name, name_pos) in members {
+                let mut origin = crate::positions::skip_assertions(hir, obj);
+                while let hir::ExprKind::Await(awaited) = hir[origin].kind {
+                    origin = crate::positions::skip_assertions(hir, awaited);
+                }
+                if let hir::ExprKind::Call(call) = hir[origin].kind {
+                    origin = crate::positions::skip_assertions(hir, hir[call].callee);
+                }
+                if !by_name.contains(&origin) {
+                    accesses.push((file, obj, name_pos, atoms.bytes(name).to_vec()));
+                }
+            }
+        }
+        let (mut reported, unexplained) = checked.checker().find_accesses_by_name(&accesses, scopes);
+        if explain.mutations {
+            explained.push(format!("by-name: {} sites in the code, {} first in their chain, {} with a reason, {unexplained} without", sites.len(), accesses.len(), reported.len()));
+        }
+        found.append(&mut reported);
+    }
     if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::LostLayout) || scopes.is_enabled(Rule::UntypedBase)) {
         let is_declared_by_program = |index: usize, layout: &Layout| layout.kind == LayoutKind::Instance && !is_runtime_layout.get(index).copied().unwrap_or(false);
         let declared: Vec<((FileId, ClassId), bool)> = (program.layouts.iter().enumerate())
@@ -3950,7 +3996,7 @@ fn link_with_helper_threads<'scope>(
         let (in_part, by_looks, all) = checked.checker().count_partially_tainted_unions();
         explained.push(format!("given: written unions of records that are given in part: {in_part} of {all}; in {by_looks} of them no member was found: one only looks like what is given"));
     }
-    if explain.throws || explain.throws_json {
+    if explain.throws || explain.throws_json || finds_fallible_checks {
         let mut starts: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
         for (module, &file) in modules.iter().enumerate() {
             starts.insert(module as u32, compute_ecma_line_starts(&checked.files.hir(file).text));
@@ -3973,7 +4019,25 @@ fn link_with_helper_threads<'scope>(
         in_parallel(64, &|_| checked.checker().help_find_untyped_argument_receivers());
         let mut asking = checked.checker();
         program.may_receive_untyped_arguments = asked.into_iter().filter(|&(func, file, root)| asking.may_receive_untyped_arguments(file, root, program.funcs[func.idx()].has(func_flags::IS_VALUE))).map(|asked| asked.0.idx() as u32).collect();
-        explained.append(&mut throws::explain(&program, checked.checker().logs_type_errors(), explain.throws_json, explain.throws_all, &line_and_column, in_parallel));
+        if explain.throws || explain.throws_json {
+            explained.append(&mut throws::explain(&program, checked.checker().logs_type_errors(), explain.throws_json, explain.throws_all, &line_and_column, in_parallel));
+        }
+        if let Some(scopes) = checked.rule_scopes.get().filter(|_| finds_fallible_checks) {
+            let at = |module: u32, pos: u32, code: u32, args: Vec<Vec<u8>>| {
+                let file = modules[module as usize];
+                let hir = checked.files.hir(file);
+                let end = bun_sema::check::spans::token_end(&hir.text, pos as usize, hir.kind == hir::FileKind::Tsx) as u32;
+                CompilerDiagnostic { file, start: pos, end, code, args, related: Vec::new() }
+            };
+            for check in throws::find_fallible_checks(&program, checked.checker().logs_type_errors(), in_parallel) {
+                if scopes.severity(Rule::CanThrow, modules[check.module as usize], check.pos) == Severity::Allow {
+                    continue;
+                }
+                let origin = check.origin.into_iter().map(|(module, pos, what)| at(module, pos, 100018, vec![what.into_bytes()]));
+                let related = origin.chain([at(check.module, check.pos, 100049, vec![check.fix.as_bytes().to_vec()])]).collect();
+                found.push(CompilerDiagnostic { related, ..at(check.module, check.pos, 100028, vec![check.what.into_bytes()]) });
+            }
+        }
     }
     if explain.integers {
         let mut is_field_name_atom = vec![false; program.strs.len()];

@@ -48,7 +48,7 @@ pub use subtypes::{Cause, FieldTypes, LoggingRelaxation, Sizes, Subtypes};
 pub use storage::{EvaluationTime, Primitive, ReferenceRead, Storage};
 pub use symbols::{ConstantSymbol, FieldKey};
 pub use lint_checks::{AotCheck, AotCheckKind};
-pub use trust::{Claim, is_engine_global};
+pub use trust::{Claim, is_engine_global, is_typed_array_class};
 pub use validation::{Constant, OtherKeys, Placeholder, PlanNode, Planned, PlannedMember, PlannedPrimitive, Rule, ValidationCall, ValidationPlan};
 
 use super::{Checker, Program};
@@ -657,11 +657,38 @@ impl<'p, 's> Checker<'p, 's> {
         parts.into_iter().any(|part| part == TypeId::UNKNOWN || part.is_any() || self.flags(part) & tf::PRIMITIVE != 0 || self.is_empty_object_type(part))
     }
 
+    pub(in crate::check) fn base_constraint_within_budget(&mut self, ty: TypeId) -> Option<TypeId> {
+        if self.fuel.get() != u64::MAX {
+            return self.resolved_base_constraint_without_budget(ty);
+        }
+        if self.aot.flows.constraints_not_known.contains(&ty) {
+            self.aot.flows.unknown_count += 1;
+            return None;
+        }
+        let had_stack_overflow = self.ran_out_of_stack.get();
+        self.fuel.set(FUEL);
+        let constraint = self.resolved_base_constraint_without_budget(ty);
+        let left = self.fuel.replace(u64::MAX);
+        if left != 0 {
+            return constraint;
+        }
+        self.ran_out_of_stack.set(had_stack_overflow);
+        self.aot.flows.unknown_count += 1;
+        self.aot.flows.constraints_not_known.insert(ty);
+        None
+    }
+
     pub fn is_provably_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
         self.is_provably_related(source, target, Relation::Assignable)
     }
 
     fn is_provably_related(&mut self, source: TypeId, target: TypeId, relation: Relation) -> bool {
+        let source = if source != target && self.is_base_constraint_too_narrow(source) {
+            let bound = self.map_type(source, |c, part| if c.has_type_variables(part) { c.value_bound(part) } else { part });
+            if bound.is_any() { TypeId::UNKNOWN } else { bound }
+        } else {
+            source
+        };
         if self.aot.flows.truncated.contains(&(source, target, relation as u8)) {
             self.aot.flows.unknown_count += 1;
             return false;

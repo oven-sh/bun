@@ -433,6 +433,7 @@ pub mod class_flags {
     pub const CONSTRUCTOR_MAY_BE_REPLACED: u32 = 1 << 9;
     pub const MAY_BE_REUSED: u32 = 1 << 10;
     pub const PROTOTYPE_IS_SET_BY_TYPED_CODE: u32 = 1 << 13;
+    pub const HAS_NO_OWN_INSTANCES: u32 = 1 << 14;
 }
 
 pub struct Layout {

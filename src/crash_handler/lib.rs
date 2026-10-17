@@ -1710,6 +1710,7 @@ mod draft {
             let range = bun_sys::windows::exe_image_range();
             WINDOWS_EXE_IMAGE_BASE.store(range.start, Ordering::Relaxed);
             WINDOWS_EXE_IMAGE_END.store(range.end, Ordering::Relaxed);
+            bun_core::debug::set_keeps_frame_pointer_chain(|address| Bun__AOT__offsetInCode(address as *const core::ffi::c_void) >= 0);
 
             // SAFETY: AddVectoredExceptionHandler is a valid Win32 call
             unsafe {

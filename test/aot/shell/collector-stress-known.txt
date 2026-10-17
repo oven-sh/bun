@@ -1,4 +1,6 @@
 # Programs that collector-stress.py does not judge, and why.
+data-from-outside/objects-born-by-a-spread-are-copied-without-the-runtime    counts calls into the runtime
+data-from-outside/fresh-literals-with-literal-fields-are-copied-without-the-runtime    counts calls into the runtime
 data-from-outside/union-members-and-literal-fields-convert-without-the-runtime    counts calls into the runtime
 data-from-outside/conversion-plans-cover-field-kinds    counts calls into the runtime
 data-from-outside/fresh-literals-are-copied-into-their-record-type    counts calls into the runtime

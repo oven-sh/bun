@@ -100,6 +100,8 @@ export async function spawned(cmd: string[], cwd: string, env: Record<string, st
   return { stdout, stderr, exitCode, signal: proc.signalCode };
 }
 
+export const withoutCoreDump = (cmd: string[]) => (isWindows ? cmd : ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...cmd]);
+
 /** The parts of a run's result that must be equal between two ways of running a program. */
 export function told(run: { stdout: string; stderr: string; exitCode: number }) {
   return {

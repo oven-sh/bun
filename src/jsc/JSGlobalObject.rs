@@ -1194,56 +1194,6 @@ impl JSGlobalObject {
         .throw()
     }
 
-    pub fn validate_big_int_range<T: bun_core::Integer>(
-        &self,
-        value: JSValue,
-        default: T,
-        range: IntegerRange,
-    ) -> JsResult<T> {
-        if value.is_undefined() || value.is_empty() {
-            return Ok(T::ZERO);
-        }
-
-        let min_t: i128 = range.min.max(T::MIN_I128);
-        let max_t: i128 = range.max.min(T::MAX_I128);
-        if value.is_big_int() {
-            if T::SIGNED {
-                if value.is_big_int_in_int64_range(
-                    i64::try_from(min_t).expect("int cast"),
-                    i64::try_from(max_t).expect("int cast"),
-                ) {
-                    return Ok(T::from_i64(value.to_int64()));
-                }
-            } else {
-                if value.is_big_int_in_uint64_range(
-                    u64::try_from(min_t).expect("int cast"),
-                    u64::try_from(max_t).expect("int cast"),
-                ) {
-                    return Ok(T::from_u64(value.to_uint64_no_truncate()));
-                }
-            }
-            return Err(self
-                .err(
-                    JscError::OUT_OF_RANGE,
-                    format_args!(
-                        "The value is out of range. It must be >= {} and <= {}.",
-                        min_t, max_t
-                    ),
-                )
-                .throw());
-        }
-
-        self.validate_integer_range::<T>(
-            value,
-            default,
-            IntegerRange {
-                min: min_t.max(i128::from(MIN_SAFE_INTEGER)),
-                max: max_t.min(i128::from(MAX_SAFE_INTEGER)),
-                field_name: range.field_name,
-            },
-        )
-    }
-
     pub fn validate_integer_range<T: bun_core::Integer>(
         &self,
         value: JSValue,

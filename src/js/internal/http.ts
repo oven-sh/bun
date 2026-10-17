@@ -1,3 +1,5 @@
+// @ts-check
+const { kCapture, kShapeMode } = require("internal/event_emitter_symbols");
 const { isIPv4 } = require("internal/net/isIP");
 
 const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, drainMicrotasks } = $cpp(
@@ -24,6 +26,28 @@ const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, dra
   drainMicrotasks: () => void;
 };
 
+const kHeaders = Symbol("kHeaders");
+const kHeadersCount = Symbol("kHeadersCount");
+const kTrailers = Symbol("kTrailers");
+const kTrailersCount = Symbol("kTrailersCount");
+const kRawHeaders = Symbol("kRawHeaders");
+const kBytesWritten = Symbol("kBytesWritten");
+const kCorked = Symbol("corked");
+const kChunkedBuffer = Symbol("kChunkedBuffer");
+const kChunkedLength = Symbol("kChunkedLength");
+const kLenientValidation = Symbol("kLenientValidation");
+const kDispatcherDetached = Symbol("kDispatcherDetached");
+const kSnapshotStatusCode = Symbol("kSnapshotStatusCode");
+const kSnapshotStatusMessage = Symbol("kSnapshotStatusMessage");
+const kMustCloseConnection = Symbol("kMustCloseConnection");
+const kPendingFinish = Symbol("kPendingFinish");
+const kPipelinedQueuedState = Symbol("kPipelinedQueuedState");
+const kImplicitHeaderFromEnd = Symbol("kImplicitHeaderFromEnd");
+const kBytesBuffered = Symbol("kBytesBuffered");
+const kAccountingFlushScheduled = Symbol("kAccountingFlushScheduled");
+const kReplayingPipelinedOps = Symbol("kReplayingPipelinedOps");
+const kFramingFrozenChunked = Symbol("kFramingFrozenChunked");
+const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 const abortedSymbol = Symbol("aborted");
 const headerStateSymbol = Symbol("headerState");
 const eofInProgress = Symbol("eofInProgress");
@@ -118,6 +142,244 @@ function emitErrorNextTickIfErrorListener(self, err, cb) {
   }
 }
 
+
+interface Original {
+  holder: object | null;
+  start: object | null;
+  name: string;
+  value: unknown;
+  get: unknown;
+  set: unknown;
+}
+function originalOf(holder: object, name: string): Original {
+  const found = Object.getOwnPropertyDescriptor(holder, name)!;
+  return { holder, start: null, name, value: found.value, get: found.get, set: found.set };
+}
+function originalAskedOfHolder(holder: object, name: string): Original {
+  const original = originalOf(holder, name);
+  original.start = holder;
+  return original;
+}
+function originalFoundFrom(start: object, name: string, isAskedOfStart: boolean): Original {
+  let holder: any = start;
+  while (!Object.prototype.hasOwnProperty.$call(holder, name)) holder = Object.getPrototypeOf(holder);
+  const original = originalOf(holder, name);
+  if (isAskedOfStart) original.start = start;
+  return original;
+}
+function absentName(name: string): Original {
+  return { holder: null, start: null, name, value: undefined, get: undefined, set: undefined };
+}
+function storesMakeOwnProperties(sample: object): boolean {
+  const names = Reflect.ownKeys(sample);
+  for (let at: any = Object.getPrototypeOf(sample); at !== null; at = Object.getPrototypeOf(at)) {
+    if ($isProxyObject(at)) return false;
+    for (let i = 0; i < names.length; i++) {
+      const found = Object.getOwnPropertyDescriptor(at, names[i]);
+      if (found !== undefined && found.writable !== true) return false;
+    }
+  }
+  return true;
+}
+function resolvesToOriginals(object: object, originals: Original[]): boolean {
+  if (!IS_BUN_AOT) return false;
+  for (let i = 0; i < originals.length; i++) {
+    const original = originals[i];
+    const name = original.name;
+    let at: any = original.start === null ? object : original.start;
+    while (at !== original.holder) {
+      if (at === null || $isProxyObject(at) || Object.prototype.hasOwnProperty.$call(at, name)) return false;
+      at = Object.getPrototypeOf(at);
+    }
+    if (at === null) continue;
+    const found = Object.getOwnPropertyDescriptor(at, name);
+    if (found === undefined || found.value !== original.value || found.get !== original.get || found.set !== original.set) return false;
+    if (found.get === undefined && found.set === undefined && !$watchProperty(at, name)) return false;
+  }
+  return true;
+}
+interface EmitterFields {
+  _events: any;
+  _eventsCount?: any;
+  [kShapeMode]: any;
+  _maxListeners: any;
+  [kCapture]: any;
+}
+interface IncomingMessageFields extends EmitterFields {
+  _readableState: any;
+  socket: any;
+  complete: any;
+  rawTrailers: any;
+  upgrade: any;
+  url: any;
+  method: any;
+  client: any;
+  [kHandle]: any;
+  _consuming: any;
+  _dumped: any;
+  _closed: any;
+  [kHeaders]: any;
+  [kHeadersCount]: any;
+  [kTrailers]: any;
+  [kTrailersCount]: any;
+  [abortedSymbol]: any;
+  [eofInProgress]: any;
+  [kReqShouldKeepAlive]: any;
+  [kRawHeaders]: any;
+  [kHeaderSource]: any;
+  [kAbortController]: any;
+  [noBodySymbol]: any;
+}
+interface ServerResponseFields extends EmitterFields {
+  outputData: any;
+  outputSize: any;
+  writable: any;
+  destroyed: any;
+  _last: any;
+  chunkedEncoding: any;
+  shouldKeepAlive: any;
+  maxRequestsOnConnectionReached: any;
+  _defaultKeepAlive: any;
+  useChunkedEncodingByDefault: any;
+  sendDate: any;
+  _removedConnection: any;
+  _removedContLen: any;
+  _removedTE: any;
+  strictContentLength: any;
+  [kBytesWritten]: any;
+  _contentLength: any;
+  _hasBody: any;
+  _trailer: any;
+  [kNeedDrain]: any;
+  finished: any;
+  _headerSent: any;
+  [kCorked]: any;
+  [kChunkedBuffer]: any;
+  [kChunkedLength]: any;
+  _closed: any;
+  [kSocket]: any;
+  _header: any;
+  [kOutHeaders]: any;
+  _keepAliveTimeout: any;
+  _onPendingData: any;
+  [kErrored]: any;
+  [kHighWaterMark]: any;
+  [kRejectNonStandardBodyWrites]: any;
+  [kLenientValidation]: any;
+  req: any;
+  _sent100: any;
+  [headerStateSymbol]: any;
+  [kPendingCallbacks]: any;
+  [kHandle]: any;
+  statusCode: any;
+  statusMessage: any;
+  [fakeSocketSymbol]: any;
+  [kCloseCallback]: any;
+  [kDispatcherDetached]: any;
+  [kSnapshotStatusCode]: any;
+  [kSnapshotStatusMessage]: any;
+  [kMustCloseConnection]: any;
+  [kPendingFinish]: any;
+  [kPipelinedQueuedState]: any;
+  [kImplicitHeaderFromEnd]: any;
+  [kUniqueHeaders]: any;
+  _ended?: any;
+  _maxRequestsPerSocket: any;
+  [kBytesBuffered]: any;
+  [kAccountingFlushScheduled]: any;
+  [kReplayingPipelinedOps]: any;
+  [kFramingFrozenChunked]: any;
+  [kServerResponseStatistics]: any;
+}
+const responseOriginals: Original[] = [];
+let nextResponseSlot = 0;
+let failedResponseChecks = 0;
+function checkResponse(res: ServerResponseFields): boolean {
+  if (!IS_BUN_AOT) return false;
+  if ($isCheckedStructure(res, 2) || failedResponseChecks > 1000) return false;
+  if (resolvesToOriginals(res, responseOriginals)) {
+    nextResponseSlot ^= 1;
+    if (!(nextResponseSlot === 0 ? $setCheckedStructure(res, 0) : $setCheckedStructure(res, 1))) failedResponseChecks++;
+    return true;
+  }
+  failedResponseChecks++;
+  $setCheckedStructure(res, 2);
+  return false;
+}
+function isPlainResponse(res: ServerResponseFields): boolean {
+  return IS_BUN_AOT && ($isCheckedStructure(res, 0) || $isCheckedStructure(res, 1) || checkResponse(res));
+}
+function hasOnlyOwnFinishListener(res: ServerResponseFields): boolean {
+  return IS_BUN_AOT && $isCheckedStructure(res._events, 3);
+}
+const requestOriginals: Original[] = [];
+let nextRequestSlot = 0;
+let failedRequestChecks = 0;
+function checkRequest(req: IncomingMessageFields): boolean {
+  if (!IS_BUN_AOT) return false;
+  if ($isCheckedStructure(req, 10) || failedRequestChecks > 1000) return false;
+  if (resolvesToOriginals(req, requestOriginals)) {
+    nextRequestSlot ^= 1;
+    if (!(nextRequestSlot === 0 ? $setCheckedStructure(req, 8) : $setCheckedStructure(req, 9))) failedRequestChecks++;
+    return true;
+  }
+  failedRequestChecks++;
+  $setCheckedStructure(req, 10);
+  return false;
+}
+function isPlainRequest(req: IncomingMessageFields): boolean {
+  return IS_BUN_AOT && ($isCheckedStructure(req, 8) || $isCheckedStructure(req, 9) || checkRequest(req));
+}
+type ReadableState = import("internal/streams/state").ReadableState;
+type WritableState = import("internal/streams/state").WritableState;
+const kConnection = Symbol("kConnection");
+interface Connection {
+  request: any;
+  keepAliveTimeoutSet: boolean;
+  keepAliveIdleStart: number | undefined;
+  timer: any;
+  pipelinedResponses: any;
+  streamingEnabled: boolean;
+  boundOnAbort: any;
+  stopsParsingOnClose: boolean;
+  upgradeIncoming: any;
+  readableState: ReadableState;
+  writableState: WritableState;
+}
+function createConnection(readableState: ReadableState, writableState: WritableState): Connection {
+  return {
+    request: null,
+    keepAliveTimeoutSet: false,
+    keepAliveIdleStart: undefined,
+    timer: undefined,
+    pipelinedResponses: undefined,
+    streamingEnabled: false,
+    boundOnAbort: null,
+    stopsParsingOnClose: false,
+    upgradeIncoming: undefined,
+    readableState,
+    writableState,
+  };
+}
+const socketOriginals: Original[] = [];
+let nextSocketSlot = 0;
+let failedSocketChecks = 0;
+function checkSocket(socket: object): boolean {
+  if (!IS_BUN_AOT) return false;
+  if (socketOriginals.length === 0 || $isCheckedStructure(socket, 18) || failedSocketChecks > 1000) return false;
+  if (resolvesToOriginals(socket, socketOriginals)) {
+    nextSocketSlot ^= 1;
+    if (!(nextSocketSlot === 0 ? $setCheckedStructure(socket, 16) : $setCheckedStructure(socket, 17))) failedSocketChecks++;
+    return true;
+  }
+  failedSocketChecks++;
+  $setCheckedStructure(socket, 18);
+  return false;
+}
+function isPlainSocket(socket: object): boolean {
+  return IS_BUN_AOT && ($isCheckedStructure(socket, 16) || $isCheckedStructure(socket, 17) || checkSocket(socket));
+}
+const nop = () => {};
 function callCloseCallback(self) {
   const callback = self[kCloseCallback];
   if (callback) {
@@ -125,7 +387,7 @@ function callCloseCallback(self) {
     self[kCloseCallback] = undefined;
   }
 }
-function emitCloseNT(self) {
+function emitCloseNT(self: ServerResponseFields) {
   if (!self._closed) {
     self.destroyed = true;
     self._closed = true;
@@ -327,7 +589,7 @@ const STATUS_CODES = {
   511: "Network Authentication Required",
 };
 
-function hasServerResponseFinished(self, chunk, callback, fromEnd) {
+function hasServerResponseFinished(self: ServerResponseFields, chunk, callback, fromEnd) {
   const finished = self.finished;
 
   // Only end() takes "" for no chunk. To Node.js's write_() it is a write: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L943-L957
@@ -547,7 +809,46 @@ function checkShouldUseProxy(proxyConfig: ProxyConfig, reqOptions: any) {
   return proxyConfig.shouldUseProxy(reqOptions.host || "localhost", reqOptions.port);
 }
 
+export type { Connection, EmitterFields, IncomingMessageFields, Original, ServerResponseFields };
 export {
+  kConnection,
+  kHeaders,
+  kHeadersCount,
+  kTrailers,
+  kTrailersCount,
+  kRawHeaders,
+  kBytesWritten,
+  kCorked,
+  kChunkedBuffer,
+  kChunkedLength,
+  kLenientValidation,
+  kDispatcherDetached,
+  kSnapshotStatusCode,
+  kSnapshotStatusMessage,
+  kMustCloseConnection,
+  kPendingFinish,
+  kPipelinedQueuedState,
+  kImplicitHeaderFromEnd,
+  kBytesBuffered,
+  kAccountingFlushScheduled,
+  kReplayingPipelinedOps,
+  kFramingFrozenChunked,
+  kServerResponseStatistics,
+  absentName,
+  hasOnlyOwnFinishListener,
+  isPlainRequest,
+  isPlainResponse,
+  originalAskedOfHolder,
+  originalOf,
+  requestOriginals,
+  createConnection,
+  isPlainSocket,
+  originalFoundFrom,
+  socketOriginals,
+  resolvesToOriginals,
+  responseOriginals,
+  nop,
+  storesMakeOwnProperties,
   METHODS,
   STATUS_CODES,
   abortedSymbol,

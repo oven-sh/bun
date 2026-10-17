@@ -217,7 +217,7 @@ Libraries that trace by replacing functions, such as OpenTelemetry's instrumenta
 | What Bun and Node.js provide: `fetch`, `setTimeout`, `console.*`, `process.*`, `Bun.serve`, `fs.readFileSync`, `http.request`, `EventEmitter.prototype.emit` | can be replaced |
 | Classes and exports of JavaScript packages: `pg.Client.prototype.query` | can be replaced |
 | Objects of the language: `Promise.prototype.then`, `JSON.parse`, `Date.now`, `Array.prototype.push` | throws a `TypeError` |
-| The prototypes of `Request`, `Response`, `Headers`, `Blob`, `URL` and `URLSearchParams`: `Response.prototype.json` | throws a `TypeError`. Replace the global with a subclass instead: `globalThis.Response = class extends Response { .. }` |
+| The prototypes of `Request`, `Response`, `Headers`, `Blob`, `URL`, `URLSearchParams` and `BunRequest`: `Response.prototype.json` | throws a `TypeError`. Replace the global with a subclass instead: `globalThis.Response = class extends Response { .. }` |
 | Classes written in TypeScript, in your program or in a [typed version of a package](/bundler/executables#typed-versions-of-packages) | throws a `TypeError`, unless TypeScript code of your program assigns to that method |
 
 To wrap a method of one of your own classes, use a subclass or a `Proxy`, or assign to the method in TypeScript: `Db.prototype.query = traced(Db.prototype.query)`.
@@ -247,14 +247,17 @@ bun check --aot ./app.ts --aot-warn=all
 bun build --compile --aot ./app.ts --outfile app --aot-deny=untyped-file,lost-layout
 ```
 
-| Rule              | Reports                                                                                                                | Default |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------- | ------- |
-| `untyped-file`    | A TypeScript file or package has type errors that do not stop the build, so it is compiled without its types            | warning |
-| `untyped-package` | A dependency is JavaScript, so it is compiled without types. Says how much of the program it is                         | off     |
-| `lost-layout`     | A class has no fixed layout, or leaves declared fields out of it. Its instances or those fields are accessed by name    | off     |
-| `untyped-base`    | A class has no fixed layout because it extends a built-in class, such as `Error`, or a JavaScript class                 | off     |
-| `open-layout`     | A declared type can also hold objects that typed code did not create, so every property access through it checks first | off     |
-| `interpreted`     | `eval`, `new Function` or `node:vm` evaluates source text when the program runs. That code runs in the interpreter      | off     |
+| Rule              | Reports                                                                                                                        | Default |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| `untyped-file`    | A TypeScript file or package has type errors that do not stop the build, so it is compiled without its types                   | warning |
+| `untyped-package` | A dependency is JavaScript, so it is compiled without types. Says how much of the program it is                                | off     |
+| `lost-layout`     | A class has no fixed layout, or leaves declared fields out of it. Its instances or those fields are accessed by name           | off     |
+| `untyped-base`    | A class has no fixed layout because it extends a built-in class, such as `Error`, or a JavaScript class                        | off     |
+| `open-layout`     | A declared type can also hold objects that typed code did not create, so every property access through it checks first         | off     |
+| `external-type`   | A declared type describes data from outside the type system, such as the result of `JSON.parse`, so its shape is not relied on | off     |
+| `by-name`         | Typed code reads a property or calls a method of an object whose layout is not known: an `any`, external data, a dictionary    | off     |
+| `can-throw`       | A value is checked against its type when the program runs, and the check can fail. The findings of `--aot-explain=throws`      | off     |
+| `interpreted`     | `eval`, `new Function` or `node:vm` evaluates source text when the program runs. That code runs in the interpreter             | off     |
 
 `--aot-deny`, `--aot-warn` and `--aot-allow` take a list of rules, or `all`. If two flags name the same rule, the later one counts. An error from a rule is like a type error: nothing is written and the exit code is 1.
 
@@ -288,6 +291,33 @@ class Fiber {
 ```txt
 fiber.ts(1,7): error TS100024: Class 'Fiber' leaves declared fields out of its layout, so every access to them is a lookup by name: id, steps. [lost-layout]
   fiber.ts(4,4): The name of this member is computed and is not a constant, so it could be the name of any field.
+```
+
+One unchecked `JSON.parse` can take the types away from much more than the line it is on. The type it is cast to, the types inside that type, and the types its values are assigned to all become data that the compiler cannot rely on. `external-type` reports each of them, and its reasons lead back to the place where the data enters:
+
+```ts config.ts icon="/icons/typescript.svg"
+interface Server {
+  port: number;
+}
+interface Config {
+  server: Server;
+}
+export const config = JSON.parse(text) as Config;
+```
+
+```txt
+config.ts(1,11): error TS100029: 'Server' describes data from outside the type system, so the compiler cannot rely on its shape: every property access through it is looked up by name or checked when the program runs. [external-type]
+  config.ts(1,11): 'Server' is part of 'Config'.
+  config.ts(7,23): A value from outside the type system is used as 'Config' here.
+```
+
+Validate the value where it enters the program and build a typed object from it. Then the types stay typed.
+
+`by-name` works on accesses, not on types. It is meant for the code that has to be fast, so limit it to a folder or put `// @aot-strict` on a function. It reports the first access of a chain (`raw.items`, not `raw.items.length`) and only where it can say why. It leaves out built-ins and objects of the runtime, such as `process` or a `Response`.
+
+```txt
+app.ts(12,16): error TS100030: 'name' is looked up by name when the program runs: the compiler does not know the layout of the object. [by-name]
+  app.ts(11,19): The object is declared here, and its type is 'any'.
 ```
 
 A build reports only what is in the executable. Code that `--define` or a feature flag removes is not reported. `bun check --aot` has no bundler, so it does not load the JavaScript of a package that ships declaration files. `untyped-package`, and `interpreted` inside such a package, are reported by a build only.
@@ -333,6 +363,40 @@ deny = ["open-layout", "interpreted"]
 ```
 
 `bun build --compile --aot` and `bun check --aot` both read it. Overrides apply in order, after the lists above them. Flags on the command line apply last.
+
+### Only what got worse
+
+A large program has thousands of findings on the day you turn a rule on. A baseline accepts them and fails the build when there are more:
+
+```bash terminal icon="terminal"
+bun build --compile --aot ./app.ts --outfile app --aot-deny=all --aot-baseline=aot-baseline.json --aot-update-baseline
+git add aot-baseline.json
+```
+
+```json aot-baseline.json icon="file-json"
+{
+  "version": 1,
+  "files": {
+    "src/db.ts": { "open-layout": 12 },
+    "src/server.ts": { "lost-layout": 1, "open-layout": 3 }
+  }
+}
+```
+
+From then on, build without `--aot-update-baseline`:
+
+- While a file has no more findings of a rule than the baseline says, they are not reported.
+- Once it has more, all of that rule's findings in that file are reported, each with a line such as `The baseline allows 3 of these in this file, and there are 4.` The baseline holds counts, so it cannot say which one is new.
+- A file that is not in the baseline accepts nothing. New files have to be clean.
+- When counts fall, a note says so. Run with `--aot-update-baseline` again to lower them in the file.
+
+Paths are relative to the working directory. A package that `untyped-file` reports is counted under its name. In `bunfig.toml`:
+
+```toml bunfig.toml icon="settings"
+[aot]
+deny = ["all"]
+baseline = "aot-baseline.json"
+```
 
 ### JSON
 

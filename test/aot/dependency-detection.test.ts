@@ -54,6 +54,30 @@ test("a package that ships its TypeScript stays typed when it only disagrees wit
   expect({ exitCode, stdout }).toEqual({ exitCode: 0, stdout: '{"name":"a"} 7 a 5\n' });
 }, 120_000);
 
+test("a package that reads a member of globalThis that the application's lib does not declare stays typed", async () => {
+  using dir = tempDir("aot-dependency-global-this", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "tsconfig.json": strict({ lib: ["ESNext"] }),
+    "main.ts": `import { half, title } from "ships-typescript";\nconsole.log(title(), half(4));\n`,
+    "node_modules/ships-typescript/package.json": JSON.stringify({ name: "ships-typescript", main: "index.ts", types: "index.ts" }),
+    "node_modules/ships-typescript/index.ts": `export function title(): string { const page = globalThis.document; return page === undefined ? "none" : String(page.title); }\nexport function half(n: number): number { return n / 2; }\n`,
+  });
+  const { said, exitCode, stdout } = await build(String(dir), "./main.ts");
+  expect(said).not.toContain("ships-typescript");
+  expect({ exitCode, stdout }).toEqual({ exitCode: 0, stdout: "none 2\n" });
+}, 120_000);
+
+test("the application's own read of a member of globalThis that its lib does not declare is an error", async () => {
+  using dir = tempDir("aot-own-global-this", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "tsconfig.json": strict({ lib: ["ESNext"] }),
+    "main.ts": `console.log(globalThis.document === undefined);\n`,
+  });
+  const { said, exitCode } = await build(String(dir), "./main.ts");
+  expect(said).toContain("TS7017");
+  expect(exitCode).not.toBe(0);
+}, 120_000);
+
 test("a type error beside a decorated class of a dependency does not stop the build either", async () => {
   using dir = tempDir("aot-dependency-decorated", {
     "package.json": JSON.stringify({ name: "app" }),

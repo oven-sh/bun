@@ -1299,6 +1299,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         {
             let declared = Ty { id: self.ty_of(declared), checked: declared };
             self.record_cast(declared, want, CoerceReason::Flow);
+            if let Some(implemented) = self.c.overload_implementation_result(fx.file, e) {
+                let implemented = self.ty_of(implemented);
+                let mut sources = self.layout_types_in(declared.id);
+                sources.extend(self.layout_types_in(implemented));
+                for target in self.layout_types_in(want) {
+                    self.c.record_unverified_overload_result(&sources, target);
+                }
+            }
             if let Some(operand) = self.c.returned_forced_cast_operand(fx.file, e) {
                 let sources = self.layout_types_in(declared.id);
                 let may_have_no_layout = self.c.has_unknown_fields(operand);

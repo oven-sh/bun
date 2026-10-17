@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { unsupported } from "./run-programs";
 
 const modulesWithUntypedFunctions = [
-  "/$bun/js/builtins/Bake.ts", "/$bun/js/builtins/BakeSSRResponse.ts", "/$bun/js/builtins/BundlerPlugin.ts",
+  "/$bun/js/builtins/Bake.ts", "/$bun/js/builtins/BundlerPlugin.ts",
   "/$bun/js/builtins/CommonJS.ts", "/$bun/js/builtins/ConsoleObject.ts", "/$bun/js/builtins/Fifo.ts", "/$bun/js/builtins/Glob.ts",
   "/$bun/js/builtins/Ipc.ts", "/$bun/js/builtins/JSBufferConstructor.ts", "/$bun/js/builtins/JSBufferPrototype.ts",
   "/$bun/js/builtins/NodeModuleObject.ts", "/$bun/js/builtins/Peek.ts", "/$bun/js/builtins/ProcessObjectInternals.ts",
@@ -24,7 +24,7 @@ const modulesWithUntypedFunctions = [
   "internal:async_hooks", "internal:async_hooks_tick", "internal:cluster/RoundRobinHandle", "internal:cluster/SharedHandle",
   "internal:cluster/Worker", "internal:cluster/child", "internal:cluster/isPrimary", "internal:cluster/primary", "internal:dgram",
   "internal:errors", "internal:fifo", "internal:fixed_queue", "internal:freelist", "internal:fs/binding", "internal:fs/cp",
-  "internal:fs/cp-sync", "internal:fs/glob", "internal:fs/streams", "internal:fs/watch", "internal:fs/watchfile", "internal:http",
+  "internal:fs/cp-sync", "internal:fs/glob", "internal:fs/streams", "internal:fs/watch", "internal:fs/watchfile",
   "internal:http/FakeSocket", "internal:http1_server_fallback", "internal:linkedlist", "internal:net/isIP",
   "internal:net/server_abort_signal", "internal:net/symbols", "internal:perf_hooks/monitorEventLoopDelay", "internal:primordials",
   "internal:promisify", "internal:quic/binding", "internal:quic/diagnostics", "internal:quic/http2util", "internal:quic/quic",
@@ -46,10 +46,10 @@ const modulesWithUntypedFunctions = [
   "internal:trace_events", "internal:tty", "internal:url", "internal:util/colors", "internal:util/comparisons", "internal:util/debuglog",
   "internal:util/deprecate", "internal:util/mime", "internal:webstreams_adapters", "internal:worker/messaging", "internal:worker/stdio",
   "isomorphic-fetch", "node-fetch", "node:_http2_upgrade", "node:_http_agent", "node:_http_client", "node:_http_common",
-  "node:_http_incoming", "node:_http_outgoing", "node:_http_server", "node:_stream_duplex", "node:_stream_passthrough",
+  "node:_http_incoming", "node:_http_server", "node:_stream_duplex", "node:_stream_passthrough",
   "node:_stream_readable", "node:_stream_transform", "node:_stream_wrap", "node:_stream_writable", "node:_tls_common", "node:_tls_wrap",
   "node:assert", "node:assert/strict", "node:async_hooks", "node:child_process", "node:cluster", "node:console", "node:crypto",
-  "node:dgram", "node:diagnostics_channel", "node:dns", "node:dns/promises", "node:domain", "node:events", "node:fs", "node:fs/promises",
+  "node:dgram", "node:diagnostics_channel", "node:dns", "node:dns/promises", "node:domain", "node:fs", "node:fs/promises",
   "node:http", "node:http2", "node:https", "node:inspector", "node:inspector/promises", "node:net", "node:os", "node:path/posix",
   "node:path/win32", "node:perf_hooks", "node:punycode", "node:quic", "node:readline", "node:readline/promises", "node:repl",
   "node:stream", "node:stream/consumers", "node:stream/iter", "node:stream/promises", "node:stream/web", "node:test", "node:timers",

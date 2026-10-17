@@ -585,12 +585,17 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         let unique_key_prefix: &[u8] = &c.unique_key_prefix;
         let paths = &unique_key_to_path;
         for chunk in chunks.iter_mut() {
+            let builtin_modules = builtin_modules_of_compiled_entry_point(c, chunk);
             let crate::chunk::Content::Javascript(js) = &mut chunk.content else {
                 continue;
             };
             let Some(mi) = js.module_info.as_mut() else {
                 continue;
             };
+            for specifier in builtin_modules {
+                let specifier = mi.str(specifier);
+                mi.request_module(specifier, analyze_transpiled_module::FetchParameters::None);
+            }
 
             // In place, so the per-build placeholder does not survive as an extra string.
             mi.rewrite_strings(move |s| {
@@ -1803,6 +1808,15 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
     debug_assert_no_placeholder_left(c, &result);
     Ok(result)
+}
+
+fn builtin_modules_of_compiled_entry_point<'a>(c: &'a LinkerContext, chunk: &Chunk) -> &'a [Box<[u8]>] {
+    let Some(facts) = c.facts.as_ref().filter(|facts| facts.typed.is_some() && chunk.is_entry_point()) else {
+        return &[];
+    };
+    let path = &*c.parse_graph().input_files.items_source()[chunk.entry_point.source_index() as usize].path.text;
+    let entry_point = facts.entry_points.iter().position(|compiled| **compiled == *path);
+    entry_point.and_then(|entry_point| facts.builtin_modules_of_entry_points.get(entry_point)).map_or(&[], Vec::as_slice)
 }
 
 fn with_aot_tokens(source_map: &[u8], tokens: &[u8]) -> Box<[u8]> {

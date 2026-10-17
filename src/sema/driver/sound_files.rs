@@ -1065,6 +1065,7 @@ pub struct TypedText {
     pub has_default_export: bool,
     pub untyped_exports: Vec<Vec<u8>>,
     pub modules_of_untyped_values: Vec<Vec<u8>>,
+    pub source: Option<Vec<u8>>,
 }
 
 pub struct Bundle<'a> {
@@ -1440,6 +1441,9 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
     }
     let entry = entry_point.and_then(|path| index_of.get(path)).and_then(|&index| written[index].as_ref()).and_then(|module| module.types);
     queue.extend(entry.iter().flat_map(|types| types.exports.iter().filter_map(|export| place_of(&export.1))));
+    let exports_of_entry = entry.map_or(&[][..], |types| &types.exports[..]);
+    let exported_twice: FxHashSet<&[u8]> = exports_of_entry.windows(2).filter(|pair| pair[0].0 == pair[1].0).map(|pair| &pair[0].0[..]).collect();
+    taken.extend(exported_twice.iter().map(|name| name.to_vec()));
     let mut namespaces_with_code: Vec<Vec<u8>> = Vec::new();
     for module in written.iter().take(mapped).flatten() {
         let file = module.syntax.file;
@@ -1780,6 +1784,13 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
         }
         if !exported.contains(&name[..]) && final_name(target).is_none() {
             linked.untyped_exports.push(name.to_vec());
+        }
+        if exported.contains(&name[..]) && exported_twice.contains(&name[..]) && matches!(target, Target::Declaration { .. }) {
+            let is_generic = place_of(target).and_then(|(index, name)| declared[index].get(&name[..])).is_none_or(|found| found.type_parameters > 0);
+            match final_name(target).filter(|_| !is_generic) {
+                Some(local) => linked.hoisted.extend_from_slice(&[&b"export type "[..], &name[..], b" = ", &local[..], b";\n"].concat()),
+                None => linked.untyped_exports.push(name.to_vec()),
+            }
         }
         let Some(local) = final_name(target).filter(|_| !exported.contains(&name[..])) else { continue };
         let clause = if local[..] == name[..] { local.clone() } else { [&local[..], b" as ", &name[..]].concat() };
@@ -2426,7 +2437,7 @@ impl<'a> Transfer<'_, 'a, '_> {
         }
         text.extend_from_slice(&self.hoisted);
         let has_default_export = output.has_default_export();
-        Ok(TypedText { text, dropped_casts: self.dropped_casts, has_default_export, untyped_exports: self.linked.untyped_exports.clone(), modules_of_untyped_values: self.linked.modules_of_untyped_values.clone() })
+        Ok(TypedText { text, dropped_casts: self.dropped_casts, has_default_export, untyped_exports: self.linked.untyped_exports.clone(), modules_of_untyped_values: self.linked.modules_of_untyped_values.clone(), source: None })
     }
 }
 
@@ -2456,7 +2467,8 @@ pub fn add_types_by_source_map(path: &[u8], javascript: &[u8], source_map: &[u8]
         .collect();
     let sources: Vec<Source<'_>> = paths.iter().zip(&texts).map(|(path, &text)| Source { path, text }).collect();
     let mappings = source_map.get(b"mappings").and_then(Json::as_str).ok_or("the source map has no mappings")?;
-    add_types(path, javascript, mappings, &sources, bundle)
+    let typed = add_types(path, javascript, mappings, &sources, bundle)?;
+    Ok(TypedText { source: paths.first().filter(|path| is_known(path)).cloned(), ..typed })
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -2493,11 +2505,26 @@ fn is_project_source(checker: &Checker<'_, '_>, file: FileId) -> bool {
 
 fn target_of(services: &mut Services<'_, '_, '_>, is_source: &dyn Fn(FileId) -> Option<Box<[u8]>>, symbol: SymbolRef) -> Option<Target> {
     let aliased = services.symbol_op(SymbolOp::Aliased, symbol);
-    aliased.and_then(|aliased| target_declared_by(services, is_source, aliased)).or_else(|| target_declared_by(services, is_source, symbol))
+    let behind = aliased.filter(|&aliased| is_alias_merged_with_type(services, aliased)).and_then(|aliased| services.symbol_op(SymbolOp::Aliased, aliased));
+    [behind, aliased, Some(symbol)].into_iter().flatten().find_map(|symbol| target_declared_by(services, is_source, symbol))
+}
+
+fn is_alias_merged_with_type(services: &mut Services<'_, '_, '_>, symbol: SymbolRef) -> bool {
+    let flags = services.symbol_info(symbol).flags;
+    flags.contains(SymbolFlags::ALIAS) && flags.intersects(SymbolFlags::TYPE)
+}
+
+fn alias_merged_with_type(services: &mut Services<'_, '_, '_>, symbol: SymbolRef) -> Option<SymbolRef> {
+    let aliased = services.symbol_op(SymbolOp::Aliased, symbol);
+    [Some(symbol), aliased].into_iter().flatten().find(|&symbol| is_alias_merged_with_type(services, symbol))
 }
 
 fn target_declared_by(services: &mut Services<'_, '_, '_>, is_source: &dyn Fn(FileId) -> Option<Box<[u8]>>, symbol: SymbolRef) -> Option<Target> {
-    let &declaration = services.declarations(symbol).first()?;
+    let declarations = services.declarations(symbol).to_vec();
+    declarations.into_iter().find_map(|declaration| target_of_declaration(services, is_source, declaration))
+}
+
+fn target_of_declaration(services: &mut Services<'_, '_, '_>, is_source: &dyn Fn(FileId) -> Option<Box<[u8]>>, declaration: NodeRef) -> Option<Target> {
     let path = is_source(declaration.file)?;
     if declaration.node == Node::FILE {
         return Some(Target::Module { path });
@@ -2550,8 +2577,8 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
             let node = NodeRef { file, node: hir.node(NameId(index as u32)) };
             let Some(symbol) = services.symbol_at_location(node) else { continue };
             let is_whole_name = !name.is_qualified() && !hir.names.get(index + 1).is_some_and(|next| next.is_qualified());
-            let flags = services.symbol_info(symbol).flags;
-            note(services, name.pos(), symbol, !name.is_qualified(), is_whole_name && flags.contains(SymbolFlags::ALIAS) && flags.intersects(SymbolFlags::TYPE));
+            let merged = alias_merged_with_type(services, symbol).filter(|_| is_whole_name);
+            note(services, name.pos(), merged.unwrap_or(symbol), !name.is_qualified(), merged.is_some());
         }
         for (index, expr) in hir.exprs.iter().enumerate().filter(|(_, expr)| is_inside(&type_ranges, expr.pos)) {
             let at = match expr.kind {
@@ -2580,7 +2607,9 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
         if let Some(module) = services.symbol_at_location(NodeRef { file, node: Node::FILE }) {
             for &exported in services.symbol_table(SymbolTable::ExportsOfModule, module) {
                 let name: Box<[u8]> = services.symbol_info(exported).name.into();
-                exports.extend(target_of(services, &is_source, exported).map(|target| (name, target)));
+                let value = target_of(services, &is_source, exported);
+                let merged = alias_merged_with_type(services, exported).and_then(|merged| target_declared_by(services, &is_source, merged)).filter(|merged| value.as_ref() != Some(merged));
+                exports.extend(merged.into_iter().chain(value).map(|target| (name.clone(), target)));
             }
         }
         let mut constants = Vec::new();
@@ -2721,6 +2750,14 @@ pub fn sound_files(outdir: &[u8], outputs: &[Output<'_>], modules: Option<&[Modu
             let name = BStr::new(&name);
             let default = if typed.has_default_export { format!("export {{ default }} from \"./{name}.sound.ts\";\n") } else { String::new() };
             found.declarations_while_checked.push(([stem, b".d.ts"].concat(), format!("export * from \"./{name}.sound.ts\";\n{default}").into_bytes()));
+            let folder_of = |path: &[u8]| path[..bun_core::strings::last_index_of_char(path, b'/').unwrap_or(0)].to_vec();
+            let from_source = typed.source.as_ref().map(|source| bun_sema::resolve::get_relative_path_from_directory(&folder_of(source), &typed_path, true));
+            if let (Some(source), Some(from_source)) = (typed.source, from_source.filter(|path| path[..] != typed_path[..])) {
+                let typed_file = if from_source.starts_with(b"../") { from_source } else { [&b"./"[..], &from_source[..]].concat() };
+                let typed_file = BStr::new(&typed_file);
+                let default = if typed.has_default_export { format!("export {{ default }} from \"{typed_file}\";\n") } else { String::new() };
+                found.declarations_while_checked.push((source, format!("export * from \"{typed_file}\";\n{default}").into_bytes()));
+            }
         }
         found.typed.push((typed_path, typed.text));
     }

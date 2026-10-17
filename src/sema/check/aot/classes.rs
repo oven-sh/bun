@@ -1163,6 +1163,10 @@ impl<'p, 's> Checker<'p, 's> {
             .collect()
     }
 
+    pub fn is_created_only_through_subclasses(&self, file: FileId, class: ClassId) -> bool {
+        self.hir(file)[class].flags.contains(Flags::ABSTRACT) && !self.has_direct_eval(file)
+    }
+
     pub fn classes_referenced_by_typeof(&mut self) -> FxHashSet<(FileId, ClassId)> {
         let mut found = FxHashSet::default();
         for file in (0..self.files().modules.len() as u32).map(FileId) {
@@ -2448,7 +2452,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             if !is_fixed {
                 let related = self.missing_layout_reasons(class, &has_fixed_layout);
-                let (rule, code) = if related.iter().all(|reason| matches!(reason.code, 100055 | 100056)) { (Rule::UntypedBase, 100027) } else { (Rule::LostLayout, 100023) };
+                let (rule, code) = if related.iter().any(|reason| reason.code == 100056) { (Rule::UntypedBase, 100027) } else { (Rule::LostLayout, 100023) };
                 if scopes.severity(rule, at.file, at.pos) != Severity::Allow {
                     found.push(CompilerDiagnostic { related, ..self.finding_at(at, code, vec![name]) });
                 }

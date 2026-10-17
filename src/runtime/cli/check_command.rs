@@ -31,6 +31,7 @@ struct Options {
     aot: bool,
     aot_explain: Vec<Box<[u8]>>,
     aot_rules: bun_aot::rules::Settings,
+    aot_rule_flags: Vec<Box<[u8]>>,
     aot_out: Option<Box<[u8]>>,
     without_builtin_modules: bool,
     logs_type_errors: bool,
@@ -158,6 +159,7 @@ fn parse(ctx: &mut crate::cli::command::ContextData, args: &[&ZStr]) -> Options 
         Ok(settings) => options.aot_rules = settings,
         Err(problem) => usage_error(format_args!("{problem}")),
     }
+    options.aot_rule_flags = rule_flags;
     if let Some(threads) = parsed.option(b"--threads") {
         match bun_core::fmt::parse_decimal::<usize>(threads) {
             Some(n) if n > 0 => options.threads = n,
@@ -514,13 +516,14 @@ impl CheckCommand {
             usage_error(format_args!("--aot takes the entry points of a program"));
         }
         let constants = bun_aot::Constants { root: from_native(&cwd), logs_type_errors: options.logs_type_errors, ..Default::default() };
-        let (mut code, mut provided) = (Vec::new(), Provided { without_builtin_modules: options.without_builtin_modules, ..Default::default() });
+        let (mut code, mut provided) = (Vec::new(), Provided { without_builtin_modules: options.without_builtin_modules, is_without_bundler: true, ..Default::default() });
         for &(name, text) in bun_aot::prelude::FILES {
             let path = bun_aot::prelude::path_of(&cwd, name);
             provided.already_read.insert(from_native(&path), text.as_bytes().into());
             code.push(path);
         }
         let said: bun_threading::Guarded<(Vec<String>, Vec<String>)> = bun_threading::Guarded::new(Default::default());
+        let baseline_outcome = bun_threading::Guarded::new(None);
         let translation = bun_aot::Translation::new(&constants).explaining(explaining(&options.aot_explain)).enforcing(options.aot_rules.clone());
         let begin = |program: &bun_sema_driver::Program, in_parallel: bun_sema_driver::InParallel<'_>| {
             let roots = command_line.paths.iter().filter_map(|path| program.files.by_path.get(&from_argument(&from_native(&cwd), path)));
@@ -541,6 +544,7 @@ impl CheckCommand {
             }
             *said.lock() = (translated.explained, translated.problems);
             *TYPEDNESS_OF_LAST_BUILD.lock() = Some(translated.typedness);
+            *baseline_outcome.lock() = program.rule_scopes.get().and_then(|scopes| scopes.baseline_outcome());
             bun_aot::release(translated.program, in_parallel);
             translated.kept_errors
         };
@@ -566,6 +570,9 @@ impl CheckCommand {
         }
         if report.is_ok() && !said.1.is_empty() {
             Global::exit(1);
+        }
+        if report.is_ok() {
+            crate::cli::aot::finish_baseline(&options.aot_rule_flags, baseline_outcome.lock().take());
         }
         report_and_exit(&report, options, &cwd)
     }
@@ -1140,6 +1147,7 @@ struct CompleteRequest {
     explain_to_log: bool,
     explains_plugins: bool,
     explains_rules_as_json: bool,
+    rule_flags: Vec<Box<[u8]>>,
     deferred_source_count: usize,
 }
 
@@ -1412,7 +1420,7 @@ fn analyze_sources<'c, 'i, 'l>(
         }
         let explain = explaining(explain);
         let deferred_source_count = deferred.code.len();
-        let complete_request = complete_request_cell.get_or_init(|| CompleteRequest { constants, function_source_printing, has_late_strings, explain_to_log, explains_plugins: explain.plugins, explains_rules_as_json: explain.rules_json, deferred_source_count });
+        let complete_request = complete_request_cell.get_or_init(|| CompleteRequest { constants, function_source_printing, has_late_strings, explain_to_log, explains_plugins: explain.plugins, explains_rules_as_json: explain.rules_json, rule_flags: rules.to_vec(), deferred_source_count });
         let _ = translation_cell.set(bun_aot::Translation::new(&complete_request.constants).explaining(explain).enforcing(crate::cli::aot::rule_settings(rules).unwrap_or_default()));
         *received_log.lock() = Some(Handed(log));
         deferred
@@ -1479,6 +1487,7 @@ fn analyze_sources<'c, 'i, 'l>(
         bun_threading::Guarded::new(None);
     let not_compiled: bun_threading::Guarded<Vec<String>> = bun_threading::Guarded::new(Vec::new());
     let explained: bun_threading::Guarded<Vec<String>> = bun_threading::Guarded::new(Vec::new());
+    let baseline_outcome = bun_threading::Guarded::new(None);
     let translation = || translation.get().expect("the request is complete when the program is loaded");
     let begin = |program: &bun_sema_driver::Program, in_parallel: bun_sema_driver::InParallel<'_>| {
         if let Some(complete_request) = complete_request.get() {
@@ -1508,6 +1517,7 @@ fn analyze_sources<'c, 'i, 'l>(
                     engine: None,
                     typed: Some(typed.into_boxed_slice()),
                     entry_points: compiled_entry_points(),
+                    builtin_modules_of_entry_points: Vec::new(),
                     tokens: None,
                 });
             }
@@ -1516,15 +1526,17 @@ fn analyze_sources<'c, 'i, 'l>(
         let has_late_strings = complete_request.get().is_some_and(|complete_request| complete_request.has_late_strings);
         let engine: bun_threading::Guarded<Option<bun_ast::type_tags::EarlyEngine>> = bun_threading::Guarded::new(None);
         let on_written = |typed: &[u8]| *engine.lock() = Some(bun_jsc::cached_bytecode::start_typed_program(typed, has_late_strings));
-        let bun_aot::EngineProgram { written: typed, kept_errors, explained: lines, typedness, tokens } = translation().finish_for_engine(program, in_parallel, errors, &on_written);
+        let bun_aot::EngineProgram { written: typed, kept_errors, explained: lines, typedness, tokens, builtin_modules_of_entry_points } = translation().finish_for_engine(program, in_parallel, errors, &on_written);
         *explained.lock() = lines;
         *TYPEDNESS_OF_LAST_BUILD.lock() = Some(typedness);
+        *baseline_outcome.lock() = program.rule_scopes.get().and_then(|scopes| scopes.baseline_outcome());
         match typed {
             Ok(typed) => {
                 *found.lock() = Some(bun_ast::type_tags::ProgramFacts {
                     engine: engine.lock().take(),
                     typed: Some(typed),
                     entry_points: compiled_entry_points(),
+                    builtin_modules_of_entry_points,
                     tokens,
                 });
             }
@@ -1573,6 +1585,9 @@ fn analyze_sources<'c, 'i, 'l>(
     }
     if complete_request.get().is_some_and(|complete_request| complete_request.explains_rules_as_json) {
         explained.lock().extend(format::rule_findings_as_json(&report, &from_native(cwd)));
+    }
+    if let Some(complete_request) = complete_request.get().filter(|_| report.is_ok()) {
+        crate::cli::aot::finish_baseline(&complete_request.rule_flags, baseline_outcome.lock().take());
     }
     if complete_request.get().is_some_and(|complete_request| complete_request.explain_to_log) {
         for line in std::mem::take(&mut *explained.lock()) {
@@ -1677,6 +1692,12 @@ pub(crate) fn sound_files_for_build(asked: SoundFilesRequest<'_>, log: &mut bun_
     let by_extension = script_kinds_by_extension(loaders);
     let tsconfig_of_sources = if tsconfig.is_none() { bun_sema_driver::sound_files::tsconfig_of_sources(&outputs, modules.map_or(&[][..], Vec::as_slice)) } else { None };
     let tsconfig = tsconfig.or(tsconfig_of_sources.as_deref());
+    let source = outputs.iter().find_map(|output| output.entry_point).or_else(|| modules.and_then(|modules| modules.first()).map(|module| &module.path[..]));
+    let governing = tsconfig.zip(source).and_then(|(tsconfig, source)| {
+        let entries = Paths::EntryPoints(Entries { paths: &[], script_kinds: &[], script_kinds_by_extension: &by_extension, conditions });
+        bun_sema_driver::governing_config_of(&request(cwd, Some(tsconfig), &entries, &[], 0, None), tsconfig, source)
+    });
+    let tsconfig = governing.as_deref().or(tsconfig);
     let check = |typed: &mut Vec<(Vec<u8>, Vec<u8>)>, declarations: &[(Vec<u8>, Vec<u8>)]| {
         let paths: Vec<Vec<u8>> = typed.iter().map(|file| file.0.clone()).collect();
         let entries = Paths::EntryPoints(Entries { paths: &paths, script_kinds: &[], script_kinds_by_extension: &by_extension, conditions });
@@ -2146,6 +2167,7 @@ pub(crate) fn audit_before(
     let mut provided = Provided {
         already_read: already_read(&cwd, &mut in_memory),
         before_read,
+        is_without_bundler: true,
         ..Default::default()
     };
     let mut code: Vec<Vec<u8>> = Vec::new();

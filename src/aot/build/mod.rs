@@ -4,6 +4,7 @@ mod expr;
 mod commonjs;
 mod comments;
 mod constants;
+mod scalar_url;
 mod coerce;
 mod host_classes;
 mod imports;
@@ -81,6 +82,12 @@ pub(crate) enum Place {
 enum Dependency {
     Module(FileId),
     External(Atom),
+}
+
+#[derive(Default)]
+struct LoadedGraph {
+    files: FxHashSet<FileId>,
+    builtin_modules: FxHashSet<Atom>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -264,6 +271,7 @@ pub struct Shared<'a> {
     entry_points: Vec<Vec<FileId>>,
     prelude: Vec<FileId>,
     decorator_helpers: Option<FileId>,
+    host_class_helpers: Option<FileId>,
     promise_helpers: Option<FileId>,
     delegation_helpers: Option<FileId>,
     validation_helpers: Option<FileId>,
@@ -285,6 +293,9 @@ pub struct Shared<'a> {
     pub(crate) json_modules_read_by_name: FxHashSet<FileId>,
     pub(crate) json_modules_loaded_whole: FxHashSet<FileId>,
     lazy_module_dependencies: Vec<OnceLock<Vec<(FileId, Dependency)>>>,
+    dependencies: Vec<OnceLock<Vec<Dependency>>>,
+    builtin_modules_loaded_by_import: Vec<OnceLock<Vec<Atom>>>,
+    loaded_by_every_entry_point: OnceLock<LoadedGraph>,
     unresolved_imports: FxHashMap<FileId, Vec<(FileId, Atom)>>,
 }
 
@@ -337,6 +348,7 @@ impl<'a> Shared<'a> {
             runtime_helpers: program.files.by_path.get(&crate::prelude::path_of(&constants.root, crate::prelude::RUNTIME_HELPERS.0)),
             has_computed_module_names: program.files.modules.iter().any(|module| matches!(module.builtin, Some(Builtin::Module(_, LoadedBy::ComputedName | LoadedBy::RuntimeModulesOrComputedName)))),
             decorator_helpers: program.files.by_path.get(&crate::prelude::path_of(&constants.root, crate::prelude::DECORATORS.0)),
+            host_class_helpers: program.files.by_path.get(&crate::prelude::path_of(&constants.root, crate::prelude::HOST_CLASSES.0)),
             promise_helpers: program.files.by_path.get(&crate::prelude::path_of(&constants.root, "promise.ts")),
             delegation_helpers: program.files.by_path.get(&crate::prelude::path_of(&constants.root, "promise.ts")),
             validation_helpers: program.files.by_path.get(&crate::prelude::path_of(&constants.root, crate::prelude::VALIDATION.0)),
@@ -354,6 +366,9 @@ impl<'a> Shared<'a> {
             json_modules_read_by_name: FxHashSet::default(),
             json_modules_loaded_whole: FxHashSet::default(),
             lazy_module_dependencies: (0..program.files.modules.len()).map(|_| OnceLock::new()).collect(),
+            dependencies: (0..program.files.modules.len()).map(|_| OnceLock::new()).collect(),
+            builtin_modules_loaded_by_import: (0..program.files.modules.len()).map(|_| OnceLock::new()).collect(),
+            loaded_by_every_entry_point: OnceLock::new(),
             unresolved_imports: FxHashMap::default(),
         };
         let mut c = program.checker();
@@ -433,6 +448,10 @@ impl<'a> Shared<'a> {
 
     pub(crate) fn validation_helpers(&self) -> Option<FileId> {
         self.validation_helpers
+    }
+
+    pub(crate) fn host_class_helpers(&self) -> Option<FileId> {
+        self.host_class_helpers
     }
 
     pub(crate) fn runtime_helpers(&self) -> Option<FileId> {
@@ -589,6 +608,10 @@ pub(crate) struct FileBuild<'c, 'p, 's> {
     lazy_variable_states: FxHashMap<Sym, Option<GlobalId>>,
     lazy_declarations: FxHashMap<FileId, Rc<Vec<(u32, u32, Sym)>>>,
     lazy_uses: Option<Rc<Vec<(u32, FnId, Sym)>>>,
+    scalar_class_by_symbol: FxHashMap<Sym, Option<scalar_url::ScalarClass>>,
+    scalar_urls: FxHashMap<(FileId, hir::ExprId), scalar_url::ScalarUrl>,
+    scalar_url_variables: FxHashMap<Sym, [Var; 3]>,
+    preevaluated_operands: Vec<(FileId, hir::ExprId, V)>,
     lazy_module_uses: Option<Rc<Vec<(u32, FnId, FileId, u32)>>>,
     pub(crate) funcs: FxHashMap<(FileId, FnId), FuncId>,
     named_functions: FxHashMap<(FileId, FnId), FuncId>,
@@ -687,6 +710,16 @@ pub fn translate_file(c: &mut Checker<'_, '_>, shared: &Shared<'_>, file: FileId
     build.define_file_classes();
     build.build_functions();
     build.finish()
+}
+
+pub fn builtin_modules_of_entry_points(c: &mut Checker<'_, '_>, shared: &Shared<'_>) -> Vec<Vec<Box<[u8]>>> {
+    let build = FileBuild::new(c, shared, NO_FILE);
+    let of_entry_point = |roots: &Vec<FileId>| {
+        let mut in_order = Vec::new();
+        build.load_graph(roots, &LoadedGraph::default(), &mut LoadedGraph::default(), &mut in_order);
+        in_order.into_iter().map(|specifier| build.c.atoms().bytes(specifier).into()).collect()
+    };
+    shared.entry_points.iter().map(of_entry_point).collect()
 }
 
 pub fn files_imported_by(c: &mut Checker<'_, '_>, shared: &Shared<'_>, file: FileId) -> Vec<FileId> {
@@ -797,6 +830,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             lazy_variable_states: FxHashMap::default(),
             lazy_declarations: FxHashMap::default(),
             lazy_uses: None,
+            scalar_class_by_symbol: FxHashMap::default(),
+            scalar_urls: FxHashMap::default(),
+            scalar_url_variables: FxHashMap::default(),
+            preevaluated_operands: Vec::new(),
             lazy_module_uses: None,
             funcs: FxHashMap::default(),
             named_functions: FxHashMap::default(),
@@ -1066,7 +1103,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn collect_dependencies_through_lazy(&self, file: FileId, walked: &mut FxHashSet<FileId>, found: &mut Vec<(FileId, Dependency)>) {
-        for dependency in self.dependencies_of(file) {
+        for &dependency in self.cached_dependencies_of(file) {
             match dependency {
                 Dependency::Module(imported) if self.is_transparent_lazy_import(file, imported) => {
                     if walked.insert(imported) {
@@ -1076,6 +1113,58 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 _ => found.push((file, dependency)),
             }
         }
+    }
+
+    fn cached_dependencies_of(&self, file: FileId) -> &'c [Dependency] {
+        let shared = self.shared;
+        shared.dependencies[file.idx()].get_or_init(|| self.dependencies_of(file))
+    }
+
+    fn load_graph(&self, roots: &[FileId], already_loaded: &LoadedGraph, loaded: &mut LoadedGraph, builtin_modules_in_order: &mut Vec<Atom>) {
+        let mut pending: Vec<FileId> = roots.iter().rev().copied().collect();
+        while let Some(file) = pending.pop() {
+            if self.is_declaration_only(file) || already_loaded.files.contains(&file) || !loaded.files.insert(file) {
+                continue;
+            }
+            let first_imported = pending.len();
+            for &dependency in self.cached_dependencies_of(file) {
+                match dependency {
+                    Dependency::Module(imported) => pending.push(imported),
+                    Dependency::External(specifier) => {
+                        let specifier = self.host_specifier(specifier);
+                        if imports::is_builtin_specifier(self.c.atoms().bytes(specifier)) && !already_loaded.builtin_modules.contains(&specifier) && loaded.builtin_modules.insert(specifier) {
+                            builtin_modules_in_order.push(specifier);
+                        }
+                    }
+                }
+            }
+            pending[first_imported..].reverse();
+        }
+    }
+
+    fn loaded_by_every_entry_point(&self) -> &'c LoadedGraph {
+        let shared = self.shared;
+        shared.loaded_by_every_entry_point.get_or_init(|| {
+            let mut common: Option<LoadedGraph> = None;
+            for roots in shared.entry_points() {
+                let mut loaded = LoadedGraph::default();
+                self.load_graph(roots, &LoadedGraph::default(), &mut loaded, &mut Vec::new());
+                common = Some(match common {
+                    Some(common) => LoadedGraph { files: &common.files & &loaded.files, builtin_modules: &common.builtin_modules & &loaded.builtin_modules },
+                    None => loaded,
+                });
+            }
+            common.unwrap_or_default()
+        })
+    }
+
+    fn builtin_modules_loaded_by_import(&self, imported: FileId) -> &'c [Atom] {
+        let shared = self.shared;
+        shared.builtin_modules_loaded_by_import[imported.idx()].get_or_init(|| {
+            let mut in_order = Vec::new();
+            self.load_graph(&[imported], self.loaded_by_every_entry_point(), &mut LoadedGraph::default(), &mut in_order);
+            in_order
+        })
     }
 
     fn is_side_effect_import(&self, file: FileId, imported: FileId) -> bool {
@@ -1921,7 +2010,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let importer = file;
         let mut in_order: Vec<(FileId, Dependency)> = Vec::new();
-        for dependency in self.dependencies_of(importer) {
+        for &dependency in self.cached_dependencies_of(importer) {
             match dependency {
                 Dependency::Module(imported) if self.is_transparent_lazy_import(importer, imported) => in_order.extend_from_slice(self.lazy_module_dependencies(imported)),
                 _ => in_order.push((importer, dependency)),
@@ -1974,20 +2063,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     }
                     let (module, unproven) = if is_importer { self.unproven_builtin_imports(file, specifier) } else { (&b""[..], Vec::new()) };
                     let global = self.external_module_global_in(importer, file, specifier);
-                    let specifier = self.host_resolved_specifier(file, specifier);
-                    let specifier = self.str(specifier);
-                    let known = self.emit(fx, Op::GlobalGet(global));
-                    let undefined = self.emit(fx, Op::Undefined);
-                    let is_missing = self.emit(fx, Op::StrictEq { a: known, b: undefined });
-                    let (first, there) = (fx.b.new_block(), fx.b.new_block());
-                    self.branch(fx, is_missing, first, there);
-                    fx.b.seal(first);
-                    fx.b.switch_to(first);
-                    let namespace = self.emit_throwing(fx, Op::ExternalModule(specifier));
-                    self.emit(fx, Op::GlobalSet(global, namespace));
-                    fx.b.jump(there);
-                    fx.b.seal(there);
-                    fx.b.switch_to(there);
+                    self.load_external_module(fx, global, file, specifier);
                     for (name, is_reexported) in unproven {
                         let namespace = self.emit(fx, Op::GlobalGet(global));
                         let bundle_name = if self.shared.constants.source_path_to_url.is_none() { module.strip_prefix(b"node:").unwrap_or(module) } else { module };
@@ -2095,6 +2171,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn emit_dynamic_import(&mut self, fx: &mut Fx, file: FileId, is_node_mode: bool, ticket: V) {
+        for &specifier in self.builtin_modules_loaded_by_import(file) {
+            let global = self.external_module_global(file, specifier);
+            self.load_external_module(fx, global, file, specifier);
+        }
         let undefined = self.emit(fx, Op::Undefined);
         self.emit_throwing(fx, Op::Await(undefined));
         let later_roots: Vec<FileId> = self.shared.entry_points().iter().filter(|roots| roots.first() == Some(&file)).flat_map(|roots| roots[1..].iter().rev().copied()).collect();

@@ -19,11 +19,11 @@ else {
     const title = headingOf(name, extension);
     generated(
       title.replaceAll("-", " "),
-      (options.seeds ?? seeds)
+      [...(options.seeds ?? seeds), ...(options.foundByFreshSeeds ?? [])]
         .filter(seed => !options.leftOut?.includes(seed))
         .map((seed, index) => ({
           name: `${title} ${seed}`,
-          isAlwaysRun: index < 2,
+          isAlwaysRun: index < 2 || (options.foundByFreshSeeds ?? []).includes(seed),
           linesMayBeRefused: options.linesMayBeRefused,
           plainEnv: options.plainEnv,
           failsToday: typeof options.failsToday === "string" ? options.failsToday : options.failsToday?.[seed],

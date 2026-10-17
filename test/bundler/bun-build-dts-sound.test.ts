@@ -214,6 +214,15 @@ describe("bun build --dts: the typed JavaScript", () => {
       ],
     ],
     [
+      "merged-exports",
+      [
+        "type Kind2 = (typeof exports_kinds_2)[keyof typeof exports_kinds_2];",
+        "export type Kind = Kind2;",
+        "  kind: typeof NAME;",
+        "function isName(kind: Kind2): boolean {\n  const seen = new Set<Kind2>;",
+      ],
+    ],
+    [
       "augmented-modules",
       [
         "declare namespace Annotations2 {\n  interface Augment {}",
@@ -240,6 +249,15 @@ describe("bun build --dts: the typed JavaScript", () => {
     const typed = await text(String(dir), "dist", "index.sound.ts");
     for (const line of lines) expect(typed).toContain(line);
     expect(withoutTypes(typed)).toBe(withoutTypes(await text(String(dir), "dist", "index.js")));
+  });
+
+  test("a name that is exported as a namespace and as a type is both in the rolled-up declaration file", async () => {
+    using dir = library("merged-exports");
+    expect(await build(String(dir), "--dts")).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.d.ts", "index.js", "index.sound.ts"]);
+    const declarations = await text(String(dir), "dist", "index.d.ts");
+    expect(declarations).toContain("export type Kind = Kind2;");
+    expect(declarations).toContain("export { exports_kinds_ as Kind, isName };");
   });
 
   test("the JavaScript is what the build writes without it, and no source map is written", async () => {
@@ -358,6 +376,19 @@ console.log(serve(server, "a", "b"), new Polite("hi").greet({ name: "you" }, 2))
     expect(await spawned([join(String(app), "app")], String(app))).toEqual({ stdout: "one class\n", stderr: "", exitCode: 0 });
   });
 
+  test.skipIf(!!unsupported)("--no-bundle: a package that imports itself by name while its exports point at its sources", async () => {
+    using dir = tempDir("build-sound-self-name", {
+      "package.json": JSON.stringify({ name: "welcome", version: "1.0.0", type: "module", exports: { ".": "./src/index.ts", "./*": "./src/*.ts" } }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "nodenext", target: "esnext", types: [], lib: ["esnext"], rewriteRelativeImportExtensions: true, verbatimModuleSyntax: true } }),
+      "src/index.ts": `import { Issue } from "welcome/issue";\nimport { read } from "./named.ts";\nexport const text: string = read(new Issue("one class"));\n`,
+      "src/issue.ts": `export class Issue {\n  #text: string;\n  constructor(text: string) {\n    this.#text = text;\n  }\n  get text(): string {\n    return this.#text;\n  }\n}\n`,
+      "src/named.ts": `import type { Issue } from "./issue.ts";\nexport function read(issue: Issue): string {\n  return issue.text;\n}\n`,
+    });
+    const built = await spawned([bunExe(), "build", "src/index.ts", "src/issue.ts", "src/named.ts", "--no-bundle", "--root", "src", "--outdir", "dist", "--target", "bun", "--dts"], String(dir));
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(await text(String(dir), "dist", "index.sound.ts")).toContain('import { Issue } from "welcome/issue";');
+  });
+
   test("require() in a bundle for the browser", async () => {
     using dir = library("odd-names");
     expect(await spawned([bunExe(), "build", "src/index.ts", "--outdir", "dist", "--packages", "external", "--dts"], String(dir))).toMatchObject({ stderr: "", exitCode: 0 });
@@ -416,6 +447,16 @@ export function clamp(value: number, limit = LIMIT): number {
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
     expect(readdirSync(String(out)).sort()).toEqual(["index.d.ts", "index.js", "index.sound.ts"]);
     expect(await text(String(out), "index.sound.ts")).toContain("interface Unused { name: string }");
+  });
+
+  test("under a tsconfig.json that only references projects, is judged under the project that has its sources", async () => {
+    using dir = library("greeter", {
+      "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "./tsconfig.build.json" }] }),
+      "tsconfig.build.json": JSON.stringify({ compilerOptions: { composite: true, strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext", "dom"], noEmit: false, outDir: "built" }, include: ["src"] }),
+      "src/index.ts": `export function reply(text: string): Response {\n  return new Response(text);\n}\n`,
+    });
+    expect(await build(String(dir), "--dts")).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(await text(String(dir), "dist", "index.sound.ts")).toContain("function reply(text: string): Response {");
   });
 
   test("needs no package.json", async () => {

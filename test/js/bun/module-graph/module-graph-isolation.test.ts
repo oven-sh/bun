@@ -90,7 +90,6 @@ const dir = String(
       import fs from "node:fs";
       import { PerformanceObserver } from "node:perf_hooks";
       import { DatabaseSync } from "node:sqlite";
-      // (No node:sqlite statement: its close() leaves the file open until they are collected, dispose() or not.)
       // Files held open inside \`dir\`, each by an object that would have to be closed or collected to let go.
       export const keepsFilesOpen = async dir => {
         const db = new Database(dir + "/bun.sqlite");

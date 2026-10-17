@@ -4,7 +4,7 @@
 // IR= 1 has IsBuiltinFunction v[0-9]+ Object.hasOwnProperty
 // IR= 1 has = BuiltinFunction Object.hasOwnProperty
 // IR= 1 larger IsBuiltinFunction v[0-9]+ Math.max
-// IR= 1 larger CallBuiltin Math.max#
+// IR= 1 larger CallDirect f[0-9]+ \(v[0-9]+, v[0-9]+\)$
 // IR= 1 listOf IsBuiltinFunction v[0-9]+ Array$
 // IR= 1 listOf CallBuiltin Array#
 // IR= 1 asObject IsBuiltinFunction v[0-9]+ Object$

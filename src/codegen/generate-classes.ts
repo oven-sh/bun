@@ -1501,7 +1501,7 @@ function generateCachedGetterTable(classes: ClassDefinition[]) {
   );
   return `
 #if ENABLE(AOT)
-static_assert(${classes.length} <= JSC::AOT::Typed::maxNumberOfHostClasses);
+static_assert(${classes.length} <= JSC::AOT::Typed::firstDOMConstructorHostClass);
 ${assertions.join("\n")}
 
 static constexpr JSC::AOT::Typed::HostClassCachedGetter generatedClassCachedGetters[] = {

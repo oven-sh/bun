@@ -2,6 +2,7 @@
 #pragma once
 #include "JSBuffer.h"
 #include <JavaScriptCore/AOTFunction.h>
+#include <JavaScriptCore/AOTTypedBuiltins.h>
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSFunctionInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -9,6 +10,11 @@
 #include <JavaScriptCore/PropertyNameArray.h>
 #include "ZigGlobalObject.h"
 #include "NativeModuleList.h"
+#include "AOTFrontEndBuiltinsHash.h"
+
+#if ENABLE(AOT)
+static_assert(AOT_TYPED_BUILTINS_HASH == BUN_AOT_FRONT_END_BUILTINS_HASH, "The front end of --aot (src/aot/builtins_generated.rs) and this JavaScriptCore (AOTTypedBuiltinLists.h) were generated from different tables of built-ins. WEBKIT_VERSION in scripts/build/deps/webkit.ts has to name a WebKit of the same cut.");
+#endif
 
 
 // These modules are implemented in native code as a function which writes ESM

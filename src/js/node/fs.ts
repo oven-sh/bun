@@ -620,6 +620,7 @@ var access = function access(path, mode, callback?) {
       options = undefined;
     }
     validateFunction(callback, "callback");
+    path = toPathIfFileURL(path);
     // Argument validation errors throw synchronously (node does the same);
     // the eager path check runs on an async stat so the JS thread isn't
     // blocked and the callback never fires synchronously.
@@ -1034,7 +1035,11 @@ function onOpendirStatRejected(callback, path, err) {
 function opendirSync(path, options) {
   // TODO: validatePath
   // validateString(path, "path");
-  return new Dir(1, path, options);
+  return new Dir(1, toPathIfFileURL(path), options);
+}
+
+function toPathIfFileURL(path) {
+  return path instanceof URL ? Bun.fileURLToPath(path) : path;
 }
 
 // Reshape a stat error as node's eager opendir error. Stat errors arrive as

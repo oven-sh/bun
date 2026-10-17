@@ -876,13 +876,20 @@ interface TestOptions {
 // test/aot costs several times the rest of test/, so it has steps of its own: test/aot/README.md, "What CI has to know".
 type AotTests = "all" | "a tenth";
 
-const aotSources = ["src/aot/", "src/sema/", "src/builtin_syntax/", "packages/bun-sound/", "test/aot/", "scripts/build/deps/webkit.ts"];
+const aotSources = [
+  "src/aot/",
+  "src/sema/",
+  "src/builtin_syntax/",
+  "packages/bun-sound/",
+  "test/aot/",
+  "scripts/build/deps/webkit.ts",
+];
 const aotGroupsOfLinuxX64 = ["aot/collector-stress/", "aot/bad-time/", "aot/instruction-counts/"];
 const aotGroupsOfTheCompiler = [...aotGroupsOfLinuxX64, "aot/startup-scaling/", "aot/variant-"];
 
 // The checkout of the step that runs this file is sparse and has no blobs: what it needs of test/ and src/ it asks git for.
 function git(...args: string[]): string | undefined {
-  const { status, stdout } = spawnSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  const { status, stdout } = spawnSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 60_000 });
   return status === 0 ? stdout : undefined;
 }
 
@@ -907,21 +914,27 @@ function getAotExcludes({ arch, distro, profile }: Platform, aot: AotTests): str
   return arch === "x64" && distro === "debian" && !profile ? [] : aotGroupsOfLinuxX64;
 }
 
-let expectedDurations: string | undefined;
+let expectedDurations: Record<string, Record<string, unknown>> | undefined;
+function getExpectedDurations(): Record<string, Record<string, unknown>> {
+  try {
+    return (expectedDurations ??= JSON.parse(git("show", "HEAD:test/expected-durations.json") ?? "{}") ?? {});
+  } catch {
+    return (expectedDurations = {});
+  }
+}
+
 function getAotParallelism(platform: Platform, aot: AotTests): number {
   const { os, arch, abi, profile } = platform;
   const windows = arch === "x64" ? "windows" : "windows-aarch64";
   const lane = profile === "asan" ? "asan" : abi === "musl" ? "musl" : os === "windows" ? windows : "default";
-  const table = (expectedDurations ??= git("show", "HEAD:test/expected-durations.json") ?? "");
-  if (!table) return aot === "a tenth" ? 3 : os === "darwin" ? 4 : 20;
   const excludes = getAotExcludes(platform, aot);
   let milliseconds = 0;
-  for (const [path, durations] of Object.entries(JSON.parse(table) as Record<string, Record<string, number>>)) {
+  for (const [path, durations] of Object.entries(getExpectedDurations())) {
     if (!path.startsWith("aot/") || excludes.some(group => path.includes(group))) continue;
-    milliseconds += durations[lane] ?? durations["default"] ?? 0;
+    milliseconds += Number(durations?.[lane] ?? durations?.["default"]) || 0;
   }
-  const shards = Math.ceil(milliseconds / (aot === "all" ? 1 : 4) / (12 * 60_000));
-  return Math.max(1, Math.min(shards, os === "darwin" ? 4 : 40));
+  const shards = Math.ceil(milliseconds / (aot === "all" ? 1 : 4) / (12 * 60_000)) || (aot === "all" ? 20 : 3);
+  return Math.min(shards, os === "darwin" ? 4 : 40);
 }
 
 function getTestBunStep(platform: Platform, options: PipelineOptions, testOptions: TestOptions = {}): CommandStep {

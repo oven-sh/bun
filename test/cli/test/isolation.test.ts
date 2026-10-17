@@ -1109,21 +1109,29 @@ describe.concurrent("--isolate: the code of built-in modules", () => {
     return { times, stdout, stderr };
   }
 
-  test("a later file compiles none of the functions an earlier file compiled", async () => {
+  test("a later file compiles none of the functions of a module an earlier file loaded", async () => {
     using dir = tempDir("isolate-builtin-code", {
-      "control.test.ts": control,
       "a.test.ts": imports("node:stream", "a"),
       "b.test.ts": imports("node:stream", "b"),
       "c.test.ts": imports("node:stream", "c"),
       "d.test.ts": imports("node:stream", "d"),
+      "realm.test.ts": file(
+        "realm",
+        `import * as x from "node:stream";`,
+        `await new ShadowRealm().importValue("node:stream", "Readable");`,
+      ),
     });
-    const [none, one, four] = await Promise.all([
-      compiled(dir, ["control"]),
+    const [one, withRealm, four] = await Promise.all([
       compiled(dir, ["a"]),
+      compiled(dir, ["realm"]),
       compiled(dir, ["a", "b", "c", "d"]),
     ]);
-    // What a file compiles because of the import: functions of node:stream and of the internal modules it requires.
-    const ofTheModule = [...one.times.keys()].filter(hash => !none.times.has(hash));
+    // The functions of node:stream and of the internal modules it requires are what a ShadowRealm, which shares no
+    // code (last test), compiles again. That leaves out the functions of src/js/builtins on the way: the VM keeps
+    // those weakly, and a collection between two files makes the later file compile one again.
+    const ofTheModule = [...one.times].flatMap(([hash, times]) =>
+      withRealm.times.get(hash) === times + 1 ? [hash] : [],
+    );
     expect({
       functions: ofTheModule.length > 0,
       compiledAgain: ofTheModule.filter(hash => four.times.get(hash)! > one.times.get(hash)!).length,
@@ -1168,20 +1176,21 @@ describe.concurrent("--isolate: the code of built-in modules", () => {
 
   // Precise coverage that starts in the second file instruments what is compiled from then on. The second file does
   // not link the code of the first, which has no instrumentation: it compiles its own, and the third file links that.
+  // (The second file imports the module dynamically so that the import comes after the start of the coverage.)
   test("a file in another code generation mode compiles its own", async () => {
-    const requires = (name: string, before = "") => file(name, `${before}\nconst x = require("node:querystring");`);
     using dir = tempDir("isolate-builtin-code-mode", {
-      "a.test.ts": requires("a"),
-      "b.test.ts": requires("b"),
-      "covered.test.ts": requires(
+      "a.test.ts": imports("node:querystring", "a"),
+      "b.test.ts": imports("node:querystring", "b"),
+      "covered.test.ts": file(
         "covered",
         `import { Session } from "node:inspector";
          const session = new Session();
          session.connect();
          session.post("Profiler.enable");
-         session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });`,
+         session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+         const x = await import("node:querystring");`,
       ),
-      "c.test.ts": requires("c"),
+      "c.test.ts": imports("node:querystring", "c"),
     });
     const [plain, covered] = await Promise.all([compiled(dir, ["a", "b", "c"]), compiled(dir, ["a", "covered", "c"])]);
     const more = [...plain.times].map(([hash, times]) => (covered.times.get(hash) ?? 0) - times);

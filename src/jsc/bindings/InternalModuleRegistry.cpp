@@ -118,9 +118,7 @@ static bool isInternalModuleSourceUnchanged(uint32_t, JSC::SourceProvider&)
 }
 #endif
 
-// What the VM keeps of a JS internal module under `bun test --isolate`: its source and the unlinked function created
-// from it. Neither belongs to a global, so the global of each test file links the ones an earlier file made. Only the
-// link and the call of the module's top level are a global's own.
+// What a VM keeps of a JS internal module under `bun test --isolate`, for the test files after the one that loaded it.
 struct InternalModuleCode {
     RefPtr<JSC::SourceProvider> provider;
     // Roots the UnlinkedFunctionExecutable, and with it the bytecode generated under it so far.
@@ -133,8 +131,7 @@ struct InternalModuleCodeTable {
     std::array<InternalModuleCode, InternalModuleRegistryConstants::moduleCount> slots {};
 };
 
-// Runs from ~JSVMClientData, after the heap's last finalization. The cells that hold the `executable` roots are gone
-// by then (so no Bun__StrongRef__delete, which writes to one); what is left to release is the providers.
+// Runs after the heap's last finalization: the root slots are gone with it, so only the providers are released.
 void InternalModuleCodeTableDeleter::operator()(InternalModuleCodeTable* table) const
 {
     delete table;
@@ -150,20 +147,13 @@ struct LinkableInternalModule {
 static LinkableInternalModule internalModuleCode(JSC::JSGlobalObject* globalObject, JSC::VM& vm, uint32_t id)
 {
     auto* clientData = WebCore::clientData(vm);
-    // Only the VM's default global shares, and only where it is replaced: by the time the global of a test file
-    // exists, the one before it runs no more code. Two globals that both run are not safe on one unlinked function
-    // (a ShadowRealm and its host): JSC pins the code generation mode of a generator body per linked function and
-    // keeps one bytecode per unlinked function, so once a debugger changes the mode of one global, a generator
-    // suspended in the other can resume on bytecode other than the one it was suspended on.
+    // Only the default global, which test isolation replaces: two running globals must not link one unlinked function (#45545).
     bool isShared = IsolatedModuleCache::canUse(vm, ::bunVM(globalObject)) && clientData->defaultGlobalObject == globalObject;
     if (isShared && clientData->internalModuleCode) {
         InternalModuleCode& code = clientData->internalModuleCode->slots[id];
         if (code.executable) {
             auto* executable = uncheckedDowncast<UnlinkedFunctionExecutable>(strongRefGet(code.executable).asCell());
-            // The bytecode of the top level is generated when a load calls it, in the mode of the loading global,
-            // and is deleted with all other bytecode (a debugger toggles, Bun.gc(true)). While it is there in this
-            // global's mode, the bytecode under the executable is this mode's. JSC's CodeCache holds to the same
-            // two: the mode is in its key, and it is emptied when all code is deleted.
+            // The slot holds while the top level's bytecode exists in this global's mode, as an entry of JSC's CodeCache does.
             auto* topLevelCode = executable->codeBlocksDecodingCached(vm).first;
             if (topLevelCode && topLevelCode->codeGenerationMode() == globalObject->defaultCodeGenerationMode() && isInternalModuleSourceUnchanged(id, *code.provider))
                 return { SourceCode(Ref { *code.provider }), executable, true };
@@ -224,9 +214,7 @@ JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& 
         JSC::getCallData(func),
         globalObject, JSC::MarkedArgumentBuffer());
 
-    // A function's execution count is kept with its unlinked code. A top level runs once in a global, but each test
-    // file's global runs the shared one: counted together they look hot, and the JIT would compile code that every
-    // later global installs to run once.
+    // The execution count is kept with the shared code, where one run per test file adds up to a hot function.
     if (isShared) {
         if (auto* codeBlock = func->jsExecutable()->codeBlockForCall())
             codeBlock->dontJITAnytimeSoon();

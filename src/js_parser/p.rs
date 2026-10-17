@@ -266,8 +266,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_es_module_syntax: bool,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
-    /// Counts the function closes that consumed `lexer.has_react_hooks_suppression_before`.
-    /// See `return_react_hooks_suppression`.
+    /// How many function closes consumed `lexer.has_react_hooks_suppression_before`.
     pub(crate) react_hooks_suppressions_taken: u32,
     pub(crate) fn_or_arrow_data_visit: FnOrArrowDataVisit,
     pub(crate) fn_only_data_visit: FnOnlyDataVisit,
@@ -461,8 +460,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// hook site so a `ReactCompilerHost(&mut P)` can borrow alongside it.
     pub(crate) react_compiler: Option<Box<bun_react_compiler::ReactCompilerState>>,
     /// Binding name from the `S::Function` / `S::Local` / `S::ExportDefault`
-    /// statement currently being visited. Set in `visit_stmt`, taken by
-    /// `enter_react_compiler_candidate` when the visit of that function starts.
+    /// statement currently being visited. Set in `visit_stmt`, consumed by
+    /// `visit_func` / arrow-visit one frame down.
     pub(crate) react_compiler_candidate_name: Option<js_ast::Ref>,
     /// Set alongside `react_compiler_candidate_name` when the candidate
     /// expression is a `memo(...)` / `forwardRef(...)` call.

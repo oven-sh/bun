@@ -409,10 +409,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(func)
     }
 
-    /// A function closed. Returns whether a `react-hooks` eslint suppression
-    /// covers it. next-line semantics: a suppression marks the enclosing
-    /// top-level function and is consumed; it never reaches that function's
-    /// siblings.
+    /// Called when a function closes. A top-level close consumes the suppression, so no sibling gets it.
     fn take_react_hooks_suppression(&mut self) -> bool {
         let pending = self.lexer.has_react_hooks_suppression_before;
         if pending && self.fn_or_arrow_data_parse.is_top_level {
@@ -423,10 +420,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         pending || self.lexer.has_react_hooks_block_suppression
     }
 
-    /// The end of a parameter list, with `react_hooks_suppressions_taken` from
-    /// its start. The list of a top-level function is parsed as top-level code,
-    /// so a function in it consumed the suppression. The function that owns the
-    /// list closes later and takes it again.
+    /// Gives back a suppression that a function in a parameter list consumed: the owner of the list closes later.
     pub(crate) fn return_react_hooks_suppression(&mut self, taken_at_start: u32) {
         if self.react_hooks_suppressions_taken != taken_at_start {
             self.lexer.has_react_hooks_suppression_before = true;

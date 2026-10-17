@@ -167,8 +167,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
 /// What `enter_react_compiler_candidate` returns for one function visit.
 #[derive(Clone, Copy)]
 pub(crate) struct ReactCompilerCandidate {
-    /// `react_compiler_candidate_name` as the statement set it, taken by this
-    /// function. `None` when this function is not the candidate.
+    /// The taken `react_compiler_candidate_name`. `None`: this function is not the candidate.
     statement_binding: Option<js_ast::Ref>,
     /// The function's own name when it has one, else `statement_binding`.
     binding: Option<js_ast::Ref>,
@@ -181,8 +180,7 @@ impl ReactCompilerCandidate {
         self.statement_binding.is_some()
     }
 
-    /// The value for `react_compiler_pending`. Set it after the parameters are
-    /// visited, right before the body is: the first function body visited takes it.
+    /// For `react_compiler_pending`, right before the visit of the body: the first body visited takes it.
     pub(crate) fn pending(
         &self,
         args: js_ast::StoreSlice<js_ast::G::Arg>,
@@ -227,10 +225,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         }
     }
 
-    /// Starts the visit of a function. The candidate takes
-    /// `react_compiler_candidate_name` here, before its parameters are visited,
-    /// so a function in its parameter list finds no name to take. Also sets
-    /// `react_compiler_may_replace_body` for the visit of the candidate.
+    /// The candidate takes its name here, before its parameters are visited, so no function in them can.
     pub(crate) fn enter_react_compiler_candidate(
         &mut self,
         name: Option<js_ast::Ref>,
@@ -261,8 +256,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         }
     }
 
-    /// Ends the visit that `enter_react_compiler_candidate` started. Returns the
-    /// compiled parameters and flags when the compiler replaced the body.
+    /// Returns the compiled parameters and flags when the compiler replaced the body.
     pub(crate) fn leave_react_compiler_candidate(
         &mut self,
         candidate: ReactCompilerCandidate,

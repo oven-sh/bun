@@ -6418,6 +6418,13 @@ describe("a `// @bun @bun-cjs` file", () => {
     });
   });
 
+  // The printer writes `import.meta.main` as `require.main == module` only in a CommonJS module.
+  it("is CommonJS also when its body names no CommonJS variable", () => {
+    expect(transpiler.transformSync(wrapper("if (import.meta.main) start();\n"))).toBe(
+      "if (require.main == module)\n  start();\n",
+    );
+  });
+
   it("is an error when the text below the pragma is not the wrapper that `bun build` writes", async () => {
     const actual = {};
     for (const [name, code] of [

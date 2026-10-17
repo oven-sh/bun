@@ -2590,6 +2590,8 @@ impl<'a> Parser<'a> {
         // A function's statements (top-level `return`, `arguments`) stay in one: no export lifting.
         p.commonjs_named_exports_deoptimized = true;
         p.is_bun_cjs_wrapper_body = true;
+        // The pragma decides the type. `Unknown` would guess an ES module for `eval("module")`.
+        p.options.module_type = options::ModuleType::Cjs;
 
         // Still in the module scope: the five parameters are its CommonJS symbols.
         let mut stmts =

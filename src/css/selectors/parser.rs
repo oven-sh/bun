@@ -2617,16 +2617,13 @@ bitflags::bitflags! {
         /// whatever comes after them if so.
         const AFTER_SLOTTED = 1 << 1;
 
-        /// Whether we've parsed a ::part() pseudo-element, or one that parses
-        /// like it (`PseudoElement::parses_as_element_backed`), already.
+        /// Whether we've parsed a ::part(), or a pseudo-element that parses like one, already.
         ///
-        /// If so, then pseudo-classes and other pseudo-elements can follow,
-        /// and nothing else.
+        /// If so, then we can only parse a subset of pseudo-elements, and
+        /// whatever comes after them if so.
         const AFTER_PART_LIKE = 1 << 2;
 
-        /// Whether we've parsed a known pseudo-element that does not parse
-        /// like ::part() (as in, an `Impl::PseudoElement` thus not accounting
-        /// for `::slotted` or `::part`) already.
+        /// Whether we've parsed a known pseudo-element that does not parse like ::part() already.
         ///
         /// If so, then other pseudo-elements and most other selectors are
         /// disallowed.
@@ -2650,8 +2647,7 @@ bitflags::bitflags! {
         const AFTER_WEBKIT_SCROLLBAR = 1 << 8;
         const AFTER_VIEW_TRANSITION = 1 << 9;
 
-        /// Whether we've parsed an `Impl::PseudoElement` of any kind, unknown
-        /// ones included. Only `SelectorFlags::HAS_PSEUDO` reads it.
+        /// Set for every `Impl::PseudoElement`. Only `SelectorFlags::HAS_PSEUDO` reads it.
         const HAS_PSEUDO_ELEMENT = 1 << 10;
     }
 }
@@ -3042,14 +3038,14 @@ impl PseudoElement {
     }
 
     /// Whether any pseudo-class or pseudo-element can follow, as after `::part()`.
-    /// `::details-content`: https://drafts.csswg.org/css-pseudo-4/#element-backed
-    /// `::picker()`: https://github.com/w3c/csswg-drafts/issues/10758 (resolved part-like)
-    /// lightningcss keeps both strict (parcel-bundler/lightningcss#1244, #1292).
     pub(crate) fn parses_as_element_backed(&self) -> bool {
         use PseudoElement as PE;
         // No `_` arm, so that a new variant has to be classified here.
         match self {
-            PE::DetailsContent | PE::PickerFunction { .. } => true,
+            // https://drafts.csswg.org/css-pseudo-4/#element-backed (strict in lightningcss)
+            PE::DetailsContent => true,
+            // Part-like: https://github.com/w3c/csswg-drafts/issues/10758 (strict in lightningcss)
+            PE::PickerFunction { .. } => true,
             PE::After
             | PE::Before
             | PE::FirstLine

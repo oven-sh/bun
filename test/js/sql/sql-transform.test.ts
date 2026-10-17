@@ -551,6 +551,16 @@ function suite(dialect: Dialect, url: () => string) {
 describe.concurrent("sqlite", () => {
   suite("sqlite", () => "sqlite://:memory:");
 
+  // A query does not read the options again: the client keeps the transform it was made with.
+  test("a transform that is assigned to sql.options afterwards is not used", async () => {
+    await using sql = new SQL(":memory:");
+    (sql.options as { transform?: unknown }).transform = {
+      undefined: 7,
+      column: { from: SQL.toCamel, to: SQL.fromCamel },
+    };
+    expect([...(await sql`select ${undefined} as user_id`)]).toEqual([{ user_id: null }]);
+  });
+
   // bun:sqlite closes nothing while a statement is on a row, and that is when `from` runs.
   test.each([
     ["a read", "select 1 as a", [{ a: 1 }]],

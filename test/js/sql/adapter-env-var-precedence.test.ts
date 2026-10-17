@@ -707,6 +707,67 @@ describe("SQL adapter environment variable precedence", () => {
     });
   });
 
+  // Object.prototype is not the environment: a name that is not set there is not looked up on it.
+  describe("a variable that is not set", () => {
+    const resolved = (...args: unknown[]) => {
+      const sql = new SQL(...(args as [string]));
+      const options = { ...sql.options };
+      if (options.adapter === "sqlite") sql.close();
+      return options;
+    };
+    const calls: [string, () => object][] = [
+      ["()", () => resolved()],
+      ["({ adapter: 'postgres' })", () => resolved({ adapter: "postgres" })],
+      ["({ adapter: 'mysql' })", () => resolved({ adapter: "mysql" })],
+      ["({ adapter: 'mariadb' })", () => resolved({ adapter: "mariadb" })],
+      ["('postgres://uu@uh/ud')", () => resolved("postgres://uu@uh/ud")],
+    ];
+
+    test.each([
+      ["DATABASE_URL", "mysql://eu:ep@eh:9/ed"],
+      ["TLS_DATABASE_URL", "postgres://eu:ep@eh:9/ed"],
+      ["POSTGRES_URL", "postgres://eu:ep@eh:9/ed"],
+      ["MYSQL_URL", "mysql://eu:ep@eh:9/ed"],
+      ["MARIADB_URL", "mariadb://eu:ep@eh:9/ed"],
+      ["SQLITE_URL", ":memory:"],
+      ["PGHOST", "eh"],
+      ["PG_PORT", "9"],
+      ["PGUSER", "eu"],
+      ["PGUSERNAME", "eu"],
+      ["PGPASSWORD", "ep"],
+      ["PGDATABASE", "ed"],
+      ["PGSSLMODE", "require"],
+      ["PGAPPNAME", "planted"],
+      ["PGOPTIONS", "-c search_path=planted"],
+      ["PGCONNECT_TIMEOUT", "1"],
+      ["PGCHANNELBINDING", "require"],
+      ["MYSQL_HOST", "eh"],
+      ["MYSQLPASSWORD", "ep"],
+      ["MARIADB_HOST", "eh"],
+      ["USER", "eu"],
+      ["USERNAME", "eu"],
+    ])("%s on Object.prototype is not one", (name, value) => {
+      for (const [call, make] of calls) {
+        const clean = make();
+        Object.defineProperty(Object.prototype, name, { value, configurable: true, enumerable: true, writable: true });
+        try {
+          expect({ call, options: make() }).toEqual({ call, options: clean });
+        } finally {
+          delete Object.prototype[name];
+        }
+      }
+    });
+
+    test.skipIf(!isWindows)("on Windows a variable that is set is found under any case", () => {
+      process.env.pghost = "eh";
+      try {
+        expect(new SQL({ adapter: "postgres" }).options.hostname).toBe("eh");
+      } finally {
+        delete process.env.pghost;
+      }
+    });
+  });
+
   describe("the SSL mode stated in two places", () => {
     const MODES = ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"] as const;
     const RESOLVED = ["disable", "prefer", "require", "verify-ca", "verify-full"] as const;

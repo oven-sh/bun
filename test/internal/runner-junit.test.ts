@@ -162,19 +162,21 @@ test("parseJunitFileSuites reads the report bun test --parallel --reporter=junit
 });
 
 // The native runner uses /tmp on Linux/macOS, independently of TMPDIR.
-test.skipIf(process.platform !== "linux" && process.platform !== "darwin")(
+const node = nodeExe();
+test.skipIf((process.platform !== "linux" && process.platform !== "darwin") || !node)(
   "explicit Linux/macOS JUnit keeps per-file reports while default execution batches allowlisted files",
   async () => {
-    const node = nodeExe();
-    if (
-      !node ||
-      execFileSync(node, ["-p", "process.release.name === 'node' && !process.versions.bun"], {
-        encoding: "utf8",
-        timeout: 5000,
-        maxBuffer: 1024,
-      }).trim() !== "true"
-    )
-      throw new Error("This runner regression requires genuine Node.js");
+    {
+      await using probe = Bun.spawn({
+        cmd: [node!, "-p", "process.release.name === 'node' && !process.versions.bun"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([probe.stdout.text(), probe.stderr.text(), probe.exited]);
+      expect(stdout.trim()).toBe("true");
+      expect(exitCode, stderr).toBe(0);
+    }
     const files = Array.from({ length: 8 }, (_, i) => `test/js/node/module/fixture-${i}.test.ts`);
     const fixture: Record<string, string> = {
       "test/parallel-allowlist.json": JSON.stringify({ dirs: ["js/node/module"], excludeFiles: [] }),
@@ -215,7 +217,7 @@ test.skipIf(process.platform !== "linux" && process.platform !== "darwin")(
       for (const junit of [false, true]) {
         await using proc = Bun.spawn({
           cmd: [
-            node,
+            node!,
             "scripts/runner.node.ts",
             "--exec-path",
             bunExe(),
@@ -230,10 +232,10 @@ test.skipIf(process.platform !== "linux" && process.platform !== "darwin")(
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(exitCode, stderr).toBe(0);
         expect(stdout.includes("8 files in parallel")).toBe(!junit);
         if (!junit) {
           expect(reports()).toEqual([]);
+          expect(exitCode, stderr).toBe(0);
           continue;
         }
         expect(reports()).toHaveLength(1);
@@ -249,12 +251,10 @@ test.skipIf(process.platform !== "linux" && process.platform !== "darwin")(
           expect(xml.match(/<testcase\b/g)).toHaveLength(1);
           expect(parse(xml)).toEqual({ [file]: { failures: 0, seconds: expect.any(Number), cases: [] } });
         }
+        expect(exitCode, stderr).toBe(0);
       }
     } finally {
-      for (const name of reports()) {
-        const path = join(nativeTemp, name);
-        if (lstatSync(path).isDirectory() && !lstatSync(path).isSymbolicLink()) rmSync(path, { recursive: true });
-      }
+      for (const name of reports()) rmSync(join(nativeTemp, name), { recursive: true, force: true });
     }
   },
 );

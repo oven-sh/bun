@@ -24,6 +24,29 @@ Bun.build({
 
 Bun.build({
   entrypoints: ["hey"],
+  compile: {
+    target: "bun-darwin-arm64",
+    macos: { infoPlist: "./Info.plist" },
+  },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  compile: {
+    macos: { infoPlist: process.platform === "darwin" ? "./Info.plist" : undefined },
+  },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  compile: {
+    // @ts-expect-error
+    macos: { infoPlist: 1 },
+  },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
   plugins: [
     {
       name: "my-terrible-plugin",

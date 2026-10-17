@@ -245,6 +245,7 @@ pub struct BundlerOptions {
     pub compile_jit_policy: f32,
     pub compile_assets: Vec<Box<[u8]>>,
     pub windows: bundle_enums::WindowsOptions,
+    pub macos: bundle_enums::MacosOptions,
     pub allow_unresolved: Option<Vec<Box<[u8]>>>,
 }
 
@@ -304,6 +305,7 @@ impl Default for BundlerOptions {
             compile_jit_policy: 1.0,
             compile_assets: Vec::new(),
             windows: bundle_enums::WindowsOptions::default(),
+            macos: bundle_enums::MacosOptions::default(),
             allow_unresolved: None,
         }
     }

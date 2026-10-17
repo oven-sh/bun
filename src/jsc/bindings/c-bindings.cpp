@@ -1189,6 +1189,15 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
     return &BUN_COMPILED.size;
 }
 
+// Room for `bun build --compile --macos-info-plist`: __TEXT cannot grow after the link, so
+// exe_format/macho.rs (set_info_plist) renames this section to __info_plist and writes the plist over
+// it. The size is the limit on that plist. It must not be named __info_plist here: codesign refuses
+// an executable whose __TEXT,__info_plist is not a property list. Written in assembly so that it has
+// no symbol, survives -dead_strip, and is exactly this size under ASan (a C array gets a redzone).
+__asm__(".section __TEXT,__bun_plist,regular,no_dead_strip\n"
+        ".space 4096\n"
+        ".text\n");
+
 #else // __linux__ / __FreeBSD__ — both ELF, same .bun section approach
 
 extern "C" BlobHeader __attribute__((section(".bun"), aligned(BLOB_HEADER_ALIGNMENT), used)) BUN_COMPILED = { 0 };

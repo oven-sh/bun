@@ -198,6 +198,11 @@ impl PackageManager {
             existing.dependencies = package.dependencies;
             existing.resolutions = package.resolutions;
             existing.bin = package.bin;
+            // A binary lockfile records the scripts. They are of the bytes that were read now.
+            if existing.scripts.filled {
+                existing.scripts = package.scripts;
+            }
+            (existing.meta).set_has_install_script(package.meta.has_install_script());
             if data.integrity.tag.is_supported() {
                 existing.meta.integrity = data.integrity;
             }

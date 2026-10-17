@@ -996,6 +996,53 @@ describe.concurrent.each(
     expect(await file(join(siblings, "dep", "index.js")).text()).toBe('module.exports = "dep";\n');
   });
 
+  // A binary lockfile records the lifecycle scripts of a package. They are of the build that is installed.
+  it.each([
+    ["adds", {}, { postinstall: "echo v2 > ran.txt" }, "v2\n"],
+    ["changes", { postinstall: "echo v1 > ran.txt" }, { postinstall: "echo v2 > ran.txt" }, "v2\n"],
+    ["drops", { postinstall: "echo v1 > ran.txt" }, {}, null],
+  ] as const)(
+    "bun update runs what the new build has when it %s a postinstall (bun.lockb)",
+    async (verb, from, to, ran) => {
+      using box = sandbox(`tarball-scripts-${verb}`, { app: {} });
+      await writeFile(
+        join(box.root, "app", "package.json"),
+        JSON.stringify({ name: "app", dependencies: { pkg: box.spec }, trustedDependencies: ["pkg"] }),
+      );
+      await writeFile(
+        join(box.root, "app", "bunfig.toml"),
+        Bun.TOML.stringify({ install: { linker, saveTextLockfile: false } }),
+      );
+      const ranFile = () => file(join(box.root, "app", "node_modules", "pkg", "ran.txt"));
+
+      await box.put("app", await tarball("v1", { scripts: from }));
+      await box.ok("app", "install");
+      expect(await ranFile().exists()).toBe("postinstall" in from);
+
+      await box.put("app", await tarball("v2", { scripts: to }));
+      await box.ok("app", "update");
+      expect(await box.installed("app")).toBe('module.exports = "v2";\n');
+      expect((await ranFile().exists()) ? await ranFile().text() : null).toBe(ran);
+    },
+  );
+
+  it("bun update records whether the new build has a lifecycle script", async () => {
+    using box = sandbox("tarball-has-install-script", { app: {} });
+    const locked = async () => (Bun.JSONC.parse(await box.lockfile("app")) as any).packages.pkg[1];
+
+    await box.put("app", await tarball("v1"));
+    await box.ok("app", "install");
+    expect(await locked()).toEqual({});
+
+    await box.put("app", await tarball("v2", { scripts: { postinstall: "echo v2 > ran.txt" } }));
+    await box.ok("app", "update");
+    expect(await locked()).toEqual({ hasInstallScript: true });
+
+    await box.put("app", await tarball("v3"));
+    await box.ok("app", "update");
+    expect(await locked()).toEqual({});
+  });
+
   // `--no-verify` skips the hash check of a download (a `file:` tarball is always checked).
   // Unverified bytes never get a cache entry named after the hash in bun.lock: their entry
   // is named after the URL and that hash together, and only `--no-verify` installs look there.

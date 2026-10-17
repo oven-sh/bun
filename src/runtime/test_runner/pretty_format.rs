@@ -2276,9 +2276,9 @@ impl<'a> Formatter<'a> {
                                             );
                                         }
                                         writer.write_all(b">");
-                                    }
 
-                                    return Ok(true);
+                                        return Ok(true);
+                                    }
                                 }
                             }
                         }

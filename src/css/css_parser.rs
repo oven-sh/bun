@@ -2336,6 +2336,20 @@ impl<AtRule> StyleSheet<AtRule> {
     }
 }
 
+/// Longest input the parser accepts: positions are `i32`, and `len + 1` must fit.
+pub const MAX_INPUT_LEN: usize = i32::MAX as usize - 1;
+
+/// Every entry point that builds a [`Parser`] over user bytes calls this first.
+pub fn check_input_len(code: &[u8]) -> Maybe<(), Err<ParserError>> {
+    if code.len() > MAX_INPUT_LEN {
+        return Err(Err {
+            kind: ParserError::input_too_large,
+            loc: None,
+        });
+    }
+    Ok(())
+}
+
 // ── StyleSheet behavior (parse/minify/to_css) ────────────────────────────────
 mod stylesheet_impl {
     use super::*;
@@ -2567,6 +2581,7 @@ mod stylesheet_impl {
             // returned `StyleSheet`.
             // TODO(refactor): re-thread the lifetime through `CssRuleList<'bump, R>`
             // and drop the `'static` bound on `arena`.
+            check_input_len(code)?;
             let mut composes = ComposesMap::default();
             let mut parser_extra = ParserExtra {
                 local_scope: LocalScope::default(),
@@ -2669,6 +2684,7 @@ mod stylesheet_impl {
             // TODO: 'bump lifetime threading — `DeclarationBlock<'static>` in
             // `StyleAttribute` vs `Parser<'a>` here; `arena: &'static Bump`
             // matches the crate-wide erasure (see `parse_with`).
+            check_input_len(code)?;
             let mut parser_extra = ParserExtra {
                 local_scope: LocalScope::default(),
                 symbols: SymbolList::default(),
@@ -3074,6 +3090,8 @@ impl<'a> Parser<'a> {
             // every `ImportRecord` produced by this parse; the lifetime
             // is erased to 'static (see PORTING.md §Lifetimes).
             let url_static: &'static [u8] = unsafe { src_str(url) };
+            // Source span, not `url.len()`: the unescaped url can be longer than its source.
+            let end_position = self.position();
             import_records.push(ImportRecord {
                 path: ast::fs::path_init(url_static),
                 kind,
@@ -3081,8 +3099,7 @@ impl<'a> Parser<'a> {
                     loc: bun_ast::Loc {
                         start: i32::try_from(start_position).expect("int cast"),
                     },
-                    // TODO: technically this is not correct because the url could be escaped
-                    len: i32::try_from(url.len()).expect("int cast"),
+                    len: i32::try_from(end_position - start_position).expect("int cast"),
                 },
                 tag: Default::default(),
                 loader: None,

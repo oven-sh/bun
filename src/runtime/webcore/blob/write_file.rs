@@ -118,6 +118,8 @@ pub(crate) struct WriteFile {
     pub(crate) close_after_io: bool,
     #[cfg(not(windows))]
     pub(crate) mkdirp_if_not_exists: bool,
+    #[cfg(not(windows))]
+    pub(crate) mode: Option<sys::Mode>,
 }
 
 bun_threading::intrusive_work_task!(WriteFile, task);
@@ -131,6 +133,13 @@ impl FileOpener for WriteFile {
     const OPEN_FLAGS: i32 =
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::NONBLOCK;
 
+    #[cfg(not(windows))]
+    fn open_args(&self) -> (i32, sys::Mode) {
+        (
+            (Self::OPEN_FLAGS & !bun_sys::O::TRUNC) | blob::truncate_on_open(self.mode),
+            self.mode.unwrap_or(crate::node::fs::DEFAULT_PERMISSION),
+        )
+    }
     fn opened_fd(&self) -> Fd {
         self.opened_fd
     }
@@ -289,6 +298,7 @@ impl WriteFile {
         file_blob: Blob,
         bytes_blob: Blob,
         mkdirp_if_not_exists: bool,
+        mode: Option<sys::Mode>,
     ) -> Result<WriteFile, Error> {
         let write_file = WriteFile {
             file_blob,
@@ -309,6 +319,7 @@ impl WriteFile {
             could_block: false,
             close_after_io: false,
             mkdirp_if_not_exists,
+            mode,
         };
         Ok(write_file)
     }
@@ -418,6 +429,18 @@ impl WriteFile {
         }
 
         let fd = self.opened_fd;
+
+        if self.is_allowed_to_close() {
+            if let bun_sys::Result::Err(err) =
+                blob::apply_mode(fd, self.mode, blob::Discard::BeforeWrite)
+            {
+                let err = err.with_path(self.pathlike().path().slice());
+                self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                self.system_error = Some(err.to_system_error().into());
+                self.on_finish();
+                return;
+            }
+        }
 
         self.could_block = 'brk: {
             if let Some(store) = self.file_blob.store.get().as_ref() {
@@ -785,6 +808,7 @@ mod windows_impl {
                         | uv::O::NONBLOCK
                         | uv::O::SEQUENTIAL
                         | uv::O::TRUNC,
+                    // A `mode` from `Bun.write` is not applied here: `blob::apply_mode` is POSIX only.
                     0o644,
                     Some(Self::on_open),
                 )
@@ -1263,6 +1287,8 @@ pub(crate) struct WriteFileWaitFromLockedValueTask {
     pub global_this: bun_ptr::BackRef<JSGlobalObject>,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) mkdirp_if_not_exists: bool,
+    #[cfg(not(windows))]
+    pub(crate) mode: Option<sys::Mode>,
 }
 
 impl WriteFileWaitFromLockedValueTask {
@@ -1320,6 +1346,8 @@ impl WriteFileWaitFromLockedValueTask {
                     &mut file_blob,
                     &blob::WriteFileOptions {
                         mkdirp_if_not_exists: Some(this.mkdirp_if_not_exists),
+                        #[cfg(not(windows))]
+                        mode: this.mode,
                         ..Default::default()
                     },
                 ) {

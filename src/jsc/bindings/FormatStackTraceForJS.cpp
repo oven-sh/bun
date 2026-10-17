@@ -24,6 +24,7 @@
 #include "BunClientData.h"
 #include "CallSite.h"
 #include "ErrorStackTrace.h"
+#include "ErrorStackFrame.h"
 #include "headers-handwritten.h"
 
 #include <wtf/Scope.h>
@@ -337,7 +338,13 @@ WTF::String formatStackTrace(
 
         if (!frame.hasLineAndColumnInfo()) continue;
 
-        originalLineColumns[i] = frame.computeLineAndColumn();
+        if (frame.codeBlock() && frame.hasBytecodeIndex()) {
+            auto position = Bun::getAdjustedLineColumnForBytecode(frame.codeBlock(), frame.bytecodeIndex());
+            originalLineColumns[i] = { static_cast<unsigned>(position.line().oneBasedInt()), static_cast<unsigned>(position.column().oneBasedInt()) };
+            if (auto overrideLine = frame.codeBlock()->ownerExecutable()->overrideLineNumber(vm))
+                originalLineColumns[i].line = *overrideLine;
+        } else
+            originalLineColumns[i] = frame.computeLineAndColumn();
 
         JSC::JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
         if (auto* callee = frame.callee()) {
@@ -375,8 +382,8 @@ WTF::String formatStackTrace(
         WTF::String functionName = Zig::functionName(vm, frame, &flags);
         OrdinalNumber originalLine = {};
         OrdinalNumber originalColumn = {};
-        OrdinalNumber displayLine = {};
-        OrdinalNumber displayColumn = {};
+        OrdinalNumber displayLine = OrdinalNumber::beforeFirst();
+        OrdinalNumber displayColumn = OrdinalNumber::beforeFirst();
         WTF::String sourceURLForFrame = sourceURLs[i];
 
         if (frame.hasLineAndColumnInfo()) {
@@ -434,11 +441,11 @@ WTF::String formatStackTrace(
 
         if (!sourceURLForFrame.isEmpty()) {
             sb.append(sourceURLForFrame);
-            if (displayLine.zeroBasedInt() > 0 || displayColumn.zeroBasedInt() > 0) {
+            if (displayLine != OrdinalNumber::beforeFirst()) {
                 sb.append(':');
                 sb.append(displayLine.oneBasedInt());
 
-                if (displayColumn.zeroBasedInt() > 0) {
+                if (displayColumn != OrdinalNumber::beforeFirst()) {
                     sb.append(':');
                     sb.append(displayColumn.oneBasedInt());
                 }

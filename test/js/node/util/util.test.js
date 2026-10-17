@@ -551,6 +551,18 @@ describe("util", () => {
   });
 
   describe("getCallSites", () => {
+    it("keeps both column aliases one-based", async () => {
+      const source = [
+        'const { getCallSites } = require("node:util");',
+        "function capture() { const frame = getCallSites(1)[0]; return [frame.lineNumber, frame.columnNumber, frame.column]; }",
+        "console.log(JSON.stringify(capture()));",
+      ].join("\n");
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "[2,36,36]\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
     it("restores Error state when stackTraceLimit is non-writable", () => {
       const desc = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
       const savedPrepare = Error.prepareStackTrace;

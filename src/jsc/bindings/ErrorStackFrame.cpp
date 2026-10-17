@@ -1,4 +1,5 @@
 #include "root.h"
+#include "ErrorStackFrame.h"
 #include "JavaScriptCore/CodeBlock.h"
 #include "headers-handwritten.h"
 #include "JavaScriptCore/BytecodeIndex.h"
@@ -8,96 +9,50 @@
 namespace Bun {
 using namespace JSC;
 
-/// Adjust a `ZigStackFramePosition` by a number of bytes. This accounts for when the adjustment
-/// crosses line boundaries, and thus requires the source code in order to properly compute
-/// the result.
-void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* code)
+static bool isConstruct(JSC::CodeBlock* code, JSC::BytecodeIndex bc)
 {
-    if (pos.byte_position - amount < 0) {
-        pos.line_zero_based = 0;
-        pos.column_zero_based = 0;
-        pos.byte_position = 0;
-        return;
+    switch (code->instructionAt(bc)->opcodeID()) {
+    case op_construct:
+    case op_construct_varargs:
+    case op_super_construct:
+    case op_super_construct_varargs:
+        return true;
+    default:
+        return false;
     }
-
-    pos.column_zero_based = pos.column_zero_based - amount;
-    if (pos.column_zero_based < 0) {
-        auto* provider = code->source().provider();
-        if (!provider) {
-            pos.line_zero_based = 0;
-            pos.column_zero_based = 0;
-            pos.byte_position = 0;
-            return;
-        }
-
-        auto source = provider->source();
-        if (!source.is8Bit()) {
-            // Debug-only assertion
-            // Bun does not yet use 16-bit sources anywhere. The transpiler ensures everything
-            // fit's into latin1 / 8-bit strings for on-average lower memory usage.
-            ASSERT_NOT_REACHED("16-bit source re-mapping is not implemented here.");
-
-            pos.line_zero_based = 0;
-            pos.column_zero_based = 0;
-            pos.byte_position = 0;
-            return;
-        }
-
-        for (int i = 0; i < amount; i++) {
-            if (source[pos.byte_position - i] == '\n') {
-                pos.line_zero_based = pos.line_zero_based - 1;
-            }
-        }
-
-        int columns = 0;
-        // Initial -1 to skip the newline that gets counted.
-        int i = pos.byte_position - amount - 1;
-        while (i > 0 && source[i] != '\n') {
-            columns += 1;
-            i -= 1;
-        }
-        pos.column_zero_based = columns;
-    }
-
-    pos.byte_position -= amount;
 }
 
 ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc)
 {
     auto expr = code->expressionInfoForBytecodeIndex(bc);
-    // Expression info has offsets only. The provider derives the line and the column from the divot.
-    auto lineColumn = code->source().provider()->documentLineColumnForOffset(expr.divot);
+    auto offset = expr.divot;
+    // Constructors point to `new`; other calls retain JSC's syntax location.
+    if (isConstruct(code, bc))
+        offset -= std::min(offset, expr.startOffset);
 
-    ZigStackFramePosition pos {
+    auto lineColumn = code->source().provider()->documentLineColumnForOffset(offset);
+    return {
         .line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt(),
         .column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt(),
-        .byte_position = (int)expr.divot,
+        .byte_position = static_cast<int>(offset),
     };
+}
 
-    auto inst = code->instructionAt(bc);
-
-    /// JavaScriptCore places error divots at different places than v8
-    // Uncomment to debug this:
-    // printf("lc = %d : %d (byte = %d)\n", pos.line.oneBasedInt(), pos.column.oneBasedInt(), expr.divot);
-    // printf("off = %d : %d\n", expr.startOffset, expr.endOffset);
-    // printf("name = %s\n", inst->name());
-
-    switch (inst->opcodeID()) {
-    case op_construct:
-    case op_construct_varargs:
-    case op_super_construct:
-    case op_super_construct_varargs:
-        // The divot by default is pointing at the `(` or the end of the class name.
-        // We want to point at the `new` keyword, which is conveniently at the
-        // expression start.
-        adjustPositionBackwards(pos, expr.startOffset, code);
-        break;
-
-    default:
-        break;
+ZigStackFramePosition getAdjustedLineColumnForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc)
+{
+    if (isConstruct(code, bc)) {
+        auto position = getAdjustedPositionForBytecode(code, bc);
+        position.byte_position = -1;
+        return position;
     }
 
-    return pos;
+    // Keep JSC's cached lookup for frames that do not need an expression-range adjustment.
+    auto lineColumn = code->lineColumnForBytecodeIndex(bc);
+    return {
+        .line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt(),
+        .column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt(),
+        .byte_position = -1,
+    };
 }
 
 } // namespace Bun

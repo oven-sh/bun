@@ -773,6 +773,7 @@ function expectBundled(
       const installProcess = Bun.spawn({
         cmd: [bunExe(), "install", ...install, "--linker=hoisted"],
         cwd: root,
+        env: bunEnv,
         stdio: ["ignore", "inherit", "inherit"],
       });
       const installExitCode = await installProcess.exited;

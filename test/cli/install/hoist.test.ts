@@ -2033,6 +2033,8 @@ test.concurrent.each([
   if (kind.endsWith("cache")) rmSync(join(dir, ".bun-cache"), { recursive: true });
   await pull();
   await run(dir, "install", "--production");
+  // The copy has the version that bun.lock resolves. It only stays where it may be a part of `n`.
+  expect(layout(dir).includes("n/b@2.0.0")).toBe(kind.endsWith("cache"));
 
   graph.b = { ...before, "2.1.0": published };
   await run(dev, "update", "b");

@@ -2466,8 +2466,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = expr.data.e_new().expect("infallible: variant checked");
         p.visit_expr(&mut e_.target);
 
-        // Matched before the arguments are visited: CommonJS output inlines `import.meta.url`
-        // to the build path during the visit.
+        // Matched before the visit: CommonJS output inlines `import.meta.url` during it.
         let is_url_of_import_meta = p.options.features.embed_new_url_assets
             && e_.args.len_u32() == 2
             && p.is_url_constructor(&e_.target)
@@ -2526,11 +2525,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `--compile`: `new URL("./file", import.meta.url)` becomes `new URL("file:" + require("./file"))`
-    /// with the record loaded by the file loader, so the file is embedded and the URL names the
-    /// embedded copy. `"file:"` + an absolute path parses to a `file:///` URL on POSIX
-    /// (`/$bunfs/root/x`) and on Windows (`B:/~BUN/root/x`, the drive letter stays a path).
-    /// A target that is not an existing file at build time is left as written.
+    /// `new URL("./file", import.meta.url)` -> `new URL("file:" + require("./file"))` with the file
+    /// loader. `"file:"` + `/$bunfs/root/x` and `"file:"` + `B:/~BUN/root/x` both parse as `file:///`.
     fn embed_new_url_asset(&mut self, e_: &mut E::New) {
         let args = e_.args.slice_mut();
         let arg_loc = args[0].loc;
@@ -2942,10 +2938,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-/// A `new URL(specifier, base)` argument that names a file relative to the base: not empty, not
-/// absolute, no scheme (`data:`, `https:`, a Windows drive letter), and no byte the URL parser
-/// strips or reads as syntax (`? # % \`, NUL, tab, newline, leading or trailing space or control),
-/// which would make the URL name a different file than the literal.
+/// Relative, no scheme or drive letter, and no byte the URL parser strips or reads as syntax.
 fn is_relative_file_specifier(specifier: &[u8]) -> bool {
     if specifier.is_empty() || matches!(specifier[0], b'/' | b'\\') {
         return false;

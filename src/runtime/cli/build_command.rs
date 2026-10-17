@@ -1302,9 +1302,7 @@ fn print_summary(
     bun_core::prettyln!("  <green>bundle<r>  {} modules", reachable_file_count);
 }
 
-/// One line per file the bundler embedded from a module reference: a `with { type: "file" }`
-/// import or a `new URL("./x", import.meta.url)` sibling. Files from `--asset` were listed by
-/// the user and are not repeated.
+/// One line per file-loader asset. `--asset` files were listed by the user and are not repeated.
 fn print_embedded_assets(output_files: &[options::OutputFile], cwd: &[u8]) {
     for f in output_files.iter() {
         if f.output_kind != options::OutputKind::Asset
@@ -1350,8 +1348,7 @@ pub(crate) fn collect_compile_assets(
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {
             if let Some(&existing) = seen.get(&dest) {
-                // The bundler already embedded this file at this name (a `with { type: "file" }`
-                // import or a `new URL(..., import.meta.url)` sibling under `--asset-naming`).
+                // The bundler already embedded this same file under this name.
                 if out[existing].value.as_slice() == bytes.as_slice() {
                     return Ok(());
                 }

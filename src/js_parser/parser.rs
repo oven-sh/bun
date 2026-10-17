@@ -177,8 +177,7 @@ pub mod Runtime {
         /// Test-only: have the React Compiler read leading `// @key value`
         /// fixture pragmas from the source. Set by the fixture runner.
         pub react_compiler_parse_test_pragmas: bool,
-        /// `--compile`: embed the file named by `new URL("./file", import.meta.url)` as a
-        /// file-loader asset and point the URL at the embedded copy.
+        /// `--compile`: embed the file named by `new URL("./file", import.meta.url)`.
         pub embed_new_url_assets: bool,
         /// `hot_module_reloading` is specific to if we are using bun.bake.DevServer.
         /// It can be enabled on the command line with --format=internal_bake_dev

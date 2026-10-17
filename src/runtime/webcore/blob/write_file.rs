@@ -112,6 +112,14 @@ pub(crate) struct WriteFile {
     pub(crate) state: AtomicU8, // ClosingState
 
     pub(crate) total_written: usize,
+    /// Bytes of this write that the synchronous attempt wrote before the job (`resume_from`).
+    pub(crate) base_written: usize,
+    /// The fd the synchronous attempt opened, until `run` takes it. Closes on drop if never run.
+    #[cfg(not(windows))]
+    pub(crate) adopted_fd: Option<sys::CloseOnDrop>,
+    /// `opened_fd` was opened without `O_TRUNC`: cut the file at the last byte written.
+    #[cfg(not(windows))]
+    pub(crate) truncate_on_finish: bool,
 
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
@@ -306,11 +314,21 @@ impl WriteFile {
             io_parking: super::IoParking::new(),
             state: AtomicU8::new(ClosingState::Running as u8),
             total_written: 0,
+            base_written: 0,
+            adopted_fd: None,
+            truncate_on_finish: false,
             could_block: false,
             close_after_io: false,
             mkdirp_if_not_exists,
         };
         Ok(write_file)
+    }
+
+    /// The rest of a write whose synchronous attempt got `EAGAIN` after `written` bytes, on `fd`.
+    #[cfg(not(windows))]
+    pub(crate) fn resume_from(&mut self, written: usize, fd: Option<sys::CloseOnDrop>) {
+        self.base_written = written;
+        self.adopted_fd = fd;
     }
 
     // reshaped for borrowck — take (off, len) here and re-derive the slice
@@ -348,7 +366,7 @@ impl WriteFile {
         let cb: WriteFileOnWriteFileCallback = WriteFilePromise::run;
         let cb_ctx = bun_core::heap::into_raw(promise).cast::<c_void>();
         let system_error = this.system_error.take();
-        let total_written = this.total_written;
+        let total_written = this.base_written + this.total_written;
         drop(this);
 
         if let Some(err) = system_error {
@@ -373,6 +391,10 @@ impl WriteFile {
         #[cfg(not(windows))]
         {
             self.io_task = Some(task);
+            if let Some(fd) = self.adopted_fd.take() {
+                self.opened_fd = fd.release();
+                self.truncate_on_finish = true;
+            }
             self.run_async();
         }
     }
@@ -400,6 +422,10 @@ impl WriteFile {
         bun_output::scoped_log!(WriteFile, "WriteFile.onFinish()");
 
         let close_after_io = self.close_after_io;
+        if core::mem::take(&mut self.truncate_on_finish) {
+            let len = self.base_written + self.total_written;
+            let _ = sys::ftruncate(self.opened_fd, i64::try_from(len).expect("int cast"));
+        }
         if self.do_close(self.is_allowed_to_close()) {
             return;
         }
@@ -460,7 +486,7 @@ impl WriteFile {
             if !self.could_block && self.bytes_blob.shared_view().len() > 1024 {
                 let _ = sys::preallocate_file(
                     fd.native(),
-                    0,
+                    i64::try_from(self.base_written).expect("int cast"),
                     i64::try_from(self.bytes_blob.shared_view().len()).expect("int cast"),
                 ); // we don't care if it fails.
             }

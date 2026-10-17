@@ -5335,35 +5335,12 @@ pub mod c {
         sysctl,
         sysctlnametomib,
         // <net/if_dl.h> — `sockaddr_dl` already re-exported above for all BSDs.
-        // misc libc
-        truncate,
         vm_deallocate,
         vm_size_t,
         vm_statistics64,
         vm_statistics64_data_t,
     };
 
-    /// Safe rc-returning `clonefile(2)` — callers that want their own
-    /// `sys::Tag` / path boxing (`errno_sys_p`) take the raw `c_int` instead
-    /// of the `Maybe<()>`-shaped [`super::clonefile`].
-    #[cfg(target_os = "macos")]
-    #[inline]
-    pub fn clonefile_rc(src: &bun_core::ZStr, dst: &bun_core::ZStr, flags: u32) -> c_int {
-        // SAFETY: `&ZStr` guarantees a readable NUL-terminated buffer.
-        unsafe { libc::clonefile(src.as_ptr(), dst.as_ptr(), flags) }
-    }
-    /// Safe rc-returning `copyfile(3)` with a null state handle.
-    #[cfg(target_os = "macos")]
-    #[inline]
-    pub fn copyfile_rc(
-        src: &bun_core::ZStr,
-        dst: &bun_core::ZStr,
-        flags: libc::copyfile_flags_t,
-    ) -> c_int {
-        // SAFETY: `&ZStr` guarantees a readable NUL-terminated buffer; `state`
-        // may be null per copyfile(3).
-        unsafe { libc::copyfile(src.as_ptr(), dst.as_ptr(), core::ptr::null_mut(), flags) }
-    }
     /// `PROCESSOR_CPU_LOAD_INFO_COUNT` — sizeof(processor_cpu_load_info)/sizeof(natural_t).
     /// Not bound by `libc`; <mach/processor_info.h>.
     #[cfg(target_os = "macos")]
@@ -5750,7 +5727,7 @@ pub mod linux {
     /// `bun.linux.ioctl_ficlone`: raw FICLONE ioctl.
     /// Support for FICLONE is dependent on the filesystem driver.
     #[inline]
-    pub fn ioctl_ficlone(dest_fd: super::Fd, src_fd: super::Fd) -> isize {
+    pub(crate) fn ioctl_ficlone(dest_fd: super::Fd, src_fd: super::Fd) -> isize {
         // FICLONE = _IOW(0x94, 9, c_int).
         const FICLONE: libc::c_ulong = 0x40049409;
         // SAFETY: raw `ioctl(2)`; both fds owned by caller.
@@ -5766,7 +5743,7 @@ pub mod linux {
 
     /// `copy_file_range` raw syscall.
     #[inline]
-    pub unsafe fn copy_file_range(
+    pub(crate) unsafe fn copy_file_range(
         in_: c_int,
         off_in: *mut i64,
         out: c_int,

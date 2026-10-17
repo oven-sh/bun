@@ -25,98 +25,6 @@ use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
 use bun_threading::UnboundedQueue;
 use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
 
-// ──────────────────────────────────────────────────────────────────────────
-// `Maybe(T)` shim — `crate::node::Maybe` is the same `Result<T, Error>` alias
-// as `bun_sys::Maybe<T>`, so this is just the file-local extension trait
-// surface that lets `Maybe::<T>::errno_sys*` / `.get_errno()` resolve.
-// ──────────────────────────────────────────────────────────────────────────
-#[cfg(not(windows))]
-pub(crate) trait MaybeSysResultExt<R>: Sized {
-    #[cfg(not(target_os = "freebsd"))]
-    fn get_errno(&self) -> E;
-    fn errno_sys<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self>;
-    fn errno_sys_fd<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self>;
-    fn errno_sys_p<Rc: sys::GetErrno>(
-        rc: Rc,
-        syscall: sys::Tag,
-        path: impl AsRef<[u8]>,
-    ) -> Option<Self>;
-    fn errno_sys_pd<Rc: sys::GetErrno>(
-        rc: Rc,
-        syscall: sys::Tag,
-        path: impl AsRef<[u8]>,
-        dest: impl AsRef<[u8]>,
-    ) -> Option<Self>;
-}
-#[cfg(not(windows))]
-impl<R> MaybeSysResultExt<R> for Maybe<R> {
-    #[cfg(not(target_os = "freebsd"))]
-    #[inline]
-    fn get_errno(&self) -> E {
-        match self {
-            Ok(_) => E::SUCCESS,
-            Err(e) => e.get_errno(),
-        }
-    }
-    #[inline]
-    fn errno_sys<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self> {
-        match sys::get_errno(rc) {
-            E::SUCCESS => None,
-            e => Some(Err(sys::Error {
-                errno: (e as u16),
-                syscall,
-                ..Default::default()
-            })),
-        }
-    }
-    #[inline]
-    fn errno_sys_fd<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self> {
-        match sys::get_errno(rc) {
-            E::SUCCESS => None,
-            e => Some(Err(sys::Error {
-                errno: (e as u16),
-                syscall,
-                fd,
-                ..Default::default()
-            })),
-        }
-    }
-    #[inline]
-    fn errno_sys_p<Rc: sys::GetErrno>(
-        rc: Rc,
-        syscall: sys::Tag,
-        path: impl AsRef<[u8]>,
-    ) -> Option<Self> {
-        match sys::get_errno(rc) {
-            E::SUCCESS => None,
-            e => Some(Err(sys::Error {
-                errno: (e as u16),
-                syscall,
-                path: path.as_ref().into(),
-                ..Default::default()
-            })),
-        }
-    }
-    #[inline]
-    fn errno_sys_pd<Rc: sys::GetErrno>(
-        rc: Rc,
-        syscall: sys::Tag,
-        path: impl AsRef<[u8]>,
-        dest: impl AsRef<[u8]>,
-    ) -> Option<Self> {
-        match sys::get_errno(rc) {
-            E::SUCCESS => None,
-            e => Some(Err(sys::Error {
-                errno: (e as u16),
-                syscall,
-                path: path.as_ref().into(),
-                dest: dest.as_ref().into(),
-                ..Default::default()
-            })),
-        }
-    }
-}
-
 /// Convert the runtime `node::time_like::TimeLike` (== `libc::timespec` on
 /// POSIX) into the `bun_sys::TimeLike` data shape that the `Syscall::*utimens`
 /// wrappers consume. On Windows both are `f64`.
@@ -2076,24 +1984,17 @@ mod _async_tasks {
             {
                 // CLONE_NOFOLLOW: `src` was classified as a directory via lstat, so
                 // mirror the O_NOFOLLOW directory open below instead of dereferencing.
-                if let Some(err) = Maybe::<ret::Cp>::errno_sys_p(
-                    bun_sys::c::clonefile_rc(src, dest, CLONE_NOFOLLOW),
-                    sys::Tag::clonefile,
-                    src.as_bytes(),
-                ) {
-                    match err.get_errno() {
+                match sys::clonefile(src, dest, CLONE_NOFOLLOW) {
+                    Ok(()) => return true,
+                    Err(err) => match err.get_errno() {
                         E::EACCES | E::ENAMETOOLONG | E::EROFS | E::EPERM | E::EINVAL => {
-                            // `errno_sys_p`
-                            // already boxed `src.as_bytes()` into `err.path`, so just forward.
-                            this_ref.finish_concurrently(err);
+                            this_ref.finish_concurrently(Err(err));
                             return false;
                         }
                         // Other errors may be due to clonefile() not being supported
                         // We'll fall back to other implementations
                         _ => {}
-                    }
-                } else {
-                    return true;
+                    },
                 }
             }
 
@@ -4938,12 +4839,7 @@ impl NodeFS {
 
             if args.mode.is_force_clone() {
                 // https://www.manpagez.com/man/2/clonefile/
-                return Maybe::<ret::CopyFile>::errno_sys_p(
-                    bun_sys::c::clonefile_rc(src, dest, 0),
-                    sys::Tag::copyfile,
-                    src,
-                )
-                .unwrap_or(Ok(()));
+                return sys::clonefile(src, dest, 0);
             } else {
                 let stat_ = match Syscall::stat(src) {
                     Ok(result) => result,
@@ -4965,13 +4861,7 @@ impl NodeFS {
                         // clonefile() will fail if it already exists
                         let _ = Syscall::unlink(dest);
                     }
-                    if Maybe::<ret::CopyFile>::errno_sys_p(
-                        bun_sys::c::clonefile_rc(src, dest, 0),
-                        sys::Tag::copyfile,
-                        src,
-                    )
-                    .is_none()
-                    {
+                    if sys::clonefile(src, dest, 0).is_ok() {
                         let _ = Syscall::chmod(dest, stat_.st_mode as u32);
                         return Ok(());
                     }
@@ -5021,12 +4911,7 @@ impl NodeFS {
             if args.mode.shouldnt_overwrite() {
                 mode |= bun_sys::c::COPYFILE_EXCL;
             }
-            return Maybe::<ret::CopyFile>::errno_sys_p(
-                bun_sys::c::copyfile_rc(src, dest, mode),
-                sys::Tag::copyfile,
-                src,
-            )
-            .unwrap_or(Ok(()));
+            return sys::copyfile(src, dest, mode);
         }
 
         #[cfg(target_os = "freebsd")]
@@ -5179,15 +5064,11 @@ impl NodeFS {
 
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
             if args.mode.is_force_clone() {
-                if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
-                    sys::linux::ioctl_ficlone(dest_fd, src_fd),
-                    sys::Tag::ioctl_ficlone,
-                    dest,
-                ) {
+                if let Err(err) = sys::ioctl_ficlone(dest_fd, src_fd) {
                     dest_fd.close();
                     // This is racey, but it's the best we can do
                     let _ = sys::unlink(dest);
-                    return err;
+                    return Err(err);
                 }
                 let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
                 dest_fd.close();
@@ -5196,8 +5077,7 @@ impl NodeFS {
 
             // If we know it's a regular file and ioctl_ficlone is available, attempt to use it.
             if sys::S::ISREG(stat_.st_mode as u32) && sys::copy_file::can_use_ioctl_ficlone() {
-                let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
-                if rc == 0 {
+                if sys::ioctl_ficlone(dest_fd, src_fd).is_ok() {
                     let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
                     dest_fd.close();
                     return Ok(());
@@ -5233,24 +5113,16 @@ impl NodeFS {
                 loop {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
-                        sys::linux::copy_file_range(
-                            src_fd.native(),
-                            &raw mut off_in_copy,
-                            dest_fd.native(),
-                            &raw mut off_out_copy,
-                            sys::page_size(),
-                            0,
-                        )
-                    };
-                    if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
-                        written,
-                        sys::Tag::copy_file_range,
-                        dest,
+                    let written = match sys::copy_file_range(
+                        src_fd,
+                        Some(&mut off_in_copy),
+                        dest_fd,
+                        Some(&mut off_out_copy),
+                        sys::page_size(),
+                        0,
                     ) {
-                        match err.get_errno() {
-                            E::EINTR => continue,
+                        Ok(written) => written,
+                        Err(err) => match err.get_errno() {
                             E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
                                 if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
                                     sys::copy_file::disable_copy_file_range_syscall();
@@ -5260,9 +5132,9 @@ impl NodeFS {
                                 wrote.set(w);
                                 return r;
                             }
-                            _ => return err,
-                        }
-                    }
+                            _ => return Err(err),
+                        },
+                    };
                     // wrote zero bytes means EOF
                     if written == 0 {
                         break;
@@ -5271,24 +5143,16 @@ impl NodeFS {
                 }
             } else {
                 while size > 0 {
-                    // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
-                        sys::linux::copy_file_range(
-                            src_fd.native(),
-                            &raw mut off_in_copy,
-                            dest_fd.native(),
-                            &raw mut off_out_copy,
-                            size,
-                            0,
-                        )
-                    };
-                    if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
-                        written,
-                        sys::Tag::copy_file_range,
-                        dest,
+                    let written = match sys::copy_file_range(
+                        src_fd,
+                        Some(&mut off_in_copy),
+                        dest_fd,
+                        Some(&mut off_out_copy),
+                        size,
+                        0,
                     ) {
-                        match err.get_errno() {
-                            E::EINTR => continue,
+                        Ok(written) => written,
+                        Err(err) => match err.get_errno() {
                             E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
                                 if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
                                     sys::copy_file::disable_copy_file_range_syscall();
@@ -5298,14 +5162,14 @@ impl NodeFS {
                                 wrote.set(w);
                                 return r;
                             }
-                            _ => return err,
-                        }
-                    }
+                            _ => return Err(err),
+                        },
+                    };
                     if written == 0 {
                         break;
                     }
                     wrote.set(wrote.get().saturating_add(written as u64));
-                    size = size.saturating_sub(written as usize);
+                    size = size.saturating_sub(written);
                 }
             }
 
@@ -5432,26 +5296,7 @@ impl NodeFS {
     }
 
     pub(crate) fn fdatasync(&mut self, args: &args::FdataSync, _: Flavor) -> Maybe<ret::Fdatasync> {
-        #[cfg(windows)]
-        {
-            return Syscall::fdatasync(args.fd);
-        }
-        #[cfg(not(windows))]
-        {
-            // `fdatasync(int)` has no memory-safety preconditions (a bad fd just
-            // yields EBADF), so declare it `safe fn` for all unix instead of
-            // routing through `libc::fdatasync` (which is blanket-`unsafe`).
-            // `libc` also omits the Darwin binding (fdatasync exists since 10.7).
-            unsafe extern "C" {
-                safe fn fdatasync(fd: libc::c_int) -> libc::c_int;
-            }
-            Maybe::<ret::Fdatasync>::errno_sys_fd(
-                fdatasync(args.fd.native()),
-                sys::Tag::fdatasync,
-                args.fd,
-            )
-            .unwrap_or(Ok(()))
-        }
+        Syscall::fdatasync(args.fd)
     }
 
     pub(crate) fn fstat(&mut self, args: &args::Fstat, _: Flavor) -> Maybe<ret::Fstat> {
@@ -5469,21 +5314,7 @@ impl NodeFS {
     }
 
     pub(crate) fn fsync(&mut self, args: &args::Fsync, _: Flavor) -> Maybe<ret::Fsync> {
-        #[cfg(windows)]
-        {
-            return Syscall::fsync(args.fd);
-        }
-        #[cfg(not(windows))]
-        {
-            // `fsync(int)` has no memory-safety preconditions (a bad fd just yields
-            // EBADF), so declare it `safe fn` instead of routing through
-            // `libc::fsync` (which is blanket-`unsafe`). Mirrors `fdatasync` above.
-            unsafe extern "C" {
-                safe fn fsync(fd: libc::c_int) -> libc::c_int;
-            }
-            Maybe::<ret::Fsync>::errno_sys(fsync(args.fd.native()), sys::Tag::fsync)
-                .unwrap_or(Ok(()))
-        }
+        Syscall::fsync(args.fd)
     }
 
     pub(crate) fn ftruncate(&mut self, args: &args::FTruncate, _: Flavor) -> Maybe<ret::Ftruncate> {
@@ -5565,22 +5396,10 @@ impl NodeFS {
         let mut to_buf = bun_paths::path_buffer_pool::get();
         let from = args.old_path.slice_z(&mut self.sync_error_buf);
         let to = args.new_path.slice_z(&mut to_buf);
-        #[cfg(windows)]
-        {
-            return match Syscall::link(from, to) {
-                Err(err) => Err(err.with_path_dest(args.old_path.slice(), args.new_path.slice())),
-                Ok(result) => Ok(result),
-            };
+        match Syscall::link(from, to) {
+            Err(err) => Err(err.with_path_dest(args.old_path.slice(), args.new_path.slice())),
+            Ok(result) => Ok(result),
         }
-        // SAFETY: `from`/`to` are NUL-terminated by `slice_z`; `link(2)` is the libc FFI.
-        #[cfg(not(windows))]
-        Maybe::<ret::Link>::errno_sys_pd(
-            unsafe { libc::link(from.as_ptr().cast(), to.as_ptr().cast()) },
-            sys::Tag::link,
-            args.old_path.slice(),
-            args.new_path.slice(),
-        )
-        .unwrap_or(Ok(()))
     }
 
     pub(crate) fn lstat(&mut self, args: &args::Lstat, _: Flavor) -> Maybe<ret::Lstat> {
@@ -5941,10 +5760,6 @@ impl NodeFS {
         prefix_buf[len..len + 6].copy_from_slice(b"XXXXXX");
         prefix_buf[len + 6] = 0;
 
-        // The mkdtemp() function returns  a  pointer  to  the  modified  template
-        // string  on  success, and NULL on failure, in which case errno is set to
-        // indicate the error
-
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
@@ -5967,24 +5782,9 @@ impl NodeFS {
         }
 
         #[cfg(not(windows))]
-        {
-            // SAFETY: `prefix_buf` is NUL-terminated and writable; mkdtemp(3) writes the
-            // generated name back into the buffer in-place.
-            let rc = unsafe { libc::mkdtemp(prefix_buf.as_mut_ptr().cast()) };
-            if !rc.is_null() {
-                // SAFETY: `rc` is non-null and points back into `prefix_buf`, which is
-                // NUL-terminated and outlives this borrow.
-                let bytes = unsafe { bun_core::ffi::cstr(rc) }.to_bytes();
-                return Ok(encode_path_result(bytes, args.encoding));
-            }
-
-            let errno = sys::last_errno();
-            Err(sys::Error {
-                errno: errno as _,
-                syscall: sys::Tag::mkdtemp,
-                path: prefix_buf[..len + 6].into(),
-                ..Default::default()
-            })
+        match sys::mkdtemp(&mut prefix_buf[..len + 7]) {
+            Ok(()) => Ok(encode_path_result(&prefix_buf[..len + 6], args.encoding)),
+            Err(err) => Err(err.with_path(&prefix_buf[..len + 6])),
         }
     }
 
@@ -7698,14 +7498,11 @@ impl NodeFS {
                 Ok(result) => Ok(result),
             };
         }
-        // SAFETY: path is NUL-terminated by slice_z; rmdir(2) is the libc FFI
         #[cfg(not(windows))]
-        Maybe::<ret::Rmdir>::errno_sys_p(
-            unsafe { libc::rmdir(args.path.slice_z(&mut self.sync_error_buf).as_ptr().cast()) },
-            sys::Tag::rmdir,
-            args.path.slice(),
-        )
-        .unwrap_or(Ok(()))
+        match sys::posix_rmdir(args.path.slice_z(&mut self.sync_error_buf)) {
+            Err(err) => Err(err.with_path(args.path.slice())),
+            Ok(()) => Ok(()),
+        }
     }
 
     pub(crate) fn rm(&mut self, args: &args::Rm, _: Flavor) -> Maybe<ret::Rm> {
@@ -7948,18 +7745,10 @@ impl NodeFS {
         #[cfg(not(windows))]
         {
             let _ = flags;
-            // SAFETY: path is NUL-terminated by slice_z; truncate(2) is the libc FFI
-            Maybe::<ret::Truncate>::errno_sys_p(
-                unsafe {
-                    libc::truncate(
-                        path.slice_z(&mut self.sync_error_buf).as_ptr().cast(),
-                        len_i64,
-                    )
-                },
-                sys::Tag::truncate,
-                path.slice(),
-            )
-            .unwrap_or(Ok(()))
+            match sys::truncate(path.slice_z(&mut self.sync_error_buf), len_i64) {
+                Err(err) => Err(err.with_path(path.slice())),
+                Ok(()) => Ok(()),
+            }
         }
     }
 
@@ -7981,14 +7770,11 @@ impl NodeFS {
                 Ok(result) => Ok(result),
             };
         }
-        // SAFETY: path is NUL-terminated by slice_z; unlink(2) is the libc FFI
         #[cfg(not(windows))]
-        Maybe::<ret::Unlink>::errno_sys_p(
-            unsafe { libc::unlink(args.path.slice_z(&mut self.sync_error_buf).as_ptr().cast()) },
-            sys::Tag::unlink,
-            args.path.slice(),
-        )
-        .unwrap_or(Ok(()))
+        match sys::unlink_without_path(args.path.slice_z(&mut self.sync_error_buf)) {
+            Err(err) => Err(err.with_path(args.path.slice())),
+            Ok(()) => Ok(()),
+        }
     }
 
     pub(crate) fn watch_file(
@@ -8241,26 +8027,19 @@ impl NodeFS {
         'try_with_clonefile: {
             // CLONE_NOFOLLOW: `src` was classified as a directory via lstat, so
             // mirror the O_NOFOLLOW directory open below instead of dereferencing.
-            if let Some(err) = Maybe::<ret::Cp>::errno_sys_p(
-                bun_sys::c::clonefile_rc(src, dest, CLONE_NOFOLLOW),
-                sys::Tag::clonefile,
-                src.as_bytes(),
-            ) {
-                match err.get_errno() {
+            match sys::clonefile(src, dest, CLONE_NOFOLLOW) {
+                Ok(()) => return Ok(()),
+                Err(err) => match err.get_errno() {
                     E::ENAMETOOLONG | E::EROFS | E::EINVAL | E::EACCES | E::EPERM => {
                         if matches!(err.get_errno(), E::EACCES | E::EPERM) && args.flags.force {
                             break 'try_with_clonefile;
                         }
-                        // `errno_sys_p` already boxed
-                        // `src.as_bytes()` into the inner `Error::path`, so just propagate.
-                        return err;
+                        return Err(err);
                     }
                     // Other errors may be due to clonefile() not being supported
                     // We'll fall back to other implementations
                     _ => {}
-                }
-            } else {
-                return Ok(());
+                },
             }
         }
 
@@ -8461,12 +8240,7 @@ impl NodeFS {
         {
             if mode.is_force_clone() {
                 // https://www.manpagez.com/man/2/clonefile/
-                return Maybe::<ret::CopyFile>::errno_sys_p(
-                    bun_sys::c::clonefile_rc(src, dest, 0),
-                    sys::Tag::clonefile,
-                    src.as_bytes(),
-                )
-                .unwrap_or(Ok(()));
+                return sys::clonefile(src, dest, 0);
             }
             let stat_ = match reuse_stat {
                 Some(s) => *s,
@@ -8487,12 +8261,7 @@ impl NodeFS {
                     if mode.shouldnt_overwrite() {
                         mode_ |= bun_sys::c::COPYFILE_EXCL;
                     }
-                    return Maybe::<ret::CopyFile>::errno_sys_p(
-                        bun_sys::c::copyfile_rc(src, dest, mode_),
-                        sys::Tag::copyfile,
-                        src.as_bytes(),
-                    )
-                    .unwrap_or(Ok(()));
+                    return sys::copyfile(src, dest, mode_);
                 }
                 self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
                 return Err(sys::Error {
@@ -8510,13 +8279,7 @@ impl NodeFS {
                     // clonefile() will fail if it already exists
                     let _ = Syscall::unlink(dest);
                 }
-                if Maybe::<ret::CopyFile>::errno_sys_p(
-                    bun_sys::c::clonefile_rc(src, dest, 0),
-                    sys::Tag::clonefile,
-                    src.as_bytes(),
-                )
-                .is_none()
-                {
+                if sys::clonefile(src, dest, 0).is_ok() {
                     let _ = Syscall::chmod(dest, stat_.st_mode as u32);
                     return Ok(());
                 }
@@ -8568,25 +8331,14 @@ impl NodeFS {
                 mode_ |= bun_sys::c::COPYFILE_EXCL;
             }
 
-            let first_try = Maybe::<ret::CopyFile>::errno_sys_p(
-                bun_sys::c::copyfile_rc(src, dest, mode_),
-                sys::Tag::copyfile,
-                src.as_bytes(),
-            );
-            match first_try {
-                None => return Ok(()),
-                Some(err) if err.get_errno() == E::ENOENT => {
+            match sys::copyfile(src, dest, mode_) {
+                Err(err) if err.get_errno() == E::ENOENT => {
                     let _ = sys::Dir::cwd().make_path(paths::resolve_path::dirname::<
                         paths::platform::Auto,
                     >(dest.as_bytes()));
-                    return Maybe::<ret::CopyFile>::errno_sys_p(
-                        bun_sys::c::copyfile_rc(src, dest, mode_),
-                        sys::Tag::copyfile,
-                        src.as_bytes(),
-                    )
-                    .unwrap_or(Ok(()));
+                    return sys::copyfile(src, dest, mode_);
                 }
-                Some(err) => return err,
+                result => return result,
             }
         }
 
@@ -8635,8 +8387,7 @@ impl NodeFS {
             let mut size: usize = stat_.st_size.max(0) as usize;
 
             if sys::S::ISREG(stat_.st_mode as u32) && sys::copy_file::can_use_ioctl_ficlone() {
-                let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
-                if rc == 0 {
+                if sys::ioctl_ficlone(dest_fd, src_fd).is_ok() {
                     let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
                     dest_fd.close();
                     return Ok(());
@@ -8670,23 +8421,16 @@ impl NodeFS {
                 loop {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
-                        sys::linux::copy_file_range(
-                            src_fd.native(),
-                            &raw mut off_in_copy,
-                            dest_fd.native(),
-                            &raw mut off_out_copy,
-                            sys::page_size(),
-                            0,
-                        )
-                    };
-                    if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
-                        written,
-                        sys::Tag::copy_file_range,
-                        dest.as_bytes(),
+                    let written = match sys::copy_file_range(
+                        src_fd,
+                        Some(&mut off_in_copy),
+                        dest_fd,
+                        Some(&mut off_out_copy),
+                        sys::page_size(),
+                        0,
                     ) {
-                        match err.get_errno() {
+                        Ok(written) => written,
+                        Err(err) => match err.get_errno() {
                             // EINVAL: eCryptfs and other filesystems may not support copy_file_range
                             // XDEV: cross-device copy not supported
                             // NOSYS: syscall not available
@@ -8700,9 +8444,9 @@ impl NodeFS {
                                 wrote.set(w);
                                 return r;
                             }
-                            _ => return err,
-                        }
-                    }
+                            _ => return Err(err.with_path(dest.as_bytes())),
+                        },
+                    };
                     // wrote zero bytes means EOF
                     if written == 0 {
                         break;
@@ -8713,23 +8457,16 @@ impl NodeFS {
                 while size > 0 {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
-                        sys::linux::copy_file_range(
-                            src_fd.native(),
-                            &raw mut off_in_copy,
-                            dest_fd.native(),
-                            &raw mut off_out_copy,
-                            size,
-                            0,
-                        )
-                    };
-                    if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
-                        written,
-                        sys::Tag::copy_file_range,
-                        dest.as_bytes(),
+                    let written = match sys::copy_file_range(
+                        src_fd,
+                        Some(&mut off_in_copy),
+                        dest_fd,
+                        Some(&mut off_out_copy),
+                        size,
+                        0,
                     ) {
-                        match err.get_errno() {
+                        Ok(written) => written,
+                        Err(err) => match err.get_errno() {
                             // EINVAL: eCryptfs and other filesystems may not support copy_file_range
                             // XDEV: cross-device copy not supported
                             // NOSYS: syscall not available
@@ -8743,15 +8480,15 @@ impl NodeFS {
                                 wrote.set(w);
                                 return r;
                             }
-                            _ => return err,
-                        }
-                    }
+                            _ => return Err(err.with_path(dest.as_bytes())),
+                        },
+                    };
                     // wrote zero bytes means EOF
                     if written == 0 {
                         break;
                     }
                     wrote.set(wrote.get().saturating_add(written as u64));
-                    size = size.saturating_sub(written as usize);
+                    size = size.saturating_sub(written);
                 }
             }
 

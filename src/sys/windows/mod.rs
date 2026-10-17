@@ -78,6 +78,18 @@ pub mod kernel32 {
             dwFlags: DWORD,
         ) -> BOOL;
 
+        /// `lpOverlapped` may be null for a handle opened without `FILE_FLAG_OVERLAPPED`.
+        pub fn DeviceIoControl(
+            hDevice: HANDLE,
+            dwIoControlCode: DWORD,
+            lpInBuffer: *mut c_void,
+            nInBufferSize: DWORD,
+            lpOutBuffer: *mut c_void,
+            nOutBufferSize: DWORD,
+            lpBytesReturned: *mut DWORD,
+            lpOverlapped: LPOVERLAPPED,
+        ) -> BOOL;
+
         // ── SRW locks / condition variables (`bun_threading` windows arm) ──
         pub fn ReleaseSRWLockExclusive(SRWLock: *mut SRWLOCK);
         pub fn SleepConditionVariableSRW(
@@ -131,6 +143,8 @@ pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 pub const MOVEFILE_COPY_ALLOWED: DWORD = 0x2;
 pub const MOVEFILE_REPLACE_EXISTING: DWORD = 0x1;
 pub const MOVEFILE_WRITE_THROUGH: DWORD = 0x8;
+/// `FSCTL_SET_SPARSE` (winioctl.h).
+pub const FSCTL_SET_SPARSE: DWORD = 0x0009_00C4;
 pub use bun_windows_sys::FILETIME;
 
 pub use bun_windows_sys::DUPLICATE_SAME_ACCESS;
@@ -181,16 +195,6 @@ pub use bun_core::windows_sys::{
 
 /// 1601-01-01 → 1970-01-01 offset in 100-ns ticks.
 pub(crate) const EPOCH_DIFFERENCE_100NS: i64 = 11_644_473_600 * 10_000_000;
-
-/// Convert a 64-bit Windows `FILETIME`
-/// (100-ns intervals since 1601-01-01 UTC, as projected in
-/// `FILE_BASIC_INFORMATION`'s `LARGE_INTEGER` time fields) into nanoseconds
-/// since the **POSIX epoch** (1970-01-01 UTC), matching the clock
-/// `bun_core::time::nano_timestamp()` reports.
-#[inline]
-pub const fn from_sys_time(nt_time: i64) -> i128 {
-    (nt_time as i128 - EPOCH_DIFFERENCE_100NS as i128) * 100
-}
 
 /// Convert a 64-bit Windows `FILETIME` (100-ns ticks since 1601-01-01 UTC)
 /// into a libuv `uv_timespec_t` (seconds + nanoseconds since the Unix epoch).
@@ -1848,16 +1852,27 @@ pub fn move_opened_file_at(
             new_file_name.len(),
         );
     }
-    // SAFETY: src_fd valid; rename_info has struct_len initialized bytes
-    let rc = unsafe {
-        ntdll::NtSetInformationFile(
-            src_fd.native(),
-            &mut io_status_block,
-            rename_info.cast::<c_void>(),
-            u32::try_from(struct_len).expect("int cast"), // already checked for error.NameTooLong
-            win32::FileInformationClass::FileRenameInformationEx,
-        )
+    let mut rename_as = |class: win32::FileInformationClass, flags: ULONG| {
+        // SAFETY: src_fd valid; rename_info is aligned and has struct_len initialized bytes
+        unsafe {
+            ptr::addr_of_mut!((*rename_info).Flags).write(flags);
+            ntdll::NtSetInformationFile(
+                src_fd.native(),
+                &mut io_status_block,
+                rename_info.cast::<c_void>(),
+                u32::try_from(struct_len).expect("int cast"), // already checked for error.NameTooLong
+                class,
+            )
+        }
     };
+    let mut rc = rename_as(win32::FileInformationClass::FileRenameInformationEx, flags);
+    // exFAT and FAT32 only implement the legacy class, where `Flags` is `BOOLEAN ReplaceIfExists`.
+    if rc == win32::ntstatus::INVALID_PARAMETER {
+        rc = rename_as(
+            win32::FileInformationClass::FileRenameInformation,
+            ULONG::from(replace_if_exists),
+        );
+    }
     bun_sys::syslog!(
         "moveOpenedFileAt({} ->> {} '{}', {}) = {}",
         src_fd,

@@ -1,7 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::is_type_flag_set;
-use bun_lint::types::{SyntaxKind, Type, TypeFlags};
-use rustc_hash::FxHashMap;
+use bun_lint::types::{IdMap, NameOf, SyntaxKind, TsNode, Type, TypeFlags};
 
 /// Disallow enums from having both number and string members.
 pub struct NoMixedEnums;
@@ -18,7 +17,7 @@ enum AllowedType {
 /// By a variable, [`get_type_from_imported`] of the first of its declarations that has one: an enum that is declared
 /// many times has as many declarations to go through for each of them.
 #[derive(Default)]
-pub struct State<'a>(FxHashMap<Symbol<'a>, Option<AllowedType>>);
+pub struct State<'a>(IdMap<Symbol<'a>, Option<AllowedType>>);
 
 /// Whether it is in quotes, and one name of upstream's `getModuleName`.
 fn name_part<'a>(module: Module<'a>) -> (bool, &'a [u8]) {
@@ -131,7 +130,7 @@ fn get_desired_type_for_definition<'a>(
             continue;
         };
         let find = || variable.declarations().find_map(|it| get_type_from_imported(file, it));
-        if let Some(from_imported) = *known.0.entry(variable).or_insert_with(find) {
+        if let Some(from_imported) = *known.0.get_or_insert_with(variable, find) {
             return from_imported;
         }
     }
@@ -150,6 +149,38 @@ fn get_desired_type_for_definition<'a>(
         previous_sibling.is_some()
     });
     get_member_type(previous_sibling.unwrap_or(first))
+}
+
+/// tsgolint's `getMemberType`: only a numeric or a string literal is decided by its kind, and a type that is neither
+/// `StringLike` nor `NumberLike` itself is unknown.
+fn tsgolint_get_member_type(member: TsNode) -> AllowedType {
+    let Some(initializer) = member.initializer() else {
+        return AllowedType::Number;
+    };
+    match initializer.kind() {
+        SyntaxKind::NumericLiteral => AllowedType::Number,
+        SyntaxKind::StringLiteral => AllowedType::String,
+        _ => {
+            let ty = initializer.get_type_at_location();
+            if is_type_flag_set(ty, TypeFlags::STRING_LIKE) {
+                AllowedType::String
+            } else if is_type_flag_set(ty, TypeFlags::NUMBER_LIKE) {
+                AllowedType::Number
+            } else {
+                AllowedType::Unknown
+            }
+        }
+    }
+}
+
+/// tsgolint's `getDesiredTypeForDefinition`: `symbol.Declarations[0].Members()[0]` of the symbol of the name, which
+/// fails where that is not an enum with a member.
+fn tsgolint_get_desired_type_for_definition(node: Enum) -> AllowedType {
+    let declaration = NameOf(node).ts_symbol().and_then(|symbol| symbol.declarations().next());
+    let first = declaration
+        .filter(|it| it.kind() == SyntaxKind::EnumDeclaration)
+        .and_then(|it| it.children().find(|member| member.kind() == SyntaxKind::EnumMember));
+    first.map_or(AllowedType::Unknown, tsgolint_get_member_type)
 }
 
 impl Rule for NoMixedEnums {
@@ -174,12 +205,19 @@ impl Rule for NoMixedEnums {
         let Some(first) = node.members().first() else {
             return;
         };
-        let desired_type = get_desired_type_for_definition(cx.file(), node, first, &mut cx.state);
+        let is_oxlint = cx.language().is_oxlint;
+        let desired_type = match is_oxlint {
+            true => tsgolint_get_desired_type_for_definition(node),
+            false => get_desired_type_for_definition(cx.file(), node, first, &mut cx.state),
+        };
         if desired_type == AllowedType::Unknown {
             return;
         }
         for member in node.members() {
-            let current_type = get_member_type(member);
+            let current_type = match is_oxlint {
+                true => tsgolint_get_member_type(member.ts_node()),
+                false => get_member_type(member),
+            };
             if current_type == AllowedType::Unknown {
                 return;
             }

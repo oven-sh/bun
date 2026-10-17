@@ -7,6 +7,8 @@ description: Creates JavaScript classes using Bun's Rust bindings generator (.cl
 
 Bridge JavaScript and Rust through `.classes.ts` definitions and Rust implementations.
 
+`src/codegen/bindgen.ts` (`*.bind.ts`, `docs/project/bindgen.mdx`) is replacing this generator: typed arguments, and the struct stored inside the JS object. Use it for a class whose struct only the JS object owns. It does not do ref-counted or shared structs, `hasPendingActivity`, `estimatedSize` or writing to a cached getter's slot yet.
+
 ## Architecture
 
 1. **JavaScript Interface Definition** (`.classes.ts` files)
@@ -18,7 +20,7 @@ Bridge JavaScript and Rust through `.classes.ts` definitions and Rust implementa
 ```typescript
 export default [
   define({
-    name: "Glob",
+    name: "Matcher",
     construct: true,
     finalize: true,
     hasPendingActivity: true,
@@ -45,16 +47,16 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[bun_jsc::JsClass]
-pub struct Glob {
+pub struct Matcher {
     pattern: Box<[u8]>,
     has_pending_activity: AtomicUsize,
 }
 
-impl Glob {
-    pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Glob>> {
+impl Matcher {
+    pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Matcher>> {
         let arg = frame.argument(0);
         let pattern = bun_core::String::from_js(arg, global)?.to_utf8_bytes().into();
-        Ok(Box::new(Glob { pattern, has_pending_activity: AtomicUsize::new(0) }))
+        Ok(Box::new(Matcher { pattern, has_pending_activity: AtomicUsize::new(0) }))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -88,7 +90,7 @@ A missing or mis-typed hook is a **compile error** in `cargo check -p bun_runtim
 The codegen also emits a `js_$T` module with the cached-value accessors. Re-export it when you need `*_set_cached` / `*_get_cached` or `detach_ptr`:
 
 ```rust
-pub use crate::generated_classes::js_Glob as js;
+pub use crate::generated_classes::js_Image as js;
 // or
 bun_jsc::impl_js_class_via_generated!(Archive => crate::generated_classes::js_Archive);
 ```
@@ -124,7 +126,7 @@ Never store raw `JSValue` in a struct field. Declare a slot in `.classes.ts` (`v
 
 ## Reference implementations
 
-- `src/runtime/api/glob.rs` + `Glob.classes.ts` — constructor, methods, `hasPendingActivity`, default finalize
+- `src/runtime/api/Shell.classes.ts` — constructor, methods, `hasPendingActivity`
 - `src/runtime/api/cron.rs` + `cron.classes.ts` — `noConstructor`, cached getter, `values: [...]`, custom finalize
 - `src/runtime/image/Image.rs:56` — the `pub use crate::generated_classes::js_Image as js;` one-liner
 - `src/jsc/host_fn.rs` — the host-fn adapters the codegen dispatches through

@@ -20,6 +20,7 @@ use bun_ast::expr::Data;
 use bun_collections::index_sort::sort_slice;
 use bun_core::strings;
 use bun_format::FormatOptions;
+use bun_format::json::{PackageJsonPlugin, SortPackageJson};
 use bun_format::sort_imports::{Settings as SortSettings, SortImports};
 use bun_format::tailwind::Oxc;
 use bun_lint::glob::Picomatch;
@@ -127,6 +128,9 @@ const OTHER_KEYS: [&[u8]; 4] = [b"$schema", b"overrides", b"plugins", b"filepath
 /// The name [`SortSettings`] uses for `sortImports` when a flag or `[fmt]` sets it.
 const SORT_IMPORTS_OF_BUN: &[u8] = b"bun.sortImports";
 
+/// `sortTailwindcss` when a flag or `[fmt]` sets it.
+const SORT_TAILWINDCSS_OF_BUN: &[u8] = b"bun.sortTailwindcss";
+
 /// The largest number that is read. It stands for `Infinity` and for `max_line_length = off`.
 pub(super) const NO_END: &[u8] = b"4294967295";
 
@@ -155,10 +159,14 @@ struct Override {
 /// A list of plugins.
 #[derive(Default)]
 struct Plugins {
-    /// One of them is not built in: its options are not known here. Not `prettier-plugin-svelte`, which may be.
+    /// One of them isn't built in, so Bun doesn't know its options.
     names_others: bool,
     /// One of them is `prettier-plugin-tailwindcss`.
     sorts_classes: bool,
+    /// One of them is `prettier-plugin-svelte`.
+    reads_svelte: bool,
+    /// One of them is `prettier-plugin-packagejson`.
+    sorts_package_json: bool,
     oxc: Oxc,
     /// Those that may print what this formatter formats in another way.
     missing: Vec<Vec<u8>>,
@@ -196,7 +204,7 @@ impl Scope {
 
 /// An element of oxc's `GlobSet`.
 pub(crate) fn glob_of_oxc(pattern: &[u8]) -> bun_glob::Pattern {
-    bun_glob::Pattern::of_oxc_glob_set(pattern)
+    bun_glob::Pattern::of_oxfmt(pattern)
 }
 
 /// Parses a pattern from Prettier's `overrides` or command line.
@@ -227,16 +235,34 @@ fn patterns_of<'t>(all: impl Iterator<Item = &'t [u8]>, is_oxfmt: bool) -> Vec<P
 const PLUGIN_FOR_CLASSES: &[u8] = b"prettier-plugin-tailwindcss";
 /// It reads JavaScript and TypeScript with another parser, and what is printed is the same.
 const PLUGIN_OF_OXC: &[u8] = b"@prettier/plugin-oxc";
-/// One version of it is built in: see [`Configs::formats_svelte`].
+/// See [`Configs::formats_svelte`].
 const PLUGIN_FOR_SVELTE: &[u8] = b"prettier-plugin-svelte";
+/// See `src/format/json/sort_package_json/npm.rs`.
+const PLUGIN_FOR_PACKAGE_JSON: &[u8] = b"prettier-plugin-packagejson";
 
-/// What the plugins that sort imports and classes do is built in.
+pub(super) fn is_plugin_for_svelte(name: &[u8]) -> bool {
+    package_of(name) == PLUGIN_FOR_SVELTE
+}
+
+fn is_plugin_for_package_json(name: &[u8]) -> bool {
+    package_of(name) == PLUGIN_FOR_PACKAGE_JSON
+}
+
+/// What the last `svelte` in `settings` says: `true`, `false` or a table, which turns it on.
+fn svelte_in(settings: &Settings) -> Option<bool> {
+    let about_it = settings.iter().rfind(|it| it.0 == b"svelte");
+    about_it.map(|it| it.1 != b"false")
+}
+
+/// Returns true for a plugin that's built in. These sort imports, classes or `package.json` keys, or format Svelte.
 pub(super) fn is_built_in_plugin(name: &[u8]) -> bool {
     let name = package_of(name);
     name.ends_with(b"/prettier-plugin-sort-imports")
         || name == b"prettier-plugin-organize-imports"
         || name == PLUGIN_FOR_CLASSES
         || name == PLUGIN_OF_OXC
+        || name == PLUGIN_FOR_SVELTE
+        || name == PLUGIN_FOR_PACKAGE_JSON
 }
 
 /// What an element of `plugins` names. One that is no string is a module that a configuration in JavaScript has imported,
@@ -247,6 +273,8 @@ fn name_of(plugin: &Json) -> Option<&[u8]> {
     match plugin.as_str() {
         None if has(b"options", b"tailwindConfig") => Some(PLUGIN_FOR_CLASSES),
         None if has(b"parsers", b"oxc") => Some(PLUGIN_OF_OXC),
+        None if has(b"parsers", b"svelte") => Some(PLUGIN_FOR_SVELTE),
+        None if has(b"options", b"packageSortOrder") => Some(PLUGIN_FOR_PACKAGE_JSON),
         name => name,
     }
 }
@@ -272,12 +300,9 @@ fn is_built_in(plugin: &Json) -> bool {
     name_of(plugin).is_some_and(is_built_in_plugin)
 }
 
-/// Plugins that add a language to Prettier, or change what it makes of one kind of file, and leave the others as they are, with
-/// how the names of those files end. Without them the rest of a project is formatted the same.
-const PLUGINS_FOR_LANGUAGES: [(&[u8], &[&[u8]]); 23] = [
-    // Its order of the fields is not that of `sortPackageJson`, which is oxfmt's.
-    (b"prettier-plugin-packagejson", &[b"/package.json"]),
-    (PLUGIN_FOR_SVELTE, &[b".svelte"]),
+/// Plugins that add a language to Prettier and don't affect other languages, each with its file name endings. The rest
+/// of a project is formatted the same without them.
+const PLUGINS_FOR_LANGUAGES: [(&[u8], &[&[u8]]); 21] = [
     (b"prettier-plugin-astro", &[b".astro"]),
     (b"@prettier/plugin-pug", &[b".pug", b".jade"]),
     (b"@prettier/plugin-php", &[b".php"]),
@@ -438,27 +463,11 @@ fn settings(json: &Json, is_oxfmt: bool) -> Settings {
                 continue;
             }
             // On, and each of its properties by itself.
-            Json::Object(properties) if name == b"jsdoc" => {
+            Json::Object(properties) if name == b"jsdoc" || (is_oxfmt && name == b"svelte") => {
                 settings.push((name.clone(), b"{}".to_vec()));
                 for (property, value) in properties {
                     if let Some(value) = text_or_bool(value) {
-                        settings.push(([b"jsdoc.", &property[..]].concat(), value));
-                    }
-                }
-                continue;
-            }
-            // On, and its properties under the names that the plugin of Prettier has for them.
-            Json::Object(properties) if is_oxfmt && name == b"svelte" => {
-                settings.push((name.clone(), b"true".to_vec()));
-                for (property, value) in properties {
-                    let name: &[u8] = match &property[..] {
-                        b"sortOrder" => b"svelteSortOrder",
-                        b"allowShorthand" => b"svelteAllowShorthand",
-                        b"indentScriptAndStyle" => b"svelteIndentScriptAndStyle",
-                        _ => continue,
-                    };
-                    if let Some(value) = text_or_bool(value) {
-                        settings.push((name.to_vec(), value));
+                        settings.push(([&name[..], b".", &property[..]].concat(), value));
                     }
                 }
                 continue;
@@ -542,6 +551,23 @@ fn not_an_integer(name: &[u8], value: &[u8], is_flag: bool) -> Option<Vec<u8>> {
         ]
         .concat(),
     )
+}
+
+/// Parses `prettier-plugin-packagejson`'s `packageSortOrder` from its value in [`Settings`]. Returns Prettier's error
+/// message if it isn't an array of strings.
+fn package_sort_order(value: &[u8]) -> Result<Vec<Vec<u8>>, Vec<u8>> {
+    let json = json::parse(value).filter(|it| it.as_str().is_none());
+    let json = json.unwrap_or_else(|| Json::String(value.to_vec()));
+    let names = json.as_array().map(|all| all.iter().map(Json::as_str));
+    let names = names.and_then(|all| all.map(|it| Some(it?.to_vec())).collect());
+    names.ok_or_else(|| {
+        let mut refusal =
+            b"Invalid packageSortOrder value. Expected an array of a string, but received "
+                .to_vec();
+        write_as_shown(&mut refusal, &json);
+        refusal.push(b'.');
+        refusal
+    })
 }
 
 /// Whether `error` is what Prettier ends the run with, and 1.
@@ -803,10 +829,11 @@ impl Plugins {
     fn of(json: &Json) -> Option<Plugins> {
         let plugins = json.get(b"plugins")?.as_array()?;
         Some(Plugins {
-            names_others: !(plugins.iter()).all(|it| {
-                is_built_in(it) || name_of(it).is_some_and(|it| package_of(it) == PLUGIN_FOR_SVELTE)
-            }),
+            names_others: !plugins.iter().all(is_built_in),
             sorts_classes: (plugins.iter().filter_map(name_of)).any(is_plugin_for_classes),
+            reads_svelte: (plugins.iter().filter_map(name_of)).any(is_plugin_for_svelte),
+            sorts_package_json: (plugins.iter().filter_map(name_of))
+                .any(is_plugin_for_package_json),
             oxc: oxc_among(plugins.iter().filter_map(name_of)),
             missing: (plugins.iter())
                 .map(|it| name_of(it).unwrap_or(b"(an object)"))
@@ -975,8 +1002,10 @@ pub(crate) struct Configs<'c> {
     options: Cow<'c, Options>,
     environment: &'c Environment<'c>,
     by_directory: Guarded<FxHashMap<Vec<u8>, Found>>,
-    /// `[[fmt.overrides]]`. Globs are relative to the working directory.
+    /// `[[fmt.overrides]]`. Globs are relative to `start_of_bunfig`.
     overrides: Vec<Override>,
+    /// [`Options::start_of_bunfig`]
+    start_of_bunfig: Vec<u8>,
     /// `--config`
     named: Option<Result<Arc<Config>, Fatal>>,
     /// [`Configs::name`]
@@ -990,8 +1019,8 @@ pub(crate) struct Configs<'c> {
     pub(crate) flavor: Flavor,
     /// By directory: see [`Configs::tsconfig_of`].
     tsconfigs: Guarded<FxHashMap<Vec<u8>, Arc<Settings>>>,
-    /// [`Configs::has_svelte_plugin_of_bun`]
-    has_svelte_plugin_of_bun: OnceLock<bool>,
+    /// [`PackageJsonPlugin::has_files_of_yarn_or_pnpm`]
+    has_files_of_yarn_or_pnpm: OnceLock<bool>,
     /// How to sort imports, by the options that say so: they are read once, not for every file.
     sort_imports: Guarded<Vec<(SortSettings, Option<Arc<SortImports>>)>>,
     /// With oxfmt, the one `.editorconfig` that counts: the nearest to the working directory.
@@ -1007,6 +1036,11 @@ pub(crate) struct Configs<'c> {
 impl<'c> Configs<'c> {
     pub(crate) fn new(options: &'c Options, environment: &'c Environment<'c>) -> Configs<'c> {
         Configs::with(Cow::Borrowed(options), environment, false)
+    }
+
+    /// The bunfig whose `[fmt]` was read: its path from the working directory.
+    pub(crate) fn bunfig(&self) -> Option<&[u8]> {
+        (self.options.has_section_of_bunfig).then_some(&self.options.bunfig[..])
     }
 
     /// The same for a rule of the linter, with options that nobody else keeps. The linter says whose configuration counts.
@@ -1040,6 +1074,7 @@ impl<'c> Configs<'c> {
             })
             .collect();
         let mut configs = Configs {
+            start_of_bunfig: options.start_of_bunfig(&environment.cwd),
             options,
             overrides,
             environment,
@@ -1051,7 +1086,7 @@ impl<'c> Configs<'c> {
             counts_everywhere,
             flavor: Flavor::Prettier,
             tsconfigs: Guarded::new(FxHashMap::default()),
-            has_svelte_plugin_of_bun: OnceLock::new(),
+            has_files_of_yarn_or_pnpm: OnceLock::new(),
             sort_imports: Guarded::new(Vec::new()),
             editorconfig_of_oxfmt: None,
             warnings: Guarded::new(Vec::new()),
@@ -1566,6 +1601,34 @@ impl<'c> Configs<'c> {
         }
     }
 
+    /// What the `.editorconfig` files of `scope` say about the file at `path`. `use_tabs`: what its configuration file says.
+    fn of_editorconfig(
+        &self,
+        scope: &Scope,
+        path: Option<&[u8]>,
+        use_tabs: Option<bool>,
+    ) -> editorconfig::Found {
+        match (self.options.config_lookup, self.flavor, path) {
+            (false, ..) | (true, Flavor::Prettier, None) => Vec::new(),
+            (true, Flavor::Prettier, Some(path)) => {
+                editorconfig::options_for(scope.editorconfigs.iter().map(|it| &**it), path)
+            }
+            (true, Flavor::Oxfmt, _) => (scope.editorconfigs.first())
+                .map(|it| match path {
+                    Some(path) => editorconfig::options_for_oxfmt(it, path, use_tabs),
+                    None => editorconfig::options_of_root_for_oxfmt(it, use_tabs),
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Whether a file says something about the file at `path`, which is what `--config-precedence=prefer-file` asks: there is
+    /// a configuration file, or a section of an `.editorconfig` is for it.
+    fn has_files_for(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
+        self.config_of(scope).is_ok_and(|it| it.is_some())
+            || !self.of_editorconfig(scope, path, None).is_empty()
+    }
+
     /// Whether the files that have `scope` are printed as oxfmt prints them: the run is like oxfmt, or their
     /// configuration file is one of oxfmt's, in a directory below where the run has started.
     pub(crate) fn is_oxfmt_for(&self, scope: &Scope) -> bool {
@@ -1594,8 +1657,7 @@ impl<'c> Configs<'c> {
     /// Whether the config or `--plugin` names a plugin that isn't built in, for the file at `path`, which has `scope`.
     pub(crate) fn names_other_plugins(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
         (self.plugins_for(scope, path)).is_some_and(|it| it.names_others)
-            || (self.names_plugin_for_svelte(scope, path) && !self.has_svelte_plugin_of_bun())
-            || !(self.options.plugins.iter()).all(|it| self.is_built_in(it))
+            || !(self.options.plugins.iter()).all(|it| is_built_in_plugin(it))
     }
 
     /// Whether the config or `--plugin` names `prettier-plugin-tailwindcss` for the file at `path`, which has `scope`.
@@ -1639,15 +1701,6 @@ impl<'c> Configs<'c> {
         (self.endings_of_plugins(scope, Some(path))).any(|ending| path.ends_with(ending))
     }
 
-    /// The plugin that adds the language of the file at `path`, which has `scope`, if Prettier reads it with one.
-    pub(crate) fn plugin_that_reads(&self, scope: &Scope, path: &[u8]) -> Option<&'static [u8]> {
-        PLUGINS_FOR_LANGUAGES
-            .iter()
-            .find(|it| it.1.iter().any(|ending| path.ends_with(ending)))
-            .filter(|_| self.is_read_by_plugin(scope, path))
-            .map(|it| it.0)
-    }
-
     /// The packages that Prettier loads as plugins for the file at `path`, which has `scope`.
     pub(crate) fn packages_of_plugins<'s>(
         &'s self,
@@ -1665,79 +1718,113 @@ impl<'c> Configs<'c> {
         (self.config_of(scope).ok().flatten()).map(|config| &config.path[..])
     }
 
-    /// Whether the `prettier-plugin-svelte` that the project's own Prettier would load prints what is printed here: it is
-    /// 4.1.1. 4.1.0 prints 19 of 7,047 real components in another way, 3.x has another parser. One that is not installed
-    /// is the newest. It is looked for from the working directory, like every package in `prettier.rs`.
-    fn has_svelte_plugin_of_bun(&self) -> bool {
-        *self.has_svelte_plugin_of_bun.get_or_init(|| {
-            tailwind::version_of_package(PLUGIN_FOR_SVELTE, &self.environment.cwd)
-                .is_none_or(|it| it == [4, 1, 1])
-        })
+    /// Whether `--no-svelte` or `svelte = false` in `[fmt]` keeps a component in `directory`, which has `scope`, from being
+    /// formatted: it is there, and with `--config-precedence` it counts. An override can still turn it on for some files.
+    pub(crate) fn turns_svelte_off(&self, scope: &Scope, directory: &[u8]) -> bool {
+        self.svelte_of_flags(None) == Some(false)
+            && !self.formats_svelte(scope, Some(&paths::join(directory, b"a.svelte")))
     }
 
-    /// Whether what the plugin `name` does is done here.
-    pub(crate) fn is_built_in(&self, name: &[u8]) -> bool {
-        is_built_in_plugin(name)
-            || (package_of(name) == PLUGIN_FOR_SVELTE && self.has_svelte_plugin_of_bun())
+    /// Whether a flag or `[fmt]` turns it off for the file at `path`.
+    pub(crate) fn turns_svelte_off_for(&self, path: &[u8]) -> bool {
+        self.svelte_of_flags(Some(path)) == Some(false)
     }
 
-    /// Whether a flag or the config asks for a part of the file at `path`, which has `scope`, or for where the cursor ends up.
-    fn is_about_part(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
-        let is_about_part =
-            |name: &[u8]| matches!(name, b"rangeStart" | b"rangeEnd" | b"cursorOffset");
-        let has_it = |settings: &Settings| settings.iter().any(|it| is_about_part(&it.0));
-        self.options.format.iter().any(|it| is_about_part(it.0))
-            || self.config_of(scope).ok().flatten().is_some_and(|config| {
-                let in_override = |it: &Override| has_it(&it.settings).then_some(());
-                has_it(&config.settings)
-                    || path.is_some_and(|it| config.in_last_override(it, in_override).is_some())
-            })
+    /// Whether an override of `[fmt]` has `svelte = false`, and nothing counts for more in `directory`, which has `scope`.
+    pub(crate) fn turns_svelte_off_for_some(&self, scope: &Scope, directory: &[u8]) -> bool {
+        let path = paths::join(directory, b"a.svelte");
+        (self.overrides.iter()).any(|it| svelte_in(&it.settings) == Some(false))
+            && !self.formats_svelte_with(scope, Some(&path), Some(false))
     }
 
-    /// Whether Svelte in the file at `path`, which has `scope`, is formatted here: a component, or the blocks of Svelte in a
-    /// Markdown file. For oxfmt the config has to have `svelte`. For Prettier it has to name the plugin: with another
-    /// version of that installed than the one that is built in, the files go to the Prettier of the project. `None`: text
-    /// without a file name.
+    /// Whether `--parser svelte`, or the same in `[fmt]`, is there.
+    pub(crate) fn asks_for_parser_of_svelte(&self) -> bool {
+        (self.options.format.iter()).any(|it| it.0 == b"parser" && it.1 == b"svelte")
+    }
+
+    /// Returns true if Bun formats the Svelte in the file at `path`, which has `scope`. That's a component, or the
+    /// Svelte blocks in a Markdown file. `path` is `None` for text without a file name.
+    ///
+    /// `--svelte`, `--no-svelte` and `svelte` in `[fmt]` decide. So does the config: oxfmt's with `svelte`, Prettier's
+    /// by listing the plugin, whichever version of it is installed. If both are set, `--config-precedence` picks one,
+    /// as for every option. If neither is set, Svelte is formatted if no config applies.
     pub(crate) fn formats_svelte(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
-        if self.is_oxfmt_for(scope) {
-            return path.is_some_and(|it| self.has_svelte_of_oxfmt(scope, it));
-        }
-        // Nothing here formats a part of a component.
-        if self.is_about_part(scope, path) {
-            return false;
-        }
-        match self.names_plugin_for_svelte(scope, path) {
-            true => self.has_svelte_plugin_of_bun(),
-            false => self.is_native_in(scope),
-        }
+        self.formats_svelte_with(scope, path, self.svelte_of_flags(path))
     }
 
-    /// Whether the file at `path`, which has `scope`, is a component that would be formatted here but for a range or a cursor.
-    pub(crate) fn leaves_svelte_for_part(&self, scope: &Scope, path: &[u8]) -> bool {
-        path.ends_with(b".svelte")
-            && !self.is_oxfmt_for(scope)
-            && self.is_about_part(scope, Some(path))
+    /// The same if the flags and `[fmt]` say `of_flags` about it.
+    fn formats_svelte_with(
+        &self,
+        scope: &Scope,
+        path: Option<&[u8]>,
+        of_flags: Option<bool>,
+    ) -> bool {
+        let of_files = || match self.is_oxfmt_for(scope) {
+            true => self.svelte_of_oxfmt(scope, path),
+            false => self.names_plugin_for_svelte(scope, path).then_some(true),
+        };
+        let said = match self.options.config_precedence {
+            Precedence::CliOverride => of_flags.or_else(of_files),
+            Precedence::FileOverride => of_files().or(of_flags),
+            Precedence::PreferFile if self.has_files_for(scope, path) => of_files(),
+            Precedence::PreferFile => of_flags,
+        };
+        said.unwrap_or_else(|| self.is_native_in(scope))
+    }
+
+    /// What `--svelte`, `--no-svelte` or `svelte` in `[fmt]` says about the file at `path`. The last override that is for the
+    /// file and has the key counts for more than the section.
+    fn svelte_of_flags(&self, path: Option<&[u8]>) -> Option<bool> {
+        let mut relative = None;
+        let mut is_for_it = |it: &Override| {
+            let start = &self.start_of_bunfig;
+            path.is_some_and(|path| {
+                it.matches(relative.get_or_insert_with(|| paths::relative(start, path)))
+            })
+        };
+        let overrides = self.overrides.iter().rev();
+        let mut said = overrides.filter_map(|it| Some((it, svelte_in(&it.settings)?)));
+        let in_override = said.find(|it| is_for_it(it.0)).map(|it| it.1);
+        let about_it = || self.options.format.iter().rfind(|it| it.0 == b"svelte");
+        in_override.or_else(|| about_it().map(|it| it.1 != b"false"))
     }
 
     /// Whether the config or `--plugin` names `prettier-plugin-svelte` for the file at `path`, which has `scope`.
     fn names_plugin_for_svelte(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
-        (self.endings_of_plugins(scope, path)).any(|it| it == b".svelte")
+        (self.plugins_for(scope, path)).is_some_and(|it| it.reads_svelte)
+            || (self.options.plugins.iter()).any(|it| is_plugin_for_svelte(it))
     }
 
-    /// Whether the configuration of oxfmt has `svelte` for the file at `path`, which has `scope`. An override can turn it on
-    /// and off.
-    fn has_svelte_of_oxfmt(&self, scope: &Scope, path: &[u8]) -> bool {
-        let Some(config) = (self.config_of(scope).ok().flatten()).filter(|it| it.is_oxfmt) else {
-            return false;
-        };
-        let last_in = |settings: &Settings| {
-            let about_it = settings.iter().rfind(|it| it.0 == b"svelte");
-            about_it.map(|it| it.1 != b"false")
+    /// True if the config or `--plugin` lists `prettier-plugin-packagejson` for the file at `path`, which has `scope`.
+    fn names_plugin_for_package_json(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
+        (self.plugins_for(scope, path)).is_some_and(|it| it.sorts_package_json)
+            || (self.options.plugins.iter()).any(|it| is_plugin_for_package_json(it))
+    }
+
+    /// `hasYarnOrPnpmFiles` of `sort-package-json`
+    fn has_files_of_yarn_or_pnpm(&self) -> bool {
+        *self.has_files_of_yarn_or_pnpm.get_or_init(|| {
+            let kind = |name: &[u8]| fs::kind(&paths::join(&self.environment.cwd, name));
+            let files: [&[u8]; 4] = [
+                b"yarn.lock",
+                b".yarnrc.yml",
+                b"pnpm-lock.yaml",
+                b"pnpm-workspace.yaml",
+            ];
+            files.iter().any(|it| kind(it).is_some()) || kind(b".yarn") == Some(fs::Kind::Directory)
+        })
+    }
+
+    /// What `svelte` in the configuration of oxfmt says about the file at `path`, which has `scope`. An override can turn it
+    /// on and off. Text without a file name is not formatted.
+    fn svelte_of_oxfmt(&self, scope: &Scope, path: Option<&[u8]>) -> Option<bool> {
+        let config = (self.config_of(scope).ok().flatten()).filter(|it| it.is_oxfmt)?;
+        let Some(path) = path else {
+            return Some(false);
         };
         config
-            .in_last_override(path, |it| last_in(&it.settings))
-            .or_else(|| last_in(&config.settings))
-            .unwrap_or(false)
+            .in_last_override(path, |it| svelte_in(&it.settings))
+            .or_else(|| svelte_in(&config.settings))
     }
 
     /// Returns true if Bun's own choices apply in `scope`: the run is in native mode and the directory has no Prettier
@@ -1793,21 +1880,8 @@ impl<'c> Configs<'c> {
             }
         }
         let mut from_files: Vec<(&[u8], &[u8])> = Vec::new();
-        let from_editorconfig = match (self.options.config_lookup, self.flavor, path) {
-            (false, ..) | (true, Flavor::Prettier, None) => Vec::new(),
-            (true, Flavor::Prettier, Some(path)) => {
-                editorconfig::options_for(scope.editorconfigs.iter().map(|it| &**it), path)
-            }
-            (true, Flavor::Oxfmt, _) => {
-                let use_tabs = use_tabs_in(from_config.iter().copied());
-                (scope.editorconfigs.first())
-                    .map(|it| match path {
-                        Some(path) => editorconfig::options_for_oxfmt(it, path, use_tabs),
-                        None => editorconfig::options_of_root_for_oxfmt(it, use_tabs),
-                    })
-                    .unwrap_or_default()
-            }
-        };
+        let use_tabs = use_tabs_in(from_config.iter().copied());
+        let from_editorconfig = self.of_editorconfig(scope, path, use_tabs);
         // oxfmt does not know `max_line_length = off`, Prettier does not know `insert_final_newline`.
         let counts = |it: &&(&[u8], Vec<u8>)| match is_oxfmt {
             true => (it.0, &it.1[..]) != (b"printWidth", NO_END),
@@ -1823,11 +1897,10 @@ impl<'c> Configs<'c> {
             from_files.push((b"printWidth", b"100"));
         }
         from_files.extend(from_config);
-        let has_files = config.is_some() || !from_editorconfig.is_empty();
         let mut from_flags: Vec<(&[u8], &[u8])> =
             (self.options.format.iter().map(|it| (it.0, &it.1[..]))).collect();
         if let Some(path) = path.filter(|_| !self.overrides.is_empty()) {
-            let relative = paths::relative(&self.environment.cwd, path);
+            let relative = paths::relative(&self.start_of_bunfig, path);
             for it in self.overrides.iter().filter(|it| it.matches(&relative)) {
                 from_flags.extend(it.settings.iter().map(|it| (&it.0[..], &it.1[..])));
             }
@@ -1836,11 +1909,18 @@ impl<'c> Configs<'c> {
         for it in from_flags.iter_mut().filter(|it| it.0 == b"sortImports") {
             it.0 = SORT_IMPORTS_OF_BUN;
         }
+        // Its paths start somewhere else than those of a configuration file.
+        for it in from_flags
+            .iter_mut()
+            .filter(|it| it.0 == b"sortTailwindcss")
+        {
+            it.0 = SORT_TAILWINDCSS_OF_BUN;
+        }
         let of_flags = from_flags.iter().copied();
         let all: Vec<(&[u8], &[u8])> = match self.options.config_precedence {
             Precedence::CliOverride => from_files.into_iter().chain(of_flags).collect(),
             Precedence::FileOverride => of_flags.chain(from_files).collect(),
-            Precedence::PreferFile if has_files => from_files,
+            Precedence::PreferFile if self.has_files_for(scope, path) => from_files,
             Precedence::PreferFile => of_flags.collect(),
         };
         // Prettier looks at the flags first, also at one that a file takes the place of.
@@ -1867,11 +1947,29 @@ impl<'c> Configs<'c> {
         }
         let mut sort_imports: Option<Vec<u8>> = None;
         let mut sort_tailwindcss: Option<Vec<u8>> = None;
+        let mut says_how_to_sort_package_json = false;
+        // Whether the last one that was read is a flag's or of `[fmt]`.
+        let mut is_tailwindcss_of_bun = false;
+        let tailwindcss_set_by = |is_of_bun: bool| match config {
+            Some(config) if config.is_oxfmt && !is_of_bun => {
+                SetBy::Oxfmt(paths::dirname(&config.path))
+            }
+            _ => SetBy::Bun(&self.start_of_bunfig),
+        };
         // oxfmt-only options are also valid under a Prettier config when a flag or `[fmt]` sets them.
-        let is_known = |name: &[u8]| is_oxfmt || from_flags.iter().any(|it| it.0 == name);
+        let is_known = |name: &[u8]| {
+            let name = match name {
+                b"sortTailwindcss" => SORT_TAILWINDCSS_OF_BUN,
+                _ => name,
+            };
+            is_oxfmt || from_flags.iter().any(|it| it.0 == name)
+        };
         // Prettier knows the options of the plugins that it has loaded.
         let knows_all_options = !is_oxfmt && !self.names_other_plugins(scope, path);
         let names_plugin_for_svelte = self.names_plugin_for_svelte(scope, path);
+        // Prettier validates a plugin's options for every file.
+        let mut package_json = (!is_oxfmt && self.names_plugin_for_package_json(scope, path))
+            .then(PackageJsonPlugin::default);
         let mut unknown: Vec<(&[u8], &[u8])> = Vec::new();
         // `sortTailwindcss` as the options of the plugin have it.
         let mut of_plugin =
@@ -1901,12 +1999,24 @@ impl<'c> Configs<'c> {
                 }
                 b"sortPackageJson" | b"sortPackageJson.sortScripts" if is_known(name) => {
                     let _ = resolved.options.set(name, value);
+                    says_how_to_sort_package_json = true;
+                }
+                b"packageSortOrder" if package_json.is_some() => {
+                    let first = package_sort_order(value).map_err(Fatal)?;
+                    package_json = Some(PackageJsonPlugin {
+                        first,
+                        ..Default::default()
+                    });
                 }
                 b"experimentalSortPackageJson" if is_oxfmt => {
                     let _ = resolved.options.set(b"sortPackageJson", value);
                 }
-                // What another version of the plugin takes is for that version to say.
-                b"svelteSortOrder" | b"svelteAllowShorthand" | b"svelteIndentScriptAndStyle"
+                b"svelteSortOrder"
+                | b"svelteAllowShorthand"
+                | b"svelteIndentScriptAndStyle"
+                | b"svelte.sortOrder"
+                | b"svelte.allowShorthand"
+                | b"svelte.indentScriptAndStyle"
                     if resolved.options.svelte.is_on =>
                 {
                     if resolved.options.set(name, value).is_err() {
@@ -1915,12 +2025,14 @@ impl<'c> Configs<'c> {
                         ));
                     }
                 }
-                // The other options of the plugin, and all of them where its files are not formatted here.
+                // The plugin's remaining option, and all of its options where Svelte is off, are accepted and ignored.
                 b"svelteSortOrder"
                 | b"svelteAllowShorthand"
                 | b"svelteIndentScriptAndStyle"
                 | b"svelte5CompilerPath"
                     if names_plugin_for_svelte => {}
+                // `Configs::formats_svelte` already handled it.
+                name if (name == b"svelte" || name.starts_with(b"svelte.")) && is_known(name) => {}
                 name if name == b"jsdoc" || name.starts_with(b"jsdoc.") => {
                     if resolved.options.set(name, value).is_err() {
                         return Err(Fatal(
@@ -1929,8 +2041,14 @@ impl<'c> Configs<'c> {
                     }
                 }
                 // An override changes the keys that it has.
-                name if is_tailwind(name) && is_known(name) => {
+                name if name == SORT_TAILWINDCSS_OF_BUN || is_tailwind(name) && is_known(name) => {
+                    let was_of_bun = is_tailwindcss_of_bun;
+                    is_tailwindcss_of_bun = name == SORT_TAILWINDCSS_OF_BUN;
                     sort_tailwindcss = Some(match &sort_tailwindcss {
+                        Some(before) if was_of_bun != is_tailwindcss_of_bun => {
+                            let set_by = tailwindcss_set_by(was_of_bun);
+                            merged_objects(&tailwind::with_whole_paths(before, set_by), value)
+                        }
                         Some(before) => merged_objects(before, value),
                         None => value.to_vec(),
                     });
@@ -1956,6 +2074,14 @@ impl<'c> Configs<'c> {
                 }
                 _ => {}
             }
+        }
+        // `svelte = false` leaves the files alone with every config, also with the `parser` that the README of the plugin has for
+        // them.
+        if resolved.options.parser.as_deref() == Some(b"svelte")
+            && !resolved.options.svelte.is_on
+            && self.svelte_of_flags(path) == Some(false)
+        {
+            resolved.options.parser = None;
         }
         if !is_oxfmt
             && resolved.options.parser.is_none()
@@ -1983,13 +2109,21 @@ impl<'c> Configs<'c> {
             }
         }
         resolved.options.sort_imports = self.sort_imports(sort)?;
-        // A flag or `[fmt]` counts for more than the plugin.
-        let (value, set_by) = match (sort_tailwindcss, of_plugin, config) {
-            (Some(value), _, Some(config)) if config.is_oxfmt => {
-                (value, SetBy::Oxfmt(paths::dirname(&config.path)))
-            }
-            (Some(value), ..) => (value, SetBy::Bun),
-            (None, Some(entries), _) => {
+        // A flag or `[fmt]` overrides the plugin.
+        if let Some(mut plugin) = package_json
+            && !says_how_to_sort_package_json
+            && path.is_some_and(|it| paths::basename(it) == b"package.json")
+        {
+            plugin.has_files_of_yarn_or_pnpm = self.has_files_of_yarn_or_pnpm();
+            resolved.options.sort_package_json = Some(SortPackageJson {
+                plugin: Some(Arc::new(plugin)),
+                ..Default::default()
+            });
+        }
+        // A flag or `[fmt]` overrides the plugin.
+        let (value, set_by) = match (sort_tailwindcss, of_plugin) {
+            (Some(value), _) => (value, tailwindcss_set_by(is_tailwindcss_of_bun)),
+            (None, Some(entries)) => {
                 if let Some(warning) = tailwind::warning_of_plugin(&entries) {
                     self.warn(&[&warning]);
                 }
@@ -1999,11 +2133,12 @@ impl<'c> Configs<'c> {
                 let found = scope.config.as_ref().map(|it| paths::dirname(&it.path));
                 (value, SetBy::Plugin(found.unwrap_or(&self.environment.cwd)))
             }
-            (None, None, _) => (b"false".to_vec(), SetBy::Bun),
+            (None, None) => (b"false".to_vec(), SetBy::Bun(&self.start_of_bunfig)),
         };
-        if value != b"false" {
-            let places = (set_by, directory);
-            let mut tailwind = tailwind::for_file(&self.classes, self.environment, &value, places);
+        if value != b"false"
+            && let Some(mut tailwind) =
+                tailwind::for_file(&self.classes, &value, (set_by, directory))
+        {
             tailwind.oxc = self.oxc_for(scope, path, resolved.options.parser.as_deref());
             resolved.options.tailwind = Some(Arc::new(tailwind));
         }

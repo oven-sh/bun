@@ -15,13 +15,14 @@
 //! | `String(n)` | [`number_to_string`] |
 //! | `Number(s)` | [`bun_core::fmt::js_string_to_number`] |
 //! | `JSON.stringify(s)` | [`json_stringify`] |
+//! | `decodeURIComponent(s)`, `decodeURI(s)` | [`decode_uri`] |
 //! | `s.toWellFormed()` | [`strings::push_wtf8_well_formed`] |
 //! | `String.fromCodePoint(...values)`, `String.fromCharCode(...values)` | [`string_from_code_points`], [`strings::push_codepoint_wtf8_joined`] |
 //! | `a < b`, `a.localeCompare`-free sorting | [`strings::order_utf16`] |
 //! | `require("natural-compare")` | [`natural_compare`] |
 //! | `esutils.keyword.isIdentifierES5`, `isIdentifierES6` | [`is_identifier_es5`], [`is_identifier_es6`] |
 //! | `s.split(/\r\n\|[\r\n\u2028\u2029]/u)`, `/\r\n\|[\r\n\u2028\u2029]/u.test(s)` | [`strings::js_lines`], [`strings::contains_js_line_break`] |
-//! | `s.slice(a, b)` with UTF-16 indices | [`strings::wtf8_slice_by_utf16`], [`strings::wtf8_offset_of_utf16_index`] |
+//! | `s.slice(a, b)` with UTF-16 indices that are not in the middle of a surrogate pair, which are taken as its start | [`strings::wtf8_slice_by_utf16`], [`strings::wtf8_offset_of_utf16_index`] |
 
 use bun_core::lexer::{char_and_size, is_type_script_identifier_part};
 use bun_core::strings;
@@ -165,6 +166,44 @@ pub fn upper_case_first(text: &[u8]) -> Cow<'_, [u8]> {
             Cow::Owned(first)
         }
     }
+}
+
+/// The spec's `Decode`. `preserved` has the characters whose escapes are kept: none for `decodeURIComponent`,
+/// `;/?:@&=+$,#` for `decodeURI`. Returns `None` where JavaScript throws: an escape is incomplete or isn't UTF-8.
+pub fn decode_uri(text: &[u8], preserved: &[u8]) -> Option<Vec<u8>> {
+    let byte_at = |at: usize| match text.get(at..at + 3) {
+        Some(&[b'%', high, low]) => bun_core::fmt::hex_pair_value(high, low),
+        _ => None,
+    };
+    let mut decoded = Vec::with_capacity(text.len());
+    let mut at = 0;
+    while let Some(&byte) = text.get(at) {
+        if byte != b'%' {
+            decoded.push(byte);
+            at += 1;
+            continue;
+        }
+        let first = byte_at(at)?;
+        let len = match first {
+            0..0x80 => 1,
+            0xC0..0xE0 => 2,
+            0xE0..0xF0 => 3,
+            0xF0..0xF8 => 4,
+            _ => return None,
+        };
+        let bytes: Vec<u8> = (0..len)
+            .map(|i| byte_at(at + 3 * i))
+            .collect::<Option<_>>()?;
+        if std::str::from_utf8(&bytes).is_err() {
+            return None;
+        }
+        match strings::contains_char(preserved, first) {
+            true => decoded.extend_from_slice(&text[at..at + 3]),
+            false => decoded.extend_from_slice(&bytes),
+        }
+        at += 3 * len;
+    }
+    Some(decoded)
 }
 
 /// `String(n)`

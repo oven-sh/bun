@@ -850,6 +850,622 @@ describe.concurrent("bun fmt", () => {
     expect(checked.exitCode).toBe(0);
   });
 
+  test("two comments before the `=>` of an arrow function are on its line", async () => {
+    // Prettier 3.9.9 prints `(a) /* b */\n/* c */ => d`, and no line break is allowed before `=>`.
+    const files = {
+      "a.js": "const f = a /* b */ /* c */ => d;\nuseEffect(() /* b */ /* c */ => { a(); }, [d]);\n",
+      "b.vue": '<template>\n  <div :x="a /* b */ /* c */ => a"></div>\n</template>\n',
+      "c.svelte": "<div x={a /* b */ /* c */ => d}></div>\n",
+    };
+    const result = await format(files, [], { reads: Object.keys(files) });
+    expect(result.files).toEqual({
+      "a.js":
+        "const f = (a) /* b */ /* c */ => d;\nuseEffect(\n  () /* b */ /* c */ => {\n    a();\n  },\n  [d],\n);\n",
+      "b.vue": '<template>\n  <div :x="(a) /* b */ /* c */ => a"></div>\n</template>\n',
+      "c.svelte": "<div x={(a) /* b */ /* c */ => d}></div>\n",
+    });
+    expect(result.exitCode).toBe(0);
+    const checked = await format(files, ["--debug-check"]);
+    expect(checked.stderr).toBe("");
+    expect(checked.exitCode).toBe(0);
+  });
+
+  test("a vertical tab next to a comment is white space", async () => {
+    const text = "function a(b\v/* c */) {}\nfunction d(/* e */\vf) {}\nconst g = /* h */\vi;\n";
+    const result = await format({ "a.js": text }, [], { reads: ["a.js"] });
+    expect(result.files).toEqual({ "a.js": text.replaceAll("\v", " ") });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test.each(["\v", "\f"])("%j between a comment and a type is white space", async space => {
+    const text = `let a: /* b */${space}C;\nfunction d(e: /* f */${space}G) {}\n`;
+    const result = await format({ "a.ts": text }, [], { reads: ["a.ts"] });
+    expect(result.files).toEqual({ "a.ts": text.replaceAll(space, " ") });
+    expect(result.exitCode).toBe(0);
+  });
+
+  // Where a comment makes the tool print another program, or none. The extension, the text, what is printed,
+  // and what the tool prints.
+  describe.each([
+    [
+      "Prettier 3.9.9 adds a `;` to a declaration in the head of a `for`",
+      {},
+      [
+        [
+          "js",
+          "for (/* prettier-ignore */ const  a of b) {\n}\n",
+          "for (/* prettier-ignore */ const  a of b) {\n}\n",
+          "for (/* prettier-ignore */ const  a; of b) {\n}\n",
+        ],
+        [
+          "js",
+          "for (/* prettier-ignore */ const  a in b) {\n}\n",
+          "for (/* prettier-ignore */ const  a in b) {\n}\n",
+          "for (/* prettier-ignore */ const  a; in b) {\n}\n",
+        ],
+        [
+          "js",
+          "for (/* prettier-ignore */ var i   =   1; ; ) {\n}\n",
+          "for (/* prettier-ignore */ var i   =   1; ;) {}\n",
+          "for (/* prettier-ignore */ var i   =   1;; ;) {}\n",
+        ],
+      ],
+    ],
+    [
+      "Prettier 3.9.9 leaves out the parentheses of what it writes as it is, where only its text needs them",
+      {},
+      [
+        [
+          "js",
+          "({}.a) && // prettier-ignore\n  b;\n",
+          "({}.a) && // prettier-ignore\n  b;\n",
+          "{}.a && // prettier-ignore\n  b;\n",
+        ],
+        [
+          "js",
+          "({} + a) /* prettier-ignore */ && b;\n",
+          "({} + a) /* prettier-ignore */ && b;\n",
+          "{} + a /* prettier-ignore */ && b;\n",
+        ],
+        [
+          "js",
+          "(function () {}()) && // prettier-ignore\n  b;\n",
+          "(function () {}()) && // prettier-ignore\n  b;\n",
+          "function () {}() && // prettier-ignore\n  b;\n",
+        ],
+        [
+          "js",
+          "x = () => ({}.a) && // prettier-ignore\n  b;\n",
+          "x = () =>\n  ({}.a) && // prettier-ignore\n  b;\n",
+          "x = () =>\n  {}.a && // prettier-ignore\n  b;\n",
+        ],
+        [
+          "js",
+          "for (let x = (a in b == c) && // prettier-ignore\n  d; ; );\n",
+          "for (\n  let x =\n    (a in b == c) && // prettier-ignore\n    d;\n  ;\n);\n",
+          "for (\n  let x =\n    a in b == c && // prettier-ignore\n    d;\n  ;\n);\n",
+        ],
+        [
+          "js",
+          "(new   A) // prettier-ignore\n  .foo();\n",
+          "(new   A) // prettier-ignore\n  .foo();\n",
+          "new   A // prettier-ignore\n  .foo();\n",
+        ],
+        [
+          "ts",
+          "b + (/* prettier-ignore */ a<T>) + c;\n",
+          "b + /* prettier-ignore */ (a<T>) + c;\n",
+          "b + /* prettier-ignore */ a<T> + c;\n",
+        ],
+        [
+          "ts",
+          "(/* prettier-ignore */ new A)!.b;\n",
+          "/* prettier-ignore */ (new A)!.b;\n",
+          "/* prettier-ignore */ new A!.b;\n",
+        ],
+        [
+          "ts",
+          "(/* prettier-ignore */ a<T>)<U>;\n",
+          "/* prettier-ignore */ (a<T>)<U>;\n",
+          "/* prettier-ignore */ a<T><U>;\n",
+        ],
+        [
+          "ts",
+          "x = b = (/* prettier-ignore */ a<T>) > c;\n",
+          "x = b = /* prettier-ignore */ (a<T>) > c;\n",
+          "x = b = /* prettier-ignore */ a<T> > c;\n",
+        ],
+        [
+          "js",
+          "(function(){}()) // prettier-ignore\n  .b();\n",
+          "(function(){}()) // prettier-ignore\n  .b();\n",
+          "function(){}() // prettier-ignore\n  .b();\n",
+        ],
+        [
+          "js",
+          "({}.a) // prettier-ignore\n  [0];\n",
+          "({}.a) // prettier-ignore\n[0];\n",
+          "{}.a // prettier-ignore\n[0];\n",
+        ],
+        [
+          "ts",
+          "x = (a  <T>) // prettier-ignore\n+ y;\n",
+          "x =\n  (a  <T>) + // prettier-ignore\n  y;\n",
+          "x =\n  a  <T> + // prettier-ignore\n  y;\n",
+        ],
+        [
+          "js",
+          "(new (A)) // prettier-ignore\n.b;\n",
+          "(new (A)) // prettier-ignore\n.b;\n",
+          "new (A) // prettier-ignore\n.b;\n",
+        ],
+        [
+          "js",
+          "(new (a + b)) // prettier-ignore\n(1);\n",
+          "(new (a + b)) // prettier-ignore\n(1);\n",
+          "new (a + b) // prettier-ignore\n(1);\n",
+        ],
+      ],
+    ],
+    [
+      "oxfmt 0.72 leaves out the parentheses of what it writes as it is",
+      { ".oxfmtrc.json": "{}" },
+      [
+        [
+          "js",
+          "/** @type {Foo} */ (new Foo // prettier-ignore\n).bar;\n",
+          "/** @type {Foo} */ (\n  new Foo // prettier-ignore\n).bar;\n",
+          "/** @type {Foo} */ new Foo.bar; // prettier-ignore\n",
+        ],
+        [
+          "js",
+          "const x = (a  +  b // prettier-ignore\n)(1);\n",
+          "const x = (a  +  b) // prettier-ignore\n(1);\n",
+          "const x = a  +  b // prettier-ignore\n(1);\n",
+        ],
+        [
+          "js",
+          "const x = (a  =  b // prettier-ignore\n) ? c : d;\n",
+          "const x = (a  =  b) // prettier-ignore\n  ? c\n  : d;\n",
+          "const x = a  =  b // prettier-ignore\n  ? c\n  : d;\n",
+        ],
+        [
+          "js",
+          "const x = a ? (b  ,  c // prettier-ignore\n) : d;\n",
+          "const x = a\n  ? (b  ,  c) // prettier-ignore\n  : d;\n",
+          "const x = a\n  ? b  ,  c // prettier-ignore\n  : d;\n",
+        ],
+        [
+          "js",
+          "const x = a ? b : (c  ,  d // prettier-ignore\n);\n",
+          "const x = a ? b : (c  ,  d); // prettier-ignore\n",
+          "const x = a ? b : c  ,  d; // prettier-ignore\n",
+        ],
+        [
+          "js",
+          "class A extends (a  +  b // prettier-ignore\n) {}\n",
+          "class A extends (a  +  b) // prettier-ignore\n{}\n",
+          "class A extends a  +  b // prettier-ignore\n{}\n",
+        ],
+        [
+          "js",
+          "const x = (()  =>  {} // prettier-ignore\n)();\n",
+          "const x = (()  =>  {}) // prettier-ignore\n();\n",
+          "const x = ()  =>  {} // prettier-ignore\n();\n",
+        ],
+        [
+          "ts",
+          "const x = (a  +  b /* prettier-ignore */\n) as T;\n",
+          "const x = (a  +  b) as /* prettier-ignore */ T;\n",
+          "const x = a  +  b as /* prettier-ignore */ T;\n",
+        ],
+        [
+          "ts",
+          "const x = (y  as  T // prettier-ignore\n)(1);\n",
+          "const x = (y  as  T) // prettier-ignore\n(1);\n",
+          "const x = y  as  T // prettier-ignore\n(1);\n",
+        ],
+        [
+          "ts",
+          "type A = B extends (C  extends D ? E : F // prettier-ignore\n) ? G : H;\n",
+          "type A = B extends (C  extends D ? E : F) // prettier-ignore\n  ? G\n  : H;\n",
+          "type A = B extends C  extends D ? E : F // prettier-ignore\n  ? G\n  : H;\n",
+        ],
+        [
+          "js",
+          "try {} catch (/* prettier-ignore */ e) {}\n",
+          "try {\n} catch (/* prettier-ignore */ e) {}\n",
+          "try {\n} catch /* prettier-ignore */ e {}\n",
+        ],
+        [
+          "js",
+          "try {\n} catch (\n  // prettier-ignore\n  { a,   b }\n) {}\n",
+          "try {\n} catch (\n  // prettier-ignore\n  { a,   b }\n) {}\n",
+          "try {\n} catch // prettier-ignore\n{ a,   b } {}\n",
+        ],
+      ],
+    ],
+    [
+      "Prettier 3.9.9 moves a comment of several lines before the `[]` of an array type, where a line break ends the type",
+      {},
+      [
+        ["ts", "type A = B[ /* a\n b */ ];\n", "type A = B[] /* a\n b */;\n", "type A = B /* a\n b */[];\n"],
+        [
+          "ts",
+          "let a: B[ /* a\n b */ ] | null;\n",
+          "let a:\n  | B[] /* a\n b */\n  | null;\n",
+          "let a:\n  | B /* a\n b */[]\n  | null;\n",
+        ],
+      ],
+    ],
+    [
+      "oxfmt 0.72 moves a comment of several lines before the `[]` of an array type, where a line break ends the type",
+      { ".oxfmtrc.json": "{}" },
+      [
+        [
+          "ts",
+          "let a: B[ /* a\n b */ ] | null;\n",
+          "let a:\n  | B[] /* a\n b */\n  | null;\n",
+          "let a:\n  | B /* a\n b */[]\n  | null;\n",
+        ],
+      ],
+    ],
+    [
+      "oxfmt 0.72 writes the `]` of an array after a line comment that follows a hole",
+      { ".oxfmtrc.json": "{}" },
+      [
+        ["js", "x = [a,\n// c\n,];\n", "x = [\n  a,\n  ,// c\n];\n", "x = [a, ,// c];\n"],
+        [
+          "js",
+          "const z = [a, , b, \n// c\n,];\n",
+          "const z = [\n  a,\n  ,\n  b,\n  ,// c\n];\n",
+          "const z = [a, , b, ,// c];\n",
+        ],
+      ],
+    ],
+    [
+      "Prettier 3.9.9 writes the `}` of a substitution in a template type after a line comment",
+      {},
+      [["ts", "type A = `${B}-${ // c\nC}`;\n", "type A = `${\n  B // c\n}-${C}`;\n", "type A = `${B // c}-${C}`;\n"]],
+    ],
+    [
+      "Prettier 3.9.9 writes what a class without a name implements after a line comment",
+      {},
+      [
+        [
+          "ts",
+          "x = class // c\nimplements A {};\n",
+          "x = class // c\nimplements A {};\n",
+          "x = class implements // cA {};\n",
+        ],
+        [
+          "ts",
+          "export default class\n// a\n// b\nimplements A {}\n",
+          "export default class // a\n// b\nimplements A {}\n",
+          "export default class implements // a\n// bA {}\n",
+        ],
+      ],
+    ],
+  ])("%s", (_, config, rows) => {
+    test("and `bun fmt` does not", async () => {
+      const names = rows.map(([extension], index) => `${index}.${extension}`);
+      const texts = Object.fromEntries(rows.map(([, text], index) => [names[index], text]));
+      const result = await format({ ...config, ...texts }, [], { reads: names });
+      expect(result.files).toEqual(Object.fromEntries(rows.map(([, , printed], index) => [names[index], printed])));
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // An object type that does not fit breaks, and one that is broken in the source stays broken. Prettier 3.9.9 and oxfmt 0.72
+  // give the only parameter of a function a line of its own unless the return type is written to break, so they print
+  //
+  //   m(
+  //     a: string,
+  //   ): {
+  //
+  // the first time and `m(a: string): {` from then on, which is what is printed here.
+  describe("the only parameter of a function, before a return type with an object type in it", () => {
+    const members = ["aaaaaaaaaaaaaaa: number", "bbbbbbbbbbbbbbbb: number", "cccccccccccccccccc: number"];
+    // An object type that does not fit on a line, as it is written and as it is printed.
+    const flat = `{ ${members.join(", ")} }`;
+    const broken = (indent = "", end = ";") => `{\n${members.map(it => `${indent}  ${it}${end}\n`).join("")}${indent}}`;
+    const flavors = [
+      ["Prettier", {}],
+      ["oxfmt", { ".oxfmtrc.json": `{ "printWidth": 80 }` }],
+    ] as const;
+    type Row = [extension: string, text: string, printed: string, flavor?: "Prettier"];
+
+    /** Formats the texts, and what they are printed as once more. oxfmt does not read Flow. */
+    async function printedTwice(flavor: string, config: Record<string, string>, all: Row[]) {
+      const rows = all.filter(row => flavor === "Prettier" || (row[0] !== "js" && row[3] === undefined));
+      const names = rows.map(([extension], index) => `${index}.${extension}`);
+      const texts = Object.fromEntries(rows.map(([, text], index) => [names[index], text]));
+      const first = await format({ ...config, ...texts }, [], { reads: names });
+      const second = await format({ ...config, ...(first.files as Record<string, string>) }, [], { reads: names });
+      const expected = Object.fromEntries(rows.map(([, , printed], index) => [names[index], printed]));
+      return { first: first.files, second: second.files, expected };
+    }
+
+    // The second pass of both tools.
+    const sameLine: Row[] = [
+      [
+        "ts",
+        `class A {\n  m(\n    a: string,\n  ): ${flat} | null {}\n}\n`,
+        `class A {\n  m(a: string): ${broken("  ")} | null {}\n}\n`,
+      ],
+      ["ts", `class A {\n  m(a: string): B<${flat}> {}\n}\n`, `class A {\n  m(a: string): B<${broken("  ")}> {}\n}\n`],
+      [
+        "ts",
+        `abstract class A {\n  abstract m(a: string): B<${flat}>;\n}\n`,
+        `abstract class A {\n  abstract m(a: string): B<${broken("  ")}>;\n}\n`,
+      ],
+      ["ts", `function f(a: string): ${flat} | null {}\n`, `function f(a: string): ${broken()} | null {}\n`],
+      ["ts", `function f(a: string): B<${flat}> {}\n`, `function f(a: string): B<${broken()}> {}\n`],
+      ["ts", `function f<T>(a: string): B<${flat}> {}\n`, `function f<T>(a: string): B<${broken()}> {}\n`],
+      ["ts", `declare function f(a: string): B<${flat}>;\n`, `declare function f(a: string): B<${broken()}>;\n`],
+      [
+        "ts",
+        `const f = function (a: string): B<${flat}> {};\n`,
+        `const f = function (a: string): B<${broken()}> {};\n`,
+      ],
+      ["ts", `f(function (a: string): B<${flat}> {});\n`, `f(function (a: string): B<${broken()}> {});\n`],
+      [
+        "ts",
+        `const o = {\n  m(a: string): B<${flat}> {},\n};\n`,
+        `const o = {\n  m(a: string): B<${broken("  ")}> {},\n};\n`,
+      ],
+      [
+        "ts",
+        `interface I {\n  m(a: string): B<${flat}>;\n}\n`,
+        `interface I {\n  m(a: string): B<${broken("  ")}>;\n}\n`,
+      ],
+      [
+        "ts",
+        `interface I {\n  (a: string): B<${flat}>;\n}\n`,
+        `interface I {\n  (a: string): B<${broken("  ")}>;\n}\n`,
+      ],
+      [
+        "ts",
+        `interface I {\n  new (a: string): B<${flat}>;\n}\n`,
+        `interface I {\n  new (a: string): B<${broken("  ")}>;\n}\n`,
+      ],
+      ["ts", `type F = (a: string) => ${flat} | null;\n`, `type F = (a: string) => ${broken()} | null;\n`],
+      ["ts", `type F = (a: string) => B<${flat}>;\n`, `type F = (a: string) => B<${broken()}>;\n`],
+      ["ts", `type F = new (a: string) => B<${flat}>;\n`, `type F = new (a: string) => B<${broken()}>;\n`],
+      ["ts", `type F = { m(a: string): B<${flat}> };\n`, `type F = {\n  m(a: string): B<${broken("  ")}>;\n};\n`],
+      // Whatever the parameter is.
+      ["ts", `function f(this: A): B<${flat}> {}\n`, `function f(this: A): B<${broken()}> {}\n`],
+      ["ts", `function f(...a: string[]): B<${flat}> {}\n`, `function f(...a: string[]): B<${broken()}> {}\n`],
+      ["ts", `function f({ a, b }: A): B<${flat}> {}\n`, `function f({ a, b }: A): B<${broken()}> {}\n`],
+      ["ts", `function f(a: { b: 1 }): B<${flat}> {}\n`, `function f(a: { b: 1 }): B<${broken()}> {}\n`],
+      // Wherever the object type is.
+      ["ts", `function f(a: string): A & ${flat} {}\n`, `function f(a: string): A & ${broken()} {}\n`],
+      ["ts", `function f(a: string): ${flat}[] {}\n`, `function f(a: string): ${broken()}[] {}\n`],
+      ["ts", `function f(a: string): a is ${flat} {}\n`, `function f(a: string): a is ${broken()} {}\n`],
+      [
+        "ts",
+        `function f(a: string): (b: number) => ${flat} {}\n`,
+        `function f(a: string): (b: number) => ${broken()} {}\n`,
+      ],
+      ["ts", `function f(a: string): B<C, ${flat}> {}\n`, `function f(a: string): B<\n  C,\n  ${broken("  ")}\n> {}\n`],
+      ["ts", `function f(a: string): [C, ${flat}] {}\n`, `function f(a: string): [\n  C,\n  ${broken("  ")},\n] {}\n`],
+      [
+        "ts",
+        `function f(a: string): C | D | ${flat} {}\n`,
+        `function f(a: string):\n  | C\n  | D\n  | ${broken("    ")} {}\n`,
+      ],
+      // The object type that did not fit behind the `)` is broken, though it fits where it is now.
+      [
+        "ts",
+        `function fffffffffffffffffffff(a: string): (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number) => { ccccccccccccc: 1; ddddddddddddd: 2 } {}\n`,
+        `function fffffffffffffffffffff(a: string): (\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,\n) => {\n  ccccccccccccc: 1;\n  ddddddddddddd: 2;\n} {}\n`,
+      ],
+      // A mapped type and the options of an import type stay broken too.
+      [
+        "ts",
+        `function f(a: string): B<{ [Kkkkkkkkkkkkkkkkkkkkkkkkk in Tttttttttttttttttttttt]: Vvvvvvvvvvvvvvvvv }> {}\n`,
+        `function f(a: string): B<{\n  [Kkkkkkkkkkkkkkkkkkkkkkkkk in Tttttttttttttttttttttt]: Vvvvvvvvvvvvvvvvv;\n}> {}\n`,
+      ],
+      [
+        "ts",
+        `function f(a: string): B<typeof import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", { with: { type: "json" } })> {}\n`,
+        `function f(a: string): B<\n  typeof import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {\n    with: { type: "json" },\n  })\n> {}\n`,
+        "Prettier",
+      ],
+      [
+        "js",
+        `// @flow\nclass A {\n  m(a: string): ${flat} | null {}\n}\n`,
+        `// @flow\nclass A {\n  m(a: string): ${broken("  ", ",")} | null {}\n}\n`,
+      ],
+      [
+        "js",
+        `// @flow\nfunction f(a: string): B<${flat}> {}\n`,
+        `// @flow\nfunction f(a: string): B<${broken("", ",")}> {}\n`,
+      ],
+      [
+        "js",
+        `// @flow\nfunction f(a: string): ?${flat} {}\n`,
+        `// @flow\nfunction f(a: string): ?${broken("", ",")} {}\n`,
+      ],
+      [
+        "js",
+        `// @flow\nfunction f(a: string): B<{| ${members.join(", ")} |}> {}\n`,
+        `// @flow\nfunction f(a: string): B<{|${broken("", ",").slice(1, -1)}|}> {}\n`,
+      ],
+      [
+        "js",
+        `// @flow\ntype F = (a: string) => B<${flat}>;\n`,
+        `// @flow\ntype F = (a: string) => B<${broken("", ",")}>;\n`,
+      ],
+      [
+        "js",
+        `// @flow\ndeclare function f(a: string): B<${flat}>;\n`,
+        `// @flow\ndeclare function f(a: string): B<${broken("", ",")}>;\n`,
+      ],
+      [
+        "js",
+        `// @flow\ndeclare class A {\n  m(a: string): B<${flat}>;\n}\n`,
+        `// @flow\ndeclare class A {\n  m(a: string): B<${broken("  ", ",")}>;\n}\n`,
+      ],
+    ];
+    test.each(flavors)("is on the line of the function if the object type breaks: %s", async (flavor, config) => {
+      const { first, second, expected } = await printedTwice(flavor, config, sameLine);
+      expect(first).toEqual(expected);
+      expect(second).toEqual(expected);
+    });
+
+    // What both tools print, every time.
+    const asTheToolsPrint: Row[] = [
+      // The object type fits once the parameter has a line of its own.
+      [
+        "ts",
+        `function ffffffffffffffffffffffffffffff(aaaaaaaaaaaaaaaaaaaaaaaaaaaa: string): Promise<{ a: number; b: string }> {}\n`,
+        `function ffffffffffffffffffffffffffffff(\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,\n): Promise<{ a: number; b: string }> {}\n`,
+      ],
+      // The return type breaks, and no object type in it does.
+      [
+        "ts",
+        `function f(a: string): Bbbbbbbbbbbbbbbbbbbb<Array<{ id: string; name: string; other: string }>, C<{ message: string }>> {}\n`,
+        `function f(\n  a: string,\n): Bbbbbbbbbbbbbbbbbbbb<\n  Array<{ id: string; name: string; other: string }>,\n  C<{ message: string }>\n> {}\n`,
+      ],
+      // These parameters break with the return type, however that is written.
+      [
+        "ts",
+        `function f(a: string, b: number): B<${flat}> {}\n`,
+        `function f(\n  a: string,\n  b: number,\n): B<${broken()}> {}\n`,
+      ],
+      ["ts", `function f(): B<${flat}> {}\n`, `function f(): B<${broken()}> {}\n`],
+      [
+        "ts",
+        `function f<T extends A>(a: string): B<${flat}> {}\n`,
+        `function f<T extends A>(\n  a: string,\n): B<${broken()}> {}\n`,
+      ],
+      ["ts", `const f = (a: string): B<${flat}> => null;\n`, `const f = (\n  a: string,\n): B<${broken()}> => null;\n`],
+      [
+        "ts",
+        `const f = (a: string): ${flat} | null => null;\n`,
+        `const f = (\n  a: string,\n): ${broken()} | null => null;\n`,
+      ],
+      [
+        "js",
+        `// @flow\nconst f = (a: string): B<${flat}> => null;\n`,
+        `// @flow\nconst f = (\n  a: string,\n): B<${broken("", ",")}> => null;\n`,
+      ],
+    ];
+    test.each(flavors)("has a line of its own otherwise: %s", async (flavor, config) => {
+      const { first, second, expected } = await printedTwice(flavor, config, asTheToolsPrint);
+      expect(first).toEqual(expected);
+      expect(second).toEqual(expected);
+    });
+
+    test("function types in each other take time in proportion to their number", async () => {
+      const times = (text: string, count: number) => Buffer.alloc(text.length * Math.floor(count), text).toString();
+      const nested = `type F = ${times("(a: A) => ", isDebug || isASAN ? 1_000 : 4_000)}${flat};\n`;
+      const ordinary = "type F = (a: A) => B;\n";
+      const run = (text: string) => format({ "a.ts": text }, ["--check"]);
+      const [odd, plain] = [await run(nested), await run(times(ordinary, nested.length / ordinary.length))];
+      expect(slowdown(odd, plain)).toBeLessThan(8);
+    });
+  });
+
+  test("a comment in what a `prettier-ignore` comment leads is copied with it, once", async () => {
+    const text = "x = <a {\n  // prettier-ignore\n  ...b\n  // c1\n  .c} />;\n";
+    const result = await format({ "a.jsx": text }, [], { reads: ["a.jsx"] });
+    expect(result.files).toEqual({
+      "a.jsx": "x = (\n  <a\n    {\n      // prettier-ignore\n      ...b\n  // c1\n  .c\n    }\n  />\n);\n",
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a `prettier-ignore` comment before an empty body is printed", async () => {
+    // Prettier 3.9.9 moves the comment into the body, copies the body, and throws: 'Comment "prettier-ignore" was not printed.'
+    const rows = [
+      ["class A // prettier-ignore\n{  }\n", "class A // prettier-ignore\n{  }\n"],
+      ["class A extends (a  +  b) // prettier-ignore\n{  }\n", "class A extends (a + b) // prettier-ignore\n{  }\n"],
+      [
+        "class A extends (a  +  b /* prettier-ignore */\n) {  }\n",
+        "class A extends (a + b) /* prettier-ignore */\n{  }\n",
+      ],
+      ["x = (function  () // prettier-ignore\n{  })();\n", "x = (function () // prettier-ignore\n{  })();\n"],
+    ];
+    const names = rows.map((_, index) => `${index}.js`);
+    const texts = Object.fromEntries(rows.map(([text], index) => [names[index], text]));
+    const result = await format(texts, [], { reads: names });
+    expect(result.files).toEqual(Object.fromEntries(rows.map(([, printed], index) => [names[index], printed])));
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a comment that no printer writes is written after its statement", async () => {
+    // The file used to be refused: "The formatter failed". When this input gets a printer for `/* a */`, which is right, take
+    // another one that `bun fmt --debug-unprinted-comments <directory> <file>` has a line for.
+    const text = "type N = keyof ( /* a */ B | C /* prettier-ignore */ );\ne;\n";
+    const result = await format({ "a.ts": text }, [], { reads: ["a.ts"] });
+    expect(result.files["a.ts"]).toBe("type N = keyof (B | C) /* prettier-ignore */; /* a */\ne;\n");
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a comment before the `:` in an object type of Flow stays there with the configuration of oxfmt", async () => {
+    // oxfmt has no Flow, so this is what Prettier prints.
+    const files = { ".oxfmtrc.json": "{}", "a.js": "// @flow\ntype A = { a /* comment */ : B };\n" };
+    const result = await format(files, ["--parser", "flow", "a.js"], { reads: ["a.js"] });
+    expect(result.files["a.js"]).toBe("// @flow\ntype A = { a /* comment */: B };\n");
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("`<!--` and `-->` comments in a script", async () => {
+    // What oxfmt 0.72 prints, unless it says otherwise. Prettier 3.9.9 does not parse these files.
+    const rows = [
+      ["<!-- prettier-ignore\na(  b  );\nc(  d  );\n", "<!-- prettier-ignore\na(  b  );\nc(d);\n"],
+      ["a;\n--> prettier-ignore\nb(  c  );\nd(  e  );\n", "a;\n--> prettier-ignore\nb(  c  );\nd(e);\n"],
+      ["<!-- a comment\na(  b  );\n", "<!-- a comment\na(b);\n"],
+      // `-->` starts a comment at the start of a line only. oxfmt prints `var --> c`, which does not parse, and `x = a--> c`,
+      // which is `x = a-- > c.b.c()`.
+      ["var\n--> c\na = b;\n", "var\n  --> c\n  a = b;\n"],
+      ["x = a\n--> c\n.b.c();\n", "x = a\n--> c\n.b\n  .c();\n"],
+    ];
+    const names = rows.map((_, index) => `${index}.js`);
+    const texts = Object.fromEntries(rows.map(([text], index) => [names[index], text]));
+    const printed = Object.fromEntries(rows.map(([, printed], index) => [names[index], printed]));
+    for (const configuration of [{}, { ".oxfmtrc.json": "{}" }]) {
+      const result = await format({ ...configuration, ...texts }, [], { reads: names });
+      expect(result.files).toEqual(printed);
+      expect(result.exitCode).toBe(0);
+    }
+  });
+
+  test("a comment that waits for the end of the line is not written in the middle of the next one", async () => {
+    // Prettier 3.9.9 prints `a; /**⏎// b⏎ * c⏎ */`, and with `/* b */` on its own line what it prints does not parse.
+    const rows = [
+      ["a // b\n; /**\n * c\n */\n", "a; // b\n/**\n * c\n */\n"],
+      ["a\n/* b */\n; /**\n * c\n */\n", "a;\n/* b */ /**\n * c\n */\n"],
+      // Prettier: `import a from /** // b⏎ * c⏎ */ "d";`
+      ['import a // b\n/**\n * c\n */ from "d";\n', 'import a from  // b\n/**\n * c\n */ "d";\n'],
+    ];
+    const names = rows.map((_, index) => `${index}.js`);
+    const texts = Object.fromEntries(rows.map(([text], index) => [names[index], text]));
+    const result = await format(texts, [], { reads: names });
+    expect(result.files).toEqual(Object.fromEntries(rows.map(([, printed], index) => [names[index], printed])));
+    expect(result.exitCode).toBe(0);
+    // Nor in one that the option `jsdoc` writes.
+    const text = 'import a // b\n/**\n * @returns   {U}   it\n * @param   {T}   x   text\n */ from "d";\n';
+    const withOption = await format({ "a.js": text }, ["--jsdoc"], { reads: ["a.js"] });
+    expect(withOption.files["a.js"]).toBe(
+      'import a from  // b\n/**\n * @param {T} x Text\n * @returns {U} It\n */ "d";\n',
+    );
+    expect(withOption.exitCode).toBe(0);
+  });
+
+  test("a binding of Vue that is nothing but a comment stays as it is", async () => {
+    // oxfmt 0.72 prints `v-slot=""` and `v-for=" in xs"`.
+    const text =
+      '<template>\n  <a   v-slot="/* a */"   b="c" />\n  <a   v-for="(/* d */) in xs"   b="c" />\n</template>\n';
+    const result = await format({ ".oxfmtrc.json": "{}", "a.vue": text }, [], { reads: ["a.vue"] });
+    expect(result.files).toEqual({
+      "a.vue": '<template>\n  <a v-slot="/* a */" b="c" />\n  <a v-for="(/* d */) in xs" b="c" />\n</template>\n',
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
   test("Handlebars", async () => {
     const result = await format({ "a.hbs": '<div   class="a  b">{{foo   bar}}</div>\n', "b.handlebars": "{{a}}" }, [], {
       reads: ["a.hbs", "b.handlebars"],
@@ -1627,55 +2243,6 @@ exports.format = async (text, options) => {
       timeout,
     );
 
-    // The order of prettier-plugin-packagejson is that of the package sort-package-json, not that of `sortPackageJson`.
-    test(
-      "so does a package.json with prettier-plugin-packagejson, and no other file",
-      async () => {
-        const plugin = "prettier-plugin-packagejson";
-        const project = {
-          ...packages,
-          [`node_modules/${plugin}/package.json`]: `{ "name": "${plugin}", "version": "3.0.0" }`,
-          ".prettierrc": `{ "plugins": ["${plugin}"], "packageSortOrder": ["version"] }\n`,
-          "package.json": '{  "a":  1 }\n',
-          "packages/b/package.json": '{  "b":  1 }\n',
-          "my-package.json": '{  "c":  1 }\n',
-          "d.js": "d  ;\n",
-        };
-        const names = ["package.json", "packages/b/package.json", "my-package.json", "d.js"];
-        const result = await format(project, [], { reads: names });
-        expect(result.files).toEqual({
-          "package.json": '{ "a": 1 }\n',
-          "packages/b/package.json": '{ "b": 1 }\n',
-          "my-package.json": '{ "c": 1 }\n',
-          "d.js": "d;\n",
-        });
-        expect(result.stderr).toContain("Used your installed Prettier for 2 files");
-        expect(result.stderr).not.toContain("warn:");
-        expect(result.exitCode).toBe(0);
-        // The flag is for what cannot be done, and this can.
-        const withFlag = await format(project, ["--allow-unsupported"], { reads: names });
-        expect(withFlag.files).toEqual(result.files);
-        expect(withFlag.stderr).toContain("Used your installed Prettier for 2 files");
-
-        // Without Prettier only those files are left, and with the flag they are formatted without the plugin.
-        const { ".prettierrc": config, "package.json": text } = project;
-        const alone = { ".prettierrc": config, "package.json": text, "d.js": "d  ;\n" };
-        const left = await format(alone, [], { reads: ["package.json", "d.js"] });
-        expect(left.files).toEqual({ "package.json": text, "d.js": "d;\n" });
-        expect(left.stderr).toContain(`Not installed: prettier, ${plugin}`);
-        expect(left.stderr).toContain(
-          `error: 1 file was not formatted because the Prettier config uses plugins that bun fmt does not include: ${plugin}\n  Use --allow-unsupported to format it without the plugins.\n`,
-        );
-        expect(left.stderr).not.toContain("language");
-        expect(left.exitCode).toBe(2);
-        const allowed = await format(alone, ["--allow-unsupported"], { reads: ["package.json"] });
-        expect(allowed.files).toEqual({ "package.json": '{\n  "a": 1\n}\n' });
-        expect(allowed.stderr).toContain(`warn: Not installed: prettier, ${plugin}`);
-        expect(allowed.exitCode).toBe(0);
-      },
-      timeout,
-    );
-
     test("a path reaches Prettier and its plugins as the system writes it, also on Windows", async () => {
       const worker = join(import.meta.dir, "../../../src/lint/js_plugin/worker");
       const head = { usesConfig: true, editorconfig: true, flags: {}, precedence: "cli-override" };
@@ -1987,6 +2554,942 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       },
       timeout,
     );
+  });
+
+  // Unless a test says otherwise, the expected output is what Prettier 3.9.9 prints on Node, with
+  // prettier-plugin-packagejson 3.0.2 and sort-package-json 3.7.1.
+  describe("prettier-plugin-packagejson", () => {
+    const plugin = "prettier-plugin-packagejson";
+    /** Like `format`, without the summary. */
+    const quiet = (files: Record<string, string>, args: string[], options?: Options) =>
+      format(files, ["--log-level=warn", ...args], options);
+    const prettierrc = `{ "plugins": ["${plugin}"] }\n`;
+    // Stand-ins whose output would show that they ran.
+    const packages = {
+      "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
+      "node_modules/prettier/index.cjs": `exports.resolveConfig = async () => null;
+exports.format = async text => "by Prettier";
+`,
+      [`node_modules/${plugin}/package.json`]: `{ "name": "${plugin}", "version": "2.0.0" }`,
+    };
+    const [unsorted, sorted] = ['{ "version": "1", "name": "a" }\n', '{\n  "name": "a",\n  "version": "1"\n}\n'];
+    const onlyFormatted = '{\n  "version": "1",\n  "name": "a"\n}\n';
+    const rows: [title: string, before: object, after: object][] = [
+      [
+        "top-level keys",
+        {
+          "_b": 1,
+          "zeta": 1,
+          "dependencies": {},
+          "_a": 1,
+          "version": "1.0.0",
+          "alpha": 1,
+          "scripts": {},
+          "name": "a",
+          "$schema": "s",
+          "exports": {},
+          "main": "m",
+          "type": "module",
+          "license": "MIT",
+          "description": "d",
+          "private": true,
+          "Beta": 1,
+          "pnpm": {},
+          "engines": {},
+          "packageManager": "bun@1",
+          "files": [],
+          "devDependencies": {},
+          "types": "t",
+          "bin": {},
+          "author": "a",
+          "repository": "r",
+          "keywords": [],
+          "homepage": "h",
+          "bugs": "b",
+          "publishConfig": {},
+          "peerDependencies": {},
+          "workspaces": [],
+          "sideEffects": false,
+          "module": "m",
+          "browser": "b",
+          "imports": {},
+          "overrides": {},
+          "resolutions": {},
+          "optionalDependencies": {},
+          "lint-staged": {},
+          "prettier": {},
+          "eslintConfig": {},
+          "jest": {},
+          "husky": {},
+          "config": {},
+          "os": [],
+          "cpu": [],
+          "volta": {},
+          "funding": "f",
+          "contributors": [],
+          "man": "m",
+          "directories": {},
+          "displayName": "A",
+        },
+        {
+          "$schema": "s",
+          "name": "a",
+          "displayName": "A",
+          "version": "1.0.0",
+          "private": true,
+          "description": "d",
+          "keywords": [],
+          "homepage": "h",
+          "bugs": "b",
+          "repository": "r",
+          "funding": "f",
+          "license": "MIT",
+          "author": "a",
+          "contributors": [],
+          "sideEffects": false,
+          "type": "module",
+          "imports": {},
+          "exports": {},
+          "main": "m",
+          "module": "m",
+          "browser": "b",
+          "types": "t",
+          "bin": {},
+          "man": "m",
+          "directories": {},
+          "files": [],
+          "workspaces": [],
+          "scripts": {},
+          "husky": {},
+          "lint-staged": {},
+          "config": {},
+          "prettier": {},
+          "eslintConfig": {},
+          "jest": {},
+          "resolutions": {},
+          "overrides": {},
+          "dependencies": {},
+          "devDependencies": {},
+          "peerDependencies": {},
+          "optionalDependencies": {},
+          "packageManager": "bun@1",
+          "engines": {},
+          "volta": {},
+          "os": [],
+          "cpu": [],
+          "publishConfig": {},
+          "pnpm": {},
+          "Beta": 1,
+          "alpha": 1,
+          "zeta": 1,
+          "_a": 1,
+          "_b": 1,
+        },
+      ],
+      [
+        "objects with their own key order",
+        {
+          "bugs": { "email": "e", "url": "u", "a": 1 },
+          "repository": { "directory": "d", "url": "u", "type": "git" },
+          "funding": { "url": "u", "type": "t" },
+          "license": { "url": "u", "type": "t" },
+          "author": { "url": "u", "email": "e", "name": "n" },
+          "maintainers": [{ "email": "e", "name": "n" }, "x"],
+          "contributors": [{ "url": "u", "name": "n" }],
+          "directories": { "test": "t", "example": "e", "doc": "d", "man": "m", "bin": "b", "lib": "l", "a": "a" },
+          "binary": { "host": "h", "package_name": "p", "remote_path": "r", "module_path": "p", "module_name": "n" },
+          "volta": { "yarn": "1", "npm": "1", "node": "1" },
+          "badges": [{ "href": "h", "url": "u", "description": "d" }],
+          "devEngines": {
+            "runtime": { "version": "1", "name": "bun" },
+            "packageManager": { "onFail": "warn", "version": "1", "name": "bun" },
+          },
+          "husky": { "hooks": { "pre-push": "a", "commit-msg": "b", "pre-commit": "c", "custom": "d" } },
+          "simple-git-hooks": { "post-merge": "a", "pre-commit": "b" },
+        },
+        {
+          "bugs": { "url": "u", "email": "e", "a": 1 },
+          "repository": { "type": "git", "url": "u", "directory": "d" },
+          "funding": { "type": "t", "url": "u" },
+          "license": { "type": "t", "url": "u" },
+          "author": { "name": "n", "email": "e", "url": "u" },
+          "maintainers": [{ "name": "n", "email": "e" }, "x"],
+          "contributors": [{ "name": "n", "url": "u" }],
+          "directories": { "lib": "l", "bin": "b", "man": "m", "doc": "d", "example": "e", "test": "t", "a": "a" },
+          "binary": { "module_name": "n", "module_path": "p", "remote_path": "r", "package_name": "p", "host": "h" },
+          "husky": { "hooks": { "pre-commit": "c", "commit-msg": "b", "pre-push": "a", "custom": "d" } },
+          "simple-git-hooks": { "pre-commit": "b", "post-merge": "a" },
+          "devEngines": {
+            "runtime": { "version": "1", "name": "bun" },
+            "packageManager": { "name": "bun", "version": "1", "onFail": "warn" },
+          },
+          "volta": { "node": "1", "npm": "1", "yarn": "1" },
+          "badges": [{ "description": "d", "url": "u", "href": "h" }],
+        },
+      ],
+      [
+        "objects that are sorted by name, and objects that aren't",
+        {
+          "bin": { "b": 1, "a": 1 },
+          "contributes": { "b": { "d": 1, "c": 1 }, "a": 1 },
+          "config": { "b": 1, "a": 1 },
+          "babel": { "presets": [], "plugins": [] },
+          "jest": { "b": { "d": 1, "c": 1 }, "a": 1 },
+          "engines": { "npm": "1", "node": "1" },
+          "publishConfig": { "registry": "r", "access": "a" },
+          "resolutions": { "b": "1", "a": "1" },
+          "oclif": { "b": { "d": 1, "c": { "f": 1, "e": 1 } }, "a": 1 },
+          "peerDependenciesMeta": { "b": { "optional": true, "a": 1 }, "a": {} },
+          "dependenciesMeta": { "b@2": { "unplugged": true, "built": true }, "b@1": {}, "@s/a@1": {}, "a": {} },
+          "imports": { "#b": 1, "#a": 1 },
+          "typesVersions": { "b": 1, "a": 1 },
+          "lint-staged": { "b": 1, "a": 1 },
+          "stylelint": { "b": 1, "a": 1 },
+          "browserslist": ["b", "a"],
+          "unknown": { "b": 1, "a": 1 },
+        },
+        {
+          "imports": { "#b": 1, "#a": 1 },
+          "typesVersions": { "b": 1, "a": 1 },
+          "bin": { "a": 1, "b": 1 },
+          "contributes": { "a": 1, "b": { "d": 1, "c": 1 } },
+          "lint-staged": { "b": 1, "a": 1 },
+          "config": { "a": 1, "b": 1 },
+          "babel": { "plugins": [], "presets": [] },
+          "browserslist": ["b", "a"],
+          "stylelint": { "b": 1, "a": 1 },
+          "jest": { "a": 1, "b": { "d": 1, "c": 1 } },
+          "oclif": { "a": 1, "b": { "c": { "e": 1, "f": 1 }, "d": 1 } },
+          "resolutions": { "a": "1", "b": "1" },
+          "dependenciesMeta": { "@s/a@1": {}, "a": {}, "b@2": { "built": true, "unplugged": true }, "b@1": {} },
+          "peerDependenciesMeta": { "a": {}, "b": { "a": 1, "optional": true } },
+          "engines": { "node": "1", "npm": "1" },
+          "publishConfig": { "access": "a", "registry": "r" },
+          "unknown": { "b": 1, "a": 1 },
+        },
+      ],
+      [
+        "arrays",
+        {
+          "keywords": ["b", "a", "b"],
+          "categories": ["b", "a", "b"],
+          "files": ["b", "a", "b"],
+          "activationEvents": ["b", "a", "b"],
+          "bundledDependencies": ["b", "a", "b"],
+          "bundleDependencies": ["b", "a", "B", "b"],
+          "extensionPack": ["b", "a", "b"],
+          "extensionDependencies": ["b", "a"],
+          "os": ["b", "a", "b"],
+          "man": ["b", "a", "b"],
+          "workspaces": ["b", "a", "b"],
+        },
+        {
+          "categories": ["b", "a"],
+          "keywords": ["b", "a"],
+          "man": ["b", "a", "b"],
+          "files": ["b", "a"],
+          "workspaces": ["b", "a", "b"],
+          "activationEvents": ["b", "a"],
+          "bundledDependencies": ["a", "b"],
+          "bundleDependencies": ["B", "a", "b"],
+          "extensionPack": ["a", "b"],
+          "extensionDependencies": ["a", "b"],
+          "os": ["b", "a", "b"],
+        },
+      ],
+      [
+        "an array with anything other than strings is left alone",
+        { "keywords": ["b", 1, "b"], "bundledDependencies": ["b", "a", null, "b"] },
+        { "keywords": ["b", 1, "b"], "bundledDependencies": ["b", "a", null, "b"] },
+      ],
+      [
+        "exports",
+        {
+          "exports": {
+            "default": "./d.js",
+            "./b": {
+              "default": "./b.js",
+              "require": "./b.cjs",
+              "import": { "default": "./b.mjs", "types": "./b.d.ts" },
+            },
+            "types": "./t.d.ts",
+            ".": "./a.js",
+            "./a": ["./a.js", { "default": 1, "node": 2 }],
+          },
+        },
+        {
+          "exports": {
+            "./b": {
+              "require": "./b.cjs",
+              "import": { "types": "./b.d.ts", "default": "./b.mjs" },
+              "default": "./b.js",
+            },
+            ".": "./a.js",
+            "./a": ["./a.js", { "default": 1, "node": 2 }],
+            "types": "./t.d.ts",
+            "default": "./d.js",
+          },
+        },
+      ],
+      [
+        "scripts",
+        {
+          "scripts": {
+            "test": "t",
+            "lint:fix": "f",
+            "postbuild": "p",
+            "build:b": "b",
+            "lint": "l",
+            "build-all": "a",
+            "prebuild": "p",
+            "build:a:z": "z",
+            "build": "b",
+            "build:a": "a",
+            "pretest": "p",
+            "prepare": "p",
+            "postinstall": "p",
+            "preinstall": "p",
+            "presto": "p",
+            "lint:": "x",
+            ":a": "y",
+            "postlint": "z",
+          },
+          "betterScripts": { "b": "b", "preb": "p", "a": "a" },
+        },
+        {
+          "scripts": {
+            ":a": "y",
+            "prebuild": "p",
+            "build": "b",
+            "postbuild": "p",
+            "build:a": "a",
+            "build:a:z": "z",
+            "build:b": "b",
+            "build-all": "a",
+            "preinstall": "p",
+            "postinstall": "p",
+            "lint": "l",
+            "postlint": "z",
+            "lint:": "x",
+            "lint:fix": "f",
+            "prepare": "p",
+            "presto": "p",
+            "pretest": "p",
+            "test": "t",
+          },
+          "betterScripts": { "a": "a", "preb": "p", "b": "b" },
+        },
+      ],
+      [
+        "scripts keep their order if run-s runs them in that order",
+        {
+          "scripts": { "build:b": "b", "prebuild": "p", "build:a": "a", "build": "run-s build:*", "a": "a" },
+          "devDependencies": { "npm-run-all": "1" },
+        },
+        {
+          "scripts": { "build:b": "b", "prebuild": "p", "build": "run-s build:*", "build:a": "a", "a": "a" },
+          "devDependencies": { "npm-run-all": "1" },
+        },
+      ],
+      [
+        "the same with npm-run-all --serial",
+        {
+          "scripts": { "c": "c", "b": "echo && npm-run-all2 x --serial b:*; echo", "a": "a" },
+          "devDependencies": { "npm-run-all2": "1" },
+        },
+        {
+          "scripts": { "c": "c", "b": "echo && npm-run-all2 x --serial b:*; echo", "a": "a" },
+          "devDependencies": { "npm-run-all2": "1" },
+        },
+      ],
+      [
+        "but not if npm-run-all isn't a dependency",
+        { "scripts": { "c": "c", "b": "run-s b:*", "a": "a" }, "devDependencies": { "other": "1" } },
+        { "scripts": { "a": "a", "b": "run-s b:*", "c": "c" }, "devDependencies": { "other": "1" } },
+      ],
+      [
+        "and not without a pattern, or if they run in parallel",
+        {
+          "scripts": { "d": "npm-run-all -p b:*", "c": "run-s b a", "b": "xrun-s b:*", "a": "run-sx a:*" },
+          "devDependencies": { "npm-run-all": "1" },
+        },
+        {
+          "scripts": { "a": "run-sx a:*", "b": "xrun-s b:*", "c": "run-s b a", "d": "npm-run-all -p b:*" },
+          "devDependencies": { "npm-run-all": "1" },
+        },
+      ],
+      [
+        "dependencies in npm's order",
+        {
+          "dependencies": {
+            "b": "1",
+            "@b/a": "1",
+            "B": "1",
+            "a": "1",
+            "a-b": "1",
+            "a_b": "1",
+            "@a/b": "1",
+            "a.b": "1",
+            "A": "1",
+            "a1": "1",
+            "a10": "1",
+            "a2": "1",
+          },
+          "devDependencies": { "b": "1", "B": "1", "a": "1" },
+          "peerDependencies": { "b": "1", "B": "1", "a": "1" },
+          "optionalDependencies": { "b": "1", "B": "1", "a": "1" },
+          "overrides": { "b": { "d": "1", "c": "1" }, "B": "1", "a": "1" },
+          "workspaces": {
+            "catalog": { "b": "1", "B": "1", "a": "1" },
+            "nohoist": ["b", "a"],
+            "packages": ["b", "a", "b"],
+            "catalogs": { "b": { "d": "1", "c": "1" }, "a": {} },
+          },
+        },
+        {
+          "workspaces": {
+            "packages": ["a", "b"],
+            "catalog": { "a": "1", "b": "1", "B": "1" },
+            "catalogs": { "b": { "d": "1", "c": "1" }, "a": {} },
+            "nohoist": ["b", "a"],
+          },
+          "overrides": { "a": "1", "b": { "d": "1", "c": "1" }, "B": "1" },
+          "dependencies": {
+            "@a/b": "1",
+            "@b/a": "1",
+            "a": "1",
+            "A": "1",
+            "a_b": "1",
+            "a-b": "1",
+            "a.b": "1",
+            "a1": "1",
+            "a10": "1",
+            "a2": "1",
+            "b": "1",
+            "B": "1",
+          },
+          "devDependencies": { "a": "1", "b": "1", "B": "1" },
+          "peerDependencies": { "a": "1", "b": "1", "B": "1" },
+          "optionalDependencies": { "a": "1", "b": "1", "B": "1" },
+        },
+      ],
+      [
+        "dependencies in Yarn's and pnpm's order",
+        {
+          "packageManager": "pnpm@9.0.0",
+          "dependencies": { "b": "1", "@b/a": "1", "B": "1", "a": "1", "a-b": "1", "a_b": "1", "A": "1" },
+        },
+        {
+          "dependencies": { "@b/a": "1", "A": "1", "B": "1", "a": "1", "a-b": "1", "a_b": "1", "b": "1" },
+          "packageManager": "pnpm@9.0.0",
+        },
+      ],
+      [
+        "packageManager: npm",
+        { "packageManager": "npm@10.0.0", "pnpm": {}, "dependencies": { "b": "1", "B": "1", "a": "1" } },
+        { "dependencies": { "a": "1", "b": "1", "B": "1" }, "packageManager": "npm@10.0.0", "pnpm": {} },
+      ],
+      [
+        "devEngines.packageManager",
+        {
+          "devEngines": { "packageManager": { "name": "yarn" } },
+          "engines": { "npm": "1" },
+          "dependencies": { "b": "1", "B": "1", "a": "1" },
+        },
+        {
+          "dependencies": { "B": "1", "a": "1", "b": "1" },
+          "engines": { "npm": "1" },
+          "devEngines": { "packageManager": { "name": "yarn" } },
+        },
+      ],
+      [
+        "pnpm",
+        { "pnpm": { "a": 1 }, "engines": { "npm": "1" }, "dependencies": { "b": "1", "B": "1", "a": "1" } },
+        { "dependencies": { "B": "1", "a": "1", "b": "1" }, "engines": { "npm": "1" }, "pnpm": { "a": 1 } },
+      ],
+      [
+        "eslintConfig",
+        {
+          "eslintConfig": {
+            "rules": { "b/a": 1, "semi": 1, "a/b/c": 1, "a/b": 1, "B": 1, "b": 1 },
+            "root": true,
+            "overrides": [
+              {
+                "rules": { "b": 1, "a": 1 },
+                "excludedFiles": "e",
+                "files": "f",
+                "overrides": [{ "env": { "b": 1, "a": 1 }, "files": "g" }],
+              },
+            ],
+            "extends": ["b", "a"],
+            "globals": { "b": 1, "a": 1 },
+            "env": { "node": true, "browser": true },
+            "parserOptions": { "sourceType": "module", "ecmaVersion": 6 },
+            "settings": { "b": { "d": 1, "c": 1 }, "a": 1 },
+            "plugins": ["b", "a"],
+            "parser": "p",
+            "ignorePatterns": [],
+          },
+        },
+        {
+          "eslintConfig": {
+            "env": { "browser": true, "node": true },
+            "parser": "p",
+            "parserOptions": { "ecmaVersion": 6, "sourceType": "module" },
+            "settings": { "a": 1, "b": { "d": 1, "c": 1 } },
+            "plugins": ["b", "a"],
+            "extends": ["b", "a"],
+            "rules": { "b": 1, "B": 1, "semi": 1, "a/b": 1, "b/a": 1, "a/b/c": 1 },
+            "overrides": [
+              {
+                "files": "f",
+                "excludedFiles": "e",
+                "rules": { "a": 1, "b": 1 },
+                "overrides": [{ "files": "g", "env": { "a": 1, "b": 1 } }],
+              },
+            ],
+            "globals": { "a": 1, "b": 1 },
+            "ignorePatterns": [],
+            "root": true,
+          },
+        },
+      ],
+      [
+        "prettier",
+        {
+          "prettier": {
+            "semi": false,
+            "overrides": [{ "options": { "semi": true, "printWidth": 1 }, "files": "f", "excludeFiles": "e" }],
+            "plugins": ["b", "a"],
+            "arrowParens": "avoid",
+          },
+        },
+        {
+          "prettier": {
+            "arrowParens": "avoid",
+            "plugins": ["b", "a"],
+            "semi": false,
+            "overrides": [{ "excludeFiles": "e", "files": "f", "options": { "printWidth": 1, "semi": true } }],
+          },
+        },
+      ],
+      [
+        "pnpm.overrides are sorted by the lowest version in each range",
+        {
+          "pnpm": {
+            "packageExtensions": { "b": { "peerDependencies": { "d": "1", "c": "1" } }, "a": {} },
+            "overrides": {
+              "b@2": "1",
+              "c": "1",
+              "b@^1.5": "1",
+              "b@>=1.0.0 <1.2": "1",
+              "b@<1": "1",
+              "b": "1",
+              "a@1>z": "1",
+              "a@1>y": "1",
+              "@s/a@2": "1",
+              "@s/a@1.x": "1",
+              "@s/a": "1",
+              "b@>1.5.0": "1",
+              "b@1.5.1-rc.1": "1",
+              "b@10": "1",
+              "b@3 || 1.1": "1",
+            },
+            "zeta": 1,
+            "onlyBuiltDependencies": ["b", "a"],
+            "patchedDependencies": { "b@1": "p", "a@1": "p" },
+            "peerDependencyRules": { "ignoreMissing": ["b"], "allowedVersions": { "b": "1", "a": "1" } },
+          },
+        },
+        {
+          "pnpm": {
+            "peerDependencyRules": { "allowedVersions": { "a": "1", "b": "1" }, "ignoreMissing": ["b"] },
+            "onlyBuiltDependencies": ["b", "a"],
+            "overrides": {
+              "@s/a": "1",
+              "@s/a@1.x": "1",
+              "@s/a@2": "1",
+              "a@1>y": "1",
+              "a@1>z": "1",
+              "b@>=1.0.0 <1.2": "1",
+              "b@>1.5.0": "1",
+              "b": "1",
+              "b@<1": "1",
+              "b@3 || 1.1": "1",
+              "b@^1.5": "1",
+              "b@1.5.1-rc.1": "1",
+              "b@2": "1",
+              "b@10": "1",
+              "c": "1",
+            },
+            "patchedDependencies": { "a@1": "p", "b@1": "p" },
+            "packageExtensions": { "a": {}, "b": { "peerDependencies": { "c": "1", "d": "1" } } },
+            "zeta": 1,
+          },
+        },
+      ],
+      [
+        "wireit",
+        {
+          "wireit": {
+            "b": {
+              "output": ["o"],
+              "files": ["f"],
+              "env": { "B": { "default": "d", "external": true }, "A": {} },
+              "dependencies": [{ "cascade": false, "script": "a" }, "x"],
+              "service": { "b": 1, "readyWhen": { "lineMatches": "l", "a": 1 } },
+              "command": "c",
+              "clean": true,
+            },
+            "a": {},
+          },
+        },
+        {
+          "wireit": {
+            "a": {},
+            "b": {
+              "command": "c",
+              "dependencies": [{ "script": "a", "cascade": false }, "x"],
+              "files": ["f"],
+              "output": ["o"],
+              "clean": true,
+              "env": { "A": {}, "B": { "external": true, "default": "d" } },
+              "service": { "readyWhen": { "a": 1, "lineMatches": "l" }, "b": 1 },
+            },
+          },
+        },
+      ],
+    ];
+    // The plugin passes the text through `JSON.parse` and `JSON.stringify`. Bun only moves members.
+    const asWritten: [title: string, before: string, after: string, ofPlugin: string][] = [
+      [
+        "keeps numbers as written",
+        '{ "b": 1.0, "a": -0, "c": 1e400, "d": 1E5, "e": 12345678901234567890, "f": 0.10 }',
+        '{\n  "a": -0,\n  "b": 1.0,\n  "c": 1e400,\n  "d": 1E5,\n  "e": 12345678901234567890,\n  "f": 0.10\n}\n',
+        '{\n  "a": 0,\n  "b": 1,\n  "c": null,\n  "d": 100000,\n  "e": 12345678901234567000,\n  "f": 0.1\n}\n',
+      ],
+      [
+        "keeps strings and keys as written, and compares what they stand for",
+        '{ "b": "\\u00e9\\/\\ud83d\\ude00\\ud800", "\\u0061": "é", "n\\u0061me": "x", "keywords": ["\\u0062", "b", "a"] }',
+        '{\n  "n\\u0061me": "x",\n  "keywords": [\n    "\\u0062",\n    "a"\n  ],\n  "\\u0061": "é",\n  "b": "\\u00e9\\/\\ud83d\\ude00\\ud800"\n}\n',
+        '{\n  "name": "x",\n  "keywords": [\n    "b",\n    "a"\n  ],\n  "a": "é",\n  "b": "é/😀\\ud800"\n}\n',
+      ],
+      [
+        "keeps every member with a duplicate key, in the order they're written in",
+        '{ "b": 1, "a": 2, "b": { "d": 1, "c": 1, "d": 2 }, "scripts": { "b": "1", "a": "", "b": "2" } }',
+        '{\n  "scripts": {\n    "a": "",\n    "b": "1",\n    "b": "2"\n  },\n  "a": 2,\n  "b": 1,\n  "b": {\n    "d": 1,\n    "c": 1,\n    "d": 2\n  }\n}\n',
+        '{\n  "scripts": {\n    "a": "",\n    "b": "2"\n  },\n  "a": 2,\n  "b": {\n    "d": 2,\n    "c": 1\n  }\n}\n',
+      ],
+      [
+        "sorts numeric keys like any other key, and only where it sorts",
+        '{ "name": "a", "10": 1, "9": 1, "scripts": { "b": "", "10": "", "9": "" }, "x": { "b": 1, "1": 1 } }',
+        '{\n  "name": "a",\n  "scripts": {\n    "10": "",\n    "9": "",\n    "b": ""\n  },\n  "10": 1,\n  "9": 1,\n  "x": {\n    "b": 1,\n    "1": 1\n  }\n}\n',
+        '{\n  "9": 1,\n  "10": 1,\n  "name": "a",\n  "scripts": {\n    "9": "",\n    "10": "",\n    "b": ""\n  },\n  "x": {\n    "1": 1,\n    "b": 1\n  }\n}\n',
+      ],
+      [
+        "leaves a file alone that isn't an object",
+        '[{ "b": 1, "a": 1 }, 1.0]',
+        '[\n  {\n    "b": 1,\n    "a": 1\n  },\n  1.0\n]\n',
+        '[\n  {\n    "b": 1,\n    "a": 1\n  },\n  1\n]\n',
+      ],
+    ];
+
+    test("puts the keys in the plugin's order", async () => {
+      const names = rows.map((_, index) => `${index}/package.json`);
+      const files = Object.fromEntries(rows.map(([, before], index) => [names[index], JSON.stringify(before)]));
+      // `--config` is needed because one of the files has a `prettier` key, which counts as a config.
+      const result = await quiet({ ".prettierrc": prettierrc, ...files }, ["--config", ".prettierrc", "."], {
+        reads: names,
+      });
+      for (const [index, [title, , after]] of rows.entries()) {
+        const text = JSON.stringify(after, null, 2) + "\n";
+        expect({ title, text: result.files[names[index]] }).toEqual({ title, text });
+      }
+      expect(result).toMatchObject({ stderr: "", exitCode: 0 });
+      const again = Object.fromEntries(
+        rows.map(([, , after], index) => [names[index], JSON.stringify(after, null, 2) + "\n"]),
+      );
+      expect(await different({ ".prettierrc": prettierrc, ...again }, ["--config", ".prettierrc", "."])).toEqual([]);
+    });
+
+    test.each(asWritten)("%s", async (_, before, after, ofPlugin) => {
+      expect(after).not.toBe(ofPlugin);
+      // After the plugin's round trip, the two are the same.
+      expect(JSON.stringify(JSON.parse(after), null, 2) + "\n").toBe(ofPlugin);
+      const files = { ".prettierrc": prettierrc, "package.json": before };
+      const result = await quiet(files, ["package.json"], { reads: ["package.json"] });
+      expect(result).toMatchObject({ stderr: "", files: { "package.json": after }, exitCode: 0 });
+      expect(await different({ ...files, "package.json": after }, [])).toEqual([]);
+    });
+
+    test("keeps a byte order mark and \\r\\n", async () => {
+      const files = {
+        ".prettierrc": `{ "plugins": ["${plugin}"], "endOfLine": "auto" }\n`,
+        "package.json": '\uFEFF{\r\n  "version": "1",\r\n  "name": "a"\r\n}\r\n',
+      };
+      const result = await quiet(files, ["package.json"], { reads: ["package.json"] });
+      expect(result).toMatchObject({
+        stderr: "",
+        files: { "package.json": '\uFEFF{\r\n  "name": "a",\r\n  "version": "1"\r\n}\r\n' },
+        exitCode: 0,
+      });
+    });
+
+    test("sorts every package.json and no other file, whatever is installed", async () => {
+      const files = {
+        ".prettierrc": prettierrc,
+        "package.json": unsorted,
+        "packages/b/package.json": unsorted,
+        "my-package.json": unsorted,
+        "package.json5": unsorted,
+        "composer.json": unsorted,
+        "other/Package.json": unsorted,
+        "d.js": "d  ;\n",
+      };
+      const after = {
+        "package.json": sorted,
+        "packages/b/package.json": sorted,
+        "my-package.json": '{ "version": "1", "name": "a" }\n',
+        "package.json5": '{ version: "1", name: "a" }\n',
+        "composer.json": onlyFormatted,
+        "other/Package.json": onlyFormatted,
+        "d.js": "d;\n",
+      };
+      for (const installed of [{}, packages]) {
+        for (const flags of [[], ["--allow-unsupported"]]) {
+          const result = await quiet({ ...files, ...installed }, flags, { reads: Object.keys(after) });
+          expect(result).toMatchObject({ stderr: "", files: after, exitCode: 0 });
+        }
+      }
+      expect(await different({ ...files, ...after, "package.json": unsorted }, [])).toEqual(["package.json"]);
+    });
+
+    test("sorts standard input", async () => {
+      const files = { ".prettierrc": prettierrc, ...packages };
+      const piped = (flags: string[]) => quiet(files, flags, { stdin: unsorted });
+      expect(await piped(["--stdin-filepath", "a/package.json"])).toMatchObject({
+        raw: sorted,
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(await format(files, ["--stdin-filepath", "package.json", "--check"], { stdin: unsorted })).toMatchObject({
+        raw: "(stdin)\n",
+        exitCode: 1,
+      });
+      expect(await piped(["--stdin-filepath", "a.json"])).toMatchObject({ raw: unsorted, stderr: "", exitCode: 0 });
+      // The plugin checks the file name.
+      expect(await piped(["--parser", "json-stringify"])).toMatchObject({
+        raw: onlyFormatted,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.each<[string, Record<string, string>, string[]?]>([
+      ["--plugin", {}, ["--plugin", plugin]],
+      [
+        "an override",
+        { ".prettierrc": JSON.stringify({ overrides: [{ files: "*.json", options: { plugins: [plugin] } }] }) },
+      ],
+      ["a path", { ".prettierrc": `{ "plugins": ["./node_modules/${plugin}/lib/index.cjs"] }` }],
+      [
+        "an imported module",
+        {
+          "prettier.config.mjs": `import plugin from "${plugin}";\nexport default { plugins: [plugin] };`,
+          [`node_modules/${plugin}/package.json`]: `{ "name": "${plugin}", "main": "index.cjs" }`,
+          [`node_modules/${plugin}/index.cjs`]:
+            'exports.parsers = { "json-stringify": {} };\nexports.options = { packageSortOrder: { type: "string", array: true } };\n',
+        },
+      ],
+    ])("enabled by %s", async (_, config, flags = []) => {
+      const result = await quiet({ ...config, "package.json": unsorted }, [...flags, "package.json"], {
+        reads: ["package.json"],
+      });
+      expect(result).toMatchObject({ stderr: "", files: { "package.json": sorted }, exitCode: 0 });
+    });
+
+    test("doesn't sort files where an override clears the plugin list or sets another parser", async () => {
+      const overrides = [
+        { files: "a/**", options: { plugins: [] } },
+        { files: "b/**", options: { parser: "json" } },
+      ];
+      const files = {
+        ".prettierrc": JSON.stringify({ plugins: [plugin], overrides }),
+        "a/package.json": unsorted,
+        "b/package.json": unsorted,
+      };
+      const result = await quiet(files, ["a", "b"], { reads: ["a/package.json", "b/package.json"] });
+      expect(result.files).toEqual({ "a/package.json": onlyFormatted, "b/package.json": unsorted });
+    });
+
+    test("puts the keys in packageSortOrder first", async () => {
+      const config = { plugins: [plugin], packageSortOrder: ["zeta", "version", "_a"] };
+      const before = { name: "a", _a: 1, main: "m", alpha: 1, version: "1", zeta: 1 };
+      const after = { zeta: 1, version: "1", _a: 1, name: "a", main: "m", alpha: 1 };
+      const files = { ".prettierrc": JSON.stringify(config), "package.json": JSON.stringify(before) };
+      const result = await quiet(files, [], { reads: ["package.json"] });
+      expect(result).toMatchObject({
+        stderr: "",
+        files: { "package.json": JSON.stringify(after, null, 2) + "\n" },
+        exitCode: 0,
+      });
+      // Without the plugin, Prettier doesn't know the option.
+      const unknown = await quiet({ ...files, ".prettierrc": '{ "packageSortOrder": ["version"] }' }, []);
+      expect(unknown.stderr).toBe('warn: Ignored unknown option { packageSortOrder: ["version"] }.');
+    });
+
+    test.each([
+      ['"version"', '"version"'],
+      ["[1]", "[1]"],
+      ['["a", null]', '["a", null]'],
+      ["true", "true"],
+      ['{ "a": 1 }', "{ a: 1 }"],
+    ])("packageSortOrder: %s is rejected for every file, as in Prettier", async (value, shown) => {
+      const files = { ".prettierrc": `{ "plugins": ["${plugin}"], "packageSortOrder": ${value} }`, "a.js": ugly };
+      const result = await quiet(files, ["a.js"], { reads: ["a.js"] });
+      expect(result.stderr).toBe(
+        `error: Invalid packageSortOrder value. Expected an array of a string, but received ${shown}.`,
+      );
+      expect(result).toMatchObject({ files: { "a.js": ugly }, exitCode: 1 });
+    });
+
+    // npm sorts names in dictionary order, Yarn and pnpm by code unit. The plugin looks in the working directory.
+    test.each(["yarn.lock", ".yarnrc.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".yarn/a"])(
+      "with %s, dependencies are sorted the way Yarn and pnpm sort them",
+      async name => {
+        const before = { dependencies: { b: "1", B: "1", a: "1" } };
+        const files = { ".prettierrc": prettierrc, "package.json": JSON.stringify(before), "c/package.json": "{}\n" };
+        const text = (names: string[]) =>
+          JSON.stringify({ dependencies: Object.fromEntries(names.map(name => [name, "1"])) }, null, 2) + "\n";
+        const run = (files: Record<string, string>) => quiet(files, [], { reads: ["package.json"] });
+        expect((await run(files)).files["package.json"]).toBe(text(["a", "b", "B"]));
+        expect((await run({ ...files, [name]: "" })).files["package.json"]).toBe(text(["B", "a", "b"]));
+        expect((await run({ ...files, [`c/${name}`]: "" })).files["package.json"]).toBe(text(["a", "b", "B"]));
+      },
+    );
+
+    // The plugin throws for these: "SyntaxError: Expected double-quoted property name in JSON at position 17".
+    test.each([
+      ['{\n  "version": "1",\n  "name": "a",\n}\n', sorted],
+      ["{ version: '1', name: 'a' }\n", sorted],
+      ['{ "version": `1`, "name": "a", }\n', sorted],
+      ['{ "b": +1, "a": [1, , 2] }\n', '{\n  "a": [\n    1,\n    null,\n    2\n  ],\n  "b": 1\n}\n'],
+    ])("sorts whatever it can format without the plugin: %j", async (text, after) => {
+      const result = await quiet({ ".prettierrc": prettierrc, "package.json": text }, [], { reads: ["package.json"] });
+      expect(result).toMatchObject({ stderr: "", files: { "package.json": after }, exitCode: 0 });
+    });
+
+    // Prettier doesn't allow comments in a package.json, with or without the plugin, so none ever has to move.
+    test.each<[string, string, [number, number, string]]>([
+      ['{\n  // a\n  "name": "a"\n}\n', "Unexpected token", [2, 3, "  // a"]],
+      ['{ "b": 1, /* c */ "a": 1 }\n', "Unexpected token", [1, 11, '{ "b": 1, /* c */ "a": 1 }']],
+      ['{ "é": 1 } x\n', "Expected end of file", [1, 12, '{ "é": 1 } x']],
+    ])("reports a syntax error the way it does without the plugin: %j", async (text, message, at) => {
+      for (const config of [prettierrc, "{}"]) {
+        const files = { ".prettierrc": config, "package.json": text, "a.js": ugly };
+        const result = await quiet(files, [], { reads: ["package.json", "a.js"] });
+        expect(result.stderr).toStartWith(problem("package.json", message, at));
+        expect(result).toMatchObject({ files: { "package.json": text, "a.js": formatted }, exitCode: 2 });
+      }
+    });
+
+    test("accepts an empty file", async () => {
+      for (const text of ["", " \n"]) {
+        const result = await quiet({ ".prettierrc": prettierrc, "package.json": text }, [], {
+          reads: ["package.json"],
+        });
+        expect(result).toMatchObject({ stderr: "", files: { "package.json": "" }, exitCode: 0 });
+      }
+    });
+
+    test("sortPackageJson, as a flag or in [fmt], overrides the plugin", async () => {
+      const before = '{ "license": "MIT", "author": "a", "repository": "r" }\n';
+      const text = (...names: string[]) =>
+        JSON.stringify(Object.fromEntries(names.map(name => [name, JSON.parse(before)[name]])), null, 2) + "\n";
+      const files = { ".prettierrc": prettierrc, "package.json": before };
+      const run = async (more: Record<string, string>, flags: string[] = []) =>
+        (await quiet({ ...files, ...more }, flags, { reads: ["package.json"] })).files["package.json"];
+      expect(await run({})).toBe(text("repository", "license", "author"));
+      expect(await run({ "bunfig.toml": "[fmt]\nsortPackageJson = true\n" })).toBe(
+        text("license", "author", "repository"),
+      );
+      expect(await run({}, ["--sort-package-json"])).toBe(text("license", "author", "repository"));
+      expect(await run({ "bunfig.toml": "[fmt]\nsortPackageJson = false\n" })).toBe(
+        text("license", "author", "repository"),
+      );
+      expect(await run({}, ["--no-sort-package-json"])).toBe(text("license", "author", "repository"));
+    });
+
+    // In a package.json, a range formats the whole file except for the final line break, with or without the plugin.
+    // Prettier looks for the offsets in the text that the plugin wrote, so with some ranges it prints that text as it is:
+    // `{"name":"a","version":"1","files":["b","a"]}`.
+    test("sorts with a range too", async () => {
+      const text = '{ "version": "1", "name": "a", "files": [ "b",   "a" ] }\n';
+      const run = async (...flags: string[]) => {
+        const files = { ".prettierrc": prettierrc, "package.json": text };
+        return (await quiet(files, [...flags, "package.json"], { reads: ["package.json"] })).files["package.json"];
+      };
+      const whole = '{\n  "name": "a",\n  "version": "1",\n  "files": [\n    "b",\n    "a"\n  ]\n}';
+      expect(await run("--range-end=16")).toBe(whole);
+      expect(await run("--range-start=42", "--range-end=52")).toBe(whole);
+      expect(await run("--range-start=0", `--range-end=${text.length}`)).toBe(whole + "\n");
+      expect(await run("--range-end=1000")).toBe(whole + "\n");
+      expect(await run("--range-start=5", "--range-end=5")).toBe(text);
+    });
+
+    test("requirePragma leaves the file unchanged, because it can't have a comment", async () => {
+      const files = { ".prettierrc": `{ "plugins": ["${plugin}"], "requirePragma": true }`, "package.json": unsorted };
+      const result = await quiet(files, [], { reads: ["package.json"] });
+      expect(result).toMatchObject({ stderr: "", files: { "package.json": unsorted }, exitCode: 0 });
+    });
+
+    describe("where the plugin drops a key or throws", () => {
+      const run = async (before: string) => {
+        const result = await quiet({ ".prettierrc": prettierrc, "package.json": before }, [], {
+          reads: ["package.json"],
+        });
+        expect(result).toMatchObject({ stderr: "", exitCode: 0 });
+        return JSON.stringify(JSON.parse(result.files["package.json"]!));
+      };
+
+      // The plugin prints `{"scripts":{"b":"","a":""},"a":1}`.
+      test("keeps a __proto__ key", async () => {
+        expect(await run('{"__proto__":{"c":1},"a":1,"scripts":{"b":"","a":""},"_a":1}')).toBe(
+          '{"scripts":{"a":"","b":""},"a":1,"__proto__":{"c":1},"_a":1}',
+        );
+      });
+
+      // "TypeError: command.includes is not a function"
+      test("sorts scripts that aren't strings, with npm-run-all in devDependencies", async () => {
+        expect(await run('{"betterScripts":{"b":{"command":"c"},"a":"a"},"devDependencies":{"npm-run-all":"1"}}')).toBe(
+          '{"betterScripts":{"a":"a","b":{"command":"c"}},"devDependencies":{"npm-run-all":"1"}}',
+        );
+      });
+
+      // "TypeError: Cannot convert undefined or null to object"
+      test("sorts scripts next to devDependencies: null", async () => {
+        expect(await run('{"scripts":{"b":"","a":""},"devDependencies":null}')).toBe(
+          '{"scripts":{"a":"","b":""},"devDependencies":null}',
+        );
+      });
+
+      // "TypeError: Invalid SemVer Range: latest"
+      test("sorts an invalid version range in pnpm.overrides last", async () => {
+        expect(await run('{"pnpm":{"overrides":{"a@latest":"1","a@2":"1","a@>3 <2":"1","a@1":"1","a":"1"}}}')).toBe(
+          '{"pnpm":{"overrides":{"a@>3 <2":"1","a":"1","a@1":"1","a@2":"1","a@latest":"1"}}}',
+        );
+      });
+    });
+
+    test("doesn't overflow the stack on very deeply nested objects and arrays", async () => {
+      const depth = 30_000;
+      const nested = (open: string, close: string) =>
+        Buffer.alloc(depth * open.length, open).toString() + "1" + Buffer.alloc(depth * close.length, close).toString();
+      const text = `{"exports":${nested('{"a":', "}")},"oclif":${nested('{"a":', "}")},"eslintConfig":${nested('{"overrides":[', "]}")},"x":${nested("[", "]")}}`;
+      const result = await quiet({ ".prettierrc": prettierrc, "package.json": text }, [], { reads: ["package.json"] });
+      expect(result.stderr).toBe(problem("package.json", "The formatted code is too long for a string"));
+      expect(result).toMatchObject({ files: { "package.json": text }, exitCode: 2 });
+    });
   });
 
   test("with an .oxfmtrc.json TOML is formatted, and Svelte if the configuration has svelte", async () => {
@@ -3014,6 +4517,66 @@ declare export function h(): void;
     expect(result.exitCode).toBe(0);
   });
 
+  // Prettier 3.9.9 does this with `--parser flow`. Babel's tree does not say which of the two is written, so with `babel`, which
+  // reads a `.js` file, and with `babel-flow` it prints `T: A` for `T extends A`.
+  test.each([[[]], [["--parser", "babel"]], [["--parser", "babel-flow"]], [["--parser", "flow"]]])(
+    "Flow: the bound of a type parameter keeps its `extends` or its `:` with %j",
+    async flags => {
+      const code = `// @flow
+type Box<T extends string> = { value: T };
+function id<T extends number>(x: T): T {
+  return x;
+}
+type A<T: string, +U extends T = T, -V: T = T> = T;
+type B<in T extends string, out U: string> = T;
+type C<T extends (A extends B ? C : D)> = T;
+type D<T: A extends B ? C : D> = T;
+type E<Props extends { ... }> = { a: Props };
+function f<const T extends number>(x: T): T {
+  return x;
+}
+function g<const T: number>(x: T): T {
+  return x;
+}
+const h = <T extends number>(x: T): T => x;
+class I<+T extends string = "a", U: React.ComponentType<T> = J> extends K<T> {
+  m<V extends T>(v: V): V {
+    return v;
+  }
+}
+opaque type L<T extends string>: T = T;
+export opaque type M<T: string>: T = T;
+declare type N<T extends string> = T;
+declare opaque type O<T extends string>: T;
+declare function p<T extends string>(x: T): T;
+declare class Q<T extends string> {
+  m<U extends T>(u: U): U;
+}
+declare export function r<T extends string>(x: T): T;
+interface S<T extends string> {
+  m<U: T>(u: U): U;
+}
+type U = <T extends string>(x: T) => T;
+type V = { m<T extends string>(x: T): T, n<T: string>(x: T): T };
+`;
+      const files = { "a.js": code.replace("<T extends string>", "<T   extends\n string>").replace("<T: ", "<T  :") };
+      const result = await format(files, [...flags, "a.js"], { reads: ["a.js"] });
+      expect(result.files).toEqual({ "a.js": code });
+      expect(result.exitCode).toBe(0);
+    },
+  );
+
+  test("Flow: a type guard as the return type of an arrow function gets no parentheses", async () => {
+    // Prettier 3.9.9 prints `(x: mixed): (x is { a: () => void }) => true`, which its `flow` parser does not read.
+    const code = `// @flow
+const a = (x: mixed): x is { a: () => void } => true;
+const b = (x: mixed): implies x is { a: () => void } => true;
+`;
+    const result = await format({ "a.js": code }, ["--parser", "flow", "--check", "a.js"]);
+    expect(result.stderr).not.toContain("a.js");
+    expect(result.exitCode).toBe(0);
+  });
+
   // What oxfmt 0.72.0 does with each. It runs OXC's parser alone: what the pass that builds the scopes reports, oxlint refuses
   // and oxfmt formats. Prettier formats a `const` without an initializer.
   test.each([
@@ -3594,6 +5157,115 @@ try {
     const [odd, plain] = [await run(index => texts[index]), await run(() => ordinary.repeat(length / ordinary.length))];
     // 3 when all is well.
     expect(slowdown(odd, plain)).toBeLessThan(6);
+  }, 120_000);
+
+  // A comment in each repetition: what attaching or printing comments once walked again for each of them, and what is like it.
+  test("JavaScript with many comments takes time in proportion to its size", async () => {
+    const count = isDebug || isASAN ? 2_000 : 40_000;
+    // The ending of the name, what is before, what is repeated, what is after.
+    const shapes: [string, string, string, string][] = [
+      ["js", "", "a; // c\n", ""],
+      ["js", "", "// c\na;\n", ""],
+      ["js", "", "// c\n", ""],
+      ["js", "a; // c\n", ";", ""],
+      ["js", "a(", "/* c */ ", "b);"],
+      ["js", "a;\n", "/* c */ ", "\n"],
+      ["js", "x = ", "/* c */ ", "a;"],
+      ["js", "x ", "/* c */ ", "= a;"],
+      ["js", "x =\n", "// c\n", "a;"],
+      ["js", "x\n", "// c\n", "= a;"],
+      ["js", "", "// c\n", "a;"],
+      ["js", "a;\n", "// c\n", "b;"],
+      ["js", "x = a ", "/* c */ ", "+ b;"],
+      ["js", "x = a + ", "/* c */ ", "b;"],
+      ["js", "x = a\n", "// c\n", "+ b;"],
+      ["js", "x = a +\n", "// c\n", "b;"],
+      ["js", "x = { a: ", "/* c */ ", "b };"],
+      ["js", "x = a ? ", "/* c */ ", "b : c;"],
+      ["js", "x = a.", "/* c */ ", "b;"],
+      ["js", "function f() ", "/* c */ ", "{}"],
+      ["js", "if (a) ", "/* c */ ", "b;"],
+      ["js", "if (a) {}\n", "// c\n", "else {}"],
+      ["js", "return_: ", "/* c */ ", "a;"],
+      ["ts", "type A = (", "/* c */ ", "B | C)[];"],
+      ["ts", "type A = ", "/* c */ ", "B;"],
+      ["ts", "let a: ", "/* c */ ", "B = c;"],
+      ["ts", "let a ", "/* c */ ", ": B = c;"],
+      ["ts", "class A {\n", "// c\n", "a = 1;\n}"],
+      ["jsx", "x = <a ", "/* c */ ", "b />;"],
+      ["js", "x = `", "${/* c */ a}", "`;"],
+      ["js", "x = `", "${a /* c */}", "`;"],
+      ["js", "x = [\n", "a, // c\n", "];"],
+      ["js", "x = [\n", "// c\na,\n", "];"],
+      ["js", "x = [\n", "/* c */ a,\n", "];"],
+      ["js", "x = [\n", ", // c\n", "];"],
+      ["js", "// prettier-ignore\nx = [\n", "a, // c\n", "];"],
+      ["js", "x = {\n", "a: 1, // c\n", "};"],
+      ["js", "x = {\n", "// c\na: 1,\n", "};"],
+      ["js", "x = {\n", "a: /* c */ 1,\n", "};"],
+      ["js", "x = {\n", "a: /* c */ 1, // d\n", "};"],
+      ["js", "x = {\n", "// c\na: /* d */ 1,\n", "};"],
+      ["js", "function f(\n", "a = /* c */ 1, // d\n", ") {}"],
+      ["js", "let\n", "a = /* c */ 1, // d\n", "b;"],
+      ["js", "switch (a) {\n", "case /* c */ 1: // d\n", "}"],
+      ["js", "export {\n", "a as /* c */ b, // d\n", "};"],
+      ["ts", "class A {\n", "a = /* c */ 1; // d\n", "}"],
+      ["ts", "interface I {\n", "a: /* c */ 1; // d\n", "}"],
+      ["ts", "enum E {\n", "A = /* c */ 1, // d\n", "}"],
+      ["ts", "type T = [\n", "a: /* c */ A, // d\n", "];"],
+      ["ts", "type T<\n", "A = /* c */ B, // d\n", "> = 1;"],
+      ["jsx", "x = <a\n", 'b=/* c */ "d" // e\n', "/>;"],
+      ["js", "f(\n", "a, // c\n", ");"],
+      ["js", "function f(\n", "a, // c\n", ") {}"],
+      ["js", "switch (a) {\n", "// c\ncase 1:\n", "}"],
+      ["js", "x = a\n", ".b() // c\n", ";"],
+      ["js", "x = a\n", "+ b // c\n", ";"],
+      ["js", "export {\n", "a, // c\n", "};"],
+      ["js", "x = ", "! /* c */ ", "a;"],
+      ["js", "x = ", "new /* c */ ", "a;"],
+      ["js", "x = ", "() => /* c */ ", "a;"],
+      ["js", "", "{ // c\n", ""],
+      ["js", "x = ", "[ // c\n", ""],
+      ["js", "x = ", "/** @type {T} */ (", "a"],
+      ["jsx", "x = <a>\n", "{/* c */}\n", "</a>;"],
+      ["jsx", "x = <a\n", "b // c\n", "/>;"],
+      ["ts", "type T =\n", "| A // c\n", ";"],
+      ["ts", "type T =\n", "& A // c\n", ";"],
+      ["ts", "type T = [\n", "A, // c\n", "];"],
+      ["ts", "class A {\n", "// c\na = 1;\n", "}"],
+      ["ts", "class A {\n", "a = 1; // c\n", "}"],
+      ["ts", "interface I {\n", "a: 1; // c\n", "}"],
+      ["ts", "enum E {\n", "A, // c\n", "}"],
+      ["ts", "class A {\n", "@a // c\n", "b;\n}"],
+      ["ts", "class A {\nb(", "@a // c\n", "c) {}\n}"],
+      ["js", "x = ", "@a // c\n", "class {};"],
+      ["js", "", "@a // c\n", "class A {}"],
+      ["js", "f()", "(/* c */)", ";"],
+      ["js", "f()", " /* c */ ()", ";"],
+      ["js", "a[0]", "(/* c */)", ".b();"],
+      ["js", `"${"a".repeat(100 * count)}"\n`, "// c\n", "[b];"],
+      ["js", "a", "\n// c\n.b", ";"],
+      ["js", "(", "/* c */ ", `a${".b".repeat(count)})();`],
+      ["js", "(", "/* c */ ", `a${".b".repeat(count)}).c;`],
+    ];
+    const texts = shapes.map(([, before, unit, after]) => before + unit.repeat(count) + after);
+    const ordinary =
+      "// Returns the sum.\nfunction add(first, second) {\n  const sum = first + second; // a number\n  return [sum, { first, second }];\n}\n\n";
+    const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
+    for (const configuration of [{}, { ".oxfmtrc.json": "{}\n" }]) {
+      const run = (text: (index: number) => string) =>
+        format(
+          {
+            ...configuration,
+            ...Object.fromEntries(shapes.map(([ending], index) => [`${index}.${ending}`, text(index)])),
+          },
+          ["--check", "--log-level", "silent"],
+        );
+      const odd = await run(index => texts[index]);
+      const plain = await run(() => ordinary.repeat(length / ordinary.length));
+      // 2.3 to 3 on Linux and 8.3 on Windows when all is well. One shape that takes quadratic time adds 9 or more.
+      expect(slowdown(odd, plain)).toBeLessThan(isWindows ? 16 : 8);
+    }
   }, 120_000);
 
   // The same for what is repeated in something. Prettier takes the square of the number of parameters.
@@ -4852,6 +6524,40 @@ try {
     test.each([
       [["--cursor-offset", "13"], js, printed, "14"],
       [["--cursor-offset", "0"], js, printed, "0"],
+      // The cursor is in a comment that moves. It stays after the name, which is the node before it.
+      [["--cursor-offset", "20"], "function f // comment\n(a, b) {}\n", "function f(a, b) {} // comment\n", "10"],
+      // It is before the body, which is the node after it and has the comment in it.
+      [
+        ["--parser", "typescript", "--cursor-offset", "20"],
+        "x  ( );\nclass A  // c1\n{}\ny  ( );\n",
+        "x();\nclass A {\n  // c1\n}\ny();\n",
+        "13",
+      ],
+      // After the source of an import type, whose quotes change.
+      [
+        ["--parser", "typescript", "--cursor-offset", "30"],
+        "x  ( );\ntype A = import(  'a'  ).B;\ny  ( );\n",
+        'x();\ntype A = import("a").B;\ny();\n',
+        "24",
+      ],
+      [
+        ["--parser", "flow", "--cursor-offset", "28"],
+        "x  ( );\ndeclare class A  // c1\n{}\ny  ( );\n",
+        "x();\ndeclare class A {\n  // c1\n}\ny();\n",
+        "21",
+      ],
+      [
+        ["--parser", "typescript", "--cursor-offset", "24"],
+        "x  ( );\ninterface A  // c1\n{}\ny  ( );\n",
+        "x();\ninterface A {\n  // c1\n}\ny();\n",
+        "17",
+      ],
+      [
+        ["--parser", "typescript", "--cursor-offset", "27"],
+        "x  ( );\ninterface A<T>  // c1\n{}\ny  ( );\n",
+        "x();\ninterface A<T> {\n  // c1\n}\ny();\n",
+        "20",
+      ],
       [
         ["--range-start", "10", "--range-end", "20"],
         "a  =  1;\nb  =  2;\nc  =  3;\n",
@@ -5173,6 +6879,176 @@ describe.concurrent("what an ignore file has is not written, however it is come 
       ["src/kept.js", "src/skipped.js"],
       ["src/dir/in.js"],
     ]);
+  });
+});
+
+// Prettier 3.9.9 does not read it. What is left out is what `git check-ignore` has.
+describe.concurrent("info/exclude of the repository that the working directory is in", () => {
+  const names = ["a.js", "gen/b.js", "kept.js", "sub/a.js", "sub/anchored.js", "sub/named.js"];
+  const tree = Object.fromEntries(names.map(name => [name, ugly]));
+  const excludes = "# a comment\n/a.js\nnamed.js\ngen/\n/sub/anchored.js\n";
+  const left = ["kept.js", "sub/a.js"];
+  /** `files`, in the directory `directory`. */
+  const inside = (directory: string, files: Record<string, string>) =>
+    Object.fromEntries(Object.entries(files).map(([name, text]) => [`${directory}/${name}`, text]));
+
+  test.each([
+    ["no configuration", {}],
+    [".prettierrc", { ".prettierrc": "{}\n" }],
+  ])("its patterns start at the root of the working tree, with %s", async (_, configuration) => {
+    const files = { ...tree, ...configuration, ".git/info/exclude": excludes };
+    expect(
+      await Promise.all([
+        different(files, []),
+        different(files, [], { cwd: "sub" }),
+        different(files, ["a.js", "sub/named.js", "gen", "gen/b.js", "sub/a.js"]),
+        different(files, ["**/*.js"]),
+        // Like .gitignore, it is not read if the files to read are named.
+        different({ ...files, "mine": "kept.js\n" }, ["--ignore-path", "mine"]),
+        different({ ...tree, ...configuration, ".git/HEAD": "ref: refs/heads/main\n" }, []),
+      ]),
+    ).toEqual([left, ["a.js"], ["sub/a.js"], left, names.filter(it => it !== "kept.js"), names]);
+  });
+
+  test("one that is there and can't be read is an error, like a .gitignore", async () => {
+    const results = await Promise.all(
+      [".git/info/exclude", ".gitignore"].map(name => format({ [`${name}/a`]: "", "a.js": ugly }, ["--check"])),
+    );
+    expect(results.map(it => [it.stderr.split(":")[1], it.exitCode])).toEqual([
+      [" Unable to read '.git/info/exclude'", 2],
+      [" Unable to read '.gitignore'", 2],
+    ]);
+  });
+
+  test("--check succeeds if every other file is formatted", async () => {
+    const files = { ".git/info/exclude": "/ugly.ts\n", "ugly.ts": "const   a=1\n", "ok.ts": "const a = 1;\n" };
+    const results = await Promise.all([
+      format(files, ["--check"]),
+      format(files, ["--check", "--ignore-path=.git/info/exclude"]),
+    ]);
+    expect(results.map(it => it.exitCode)).toEqual([0, 0]);
+  });
+
+  test("standard input with the name of a file that it has is printed as it is", async () => {
+    const files = { ".git/info/exclude": "/a.js\n" };
+    const results = await Promise.all(
+      ["a.js", "b.js"].map(name => format(files, ["--stdin-filepath", name], { stdin: ugly })),
+    );
+    expect(results.map(it => it.raw)).toEqual([ugly, formatted]);
+  });
+
+  test("what .gitignore says about a file comes first", async () => {
+    const files = { "a.js": ugly, "b.js": ugly, "c.js": ugly, "dir/d.js": ugly };
+    expect(
+      await Promise.all([
+        different({ ...files, ".git/info/exclude": "a.js\nb.js\n", ".gitignore": "!a.js\n" }, []),
+        different({ ...files, ".git/info/exclude": "!a.js\n", ".gitignore": "a.js\n" }, []),
+        different({ ...files, ".git/info/exclude": "*.js\n!a.js\n" }, []),
+        // Nothing takes a file out of a directory that is ignored.
+        different({ ...files, ".git/info/exclude": "dir/\n", ".gitignore": "!dir/d.js\n" }, []),
+        // It is not of Git.
+        different({ ...files, ".git/info/exclude": "!a.js\n", ".prettierignore": "a.js\n" }, []),
+      ]),
+    ).toEqual([
+      ["a.js", "c.js", "dir/d.js"],
+      ["b.js", "c.js", "dir/d.js"],
+      ["a.js"],
+      ["a.js", "b.js", "c.js"],
+      ["b.js", "c.js", "dir/d.js"],
+    ]);
+  });
+
+  // `git worktree add` writes these, the first with an absolute path unless it is run `--relative-paths`.
+  const worktree = {
+    ...inside("wt", tree),
+    "wt/.git": "gitdir: ../main/.git/worktrees/wt\n",
+    "main/.git/worktrees/wt/commondir": "../..\n",
+    "main/.git/info/exclude": excludes,
+  };
+
+  test("in a working tree of `git worktree add`, it is that of the repository", async () => {
+    const absolute = (dir: string) =>
+      writeFileSync(join(dir, "wt", ".git"), `gitdir: ${join(dir, "main", ".git", "worktrees", "wt")}\n`);
+    expect(
+      await Promise.all([
+        different(worktree, [], { cwd: "wt" }),
+        different(worktree, [], { cwd: "wt/sub" }),
+        different(worktree, [], { cwd: "wt", before: absolute }),
+      ]),
+    ).toEqual([left, ["a.js"], left]);
+  });
+
+  test("in a submodule, it is that of the submodule", async () => {
+    const files = {
+      ...inside("vendor/lib", tree),
+      ".git/info/exclude": "kept.js\n",
+      ".git/modules/vendor/lib/info/exclude": excludes,
+      "vendor/lib/.git": "gitdir: ../../.git/modules/vendor/lib\n",
+    };
+    expect(
+      await Promise.all([different(files, [], { cwd: "vendor/lib" }), different(files, [], { cwd: "vendor/lib/sub" })]),
+    ).toEqual([left, ["a.js"]]);
+  });
+
+  test("in a repository that is in another one, it is that of the inner one", async () => {
+    const files = {
+      ...inside("inner", tree),
+      ".git/info/exclude": "kept.js\n",
+      "inner/.git/info/exclude": excludes,
+    };
+    expect(await different(files, [], { cwd: "inner/sub" })).toEqual(["a.js"]);
+  });
+
+  test("it says nothing about a file that is not in the working tree", async () => {
+    const files = { "repo/.git/info/exclude": "*.js\n.*\n", "repo/a.js": ugly, "other/b.js": ugly };
+    expect(
+      await Promise.all([
+        different(files, [".", "../other"], { cwd: "repo" }),
+        different(files, [".", "../other/b.js"], { cwd: "repo" }),
+        different(files, ["--ignore-path", ".git/info/exclude", ".", "../other"], { cwd: "repo" }),
+      ]),
+    ).toEqual([["../other/b.js"], ["../other/b.js"], ["../other/b.js"]]);
+  });
+
+  describe("--ignore-path names it", () => {
+    test.each([
+      ["no configuration", {}],
+      [".prettierrc", { ".prettierrc": "{}\n" }],
+      [".oxfmtrc.json", { ".oxfmtrc.json": "{}\n" }],
+    ])("its patterns start at the root of the working tree, with %s", async (_, configuration) => {
+      const files = { ...tree, ...configuration, ".git/info/exclude": excludes };
+      expect(
+        await Promise.all([
+          different(files, ["--ignore-path", ".git/info/exclude"]),
+          different(files, ["--ignore-path", "../.git/info/exclude"], { cwd: "sub" }),
+          different(files, ["--ignore-path", ".git/info/exclude", "a.js", "sub/named.js", "sub/a.js"]),
+          // The patterns of any other file start where the file is.
+          different({ ...files, "sub/info/exclude": "/a.js\n", "sub/info/a.js": ugly }, [
+            "--ignore-path",
+            "sub/info/exclude",
+            ...names,
+            "sub/info/a.js",
+          ]),
+        ]),
+      ).toEqual([left, ["a.js"], ["sub/a.js"], names]);
+    });
+
+    test("from above the repository", async () => {
+      const files = { ...inside("repo", tree), "repo/.git/info/exclude": excludes, "a.js": ugly };
+      expect(await different(files, ["--ignore-path", "repo/.git/info/exclude"])).toEqual([
+        "a.js",
+        ...left.map(it => `repo/${it}`),
+      ]);
+    });
+
+    test("from another working tree of the repository", async () => {
+      expect(
+        await Promise.all([
+          different(worktree, ["--ignore-path", "../main/.git/info/exclude"], { cwd: "wt" }),
+          different(worktree, ["--ignore-path", "../../main/.git/info/exclude"], { cwd: "wt/sub" }),
+        ]),
+      ).toEqual([left, ["a.js"]]);
+    });
   });
 });
 
@@ -6835,6 +8711,7 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
     ["timing = true", "--timing"],
     ["color = true", "--color"],
     [`cwd = "sub"`, "--cwd"],
+    ["script = false", "--no-script"],
   ])("%s is refused, and nothing is written", async (line, flag) => {
     const key = line.split(" ")[0];
     const result = await run({ "bunfig.toml": `[fmt]\n${line}\n`, "a.js": ugly }, ["a.js"]);

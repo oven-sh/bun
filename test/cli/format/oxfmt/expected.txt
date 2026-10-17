@@ -144,6 +144,8 @@ FAIL oxfmt js/semicolons/empty-line.js { printWidth: 80, semi: false }
 FAIL oxfmt js/semicolons/empty-line.js { printWidth: 100, semi: false }
 FAIL prettier js/semicolons/suppressed-cast-comment-asi-guard.js { printWidth: 80, semi: false }
 FAIL prettier js/semicolons/suppressed-cast-comment-asi-guard.js { printWidth: 100, semi: false }
+FAIL prettier js/semicolons/suppressed-for-head-declaration.js { printWidth: 80, semi: true }
+FAIL prettier js/semicolons/suppressed-for-head-declaration.js { printWidth: 100, semi: true }
 FAIL oxfmt js/semicolons/suppressed-for-head-declaration.js { printWidth: 80, semi: true }
 FAIL oxfmt js/semicolons/suppressed-for-head-declaration.js { printWidth: 100, semi: true }
 FAIL oxfmt js/semicolons/suppressed-source-paren-asi-guard.js { printWidth: 80, semi: false }

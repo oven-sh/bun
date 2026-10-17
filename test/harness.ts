@@ -13,7 +13,7 @@ import { execSync } from "child_process";
 import { readdir, writeFile } from "fs/promises";
 import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
-import { dirname, isAbsolute, join } from "path";
+import { dirname, isAbsolute, join, sep } from "path";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -24,6 +24,18 @@ export const isFreeBSD = process.platform === "freebsd";
 export const isAndroid = process.platform === "android";
 export const isPosix = isMacOS || isLinux || isFreeBSD || isAndroid;
 export const isWindows = process.platform === "win32";
+/**
+ * Whether the tests are running as uid 0. Root bypasses file and directory
+ * mode bits, so tests that expect EACCES from a `chmod 000` fixture skip on it,
+ * while tests that need to setuid/setgid a child only run on it. Always false
+ * on Windows, where `process.getuid` does not exist.
+ */
+export const isRoot = process.getuid?.() === 0;
+/**
+ * Size of bun's fixed path buffers (`MAX_PATH_BYTES` in `src/bun_core/util.rs`). A path longer than this does not
+ * fit in one, which code taking a path from the user has to report rather than overflow the buffer.
+ */
+export const MAX_PATH_BYTES = isWindows ? 32767 * 3 + 1 : isLinux || isAndroid ? 4096 : 1024;
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isArm64 = process.arch === "arm64";
 export const isDebug = Bun.version.includes("debug");
@@ -79,6 +91,9 @@ export const bunEnv: NodeJS.Dict<string> = {
   // The `bun install` "Slow filesystem detected" warning is timing-dependent
   // and flakes stderr assertions on slow CI filesystems.
   BUN_DISABLE_SLOW_FILESYSTEM_WARNING: "1",
+  // `bun install` waits 250ms, 500ms, ... between the attempts of a failed request:
+  // 7.75s for each request a test lets fail for good.
+  BUN_CONFIG_HTTP_RETRY_BACKOFF: "1",
   // Tests drive `bun update --interactive` by writing keystrokes to a pipe;
   // the real command refuses on non-TTY stdin. Bypass that gate under test.
   BUN_INTERNAL_INTERACTIVE_ASSUME_TTY: "1",
@@ -113,6 +128,16 @@ for (let key in bunEnv) {
   if (key.startsWith("BUILDKITE")) {
     delete bunEnv[key];
     delete process.env[key];
+  }
+
+  // `bun run <script>` exports these to the script, so a test run started through a
+  // package.json script (`bun bd test`) inherits them while CI, which starts `bun test`
+  // directly, does not. Spawned buns honor them: NODE/npm_node_execpath decide whether
+  // the node shim gets created, and most npm_* values (npm_config_user_agent,
+  // npm_package_name, ...) are only set when absent.
+  if (key === "NODE" || key.startsWith("npm_") || key.startsWith("NPM_CONFIG_")) {
+    delete ciEnv[key];
+    delete bunEnv[key];
   }
 }
 
@@ -352,6 +377,62 @@ export async function expectMaxObjectTypeCount(
   expect(heapStats().objectTypeCounts[type] ?? 0).toBeLessThanOrEqual(count);
 }
 
+// ASAN's quarantine pins freed blocks and keeps RSS at peak.
+export function withoutAsanQuarantine(env: NodeJS.Dict<string>): NodeJS.Dict<string> {
+  return {
+    ...env,
+    ASAN_OPTIONS: [env.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+      .filter(Boolean)
+      .join(":"),
+  };
+}
+
+// Runs the command passed as a JSON array in the last argument and prints one
+// JSON line: the command's output, exit status, and peak RSS in bytes.
+const maxRSSSpawner = /* js */ `
+  const proc = Bun.spawn({ cmd: JSON.parse(process.argv.at(-1)), stdout: "pipe", stderr: "pipe" });
+  process.on("SIGTERM", () => proc.kill());
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { signalCode } = proc;
+  console.log(JSON.stringify({ stdout, stderr, exitCode, signalCode, maxRSS: proc.resourceUsage().maxRSS }));
+`;
+
+/**
+ * Runs `cmd` and returns its output, exit status, and peak RSS in bytes.
+ *
+ * On Linux, `resourceUsage().maxRSS` of a process that the test spawned
+ * itself is not that process's own peak, because `ru_maxrss` survives exec.
+ * The child starts from the high-water mark of its spawner (`exec_mmap` ->
+ * `setmax_mm_hiwater_rss`), so the number is max(test runner peak, child
+ * peak). Here the spawner is a small bun process. The inherited mark is then
+ * a fixed floor (~30 MB release, ~320 MB debug+ASAN), not whatever the test
+ * runner allocated so far.
+ */
+export async function runCommandMaxRSS(options: { cmd: string[]; cwd?: string; env?: NodeJS.Dict<string> }) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", maxRSSSpawner, JSON.stringify(options.cmd)],
+    cwd: options.cwd,
+    env: options.env ?? bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  const result: {
+    stdout: string;
+    stderr: string;
+    exitCode: number;
+    signalCode: NodeJS.Signals | null;
+    maxRSS: number;
+  } = JSON.parse(stdout);
+  // Guard the unit: any bun process peaks well above 1 MiB in bytes but under
+  // 1_048_576 in kB; a failure here means maxRSS regressed to kB and every
+  // upper bound on it is vacuous.
+  expect(result.maxRSS).toBeGreaterThan(1024 * 1024);
+  return result;
+}
+
 /**
  * Peak RSS of a bun process that runs `fixture`, whose only stdout line is
  * the JSON `expected` (the transfer's completion result), and the peak RSS of
@@ -359,16 +440,15 @@ export async function expectMaxObjectTypeCount(
  * the assertion is about the payload, not the runtime's fixed footprint.
  */
 export async function runFixtureMaxRSS(fixture: string, expected: unknown) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+    cmd: [bunExe(), "-e", fixture],
+    // With the quarantine on, the delta of a fixture that moves 128 MB is the
+    // size of the quarantine (256 MB), whatever the fixture holds.
+    env: withoutAsanQuarantine(bunEnv),
+  });
   expect(stderr).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual(expected);
   expect(exitCode).toBe(0);
-  const maxRSS = proc.resourceUsage()!.maxRSS;
-  // Guard the unit: any bun process peaks well above 1 MiB in bytes but under
-  // 1_048_576 in kB; a failure here means maxRSS regressed to kB and every
-  // bounded-memory assertion below is vacuous.
-  expect(maxRSS).toBeGreaterThan(1024 * 1024);
   return maxRSS;
 }
 
@@ -383,13 +463,7 @@ export async function expectRssDeltaBelow(
 ): Promise<void> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...cmd],
-    env: {
-      ...bunEnv,
-      // ASAN's quarantine pins freed blocks and keeps RSS at peak.
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-        .filter(Boolean)
-        .join(":"),
-    },
+    env: withoutAsanQuarantine(bunEnv),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -402,11 +476,10 @@ export async function expectRssDeltaBelow(
 
 let emptyBunMaxRSS: Promise<number> | undefined;
 export function emptyProcessMaxRSS() {
-  return (emptyBunMaxRSS ??= (async () => {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv });
-    await proc.exited;
-    return proc.resourceUsage()!.maxRSS;
-  })());
+  return (emptyBunMaxRSS ??= runCommandMaxRSS({
+    cmd: [bunExe(), "-e", ""],
+    env: withoutAsanQuarantine(bunEnv),
+  }).then(({ maxRSS }) => maxRSS));
 }
 
 // we must ensure that finalizers are run
@@ -440,10 +513,7 @@ export function hideFromStackTrace(block: CallableFunction) {
 
 export type DirectoryTree = {
   [name: string]:
-    | string
-    | Buffer
-    | DirectoryTree
-    | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
+    string | Buffer | DirectoryTree | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
 };
 
 export async function makeTree(base: string, tree: DirectoryTree) {
@@ -543,10 +613,79 @@ export function tempDir(
   return new DisposableString(base) as string & DisposableString & AsyncDisposable;
 }
 
+/**
+ * Windows only. Makes `dir` the root of a new drive with `subst`, and removes the drive on dispose.
+ * A test cannot write to the root of a real drive.
+ */
+export function substDrive(dir: string): Disposable & { root: string } {
+  for (const letter of "ZYXWVUTSRQPONMLKJIHGFED") {
+    if (Bun.spawnSync({ cmd: ["subst", `${letter}:`, dir], env: bunEnv }).exitCode === 0) {
+      return {
+        root: `${letter}:\\`,
+        [Symbol.dispose]: () => void Bun.spawnSync({ cmd: ["subst", `${letter}:`, "/d"], env: bunEnv }),
+      };
+    }
+  }
+  throw new Error("no free drive letter for subst");
+}
+
 export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string): string {
   const base = tmpdirSync();
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return base;
+}
+
+/**
+ * `Bun.spawn` options for a child that must be subject to file permission bits,
+ * for tests where e.g. a `chmod 444` file has to be unwritable.
+ *
+ * Root bypasses permission bits, so when the tests run as root the child is
+ * run as uid/gid 65534 ("nobody" on Linux and macOS): `dir` is handed over to
+ * that user, and every ancestor up to TMPDIR it could not traverse (CI points
+ * TMPDIR at a mode 0700 directory) gets `o+x` until the returned value is disposed. When
+ * the tests already run unprivileged, the child runs as the current user and
+ * nothing is changed. POSIX only.
+ *
+ * @example
+ * ```ts
+ * using dir = tempDir("read-only", { "package.json": "{}" });
+ * fs.chmodSync(join(String(dir), "package.json"), 0o444);
+ * using unprivileged = unprivilegedSpawnOptions(String(dir));
+ * await using proc = Bun.spawn({ cmd: [bunExe(), "pm", "pack"], cwd: String(dir), env: bunEnv, ...unprivileged });
+ * ```
+ */
+export function unprivilegedSpawnOptions(dir: string): { uid?: number; gid?: number } & Disposable {
+  const restoreModes: [path: string, mode: number][] = [];
+  const options: { uid?: number; gid?: number } & Disposable = {
+    [Symbol.dispose]() {
+      for (const [path, mode] of restoreModes) fs.chmodSync(path, mode);
+    },
+  };
+  if (!isRoot) return options;
+
+  const NOBODY = 65534;
+  try {
+    fs.chownSync(dir, NOBODY, NOBODY);
+    for (const entry of fs.readdirSync(dir, { recursive: true, encoding: "utf8" })) {
+      fs.lchownSync(join(dir, entry), NOBODY, NOBODY);
+    }
+    const tmp = fs.realpathSync(os.tmpdir());
+    for (let parent = dirname(fs.realpathSync(dir)); parent !== dirname(parent); parent = dirname(parent)) {
+      const mode = fs.statSync(parent).mode & 0o7777;
+      if (mode & 0o001) continue;
+      if (parent !== tmp && !parent.startsWith(tmp + sep)) {
+        throw new Error(`${parent} is above TMPDIR and uid ${NOBODY} cannot traverse it`);
+      }
+      fs.chmodSync(parent, mode | 0o001);
+      restoreModes.push([parent, mode]);
+    }
+  } catch (e) {
+    options[Symbol.dispose]();
+    throw e;
+  }
+  options.uid = NOBODY;
+  options.gid = NOBODY;
+  return options;
 }
 
 export interface BunRunResult {
@@ -1189,6 +1328,13 @@ export function isDockerEnabled(): boolean {
     return false;
   }
 }
+
+/** Can `ensure(service)` from test/docker/index.ts provide this service here? Same order as `ensure()`. */
+export function isDockerServiceEnabled(service: string): boolean {
+  // isDockerEnabled() throws on Linux CI without docker, so it comes last.
+  return !!process.env["BUN_TEST_SERVICE_" + service] || !!process.env.BUN_DOCKER_COORDINATOR || isDockerEnabled();
+}
+
 export async function waitForPort(port: number, timeout: number = 60_000): Promise<void> {
   let deadline = Date.now() + Math.max(1, timeout);
   let error: unknown;
@@ -1273,10 +1419,7 @@ export async function describeWithContainer(
     }
   }
 
-  // Skip only when no env override, no coordinator, and docker is unavailable.
-  // isDockerEnabled() may throw when docker is required but absent, so the
-  // env-override and coordinator checks must short-circuit before it.
-  if (!process.env["BUN_TEST_SERVICE_" + actualService] && !process.env.BUN_DOCKER_COORDINATOR && !isDockerEnabled()) {
+  if (!isDockerServiceEnabled(actualService)) {
     describe.todo(label);
     return;
   }
@@ -1634,6 +1777,14 @@ export async function pack(cwd: string, env: NodeJS.Dict<string>, ...args: strin
   return { out, err };
 }
 
+/** Writes `<packageDir>/node_modules/.bin/<name>`: a command that prints `says`. */
+export function writeBinCommand(packageDir: string, name: string, says: string) {
+  const bin = join(packageDir, "node_modules", ".bin");
+  fs.mkdirSync(bin, { recursive: true });
+  if (isWindows) fs.writeFileSync(join(bin, `${name}.cmd`), `@echo ${says}\r\n`);
+  else fs.writeFileSync(join(bin, name), `#!/bin/sh\necho ${says}\n`, { mode: 0o755 });
+}
+
 // If you need to modify, clone it
 export const expiredTls = Object.freeze({
   cert: "-----BEGIN CERTIFICATE-----\nMIIDXTCCAkWgAwIBAgIJAKLdQVPy90jjMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV\nBAYTAkFVMRMwEQYDVQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBX\naWRnaXRzIFB0eSBMdGQwHhcNMTkwMjAzMTQ0OTM1WhcNMjAwMjAzMTQ0OTM1WjBF\nMQswCQYDVQQGEwJBVTETMBEGA1UECAwKU29tZS1TdGF0ZTEhMB8GA1UECgwYSW50\nZXJuZXQgV2lkZ2l0cyBQdHkgTHRkMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIB\nCgKCAQEA7i7IIEdICTiSTVx+ma6xHxOtcbd6wGW3nkxlCkJ1UuV8NmY5ovMsGnGD\nhJJtUQ2j5ig5BcJUf3tezqCNW4tKnSOgSISfEAKvpn2BPvaFq3yx2Yjz0ruvcGKp\nDMZBXmB/AAtGyN/UFXzkrcfppmLHJTaBYGG6KnmU43gPkSDy4iw46CJFUOupc51A\nFIz7RsE7mbT1plCM8e75gfqaZSn2k+Wmy+8n1HGyYHhVISRVvPqkS7gVLSVEdTea\nUtKP1Vx/818/HDWk3oIvDVWI9CFH73elNxBkMH5zArSNIBTehdnehyAevjY4RaC/\nkK8rslO3e4EtJ9SnA4swOjCiqAIQEwIDAQABo1AwTjAdBgNVHQ4EFgQUv5rc9Smm\n9c4YnNf3hR49t4rH4yswHwYDVR0jBBgwFoAUv5rc9Smm9c4YnNf3hR49t4rH4ysw\nDAYDVR0TBAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEATcL9CAAXg0u//eYUAlQa\nL+l8yKHS1rsq1sdmx7pvsmfZ2g8ONQGfSF3TkzkI2OOnCBokeqAYuyT8awfdNUtE\nEHOihv4ZzhK2YZVuy0fHX2d4cCFeQpdxno7aN6B37qtsLIRZxkD8PU60Dfu9ea5F\nDDynnD0TUabna6a0iGn77yD8GPhjaJMOz3gMYjQFqsKL252isDVHEDbpVxIzxPmN\nw1+WK8zRNdunAcHikeoKCuAPvlZ83gDQHp07dYdbuZvHwGj0nfxBLc9qt90XsBtC\n4IYR7c/bcLMmKXYf0qoQ4OzngsnPI5M+v9QEHvYWaKVwFY4CTcSNJEwfXw+BAeO5\nOA==\n-----END CERTIFICATE-----",
@@ -1952,6 +2103,66 @@ export function textLockfile(version: number, pkgs: any): string {
   });
 }
 
+/**
+ * Builds the gzipped tarball GitHub serves for `/repos/<owner>/<repo>/tarball/<ref>`: one
+ * root directory, which GitHub names `<owner>-<repo>-<short sha>`, with the repository's
+ * files inside it. `bun install` reads the dependency's resolved commit (the lockfile's
+ * third tuple element and the installed `.bun-tag`) from the archive's first entry, which
+ * is why the root directory gets an entry of its own ahead of the files.
+ *
+ * Serve the bytes from a local server and pass its URL as `GITHUB_API_URL` to install
+ * `owner/repo#ref` dependencies without contacting api.github.com.
+ */
+export function githubTarball(rootDir: string, files: Record<string, string | Uint8Array>) {
+  const entries: Record<string, string | Uint8Array> = { [`${rootDir}/`]: "" };
+  for (const [path, contents] of Object.entries(files)) entries[`${rootDir}/${path}`] = contents;
+  return new Bun.Archive(entries, { compress: "gzip" }).bytes();
+}
+
+/**
+ * A git repository on disk standing in for one on a real host, for the cases whose point is the specifier
+ * (`bitbucket:user/repo`, `git@github.com:user/repo.git`): bun has to turn it into one of `cloneUrls`, which git then
+ * rewrites to the local repository (`url.<base>.insteadOf`). A bun spawned with the returned `env` cannot reach the
+ * host: git refuses every transport but `file`, so a clone URL that is not listed fails.
+ */
+export async function hostedGitRepository(cloneUrls: string[], files: Record<string, string>) {
+  const dir = tempDir("git-dep-hosted", files);
+  const git = async (...args: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: ["git", ...args],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_AUTHOR_NAME: "Test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "Test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`git ${args.join(" ")} exited with ${exitCode}: ${stderr}`);
+    return stdout.trim();
+  };
+  await git("-c", "init.defaultBranch=main", "init", "--quiet");
+  await git("add", "-A");
+  await git("-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "init");
+  const key = `url.${Bun.pathToFileURL(String(dir)).href}.insteadOf`;
+  const config: Record<string, string> = { GIT_ALLOW_PROTOCOL: "file", GIT_CONFIG_COUNT: `${cloneUrls.length}` };
+  cloneUrls.forEach((url, i) => {
+    config[`GIT_CONFIG_KEY_${i}`] = key;
+    config[`GIT_CONFIG_VALUE_${i}`] = url;
+  });
+  return {
+    /** Of its only commit. */
+    sha: await git("rev-parse", "HEAD"),
+    env: { ...bunEnv, ...config },
+    [Symbol.dispose]: () => dir[Symbol.dispose](),
+  };
+}
+
 export async function readdirSorted(path: string): Promise<string[]> {
   const results = await readdir(path);
   results.sort();
@@ -2256,4 +2467,104 @@ export function readElf64ProgramHeaders(path: string): Elf64ProgramHeader[] {
   } finally {
     closeSync(fd);
   }
+}
+
+const dtUnknownReaddirMarker = "dt-unknown-readdir-shim: rewrote getdents64 d_type";
+let dtUnknownReaddirShim: Promise<string> | undefined;
+
+async function compileDtUnknownReaddirShim(): Promise<string> {
+  const cc = which("cc") || which("clang") || which("gcc");
+  if (!cc) throw new Error("dtUnknownReaddir: no C compiler (cc/clang/gcc) found in $PATH");
+  const shim = join(tmpdirSync("dt-unknown-readdir-"), "shim.so");
+  const source = join(import.meta.dir, "fixtures", "dt-unknown-readdir-shim.c");
+  const proc = Bun.spawn({
+    cmd: [cc, "-shared", "-fPIC", "-O2", `-DMARKER="${dtUnknownReaddirMarker}"`, "-o", shim, source, "-ldl"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0)
+    throw new Error(`dtUnknownReaddir: compiling the shim failed (exit ${exitCode}):\n${stderr || stdout}`);
+  return shim;
+}
+
+/**
+ * Runs bun as if on a filesystem whose readdir does not report entry types
+ * (FUSE, some NFS servers, XFS formatted with `ftype=0`), without needing such a
+ * mount: `env()` preloads a shim that zeroes `d_type` in every `getdents64`
+ * record. The shim prints `marker` to stderr the first time it does so; assert
+ * on it, otherwise a test here passes vacuously if bun ever stops issuing
+ * `getdents64` through libc's `syscall()` wrapper, which is what the shim hooks.
+ */
+export const dtUnknownReaddir = {
+  /** Linux with a C compiler; `skipIf(!dtUnknownReaddir.available)`. */
+  get available(): boolean {
+    return isLinux && !!(which("cc") || which("clang") || which("gcc"));
+  },
+  marker: dtUnknownReaddirMarker,
+  /**
+   * Compiles the shim the first time it is called. Call it from `beforeAll`
+   * (the compiler can take several seconds on a loaded machine) and spawn bun
+   * with the returned env.
+   */
+  async env(): Promise<NodeJS.Dict<string>> {
+    const shim = await (dtUnknownReaddirShim ??= compileDtUnknownReaddirShim());
+    return { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim };
+  },
+};
+
+/**
+ * Hexadecimal, octal and binary integers as text, each with its exact value. Most lie between two
+ * doubles: 600 from a fixed seed, then ties, neighbours of ties and the edge of `Infinity`.
+ */
+export function integersThatNeedRounding(): [string, bigint][] {
+  // prefix, digits to draw from, longest
+  const prefixes: [string, string, number][] = [
+    ["0x", "0123456789abcdefABCDEF", 40],
+    ["0X", "0123456789abcdef", 40],
+    ["0o", "01234567", 50],
+    ["0b", "01", 140],
+  ];
+  const cases: [string, bigint][] = [];
+  const add = (prefix: string, digits: string) =>
+    cases.push([prefix + digits, BigInt(prefix.toLowerCase() + digits.replaceAll("_", ""))]);
+  let state = 12345;
+  const random = (below: number) => {
+    state = (state + 0x6d2b79f5) | 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) % below;
+  };
+  for (let i = 0; i < 600; i++) {
+    const [prefix, alphabet, longest] = prefixes[random(prefixes.length)];
+    let digits = "";
+    for (let length = 1 + random(longest); length > 0; length--) digits += alphabet[random(alphabet.length)];
+    add(prefix, digits);
+  }
+  const edges = [
+    // halfway between two doubles, and one off either side of halfway
+    2n ** 53n + 1n,
+    2n ** 53n + 3n,
+    2n ** 64n + 2n ** 11n,
+    2n ** 64n + 2n ** 11n + 1n,
+    2n ** 64n + 3n * 2n ** 11n,
+    2n ** 200n + 2n ** 147n - 1n,
+    2n ** 200n + 2n ** 147n,
+    2n ** 200n + 2n ** 147n + 1n,
+    // the largest values that are finite, and the first that are not
+    2n ** 1024n - 2n ** 970n - 1n,
+    2n ** 1024n - 2n ** 970n,
+    2n ** 1024n,
+    2n ** 5000n,
+    0n,
+    2n ** 64n - 1n,
+  ];
+  for (const [prefix, alphabet] of prefixes) {
+    const radix = new Set(alphabet.toLowerCase()).size;
+    for (const edge of edges) add(prefix, edge.toString(radix));
+  }
+  add("0x", Buffer.alloc(100, "0").toString() + "b3c8bf81fdf2247");
+  add("0x", "b3c8_bf81_fdf2_247");
+  return cases;
 }

@@ -109,6 +109,62 @@ describe.concurrent("Server", () => {
     expect(received).toEqual(expected);
   });
 
+  // Otherwise the socket, its topics and its lifetime would belong to the server that received the
+  // request, but it would use the other server's handlers and connection counters.
+  test.each([
+    ["an HTTP server", false],
+    ["an HTTPS server", true],
+  ])("upgrade() on %s throws for a Request received by a different server", async (_label, otherIsTLS) => {
+    const events: string[] = [];
+    const websocket = (name: string) => ({
+      open(ws: ServerWebSocket) {
+        events.push(name + ".open");
+        ws.close();
+      },
+      message() {},
+    });
+    using other = Bun.serve({
+      port: 0,
+      tls: otherIsTLS ? tls : undefined,
+      fetch: () => new Response("other"),
+      websocket: websocket("other"),
+    });
+    const { promise: results, resolve, reject } = Promise.withResolvers<Record<string, string>>();
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      websocket: websocket("server"),
+      fetch(req, server) {
+        try {
+          const result: Record<string, string> = {};
+          try {
+            result.otherUpgrade = String(other.upgrade(req));
+          } catch (e) {
+            result.otherUpgrade = (e as Error).message;
+          }
+          // timeout() and requestIP() only touch the request's own connection, so any server object works.
+          other.timeout(req, 10);
+          result.otherRequestIP = typeof other.requestIP(req)?.address;
+          result.ownUpgrade = String(server.upgrade(req));
+          resolve(result);
+        } catch (e) {
+          reject(e);
+          throw e;
+        }
+      },
+    });
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    ws.onclose = () => onClose();
+    expect(await results).toEqual({
+      otherUpgrade: "upgrade() must be called on the same server that received the request",
+      otherRequestIP: "string",
+      ownUpgrade: "true",
+    });
+    await closed;
+    expect(events).toEqual(["server.open"]);
+  });
+
   test("should not allow Bun.serve without first argument being a object", () => {
     expect(() => {
       //@ts-ignore
@@ -477,14 +533,14 @@ describe.concurrent("Server", () => {
     // Test that HTTPS keep-alive doesn't cause it to re-use the connection on
     // the next attempt, when the next attempt has reject unauthorized enabled
     {
-      expect(
+      await expect(
         async () => await fetch(server.url, { tls: { rejectUnauthorized: true } }).then(res => res.text()),
       ).toThrow("self signed certificate");
     }
 
     {
       using _ = rejectUnauthorizedScope(true);
-      expect(async () => await fetch(server.url).then(res => res.text())).toThrow("self signed certificate");
+      await expect(async () => await fetch(server.url).then(res => res.text())).toThrow("self signed certificate");
     }
 
     {
@@ -640,7 +696,7 @@ test("should be able to await server.stop()", async () => {
   // Wait for the server to stop
   await stopped;
   // Ensure the server is completely stopped
-  expect(async () => await fetch(server.url)).toThrow();
+  await expect(async () => await fetch(server.url)).toThrow();
 });
 
 describe.concurrent("server.stop() drain promise counts open connections", () => {
@@ -1532,12 +1588,12 @@ test("should be able to await server.stop(true) with keep alive", async () => {
   await stopped;
 
   // It should fail before the server responds
-  expect(async () => {
+  await expect(async () => {
     await (await responsePromise).text();
   }).toThrow();
 
   // Ensure the server is completely stopped
-  expect(async () => await fetch(server.url)).toThrow();
+  await expect(async () => await fetch(server.url)).toThrow();
 });
 
 // Shared rig for the "late keep-alive" tests below: open a raw TCP socket,
@@ -2913,7 +2969,7 @@ describe.concurrent("websocket and routes test", () => {
         } else {
           const result = await promise;
           expect(errorFired).toBe(true); // Error event should fire for failed upgrade
-          expect(result).toBe(1002);
+          expect(result).toBe(1006);
         }
         if (hasPOST) {
           const result = await fetch(url, {

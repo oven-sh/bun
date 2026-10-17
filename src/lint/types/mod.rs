@@ -107,6 +107,7 @@
 //!   from the last candidate. `const c = new C(() => c.x)` is no circularity.
 
 mod flags;
+mod id_set;
 mod locate;
 mod node;
 mod signature;
@@ -118,6 +119,7 @@ pub mod utils;
 
 pub use bun_sema::check::services::ReadLibrary;
 pub use flags::*;
+pub use id_set::{IdMap, IdSet, Indexed};
 pub use locate::{Locate, NameOf};
 pub use node::{SourceFile, SyntaxKind, TsNode};
 pub use signature::{IndexInfo, Signature, SignatureIter, SignatureList, TypePredicate};
@@ -263,6 +265,9 @@ queries! {
     // ── from a node ──
     fn type_at_location(node: NodeRef) -> TypeId;
     fn symbol_at_location(node: NodeRef) -> Option<SymbolRef>;
+    /// `checker.getAccessedPropertyName(node)`: the name of a property access as it is written, and of an
+    /// element access what `tryGetElementAccessExpressionName` finds for its key.
+    fn accessed_property_name(node: NodeRef) -> Option<&'a [u8]>;
     fn type_from_type_node(node: NodeRef) -> TypeId;
     fn contextual_type(node: NodeRef) -> Option<TypeId>;
     fn apparent_type_of_contextual_type(node: NodeRef) -> Option<TypeId>;
@@ -443,7 +448,15 @@ impl<'a> Types<'a> {
 
     /// `checker.getTypeAtLocation(node)`
     pub fn get_type_at_location(self, node: impl Locate<'a>) -> Type<'a> {
-        node.locate(self.file).get_type_at_location()
+        node.locate_for_type(self.file).get_type_at_location()
+    }
+
+    /// `checker.getAccessedPropertyName(node)` of a property or element access: the name that is written, or the
+    /// one that a key names which is a literal, a constant or an enum member. tsgolint asks this where
+    /// typescript-eslint evaluates the key.
+    pub fn get_accessed_property_name(self, node: impl Locate<'a>) -> Option<&'a [u8]> {
+        let (file, node) = (self.file, node.locate(self.file).raw());
+        file.query(|q| q.accessed_property_name(node))
     }
 
     /// `checker.getSymbolsInScope(node, meaning).find(it => it.name === name)`, which does not make

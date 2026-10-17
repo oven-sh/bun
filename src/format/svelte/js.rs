@@ -242,13 +242,13 @@ impl FromParser<'_> {
     fn program<R>(
         &mut self,
         (program, at): (&[u8], u32),
-        read: impl for<'b> Fn(StmtKind<'b>) -> Option<R>,
+        read: impl for<'b> Fn(&'b File<'b>, StmtKind<'b>) -> Option<R>,
     ) -> Result<R, usize> {
         let (mut result, mut typescript_at) = (None, None);
         self.parse.call(self.path(), program, false, &mut |file| {
             typescript_at = file.first_of_typescript_in_javascript();
             if !file.has_parse_errors() && typescript_at.is_none() {
-                result = file.body().iter().next().and_then(|it| read(it.kind()));
+                result = (file.body().iter().next()).and_then(|it| read(file, it.kind()));
             }
         });
         self.typescript_at = typescript_at.map(|it| (at + it) as usize - 1);
@@ -352,37 +352,36 @@ impl Js for FromParser<'_> {
         })
     }
 
-    fn type_at(&mut self, text: &[u8], at: usize) -> Result<Span, usize> {
+    fn type_at(&mut self, text: &[u8], at: usize) -> Result<(Span, bool), usize> {
         self.part(
             (text.len(), at),
             Goal::Type,
-            |_, statement, _| match statement.kind() {
+            |file, statement, _| match statement.kind() {
                 StmtKind::TypeAlias(alias) => {
                     let span = alias.ty().span();
-                    Some(Span::new(at + span.start as usize, at + span.end as usize))
+                    let span = Span::new(at + span.start as usize, at + span.end as usize);
+                    Some((span, file.comments().next().is_some()))
                 }
                 _ => None,
             },
         )
     }
 
-    fn check_pattern(&mut self, text: &[u8], pattern: Span) -> Result<(), usize> {
+    fn check_pattern(&mut self, text: &[u8], pattern: Span) -> Result<bool, usize> {
         let program = [b"(", pattern.of(text), b" = 1\n)"].concat();
-        self.program((&program, pattern.start), |_| Some(()))
+        self.program((&program, pattern.start), |file, _| {
+            Some(file.comments().next().is_some())
+        })
     }
 
-    fn parameters(&mut self, text: &[u8], parameters: Span) -> Result<Option<u32>, usize> {
+    fn check_parameters(&mut self, text: &[u8], parameters: Span) -> Result<(), usize> {
         let program = [b"(", parameters.of(text), b" => {}\n)"].concat();
-        self.program((&program, parameters.start), |statement| match statement {
-            StmtKind::Expr(e) => match e.kind() {
-                // One byte, the `(`, is before them.
-                ExprKind::Fn(function) => Some(
-                    (function.params().iter().last())
-                        .map(|it| parameters.start + it.span_without_modifiers().end - 1),
-                ),
+        self.program(
+            (&program, parameters.start),
+            |_, statement| match statement {
+                StmtKind::Expr(e) if matches!(e.kind(), ExprKind::Fn(_)) => Some(()),
                 _ => None,
             },
-            _ => None,
-        })
+        )
     }
 }

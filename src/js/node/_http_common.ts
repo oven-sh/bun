@@ -76,6 +76,7 @@ interface HTTPParserBinding {
 
 const { methods, allMethods, HTTPParser } = process.binding("http_parser") as HTTPParserBinding;
 const incoming = require("node:_http_incoming");
+const { kHeaderSource } = require("internal/http");
 
 const { IncomingMessage, readStart, readStop } = incoming;
 
@@ -183,6 +184,7 @@ function parserOnHeadersComplete(
   const ParserIncomingMessage = socket?.server?.[kIncomingMessage] || IncomingMessage;
 
   const incoming = (parser.incoming = new ParserIncomingMessage(socket));
+  incoming[kHeaderSource] = null;
   incoming.httpVersionMajor = versionMajor;
   incoming.httpVersionMinor = versionMinor;
   incoming.httpVersion = `${versionMajor}.${versionMinor}`;

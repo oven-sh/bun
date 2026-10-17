@@ -176,7 +176,8 @@ pub struct LintResult {
     pub skipped_rules: Vec<Box<[u8]>>,
     /// Why a rule has [handed the file back](File::hand_back) to that of its package, which has run in its place.
     pub handed_back: Option<crate::formats::Reason>,
-    /// It [may be misread](may_be_misread), and whoever lints has somebody else to read it. There is nothing else in the result.
+    /// It [may be misread](may_be_misread), or a comment in a file that is not JavaScript turns on a rule that is not for its
+    /// language, and whoever lints has somebody else to read it. There is nothing else in the result.
     pub is_unread: bool,
     /// ESLint throws this while it lints the file, and that ends the run with the exit code 2: a rule refuses options that its
     /// schema accepts ([`Rule::validate`](crate::rule::Rule::validate)), or a rule of a JavaScript plugin throws. There is
@@ -463,7 +464,11 @@ impl<S: RuleSet> Linter<S> {
     ) -> LintResult {
         let locator = Locator::new(file);
         let mut problems: Vec<LintMessage> = Vec::new();
-        let (mut fatal, is_of_parser) = syntax::parse_errors_and_stage(file);
+        let (mut fatal, is_of_parser) = match file.parsed() {
+            // Its language has parsed it.
+            Some(_) => (Vec::new(), false),
+            None => syntax::parse_errors_and_stage(file),
+        };
         if !fatal.is_empty() {
             let is_oxlint = file.language().is_oxlint;
             if is_oxlint && is_of_parser && syntax::is_flow(file) {
@@ -501,12 +506,12 @@ impl<S: RuleSet> Linter<S> {
             true => file.config_comments(),
             false => &[],
         };
-        // ESLint takes `oxlint-disable` and the like for ordinary comments.
+        // ESLint takes `oxlint-disable` and the like for ordinary comments. Without a configuration of either, those of both count.
         let is_understood = |it: &&ConfigComment| {
             let is_called_oxlint = file.slice(it.label_span).starts_with(b"oxlint");
             match config.understands_oxlint_comments {
                 true => is_called_oxlint || options.respects_eslint_comments,
-                false => !is_called_oxlint && !it.is_only_of_oxlint,
+                false => config.has_every_rule || (!is_called_oxlint && !it.is_only_of_oxlint),
             }
         };
         let prepared = config.prepared.get_or_init(|| self.prepare(config));
@@ -599,6 +604,19 @@ impl<S: RuleSet> Linter<S> {
             for comment in comments.iter().filter(is_understood) {
                 inline.disable_directives(comment, &mut parents, &mut disable_directives);
             }
+        }
+        // Such a rule is one of a package, or it would see JavaScript that is not there.
+        let is_of_no_language =
+            |it: &Running<S>| it.severity != Severity::Off && it.entry.meta.languages.is_empty();
+        if file.parsed().is_some()
+            && (running.iter().any(is_of_no_language)
+                || !running_js.is_empty()
+                || !result.skipped_rules.is_empty())
+        {
+            return LintResult {
+                is_unread: true,
+                ..LintResult::default()
+            };
         }
         let mut off: Vec<RuleId> = Vec::new();
         if config.has_every_rule {
@@ -802,6 +820,34 @@ impl<S: RuleSet> Linter<S> {
                 }
             }
         }
+        // See `Pairs`. Where the rule without types is the more severe, both report as they are: a report less would be a
+        // milder one.
+        let pairs = S::PAIRS;
+        if file.types.is_some()
+            && file.language().is_oxlint
+            && (!is_plain || prepared.on.intersects(&pairs.without_types))
+        {
+            let mut paired = file.sink.paired.borrow_mut();
+            for (index, it) in enabled.iter().enumerate() {
+                let number = it.rule.number();
+                if it.severity == Severity::Off || !pairs.without_types.has(number) {
+                    continue;
+                }
+                let typed = pairs.typed[number as usize];
+                let with_types = (enabled.iter()).position(|other| {
+                    other.rule.number() == typed && other.severity >= it.severity
+                });
+                if let Some(with_types) = with_types {
+                    let with_types = with_types as u16;
+                    let known = paired.iter().find(|it| it.0 == with_types).map(|it| it.1);
+                    let pair = known.unwrap_or(paired.len() as u8);
+                    if known.is_none() {
+                        paired.push((with_types, pair, true));
+                    }
+                    paired.push((index as u16, pair, false));
+                }
+            }
+        }
         let wants_places = options.wants_places || wants_fixes || has_directives;
         let of_js = problems.len() - before_js;
         for (it, reported) in problems.iter_mut().skip(before_js).zip(1..) {
@@ -930,6 +976,7 @@ impl<S: RuleSet> Linter<S> {
             let Some(rule) = ran(diagnostic.rule as usize) else {
                 continue;
             };
+            let claim = diagnostic.details.as_deref().and_then(|it| it.claim);
             let changes_something = diagnostic.fix.is_some() || !diagnostic.suggestions.is_empty();
             let follows_oxlint = changes_something && file.language().is_oxlint;
             let key = Some((diagnostic.rule, diagnostic.message_id));
@@ -944,6 +991,7 @@ impl<S: RuleSet> Linter<S> {
                     true => step + before_in_run(step),
                     false => ranks.get(at as usize).copied().unwrap_or(0),
                 },
+                claim,
                 ..to_message(diagnostic, rule.reported_as(), places)
             });
             let Some(message) =
@@ -1033,6 +1081,10 @@ impl<S: RuleSet> Linter<S> {
             if problems.iter().any(is_thrown_error) {
                 problems.retain(|it| !it.rule_id.as_ref().is_some_and(stands_for_js_rule));
             }
+        }
+        // Before the comments, which are compared with a report where it's shown.
+        if file.language().stands_alone {
+            problems.iter_mut().for_each(LintMessage::stay_in_file);
         }
         if wants_places && !in_run_order {
             LintMessage::sort(&mut problems);
@@ -1170,6 +1222,7 @@ fn to_message(
             None => end,
         }),
         is_fatal: false,
+        claim: None,
         fix: diagnostic.fix.take(),
         suggestions: match diagnostic.suggestions.is_empty() {
             true => Vec::new(),
@@ -1208,6 +1261,7 @@ fn js_message(report: js_plugin::Report, rule: &RunningJs, wants_fixes: bool) ->
         column: report.column.unwrap_or(0),
         end: report.end,
         is_fatal: false,
+        claim: None,
         fix: report.fix.filter(|_| wants_fixes),
         suggestions: (report.suggestions.into_iter().filter(|_| wants_fixes))
             .map(Into::into)
@@ -1297,6 +1351,7 @@ impl ThrownError<'_> {
             column: 0,
             end: None,
             is_fatal: true,
+            claim: None,
             fix: None,
             suggestions: Vec::new(),
             suppressions: Vec::new(),
@@ -1469,7 +1524,8 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             }
             _ => return,
         }
-        let rules = match comment::parse_json_like_config(self.file.slice(comment.value)) {
+        let rules = match comment::parse_json_like_config(self.file.slice_of_comment(comment.value))
+        {
             Ok(rules) => rules,
             Err(message) => return self.fatal(comment, message),
         };
@@ -1597,6 +1653,26 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                     b"\" is invalid:\n\t",
                     bun_core::strings::trim_js_whitespace(lines),
                     b"\n",
+                ]);
+                self.error(comment, Some(rule.id()), message);
+                continue;
+            }
+            let meta = match rule {
+                Named::Native(entry) | Named::Instance(&ConfiguredRule { entry, .. }, _) => {
+                    Some(entry.meta)
+                }
+                Named::Js(_) => None,
+            };
+            if validated.is_some()
+                && meta.is_some_and(|it| !self.config.supports_language(it))
+                && self.config.language.eslint_major >= 10
+            {
+                let message = quoted(&[
+                    b"Inline configuration for rule \"",
+                    &id,
+                    b"\" is invalid:\n\tRule does not support the language \"",
+                    self.config.normalized_language_name(),
+                    b"\". Use a config block with \"files\" to apply the rule only to supported files, or disable it.\n",
                 ]);
                 self.error(comment, Some(rule.id()), message);
                 continue;
@@ -1764,7 +1840,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             ]);
             return self.error(comment, None, message);
         }
-        let list = self.file.slice(comment.value);
+        let list = self.file.slice_of_comment(comment.value);
         let mut names = comment::parse_list_config(list);
         let (line, column) = if kind == disable::Kind::DisableNextLine {
             end
@@ -1802,9 +1878,14 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
         parents.push(disable::Parent {
             comment: comment.span,
             list,
+            list_span: comment.value,
             names,
-            justification: self.file.slice(comment.justification),
+            justification: self.file.slice_of_comment(comment.justification),
             start,
+            tool: match self.file.slice(comment.label_span).starts_with(b"oxlint") {
+                true => "oxlint",
+                false => "eslint",
+            },
         });
     }
 }

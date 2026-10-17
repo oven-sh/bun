@@ -2610,7 +2610,7 @@ impl VirtualMachine {
     /// Release — never run — everything queued on both event loops (tasks,
     /// concurrent tasks, pending immediates) while the JSC heap and this
     /// thread's loop are alive: their JS handles and keep-alives drop now. The
-    /// macro loop is only ever ticked explicitly, so whatever a macro queued on
+    /// macro loop too: not everything a macro queued on it is handed over, so
     /// it is still there. Teardown phase B; also the one thing an owner that
     /// calls `destroy()` without a teardown (bake's build VM) must do first.
     pub fn release_queued_work(&mut self) {
@@ -5596,6 +5596,17 @@ impl VirtualMachine {
         // time and `load_preloads` clears the boxes but keeps the Vec buffer,
         // so reclaim it here or every Worker leaks it.
         drop(core::mem::take(&mut self.preload));
+
+        // Same raw-dealloc story for the two macro tables.
+        drop(core::mem::take(&mut self.macros));
+        for entry_point in core::mem::take(&mut self.macro_entry_points).values() {
+            // SAFETY: boxed by `load_macro_entry_point`; the table owned it.
+            unsafe {
+                bun_core::heap::destroy(
+                    entry_point.cast::<bun_bundler::entry_points::MacroEntryPoint>(),
+                );
+            }
+        }
 
         // SAFETY: this VM is raw-`dealloc`'d (no field `Drop` runs), so
         // `transpiler` is never auto-dropped after `deinit` clears its fields.

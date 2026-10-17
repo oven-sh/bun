@@ -682,6 +682,13 @@ impl EventLoop {
     /// returned is this loop's to run, and the platform loop both share stays
     /// alive for it until then.
     fn macro_loop_if_not_running(&self) -> Option<&EventLoop> {
+        // SAFETY: a sibling field of the live owning VM. Shared access: this
+        // also runs beneath a batch of that loop's immediates.
+        self.macro_loop_ptr_if_not_running()
+            .map(|macro_loop| unsafe { macro_loop.as_ref() })
+    }
+
+    fn macro_loop_ptr_if_not_running(&self) -> Option<NonNull<EventLoop>> {
         let vm = self.vm();
         // SAFETY: `vm` is the live owning VM (set in `init()`). `addr_of!`
         // projects to sibling fields without materializing a
@@ -690,7 +697,50 @@ impl EventLoop {
             (core::ptr::addr_of!((*vm).has_enabled_macro_mode).read()
                 && !core::ptr::addr_of!((*vm).macro_mode).read()
                 && core::ptr::eq(self, core::ptr::addr_of!((*vm).regular_event_loop)))
-            .then(|| &*core::ptr::addr_of!((*vm).macro_event_loop))
+            .then(|| NonNull::new_unchecked(core::ptr::addr_of_mut!((*vm).macro_event_loop)))
+        }
+    }
+
+    /// Runs the macro loop's immediates once no macro runs; `true` when the poll after it must not block.
+    #[inline]
+    pub unsafe fn run_macro_loop_leftovers(this: *mut Self, vm: *mut VirtualMachine) -> bool {
+        // SAFETY: the caller passes the live per-thread `vm` and its current
+        // loop; the borrow ends before anything re-enters.
+        let macro_loop = unsafe {
+            debug_assert!(core::ptr::eq(this, (*vm).event_loop));
+            (*this).macro_loop_ptr_if_not_running()
+        };
+        match macro_loop {
+            // SAFETY: as above; the gate says no macro is running.
+            Some(macro_loop) => unsafe { Self::run_macro_loop_immediates(macro_loop, vm) },
+            None => false,
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    unsafe fn run_macro_loop_immediates(
+        macro_loop: NonNull<EventLoop>,
+        vm: *mut VirtualMachine,
+    ) -> bool {
+        let macro_loop = macro_loop.as_ptr();
+        // SAFETY: `macro_loop` is the macro loop of the live `vm`, and no macro
+        // runs; `tick_immediate_tasks` launders `self` for a callback that starts one.
+        unsafe {
+            let ran = !(*macro_loop).immediate_tasks.is_empty();
+            if ran {
+                // In place, not moved: a later macro's wait ticks only that loop.
+                (*macro_loop).tick_immediate_tasks(vm);
+                debug_assert!(!(*vm).macro_mode);
+            }
+            // After a batch too: a macro under it can have queued on that loop.
+            let pending = ran || !(*macro_loop).concurrent_tasks.is_empty();
+            // `get_timeout` zeroes the poll timeout for this only on POSIX.
+            #[cfg(windows)]
+            if pending {
+                (*(*vm).event_loop).wakeup();
+            }
+            pending
         }
     }
 
@@ -762,13 +812,13 @@ impl EventLoop {
     /// faster than this thread runs what they post; without a bound a steady
     /// producer (a worker flooding postMessage) keeps `tick()` from ever
     /// returning and timers / I/O never run. What is left is picked up by the
-    /// next `tick()`, after a non-blocking poll (`has_pending_tasks`).
+    /// next `tick()`, after a non-blocking poll (`has_own_pending_tasks`).
     const CONCURRENT_REFILLS_PER_TICK: u32 = 8;
 
     /// Work is queued that the next `tick()` will run: the poll before it must
     /// not block.
-    pub fn has_pending_tasks(&self) -> bool {
-        self.tasks.readable_length() > 0 || self.has_concurrent_tasks()
+    pub fn has_own_pending_tasks(&self) -> bool {
+        self.tasks.readable_length() > 0 || !self.concurrent_tasks.is_empty()
     }
 
     pub fn tick(&mut self) {
@@ -1009,6 +1059,13 @@ impl EventLoop {
     /// # Safety
     /// `virtual_machine` must be the live per-thread VM that owns this `EventLoop`.
     pub unsafe fn tick_immediate_tasks(&mut self, virtual_machine: *mut VirtualMachine) {
+        // SAFETY: per fn contract; field reads only.
+        debug_assert!(unsafe {
+            let this: *const Self = self;
+            core::ptr::eq(this, (*virtual_machine).event_loop)
+                || (!(*virtual_machine).macro_mode
+                    && core::ptr::eq(this, &raw const (*virtual_machine).macro_event_loop))
+        });
         // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
         // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is `noalias`, and
         // the only thing reaching the `__bun_run_immediate_task` extern call is
@@ -1040,8 +1097,9 @@ impl EventLoop {
 
         // make sure microtasks are drained if the last task had an exception
         if exception_thrown {
-            // SAFETY: as above.
-            let _ = unsafe { (*this).maybe_drain_microtasks() };
+            // Not `this`: the regular loop also runs the macro loop's queue.
+            // SAFETY: `virtual_machine` is live and `event_loop` is one of its loops.
+            let _ = unsafe { (*(*virtual_machine).event_loop).maybe_drain_microtasks() };
         }
 
         // SAFETY: as above; this read MUST observe pushes JS made during the

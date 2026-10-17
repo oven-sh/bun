@@ -653,24 +653,83 @@ pub(crate) mod on_unhandled_rejection {
     }
 }
 
-fn consume_arg(
+/// Pretty-prints `value` on one line; a string keeps its quotes.
+fn write_pretty_value(
     global_this: &JSGlobalObject,
-    should_write: bool,
-    str_idx: &mut usize,
-    args_idx: &mut usize,
-    array_list: &mut Vec<u8>,
-    arg: JSValue,
-    fallback: &[u8],
+    value: JSValue,
+    list: &mut Vec<u8>,
 ) -> JsResult<()> {
-    if should_write {
-        let owned_slice = arg.to_utf8(global_this)?;
-        array_list.extend_from_slice(owned_slice.slice());
-    } else {
-        array_list.extend_from_slice(fallback);
+    let mut formatter = crate::test_runner::expect::make_formatter(global_this);
+    formatter.single_line = true;
+    formatter.format_value::<false>(value, list)
+}
+
+/// Writes `value` as `String(value)` reads in a title: raw text for a string, pretty-printed otherwise.
+fn write_title_value(
+    global_this: &JSGlobalObject,
+    value: JSValue,
+    list: &mut Vec<u8>,
+) -> JsResult<()> {
+    if value.is_string() {
+        let owned_slice = value.to_utf8(global_this)?;
+        list.extend_from_slice(owned_slice.slice());
+        return Ok(());
     }
-    *str_idx += 1;
-    *args_idx += 1;
-    Ok(())
+    write_pretty_value(global_this, value, list)
+}
+
+/// Writes one positional argument with the `util.format` coercion Jest applies to `%<spec>`.
+fn write_placeholder_arg(
+    global_this: &JSGlobalObject,
+    spec: u8,
+    arg: JSValue,
+    list: &mut Vec<u8>,
+) -> JsResult<()> {
+    let number = match spec {
+        b's' => return write_title_value(global_this, arg, list),
+        b'p' | b'o' | b'O' => return write_pretty_value(global_this, arg, list),
+        b'j' => {
+            let str = arg.json_stringify_fast(global_this)?;
+            list.extend_from_slice(&str.to_owned_slice());
+            return Ok(());
+        }
+        b'd' | b'i' if arg.is_big_int() => return write_title_value(global_this, arg, list),
+        b'd' if arg.is_symbol() => f64::NAN,
+        b'd' => arg.to_number(global_this)?,
+        b'i' => arg.parse_int(global_this, 0)?,
+        _ => arg.parse_float(global_this)?,
+    };
+    write_title_value(global_this, JSValue::js_number(number), list)
+}
+
+/// Byte width of the identifier code point at `text[at]`, or 0 when it is not one.
+#[inline]
+fn identifier_width_at(text: &[u8], at: usize, is_start: bool) -> usize {
+    let byte = text[at];
+    if byte >= 0x80 {
+        return non_ascii_identifier_width(&text[at..], is_start);
+    }
+    let code_point = i32::from(byte);
+    usize::from(if is_start {
+        bun_js_parser::js_lexer::is_identifier_start(code_point)
+    } else {
+        bun_js_parser::js_lexer::is_identifier_continue(code_point)
+    })
+}
+
+#[cold]
+#[inline(never)]
+fn non_ascii_identifier_width(text: &[u8], is_start: bool) -> usize {
+    let mut cursor = bun_core::strings::Cursor::default();
+    if !bun_core::strings::CodepointIterator::init(text).next(&mut cursor) {
+        return 0;
+    }
+    let is_identifier = if is_start {
+        bun_js_parser::js_lexer::is_identifier_start(cursor.c)
+    } else {
+        bun_js_parser::js_lexer::is_identifier_continue(cursor.c)
+    };
+    if is_identifier { usize::from(cursor.width) } else { 0 }
 }
 
 /// Generate test label by positionally injecting parameters with printf formatting
@@ -693,26 +752,28 @@ pub(crate) fn format_label(
             && function_args[0].is_object()
         {
             let var_start = idx + 1;
-            let mut var_end = var_start;
 
-            if bun_js_parser::js_lexer::is_identifier_start(label[var_end] as i32) {
-                var_end += 1;
+            if label[var_start] == b'#' {
+                write!(&mut list, "{}", test_idx).unwrap();
+                idx = var_start + 1;
+                continue;
+            }
+
+            let start_width = identifier_width_at(label, var_start, true);
+            if start_width != 0 {
+                let mut var_end = var_start + start_width;
 
                 while var_end < label.len() {
-                    let c = label[var_end];
-                    if c == b'.' {
-                        if var_end + 1 < label.len()
-                            && bun_js_parser::js_lexer::is_identifier_continue(label[var_end + 1] as i32)
-                        {
-                            var_end += 1;
-                        } else {
-                            break;
-                        }
-                    } else if bun_js_parser::js_lexer::is_identifier_continue(c as i32) {
-                        var_end += 1;
-                    } else {
+                    // A `.` stays in the path only when an identifier character follows it.
+                    let at = if label[var_end] == b'.' { var_end + 1 } else { var_end };
+                    if at >= label.len() {
                         break;
                     }
+                    let width = identifier_width_at(label, at, false);
+                    if width == 0 {
+                        break;
+                    }
+                    var_end = at + width;
                 }
 
                 let var_path = &label[var_start..var_end];
@@ -720,109 +781,45 @@ pub(crate) fn format_label(
                     global_this,
                     bun_string_jsc::create_utf8_for_js(global_this, var_path)?,
                 )?;
-                if !value.is_empty_or_undefined_or_null() {
-                    // For primitive strings, use toString() to avoid adding quotes
-                    // This matches Jest's behavior (https://github.com/jestjs/jest/issues/7689)
-                    if value.is_string() {
-                        let owned_slice = value.to_utf8(global_this)?;
-                        list.extend_from_slice(owned_slice.slice());
-                    } else {
-                        let mut formatter = crate::test_runner::expect::make_formatter(global_this);
-                        // formatter cleanup handled by Drop.
-                        formatter.format_value::<false>(value, &mut list)?;
-                    }
-                    idx = var_end;
-                    continue;
+                // Empty means the property does not exist; null/undefined render.
+                if value.is_empty() {
+                    list.extend_from_slice(&label[idx..var_end]);
+                } else {
+                    write_title_value(global_this, value, &mut list)?;
                 }
-            } else {
-                while var_end < label.len()
-                    && (bun_js_parser::js_lexer::is_identifier_continue(label[var_end] as i32)
-                        && label[var_end] != b'$')
-                {
-                    var_end += 1;
-                }
+                idx = var_end;
+                continue;
             }
 
             list.push(b'$');
-            list.extend_from_slice(&label[var_start..var_end]);
-            idx = var_end;
-        } else if char == b'%' && (idx + 1 < label.len()) && !(args_idx >= function_args.len()) {
-            let current_arg = function_args[args_idx];
+            idx += 1;
+            continue;
+        }
 
-            match label[idx + 1] {
-                b's' => {
-                    consume_arg(
-                        global_this,
-                        !current_arg.is_empty() && current_arg.js_type().is_string(),
-                        &mut idx,
-                        &mut args_idx,
-                        &mut list,
-                        current_arg,
-                        b"%s",
-                    )?;
-                }
-                b'i' => {
-                    consume_arg(
-                        global_this,
-                        current_arg.is_any_int(),
-                        &mut idx,
-                        &mut args_idx,
-                        &mut list,
-                        current_arg,
-                        b"%i",
-                    )?;
-                }
-                b'd' => {
-                    consume_arg(
-                        global_this,
-                        current_arg.is_number(),
-                        &mut idx,
-                        &mut args_idx,
-                        &mut list,
-                        current_arg,
-                        b"%d",
-                    )?;
-                }
-                b'f' => {
-                    consume_arg(
-                        global_this,
-                        current_arg.is_number(),
-                        &mut idx,
-                        &mut args_idx,
-                        &mut list,
-                        current_arg,
-                        b"%f",
-                    )?;
-                }
-                b'j' | b'o' => {
-                    // Use jsonStringifyFast for SIMD-optimized serialization
-                    let str = current_arg.json_stringify_fast(global_this)?;
-                    let owned_slice = str.to_owned_slice();
-                    list.extend_from_slice(&owned_slice);
-                    idx += 1;
+        if char == b'%' && idx + 1 < label.len() {
+            let spec = label[idx + 1];
+            match spec {
+                b'%' => list.push(b'%'),
+                b'#' => write!(&mut list, "{}", test_idx).unwrap(),
+                b'$' => write!(&mut list, "{}", test_idx + 1).unwrap(),
+                b's' | b'd' | b'i' | b'f' | b'j' | b'o' | b'O' | b'p'
+                    if args_idx < function_args.len() =>
+                {
+                    let arg = function_args[args_idx];
                     args_idx += 1;
-                }
-                b'p' => {
-                    let mut formatter = crate::test_runner::expect::make_formatter(global_this);
-                    formatter.format_value::<false>(current_arg, &mut list)?;
-                    idx += 1;
-                    args_idx += 1;
-                }
-                b'#' => {
-                    write!(&mut list, "{}", test_idx).unwrap();
-                    idx += 1;
-                }
-                b'%' => {
-                    list.push(b'%');
-                    idx += 1;
+                    write_placeholder_arg(global_this, spec, arg, &mut list)?;
                 }
                 _ => {
-                    // ignore unrecognized fmt
+                    list.push(b'%');
+                    idx += 1;
+                    continue;
                 }
             }
-        } else {
-            list.push(char);
+            idx += 2;
+            continue;
         }
+
+        list.push(char);
         idx += 1;
     }
 

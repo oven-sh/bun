@@ -3580,14 +3580,19 @@ impl VirtualMachine {
             // Preloads (evaluated above, synchronously) are not the entry: only
             // module evaluations from here on mark the entry graph as executing.
             self.entry_evaluation_started = false;
-            // Note: reshaped for borrowck — capture raw ptr before &self call.
-            let global = self.global;
-            let global_ref = self.global();
             let builtin = match self.main_entry_point {
                 MainEntryPoint::File => None,
                 MainEntryPoint::Html => Some(BuiltinEntryPoint::Html),
                 MainEntryPoint::Bake => Some(BuiltinEntryPoint::Bake),
             };
+            // The built-in module is the main module, so what it imports loads as the imports of a
+            // main module do (`has_loaded`): a file of an unknown type is a file, not a script.
+            if builtin.is_some() && !self.transpiler.options.disable_transpilation {
+                self.has_loaded = true;
+            }
+            // Note: reshaped for borrowck — capture raw ptr before &self call.
+            let global = self.global;
+            let global_ref = self.global();
             let promise = if let Some(builtin) = builtin {
                 let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || {
                     Bun__loadBuiltinEntryPoint(global_ref, builtin)

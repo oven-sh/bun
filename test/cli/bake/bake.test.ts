@@ -284,7 +284,7 @@ test.concurrent.each([
 });
 
 // Creating a symlink on Windows needs a privilege that CI does not have.
-test.skipIf(isWindows)("bun bake serves pages that are symlinks or in a symlinked folder", async () => {
+test.concurrent.skipIf(isWindows)("bun bake serves pages that are symlinks or in a symlinked folder", async () => {
   using dir = tempDir("bake-command-symlink", {
     "shared/page.html": `<!doctype html><html><body><h1>Shared</h1></body></html>`,
     "shared/docs/intro.html": `<!doctype html><html><body><h1>Intro</h1></body></html>`,
@@ -298,4 +298,19 @@ test.skipIf(isWindows)("bun bake serves pages that are symlinks or in a symlinke
 
   expect(await get(url, "/linked")).toContain("<h1>Shared</h1>");
   expect(await get(url, "/docs/intro")).toContain("<h1>Intro</h1>");
+});
+
+test.concurrent("bun bake loads a file of an unknown type that app/server.ts imports as a file", async () => {
+  using dir = tempDir("bake-command-asset", {
+    "app/icon.png": "not really a png",
+    "app/server.ts": `
+      import icon from "./icon.png";
+      export default { fetch: () => new Response(require("node:path").basename(icon)) };
+    `,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  expect(await get(url, "/missing")).toBe("200 icon.png");
 });

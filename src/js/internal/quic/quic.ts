@@ -1788,8 +1788,7 @@ class QuicStream {
   }
 
   /**
-   * Fulfilled once the stream has an ID. Rejects if a pending stream is
-   * closed with an error before it opens.
+   * A promise that is fulfilled once the stream has an ID.
    * @type {Promise<void>}
    */
   get opened() {

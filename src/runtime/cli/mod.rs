@@ -967,18 +967,7 @@ pub(crate) mod command {
             ctx.args = arguments::parse(cmd, ctx)?;
         }
 
-        #[cfg(windows)]
-        {
-            if ctx.debug.hot_reload == HotReload::Watch {
-                {
-                    if !bun_sys::windows::is_watcher_child() {
-                        bun_sys::windows::become_watcher_manager();
-                    } else {
-                        bun_core::set_auto_reload_on_crash(true);
-                    }
-                }
-            }
-        }
+        super::set_up_watch_restarts(ctx);
 
         Ok(ctx)
     }
@@ -2299,4 +2288,32 @@ pub(crate) fn print_revision_and_exit() -> ! {
     let _ = w.write_all(b"\n");
     Output::flush();
     Global::exit(0);
+}
+
+/// `--check` with `--hot`: nothing runs unchecked, so the process starts again, as under `--watch`.
+/// Call it before `set_up_watch_restarts`.
+pub(crate) fn watch_instead_of_hot_for_check(ctx: &mut command::ContextData) {
+    if ctx.debug.hot_reload == command::HotReload::Hot {
+        ctx.debug.hot_reload = command::HotReload::Watch;
+        #[cfg(not(windows))]
+        {
+            bun_core::set_auto_reload_on_crash(true);
+        }
+    }
+}
+
+/// Under `--watch` on Windows, a manager process starts this one again after each change.
+pub(crate) fn set_up_watch_restarts(ctx: &command::ContextData) {
+    #[cfg(windows)]
+    {
+        if ctx.debug.hot_reload == command::HotReload::Watch {
+            if !bun_sys::windows::is_watcher_child() {
+                bun_sys::windows::become_watcher_manager();
+            } else {
+                bun_core::set_auto_reload_on_crash(true);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = ctx;
 }

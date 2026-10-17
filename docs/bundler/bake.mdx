@@ -30,6 +30,8 @@ bun bake
 
 Each page is bundled with its scripts and stylesheets, the same as an [HTML import](/bundler/fullstack). Edits to pages reload in the browser. After you change `app/server.ts`, restart `bun bake`.
 
+`bun bake` always runs the dev server, also with `NODE_ENV=production`. It is not for production.
+
 ## Pages
 
 Every `.html` file in `app/pages/` is a page. Its path is its URL:

@@ -198,3 +198,18 @@ test.concurrent("bun bake --help", async () => {
   expect(stdout).toContain("--check");
   expect(exitCode).toBe(0);
 });
+
+test.concurrent("bun bake serves a page with a non-ASCII name at its encoded URL", async () => {
+  using dir = tempDir("bake-command-unicode", {
+    "app/pages/über.html": `<!doctype html><html><body><h1>Über</h1></body></html>`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  // `fetch` sends the path percent-encoded, as browsers do.
+  const res = await fetch(new URL("/über", url));
+  expect(new URL(res.url).pathname).toBe("/%C3%BCber");
+  expect(await res.text()).toContain("<h1>Über</h1>");
+  expect(res.status).toBe(200);
+});

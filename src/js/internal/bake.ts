@@ -38,7 +38,14 @@ Options:
   --check # type check the project first, and do not serve it if it has errors
 `;
 
-type Page = { route: string; file: string; bundle: HTMLBundle };
+type Page = {
+  /** The URL path, without the leading `/`, as the file names it. */
+  route: string;
+  /** The `Bun.serve` route: `/` and `route` with each segment percent-encoded, as browsers send it. */
+  url: string;
+  file: string;
+  bundle: HTMLBundle;
+};
 
 type AppServer = {
   routes?: Record<string, unknown>;
@@ -83,7 +90,8 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
       throw new Error(`"${display(other)}" and "${display(file)}" are both the page "/${route}".`);
     }
     fileOfRoute[route] = file;
-    pages.push({ route, file, bundle: (await import(file)).default });
+    const url = "/" + route.split("/").map(encodeURIComponent).join("/");
+    pages.push({ route, url, file, bundle: (await import(file)).default });
   }
   return pages;
 }
@@ -145,8 +153,8 @@ async function start() {
   const pageOfRoute: Record<string, Page> = { __proto__: null } as any;
   for (let i = 0; i < pages.length; i++) {
     const page = pages[i];
-    routes["/" + page.route] = page.bundle;
-    pageOfRoute["/" + page.route] = page;
+    routes[page.url] = page.bundle;
+    pageOfRoute[page.url] = page;
   }
   const appRoutes = app?.server.routes;
   if (appRoutes !== undefined) {

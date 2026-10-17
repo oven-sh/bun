@@ -2763,7 +2763,14 @@ impl RunCommand {
                 .position(|arg| &arg[..] == b"--check")
             {
                 ctx.passthrough.remove(i);
-                ctx.runtime_options.check = true;
+                if !ctx.runtime_options.check {
+                    ctx.runtime_options.check = true;
+                    let hot_reload = ctx.debug.hot_reload;
+                    cli::watch_instead_of_hot_for_check(ctx);
+                    if hot_reload != ctx.debug.hot_reload {
+                        cli::set_up_watch_restarts(ctx);
+                    }
+                }
             }
             let cwd = match bun_sys::getcwd_alloc() {
                 Ok(cwd) => cwd,

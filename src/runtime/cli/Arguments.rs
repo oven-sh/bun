@@ -1269,14 +1269,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.runtime_options.smol = args.flag(b"--smol");
         // To `node`, `--check` means something else.
         ctx.runtime_options.check = args.flag(b"--check") && cmd != CommandTag::RunAsNodeCommand;
-        // Nothing runs unchecked, so the process starts again, as under `--watch`. Decided here: on
-        // Windows the process that starts it again is set up right after this.
-        if ctx.runtime_options.check && ctx.debug.hot_reload == HotReload::Hot {
-            ctx.debug.hot_reload = HotReload::Watch;
-            #[cfg(not(windows))]
-            {
-                bun_core::set_auto_reload_on_crash(true);
-            }
+        // Decided here: on Windows the process that starts it again is set up right after this.
+        if ctx.runtime_options.check {
+            super::watch_instead_of_hot_for_check(ctx);
         }
         // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
         ctx.runtime_options.interactive = args.flag(b"--interactive")

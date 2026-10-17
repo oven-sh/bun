@@ -59,6 +59,7 @@ mod instantiate;
 pub mod jsdoc;
 mod jsx;
 mod late_bound;
+mod links;
 mod loop_cycles;
 mod mapped;
 mod order;
@@ -69,6 +70,7 @@ mod related;
 mod related_expected;
 pub mod services;
 mod shape;
+mod shortcuts;
 mod sink;
 pub mod spans;
 mod symbol_ids;
@@ -710,6 +712,7 @@ impl<'s> Program<'s> {
             rechecked_members: Default::default(),
             literals_checked_under: Default::default(),
             inference_contexts: Vec::new(),
+            inference_memo: Default::default(),
             instantiation_depth: 0,
             outermost_comparison: None,
             instantiation_count: 0,
@@ -780,6 +783,8 @@ impl<'s> Program<'s> {
             recent_unions: Default::default(),
             recent_unreduced_unions: Default::default(),
             unions_of_union_types: Default::default(),
+            union_calls: Default::default(),
+            wholes_of_unions: Default::default(),
             constraint_stack: Vec::new(),
             constraints_marked_circular: Vec::new(),
             circular_constraint_origins: Vec::new(),
@@ -805,6 +810,7 @@ impl<'s> Program<'s> {
             has_ambient_context: false,
             suggestions_among_globals: Default::default(),
             alias_symbols: Default::default(),
+            links: Default::default(),
             could_contain_type_variables: Default::default(),
             has_compared_without_total_order: std::cell::Cell::new(false),
             symbol_ids: None,
@@ -878,6 +884,7 @@ impl<'s> Program<'s> {
             stack_base: stack_pointer(),
             stack_limit: 6 << 20,
             work: 0,
+            scopes_begun: 0,
             work_trap: WORK_TRAP_DISARMED,
             refused_expressions: Vec::new(),
             side_effect_free: Default::default(),
@@ -1344,6 +1351,8 @@ pub struct Checker<'p, 's> {
     literals_checked_under: FxHashMap<(FileId, ExprId, TypeId, u8), TypeId>,
     /// `inferenceContextInfos`
     inference_contexts: Vec<InferenceContextInfo>,
+    /// What the walks of `inferTypes` have written. See check/infer_memo.rs.
+    inference_memo: infer::InferenceMemo,
     instantiation_depth: u32,
     /// The comparison that began while no query and no instantiation was in progress and has not
     /// ended: its `errorNode`. See `begin_comparison`.
@@ -1489,7 +1498,8 @@ pub struct Checker<'p, 's> {
     /// `stack` when that began.
     identical_base_types_in_progress: Vec<(TypeId, usize)>,
     /// The mapped types with an `as` clause for which `isGenericMappedType` is in progress.
-    /// `ObjectFlagsIsGenericTypeComputed` with the two flags, of unions and intersections.
+    /// `ObjectFlagsIsGenericTypeComputed` with the two flags, of the unions and intersections in which there is a mapped
+    /// type. The others have them in `Types::generic_object_flags`.
     generic_object_flags: FxHashMap<TypeId, (bool, bool)>,
     /// `number_name` of the index, `NONE` where it has not been asked for.
     names_of_small_numbers: std::cell::RefCell<Vec<Atom>>,
@@ -1507,6 +1517,10 @@ pub struct Checker<'p, 's> {
     recent_unreduced_unions: instantiate::Recent,
     /// `unionOfUnionTypes`, for `UnionReductionSubtype`: the lower id first.
     unions_of_union_types: FxHashMap<(TypeId, TypeId), TypeId>,
+    union_calls: unions::UnionCalls,
+    /// For a union that has some of the members of another union, that other union, under the id
+    /// and 0. See `join_by_position`.
+    wholes_of_unions: instantiate::Recent,
     /// The `stack` of `getResolvedBaseConstraint`: the recursion identities of the nested
     /// constraint computations in progress.
     constraint_stack: Vec<relate::RecursionId>,
@@ -1557,7 +1571,9 @@ pub struct Checker<'p, 's> {
     suggestions_among_globals: errors::SuggestionsAmongGlobals,
     /// `t.alias.symbol` by type: see `alias_symbol_of_type`.
     alias_symbols: std::cell::RefCell<FxHashMap<TypeId, Option<Sym>>>,
-    /// What `could_contain_type_variables` has found, by type.
+    /// The derived parts of conditional and mapped types, and the aliases of types.
+    links: links::TypeLinks,
+    /// What `could_contain_type_variables_by_table` has found, by type.
     could_contain_type_variables: std::cell::RefCell<FxHashMap<TypeId, bool>>,
     /// Set by `compare_type_names` where `CompareTypes` is not transitive.
     has_compared_without_total_order: std::cell::Cell<bool>,
@@ -1781,6 +1797,8 @@ pub struct Checker<'p, 's> {
     stack_limit: usize,
     /// Number of queries made so far.
     pub work: u64,
+    /// Number of calls of `begin_scope` so far.
+    scopes_begun: u64,
     /// `enter` takes its slow path when `work` has this value: the next value of `work` while `refused_expressions` is not empty,
     /// `WORK_TRAP_DISARMED` otherwise.
     work_trap: u64,
@@ -3227,6 +3245,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Begins a computation that is not a query on `stack` but whose result is cached, such as a type comparison.
     #[inline]
     fn begin_scope(&mut self) -> Scope {
+        self.scopes_begun += 1;
         Scope {
             outer_taint: std::mem::replace(&mut self.lowest_taint, usize::MAX),
             frames: self.frames.len() as u32,
@@ -3704,6 +3723,23 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Union(members) => members.iter().all(|&m| f(self, m)),
             _ => f(self, ty),
         }
+    }
+
+    /// `every_type(ty, is_unit)`
+    pub(crate) fn is_every_type_unit(&self, ty: TypeId) -> bool {
+        if !shortcuts::MEMBER_FLAGS {
+            return self.every_type(ty, |c, member| c.is_unit(member));
+        }
+        // A member of an enum has `ENUM_LITERAL` beside the flag of its value. An intersection isn't a unit type, whatever
+        // it consists of.
+        let others = self.types().member_flags(ty) & !(tf::UNIT | tf::ENUM_LITERAL);
+        let is_every_type_unit = others == 0 && !self.may_be_reduced(ty);
+        if shortcuts::SHADOW
+            && is_every_type_unit != self.every_type(ty, |c, member| c.is_unit(member))
+        {
+            self.fact_differs("every member is a unit type", &[ty]);
+        }
+        is_every_type_unit
     }
 
     pub fn some_type(&self, ty: TypeId, f: impl Fn(&Self, TypeId) -> bool) -> bool {

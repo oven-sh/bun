@@ -83,24 +83,48 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getGenericObjectFlags`: `ObjectFlagsIsGenericObjectType`, `ObjectFlagsIsGenericIndexType`.
     /// Whichever is asked for, a mapped type resolves its constraint type.
     fn get_generic_object_flags(&mut self, ty: TypeId) -> (bool, bool) {
-        let both = |a: (bool, bool), b: (bool, bool)| (a.0 | b.0, a.1 | b.1);
+        let (object, index, _) = self.generic_object_flags_and_whether_resolved(ty);
+        (object, index)
+    }
+
+    /// The third: a mapped type was asked for the answer, now or when it was first given. Without one nothing is resolved,
+    /// and the answer says what the types are made of.
+    fn generic_object_flags_and_whether_resolved(&mut self, ty: TypeId) -> (bool, bool, bool) {
         match *self.data(ty) {
             TypeData::Union(ref parts) | TypeData::Intersection(ref parts) => {
+                let known = if shortcuts::MEMBER_FLAGS
+                    && self.types().member_flags(ty) & (tf::INSTANTIABLE | tf::OBJECT) == 0
+                {
+                    // Only an object type or an instantiable type is generic.
+                    Some((false, false))
+                } else if shortcuts::GENERIC_OBJECT_FLAGS {
+                    self.types().generic_object_flags(ty)
+                } else {
+                    None
+                };
+                if let Some((object, index)) = known {
+                    if shortcuts::SHADOW
+                        && self.generic_object_flags_of_all(parts) != (object, index, false)
+                    {
+                        self.fact_differs_for("getGenericObjectFlags", &[ty]);
+                    }
+                    return (object, index, false);
+                }
                 // `ObjectFlagsIsGenericTypeComputed`
-                if let Some(&flags) = self.generic_object_flags.get(&ty) {
-                    return flags;
+                if let Some(&(object, index)) = self.generic_object_flags.get(&ty) {
+                    return (object, index, true);
                 }
-                let mut flags = (false, false);
-                for &part in parts.iter() {
-                    flags = both(flags, self.get_generic_object_flags(part));
+                let (object, index, is_resolved) = self.generic_object_flags_of_all(parts);
+                if shortcuts::GENERIC_OBJECT_FLAGS && !is_resolved {
+                    (self.types()).set_generic_object_flags(ty, (object, index));
+                } else {
+                    self.generic_object_flags.insert(ty, (object, index));
                 }
-                self.generic_object_flags.insert(ty, flags);
-                flags
+                (object, index, is_resolved)
             }
-            TypeData::Substitution { base, constraint } => both(
-                self.get_generic_object_flags(base),
-                self.get_generic_object_flags(constraint),
-            ),
+            TypeData::Substitution { base, constraint } => {
+                self.generic_object_flags_of_all(&[base, constraint])
+            }
             _ => {
                 let flags = self.flags(ty);
                 (
@@ -109,9 +133,20 @@ impl<'p, 's> Checker<'p, 's> {
                         || self.is_generic_tuple_type(ty),
                     flags & (tf::INSTANTIABLE_NON_PRIMITIVE | tf::INDEX) != 0
                         || self.is_generic_string_like_type(ty),
+                    self.mapped_origin(ty).is_some(),
                 )
             }
         }
+    }
+
+    /// `generic_object_flags_and_whether_resolved` of each of `types`, taken together.
+    fn generic_object_flags_of_all(&mut self, types: &[TypeId]) -> (bool, bool, bool) {
+        let mut all = (false, false, false);
+        for &ty in types {
+            let one = self.generic_object_flags_and_whether_resolved(ty);
+            all = (all.0 | one.0, all.1 | one.1, all.2 | one.2);
+        }
+        all
     }
 
     /// `isGenericStringLikeType`
@@ -131,7 +166,7 @@ impl<'p, 's> Checker<'p, 's> {
         else {
             return false;
         };
-        let constraint = self.mapped_constraint(file, node, mapper);
+        let constraint = self.mapped_keys(ty);
         if self.is_generic_index_type(constraint) {
             return true;
         }
@@ -226,7 +261,7 @@ impl<'p, 's> Checker<'p, 's> {
                 && !index_flags.contains(IndexFlags::NO_REDUCIBLE_CHECK)
                 && self.is_generic_reducible(ty)
             || matches!(self.data(ty), TypeData::Intersection(parts)
-                if self.maybe_type_of_kind(ty, |c, t| c.is_instantiable(t))
+                if self.maybe_type_of_kind(ty, tf::INSTANTIABLE)
                     && parts.iter().any(|&part| self.is_empty_anonymous_object_type(part)))
     }
 
@@ -239,10 +274,7 @@ impl<'p, 's> Checker<'p, 's> {
         let Some((file, node, mapper)) = self.mapped_origin(ty) else {
             return TypeId::NEVER;
         };
-        let (decl, constraint) = (
-            self.mapped_decl(file, node),
-            self.mapped_constraint(file, node, mapper),
-        );
+        let (decl, constraint) = (self.mapped_decl(file, node), self.mapped_keys(ty));
         let no_index_signatures = index_flags.contains(IndexFlags::NO_INDEX_SIGNATURES);
         // "no mapping and no filtering required, just quickly bail to returning the constraint in the common case"
         if decl.name_ty.is_none() && !no_index_signatures {
@@ -1872,6 +1904,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.task.closed_a_cycle = true;
             }
             (self.p.circular_mapped_constraints).insert(&self.task, key, (), Stored::new());
+            self.links.note_circular_mapped_constraint();
             return TypeId::ERROR;
         }
         self.mapped_constraints_in_progress
@@ -1880,6 +1913,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `!popTypeResolution()` in `getResolvedBaseConstraint`
         if (self.mapped_constraints_in_progress.pop()).is_some_and(|it| it.2) {
             (self.p.circular_mapped_constraints).insert(&self.task, key, (), Stored::new());
+            self.links.note_circular_mapped_constraint();
             self.report_circular_mapped_key(file, node);
         }
         // Afterwards: this may be the resolution in which the cycle was closed.
@@ -1935,6 +1969,29 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Keyof(t) => Some((t, false)),
             _ => None,
         }
+    }
+
+    /// Whether `mapped_modifiers_source` reads each type that it asks for from a table, and from an entry that stays.
+    pub(super) fn is_mapped_modifiers_source_settled(
+        &self,
+        file: FileId,
+        node: TypeNodeId,
+    ) -> bool {
+        let param = &self.hir(file)[self.mapped_decl(file, node).param];
+        let constraint = param.constraint;
+        if let TypeNodeKind::Keyof(of) = self.hir(file)[constraint].kind
+            && (self.parenthesized_types_around(file, constraint, param.pos))
+                .next()
+                .is_none()
+        {
+            return self.is_type_node_settled(file, of);
+        }
+        let declared = self.p.type_node_types.get(&self.task, &(file, constraint));
+        self.is_type_node_settled(file, constraint)
+            && declared.is_some_and(|declared| {
+                !matches!(self.data(declared), TypeData::TypeParam(..))
+                    || (self.p.type_param_constraints.get(&self.task, &declared)).is_some()
+            })
     }
 
     /// `getHomomorphicTypeVariable`: the `T` of a mapped type whose constraint type is `keyof T`,
@@ -2707,8 +2764,7 @@ impl<'p, 's> Checker<'p, 's> {
             // instantiates to.
             self.optional_property(ty)
         } else if optional {
-            // `maybeTypeOfKind(ty, TypeFlagsUndefined | TypeFlagsVoid)`
-            if self.maybe_type_of_kind(ty, |_, t| t.is_undefined() || t == TypeId::VOID) {
+            if self.maybe_type_of_kind(ty, tf::UNDEFINED | tf::VOID) {
                 ty
             } else {
                 self.optional_property(ty)

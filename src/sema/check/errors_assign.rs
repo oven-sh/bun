@@ -1688,8 +1688,7 @@ impl Checker<'_, '_> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        self.maybe_type_of_kind(source, |_, t| t.is_undefined())
-            && self.contains_missing_type(target)
+        self.maybe_type_of_kind(source, tf::UNDEFINED) && self.contains_missing_type(target)
     }
 
     /// `getExactOptionalUnassignableProperties`, whether there are any.

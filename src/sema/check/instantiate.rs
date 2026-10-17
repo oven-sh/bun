@@ -99,6 +99,12 @@ impl ActiveMappers {
         self.mappers.iter().rposition(|&m| m == mapper)
     }
 
+    /// Whether an `instantiate_cached` with `mapper` is in progress.
+    #[inline]
+    pub(super) fn is_active(&self, mapper: MapperId) -> bool {
+        self.find(mapper).is_some()
+    }
+
     /// `pushActiveMapper`
     fn push(&mut self, mapper: MapperId) {
         self.pushed = self.pushed.wrapping_add(1).max(1);

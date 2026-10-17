@@ -3085,6 +3085,699 @@ export { n, area, u };
       },
     );
 
+    test("a type with optional properties and nothing else takes no type that shares none of them", async () => {
+      using dir = project({
+        "a.ts": `
+type None = {};
+type One = { a?: number };
+type AllOptional = { a?: number; b?: string };
+type Mixed = { a?: number; b: string };
+type WithCall = { a?: number; (): void };
+type WithConstruct = { a?: number; new (): object };
+type WithIndex = { a?: number; [key: string]: number | undefined };
+type BothWeak = One & { c?: boolean };
+type WeakAndNot = One & { d: 1 };
+type WeakAndEmpty = One & {};
+interface Base { a?: number }
+interface Derived extends Base { b?: string }
+interface Required1 extends Base { c: string }
+interface Box<T> { value?: T }
+class Options { a?: number; b?: string }
+declare const other: { z: 1 };
+declare const returnsOther: () => { z: 1 };
+declare const returnsOne: () => { a: 1 };
+declare const list: string[];
+const t00: None = other;
+const t01: One = other;
+const t02: AllOptional = other;
+const t03: Mixed = other;
+const t04: WithCall = other;
+const t05: WithConstruct = other;
+const t06: WithIndex = other;
+const t07: BothWeak = other;
+const t08: WeakAndNot = other;
+const t09: WeakAndEmpty = other;
+const t10: Base = other;
+const t11: Derived = other;
+const t12: Required1 = other;
+const t13: Box<number> = other;
+const t14: Box<string> = other;
+const t15: Options = other;
+const t16: Partial<{ a: number; b: string }> = other;
+const t17: Partial<Mixed> = other;
+const t18: Required<One> = other;
+const t19: One = returnsOther;
+const t20: One = returnsOne;
+const t21: One = list;
+const t22: One = 1;
+const t23: AllOptional = "x";
+const t24: One = {};
+const t25: One = null! as {};
+const t26: One = null! as { a: 1; z: 1 };
+const t27: BothWeak = null! as { c: true; z: 1 };
+const t28: One | AllOptional = other;
+const t29 = other as One;
+const t30 = 1 as One;
+const t31 = "x" as AllOptional;
+const t32 = returnsOther as One;
+function generic<T extends One, U extends { z: 1 }>(t: T, u: U) {
+  const a: One = t;
+  const b: One = u;
+  const c: Box<T> = u;
+  const d: Partial<T> = u;
+}
+export {};
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(22,7): error TS2559: Type '{ z: 1; }' has no properties in common with type 'One'.
+        a.ts(23,7): error TS2559: Type '{ z: 1; }' has no properties in common with type 'AllOptional'.
+        a.ts(24,7): error TS2741: Property 'b' is missing in type '{ z: 1; }' but required in type 'Mixed'.
+        a.ts(25,7): error TS2322: Type '{ z: 1; }' is not assignable to type 'WithCall'.
+          Type '{ z: 1; }' provides no match for the signature '(): void'.
+        a.ts(26,7): error TS2322: Type '{ z: 1; }' is not assignable to type 'WithConstruct'.
+          Type '{ z: 1; }' provides no match for the signature 'new (): object'.
+        a.ts(28,7): error TS2559: Type '{ z: 1; }' has no properties in common with type 'BothWeak'.
+        a.ts(29,7): error TS2322: Type '{ z: 1; }' is not assignable to type 'WeakAndNot'.
+          Property 'd' is missing in type '{ z: 1; }' but required in type '{ d: 1; }'.
+        a.ts(30,7): error TS2559: Type '{ z: 1; }' has no properties in common with type 'One'.
+        a.ts(31,7): error TS2559: Type '{ z: 1; }' has no properties in common with type 'Base'.
+        a.ts(32,7): error TS2559: Type '{ z: 1; }' has no properties in common with type 'Derived'.
+        a.ts(33,7): error TS2741: Property 'c' is missing in type '{ z: 1; }' but required in type 'Required1'.
+        a.ts(34,7): error TS2559: Type '{ z: 1; }' has no properties in common with type 'Box<number>'.
+        a.ts(35,7): error TS2559: Type '{ z: 1; }' has no properties in common with type 'Box<string>'.
+        a.ts(36,7): error TS2559: Type '{ z: 1; }' has no properties in common with type 'Options'.
+        a.ts(37,7): error TS2559: Type '{ z: 1; }' has no properties in common with type 'Partial<{ a: number; b: string; }>'.
+        a.ts(38,7): error TS2559: Type '{ z: 1; }' has no properties in common with type 'Partial<Mixed>'.
+        a.ts(39,7): error TS2741: Property 'a' is missing in type '{ z: 1; }' but required in type 'Required<One>'.
+        a.ts(40,7): error TS2559: Type '() => { z: 1; }' has no properties in common with type 'One'.
+        a.ts(41,18): error TS2560: Value of type '() => { a: 1; }' has no properties in common with type 'One'. Did you mean to call it?
+        a.ts(42,7): error TS2559: Type 'string[]' has no properties in common with type 'One'.
+        a.ts(43,7): error TS2559: Type '1' has no properties in common with type 'One'.
+        a.ts(44,7): error TS2559: Type '"x"' has no properties in common with type 'AllOptional'.
+        a.ts(49,7): error TS2322: Type '{ z: 1; }' is not assignable to type 'AllOptional | One'.
+        a.ts(56,9): error TS2322: Type 'U' is not assignable to type 'One'.
+          Type '{ z: 1; }' has no properties in common with type 'One'.
+        a.ts(57,9): error TS2322: Type 'U' is not assignable to type 'Box<T>'.
+          Type '{ z: 1; }' has no properties in common with type 'Box<T>'.
+        a.ts(58,9): error TS2322: Type 'U' is not assignable to type 'Partial<T>'.
+          Type '{ z: 1; }' has no properties in common with type 'Partial<T>'."
+      `);
+    });
+
+    test("two literal types of one kind, of two kinds, of enums, and template literal types", async () => {
+      using dir = project({
+        "a.ts": `
+enum E { A = 1, B = 2 }
+enum F { A = 1, B = 2 }
+enum S { X = "x", Y = "y" }
+const enum C { A = 1 }
+declare let a: "a", b: "b", one: 1, two: 2, big1: 1n, big2: 2n, yes: true, no: false;
+declare let zero: 0, minusZero: -0, ea: E.A, eb: E.B, fa: F.A, sx: S.X, ca: C.A;
+declare let startsWithA: \`a\${string}\`, upper: Uppercase<string>, text: string, count: number;
+declare let ab: "a" | "b", cd: "c" | "d", oneTwo: 1 | 2, mixed: "a" | 1 | 1n | true;
+a = b;
+one = two;
+big1 = big2;
+yes = no;
+a = one;
+one = big1;
+zero = minusZero;
+a = "b";
+one = 2;
+big1 = 2n;
+yes = false;
+a = "a";
+ea = eb;
+ea = fa;
+ea = 1;
+ea = 2;
+ea = one;
+ea = two;
+one = ea;
+two = ea;
+sx = "x";
+a = sx;
+ca = ea;
+ea = ca;
+startsWithA = a;
+startsWithA = b;
+startsWithA = "ab";
+upper = a;
+upper = "A";
+a = startsWithA;
+ab = cd;
+ab = a;
+oneTwo = ab;
+mixed = b;
+mixed = two;
+mixed = big2;
+mixed = no;
+[a === b, one === two, big1 === big2, yes === no, zero === minusZero, a === one, one === big1];
+[a === "a", a === "b", one === 1, one === 2, big1 === 2n, yes === false];
+[ea === eb, ea === fa, ea === 1, ea === 2, ea === one, ea === two, two === ea, sx === "x", sx === a, ca === ea];
+[startsWithA === a, startsWithA === b, b === startsWithA, upper === a, text === a, count === one];
+[ab === cd, ab === a, cd === a, oneTwo === ab, mixed === b, mixed === two, mixed === a];
+switch (a) { case "a": break; case "b": break; case b: break; case startsWithA: break; }
+switch (one) { case 1: break; case 2: break; case E.A: break; case E.B: break; case 1n: break; }
+switch (ab) { case "a": break; case "c": break; case cd: break; }
+switch (ea) { case E.A: break; case E.B: break; case F.A: break; case 1: break; case 2: break; }
+["a" as "b", 1 as 2, 1n as 2n, true as false, "a" as \`a\${string}\`, "b" as \`a\${string}\`, E.A as E.B, E.A as F.A, 1 as E.B];
+var same: "a";
+var same: "b";
+var sameNumber: 1;
+var sameNumber: 2;
+var sameEnum: E.A;
+var sameEnum: F.A;
+var sameAgain: "a";
+var sameAgain: "a";
+function generic<T extends "a", U extends "b">(t: T, u: U) {
+  t = u;
+  [t === u, t === "a", t === "b", u === a];
+}
+const narrowed = (value: "a" | "b" | 1 | 2 | 1n | true) => {
+  if (value === "a") { const n: never = value; }
+  else if (value === 1) { const n: never = value; }
+  else if (value === 1n) { const n: never = value; }
+  else if (value === true) { const n: never = value; }
+  else { const n: never = value; }
+};
+export {};
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(10,1): error TS2322: Type '"b"' is not assignable to type '"a"'.
+        a.ts(11,1): error TS2322: Type '2' is not assignable to type '1'.
+        a.ts(12,1): error TS2322: Type '2n' is not assignable to type '1n'.
+        a.ts(13,1): error TS2322: Type 'false' is not assignable to type 'true'.
+        a.ts(14,1): error TS2322: Type '1' is not assignable to type '"a"'.
+        a.ts(15,1): error TS2322: Type '1n' is not assignable to type '1'.
+        a.ts(17,1): error TS2322: Type '"b"' is not assignable to type '"a"'.
+        a.ts(18,1): error TS2322: Type '2' is not assignable to type '1'.
+        a.ts(19,1): error TS2322: Type '2n' is not assignable to type '1n'.
+        a.ts(20,1): error TS2322: Type 'false' is not assignable to type 'true'.
+        a.ts(22,1): error TS2322: Type 'E.B' is not assignable to type 'E.A'.
+        a.ts(23,1): error TS2322: Type 'F.A' is not assignable to type 'E.A'.
+        a.ts(25,1): error TS2322: Type '2' is not assignable to type 'E.A'.
+        a.ts(27,1): error TS2322: Type '2' is not assignable to type 'E.A'.
+        a.ts(29,1): error TS2322: Type 'E.A' is not assignable to type '2'.
+        a.ts(30,1): error TS2322: Type '"x"' is not assignable to type 'S.X'.
+        a.ts(31,1): error TS2322: Type 'S.X' is not assignable to type '"a"'.
+        a.ts(32,1): error TS2322: Type 'E.A' is not assignable to type 'C'.
+        a.ts(33,1): error TS2322: Type 'C' is not assignable to type 'E.A'.
+        a.ts(35,1): error TS2322: Type '"b"' is not assignable to type '\`a\${string}\`'.
+        a.ts(37,1): error TS2322: Type 'string' is not assignable to type 'Uppercase<string>'.
+        a.ts(39,1): error TS2322: Type '\`a\${string}\`' is not assignable to type '"a"'.
+        a.ts(40,1): error TS2322: Type '"c" | "d"' is not assignable to type '"a" | "b"'.
+          Type '"c"' is not assignable to type '"a" | "b"'.
+        a.ts(42,1): error TS2322: Type '"a"' is not assignable to type '1 | 2'.
+        a.ts(43,1): error TS2322: Type '"b"' is not assignable to type '"a" | 1 | 1n | true'.
+        a.ts(44,1): error TS2322: Type '2' is not assignable to type '"a" | 1 | 1n | true'.
+        a.ts(45,1): error TS2322: Type '2n' is not assignable to type '"a" | 1 | 1n | true'.
+        a.ts(46,1): error TS2322: Type 'false' is not assignable to type '"a" | 1 | 1n | true'.
+        a.ts(47,2): error TS2367: This comparison appears to be unintentional because the types '"a"' and '"b"' have no overlap.
+        a.ts(47,11): error TS2367: This comparison appears to be unintentional because the types '1' and '2' have no overlap.
+        a.ts(47,24): error TS2367: This comparison appears to be unintentional because the types '1n' and '2n' have no overlap.
+        a.ts(47,39): error TS2367: This comparison appears to be unintentional because the types 'true' and 'false' have no overlap.
+        a.ts(47,71): error TS2367: This comparison appears to be unintentional because the types 'string' and 'number' have no overlap.
+        a.ts(47,82): error TS2367: This comparison appears to be unintentional because the types 'number' and 'bigint' have no overlap.
+        a.ts(48,13): error TS2367: This comparison appears to be unintentional because the types '"a"' and '"b"' have no overlap.
+        a.ts(48,35): error TS2367: This comparison appears to be unintentional because the types '1' and '2' have no overlap.
+        a.ts(48,46): error TS2367: This comparison appears to be unintentional because the types '1n' and '2n' have no overlap.
+        a.ts(48,59): error TS2367: This comparison appears to be unintentional because the types 'true' and 'false' have no overlap.
+        a.ts(49,2): error TS2367: This comparison appears to be unintentional because the types 'E.A' and 'E.B' have no overlap.
+        a.ts(49,13): error TS2367: This comparison appears to be unintentional because the types 'E' and 'F' have no overlap.
+        a.ts(49,34): error TS2367: This comparison appears to be unintentional because the types 'E.A' and '2' have no overlap.
+        a.ts(49,56): error TS2367: This comparison appears to be unintentional because the types 'E.A' and '2' have no overlap.
+        a.ts(49,68): error TS2367: This comparison appears to be unintentional because the types '2' and 'E.A' have no overlap.
+        a.ts(49,92): error TS2367: This comparison appears to be unintentional because the types 'S.X' and '"a"' have no overlap.
+        a.ts(49,102): error TS2367: This comparison appears to be unintentional because the types 'C' and 'E' have no overlap.
+        a.ts(50,21): error TS2367: This comparison appears to be unintentional because the types '\`a\${string}\`' and '"b"' have no overlap.
+        a.ts(50,40): error TS2367: This comparison appears to be unintentional because the types '"b"' and '\`a\${string}\`' have no overlap.
+        a.ts(51,2): error TS2367: This comparison appears to be unintentional because the types '"a"' and '"c" | "d"' have no overlap.
+        a.ts(51,23): error TS2367: This comparison appears to be unintentional because the types '"c" | "d"' and '"a"' have no overlap.
+        a.ts(51,33): error TS2367: This comparison appears to be unintentional because the types 'number' and 'string' have no overlap.
+        a.ts(51,48): error TS2367: This comparison appears to be unintentional because the types '"a" | 1 | 1n | true' and '"b"' have no overlap.
+        a.ts(51,61): error TS2367: This comparison appears to be unintentional because the types '"a" | 1 | 1n | true' and '2' have no overlap.
+        a.ts(52,36): error TS2678: Type '"b"' is not comparable to type '"a"'.
+        a.ts(52,53): error TS2678: Type '"b"' is not comparable to type '"a"'.
+        a.ts(53,36): error TS2678: Type '2' is not comparable to type '1'.
+        a.ts(53,68): error TS2678: Type 'E.B' is not comparable to type '1'.
+        a.ts(53,85): error TS2678: Type '1n' is not comparable to type '1'.
+        a.ts(54,37): error TS2678: Type '"c"' is not comparable to type '"a"'.
+        a.ts(54,54): error TS2678: Type '"c" | "d"' is not comparable to type '"a"'.
+          Type '"d"' is not comparable to type '"a"'.
+        a.ts(55,37): error TS2678: Type 'E.B' is not comparable to type 'E.A'.
+        a.ts(55,54): error TS2678: Type 'F.A' is not comparable to type 'E.A'.
+        a.ts(55,86): error TS2678: Type '2' is not comparable to type 'E.A'.
+        a.ts(56,101): error TS2352: Conversion of type 'E' to type 'F.A' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+        a.ts(58,5): error TS2403: Subsequent variable declarations must have the same type.  Variable 'same' must be of type '"a"', but here has type '"b"'.
+        a.ts(60,5): error TS2403: Subsequent variable declarations must have the same type.  Variable 'sameNumber' must be of type '1', but here has type '2'.
+        a.ts(62,5): error TS2403: Subsequent variable declarations must have the same type.  Variable 'sameEnum' must be of type 'E.A', but here has type 'F.A'.
+        a.ts(66,3): error TS2322: Type 'U' is not assignable to type 'T'.
+          'T' could be instantiated with an arbitrary type which could be unrelated to 'U'.
+        a.ts(67,4): error TS2367: This comparison appears to be unintentional because the types 'T' and 'U' have no overlap.
+        a.ts(67,24): error TS2367: This comparison appears to be unintentional because the types 'T' and '"b"' have no overlap.
+        a.ts(67,35): error TS2367: This comparison appears to be unintentional because the types 'U' and '"a"' have no overlap.
+        a.ts(70,30): error TS2322: Type '"a"' is not assignable to type 'never'.
+        a.ts(71,33): error TS2322: Type '1' is not assignable to type 'never'.
+        a.ts(72,34): error TS2322: Type '1n' is not assignable to type 'never'.
+        a.ts(73,36): error TS2322: Type 'true' is not assignable to type 'never'.
+        a.ts(74,16): error TS2322: Type '"b" | 2' is not assignable to type 'never'.
+          Type '"b"' is not assignable to type 'never'."
+      `);
+    });
+
+    test("what depends on the kinds of types in a union or an intersection", async () => {
+      using dir = project({
+        "a.ts": `
+enum E { A = 1, B = 2 }
+enum S { X = "x", Y = "y" }
+type Brand = string & { __brand: 1 };
+type Primitives = "a" | "b" | 1 | 2n | true | undefined | null | symbol;
+type WithNumber = "a" | number;
+type WithPattern = "a" | \`x\${string}\`;
+type WithMapping = "a" | Uppercase<string>;
+type WithBrand = "a" | Brand;
+type WithObject = "a" | { o: 1 };
+type WithEnum = "a" | E.A | S.X;
+const p: Primitives[] = ["a", "c", 1, 3, 2n, 3n, true, false, undefined, null];
+const n: WithNumber[] = ["a", "c", 3, 3n];
+const t: WithPattern[] = ["a", "c", "xc"];
+const m: WithMapping[] = ["a", "c", "C"];
+const b: WithBrand[] = ["a", "c"];
+const o: WithObject[] = ["a", "c", { o: 1 }];
+const e: WithEnum[] = ["a", "x", 1, 2, E.A, E.B, S.X, S.Y];
+declare const sym: unique symbol;
+declare const maybeSymbol: string | typeof sym, maybeBig: number | bigint, big: bigint, either: 1 | 2n, tagged: bigint & { tag: 1 };
+[\`\${maybeSymbol}\`, \`\${big}\`, +maybeBig, +big, +either, +tagged, -maybeBig, -big, ~either, -tagged];
+[maybeBig * 2, big * 2n, maybeBig * maybeBig, either * 1];
+function templates<T extends symbol, U extends string | symbol, V extends string>(t: T, u: U, v: V) {
+  return [\`\${t}\`, \`\${u}\`, \`\${v}\`, +t, +u, +v];
+}
+function exhaustive1(x: "a" | 1 | E.A | S.X | true | null | undefined): number {
+  switch (x) { case "a": case 1: case E.A: case S.X: case true: case null: case undefined: return 1; }
+}
+function exhaustive2(x: E): number { switch (x) { case E.A: return 1; case E.B: return 2; } }
+function notExhaustive(x: "a" | "b" | E): number { switch (x) { case "a": case E.A: return 1; } }
+function notUnits1(x: "a" | string & {}): number { switch (x) { case "a": return 1; } }
+function notUnits2(x: "a" | Brand): number { switch (x) { case "a": return 1; } }
+function notUnits3(x: "a" | number): number { switch (x) { case "a": return 1; } }
+function noMembers(x: never): number { switch (x) { case "a": return 1; } }
+function equal(x: string | number | bigint | boolean, y: "a" | 1 | 2n, z: \`x\${string}\` | true, w: string | 1) {
+  if (x === y) { const n: never = x; }
+  if (x === z) { const n: never = x; }
+  if (x === w) { const n: never = x; }
+  if (z === w) { const n: never = z; }
+}
+function chains(a: { v: 1 } | null | undefined, b: { v: 1 } | { v: 2 }, c: { v: 1 } | void) {
+  const a1: never = a?.v;
+  const b1: never = b?.v;
+  const a2: never = a!.v;
+  const c1: never = c?.v;
+}
+declare function literal<T extends string>(x: T): T;
+declare function literals<T extends string | number | bigint | symbol>(x: T): T;
+declare function tag<T extends string & {}>(x: T): T;
+declare function wide<T extends {}>(x: T): T;
+declare function key<T, K extends keyof T>(t: T, x: K): K;
+const l: never[] = [literal("a"), literals("a"), literals(1), literals(1n), literals(sym), tag("a"), wide("a"), wide(1), key({ a: 1 }, "a")];
+const kept: ("a" | 1 | 2n | true | \`x\${string}\`)[] = ["a", 1, 2n, true, "xa"].map(x => x);
+let widened = [null! as "a" | 1, null! as E.A | S.X, null! as true | 2n] as const;
+export {};
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(12,31): error TS2322: Type '"c"' is not assignable to type 'Primitives'.
+        a.ts(12,39): error TS2322: Type '3' is not assignable to type 'Primitives'.
+        a.ts(12,46): error TS2322: Type '3n' is not assignable to type 'Primitives'.
+        a.ts(12,56): error TS2322: Type 'false' is not assignable to type 'Primitives'.
+        a.ts(13,31): error TS2322: Type '"c"' is not assignable to type 'WithNumber'.
+        a.ts(13,39): error TS2322: Type 'bigint' is not assignable to type 'WithNumber'.
+        a.ts(14,32): error TS2322: Type '"c"' is not assignable to type 'WithPattern'.
+        a.ts(15,32): error TS2322: Type '"c"' is not assignable to type 'WithMapping'.
+        a.ts(16,30): error TS2322: Type '"c"' is not assignable to type 'WithBrand'.
+        a.ts(17,31): error TS2322: Type '"c"' is not assignable to type 'WithObject'.
+        a.ts(18,29): error TS2322: Type '"x"' is not assignable to type 'WithEnum'.
+        a.ts(18,37): error TS2322: Type '2' is not assignable to type 'WithEnum'.
+        a.ts(18,45): error TS2322: Type 'E.B' is not assignable to type 'WithEnum'.
+        a.ts(18,55): error TS2322: Type 'S.Y' is not assignable to type 'WithEnum'.
+        a.ts(21,5): error TS2731: Implicit conversion of a 'symbol' to a 'string' will fail at runtime. Consider wrapping this expression in 'String(...)'.
+        a.ts(21,31): error TS2736: Operator '+' cannot be applied to type 'number | bigint'.
+        a.ts(21,42): error TS2736: Operator '+' cannot be applied to type 'bigint'.
+        a.ts(21,48): error TS2736: Operator '+' cannot be applied to type 'number | bigint'.
+        a.ts(21,57): error TS2736: Operator '+' cannot be applied to type 'bigint & { tag: 1; }'.
+        a.ts(22,2): error TS2365: Operator '*' cannot be applied to types 'number | bigint' and 'number'.
+        a.ts(22,26): error TS2365: Operator '*' cannot be applied to types 'number | bigint' and 'number | bigint'.
+        a.ts(22,47): error TS2365: Operator '*' cannot be applied to types 'number | bigint' and 'number'.
+        a.ts(24,14): error TS2731: Implicit conversion of a 'symbol' to a 'string' will fail at runtime. Consider wrapping this expression in 'String(...)'.
+        a.ts(24,22): error TS2731: Implicit conversion of a 'symbol' to a 'string' will fail at runtime. Consider wrapping this expression in 'String(...)'.
+        a.ts(24,36): error TS2469: The '+' operator cannot be applied to type 'symbol'.
+        a.ts(24,40): error TS2469: The '+' operator cannot be applied to type 'symbol'.
+        a.ts(30,43): error TS2366: Function lacks ending return statement and return type does not include 'undefined'.
+        a.ts(31,43): error TS2366: Function lacks ending return statement and return type does not include 'undefined'.
+        a.ts(32,37): error TS2366: Function lacks ending return statement and return type does not include 'undefined'.
+        a.ts(33,38): error TS2366: Function lacks ending return statement and return type does not include 'undefined'.
+        a.ts(34,31): error TS2366: Function lacks ending return statement and return type does not include 'undefined'.
+        a.ts(36,24): error TS2322: Type '"a" | 1 | 2n' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'.
+        a.ts(37,24): error TS2322: Type 'true | \`x\${string}\`' is not assignable to type 'never'.
+          Type 'true' is not assignable to type 'never'.
+        a.ts(38,24): error TS2322: Type 'string | 1' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        a.ts(39,24): error TS2322: Type '\`x\${string}\`' is not assignable to type 'never'.
+        a.ts(42,9): error TS2322: Type '1 | undefined' is not assignable to type 'never'.
+          Type 'undefined' is not assignable to type 'never'.
+        a.ts(43,9): error TS2322: Type '1 | 2' is not assignable to type 'never'.
+          Type '1' is not assignable to type 'never'.
+        a.ts(44,9): error TS2322: Type '1' is not assignable to type 'never'.
+        a.ts(45,9): error TS2322: Type '1 | undefined' is not assignable to type 'never'.
+          Type 'undefined' is not assignable to type 'never'.
+        a.ts(52,21): error TS2322: Type '"a"' is not assignable to type 'never'.
+        a.ts(52,35): error TS2322: Type '"a"' is not assignable to type 'never'.
+        a.ts(52,50): error TS2322: Type '1' is not assignable to type 'never'.
+        a.ts(52,63): error TS2322: Type '1n' is not assignable to type 'never'.
+        a.ts(52,77): error TS2322: Type 'symbol' is not assignable to type 'never'.
+        a.ts(52,92): error TS2322: Type '"a"' is not assignable to type 'never'.
+        a.ts(52,102): error TS2322: Type 'string' is not assignable to type 'never'.
+        a.ts(52,113): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(52,122): error TS2322: Type '"a"' is not assignable to type 'never'.
+        a.ts(53,7): error TS2322: Type '(string | number | bigint | boolean)[]' is not assignable to type '("a" | 1 | 2n | true | \`x\${string}\`)[]'.
+          Type 'string | number | bigint | boolean' is not assignable to type '"a" | 1 | 2n | true | \`x\${string}\`'.
+            Type 'string' is not assignable to type '"a" | 1 | 2n | true | \`x\${string}\`'."
+      `);
+    });
+
+    test("an intersection with the empty object type, with and without a type variable", async () => {
+      using dir = project({
+        "a.ts": `
+function normalize<T, K extends keyof T>(a: Partial<T>[K] & {}, b: T[K] & {}, c: T & {}, d: T & null, e: { x: 1 } & {}, f: ({ x: 1 } | { y: 2 }) & { z: 3 }, g: { x: 1 } & { y?: 2 }) {
+  b = a;
+  a = b;
+  const t: T = c;
+  const u: {} = c;
+  const n0: never = c;
+  const n1: never = d;
+  const n2: never = e;
+  const n3: never = f;
+  const n4: never = g;
+  const k0: never = null! as keyof (T & {});
+  const k1: never = null! as keyof ({ x: 1 } & {});
+  const k2: never = null! as keyof (T & { x: 1 });
+}
+export {};
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(7,9): error TS2322: Type 'T & {}' is not assignable to type 'never'.
+        a.ts(8,9): error TS2322: Type 'T & null' is not assignable to type 'never'.
+        a.ts(9,9): error TS2322: Type '{ x: 1; }' is not assignable to type 'never'.
+        a.ts(10,9): error TS2322: Type '({ x: 1; } | { y: 2; }) & { z: 3; }' is not assignable to type 'never'.
+          Type '{ x: 1; } & { z: 3; }' is not assignable to type 'never'.
+        a.ts(11,9): error TS2322: Type '{ x: 1; } & { y?: 2 | undefined; }' is not assignable to type 'never'.
+        a.ts(12,9): error TS2322: Type 'keyof (T & {})' is not assignable to type 'never'.
+          Type 'string | number | symbol' is not assignable to type 'never'.
+            Type 'string' is not assignable to type 'never'.
+        a.ts(13,9): error TS2322: Type '"x"' is not assignable to type 'never'.
+        a.ts(14,9): error TS2322: Type '"x" | keyof T' is not assignable to type 'never'.
+          Type '"x"' is not assignable to type 'never'."
+      `);
+    });
+
+    // The comparisons in progress are searched as a list while there are up to 32 of them.
+    test.each([3, 31, 32, 33, 34, 70])("two rings of %i interfaces that refer to each other", async count => {
+      const ring = (last: string) =>
+        Array.from({ length: count }, (_, i) => {
+          const rest = (of: string) => `next: ${of}${(i + 1) % count}; skip: ${of}${(i * 2 + 2) % count}; }`;
+          return `interface A${i} { v: ${i}; ${rest("A")}\ninterface B${i} { v: ${i === count - 1 ? last : i}; ${rest("B")}\n`;
+        }).join("") +
+        `declare const a: A0;\nconst b: B0 = a;\nconst c: B${count >> 1} = a;\nconst again: B0 = a;\nexport {};\n`;
+      using dir = project({ "same.ts": ring(`${count - 1}`), "other.ts": ring(`"other"`) });
+      const { stdout } = await check(dir);
+      const differs = (file: string, line: number) => [
+        `${file}.ts(${line},7): error TS2322: Type 'A0' is not assignable to type 'B0'.`,
+        `  The types of '${repeat("next.", count - 1)}v' are incompatible between these types.`,
+        `    Type '${count - 1}' is not assignable to type '"other"'.`,
+      ];
+      const halfway = (file: string) => [
+        `${file}.ts(${2 * count + 3},7): error TS2322: Type 'A0' is not assignable to type 'B${count >> 1}'.`,
+        `  Types of property 'v' are incompatible.`,
+        `    Type '0' is not assignable to type '${count >> 1}'.`,
+      ];
+      expect(stdout.split("\n")).toEqual([
+        ...differs("other", 2 * count + 2),
+        ...halfway("other"),
+        ...differs("other", 2 * count + 4),
+        ...halfway("same"),
+      ]);
+    });
+
+    // What is found out about a type without resolving anything is kept with the type, for every file that comes to it.
+    test("types without type variables, and unions with and without generic members, in several files", async () => {
+      const pairs = Array.from({ length: 30 }, (_, i) => `export type P${i + 1} = Pair<P${i}, P${i}>;\n`).join("");
+      const use = (i: number) => `
+import type { Closed, Homomorphic, Keys, P30, Plain, WithMapped, WithPattern, WithTemplate, WithTuple } from "./types";
+import { both, pick } from "./types";
+declare const closed: Closed, p30: P30;
+const picked: never = pick(closed, ${i});
+const first: never = both({ first: "f${i}", second: p30 }, p30);
+type Index<T, K> = K extends keyof T ? T[K] : "none";
+const i0: never = null! as Index<Plain, "a">;
+const i1: never = null! as Index<WithMapped, "a">;
+const i2: never = null! as Index<WithTuple<[${i}]>, 0>;
+const i3: never = null! as Index<Homomorphic<{ a: ${i} }>, "a">;
+const k0: never = null! as keyof Plain;
+const k1: never = null! as keyof WithMapped;
+const k2: never = null! as keyof Homomorphic<{ a: ${i}; b: 2 }>;
+function generic<T extends { a: unknown }, S extends string, R extends unknown[]>(
+  mapped: Homomorphic<T>, tuple: WithTuple<R>, template: WithTemplate<S>, pattern: WithPattern, plain: Plain, keys: Keys,
+) {
+  const a0: never = mapped["a"];
+  const a1: never = null! as keyof typeof mapped;
+  const a2: never = null! as Record<typeof template, ${i}>;
+  const a3: never = null! as Record<typeof pattern, ${i}>;
+  const a4: never = null! as { [K in typeof template]: K };
+  const a5: never = null! as { [K in typeof keys]: K }[typeof keys];
+  const a6: never = tuple;
+  if (typeof plain === "string") { const s: never = plain; } else { const s: never = plain; }
+}
+export {};
+`;
+      const errors = (i: number) => `
+use${i}.ts(5,7): error TS2322: Type '${i}' is not assignable to type 'never'.
+use${i}.ts(6,7): error TS2322: Type 'string' is not assignable to type 'never'.
+use${i}.ts(8,7): error TS2322: Type '"none"' is not assignable to type 'never'.
+use${i}.ts(9,7): error TS2322: Type '"a" | 1' is not assignable to type 'never'.
+  Type '"a"' is not assignable to type 'never'.
+use${i}.ts(10,7): error TS2322: Type '"none"' is not assignable to type 'never'.
+use${i}.ts(11,7): error TS2322: Type '1 | ${i}' is not assignable to type 'never'.
+  Type '1' is not assignable to type 'never'.
+use${i}.ts(13,7): error TS2322: Type '"a"' is not assignable to type 'never'.
+use${i}.ts(14,7): error TS2322: Type '"a"' is not assignable to type 'never'.
+use${i}.ts(18,9): error TS2322: Type '1 | T["a"]' is not assignable to type 'never'.
+  Type '1' is not assignable to type 'never'.
+use${i}.ts(19,9): error TS2322: Type '"a" & keyof T' is not assignable to type 'never'.
+use${i}.ts(20,9): error TS2322: Type 'Record<WithTemplate<S>, ${i}>' is not assignable to type 'never'.
+use${i}.ts(21,9): error TS2322: Type 'Record<WithPattern, ${i}>' is not assignable to type 'never'.
+use${i}.ts(22,9): error TS2322: Type '{ [K in WithTemplate<S>]: K; }' is not assignable to type 'never'.
+use${i}.ts(23,9): error TS2322: Type '"a" | "b" | "c"' is not assignable to type 'never'.
+  Type '"a"' is not assignable to type 'never'.
+use${i}.ts(24,9): error TS2322: Type 'WithTuple<R>' is not assignable to type 'never'.
+  Type '{ a: 1; }' is not assignable to type 'never'.
+use${i}.ts(25,42): error TS2322: Type 'string' is not assignable to type 'never'.
+use${i}.ts(25,75): error TS2322: Type '3 | { a: 1; } | { b: 2; }' is not assignable to type 'never'.
+  Type '3' is not assignable to type 'never'.`;
+      const files = [5, 6, 7, 8];
+      using dir = project({
+        "types.ts": `
+export interface Pair<A, B> { first: A; second: B }
+export type P0 = { leaf: 1 };
+${pairs}export type Closed = { a: string; b: [number, P30]; c: () => void } | P30 | (P29 & { tag: 1 });
+export type Keys = "a" | "b" | "c";
+export type Plain = { a: 1 } | { b: 2 } | string | 3;
+export type WithMapped = { a: 1 } | { [K in Keys]: K };
+export type WithTuple<T extends unknown[]> = { a: 1 } | [0, ...T];
+export type WithTemplate<T extends string> = "x" | \`on\${T}\`;
+export type WithPattern = "x" | \`on\${string}\` | Uppercase<string>;
+export type Homomorphic<T> = { a: 1 } | { [K in keyof T]: T[K] };
+export declare function pick<T>(closed: Closed, value: T): T;
+export declare function both<T>(pair: Pair<T, P30>, closed: P30): T;
+`,
+        ...Object.fromEntries(files.map(i => [`use${i}.ts`, use(i)])),
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toBe(files.map(errors).join("").trim());
+    });
+
+    test("type references whose type arguments are type parameters, at any depth", async () => {
+      using dir = project({
+        "a.ts": `
+interface Box<T> { value: T; map<U>(f: (value: T) => U): Box<U> }
+interface Two<A, B> { a: Box<A>; b: Box<B> }
+function compare<T, U, V extends string, W extends V>(
+  t: Box<T>, u: Box<U>, v: Box<V>, w: Box<W>, tt: Box<Box<T>>, uu: Box<Box<U>>, tu: Two<T, U>, ut: Two<U, T>,
+  pair: [T, Box<U>], riap: [U, Box<T>], closed: Box<string>, deep: Box<Box<Box<Box<Box<T>>>>>, peed: Box<Box<Box<Box<Box<U>>>>>,
+) {
+  t = u;
+  u = t;
+  v = w;
+  w = v;
+  tt = uu;
+  tu = ut;
+  pair = riap;
+  closed = v;
+  v = closed;
+  closed = t;
+  deep = peed;
+  t = t;
+  tt = tt;
+}
+function again<A, B>(a: Box<A>, b: Box<B>, aa: Box<Box<A>>, bb: Box<Box<B>>, ab: Two<A, B>, ba: Two<B, A>) {
+  a = b;
+  aa = bb;
+  ab = ba;
+}
+export {};
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(8,3): error TS2322: Type 'Box<U>' is not assignable to type 'Box<T>'.
+          Type 'U' is not assignable to type 'T'.
+            'T' could be instantiated with an arbitrary type which could be unrelated to 'U'.
+        a.ts(9,3): error TS2322: Type 'Box<T>' is not assignable to type 'Box<U>'.
+          Type 'T' is not assignable to type 'U'.
+            'U' could be instantiated with an arbitrary type which could be unrelated to 'T'.
+        a.ts(11,3): error TS2322: Type 'Box<V>' is not assignable to type 'Box<W>'.
+          Type 'V' is not assignable to type 'W'.
+            'V' is assignable to the constraint of type 'W', but 'W' could be instantiated with a different subtype of constraint 'string'.
+        a.ts(12,3): error TS2322: Type 'Box<Box<U>>' is not assignable to type 'Box<Box<T>>'.
+          Type 'Box<U>' is not assignable to type 'Box<T>'.
+            Type 'U' is not assignable to type 'T'.
+              'T' could be instantiated with an arbitrary type which could be unrelated to 'U'.
+        a.ts(13,3): error TS2322: Type 'Two<U, T>' is not assignable to type 'Two<T, U>'.
+          Type 'U' is not assignable to type 'T'.
+            'T' could be instantiated with an arbitrary type which could be unrelated to 'U'.
+        a.ts(14,3): error TS2322: Type '[U, Box<T>]' is not assignable to type '[T, Box<U>]'.
+          Type at position 0 in source is not compatible with type at position 0 in target.
+            Type 'U' is not assignable to type 'T'.
+              'T' could be instantiated with an arbitrary type which could be unrelated to 'U'.
+        a.ts(16,3): error TS2322: Type 'Box<string>' is not assignable to type 'Box<V>'.
+          Type 'string' is not assignable to type 'V'.
+            'string' is assignable to the constraint of type 'V', but 'V' could be instantiated with a different subtype of constraint 'string'.
+        a.ts(17,3): error TS2322: Type 'Box<T>' is not assignable to type 'Box<string>'.
+          Type 'T' is not assignable to type 'string'.
+        a.ts(18,3): error TS2322: Type 'Box<Box<Box<Box<Box<U>>>>>' is not assignable to type 'Box<Box<Box<Box<Box<T>>>>>'.
+          Type 'Box<Box<Box<Box<U>>>>' is not assignable to type 'Box<Box<Box<Box<T>>>>'.
+            Type 'Box<Box<Box<U>>>' is not assignable to type 'Box<Box<Box<T>>>'.
+              Type 'Box<Box<U>>' is not assignable to type 'Box<Box<T>>'.
+                Type 'Box<U>' is not assignable to type 'Box<T>'.
+                  Type 'U' is not assignable to type 'T'.
+                    'T' could be instantiated with an arbitrary type which could be unrelated to 'U'.
+        a.ts(23,3): error TS2322: Type 'Box<B>' is not assignable to type 'Box<A>'.
+          Type 'B' is not assignable to type 'A'.
+            'A' could be instantiated with an arbitrary type which could be unrelated to 'B'.
+        a.ts(24,3): error TS2322: Type 'Box<Box<B>>' is not assignable to type 'Box<Box<A>>'.
+          Type 'Box<B>' is not assignable to type 'Box<A>'.
+            Type 'B' is not assignable to type 'A'.
+              'A' could be instantiated with an arbitrary type which could be unrelated to 'B'.
+        a.ts(25,3): error TS2322: Type 'Two<B, A>' is not assignable to type 'Two<A, B>'.
+          Type 'B' is not assignable to type 'A'.
+            'A' could be instantiated with an arbitrary type which could be unrelated to 'B'."
+      `);
+    });
+
+    test("members that mention `this`, at the top or nested, and members that do not, own and inherited", async () => {
+      using dir = project({
+        "a.ts": `
+class Base {
+  plain = 1;
+  typed: string[] = [];
+  self: this = this;
+  nested: Array<() => this> = [];
+  method(x: number): string { return ""; }
+  chain(): this { return this; }
+  takes(other: this): void {}
+  generic<T>(x: T): T { return x; }
+  inferred() { return this; }
+}
+class Derived extends Base { extra = 1; }
+class Further extends Derived { more = 1; }
+interface Plain { a: number; f(x: string): void }
+interface Fluent { a: number; next(): this; all: this[] }
+interface PlainChild extends Plain { b: 1 }
+interface FluentChild extends Fluent { b: 1 }
+function outer<O>() {
+  return class Inner { value!: O; plain = 1; self(): this { return this; } };
+}
+declare const base: Base, derived: Derived, further: Further, both: Base & Derived, either: Base | Derived;
+declare const plainChild: PlainChild, fluentChild: FluentChild, mixed: Plain & PlainChild, fluents: Fluent & FluentChild;
+const n: never[] = [
+  base.plain, base.typed, base.self, base.nested, base.method, base.chain(), base.takes, base.generic, base.inferred(),
+  derived.plain, derived.typed, derived.self, derived.nested, derived.method, derived.chain(), derived.takes, derived.inferred(),
+  further.self, further.nested[0](), further.chain(),
+  both.plain, both.self, both.nested, both.chain(), both.method,
+  either.plain, either.self, either.chain(), either.method,
+  plainChild.a, plainChild.f, fluentChild.next(), fluentChild.all, mixed.a, mixed.f, fluents.next(), fluents.all,
+  new (outer<string>())().value, new (outer<string>())().plain,
+];
+const up: Base = derived;
+const down: Derived = base;
+const fluent: FluentChild = null! as Fluent;
+export {};
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(25,3): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(25,15): error TS2322: Type 'string[]' is not assignable to type 'never'.
+        a.ts(25,27): error TS2322: Type 'Base' is not assignable to type 'never'.
+        a.ts(25,38): error TS2322: Type '(() => Base)[]' is not assignable to type 'never'.
+        a.ts(25,51): error TS2322: Type '(x: number) => string' is not assignable to type 'never'.
+        a.ts(25,64): error TS2322: Type 'Base' is not assignable to type 'never'.
+        a.ts(25,78): error TS2322: Type '(other: Base) => void' is not assignable to type 'never'.
+        a.ts(25,90): error TS2322: Type '<T>(x: T) => T' is not assignable to type 'never'.
+        a.ts(25,104): error TS2322: Type 'Base' is not assignable to type 'never'.
+        a.ts(26,3): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(26,18): error TS2322: Type 'string[]' is not assignable to type 'never'.
+        a.ts(26,33): error TS2322: Type 'Derived' is not assignable to type 'never'.
+        a.ts(26,47): error TS2322: Type '(() => Derived)[]' is not assignable to type 'never'.
+        a.ts(26,63): error TS2322: Type '(x: number) => string' is not assignable to type 'never'.
+        a.ts(26,79): error TS2322: Type 'Derived' is not assignable to type 'never'.
+        a.ts(26,96): error TS2322: Type '(other: Derived) => void' is not assignable to type 'never'.
+        a.ts(26,111): error TS2322: Type 'Derived' is not assignable to type 'never'.
+        a.ts(27,3): error TS2322: Type 'Further' is not assignable to type 'never'.
+        a.ts(27,17): error TS2322: Type 'Further' is not assignable to type 'never'.
+        a.ts(27,38): error TS2322: Type 'Further' is not assignable to type 'never'.
+        a.ts(28,3): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(28,15): error TS2322: Type 'Base & Derived' is not assignable to type 'never'.
+        a.ts(28,26): error TS2322: Type '(() => Base & Derived)[]' is not assignable to type 'never'.
+        a.ts(28,39): error TS2322: Type 'Base & Derived' is not assignable to type 'never'.
+        a.ts(28,53): error TS2322: Type '(x: number) => string' is not assignable to type 'never'.
+        a.ts(29,3): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(29,17): error TS2322: Type 'Base | Derived' is not assignable to type 'never'.
+          Type 'Base' is not assignable to type 'never'.
+        a.ts(29,30): error TS2322: Type 'Base' is not assignable to type 'never'.
+        a.ts(29,46): error TS2322: Type '(x: number) => string' is not assignable to type 'never'.
+        a.ts(30,3): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(30,17): error TS2322: Type '(x: string) => void' is not assignable to type 'never'.
+        a.ts(30,31): error TS2322: Type 'FluentChild' is not assignable to type 'never'.
+        a.ts(30,51): error TS2322: Type 'FluentChild[]' is not assignable to type 'never'.
+        a.ts(30,68): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(30,77): error TS2322: Type '(x: string) => void' is not assignable to type 'never'.
+        a.ts(30,86): error TS2322: Type 'Fluent & FluentChild' is not assignable to type 'never'.
+        a.ts(30,102): error TS2322: Type '(Fluent & FluentChild)[]' is not assignable to type 'never'.
+        a.ts(31,3): error TS2322: Type 'string' is not assignable to type 'never'.
+        a.ts(31,34): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(34,7): error TS2741: Property 'extra' is missing in type 'Base' but required in type 'Derived'.
+        a.ts(35,7): error TS2741: Property 'b' is missing in type 'Fluent' but required in type 'FluentChild'."
+      `);
+    });
+
     test("a variable referenced in a callback inside its own initializer", async () => {
       using dir = project({
         "a.ts": `
@@ -10928,6 +11621,449 @@ export const f1 = kv(SE.A, { A: 1 }); export const f2 = kv(SE.A, { a: 1 }); expo
       expect(exitCode).toBe(1);
     });
 
+    // What a long walk from a source type to a target type has inferred is kept, and is written down in place of the
+    // next walk from the same state. A walk is long from 16 steps on: one for the two types, and one for each part of
+    // the target that mentions a type parameter. It is kept the second or the third time it is made, and only if it did
+    // nothing but infer. So each program says the same thing eight times, in sizes on both sides of what is long, and
+    // gets the same answer every time: that of TypeScript 7.0.2.
+    describe("inference between the same types again and again", () => {
+      /** `text(0)`, `text(1)` .. up to `count` of them. */
+      const each = (count: number, text: (i: number) => string, separator = " | ") =>
+        Array.from({ length: count }, (_, i) => text(i)).join(separator);
+      const properties = (count: number, type: (i: number) => string) => each(count, i => `p${i}: ${type(i)}`, "; ");
+      const times = 8;
+
+      type Repeated = {
+        sizes: number[];
+        /** The start of the file. */
+        declarations: (count: number) => string;
+        /** What comes after it `times` times. */
+        round: (i: number, count: number) => string;
+        /** The errors in `declarations`, after the name of the file. */
+        declared?: string;
+        /** The errors in each `round`, with the line counted from where it starts. */
+        repeated: string;
+      };
+      const programs: Record<string, Repeated> = {
+        "a call in a list of a union, from which its return type is extracted": {
+          sizes: [2, 3, 4, 5, 8, 30],
+          declarations: count => `
+type Event = ${each(count, i => `{ type: "t${i}"; data: { v${i}: ${i} } }`)};
+type Payload<K extends Event["type"]> = Extract<Event, { type: K }>;
+type First = Extract<Event, { type: "t0" }>;
+declare function event<K extends Event["type"]>(type: K, data: Payload<K>["data"]): Payload<K>;
+declare function some<K extends Event["type"]>(): Payload<K>;`,
+          round: i => `
+export const events${i}: Event[] = [
+  event("t0", { v0: 0 }),
+  event("t1", { v1: 1 }),
+  event("t0", { v0: 1 }),
+  event("t1", { v0: 0 }),
+  some(),
+];
+export const first${i}: First = some();
+export const list${i}: First[] = [some(), event("t0", { v0: 0 }), event("t1", { v1: 1 })];
+export const none${i}: { type: "t0"; data: 0 } = some();`,
+          repeated: `
+(+4,17): error TS2322: Type '1' is not assignable to type '0'.
+(+5,17): error TS2353: Object literal may only specify known properties, and 'v0' does not exist in type '{ v1: 1; }'.
+(+9,64): error TS2322: Type '{ type: "t1"; data: { v1: 1; }; }' is not assignable to type '{ type: "t0"; data: { v0: 0; }; }'.
+  Types of property 'type' are incompatible.
+    Type '"t1"' is not assignable to type '"t0"'.
+(+10,14): error TS2322: Type '{ type: "t0"; data: { v0: 0; }; }' is not assignable to type '{ type: "t0"; data: 0; }'.
+  Types of property 'data' are incompatible.
+    Type '{ v0: 0; }' is not assignable to type '0'.
+`,
+        },
+        "an object type with about as many properties as a long walk has steps": {
+          sizes: [8, 9, 10, 11, 12, 40],
+          declarations: count => `
+interface Target<T, U> { ${properties(count, i => (i % 2 ? "T" : "U[]"))} }
+interface A { ${properties(count, i => (i % 2 ? "string" : "number[]"))} }
+interface B { ${properties(count, i => (i % 2 ? `"b${i % 4}"` : "[1, 2]"))} }
+declare function take<T, U>(x: Target<T, U>): [T, U];
+declare const a: A, b: B;`,
+          round: i => `
+export const a${i}: never = take(a);
+export const b${i}: never = take(b);`,
+          repeated: `
+(+1,14): error TS2322: Type '[string, number]' is not assignable to type 'never'.
+(+2,14): error TS2322: Type '["b1" | "b3", 1 | 2]' is not assignable to type 'never'.
+`,
+        },
+        "after another walk has found a candidate": {
+          sizes: [14, 15, 16, 17, 40],
+          declarations: count => `
+interface Target<T> { ${properties(count, () => "T")} }
+interface A { ${properties(count, () => "string")} }
+interface B { ${properties(count, () => "number")} }
+declare function two<T>(x: Target<T>, y: Target<T>): T;
+declare function three<T>(x: Target<T>, y: Target<T>, z: Target<T>): T;
+declare const a: A, b: B;`,
+          round: i => `
+export const same${i}: never = two(a, a);
+two(a, b);
+two(b, a);
+three(b, b, a);
+three(a, b, b);`,
+          repeated: `
+(+1,14): error TS2322: Type 'string' is not assignable to type 'never'.
+(+2,8): error TS2345: Argument of type 'B' is not assignable to parameter of type 'Target<string>'.
+  Types of property 'p0' are incompatible.
+    Type 'number' is not assignable to type 'string'.
+(+3,8): error TS2345: Argument of type 'A' is not assignable to parameter of type 'Target<number>'.
+  Types of property 'p0' are incompatible.
+    Type 'string' is not assignable to type 'number'.
+(+4,13): error TS2345: Argument of type 'A' is not assignable to parameter of type 'Target<number>'.
+  Types of property 'p0' are incompatible.
+    Type 'string' is not assignable to type 'number'.
+(+5,10): error TS2345: Argument of type 'B' is not assignable to parameter of type 'Target<string>'.
+  Types of property 'p0' are incompatible.
+    Type 'number' is not assignable to type 'string'.
+`,
+        },
+        "after a function has fixed the type parameter": {
+          sizes: [14, 15, 16, 17, 40],
+          declarations: count => `
+interface Target<T> { ${properties(count, () => "T")} }
+interface A { ${properties(count, () => "string")} }
+interface B { ${properties(count, () => "number")} }
+declare function fix<T>(x: Target<T>, use: (value: T) => void, y: Target<T>): T;
+declare function late<T>(use: (value: T) => void, x: Target<T>): T;
+declare const a: A, b: B;`,
+          round: () => `
+fix(a, value => { const v: never = value; }, b);
+fix(b, value => { const v: never = value; }, b);
+late(value => { const v: never = value; }, a);`,
+          repeated: `
+(+1,25): error TS2322: Type 'string' is not assignable to type 'never'.
+(+1,46): error TS2345: Argument of type 'B' is not assignable to parameter of type 'Target<string>'.
+  Types of property 'p0' are incompatible.
+    Type 'number' is not assignable to type 'string'.
+(+2,25): error TS2322: Type 'number' is not assignable to type 'never'.
+(+3,23): error TS2322: Type 'string' is not assignable to type 'never'.
+`,
+        },
+        "from the contextual return type, and then from an argument": {
+          sizes: [14, 15, 16, 17, 40],
+          declarations: count => `
+interface Target<T> { ${properties(count, () => "T")} }
+interface A { ${properties(count, () => `"a" | "b"`)} }
+interface B { ${properties(count, () => "number")} }
+declare function make<T>(x?: Target<T>, y?: T): Target<T>;
+declare const a: A, b: B;`,
+          round: i => `
+export const m${i}: A = make();
+export const n${i}: A = make(b);
+export const o${i}: A = make(undefined, "a");
+export const p${i}: A = make(undefined, "c");
+export const q${i}: never = make(a);`,
+          repeated: `
+(+2,14): error TS2322: Type 'Target<number>' is not assignable to type 'A'.
+  Types of property 'p0' are incompatible.
+    Type 'number' is not assignable to type '"a" | "b"'.
+(+4,14): error TS2322: Type 'Target<"c">' is not assignable to type 'A'.
+  Types of property 'p0' are incompatible.
+    Type '"c"' is not assignable to type '"a" | "b"'.
+(+5,14): error TS2322: Type 'Target<"a" | "b">' is not assignable to type 'never'.
+`,
+        },
+        "overloads with the same parameter type": {
+          sizes: [14, 15, 16, 17, 40],
+          declarations: count => `
+interface Target<T> { ${properties(count, () => "T")} }
+interface A { ${properties(count, () => "string")} }
+declare function over<T>(x: Target<T>, kind: "one"): T;
+declare function over<T>(x: Target<T>, kind: "list"): T[];
+declare function over<T>(x: Target<T>, kind: "pair", use: (value: T) => T): [T, T];
+declare const a: A;`,
+          round: i => `
+export const one${i}: never = over(a, "one");
+export const list${i}: never = over(a, "list");
+export const pair${i}: never = over(a, "pair", value => value);
+over(a, "none");`,
+          repeated: `
+(+1,14): error TS2322: Type 'string' is not assignable to type 'never'.
+(+2,14): error TS2322: Type 'string[]' is not assignable to type 'never'.
+(+3,14): error TS2322: Type '[string, string]' is not assignable to type 'never'.
+(+4,9): error TS2769: No overload matches this call.
+  The last overload gave the following error.
+    Argument of type '"none"' is not assignable to parameter of type '"list"'.
+`,
+        },
+        "a generic function as an argument": {
+          sizes: [8, 9, 10, 11, 40],
+          declarations: count => `
+interface Target<T> { ${properties(count, i => (i % 2 ? "T" : "T[]"))} }
+interface Twin<T> { ${properties(count, i => (i % 2 ? "T" : "T[]"))} }
+declare function pass<T>(x: Target<T>): T[];
+declare function lift<A, B>(f: (x: Twin<A>) => B): (x: Twin<A>) => B;
+declare function then<A, B, C>(f: (x: Twin<A>) => B, g: (x: B) => C): (x: Twin<A>) => C;
+declare const twin: Twin<"t">;`,
+          round: i => `
+export const l${i}: never = lift(pass);
+export const m${i}: never = lift(pass)(twin);
+export const n${i}: never = then(pass, list => list[0]);`,
+          repeated: `
+(+1,14): error TS2322: Type '<T>(x: Twin<T>) => T[]' is not assignable to type 'never'.
+(+2,14): error TS2322: Type '"t"[]' is not assignable to type 'never'.
+(+3,14): error TS2322: Type '<T>(x: Twin<T>) => T' is not assignable to type 'never'.
+`,
+        },
+        "a union of object types to a generic union": {
+          sizes: [3, 4, 5, 8, 30],
+          declarations: count => `
+type Shape<T> = ${each(count, i => `{ kind: "k${i}"; value: T; extra${i}: ${i} }`)};
+type Concrete = ${each(count, i => `{ kind: "k${i}"; value: ${["1", '"two"', "true"][i % 3]}; extra${i}: ${i} }`)};
+type Other = ${each(count, i => `{ kind: "k${i}"; value: ${i % 2 ? "bigint" : "null"}; extra${i}: ${i} }`)};
+declare function pick<T>(shape: Shape<T>): T;
+declare function both<T>(x: Shape<T>, y: Shape<T>): T;
+declare const concrete: Concrete, other: Other;`,
+          round: i => `
+export const c${i}: never = pick(concrete);
+export const o${i}: never = pick(other);
+export const d${i}: never = both(other, concrete);`,
+          repeated: `
+(+1,14): error TS2322: Type '1' is not assignable to type 'never'.
+(+1,31): error TS2345: Argument of type 'Concrete' is not assignable to parameter of type 'Shape<1>'.
+  Type '{ kind: "k1"; value: "two"; extra1: 1; }' is not assignable to type 'Shape<1>'.
+    Type '{ kind: "k1"; value: "two"; extra1: 1; }' is not assignable to type '{ kind: "k1"; value: 1; extra1: 1; }'.
+      Types of property 'value' are incompatible.
+        Type '"two"' is not assignable to type '1'.
+(+2,14): error TS2322: Type 'bigint | null' is not assignable to type 'never'.
+  Type 'null' is not assignable to type 'never'.
+(+3,14): error TS2322: Type 'bigint | null' is not assignable to type 'never'.
+  Type 'null' is not assignable to type 'never'.
+(+3,38): error TS2345: Argument of type 'Concrete' is not assignable to parameter of type 'Shape<bigint | null>'.
+  Type '{ kind: "k0"; value: 1; extra0: 0; }' is not assignable to type 'Shape<bigint | null>'.
+    Type '{ kind: "k0"; value: 1; extra0: 0; }' is not assignable to type '{ kind: "k0"; value: bigint | null; extra0: 0; }'.
+      Types of property 'value' are incompatible.
+        Type 'number' is not assignable to type 'bigint'.
+`,
+        },
+        "a walk that makes types": {
+          sizes: [6, 7, 8, 9, 40],
+          declarations: count => `
+interface Keys<T> { ${properties(count, () => "keyof T")} }
+interface Names { ${properties(count, i => `"n${i % 3}"`)} }
+type Boxed<T> = { [K in keyof T]: { value: T[K] } };
+interface Boxes<T> { ${properties(count, () => "Boxed<T>")} }
+interface Full { ${properties(count, i => `{ x: { value: ${i % 2} } }`)} }
+interface Tails<T extends unknown[]> { ${properties(count, () => "[0, ...T]")} }
+interface Tuples { ${properties(count, i => `[0, "x", ${i % 2}]`)} }
+declare function keys<T>(x: Keys<T>): T;
+declare function unbox<T>(x: Boxes<T>): T;
+declare function tails<T extends unknown[]>(x: Tails<T>): T;
+declare const names: Names, full: Full, tuples: Tuples;`,
+          round: i => `
+export const k${i} = keys(names), k${i}has: never = null! as keyof typeof k${i};
+export const u${i} = unbox(full), u${i}is: never = u${i};
+export const t${i}: never = tails(tuples);`,
+          repeated: `
+(+1,32): error TS2322: Type '"n0" | "n1" | "n2"' is not assignable to type 'never'.
+  Type '"n0"' is not assignable to type 'never'.
+(+2,25): error TS2345: Argument of type 'Full' is not assignable to parameter of type 'Boxes<{ x: 0; }>'.
+  The types of 'p1.x.value' are incompatible between these types.
+    Type '1' is not assignable to type '0'.
+(+2,32): error TS2322: Type '{ x: 0; }' is not assignable to type 'never'.
+(+3,14): error TS2322: Type '["x", 0]' is not assignable to type 'never'.
+(+3,32): error TS2345: Argument of type 'Tuples' is not assignable to parameter of type 'Tails<["x", 0]>'.
+  Types of property 'p1' are incompatible.
+    Type '[0, "x", 1]' is not assignable to type '[0, "x", 0]'.
+      Type at position 2 in source is not compatible with type at position 2 in target.
+        Type '1' is not assignable to type '0'.
+`,
+        },
+        "a property whose type is being resolved, or has an error": {
+          sizes: [12, 13, 14, 15, 40],
+          declarations: count => `
+interface Linked<T, U> { ${properties(count, () => "U")}; next: T }
+interface Plain { ${properties(count, () => "number")}; next: "end" }
+declare function link<T, U>(x: Linked<T, U>): T[];
+declare const plain: Plain;
+link(plain);
+link(plain);
+link(plain);
+link(plain);
+export const early: never = link(new Later());
+class Chain { next = link(this); ${each(count, i => `p${i} = ${i}`, "; ")} }
+class Ring { next = link(new Ring()); ${each(count, i => `p${i} = ${i}`, "; ")} }
+class Later { next = missing; ${each(count, i => `p${i} = ${i}`, "; ")} }
+function loop() { return link({ next: loop(), ${each(count, i => `p${i}: ${i}`, ", ")} }); }`,
+          round: i => `
+export const chain${i}: never = link(new Chain());
+export const ring${i}: never = link(new Ring());
+export const later${i}: never = link(new Later());
+export const plain${i}: never = link(plain);
+export const loop${i}: never = loop();`,
+          declared: `
+(10,14): error TS2322: Type 'any[]' is not assignable to type 'never'.
+(10,38): error TS2449: Class 'Later' used before its declaration.
+(11,15): error TS7022: 'next' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(12,14): error TS7022: 'next' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(13,22): error TS2304: Cannot find name 'missing'.
+(14,10): error TS7023: 'loop' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+`,
+          repeated: `
+(+1,14): error TS2322: Type 'any[]' is not assignable to type 'never'.
+(+2,14): error TS2322: Type 'any[]' is not assignable to type 'never'.
+(+3,14): error TS2322: Type 'any[]' is not assignable to type 'never'.
+(+4,14): error TS2322: Type '"end"[]' is not assignable to type 'never'.
+(+5,14): error TS2322: Type 'any' is not assignable to type 'never'.
+`,
+        },
+        "while the type of an alias is being resolved, and in a loop": {
+          sizes: [14, 15, 16, 17, 40],
+          declarations: count => `
+interface Target<T> { ${properties(count, () => "T")} }
+interface A { ${properties(count, () => "string")} }
+declare function take<T>(x: Target<T>): T[];
+declare function next<T>(x: Target<T>, seen: T | number): T;
+declare const a: A;`,
+          round: i => `
+export type Alias${i} = typeof value${i};
+const value${i} = take(a);
+export const alias${i}: never = null! as Alias${i};
+export function loop${i}(more: boolean) {
+  let seen: string | number = 0;
+  while (more) {
+    seen = next(a, seen);
+    const now: never = seen;
+  }
+  const after: never = seen;
+}`,
+          repeated: `
+(+3,14): error TS2322: Type 'string[]' is not assignable to type 'never'.
+(+8,11): error TS2322: Type 'string' is not assignable to type 'never'.
+(+10,9): error TS2322: Type 'string | number' is not assignable to type 'never'.
+  Type 'string' is not assignable to type 'never'.
+`,
+        },
+        "a property whose type reaches the limit of instantiations": {
+          sizes: [12, 13, 14, 15, 40],
+          declarations: count => `
+interface Target<T> { ${properties(count, () => "T")}; deep: T }
+declare function take<T>(x: Target<T>): T;
+declare const plain: Plain, source: Source;
+take(plain);
+take(plain);
+take(plain);
+take(plain);
+export const first: never = take(source);
+type Count<N extends 0[]> = N["length"] extends 200 ? N : Count<[...N, 0]> | 0;
+interface Plain { ${properties(count, () => "1")}; deep: 1 }
+interface Source { ${properties(count, () => "1")}; deep: Count<[]> }`,
+          round: i => `
+export const s${i}: never = take(source);
+export const p${i}: never = take(plain);`,
+          declared: `
+(9,14): error TS2322: Type 'any' is not assignable to type 'never'.
+(9,29): error TS2589: Type instantiation is excessively deep and possibly infinite.
+`,
+          repeated: `
+(+1,14): error TS2322: Type 'any' is not assignable to type 'never'.
+(+2,14): error TS2322: Type '1' is not assignable to type 'never'.
+`,
+        },
+        "inside the instantiation of a conditional type": {
+          sizes: [8, 9, 10, 11, 40],
+          declarations: count => `
+interface Target<T, U> { ${properties(count, i => (i % 2 ? "T" : "U[]"))} }
+interface A { ${properties(count, i => (i % 2 ? "string" : "number[]"))} }
+interface B { ${properties(count, i => (i % 2 ? "boolean" : "null[]"))} }
+type Get<X> = X extends Target<infer T, infer U> ? [T, U] : "no";
+type Wrapped<X> = { got: Get<X> };
+declare function get<X>(x: X): Get<X>;
+declare const a: A, b: B;
+export const g0: never = null! as Get<A>;
+export const g1: never = null! as Get<B>;
+export const g2: never = null! as Get<A | B>;
+export const g3: never = null! as Get<A & { more: 1 }>;
+export const g4: never = null! as Get<B & { more: 1 }>;
+export const g5: never = null! as Get<A | 1>;
+export const g6: never = null! as Wrapped<A>["got"];
+export const g7: never = null! as Wrapped<A | B | 2>["got"];`,
+          round: i => `
+export const a${i}: never = get(a);
+export const b${i}: never = get(b);
+export const c${i}: never = get({ ...a, extra${i}: ${i} });`,
+          declared: `
+(9,14): error TS2322: Type '[string, number]' is not assignable to type 'never'.
+(10,14): error TS2322: Type '[boolean, null]' is not assignable to type 'never'.
+(11,14): error TS2322: Type '[string, number] | [boolean, null]' is not assignable to type 'never'.
+  Type '[string, number]' is not assignable to type 'never'.
+(12,14): error TS2322: Type '[string, number]' is not assignable to type 'never'.
+(13,14): error TS2322: Type '[boolean, null]' is not assignable to type 'never'.
+(14,14): error TS2322: Type '"no" | [string, number]' is not assignable to type 'never'.
+  Type '"no"' is not assignable to type 'never'.
+(15,14): error TS2322: Type '[string, number]' is not assignable to type 'never'.
+(16,14): error TS2322: Type '"no" | [string, number] | [boolean, null]' is not assignable to type 'never'.
+  Type '"no"' is not assignable to type 'never'.
+`,
+          repeated: `
+(+1,14): error TS2322: Type '[string, number]' is not assignable to type 'never'.
+(+2,14): error TS2322: Type '[boolean, null]' is not assignable to type 'never'.
+(+3,14): error TS2322: Type '[string, number]' is not assignable to type 'never'.
+`,
+        },
+        "more candidates than are kept": {
+          sizes: [15, 503, 504, 520],
+          declarations: count => `
+interface Wide<T> { ${properties(count, () => "T")} }
+interface Literals { ${properties(count, i => `${i}`)} }
+declare function wide<T>(x: Wide<T>): [${count - 1} extends T ? "last" : 0, ${count} extends T ? 0 : "no more"];
+declare const literals: Literals;`,
+          round: i => `
+export const w${i}: never = wide(literals);`,
+          repeated: `
+(+1,14): error TS2322: Type '["last", "no more"]' is not assignable to type 'never'.
+`,
+        },
+        "more walks than there are places for at first": {
+          sizes: [63, 64, 65, 66, 321],
+          declarations: count => `
+interface Target<T> { ${properties(16, () => "T")} }
+${each(count, i => `interface S${i} { ${properties(16, () => `${i}`)} }`, " ")}
+declare const ${each(count, i => `s${i}: S${i}`, ", ")};
+declare function take<T>(x: Target<T>): T;`,
+          round: (round, count) => `
+export const right${round}: [${each(count, i => `${i}`, ", ")}] = [${each(count, i => `take(s${i})`, ", ")}];
+export const wrong${round}: [5, 4] = [take(s5), take(s5)];`,
+          repeated: `
+(+2,42): error TS2322: Type '5' is not assignable to type '4'.
+`,
+        },
+      };
+
+      test.each(Object.keys(programs))("%s", async title => {
+        const { declarations, round, declared = "", repeated } = programs[title];
+        // A debug build is 10 to 100 times slower.
+        const sizes = programs[title].sizes.filter(size => size < 100 || !(isDebug || isASAN));
+        const file = (size: number) => `export {};${declarations(size)}${each(times, i => round(i, size), "")}\n`;
+        using dir = project(Object.fromEntries(sizes.map(size => [`size${size}.ts`, file(size)])));
+        const newlines = (text: string) => text.split("\n").length - 1;
+        const lines = (text: string) => text.split("\n").filter(line => line !== "");
+        const expected = [lines(declared), ...Array.from({ length: times }, () => lines(repeated))];
+        for (const { stdout } of await Promise.all([check(dir), check(dir, ["--threads", "1"])])) {
+          // By size: the errors in the declarations, then those in each round.
+          const found: Record<string, string[][]> = {};
+          let part: string[] = [];
+          for (const line of lines(stdout)) {
+            // The lines that explain an error come after it, indented.
+            const error = /^size(\d+)\.ts\((\d+)(,.*)$/.exec(line);
+            if (error) {
+              const after = +error[2] - 1 - newlines(declarations(+error[1]));
+              const length = newlines(round(0, +error[1]));
+              const parts = (found[error[1]] ??= expected.map(() => []));
+              part = parts[after <= 0 ? 0 : 1 + Math.floor((after - 1) / length)];
+              part.push(after <= 0 ? `(${error[2]}${error[3]}` : `(+${((after - 1) % length) + 1}${error[3]}`);
+            } else part.push(line);
+          }
+          expect(found).toEqual(Object.fromEntries(sizes.map(size => [size, expected])));
+        }
+      });
+    });
+
     test("array literals as inference candidates", async () => {
       using dir = project({
         "a.ts": `declare function two<B>(a: () => B, b: () => B): B;
@@ -15624,6 +16760,668 @@ export const loaded = loader.load(key, options, key);
         b.ts(8,6): error TS2589: Type instantiation is excessively deep and possibly infinite."
       `);
       expect(exitCode).toBe(1);
+    });
+
+    // What TypeScript 7.0.2 reports about each program.
+    describe("the parts of conditional and mapped types, and aliases, asked for again and again", () => {
+      test("conditional types in relations, in inference and in messages", async () => {
+        using dir = project({
+          "a.ts": `type IsString<T> = T extends string ? "yes" : "no";
+type Boxed<T> = [T] extends [string] ? { s: T } : { o: T };
+type Elem<T> = T extends readonly (infer E)[] ? E : never;
+type Kind<T> = T extends string ? "s" : T extends number ? "n" : T extends boolean ? "b" : "o";
+type Both<T, U> = T extends U ? (U extends T ? [T, U] : [T]) : [];
+
+function related<T, U extends T>(
+  a: IsString<T>, b: IsString<U>, c: Boxed<T>, d: Boxed<U>, e: Elem<T>, f: Elem<U>, g: Kind<T>, h: Kind<U>,
+  i: Both<T, U>, j: Both<U, T>,
+) {
+  a = b; b = a; c = d; d = c; e = f; f = e; g = h; h = g; i = j; j = i;
+  // The same comparisons with other targets read the same parts again.
+  const a1: "yes" | "no" = a;
+  const a2: "yes" = a;
+  const c1: { s: T } | { o: T } = c;
+  const c2: { s: T } = c;
+  const e1: unknown[] = e;
+  const g1: "s" | "n" | "b" | "o" = g;
+  const g2: "s" | "n" | "b" = g;
+  const i1: [T, U] | [T] | [] = i;
+  const i2: [T, U] | [T] = i;
+  const same: [IsString<T>, Boxed<T>, Elem<T>, Kind<T>, Both<T, U>] = [a, c, e, g, i];
+  const other: [IsString<U>, Boxed<U>, Elem<U>, Kind<U>, Both<U, T>] = [a, c, e, g, i];
+}
+
+declare function isString<T>(x: IsString<T>): T;
+declare function boxed<T>(x: Boxed<T>): T;
+declare function elem<T>(x: Elem<T>): T;
+declare function kind<T>(x: Kind<T>): T;
+declare function both<T, U>(x: Both<T, U>): [T, U];
+function inferred<V, W>(a: IsString<V>, c: Boxed<V>, e: Elem<V>, g: Kind<V>, i: Both<V, W>) {
+  const r1: never = isString(a);
+  const r2: never = boxed(c);
+  const r3: never = elem(e);
+  const r4: never = kind(g);
+  const r5: never = both(i);
+  const r6: never = [isString(a), boxed(c), elem(e), kind(g), both(i)];
+  const r7: never = boxed({ s: "x" });
+  const r8: never = kind("n");
+}
+
+const resolved: [IsString<"a" | 1>, Boxed<"a" | 1>, Elem<[1, "two"]>, Kind<"a" | 1 | true | null>, Both<1, number>] = null!;
+const printed: never = resolved;
+export {};
+`,
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(11,24): error TS2322: Type 'Boxed<T>' is not assignable to type 'Boxed<U>'.
+            Type 'T' is not assignable to type 'U'.
+              'U' could be instantiated with an arbitrary type which could be unrelated to 'T'.
+          a.ts(11,59): error TS2322: Type 'Both<U, T>' is not assignable to type 'Both<T, U>'.
+            Type '[] | (T extends U ? [U, T] : [U])' is not assignable to type 'Both<T, U>'.
+              Type '[]' is not assignable to type 'Both<T, U>'.
+          a.ts(11,66): error TS2322: Type 'Both<T, U>' is not assignable to type 'Both<U, T>'.
+            Type '[] | (U extends T ? [T, U] : [T])' is not assignable to type 'Both<U, T>'.
+              Type '[]' is not assignable to type 'Both<U, T>'.
+          a.ts(14,9): error TS2322: Type '"no" | "yes"' is not assignable to type '"yes"'.
+            Type '"no"' is not assignable to type '"yes"'.
+          a.ts(16,9): error TS2322: Type '{ s: T; } | { o: T; }' is not assignable to type '{ s: T; }'.
+            Property 's' is missing in type '{ o: T; }' but required in type '{ s: T; }'.
+          a.ts(17,9): error TS2322: Type 'Elem<T>' is not assignable to type 'unknown[]'.
+            Type 'unknown' is not assignable to type 'unknown[]'.
+          a.ts(19,9): error TS2322: Type '"b" | "n" | "o" | "s"' is not assignable to type '"b" | "n" | "s"'.
+            Type '"o"' is not assignable to type '"b" | "n" | "s"'.
+          a.ts(20,9): error TS2322: Type '[] | [T] | [T, T]' is not assignable to type '[] | [T] | [T, U]'.
+            Type '[T, T]' is not assignable to type '[] | [T] | [T, U]'.
+              Type '[T, T]' is not assignable to type '[T, U]'.
+                Type at position 1 in source is not compatible with type at position 1 in target.
+                  Type 'T' is not assignable to type 'U'.
+                    'U' could be instantiated with an arbitrary type which could be unrelated to 'T'.
+          a.ts(21,9): error TS2322: Type '[] | [T] | [T, T]' is not assignable to type '[T] | [T, U]'.
+            Type '[]' is not assignable to type '[T] | [T, U]'.
+              Type '[]' is not assignable to type '[T, U]'.
+                Source has 0 element(s) but target requires 2.
+          a.ts(23,76): error TS2322: Type 'Boxed<T>' is not assignable to type 'Boxed<U>'.
+            Type 'T' is not assignable to type 'U'.
+              'U' could be instantiated with an arbitrary type which could be unrelated to 'T'.
+          a.ts(23,85): error TS2322: Type 'Both<T, U>' is not assignable to type 'Both<U, T>'.
+            Type '[] | (U extends T ? [T, U] : [T])' is not assignable to type 'Both<U, T>'.
+              Type '[]' is not assignable to type 'Both<U, T>'.
+          a.ts(32,9): error TS2322: Type 'V' is not assignable to type 'never'.
+          a.ts(33,9): error TS2322: Type 'V' is not assignable to type 'never'.
+          a.ts(34,9): error TS2322: Type 'V' is not assignable to type 'never'.
+          a.ts(35,9): error TS2322: Type 'V' is not assignable to type 'never'.
+          a.ts(36,9): error TS2322: Type '[V, W]' is not assignable to type 'never'.
+          a.ts(37,9): error TS2322: Type '(V | [V, W])[]' is not assignable to type 'never'.
+          a.ts(38,9): error TS2322: Type 'string' is not assignable to type 'never'.
+          a.ts(39,26): error TS2345: Argument of type '"n"' is not assignable to parameter of type 'never'.
+          a.ts(43,7): error TS2322: Type '["no" | "yes", { o: "a" | 1; }, "two" | 1, "b" | "n" | "o" | "s", [1]]' is not assignable to type 'never'."
+        `);
+        expect(exitCode).toBe(1);
+      });
+
+      test("mapped types with `as` clauses and modifiers, over keys, unions, arrays and tuples", async () => {
+        using dir = project({
+          "a.ts": `type Getters<T> = { [K in keyof T as \`get\${Capitalize<K & string>}\`]: () => T[K] };
+type OnlyStrings<T> = { [K in keyof T as T[K] extends string ? K : never]: T[K] };
+type Loose<T> = { [K in keyof T]+?: T[K] };
+type Strict<T> = { -readonly [K in keyof T]-?: T[K] };
+type Frozen<T> = { +readonly [K in keyof T]: T[K] };
+type Flags<K extends string> = { [P in K]: boolean };
+type Chosen<T, K extends keyof T> = { [P in K]: T[P] };
+type Boxes<T> = { [K in keyof T]: { box: T[K] } };
+interface Point { x: number; readonly y?: string; z: "z" }
+
+const getters: never = null! as Getters<Point>;
+const onlyStrings: never = null! as OnlyStrings<Point>;
+const loose: never = null! as Loose<Point>;
+const strict: never = null! as Strict<Point>;
+const frozen: never = null! as Frozen<Point>;
+const flags: never = null! as Flags<"a" | "b">;
+const chosen: never = null! as Chosen<Point, "y" | "z">;
+const array: never = null! as Boxes<number[]>;
+const readonlyArray: never = null! as Boxes<readonly string[]>;
+const tuple: never = null! as Boxes<[1, "two"?, ...boolean[]]>;
+const strictTuple: never = null! as Strict<readonly [1, "two"?]>;
+const looseTuple: never = null! as Loose<[1, 2]>;
+const primitive: never = null! as Boxes<string>;
+const union: never = null! as Boxes<{ a: 1 } | [2]>;
+const members: [Getters<Point>, OnlyStrings<Point>, Loose<Point>, Strict<Point>, Flags<"a" | "b">, Chosen<Point, "y" | "z">] = [{}, {}, {}, {}, {}, {}];
+(null! as Frozen<Point>).x = 1; (null! as Strict<Point>).y = ""; (null! as Loose<Point>).y = ""; (null! as Chosen<Point, "y">).y = "";
+
+function related<T, U extends T, K extends keyof T, L extends K>(
+  g1: Getters<T>, g2: Getters<U>, s1: OnlyStrings<T>, s2: OnlyStrings<U>, l1: Loose<T>, l2: Loose<U>,
+  r1: Strict<T>, r2: Strict<U>, f1: Frozen<T>, f2: Frozen<U>, c1: Chosen<T, K>, c2: Chosen<T, L>, b1: Boxes<T>, b2: Boxes<U>,
+  t: T, u: U,
+) {
+  g1 = g2; g2 = g1; s1 = s2; s2 = s1; l1 = l2; l2 = l1; r1 = r2; r2 = r1; f1 = f2; f2 = f1; c1 = c2; c2 = c1; b1 = b2; b2 = b1;
+  l1 = t; l1 = u; l2 = t; f1 = t; f2 = t; r1 = t; t = r1; t = f1; t = l1; c1 = t; c2 = t; b1 = t;
+  // Each of them once more, against another type.
+  l1 = r1; r1 = l1; f1 = r1; r1 = f1; l1 = f1; f1 = l1; c1 = r1; c1 = l1; g1 = s1; s1 = g1; b1 = l1;
+  const k1: keyof T = null! as keyof Loose<T>;
+  const k2: keyof Loose<T> = null! as keyof T;
+  const k3: keyof T = null! as keyof Getters<T>;
+  const k4: K = null! as keyof Chosen<T, K>;
+  const k5: keyof OnlyStrings<T> = null! as keyof T;
+  const v1: T[K] = c1[null! as K];
+  const v2: { box: T[K] } = b1[null! as K];
+  const v3: T[K] = l1[null! as K];
+  const v4: T[K] = r1[null! as K];
+}
+
+declare function loosened<T>(x: Loose<T>): T;
+declare function strictened<T>(x: Strict<T>): T;
+declare function unboxed<T>(x: Boxes<T>): T;
+declare function chosenFrom<T, K extends keyof T>(x: Chosen<T, K>): [T, K];
+declare function flagged<K extends string>(x: Flags<K>): K;
+declare function got<T>(x: Getters<T>): T;
+function inferred<V, W extends keyof V>(l: Loose<V>, s: Strict<V>, b: Boxes<V>, c: Chosen<V, W>, g: Getters<V>) {
+  const i1: never = loosened(l);
+  const i2: never = strictened(s);
+  const i3: never = unboxed(b);
+  const i4: never = chosenFrom(c);
+  const i5: never = got(g);
+  const i6: never = loosened({ a: 1, b: undefined });
+  const i7: never = unboxed({ a: { box: 1 }, b: { box: "b" } });
+  const i8: never = unboxed([{ box: 1 }, { box: "b" }]);
+  const i9: never = flagged({ a: true, b: false });
+  const i10: never = chosenFrom({ a: 1 });
+  const i11: never = strictened({ a: 1 } as { readonly a?: number });
+}
+export {};
+`,
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(11,7): error TS2322: Type 'Getters<Point>' is not assignable to type 'never'.
+          a.ts(12,7): error TS2322: Type 'OnlyStrings<Point>' is not assignable to type 'never'.
+          a.ts(13,7): error TS2322: Type 'Loose<Point>' is not assignable to type 'never'.
+          a.ts(14,7): error TS2322: Type 'Strict<Point>' is not assignable to type 'never'.
+          a.ts(15,7): error TS2322: Type 'Frozen<Point>' is not assignable to type 'never'.
+          a.ts(16,7): error TS2322: Type 'Flags<"a" | "b">' is not assignable to type 'never'.
+          a.ts(17,7): error TS2322: Type 'Chosen<Point, "y" | "z">' is not assignable to type 'never'.
+          a.ts(18,7): error TS2322: Type '{ box: number; }[]' is not assignable to type 'never'.
+          a.ts(19,7): error TS2322: Type 'readonly { box: string; }[]' is not assignable to type 'never'.
+          a.ts(20,7): error TS2322: Type '[{ box: 1; }, ({ box: "two" | undefined; } | undefined)?, ...{ box: boolean; }[]]' is not assignable to type 'never'.
+          a.ts(21,7): error TS2322: Type '[1, "two"]' is not assignable to type 'never'.
+          a.ts(22,7): error TS2322: Type '[(1 | undefined)?, (2 | undefined)?]' is not assignable to type 'never'.
+          a.ts(23,7): error TS2322: Type 'string' is not assignable to type 'never'.
+          a.ts(24,7): error TS2322: Type 'Boxes<{ a: 1; } | [2]>' is not assignable to type 'never'.
+            Type 'Boxes<{ a: 1; }>' is not assignable to type 'never'.
+          a.ts(25,129): error TS2739: Type '{}' is missing the following properties from type 'Getters<Point>': getX, getZ
+          a.ts(25,133): error TS2741: Property 'z' is missing in type '{}' but required in type 'OnlyStrings<Point>'.
+          a.ts(25,141): error TS2739: Type '{}' is missing the following properties from type 'Strict<Point>': x, y, z
+          a.ts(25,145): error TS2739: Type '{}' is missing the following properties from type 'Flags<"a" | "b">': a, b
+          a.ts(25,149): error TS2741: Property 'z' is missing in type '{}' but required in type 'Chosen<Point, "y" | "z">'.
+          a.ts(26,26): error TS2540: Cannot assign to 'x' because it is a read-only property.
+          a.ts(26,90): error TS2540: Cannot assign to 'y' because it is a read-only property.
+          a.ts(26,128): error TS2540: Cannot assign to 'y' because it is a read-only property.
+          a.ts(33,12): error TS2322: Type 'Getters<T>' is not assignable to type 'Getters<U>'.
+            Type 'keyof U' is not assignable to type 'keyof T'.
+              Type 'string | number | symbol' is not assignable to type 'keyof T'.
+                Type 'string' is not assignable to type 'keyof T'.
+          a.ts(33,21): error TS2322: Type 'OnlyStrings<U>' is not assignable to type 'OnlyStrings<T>'.
+          a.ts(33,30): error TS2322: Type 'OnlyStrings<T>' is not assignable to type 'OnlyStrings<U>'.
+            Type 'keyof U' is not assignable to type 'keyof T'.
+              Type 'string | number | symbol' is not assignable to type 'keyof T'.
+                Type 'string' is not assignable to type 'keyof T'.
+          a.ts(33,48): error TS2322: Type 'Loose<T>' is not assignable to type 'Loose<U>'.
+            Type 'keyof U' is not assignable to type 'keyof T'.
+              Type 'string | number | symbol' is not assignable to type 'keyof T'.
+                Type 'string' is not assignable to type 'keyof T'.
+          a.ts(33,66): error TS2322: Type 'Strict<T>' is not assignable to type 'Strict<U>'.
+            Type 'keyof U' is not assignable to type 'keyof T'.
+              Type 'string | number | symbol' is not assignable to type 'keyof T'.
+                Type 'string' is not assignable to type 'keyof T'.
+          a.ts(33,84): error TS2322: Type 'Frozen<T>' is not assignable to type 'Frozen<U>'.
+            Type 'keyof U' is not assignable to type 'keyof T'.
+              Type 'string | number | symbol' is not assignable to type 'keyof T'.
+                Type 'string' is not assignable to type 'keyof T'.
+          a.ts(33,93): error TS2322: Type 'Chosen<T, L>' is not assignable to type 'Chosen<T, K>'.
+            Type 'K' is not assignable to type 'L'.
+              'K' is assignable to the constraint of type 'L', but 'L' could be instantiated with a different subtype of constraint 'string | number | symbol'.
+          a.ts(33,120): error TS2322: Type 'Boxes<T>' is not assignable to type 'Boxes<U>'.
+            Type 'keyof U' is not assignable to type 'keyof T'.
+              Type 'string | number | symbol' is not assignable to type 'keyof T'.
+                Type 'string' is not assignable to type 'keyof T'.
+          a.ts(34,19): error TS2322: Type 'T' is not assignable to type 'Loose<U>'.
+          a.ts(34,35): error TS2322: Type 'T' is not assignable to type 'Frozen<U>'.
+          a.ts(34,43): error TS2322: Type 'T' is not assignable to type 'Strict<T>'.
+          a.ts(34,67): error TS2322: Type 'Loose<T>' is not assignable to type 'T'.
+            'T' could be instantiated with an arbitrary type which could be unrelated to 'Loose<T>'.
+          a.ts(34,91): error TS2322: Type 'T' is not assignable to type 'Boxes<T>'.
+          a.ts(36,12): error TS2322: Type 'Loose<T>' is not assignable to type 'Strict<T>'.
+          a.ts(36,30): error TS2322: Type 'Frozen<T>' is not assignable to type 'Strict<T>'.
+          a.ts(36,48): error TS2322: Type 'Loose<T>' is not assignable to type 'Frozen<T>'.
+          a.ts(36,66): error TS2322: Type 'Loose<T>' is not assignable to type 'Chosen<T, K>'.
+          a.ts(36,75): error TS2322: Type 'OnlyStrings<T>' is not assignable to type 'Getters<T>'.
+          a.ts(36,84): error TS2322: Type 'Getters<T>' is not assignable to type 'OnlyStrings<T>'.
+          a.ts(36,93): error TS2322: Type 'Loose<T>' is not assignable to type 'Boxes<T>'.
+          a.ts(41,9): error TS2322: Type 'keyof T' is not assignable to type 'keyof OnlyStrings<T>'.
+            Type 'string | number | symbol' is not assignable to type 'keyof OnlyStrings<T>'.
+              Type 'string' is not assignable to type 'keyof OnlyStrings<T>'.
+                Type 'string' is not assignable to type 'T[K] extends string ? K : never'.
+                  Type 'keyof T' is not assignable to type 'T[K] extends string ? K : never'.
+                    Type 'string | number | symbol' is not assignable to type 'T[K] extends string ? K : never'.
+                      Type 'string' is not assignable to type 'T[K] extends string ? K : never'.
+          a.ts(44,9): error TS2322: Type 'T[K] | undefined' is not assignable to type 'T[K]'.
+            'T[K]' could be instantiated with an arbitrary type which could be unrelated to 'T[K] | undefined'.
+          a.ts(55,9): error TS2322: Type 'V' is not assignable to type 'never'.
+          a.ts(56,9): error TS2322: Type 'V' is not assignable to type 'never'.
+          a.ts(57,9): error TS2322: Type 'V' is not assignable to type 'never'.
+          a.ts(58,9): error TS2322: Type '[V, W]' is not assignable to type 'never'.
+          a.ts(59,9): error TS2322: Type 'V' is not assignable to type 'never'.
+          a.ts(60,9): error TS2322: Type '{ a: number; b: undefined; }' is not assignable to type 'never'.
+          a.ts(61,9): error TS2322: Type '{ a: number; b: string; }' is not assignable to type 'never'.
+          a.ts(62,9): error TS2322: Type '[number, string]' is not assignable to type 'never'.
+          a.ts(63,9): error TS2322: Type '"a" | "b"' is not assignable to type 'never'.
+            Type '"a"' is not assignable to type 'never'.
+          a.ts(64,9): error TS2322: Type '[{ a: number; }, "a"]' is not assignable to type 'never'.
+          a.ts(65,9): error TS2322: Type '{ readonly a?: number | undefined; }' is not assignable to type 'never'.
+          a.ts(65,33): error TS2345: Argument of type '{ readonly a?: number | undefined; }' is not assignable to parameter of type 'Strict<{ readonly a?: number | undefined; }>'.
+            Types of property 'a' are incompatible.
+              Type 'number | undefined' is not assignable to type 'number'.
+                Type 'undefined' is not assignable to type 'number'."
+        `);
+        expect(exitCode).toBe(1);
+      });
+
+      test("mapped types before and after one whose key type is circular", async () => {
+        using dir = project({
+          "a.ts": `type Plain<T> = { [K in keyof T]: T[K] };
+function before<T>(a: Plain<T>, b: Plain<T[]>) {
+  const k1: keyof T = null! as keyof Plain<T>;
+  a = b;
+}
+// The key type of each of these refers to the mapped type itself.
+interface Holder<T> { m: { [K in keyof Holder<T>["m"] | keyof T]: K } }
+declare let self: { [K in keyof typeof self]: K };
+class Box<T> { m!: { [K in keyof this["m"]]: T } }
+declare function make<T>(): { [K in keyof ReturnType<typeof make<T>>]: K };
+const holder: never = null! as Holder<{ a: 1 }>["m"];
+const own: never = self;
+const box: never = new Box<1>().m;
+const made: never = make<1>();
+function after<T>(a: Plain<T>, b: Plain<T[]>, c: Holder<T>["m"], d: Holder<T[]>["m"]) {
+  const k1: keyof T = null! as keyof Plain<T>;
+  const k2: keyof T = null! as keyof Holder<T>["m"];
+  a = b; a = c; c = a; c = d; d = c;
+  a = b; a = c; c = a; c = d; d = c;
+}
+export {};
+`,
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(4,3): error TS2322: Type 'T[]' is not assignable to type 'Plain<T>'.
+          a.ts(7,23): error TS2502: 'm' is referenced directly or indirectly in its own type annotation.
+          a.ts(7,34): error TS2313: Type parameter 'K' has a circular constraint.
+          a.ts(8,13): error TS2502: 'self' is referenced directly or indirectly in its own type annotation.
+          a.ts(8,27): error TS2313: Type parameter 'K' has a circular constraint.
+          a.ts(9,28): error TS2313: Type parameter 'K' has a circular constraint.
+          a.ts(10,29): error TS2577: Return type annotation circularly references itself.
+          a.ts(10,37): error TS2313: Type parameter 'K' has a circular constraint.
+          a.ts(11,7): error TS2322: Type 'any' is not assignable to type 'never'.
+          a.ts(12,7): error TS2322: Type 'any' is not assignable to type 'never'.
+          a.ts(13,7): error TS2322: Type '{}' is not assignable to type 'never'.
+          a.ts(13,20): error TS2589: Type instantiation is excessively deep and possibly infinite.
+          a.ts(14,7): error TS2322: Type 'any' is not assignable to type 'never'.
+          a.ts(17,9): error TS2322: Type 'string | number | symbol' is not assignable to type 'keyof T'.
+            Type 'string' is not assignable to type 'keyof T'.
+          a.ts(18,3): error TS2322: Type 'T[]' is not assignable to type 'Plain<T>'.
+          a.ts(19,3): error TS2322: Type 'T[]' is not assignable to type 'Plain<T>'."
+        `);
+        expect(exitCode).toBe(1);
+      });
+
+      test("aliases with no, one, four and five type arguments, and two names for one structure", async () => {
+        using dir = project({
+          "a.ts": `type None = { a: 1 };
+type One<A> = { a: A };
+type Four<A, B, C, D> = { a: A; b: B; c: C; d: D };
+type Five<A, B, C, D, E> = { a: A; b: B; c: C; d: D; e: E };
+type Defaults<A, B = A, C = [A, B]> = { a: A; b: B; c: C };
+// Two names for one structure, declared and instantiated.
+type Same1<A> = { same: A };
+type Same2<A> = { same: A };
+type Fn1<A> = (a: A) => A;
+type Fn2<A> = (a: A) => A;
+type Cond1<A> = A extends string ? { s: A } : { o: A };
+type Cond2<A> = A extends string ? { s: A } : { o: A };
+type Mapped1<A> = { [K in keyof A]: A[K] };
+type Mapped2<A> = { [K in keyof A]: A[K] };
+type Union1<A> = A | 1;
+type Union2<A> = A | 1;
+type Renamed<A> = One<A>;
+type Nested<A> = One<One<A>>;
+
+const none: never = null! as None;
+const one: never = null! as One<1>;
+const four: never = null! as Four<1, 2, 3, 4>;
+const five: never = null! as Five<1, 2, 3, 4, 5>;
+const defaults1: never = null! as Defaults<1>;
+const defaults2: never = null! as Defaults<1, 2>;
+const defaults3: never = null! as Defaults<1, 2, 3>;
+const renamed: never = null! as Renamed<1>;
+const nested: never = null! as Nested<1>;
+const list: never = null! as [Same1<1>, Same2<1>, Fn1<1>, Fn2<1>, Cond1<1>, Cond2<"s">, Mapped1<None>, Mapped2<None>, Union1<2>, Union2<2>];
+
+function declared<A, B, C, D, E>(
+  one: One<A>, four: Four<A, B, C, D>, five: Five<A, B, C, D, E>, other: Five<E, D, C, B, A>, defaults: Defaults<A>,
+  s1: Same1<A>, s2: Same2<A>, f1: Fn1<A>, f2: Fn2<A>, c1: Cond1<A>, c2: Cond2<A>, m1: Mapped1<A>, m2: Mapped2<A>,
+  u1: Union1<A>, u2: Union2<A>, s3: Same1<B>, f3: Fn1<B>, c3: Cond1<B>, m3: Mapped1<B>, u3: Union1<B>,
+) {
+  five = other; other = five; five = one; one = five; one = defaults; defaults = one;
+  four = five; five = four; four = null! as Four<D, C, B, A>;
+  s1 = s2; s2 = s1; f1 = f2; f2 = f1; c1 = c2; c2 = c1; m1 = m2; m2 = m1; u1 = u2; u2 = u1;
+  s1 = s3; f1 = f3; c1 = c3; m1 = m3; u1 = u3;
+  s2 = s3; f2 = f3; c2 = c3; m2 = m3; u2 = u3;
+  const all: never = [one, five, defaults, s1, s2, f1, f2, c1, c2, m1, m2, u1, u2];
+}
+
+declare function fromOne<A>(x: One<A>): A;
+declare function fromFour<A, B, C, D>(x: Four<A, B, C, D>): [A, B, C, D];
+declare function fromFive<A, B, C, D, E>(x: Five<A, B, C, D, E>): [A, B, C, D, E];
+declare function fromDefaults<A>(x: Defaults<A>): A;
+declare function fromCond<A>(x: Cond1<A>): A;
+function inferred<V, W>(one: One<V>, five: Five<V, W, V, W, V>, defaults: Defaults<V>, c1: Cond1<V>, c2: Cond2<V>, same: Same1<V>) {
+  const i1: never = fromOne(one);
+  const i2: never = fromFive(five);
+  const i3: never = fromDefaults(defaults);
+  const i4: never = fromCond(c1);
+  const i5: never = fromCond(c2);
+  const i6: never = fromOne(five);
+  const i7: never = fromOne(same);
+  const i8: never = fromFour(null! as Four<V, W, W, V>);
+  const i9: never = fromFour(five);
+}
+export {};
+`,
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(20,7): error TS2322: Type 'None' is not assignable to type 'never'.
+          a.ts(21,7): error TS2322: Type 'One<1>' is not assignable to type 'never'.
+          a.ts(22,7): error TS2322: Type 'Four<1, 2, 3, 4>' is not assignable to type 'never'.
+          a.ts(23,7): error TS2322: Type 'Five<1, 2, 3, 4, 5>' is not assignable to type 'never'.
+          a.ts(24,7): error TS2322: Type 'Defaults<1, 1, [1, 1]>' is not assignable to type 'never'.
+          a.ts(25,7): error TS2322: Type 'Defaults<1, 2, [1, 2]>' is not assignable to type 'never'.
+          a.ts(26,7): error TS2322: Type 'Defaults<1, 2, 3>' is not assignable to type 'never'.
+          a.ts(27,7): error TS2322: Type 'Renamed<1>' is not assignable to type 'never'.
+          a.ts(28,7): error TS2322: Type 'Nested<1>' is not assignable to type 'never'.
+          a.ts(29,7): error TS2322: Type '[Same1<1>, Same2<1>, Fn1<1>, Fn2<1>, { o: 1; }, { s: "s"; }, Mapped1<None>, Mapped2<None>, Union1<2>, Union2<2>]' is not assignable to type 'never'.
+          a.ts(36,3): error TS2322: Type 'Five<E, D, C, B, A>' is not assignable to type 'Five<A, B, C, D, E>'.
+            Type 'E' is not assignable to type 'A'.
+              'A' could be instantiated with an arbitrary type which could be unrelated to 'E'.
+          a.ts(36,17): error TS2322: Type 'Five<A, B, C, D, E>' is not assignable to type 'Five<E, D, C, B, A>'.
+            Type 'A' is not assignable to type 'E'.
+              'E' could be instantiated with an arbitrary type which could be unrelated to 'A'.
+          a.ts(36,31): error TS2739: Type 'One<A>' is missing the following properties from type 'Five<A, B, C, D, E>': b, c, d, e
+          a.ts(36,71): error TS2739: Type 'One<A>' is missing the following properties from type 'Defaults<A, A, [A, A]>': b, c
+          a.ts(37,16): error TS2741: Property 'e' is missing in type 'Four<A, B, C, D>' but required in type 'Five<A, B, C, D, E>'.
+          a.ts(37,29): error TS2322: Type 'Four<D, C, B, A>' is not assignable to type 'Four<A, B, C, D>'.
+            Type 'D' is not assignable to type 'A'.
+              'A' could be instantiated with an arbitrary type which could be unrelated to 'D'.
+          a.ts(39,3): error TS2322: Type 'Same1<B>' is not assignable to type 'Same1<A>'.
+            Type 'B' is not assignable to type 'A'.
+              'A' could be instantiated with an arbitrary type which could be unrelated to 'B'.
+          a.ts(39,12): error TS2322: Type 'Fn1<B>' is not assignable to type 'Fn1<A>'.
+            Types of parameters 'a' and 'a' are incompatible.
+              Type 'A' is not assignable to type 'B'.
+                'B' could be instantiated with an arbitrary type which could be unrelated to 'A'.
+          a.ts(39,21): error TS2322: Type 'Cond1<B>' is not assignable to type 'Cond1<A>'.
+            Type 'B' is not assignable to type 'A'.
+              'A' could be instantiated with an arbitrary type which could be unrelated to 'B'.
+          a.ts(39,30): error TS2322: Type 'Mapped1<B>' is not assignable to type 'Mapped1<A>'.
+            Type 'keyof A' is not assignable to type 'keyof B'.
+              Type 'string | number | symbol' is not assignable to type 'keyof B'.
+                Type 'string' is not assignable to type 'keyof B'.
+          a.ts(39,39): error TS2322: Type 'Union1<B>' is not assignable to type 'Union1<A>'.
+            Type 'B' is not assignable to type 'Union1<A>'.
+          a.ts(40,3): error TS2322: Type 'Same1<B>' is not assignable to type 'Same2<A>'.
+            Types of property 'same' are incompatible.
+              Type 'B' is not assignable to type 'A'.
+                'A' could be instantiated with an arbitrary type which could be unrelated to 'B'.
+          a.ts(40,12): error TS2322: Type 'Fn1<B>' is not assignable to type 'Fn2<A>'.
+            Types of parameters 'a' and 'a' are incompatible.
+              Type 'A' is not assignable to type 'B'.
+                'B' could be instantiated with an arbitrary type which could be unrelated to 'A'.
+          a.ts(40,21): error TS2322: Type 'Cond1<B>' is not assignable to type 'Cond2<A>'.
+            Type '{ s: B; } | { o: B; }' is not assignable to type 'Cond2<A>'.
+              Type '{ s: B; }' is not assignable to type 'Cond2<A>'.
+          a.ts(40,30): error TS2322: Type 'Mapped1<B>' is not assignable to type 'Mapped2<A>'.
+            Type 'keyof A' is not assignable to type 'keyof B'.
+              Type 'string | number | symbol' is not assignable to type 'keyof B'.
+                Type 'string' is not assignable to type 'keyof B'.
+          a.ts(40,39): error TS2322: Type 'Union1<B>' is not assignable to type 'Union2<A>'.
+            Type 'B' is not assignable to type 'Union2<A>'.
+          a.ts(41,9): error TS2322: Type '(1 | A | Fn1<A> | One<A> | Same1<A> | { s: A; } | { o: A; })[]' is not assignable to type 'never'.
+          a.ts(50,9): error TS2322: Type 'V' is not assignable to type 'never'.
+          a.ts(51,9): error TS2322: Type '[V, W, V, W, V]' is not assignable to type 'never'.
+          a.ts(52,9): error TS2322: Type 'V' is not assignable to type 'never'.
+          a.ts(53,9): error TS2322: Type 'V' is not assignable to type 'never'.
+          a.ts(54,9): error TS2322: Type 'string & V' is not assignable to type 'never'.
+          a.ts(55,9): error TS2322: Type 'V' is not assignable to type 'never'.
+          a.ts(56,29): error TS2741: Property 'a' is missing in type 'Same1<V>' but required in type 'One<never>'.
+          a.ts(57,9): error TS2322: Type '[V, W, W, V]' is not assignable to type 'never'.
+          a.ts(58,9): error TS2322: Type '[V, W, V, W]' is not assignable to type 'never'."
+        `);
+        expect(exitCode).toBe(1);
+      });
+
+      test("what is asked for while something that mentions it is in progress, or after a limit", async () => {
+        using dir = project({
+          "a.ts": `type D<T> = T extends string ? [T] : { t: T };
+type M<T> = { [K in keyof T as K extends string ? \`_\${K}\` : never]?: D<T[K]> };
+
+// The parts of \`D<T>\` and \`M<T>\` are read while a type that mentions them is instantiated with the same type arguments.
+type Uses<T> = { a: D<T>; m: M<T> } extends { a: [T] | { t: T }; m: { [key: string]: unknown } } ? [D<T>, M<T>] : never;
+function sameArguments<T>(x: Uses<T>, y: [D<T>, M<T>]) {
+  x = y; y = x;
+  x = y; y = x;
+}
+
+// While the index signature of an instantiated type is instantiated.
+type Dict<T> = { [key: string]: { a: D<T>; d: Dict<T> } extends { a: [T] | { t: T }; d: { [key: string]: infer V } } ? V | D<T> : never };
+function indexSignatures<T>(x: Dict<T>, y: Dict<T[]>, z: Dict<string>) {
+  const a: never = x["a"];
+  const b: never = y["b"];
+  const c: never = z["c"];
+  x = y; y = x; x = z;
+}
+
+// While the alias, the constraint or the annotation that they are part of is resolved.
+type Loop<T> = T extends string ? { next: Loop<T>; d: D<Loop<T>> } : Loop<string>["d"];
+type Self<T extends D<T> extends [T] ? string : number> = D<T>;
+interface Node1<T> { value: D<Node1<T>["value"]>; keys: M<Node1<T>>; }
+function inProgress<T extends string, U extends number>(a: Loop<T>, b: Loop<U>, c: Self<T>, d: Self<U>, e: Node1<T>, f: Node1<U>) {
+  const n: never = [a, b, c, d, e.value, e.keys];
+  a = b; b = a; c = d; d = c; e = f; f = e;
+}
+
+// After a limit was reached in the same statement, and in the next one.
+type Wrap<N extends number, T = 1, A extends 1[] = []> = A["length"] extends N ? T : Wrap<N, { v: T }, [...A, 1]>;
+type Walk<T, W> = W extends { v: infer V } ? ({ a: D<T> } extends { a: [T] | { t: T } | W } ? Walk<T, V> | D<T> : never) : W;
+function atTheLimit<T>(deep: Walk<T, Wrap<60>>, shallow: Walk<T, Wrap<3>>, d: D<T>) {
+  const n: never = [deep, shallow, d];
+  shallow = d; d = shallow; deep = d; d = deep;
+}
+export {};
+`,
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(14,9): error TS2322: Type 'unknown' is not assignable to type 'never'.
+          a.ts(15,9): error TS2322: Type 'unknown' is not assignable to type 'never'.
+          a.ts(16,9): error TS2322: Type 'unknown' is not assignable to type 'never'.
+          a.ts(23,22): error TS2502: 'value' is referenced directly or indirectly in its own type annotation.
+          a.ts(24,89): error TS2344: Type 'T' does not satisfy the constraint 'D<T> extends [T] ? string : number'.
+            Type 'string' is not assignable to type 'D<T> extends [T] ? string : number'.
+          a.ts(24,101): error TS2344: Type 'U' does not satisfy the constraint 'D<U> extends [U] ? string : number'.
+            Type 'number' is not assignable to type 'D<U> extends [U] ? string : number'.
+          a.ts(25,9): error TS2322: Type 'any[]' is not assignable to type 'never'.
+          a.ts(26,3): error TS2322: Type 'Loop<U>' is not assignable to type 'Loop<T>'.
+            Type 'U' is not assignable to type 'T'.
+              'T' could be instantiated with an arbitrary type which could be unrelated to 'U'.
+          a.ts(26,10): error TS2322: Type 'Loop<T>' is not assignable to type 'Loop<U>'.
+            Type 'T' is not assignable to type 'U'.
+              'U' could be instantiated with an arbitrary type which could be unrelated to 'T'.
+          a.ts(26,17): error TS2322: Type 'D<U>' is not assignable to type 'D<T>'.
+            Type 'U' is not assignable to type 'T'.
+              'T' could be instantiated with an arbitrary type which could be unrelated to 'U'.
+          a.ts(26,24): error TS2322: Type 'D<T>' is not assignable to type 'D<U>'.
+            Type 'T' is not assignable to type 'U'.
+              'U' could be instantiated with an arbitrary type which could be unrelated to 'T'.
+          a.ts(32,30): error TS2589: Type instantiation is excessively deep and possibly infinite.
+          a.ts(33,9): error TS2322: Type 'any[]' is not assignable to type 'never'."
+        `);
+        expect(exitCode).toBe(1);
+      });
+
+      test("recursive conditional types at the depth limit and one step over it", async () => {
+        const wrap = `type Wrap<N extends number, T = 1, A extends 1[] = []> = A["length"] extends N ? T : Wrap<N, { v: T }, [...A, 1]>;`;
+        // The last depth without an error, and the program. Each file has types of its own, so none finds what another has instantiated.
+        const shapes: Record<string, [number, (depth: number) => string]> = {
+          tail: [
+            999,
+            depth =>
+              `type Count<N extends number, A extends 1[] = []> = A["length"] extends N ? A["length"] : Count<N, [...A, 1]>;\nexport type R = Count<${depth}>;\n`,
+          ],
+          mapped: [
+            48,
+            depth =>
+              `type Leaves<T> = T extends object ? { [K in keyof T]: Leaves<T[K]> }[keyof T] : T;\n${wrap}\nexport type R = Leaves<Wrap<${depth}>>;\n`,
+          ],
+          union: [
+            49,
+            depth =>
+              `type Flat<T> = T extends { v: infer V } ? Flat<V> | 0 : T;\n${wrap}\nexport type R = Flat<Wrap<${depth}>>;\n`,
+          ],
+          tuple: [
+            48,
+            depth =>
+              `type Depth<T> = [T] extends [{ v: infer V }] ? [1, ...Depth<V>] : [];\n${wrap}\nexport type R = Depth<Wrap<${depth}>>;\n`,
+          ],
+          intersection: [
+            49,
+            depth =>
+              `type All<T> = T extends { v: infer V } ? { d: 1 } & All<V> : {};\n${wrap}\nexport type R = All<Wrap<${depth}>>;\n`,
+          ],
+        };
+        using dir = project(
+          Object.fromEntries(
+            Object.entries(shapes).flatMap(([name, [last, program]]) => [
+              [`${name}-under.ts`, program(last)],
+              [`${name}-over.ts`, program(last + 1)],
+            ]),
+          ),
+        );
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "intersection-over.ts(3,17): error TS2589: Type instantiation is excessively deep and possibly infinite.
+          mapped-over.ts(3,17): error TS2589: Type instantiation is excessively deep and possibly infinite.
+          tail-over.ts(2,17): error TS2589: Type instantiation is excessively deep and possibly infinite.
+          tuple-over.ts(3,17): error TS2589: Type instantiation is excessively deep and possibly infinite.
+          union-over.ts(3,17): error TS2589: Type instantiation is excessively deep and possibly infinite."
+        `);
+        expect(exitCode).toBe(1);
+      });
+
+      test("a mapped and a conditional type under many type arguments", async () => {
+        const numbers = Array.from({ length: 40 }, (_, i) => i + 10);
+        using dir = project({
+          "a.ts": `
+type Boxes<T> = { [K in keyof T]: { box: T[K] } };
+type Named<T> = { [K in keyof T as \`n\${K & string}\`]-?: T[K] };
+type First<T> = T extends { p0: infer V } ? V : T extends { p1: infer V } ? [V] : never;
+function generic<T>(boxes: Boxes<T>, named: Named<T>, first: First<T>) {
+${numbers.map(i => `  boxes = null! as Boxes<T | { p${i}: ${i} }>; named = null! as Named<T & { p${i}: ${i} }>; first = null! as First<T | { p${i % 3}: ${i} }>;`).join("\n")}
+}
+${numbers.map(i => `const v${i}: never = null! as [Boxes<{ p${i}: ${i} }>["p${i}"], Named<{ p${i}?: ${i} }>["np${i}"], keyof Named<{ p${i}: 1; q: 2 }>, First<{ p${i % 3}: ${i} }>];`).join("\n")}
+export {};
+`,
+        });
+        const first = (i: number) => [`${i}`, `[${i}]`, "never"][i % 3];
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout.split("\n")).toEqual([
+          ...numbers.flatMap((i, at) => [
+            `a.ts(${at + 6},3): error TS2322: Type 'Boxes<T | { p${i}: ${i}; }>' is not assignable to type 'Boxes<T>'.`,
+            `  Type 'Boxes<{ p${i}: ${i}; }>' is not assignable to type 'Boxes<T>'.`,
+            ...(i % 3 === 2
+              ? []
+              : [
+                  `a.ts(${at + 6},85): error TS2322: Type '${first(i)} | First<T>' is not assignable to type 'First<T>'.`,
+                  `  Type '${i % 3 ? first(i) : "number"}' is not assignable to type 'First<T>'.`,
+                ]),
+          ]),
+          ...numbers.map(
+            (i, at) =>
+              `a.ts(${at + 47},7): error TS2322: Type '[{ box: ${i}; }, ${i}, "np${i}" | "nq", ${first(i)}]' is not assignable to type 'never'.`,
+          ),
+        ]);
+        expect(exitCode).toBe(1);
+      });
+
+      test.each([1, 8])("generic types of one file that many files instantiate, on %d threads", async threads => {
+        const numbers = Array.from({ length: 12 }, (_, i) => i + 10);
+        using dir = project({
+          "types.ts": `
+export type D<T> = T extends string ? [T] : { t: T };
+export type E<T> = T extends readonly (infer U)[] ? D<U> : D<T>;
+export type M<T> = { readonly [K in keyof T as K extends string ? \`_\${K}\` : never]?: D<T[K]> };
+export type P<T, K extends keyof T> = { [Q in K]: E<T[Q]> };
+export type Five<A, B, C, D, E> = { a: A; b: B; c: C; d: D; e: E };
+export declare function d<T>(x: D<T>): T;
+export declare function m<T>(x: M<T>): T;
+export function declared<T, K extends keyof T>(a: D<T>, b: E<T>, c: M<T>, e: P<T, K>) {
+  const n: never = [a, b, c, e];
+}
+`,
+          ...Object.fromEntries(
+            numbers.map(i => [
+              `use${i}.ts`,
+              `
+import { d, m, type D, type E, type Five, type M, type P } from "./types";
+interface Own { own${i}: ${i}; shared: string; list: ${i}[] }
+export function generic<T, K extends keyof T>(a: D<T>, b: E<T>, c: M<T>, e: P<T, K>, a2: D<T[]>, b2: E<T[]>, c2: M<T[]>) {
+  a = a2; b = b2; c = c2; a = b; b = a; b2 = a;
+  const n: never = [d(a), m(c), d(a2), m(c2)];
+  const five: Five<D<T>, E<T>, M<T>, P<T, K>, ${i}> = null! as Five<D<T[]>, E<T[]>, M<T[]>, P<T, K>, ${i + 1}>;
+}
+const own: never = null! as [D<Own>, E<Own[]>, M<Own>["_own${i}"], M<Own>["_shared"], P<Own, "list" | "own${i}">["list"]];
+const shared: never = null! as [D<string>, E<string[]>, M<{ shared: string }>, P<{ shared: string }, "shared">];
+`,
+            ]),
+          ),
+        });
+        const { stdout, exitCode } = await check(dir, ["--threads", String(threads)]);
+        expect(stdout.split("\n")).toEqual([
+          `types.ts(10,9): error TS2322: Type '(M<T> | P<T, K> | [T])[]' is not assignable to type 'never'.`,
+          ...numbers.flatMap(i =>
+            `
+use${i}.ts(5,3): error TS2322: Type '{ t: T[]; }' is not assignable to type 'D<T>'.
+use${i}.ts(5,11): error TS2322: Type 'D<T>' is not assignable to type 'E<T>'.
+  Type '{ t: T; } | [T]' is not assignable to type 'E<T>'.
+    Type '{ t: T; }' is not assignable to type 'E<T>'.
+use${i}.ts(5,19): error TS2322: Type 'M<T[]>' is not assignable to type 'M<T>'.
+use${i}.ts(5,27): error TS2322: Type 'E<T>' is not assignable to type 'D<T>'.
+  Type '{ t: unknown; } | D<T>' is not assignable to type 'D<T>'.
+    Type '{ t: unknown; }' is not assignable to type 'D<T>'.
+use${i}.ts(5,34): error TS2322: Type 'D<T>' is not assignable to type 'E<T>'.
+  Type '{ t: T; } | [T]' is not assignable to type 'E<T>'.
+    Type '{ t: T; }' is not assignable to type 'E<T>'.
+use${i}.ts(6,9): error TS2322: Type '(T | T[])[]' is not assignable to type 'never'.
+use${i}.ts(7,9): error TS2322: Type 'Five<{ t: T[]; }, D<T>, M<T[]>, P<T, K>, ${i + 1}>' is not assignable to type 'Five<D<T>, E<T>, M<T>, P<T, K>, ${i}>'.
+  Type '{ t: T[]; }' is not assignable to type 'D<T>'.
+use${i}.ts(9,7): error TS2322: Type '[{ t: Own; }, { t: Own; }, { t: ${i}; } | undefined, [string] | undefined, { t: ${i}; }]' is not assignable to type 'never'.
+use${i}.ts(10,7): error TS2322: Type '[[string], [string], M<{ shared: string; }>, P<{ shared: string; }, "shared">]' is not assignable to type 'never'.
+`
+              .trim()
+              .split("\n"),
+          ),
+        ]);
+        expect(exitCode).toBe(1);
+      });
     });
   });
 

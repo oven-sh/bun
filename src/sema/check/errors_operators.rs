@@ -203,7 +203,7 @@ pub(super) fn check_satisfies(
 pub(super) fn check_template_spans(c: &mut Checker<'_, '_>, file: FileId, spans: IdList<ExprId>) {
     for span in c.hir(file).ids(spans) {
         let ty = c.type_of_expr(file, span);
-        if c.maybe_type_of_kind_considering_base_constraint(ty, Checker::is_symbol_like) {
+        if c.maybe_type_of_kind_considering_base_constraint(ty, tf::ES_SYMBOL_LIKE) {
             c.error(file, c.hir(file).child(span), 2731, &[]);
         }
     }

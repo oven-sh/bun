@@ -104,16 +104,18 @@ pub struct Resolved<'s> {
     names: Names<ArenaBox<'s, [u32]>>,
     /// A 256-bit filter of the names of the properties: a name whose bit is clear is not one of them.
     name_filter: [u64; 4],
+    /// `isWeakType` of an object type that has these members: properties, all of them optional, and nothing else.
+    is_weak: bool,
 }
 
-/// Every field is named, so that a new one is a compile error. `names` and `name_filter` are derived from `shape`, so they
-/// are not shown.
+/// Every field is named, so that a new one is a compile error. The others are derived from `shape`, so they are not shown.
 impl crate::types::Follow for Resolved<'_> {
     fn visit<V: crate::types::Visitor>(&self, visitor: &mut V) {
         let Resolved {
             shape,
             names: _,
             name_filter: _,
+            is_weak: _,
         } = self;
         shape.visit(visitor);
     }
@@ -122,6 +124,8 @@ impl crate::types::Follow for Resolved<'_> {
             shape,
             names,
             name_filter,
+            // No id has a part in it.
+            is_weak: _,
         } = self;
         let has_own_names = shape.props.iter().any(|prop| prop.name.is_own());
         shape.follow(link);
@@ -141,8 +145,23 @@ impl<'s> Resolved<'s> {
         Resolved {
             names: Names::of(&shape.props),
             name_filter: Resolved::name_filter_of(&shape.props),
+            is_weak: Resolved::is_weak_shape(&shape),
             shape,
         }
+    }
+
+    pub(super) fn is_weak_shape(shape: &Shape) -> bool {
+        let is_optional = |prop: &Prop| prop.flags.contains(PropFlags::OPTIONAL);
+        !shape.props.is_empty()
+            && shape.call.is_empty()
+            && shape.construct.is_empty()
+            && shape.index.is_empty()
+            && shape.props.iter().all(is_optional)
+    }
+
+    #[inline]
+    pub(super) fn is_weak(&self) -> bool {
+        self.is_weak
     }
 
     fn name_filter_of(props: &[Prop]) -> [u64; 4] {
@@ -7378,7 +7397,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `isLiteralType`, `isPatternLiteralType`
         let is_literal = |c: &Self, t: TypeId| {
-            c.is_boolean(t) || c.is_pattern_literal(t) || c.every_type(t, |c, m| c.is_unit(m))
+            c.is_boolean(t) || c.is_pattern_literal(t) || c.is_every_type_unit(t)
         };
         // The names in the order of `getPropertiesOfUnionOrIntersectionType`, and for each the members
         // in order. `createUnionOrIntersectionProperty` compares every symbol with the first

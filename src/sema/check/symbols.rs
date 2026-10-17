@@ -2896,9 +2896,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isGenericTypeWithUndefinedConstraint`
     fn is_generic_type_with_undefined_constraint(&mut self, ty: TypeId) -> bool {
         self.is_instantiable(ty)
-            && self.base_constraint_of(ty).is_some_and(|constraint| {
-                self.maybe_type_of_kind(constraint, |_, t| t.is_undefined())
-            })
+            && self
+                .base_constraint_of(ty)
+                .is_some_and(|constraint| self.maybe_type_of_kind(constraint, tf::UNDEFINED))
     }
 
     fn type_of_pat_uncached(&mut self, file: FileId, pat: PatId) -> TypeId {
@@ -4822,32 +4822,6 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isLiteralOfContextualType`: whether `contextual` accepts the literal type `candidate`, as
     /// opposed to its base type only.
     pub fn is_literal_context(&mut self, candidate: TypeId, contextual: TypeId) -> bool {
-        // `TypeFlagsStringLiteral`, `TypeFlagsNumberLiteral`: an enum member has the flag of its
-        // value, a computed member neither.
-        let is_string_literal = |c: &Self, m: TypeId| {
-            matches!(
-                c.data(m),
-                TypeData::StringLit { .. }
-                    | TypeData::EnumLit {
-                        value: EnumValue::String(_),
-                        ..
-                    }
-            )
-        };
-        let is_number_literal = |c: &Self, m: TypeId| {
-            matches!(
-                c.data(m),
-                TypeData::NumberLit { .. }
-                    | TypeData::EnumLit {
-                        value: EnumValue::Number(_),
-                        ..
-                    }
-            )
-        };
-        let is_bigint_literal =
-            |c: &Self, m: TypeId| matches!(c.data(m), TypeData::BigIntLit { .. });
-        let is_unique_symbol =
-            |c: &Self, m: TypeId| matches!(c.data(m), TypeData::UniqueSymbol { .. });
         if let TypeData::Union(parts) | TypeData::Intersection(parts) = self.data(contextual) {
             return parts.iter().any(|&p| self.is_literal_context(candidate, p));
         }
@@ -4856,16 +4830,14 @@ impl<'p, 's> Checker<'p, 's> {
             // A type parameter constrained to a primitive requests the literal type, even if the
             // constraint is `string & {}`.
             let constraint = self.base_constraint(contextual);
-            let extends =
-                |c: &Self, kind: fn(&Self, TypeId) -> bool| c.maybe_type_of_kind(constraint, kind);
-            return (extends(self, |_: &Self, m: TypeId| m == TypeId::STRING)
-                && self.maybe_type_of_kind(candidate, is_string_literal))
-                || (extends(self, |_: &Self, m: TypeId| m == TypeId::NUMBER)
-                    && self.maybe_type_of_kind(candidate, is_number_literal))
-                || (extends(self, |_: &Self, m: TypeId| m == TypeId::BIGINT)
-                    && self.maybe_type_of_kind(candidate, is_bigint_literal))
-                || (extends(self, |_: &Self, m: TypeId| m == TypeId::SYMBOL)
-                    && self.maybe_type_of_kind(candidate, is_unique_symbol))
+            let is_literal_of = |primitive: u32, literal: u32| {
+                self.maybe_type_of_kind(constraint, primitive)
+                    && self.maybe_type_of_kind(candidate, literal)
+            };
+            return is_literal_of(tf::STRING, tf::STRING_LITERAL)
+                || is_literal_of(tf::NUMBER, tf::NUMBER_LITERAL)
+                || is_literal_of(tf::BIGINT, tf::BIGINT_LITERAL)
+                || is_literal_of(tf::ES_SYMBOL, tf::UNIQUE_ES_SYMBOL)
                 || (!self.is_deferred(constraint)
                     && self.is_literal_context(candidate, constraint));
         }
@@ -4877,15 +4849,17 @@ impl<'p, 's> Checker<'p, 's> {
             | TypeData::EnumLit {
                 value: EnumValue::String(_),
                 ..
-            } => self.maybe_type_of_kind(candidate, is_string_literal),
+            } => self.maybe_type_of_kind(candidate, tf::STRING_LITERAL),
             TypeData::NumberLit { .. }
             | TypeData::EnumLit {
                 value: EnumValue::Number(_),
                 ..
-            } => self.maybe_type_of_kind(candidate, is_number_literal),
-            TypeData::BigIntLit { .. } => self.maybe_type_of_kind(candidate, is_bigint_literal),
-            TypeData::BoolLit { .. } => self.maybe_type_of_kind(candidate, Self::is_boolean_like),
-            TypeData::UniqueSymbol { .. } => self.maybe_type_of_kind(candidate, is_unique_symbol),
+            } => self.maybe_type_of_kind(candidate, tf::NUMBER_LITERAL),
+            TypeData::BigIntLit { .. } => self.maybe_type_of_kind(candidate, tf::BIGINT_LITERAL),
+            TypeData::BoolLit { .. } => self.maybe_type_of_kind(candidate, tf::BOOLEAN_LITERAL),
+            TypeData::UniqueSymbol { .. } => {
+                self.maybe_type_of_kind(candidate, tf::UNIQUE_ES_SYMBOL)
+            }
             _ => false,
         }
     }
@@ -5117,7 +5091,7 @@ impl<'p, 's> Checker<'p, 's> {
                     || self.is_empty_object_type(constraint)
                     || self.parts(constraint).iter().any(|&m| self.is_thenable(m))
             }
-            None => self.maybe_type_of_kind(ty, Self::is_type_variable),
+            None => self.maybe_type_of_kind(ty, tf::TYPE_VARIABLE),
         }
     }
 

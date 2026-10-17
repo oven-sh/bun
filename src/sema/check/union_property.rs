@@ -13,6 +13,9 @@
 //! The first two are kept for the member, not for the union: whatever narrows or filters a union makes another union of the
 //! same members. The third is a few bits for each member of the union.
 //!
+//! `getTypeOfPropertyOfContextualType` asks every member of a union for a name too, and reads what is kept here
+//! (`members_to_ask_as_context`). It adds nothing to it.
+//!
 //! Asking a member can resolve types, report errors and close cycles, so none of this may change what is resolved, nor in
 //! which order:
 //! - The facts are a by-product of asking the member. Nothing is resolved for their sake.
@@ -89,6 +92,8 @@ struct UnionSummary {
     always_visited: PositionSet,
     /// What the other members add where they do not have the name, and which of them add it.
     missing: SmallVec<[(Missing, PositionSet); 2]>,
+    /// `always_visited`, and the other members for which `has_only_its_properties` does not hold.
+    always_asked_as_context: PositionSet,
 }
 
 /// A type id can be the task's own, so none of this is shared with other tasks.
@@ -297,7 +302,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // `isLiteralType`, `isPatternLiteralType`
             if self.is_boolean(t)
-                || !t.is_never() && self.every_type(t, |c, m| c.is_unit(m))
+                || !t.is_never() && self.is_every_type_unit(t)
                 || self.is_pattern_literal(t)
             {
                 flags |= PropFlags::HAS_LITERAL_TYPE;
@@ -315,14 +320,8 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<Prop<'s>> {
         let skips = skip_object_function_property_augment;
         let parts = self.parts(containing_type);
-        // Looking a name up in an intersection that is being reduced creates its properties once more: see
-        // `reduce_apparent_type_of_intersection_in_progress`.
-        let mut being_reduced = self.never_in_progress.iter();
-        let uses_facts = parts.len() >= MIN_MEMBERS_FOR_FACTS
-            && !skips
-            // `members` leaves out what a type reference inherits.
-            && self.unresolved_members.is_empty()
-            && !being_reduced.any(|ty| self.union_members.reduced.contains(ty));
+        let uses_facts =
+            parts.len() >= MIN_MEMBERS_FOR_FACTS && !skips && self.do_member_facts_hold();
         let mut walk = Walk {
             name,
             skips,
@@ -354,17 +353,89 @@ impl<'p, 's> Checker<'p, 's> {
         self.finish_union_property(builder, containing_type, name)
     }
 
+    /// Whether asking a member gives what its facts say, as things are in progress now.
+    fn do_member_facts_hold(&self) -> bool {
+        // Looking a name up in an intersection that is being reduced creates its properties once more: see
+        // `reduce_apparent_type_of_intersection_in_progress`.
+        let mut being_reduced = self.never_in_progress.iter();
+        // `members` leaves out what a type reference inherits.
+        self.unresolved_members.is_empty()
+            && !being_reduced.any(|ty| self.union_members.reduced.contains(ty))
+    }
+
     /// Whether what a member adds where it does not have the name can be the same as for other names: no object type
     /// inherits the name from `Object` or `Function`, and it is neither late-bound nor numeric, where it depends on the key
     /// type of an index signature whether that applies.
     fn is_ordinary_name(&self, walk: &mut Walk) -> bool {
         let (name, is_late_bound) = (walk.name, walk.is_late_bound);
-        *walk.is_ordinary_name.get_or_insert_with(|| {
-            name.is_some()
-                && !is_late_bound
-                && !self.is_numeric_name(name)
-                && self.is_never_inherited(name)
-        })
+        *walk
+            .is_ordinary_name
+            .get_or_insert_with(|| self.is_ordinary(name, is_late_bound))
+    }
+
+    /// `is_late_bound`: `Atoms::is_symbol_name`.
+    fn is_ordinary(&self, name: Atom, is_late_bound: bool) -> bool {
+        name.is_some()
+            && !is_late_bound
+            && !self.is_numeric_name(name)
+            && self.is_never_inherited(name)
+    }
+
+    /// Whether all there is to find in the member `current`, which has `facts`, are the properties in `facts.members`: it
+    /// is an object type, so it is its own apparent type, and it has no index signature.
+    fn has_only_its_properties(&self, current: TypeId, facts: &MemberFacts<'p>) -> bool {
+        let shape = facts.members.shape();
+        self.flags(current) & tf::OBJECT != 0
+            && facts.apparent_type == current
+            && facts.reduced_apparent_type == current
+            && shape.properties_of.is_none()
+            && shape.index.is_empty()
+    }
+
+    /// For `getTypeOfPropertyOfContextualType`: the members of `union` to ask for the property `name`. `None`: all.
+    ///
+    /// A member that is left out `has_only_its_properties`, and `name`, which is ordinary, is not among them. So it has no
+    /// such property, inherits none and has no index signature that applies. To find that out takes its members, which are
+    /// stored: nothing is resolved, so not asking is not observable.
+    pub(super) fn members_to_ask_as_context(
+        &self,
+        union: TypeId,
+        name: Atom,
+    ) -> Option<PositionSet> {
+        let parts = self.parts(union);
+        // Members get their facts where the properties of a union are made. Those of a union that has not been there are not
+        // worth a lookup each.
+        if parts.len() < MIN_MEMBERS_FOR_FACTS
+            || !self.union_members.walked.contains(&union)
+            || !self.do_member_facts_hold()
+            || !self.is_ordinary(name, self.atoms().is_symbol_name(name))
+        {
+            return None;
+        }
+        let holders = self.union_members.holders.get(&name);
+        let holders = holders.map_or(&[][..], |holders| &holders[..]);
+        if let Some(summary) = self.union_members.summaries.get(&union)
+            && holders.len() <= MOST_HOLDERS_TO_FIND
+        {
+            let mut asked = summary.always_asked_as_context.clone();
+            for holder in holders {
+                if let Some(at) = parts.iter().position(|member| member == holder) {
+                    asked.insert(at);
+                }
+            }
+            return Some(asked);
+        }
+        let mut asked = PositionSet::new(parts.len());
+        for (at, member) in parts.iter().enumerate() {
+            let lacks_it = self.union_members.facts.get(member).is_some_and(|facts| {
+                self.has_only_its_properties(*member, facts)
+                    && facts.members.resolved.prop_past_filter(name).is_none()
+            });
+            if !lacks_it {
+                asked.insert(at);
+            }
+        }
+        Some(asked)
     }
 
     /// The members of `union` to visit for the property, if its summary and the holders of the name say. `None`: all.
@@ -552,17 +623,24 @@ impl<'p, 's> Checker<'p, 's> {
         let mut summary = UnionSummary {
             always_visited: PositionSet::new(parts.len()),
             missing: SmallVec::new(),
+            always_asked_as_context: PositionSet::new(parts.len()),
         };
         for (at, current) in parts.iter().enumerate() {
-            let Some(&MemberFacts {
-                when_missing: WhenMissing::Adds(missing),
-                is_listed: true,
-                ..
-            }) = self.union_members.facts.get(current)
+            let Some(
+                facts @ &MemberFacts {
+                    when_missing: WhenMissing::Adds(missing),
+                    is_listed: true,
+                    ..
+                },
+            ) = self.union_members.facts.get(current)
             else {
                 summary.always_visited.insert(at);
+                summary.always_asked_as_context.insert(at);
                 continue;
             };
+            if !self.has_only_its_properties(*current, facts) {
+                summary.always_asked_as_context.insert(at);
+            }
             match summary.missing.iter_mut().find(|it| it.0 == missing) {
                 Some((_, members)) => members.insert(at),
                 None => {

@@ -2788,7 +2788,7 @@ impl Checker<'_, '_> {
         r: TypeId,
     ) -> bool {
         let may_be_symbol = |c: &mut Self, t| {
-            c.maybe_type_of_kind_considering_base_constraint(t, Self::is_symbol_like)
+            c.maybe_type_of_kind_considering_base_constraint(t, tf::ES_SYMBOL_LIKE)
         };
         let offending = if may_be_symbol(self, l) {
             left

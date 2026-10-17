@@ -18,7 +18,7 @@ use bun_alloc::{ArenaBox, vec_from_iter_in};
 use std::alloc::Allocator;
 use std::cell::Cell;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 /// A list that is stored once: one block, of its exact size, in the arena of the thread that built
 /// it. As wide as `Box<[T]>`. It frees the block when it is dropped, on any thread.
@@ -988,6 +988,8 @@ pub mod tf {
         | NULL;
     pub const INSTANTIABLE_NON_PRIMITIVE: u32 =
         TYPE_PARAMETER | INDEXED_ACCESS | CONDITIONAL | SUBSTITUTION;
+    pub const INSTANTIABLE: u32 =
+        INSTANTIABLE_NON_PRIMITIVE | INDEX | TEMPLATE_LITERAL | STRING_MAPPING;
     pub const STRUCTURED_OR_INSTANTIABLE: u32 = OBJECT
         | UNION
         | INTERSECTION
@@ -1373,6 +1375,8 @@ pub struct TypeRecord<'s> {
     constrained_type_variable: std::sync::atomic::AtomicU8,
     /// See `Types::mark_without_primitive_union`.
     is_without_primitive_union: AtomicBool,
+    /// See `Types::mark_sorted_run`.
+    is_sorted_run: AtomicBool,
     id: TypeId,
 }
 
@@ -1384,6 +1388,19 @@ struct TypeSummary {
     flags: u32,
     object_flags: ObjectFlags,
     class: InstantiationClass,
+    member_flags: u32,
+}
+
+/// The bits of `Summaries::facts`. A fact is written whole: the bit that says it is known together
+/// with its value.
+mod fact {
+    pub(super) const KNOWS_COULD_CONTAIN_TYPE_VARIABLES: u8 = 1;
+    pub(super) const COULD_CONTAIN_TYPE_VARIABLES: u8 = 1 << 1;
+    pub(super) const KNOWS_GENERIC_OBJECT_FLAGS: u8 = 1 << 2;
+    pub(super) const IS_GENERIC_OBJECT_TYPE: u8 = 1 << 3;
+    pub(super) const IS_GENERIC_INDEX_TYPE: u8 = 1 << 4;
+    pub(super) const KNOWS_HAS_GENERIC_ARGUMENTS: u8 = 1 << 5;
+    pub(super) const HAS_GENERIC_ARGUMENTS: u8 = 1 << 6;
 }
 
 /// `TypeRecord::summary` of the types of a store, by index: a column for each field, so that what is
@@ -1392,6 +1409,11 @@ struct Summaries<L: Length, A: Allocator + Clone> {
     flags: Stable<u32, L, A>,
     object_flags: Stable<ObjectFlags, L, A>,
     class: Stable<InstantiationClass, L, A>,
+    /// See `Types::member_flags`.
+    member_flags: Stable<u32, L, A>,
+    /// What the checker has found out about the type since it was created: `fact`. See
+    /// `Types::add_facts` for what may be here. Those of a task-local type are not published with it.
+    facts: Stable<AtomicU8, L, A>,
 }
 
 impl<L: Length, A: Allocator + Clone> Summaries<L, A> {
@@ -1399,6 +1421,8 @@ impl<L: Length, A: Allocator + Clone> Summaries<L, A> {
         Summaries {
             flags: Stable::new_in(alloc.clone()),
             object_flags: Stable::new_in(alloc.clone()),
+            member_flags: Stable::new_in(alloc.clone()),
+            facts: Stable::new_in(alloc.clone()),
             class: Stable::new_in(alloc),
         }
     }
@@ -1423,11 +1447,23 @@ impl<L: Length, A: Allocator + Clone> Summaries<L, A> {
         *self.class.get(index)
     }
 
+    #[inline(always)]
+    fn member_flags(&self, index: u32) -> u32 {
+        *self.member_flags.get(index)
+    }
+
+    #[inline(always)]
+    fn facts(&self, index: u32) -> &AtomicU8 {
+        self.facts.get(index)
+    }
+
     /// Returns the index. One thread at a time: the columns are added to one after the other.
     #[inline]
     fn push(&self, summary: TypeSummary) -> u32 {
         self.flags.push(summary.flags);
         self.object_flags.push(summary.object_flags);
+        self.member_flags.push(summary.member_flags);
+        self.facts.push(AtomicU8::new(0));
         self.class.push(summary.class)
     }
 }
@@ -1444,11 +1480,18 @@ pub enum InstantiationClass {
 }
 
 impl TypeRecord<'_> {
-    fn summary(&self) -> TypeSummary {
+    /// `member_flags_of`: `Types::member_flags` of a constituent.
+    fn summary(&self, member_flags_of: impl Fn(TypeId) -> u32) -> TypeSummary {
         TypeSummary {
             flags: self.flags,
             object_flags: self.object_flags,
             class: self.instantiation_class(),
+            member_flags: match &self.created.0 {
+                TypeData::Union(members) | TypeData::Intersection(members) => members
+                    .iter()
+                    .fold(0, |flags, &member| flags | member_flags_of(member)),
+                _ => self.flags,
+            },
         }
     }
 
@@ -1851,7 +1894,7 @@ fn is_in_order(pairs: &[(TypeId, TypeId)]) -> bool {
 
 /// The shared store: the published types, signatures, type mappers and lists of index components.
 /// Read-only during a step: a lookup is lock-free and writes nothing. Task-local records are in the
-/// task's `OwnStore`. `link`, at the barrier, is the only writer.
+/// task's `OwnStore`. `link`, at the barrier, is the only writer, but for `Types::add_facts`.
 ///
 /// - A record consists of its interning key and flags computed from the key, so it does not depend
 ///   on which task created it.
@@ -2090,7 +2133,12 @@ impl<'s> TypeStore<'s> {
     /// Between steps, on one thread.
     fn summarize_types(&self, below: u32) {
         for id in self.summaries.len()..below {
-            self.summaries.push(self.types.items.get(id).summary());
+            // What a record references has a lower id.
+            let summary = self.types.items.get(id).summary(|member| {
+                debug_assert!(member.0 < id);
+                self.summaries.member_flags(member.0)
+            });
+            self.summaries.push(summary);
         }
     }
 }
@@ -2179,10 +2227,109 @@ impl<'p, 's> Types<'p, 's> {
         }
     }
 
+    /// `Type.flags` of everything that `maybeTypeOfKind` gets to in `id`, taken together: of a
+    /// union or an intersection, the `member_flags` of its constituents, without its own flags. Of
+    /// any other type, its flags.
+    #[inline]
+    pub fn member_flags(&self, id: TypeId) -> u32 {
+        if id.0 & LOCAL == 0 {
+            self.published.summaries.member_flags(id.0)
+        } else {
+            self.own.summaries.member_flags(id.0 & !LOCAL)
+        }
+    }
+
+    /// `Relaxed` is enough, here and in `add_facts`: a fact is in one byte and is written whole, so
+    /// a reader sees all of it or nothing, and nothing else is read on the strength of it.
+    #[inline]
+    fn facts(&self, id: TypeId) -> u8 {
+        if id.0 & LOCAL == 0 {
+            (self.published.summaries.facts(id.0)).load(Ordering::Relaxed)
+        } else {
+            (self.own.summaries.facts(id.0 & !LOCAL)).load(Ordering::Relaxed)
+        }
+    }
+
+    /// Only for a function of the interning key of `id` and of the program that is computed without
+    /// resolving anything: no type, signature or mapper is created for it, no query is made and no
+    /// counter moves. Then a task cannot tell whether it reads the fact or computes it, so it does
+    /// not matter which task has written it, or when, into a published type too.
+    #[inline]
+    fn add_facts(&self, id: TypeId, facts: u8) {
+        if id.0 & LOCAL == 0 {
+            (self.published.summaries.facts(id.0)).fetch_or(facts, Ordering::Relaxed);
+        } else {
+            let known = self.own.summaries.facts(id.0 & !LOCAL);
+            known.store(known.load(Ordering::Relaxed) | facts, Ordering::Relaxed);
+        }
+    }
+
+    /// `ObjectFlagsCouldContainTypeVariables`, if `ObjectFlagsCouldContainTypeVariablesComputed`.
+    #[inline]
+    pub fn could_contain_type_variables(&self, id: TypeId) -> Option<bool> {
+        let facts = self.facts(id);
+        (facts & fact::KNOWS_COULD_CONTAIN_TYPE_VARIABLES != 0)
+            .then_some(facts & fact::COULD_CONTAIN_TYPE_VARIABLES != 0)
+    }
+
+    /// See `add_facts`.
+    #[inline]
+    pub fn set_could_contain_type_variables(&self, id: TypeId, could_contain: bool) {
+        let value = match could_contain {
+            true => fact::COULD_CONTAIN_TYPE_VARIABLES,
+            false => 0,
+        };
+        self.add_facts(id, fact::KNOWS_COULD_CONTAIN_TYPE_VARIABLES | value);
+    }
+
+    /// `ObjectFlagsIsGenericObjectType` and `ObjectFlagsIsGenericIndexType`, if
+    /// `set_generic_object_flags` has been called.
+    #[inline]
+    pub fn generic_object_flags(&self, id: TypeId) -> Option<(bool, bool)> {
+        let facts = self.facts(id);
+        (facts & fact::KNOWS_GENERIC_OBJECT_FLAGS != 0).then_some((
+            facts & fact::IS_GENERIC_OBJECT_TYPE != 0,
+            facts & fact::IS_GENERIC_INDEX_TYPE != 0,
+        ))
+    }
+
+    /// See `add_facts`: not for a type in which `getGenericObjectFlags` gets to a mapped type, whose
+    /// constraint type it resolves.
+    #[inline]
+    pub fn set_generic_object_flags(&self, id: TypeId, (object, index): (bool, bool)) {
+        let mut facts = fact::KNOWS_GENERIC_OBJECT_FLAGS;
+        if object {
+            facts |= fact::IS_GENERIC_OBJECT_TYPE;
+        }
+        if index {
+            facts |= fact::IS_GENERIC_INDEX_TYPE;
+        }
+        self.add_facts(id, facts);
+    }
+
+    /// `Checker::has_generic_arguments`, if `set_has_generic_arguments` has been called.
+    #[inline]
+    pub fn has_generic_arguments(&self, id: TypeId) -> Option<bool> {
+        let facts = self.facts(id);
+        (facts & fact::KNOWS_HAS_GENERIC_ARGUMENTS != 0)
+            .then_some(facts & fact::HAS_GENERIC_ARGUMENTS != 0)
+    }
+
+    /// See `add_facts`.
+    #[inline]
+    pub fn set_has_generic_arguments(&self, id: TypeId, has_generic_arguments: bool) {
+        let value = match has_generic_arguments {
+            true => fact::HAS_GENERIC_ARGUMENTS,
+            false => 0,
+        };
+        self.add_facts(id, fact::KNOWS_HAS_GENERIC_ARGUMENTS | value);
+    }
+
     /// `new_record` for a task-local type, which the caller adds to `OwnStore::types` next.
     fn new_own_record(&self, created: Made<'s>, id: u32) -> TypeRecord<'s> {
         let record = self.new_record(created, id);
-        let index = self.own.summaries.push(record.summary());
+        let summary = record.summary(|member| self.member_flags(member));
+        let index = self.own.summaries.push(summary);
         debug_assert_eq!(index | LOCAL, id);
         record
     }
@@ -2600,6 +2747,7 @@ impl<'p, 's> Types<'p, 's> {
             is_ordered_by_id: AtomicBool::new(is_ordered_by_id),
             constrained_type_variable: std::sync::atomic::AtomicU8::new(0),
             is_without_primitive_union: AtomicBool::new(false),
+            is_sorted_run: AtomicBool::new(false),
             created,
             id: TypeId(id),
         }
@@ -2636,6 +2784,30 @@ impl<'p, 's> Types<'p, 's> {
             let record = self.record(id);
             record.is_ordered_by_id.store(true, Ordering::Relaxed);
         }
+    }
+
+    /// See `mark_ordered_by_id`. Never for a published type.
+    #[inline]
+    pub fn is_ordered_by_id(&self, id: TypeId) -> bool {
+        id.0 & LOCAL != 0 && self.record(id).is_ordered_by_id.load(Ordering::Relaxed)
+    }
+
+    /// The members of the union `id` can be merged with those of another union instead of being
+    /// sorted again. See `Checker::add_in_order` for what that takes. It holds for good: it depends
+    /// on the members alone, and the merge step, where it sorts them again, sorts the same set. So
+    /// any task may note it at any time, in a published record too, and it is published with the
+    /// record. A union without the mark may be such a union as well: it is sorted the long way.
+    #[inline]
+    pub fn mark_sorted_run(&self, id: TypeId) {
+        let record = self.record(id);
+        if !record.is_sorted_run.load(Ordering::Relaxed) {
+            record.is_sorted_run.store(true, Ordering::Relaxed);
+        }
+    }
+
+    #[inline]
+    pub fn is_sorted_run(&self, id: TypeId) -> bool {
+        self.record(id).is_sorted_run.load(Ordering::Relaxed)
     }
 
     /// `Shape::has_no_instantiable_symbol` is part of the identity of a type only where it makes a
@@ -4036,7 +4208,7 @@ fn take<V>(own: &mut Own<V>, marks: &Bits, hashes: &[ContentHash]) -> Taken<V> {
 
 impl<'s> OwnStore<'s> {
     /// The number of records of each kind, in the order of `KINDS`.
-    fn lengths(&self) -> [usize; 5] {
+    pub(crate) fn lengths(&self) -> [usize; 5] {
         [
             self.atoms.records.len() as usize,
             self.components.records.len() as usize,

@@ -110,7 +110,7 @@ impl Checker<'_, '_> {
 
     /// `maybeTypeOfKind(t, TypeFlagsVoid)`
     fn maybe_void(&self, t: TypeId) -> bool {
-        self.maybe_type_of_kind(t, |_, t| t == TypeId::VOID)
+        self.maybe_type_of_kind(t, tf::VOID)
     }
 
     /// `checkFunctionOrMethodDeclaration`, `checkFunctionExpressionOrObjectLiteralMethod`: 8030 for

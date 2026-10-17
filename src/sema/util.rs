@@ -143,6 +143,11 @@ impl PositionSet {
         self.0[position / 64] |= 1 << (position % 64);
     }
 
+    #[inline]
+    pub(crate) fn contains(&self, position: usize) -> bool {
+        self.0[position / 64] >> (position % 64) & 1 != 0
+    }
+
     /// The words of the set without what is in `excluded`, each with its index.
     #[inline]
     fn words_except(

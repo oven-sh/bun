@@ -2893,7 +2893,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.rechecked_exprs = outside.rechecked_exprs;
         self.rechecked_members = outside.rechecked_members;
         self.mode_of_recheck = outside.mode_of_recheck;
-        let is_literal_of_contextual_type = self.maybe_type_of_kind(ty, Self::is_literal) && {
+        let is_literal_of_contextual_type = self.maybe_type_of_kind(ty, tf::LITERAL) && {
             let instantiated =
                 self.instantiate_contextual_type(contextual_type, file, e, ContextFlags::empty());
             self.is_literal_context(ty, instantiated)

@@ -9,11 +9,18 @@ use super::*;
 use crate::bind::{Decl, ScopeKind};
 use smallvec::{SmallVec, smallvec};
 
+#[path = "infer_memo.rs"]
+mod memo;
+pub(super) use memo::InferenceMemo;
+
 /// The members of a union or an intersection during iteration.
 pub(super) type Parts = SmallVec<[TypeId; 8]>;
 
 /// From this many pairs on, `Inference::visited` is searched through `Inference::visited_index`.
 const VISITED_INDEX_FROM: usize = 16;
+
+/// After this many calls of `infer_types`, a walk infers nothing more.
+const MOST_CALLS: u32 = 200_000;
 
 // InferencePriority. The lower the better.
 pub(super) const PRIORITY_NAKED: u32 = 1;
@@ -237,7 +244,16 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return;
         }
+        if !memo::ENABLED {
+            return self.infer_types(n, source, target);
+        }
+        if self.inference_memo.has_long_walk_to(target) {
+            return self.infer_types_with_memo(n, source, target);
+        }
         self.infer_types(n, source, target);
+        if n.calls >= memo::LONG_WALK {
+            self.inference_memo.note_long_walk_to(target);
+        }
     }
 
     /// `inferFromTypes`
@@ -259,7 +275,7 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         n.calls += 1;
-        if n.calls > 200_000 || self.is_stack_low() {
+        if n.calls > MOST_CALLS || self.is_stack_low() {
             return;
         }
         // Two instantiations of one alias: infer between the type arguments only. Without type arguments there is nothing to infer.
@@ -424,7 +440,7 @@ impl<'p, 's> Checker<'p, 's> {
             (_, TypeData::Keyof(t))
                 if source == TypeId::STRING
                     || self.is_boolean(source)
-                    || !source.is_never() && self.every_type(source, |c, m| c.is_unit(m)) =>
+                    || !source.is_never() && self.is_every_type_unit(source) =>
             {
                 let empty = self.empty_object_type_from_string_literal(source);
                 let saved = n.priority;
@@ -2476,9 +2492,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `maybeTypeOfKind(t, Primitive | Index | TemplateLiteral | StringMapping)`
     pub(super) fn may_be_primitive_or_key(&self, ty: TypeId) -> bool {
-        self.maybe_type_of_kind(ty, |c, t| {
-            matches!(c.data(t), TypeData::Keyof(_)) || c.is_primitive(t)
-        })
+        self.maybe_type_of_kind(ty, tf::PRIMITIVE | tf::INDEX)
     }
 
     /// `isTypeParameterAtTopLevel`
@@ -2957,14 +2971,33 @@ impl<'p, 's> Checker<'p, 's> {
     /// and for every type that the original does not look into. Inference to such a type finds no
     /// candidate, but resolves the parts of the source that it visits.
     pub(super) fn could_contain_type_variables(&self, ty: TypeId) -> bool {
-        if self.has_type_variables(ty) || self.is_instantiable(ty) {
+        let flags = self.flags(ty);
+        if self.has_type_variables(ty) || flags & tf::INSTANTIABLE != 0 {
             return true;
         }
-        if self.flags(ty) & (tf::OBJECT | tf::UNION_OR_INTERSECTION) == 0 {
+        if flags & (tf::OBJECT | tf::UNION_OR_INTERSECTION) == 0 {
             return false;
+        }
+        if !shortcuts::COULD_CONTAIN_TYPE_VARIABLES {
+            return self.could_contain_type_variables_by_table(ty);
         }
         // `ObjectFlagsCouldContainTypeVariablesComputed`. Types share their parts: without it a part is visited once for each
         // path to it, 2^n times in `type P1 = Pair<P0, P0>` .. `type Pn = Pair<Pn-1, Pn-1>`.
+        if let Some(known) = self.types().could_contain_type_variables(ty) {
+            if shortcuts::SHADOW && self.could_contain_type_variables_by_table(ty) != known {
+                self.fact_differs("couldContainTypeVariables", &[ty]);
+            }
+            return known;
+        }
+        // The worker reads the type, its mapper, its alias, and the flags and the declarations of symbols.
+        let could_contain = self.could_contain_type_variables_worker(ty);
+        (self.types()).set_could_contain_type_variables(ty, could_contain);
+        could_contain
+    }
+
+    /// The same for an object type, a union or an intersection without type variables, with the answers in a table of the
+    /// task.
+    fn could_contain_type_variables_by_table(&self, ty: TypeId) -> bool {
         if let Some(&known) = self.could_contain_type_variables.borrow().get(&ty) {
             return known;
         }

@@ -1030,7 +1030,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .fold(0, |all, &p| all | self.type_facts_worker(p, mask)),
             // `getIntersectionTypeFacts`: next to a primitive, object types are tags.
             TypeData::Intersection(parts) => {
-                let ignore_objects = self.maybe_type_of_kind(ty, Self::is_primitive);
+                let ignore_objects = self.maybe_type_of_kind(ty, tf::PRIMITIVE);
                 let (mut ored, mut anded) = (0, ALL);
                 for &p in parts.iter() {
                     if !(ignore_objects && self.is_object_type(p)) {
@@ -2553,7 +2553,7 @@ impl<'p, 's> Checker<'p, 's> {
         let name = access.name;
         let remove_nullable = self.p.files.options.strict_null_checks
             && (access.optional || access.non_null)
-            && self.maybe_type_of_kind(ty, |_, m| m.is_undefined() || m.is_null());
+            && self.maybe_type_of_kind(ty, tf::NULLABLE);
         let base = if remove_nullable {
             self.type_with_facts(ty, facts::NE_UNDEFINED_OR_NULL)
         } else {
@@ -3251,7 +3251,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let discriminant = self.type_of_property(m, name)?;
             // `isLiteralType`
-            if !self.every_type(discriminant, |c, d| c.is_unit(d)) {
+            if !self.is_every_type_unit(discriminant) {
                 return None;
             }
             let mut is_duplicate = false;
@@ -3499,25 +3499,15 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `replacePrimitivesWithLiterals`: `string` that compared equal to `"a"` becomes `"a"`.
     fn replace_primitives_with_literals(&mut self, ty: TypeId, literals: TypeId) -> TypeId {
-        fn is_pattern(c: &Checker<'_, '_>, t: TypeId) -> bool {
-            matches!(
-                c.data(t),
-                TypeData::Template { .. } | TypeData::StringMapping { .. }
-            )
-        }
-        let has_primitives = self.maybe_type_of_kind(ty, |c, t| {
-            matches!(t, TypeId::STRING | TypeId::NUMBER | TypeId::BIGINT)
-                || matches!(c.data(t), TypeData::Template { .. })
-        });
-        if !has_primitives
-            || !self.maybe_type_of_kind(literals, |c, t| {
-                c.is_literal(t) && !c.is_boolean_like(t) || is_pattern(c, t)
-            })
+        let pattern = tf::TEMPLATE_LITERAL | tf::STRING_MAPPING;
+        let primitives = tf::STRING | tf::NUMBER | tf::BIGINT | tf::TEMPLATE_LITERAL;
+        let replacements = tf::STRING_LITERAL | tf::NUMBER_LITERAL | tf::BIGINT_LITERAL | pattern;
+        if !self.maybe_type_of_kind(ty, primitives)
+            || !self.maybe_type_of_kind(literals, replacements)
         {
             return ty;
         }
-        let has_wide_strings =
-            self.maybe_type_of_kind(literals, |c, t| t == TypeId::STRING || is_pattern(c, t));
+        let has_wide_strings = self.maybe_type_of_kind(literals, tf::STRING | pattern);
         self.map_type(ty, |c, m| {
             if m == TypeId::STRING {
                 c.filter(literals, |k, x| k.is_string_like(x))
@@ -3865,7 +3855,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // Otherwise, the generic members that may turn out to be a candidate once instantiated.
             c.map_type(ty, |c, t| {
-                if c.maybe_type_of_kind(t, Self::is_instantiable) {
+                if c.maybe_type_of_kind(t, tf::INSTANTIABLE) {
                     let related = match c.base_constraint_of(t) {
                         None => true,
                         Some(constraint) if check_derived => c.is_type_derived_from(n, constraint),
@@ -4623,7 +4613,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let constraint = self.base_constraint(ty);
-        !self.maybe_type_of_kind(constraint, |_, m| m.is_undefined() || m.is_null())
+        !self.maybe_type_of_kind(constraint, tf::NULLABLE)
     }
 
     /// `isConstraintPosition`: whether `e` is in a position where the constraint of its type is
@@ -8304,7 +8294,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let ty = self.base_constraint_of(ty).unwrap_or(ty);
         // `isLiteralType`
-        if !self.every_type(ty, |c, m| c.is_unit(m)) {
+        if !self.is_every_type_unit(ty) {
             return Some(false);
         }
         let switch_types = self.get_switch_clause_types(file, stmt);

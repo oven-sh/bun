@@ -1940,19 +1940,33 @@ impl<'p, 's> Checker<'p, 's> {
             _ => {
                 self.is_deferred(ty) && {
                     let constraint = self.base_constraint(ty);
-                    self.maybe_type_of_kind(constraint, Self::is_string_like)
+                    self.maybe_type_of_kind(constraint, tf::STRING_LIKE)
                 }
             }
         }
     }
 
-    /// `maybeTypeOfKind`: whether `ty` is of the kind, or a member of it if it is a union or an intersection.
-    pub(super) fn maybe_type_of_kind(&self, ty: TypeId, kind: fn(&Self, TypeId) -> bool) -> bool {
+    /// `maybeTypeOfKind`: whether `ty` has one of the flags `kind`, or a member of it if it is a union or an intersection.
+    /// The flags of a union itself, such as `boolean`, do not count.
+    #[inline]
+    pub(super) fn maybe_type_of_kind(&self, ty: TypeId, kind: u32) -> bool {
+        if !shortcuts::MEMBER_FLAGS {
+            return self.has_member_of_kind(ty, kind);
+        }
+        let maybe = self.types().member_flags(ty) & kind != 0;
+        if shortcuts::SHADOW && maybe != self.has_member_of_kind(ty, kind) {
+            self.fact_differs("maybeTypeOfKind", &[ty]);
+        }
+        maybe
+    }
+
+    /// `maybe_type_of_kind`, member by member.
+    fn has_member_of_kind(&self, ty: TypeId, kind: u32) -> bool {
         match self.data(ty) {
             TypeData::Union(parts) | TypeData::Intersection(parts) => {
-                parts.iter().any(|&p| self.maybe_type_of_kind(p, kind))
+                parts.iter().any(|&p| self.has_member_of_kind(p, kind))
             }
-            _ => kind(self, ty),
+            _ => self.flags(ty) & kind != 0,
         }
     }
 
@@ -1960,7 +1974,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn maybe_type_of_kind_considering_base_constraint(
         &mut self,
         ty: TypeId,
-        kind: fn(&Self, TypeId) -> bool,
+        kind: u32,
     ) -> bool {
         self.maybe_type_of_kind(ty, kind)
             || self
@@ -5274,7 +5288,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     _ => {
                         self.check_non_null_type(file, operand, ty);
-                        let (is_symbol, is_bigint) = (Self::is_symbol_like, Self::is_bigint_like);
+                        let (is_symbol, is_bigint) = (tf::ES_SYMBOL_LIKE, tf::BIGINT_LIKE);
                         if self.maybe_type_of_kind_considering_base_constraint(ty, is_symbol) {
                             let operator = match op {
                                 UnOp::Plus => "+",
@@ -5312,10 +5326,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getUnaryResultType`
     fn unary_result_type(&mut self, operand: TypeId) -> TypeId {
-        if !self.maybe_type_of_kind(operand, Self::is_bigint_like) {
+        if !self.maybe_type_of_kind(operand, tf::BIGINT_LIKE) {
             return TypeId::NUMBER;
         }
-        if self.maybe_type_of_kind(operand, Self::is_number_like) {
+        if self.maybe_type_of_kind(operand, tf::NUMBER_LIKE) {
             self.union(&[TypeId::NUMBER, TypeId::BIGINT])
         } else {
             TypeId::BIGINT
@@ -5576,8 +5590,8 @@ impl<'p, 's> Checker<'p, 's> {
                 let right_ok = self.check_arithmetic_operand_type(file, right, r, 2363, true);
                 let any_or_unknown = |c: &Self, t: TypeId| c.is_any(t) || t == TypeId::UNKNOWN;
                 let result = if any_or_unknown(self, l) && any_or_unknown(self, r)
-                    || !self.maybe_type_of_kind(l, Self::is_bigint_like)
-                        && !self.maybe_type_of_kind(r, Self::is_bigint_like)
+                    || !self.maybe_type_of_kind(l, tf::BIGINT_LIKE)
+                        && !self.maybe_type_of_kind(r, tf::BIGINT_LIKE)
                 {
                     TypeId::NUMBER
                 } else if both_are_bigint_like(self, l, r) {

@@ -1031,26 +1031,56 @@ impl<'p, 's> Checker<'p, 's> {
         if context.is_never() {
             return Some(context);
         }
+        let parts = self.parts(context);
+        let asked = match shortcuts::CONTEXTUAL_UNIONS {
+            true => self.members_to_ask_as_context(context, name),
+            false => None,
+        };
         let mut types = Parts::new();
-        for &part in self.parts(context) {
-            let found = if self.is_intersection(part) {
-                self.contextual_property_of_intersection(part, name, name_type)
-            } else if !self.is_object_type(part) {
-                None
-            } else if self.is_generic_mapped_without_remapping(part) {
-                self.contextual_property_of_generic_mapped(part, name, name_type)
-            } else {
-                match self.concrete_contextual_property(part, name) {
-                    Some(declared) => Some(declared),
-                    None => self.contextual_type_from_index_infos(part, name, name_type),
+        match &asked {
+            Some(asked) if !shortcuts::SHADOW => {
+                for at in asked.iter() {
+                    types.extend(self.contextual_property_of_member(parts[at], name, name_type));
                 }
-            };
-            types.extend(found);
+            }
+            _ => {
+                for (at, &part) in parts.iter().enumerate() {
+                    let is_left_out = asked.as_ref().is_some_and(|asked| !asked.contains(at));
+                    let before = is_left_out.then(|| self.traces());
+                    let found = self.contextual_property_of_member(part, name, name_type);
+                    if is_left_out && (found.is_some() || before != Some(self.traces())) {
+                        let fact = "a member of a contextual union has no such property";
+                        self.fact_differs_for(fact, &[part, context]);
+                    }
+                    types.extend(found);
+                }
+            }
         }
         if types.is_empty() {
             None
         } else {
             Some(self.union_unreduced(&types))
+        }
+    }
+
+    /// The callback of `mapTypeEx` in `getTypeOfPropertyOfContextualTypeEx`.
+    fn contextual_property_of_member(
+        &mut self,
+        part: TypeId,
+        name: Atom,
+        name_type: Option<TypeId>,
+    ) -> Option<TypeId> {
+        if self.is_intersection(part) {
+            self.contextual_property_of_intersection(part, name, name_type)
+        } else if !self.is_object_type(part) {
+            None
+        } else if self.is_generic_mapped_without_remapping(part) {
+            self.contextual_property_of_generic_mapped(part, name, name_type)
+        } else {
+            match self.concrete_contextual_property(part, name) {
+                Some(declared) => Some(declared),
+                None => self.contextual_type_from_index_infos(part, name, name_type),
+            }
         }
     }
 
@@ -1284,7 +1314,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // A type parameter is not cloned with the signature it belongs to: the outer type arguments
         // of the signature are not applied to its constraint.
-        let sig = if self.maybe_type_of_kind(instantiated, Self::is_deferred) {
+        let is_deferred = tf::INSTANTIABLE_NON_PRIMITIVE | tf::INDEX;
+        let sig = if self.maybe_type_of_kind(instantiated, is_deferred) {
             self.get_inference_context(file, e)
                 .and_then(|level| self.inference_contexts[level].context.as_ref()?.sig)
         } else {
@@ -1344,7 +1375,7 @@ impl<'p, 's> Checker<'p, 's> {
         context_flags: ContextFlags,
     ) -> TypeId {
         if self.inference_contexts.is_empty()
-            || !self.maybe_type_of_kind(contextual_type, Self::is_instantiable)
+            || !self.maybe_type_of_kind(contextual_type, tf::INSTANTIABLE)
         {
             return contextual_type;
         }

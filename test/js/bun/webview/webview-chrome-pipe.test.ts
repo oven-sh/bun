@@ -11,6 +11,7 @@
 // { resolved } or { rejected: message }.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const fixture = join(import.meta.dir, "fake-chrome-fixture.ts");
@@ -38,10 +39,10 @@ const prelude = /* js */ `
   const big = ${BIG};
 `;
 
-async function runScenario(body: string): Promise<unknown> {
+async function runScenario(body: string, env: Record<string, string> = {}): Promise<unknown> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", prelude + body],
-    env: bunEnv,
+    env: { ...bunEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -387,6 +388,148 @@ test.concurrent("bun test --isolate retires the transport with the file that spa
   expect(stderr).toContain(" 2 pass");
   expect(exitCode).toBe(0);
 });
+
+// Without `dataStore.directory` the runtime makes a `--user-data-dir` under
+// the temp dir (BUN_TMPDIR here) for the browser it spawns. That directory
+// goes with the browser: when the browser is gone while bun keeps running
+// (`closeAll()`, a crash, `bun test --isolate` moving on), and at process exit
+// for a browser still up then (the usual case: `close()` leaves it running).
+const profileDirs = (dir: string) => readdirSync(dir).filter(name => name.endsWith(".bun-chrome"));
+
+// Runs in the scenario: the profile directories under BUN_TMPDIR, and a wait for there to be none.
+const profileProbe = /* js */ `
+  import { readdirSync } from "node:fs";
+  const profileDirs = () => readdirSync(process.env.BUN_TMPDIR).filter(name => name.endsWith(".bun-chrome"));
+  const untilNoProfileDirs = async () => {
+    for (const deadline = Date.now() + 10_000; profileDirs().length && Date.now() < deadline; ) await Bun.sleep(10);
+    return profileDirs();
+  };
+`;
+
+test.concurrent("the temporary profile directory is deleted at process exit", async () => {
+  using tmp = tempDir("webview-chrome-profile", {});
+  const result = await runScenario(
+    profileProbe +
+      `
+    const view = newView();
+    await view.navigate("http://fake/");
+    print({ whileRunning: profileDirs().length });
+    view.close();
+  `,
+    { BUN_TMPDIR: String(tmp) },
+  );
+  expect({ result, afterExit: profileDirs(String(tmp)) }).toEqual({
+    result: { whileRunning: 1 },
+    afterExit: [],
+  });
+});
+
+test.concurrent("the temporary profile directory is deleted once its browser is reaped", async () => {
+  using tmp = tempDir("webview-chrome-profile", {});
+  const result = await runScenario(
+    profileProbe +
+      `
+    const view = newView();
+    await view.navigate("http://fake/");
+    const whileRunning = profileDirs().length;
+    Bun.WebView.closeAll();
+    const afterCloseAll = await untilNoProfileDirs();
+    // The next browser gets a directory of its own.
+    const again = newView();
+    await again.navigate("http://fake/");
+    const whileRunningAgain = profileDirs().length;
+    await outcome(again.evaluate("__fake_exit(0)"));
+    const afterCrash = await untilNoProfileDirs();
+    print({ whileRunning, afterCloseAll, whileRunningAgain, afterCrash });
+  `,
+    { BUN_TMPDIR: String(tmp) },
+  );
+  expect({ result, afterExit: profileDirs(String(tmp)) }).toEqual({
+    result: { whileRunning: 1, afterCloseAll: [], whileRunningAgain: 1, afterCrash: [] },
+    afterExit: [],
+  });
+});
+
+// A real browser's helper processes outlive the browser process by a moment
+// and write to the profile on their way out (the network service flushes its
+// cache index). The fake's `--helper` does the same, so the directory only
+// stays gone if the helper is taken down with the browser.
+test.skipIf(isWindows)("a helper that outlives the browser cannot bring the profile directory back", async () => {
+  using tmp = tempDir("webview-chrome-profile", {});
+  const result = await runScenario(
+    profileProbe +
+      `
+    backend.argv.push("--helper");
+    const view = newView();
+    await view.navigate("http://fake/");
+    print({ whileRunning: profileDirs().length });
+    view.close();
+  `,
+    { BUN_TMPDIR: String(tmp) },
+  );
+  expect({ result, afterExit: profileDirs(String(tmp)) }).toEqual({
+    result: { whileRunning: 1 },
+    afterExit: [],
+  });
+});
+
+test.concurrent("a --user-data-dir in backend.argv is the browser's only profile directory", async () => {
+  using tmp = tempDir("webview-chrome-profile", { "profile/.keep": "" });
+  const userDir = join(String(tmp), "profile");
+  const result = await runScenario(
+    profileProbe +
+      `
+    backend.argv.push("--user-data-dir=" + ${JSON.stringify(userDir)});
+    const view = newView();
+    await view.navigate("http://fake/");
+    const flags = await view.evaluate("process.argv.filter(a => a.startsWith('--user-data-dir'))");
+    print({ flags, whileRunning: profileDirs().length });
+    view.close();
+  `,
+    { BUN_TMPDIR: String(tmp) },
+  );
+  expect({ result, afterExit: profileDirs(String(tmp)), userDirKept: existsSync(join(userDir, "Local State")) }).toEqual({
+    result: { flags: ["--user-data-dir=" + userDir], whileRunning: 0 },
+    afterExit: [],
+    userDirKept: true,
+  });
+});
+
+// `bun test --isolate` retires each file's browser as the file finishes, so
+// its profile directory goes at that point, or at exit if the run ends first.
+// `--parallel` (which implies --isolate) ends each worker right after it
+// retires its last file's browser.
+for (const flags of [["--isolate"], ["--parallel=2"]]) {
+  test.concurrent(`bun test ${flags.join(" ")} leaves no profile directory behind`, async () => {
+    const file = /* js */ `
+      import { test } from "bun:test";
+      const backend = {
+        type: "chrome",
+        url: false,
+        path: ${JSON.stringify(bunExe())},
+        argv: [${JSON.stringify(fixture)}, "--exit-delay=20000"],
+        stderr: "inherit",
+      };
+      test("opens a view", async () => {
+        const view = new Bun.WebView({ backend, width: 100, height: 100 });
+        await view.navigate("http://fake/" + import.meta.file);
+      });
+    `;
+    using dir = tempDir("webview-isolate-profile", { "a.test.ts": file, "b.test.ts": file, "tmp/.keep": "" });
+    const tmp = join(String(dir), "tmp");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...flags, "a.test.ts", "b.test.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_TMPDIR: tmp },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 2 pass");
+    expect(profileDirs(tmp)).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+}
 
 // On POSIX fd 3 and fd 4 are one socket, so losing a single direction is not
 // a state that exists there; on Windows they are two pipes with two failure

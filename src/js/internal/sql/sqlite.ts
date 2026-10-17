@@ -138,9 +138,16 @@ class SQLiteAdapter
       this.db = new Database(
         filename,
         // Read-only wins over `create` and `readwrite`. Else a file that is not there is made, unless `create` is false.
-        readonly
-          ? { readonly: true, safeIntegers, strict }
-          : { readwrite: true, create: create !== false, safeIntegers, strict },
+        // It inherits nothing: bun:sqlite looks for more names than these.
+        (readonly
+          ? { __proto__: null, readonly: true, safeIntegers, strict }
+          : {
+              __proto__: null,
+              readwrite: true,
+              create: create !== false,
+              safeIntegers,
+              strict,
+            }) as unknown as BunSQLiteModule.DatabaseOptions,
       );
     } catch (err) {
       // A mistake in the options, not a database that cannot be opened: `new SQL()` throws it.

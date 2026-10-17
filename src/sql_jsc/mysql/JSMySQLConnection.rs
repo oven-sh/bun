@@ -737,6 +737,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
             return;
         }
         if !this.connection_mut().do_handshake(success, ssl_error) {
+            // The socket was closed under the handshake: usockets has no verdict then, and this is no verification error.
+            if ssl_error.reason_bytes().is_empty() {
+                return this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
+            }
             let v = crate::jsc::verify_error_to_js(&ssl_error, &this.global_object);
             return this.fail_with_js_value(v);
         }

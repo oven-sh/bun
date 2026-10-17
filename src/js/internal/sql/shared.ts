@@ -607,6 +607,8 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> exte
 
   isConnected(): boolean;
   get closed(): boolean;
+  /** close({ timeout: 0 }) was called: the caller gave up on what is queued. */
+  readonly closedAtOnce?: boolean;
 
   readonly supportsReservedConnections: boolean;
   /** `true`: `onConnected` was still queued and will never run. */

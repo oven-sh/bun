@@ -84,11 +84,6 @@ pub(crate) fn write_text<Context: WriterContext>(
         return writer.write(b"Invalid Date");
     };
     let iso = &mut buf[..len];
-    if tag.is_json() {
-        writer.write(b"\"")?;
-        writer.write(iso)?;
-        return writer.write(b"\"");
-    }
     // Their input functions reject the `T`.
     if matches!(tag, Tag::time | Tag::timetz) {
         if let Some(t) = bun_core::strings::index_of_char_usize(iso, b'T') {

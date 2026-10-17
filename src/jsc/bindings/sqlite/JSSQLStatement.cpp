@@ -166,6 +166,7 @@ static constexpr int MAX_SQLITE_PREPARE_FLAG = SQLITE_PREPARE_PERSISTENT | SQLIT
     CHECK_NOT_BUSY(castedThis->version_db)
 
 namespace WebCore {
+class JSSQLDatabase;
 class JSSQLStatement;
 static ASCIILiteral finalizedMessage(const JSSQLStatement* statement);
 }
@@ -195,6 +196,12 @@ public:
     // SQLite is calling script of the user from inside a statement of this connection. To reset or finalize that
     // statement now, or to close the connection, frees what SQLite returns to. So every call on the connection throws.
     bool inCallback = false;
+    // What calls SQLite is not a call of the user's on a live object: a destructor (perhaps in the middle of a collection),
+    // the end of the thread, a graph that is disposed. The cells can be garbage, so no callback touches one, or the VM.
+    // sqlite3_finalize() commits a write statement that was left on a row, and a full-text index writes its tables then.
+    bool scriptForbidden = false;
+    // For the update hook, where script is not forbidden. Null once the cell is destroyed.
+    WebCore::JSSQLDatabase* cell = nullptr;
 
     sqlite3* handle() const { return closed ? nullptr : db; }
 
@@ -246,6 +253,7 @@ VersionSqlite3::~VersionSqlite3()
         live[liveIndex] = last;
         last->liveIndex = liveIndex;
     }
+    scriptForbidden = true;
     closeHandle();
 }
 
@@ -270,8 +278,11 @@ extern "C" void Bun__closeAllSQLiteDatabasesForTermination(JSC::JSGlobalObject* 
         if (record->inCallback)
             record->abandonStatements();
         else if (record->db) {
+            WTF::SetForScope forbidScript { record->scriptForbidden, true };
             Bun__sqliteCheckpointForTermination(record->db);
-            record->closeHandle();
+            // A write statement that was left on a row holds its transaction open, with all that the connection
+            // wrote since. To finalize it commits them, and on the main thread no destructor will.
+            record->close(true);
         }
     }
 }
@@ -286,8 +297,10 @@ extern "C" void Bun__closeSQLiteDatabasesOfGraphContext(WebCore::ScriptExecution
         if (record->graphContext == graphContext && record->db && !record->inCallback)
             owned.append(*record);
     }
-    for (auto& record : owned)
+    for (auto& record : owned) {
+        WTF::SetForScope forbidScript { record->scriptForbidden, true };
         record->close(true);
+    }
 }
 
 namespace WebCore {
@@ -456,6 +469,7 @@ public:
         return ptr;
     }
     static void destroy(JSC::JSCell* cell) { static_cast<JSSQLDatabase*>(cell)->~JSSQLDatabase(); }
+    ~JSSQLDatabase() { m_record->cell = nullptr; }
     template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         return WebCore::subspaceForImpl<JSSQLDatabase, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSSQLDatabase, m_subspaceForJSSQLDatabase));
@@ -492,6 +506,7 @@ private:
         : Base(vm, structure)
         , m_record(WTF::move(record))
     {
+        m_record->cell = this;
     }
 
     const Ref<VersionSqlite3> m_record;
@@ -1698,6 +1713,8 @@ struct SQLiteCallbacks {
             throwTypeError(globalObject, scope, makeString("User-defined function "_s, name, "() returned an invalid value"_s));
     }
 
+    bool scriptForbidden() const { return connection->scriptForbidden; }
+
     struct CallbackScope : WTF::SetForScope<bool> {
         explicit CallbackScope(const SQLiteCallbacks& callbacks)
             : SetForScope(callbacks.connection->inCallback, true)
@@ -1779,10 +1796,15 @@ static std::optional<unsigned> updateHookIndex(int operation)
     }
 }
 
-// What runs the statement (a JSSQLStatement, db.run()) keeps the cell alive.
-static void callUpdateHook(void* cell, int operation, const char* schema, const char* table, sqlite3_int64 rowid)
+static void callUpdateHook(void* record, int operation, const char* schema, const char* table, sqlite3_int64 rowid)
 {
-    auto* database = static_cast<JSSQLDatabase*>(cell);
+    auto* connection = static_cast<VersionSqlite3*>(record);
+    if (connection->scriptForbidden) [[unlikely]]
+        return;
+    // What runs the statement (a JSSQLStatement, db.run()) keeps the cell alive.
+    auto* database = connection->cell;
+    if (!database) [[unlikely]]
+        return;
     auto index = updateHookIndex(operation);
     JSObject* hook = index ? database->m_updateHooks[*index].get() : nullptr;
     if (!hook)
@@ -1801,7 +1823,7 @@ static void callUpdateHook(void* cell, int operation, const char* schema, const 
     arguments.append(database->m_safeIntegers ? JSBigInt::createFrom(globalObject, static_cast<int64_t>(rowid)) : jsNumber(static_cast<int64_t>(rowid)));
     arguments.append(jsString(vm, Bun::sqliteText(schema)));
 
-    WTF::SetForScope inCallback { database->record().inCallback, true };
+    WTF::SetForScope inCallback { connection->inCallback, true };
     if (!scope.exception()) [[likely]]
         JSC::call(globalObject, hook, JSC::getCallData(hook), wrapper, arguments);
     // SQLite goes on with the statement whatever happens here.
@@ -1866,7 +1888,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetUpdateHookFunction, (JSC::JSGlobalObje
     const bool hasHook = hooks[0] || hooks[1] || hooks[2];
     database->m_wrapper.setMayBeNull(vm, database, hasHook ? callFrame->argument(3).getObject() : nullptr);
     database->m_safeIntegers = callFrame->argument(4).isInt32() && (callFrame->argument(4).asInt32() & kSafeIntegersFlag);
-    sqlite3_update_hook(db, hasHook ? callUpdateHook : nullptr, database);
+    sqlite3_update_hook(db, hasHook ? callUpdateHook : nullptr, &database->record());
     return JSValue::encode(jsUndefined());
 }
 
@@ -2141,13 +2163,8 @@ static JSC::EncodedJSValue collectRows(JSC::JSGlobalObject* lexicalGlobalObject,
             return {};
         }
 
-        // An indexed setter on Array.prototype runs script here, which can finalize the statement.
-        rows->push(lexicalGlobalObject, row);
-        if (castedThis->stmt != stmt) [[unlikely]] {
-            if (!scope.exception())
-                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, finalizedMessage(castedThis)));
-            return {};
-        }
+        // Not push(): an indexed setter on a prototype would get the row in place of the array, and the array as `this`.
+        rows->putDirectIndex(lexicalGlobalObject, rows->length(), row);
         if (scope.exception()) [[unlikely]] {
             sqlite3_reset(stmt);
             return {};
@@ -2576,9 +2593,10 @@ void JSSQLStatement::finishCreation(VM& vm)
 
 JSSQLStatement::~JSSQLStatement()
 {
-    if (this->version_db) {
-        this->version_db->statements.remove(this);
-    }
+    if (!version_db)
+        return;
+    version_db->statements.remove(this);
+    WTF::SetForScope forbidScript { version_db->scriptForbidden, true };
     finalizeStatement();
 }
 
@@ -2633,12 +2651,18 @@ JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject)
 
 int VersionSqlite3::close(bool force)
 {
+    // sqlite3_finalize() can call a hook or an aggregate's xFinal. A collection in that script runs the destructors
+    // of other statements, which leave `statements`: one that is no longer in it is gone.
+    Vector<WebCore::JSSQLStatement*> toFinalize;
     for (auto* statement : statements) {
-        if (!statement->stmt || !(force || statement->ownedByDatabase))
+        if (statement->stmt && (force || statement->ownedByDatabase))
+            toFinalize.append(statement);
+    }
+    for (auto* statement : toFinalize) {
+        if (!statements.remove(statement))
             continue;
-        sqlite3_finalize(statement->stmt);
-        statement->stmt = nullptr;
         statement->finalizedByClose = true;
+        sqlite3_finalize(std::exchange(statement->stmt, nullptr));
     }
     closed = true;
     if (!force) {

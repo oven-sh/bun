@@ -980,7 +980,11 @@ impl Expect {
                 js_promise::Unwrapped::Rejected(rejected) => {
                     Ok((Some(rejected.to_error().unwrap_or(rejected)), return_value_from_function))
                 }
-                js_promise::Unwrapped::Pending => Err(Pass::wait_for(global_this, promise)),
+                // A Promise subclass can start its work in `then()`, as a `Bun.sql` query does.
+                js_promise::Unwrapped::Pending => {
+                    let awaited = Self::promise_to_await(global_this, return_value)?.unwrap_or(promise);
+                    Err(Pass::wait_for(global_this, awaited))
+                }
             };
         }
 

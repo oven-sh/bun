@@ -1843,7 +1843,9 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
             expect(inComment.stdout).not.toContain(it.needy);
             expect(inComment.stderr).toContain(warning(it.needy));
             expect(inComment.exitCode).toBe(flags.includes("--allow-unsupported") ? 1 : 2);
-            const printed = (it: typeof inConfig) => [it.stdout, withoutTimes(it.stderr), it.exitCode];
+            // `-f json` prints absolute paths, and each project has its own temporary directory.
+            const withoutDir = (text: string) => text.replaceAll(/bun-lint-js-parsers_\w+/g, "<dir>");
+            const printed = (it: typeof inConfig) => [withoutDir(it.stdout), withoutTimes(it.stderr), it.exitCode];
             expect(printed(inComment)).toEqual(printed(inConfig));
           },
         );

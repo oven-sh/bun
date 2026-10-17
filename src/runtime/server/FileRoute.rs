@@ -36,7 +36,6 @@ pub(crate) struct FileRoute {
     // event loop.
     stat_hash: Cell<StatHash>,
     has_last_modified_header: bool,
-    has_content_length_header: bool,
     has_content_range_header: bool,
     has_date_header: bool,
 }
@@ -49,9 +48,13 @@ pub(crate) struct InitOptions<'a> {
 
 use crate::webcore::headers_ref::blob_content_type;
 
-#[inline]
+/// The route frames the body from the file size on each request.
 fn headers_from(fetch_headers: Option<&FetchHeaders>, blob: &Blob) -> Headers {
-    bun_http_jsc::headers_jsc::from_fetch_headers(fetch_headers, blob_content_type(blob))
+    let mut headers =
+        bun_http_jsc::headers_jsc::from_fetch_headers(fetch_headers, blob_content_type(blob));
+    headers.remove(b"transfer-encoding");
+    headers.remove(b"content-length");
+    headers
 }
 
 #[inline]
@@ -114,7 +117,6 @@ impl FileRoute {
             ref_count: Cell::new(1),
             server: Cell::new(server),
             has_last_modified_header: headers.get(b"last-modified").is_some(),
-            has_content_length_header: headers.get(b"content-length").is_some(),
             has_content_range_header: headers.get(b"content-range").is_some(),
             has_date_header: headers.get(b"date").is_some(),
             blob,
@@ -218,10 +220,6 @@ impl FileRoute {
                 resp.write_header(b"last-modified", last_modified);
             }
             self.stat_hash.set(sh);
-        }
-
-        if self.has_content_length_header {
-            resp.mark_wrote_content_length_header();
         }
     }
 

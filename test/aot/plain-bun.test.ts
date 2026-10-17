@@ -25,8 +25,14 @@ test.failing(
   "Array.prototype.sort writes every sorted item back although the comparator has changed the array in its last comparison",
   async () => {
     const program = "arrays/sort-write-back-after-mutation";
-    const correct = { stdout: readFileSync(join(import.meta.dir, "programs", program + ".expected.txt"), "utf8"), exitCode: 0 };
-    const runs = await Promise.all([plain(program, { BUN_JSC_useConcurrentJIT: "0" }), ...Array.from({ length: 10 }, () => plain(program))]);
+    const correct = {
+      stdout: readFileSync(join(import.meta.dir, "programs", program + ".expected.txt"), "utf8"),
+      exitCode: 0,
+    };
+    const runs = await Promise.all([
+      plain(program, { BUN_JSC_useConcurrentJIT: "0" }),
+      ...Array.from({ length: 10 }, () => plain(program)),
+    ]);
     for (const run of runs) expect(run).toEqual(correct);
   },
   120_000,

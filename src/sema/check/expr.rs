@@ -1214,7 +1214,9 @@ impl<'p, 's> Checker<'p, 's> {
                 let printed = self.apparent_type_of_intersection(apparent);
                 self.error_at(node, 2542, &[Arg::Type(printed)]);
             }
-            if self.check_options(file).no_property_access_from_index_signature
+            if self
+                .check_options(file)
+                .no_property_access_from_index_signature
                 && !self.is_restricted_to_fixed_set(file)
                 && !bound.is_in_type_query(e)
             {
@@ -1480,7 +1482,12 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let (obj, index, chain, written) = match hir[e].kind {
             ExprKind::Index { obj, index, chain } => (obj, index, chain, None),
-            ExprKind::Dot { obj, name, name_pos, chain } => (obj, ExprId::NONE, chain, Some((name, name_pos))),
+            ExprKind::Dot {
+                obj,
+                name,
+                name_pos,
+                chain,
+            } => (obj, ExprId::NONE, chain, Some((name, name_pos))),
             _ => return (TypeId::UNRESOLVED, false),
         };
         let (object, stops) = self.chain_receiver(file, obj, chain);
@@ -1503,7 +1510,10 @@ impl<'p, 's> Checker<'p, 's> {
             return (receiver, stops);
         }
         // A `const` enum can only be indexed by a string literal.
-        if written.is_none() && !is_string_literal_like(hir, index) && self.is_const_enum_object(receiver) {
+        if written.is_none()
+            && !is_string_literal_like(hir, index)
+            && self.is_const_enum_object(receiver)
+        {
             if !hir.has_errors {
                 self.error_at(self.span_of_parenthesized_expr(file, index), 2476, &[]);
             }
@@ -1572,7 +1582,11 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let index_expression = match written {
             Some((_, name_pos)) => (file, name_pos, hir[e].end - 1),
-            None => (file, self.start_of(file, index), self.end_of_expr(file, index)),
+            None => (
+                file,
+                self.start_of(file, index),
+                self.end_of_expr(file, index),
+            ),
         };
         (
             self.get_flow_type_of_access_expression(
@@ -1623,7 +1637,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn type_of_link(&mut self, file: FileId, e: ExprId) -> (TypeId, bool) {
         let hir = self.hir(file);
         match hir[e].kind {
-            ExprKind::Dot { name_pos, .. } if !is_bracket_access(hir, name_pos) => self.type_of_property_access(file, e),
+            ExprKind::Dot { name_pos, .. } if !is_bracket_access(hir, name_pos) => {
+                self.type_of_property_access(file, e)
+            }
             ExprKind::Dot { .. } | ExprKind::Index { .. } => {
                 let (ty, stops) = self.type_of_element_access_unchecked(file, e);
                 // Its source position is only computed when there is something to check.
@@ -1640,7 +1656,10 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Call(_) if self.required_builtin_module(file, e).is_some() => {
                 let required = self.required_builtin_module(file, e).unwrap_or(file);
                 let module = self.files().file_symbol(required);
-                let value = self.files().module_export(module, known::default).unwrap_or_else(|| self.files().module_value(module));
+                let value = self
+                    .files()
+                    .module_export(module, known::default)
+                    .unwrap_or_else(|| self.files().module_value(module));
                 (self.type_of_symbol(value), false)
             }
             // `checkCallExpression`: the type of a `require` call is the module.
@@ -2060,7 +2079,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// program itself.
     pub(super) fn is_commonjs_require(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
-        if !hir.is_js && !hir.is_annotated_javascript() || crate::bind::required_specifier(hir, e).is_none() {
+        if !hir.is_js && !hir.is_annotated_javascript()
+            || crate::bind::required_specifier(hir, e).is_none()
+        {
             return false;
         }
         let ExprKind::Call(c) = hir[e].kind else {
@@ -2097,20 +2118,45 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The entity that creates the JSX element `element` with the classic runtime (`getJsxFactoryEntity`, or `getJsxFragmentFactoryEntity`
     /// for the tag of a fragment), as its identifiers from left to right, and what the first of them refers to where the element is.
-    pub fn classic_jsx_factory(&self, file: FileId, element: ExprId, is_fragment_tag: bool) -> (Vec<Atom>, Option<Sym>) {
-        let entity = super::errors_jsx::classic_jsx_entity(self.files(), self.atoms(), self.hir(file), is_fragment_tag);
+    pub fn classic_jsx_factory(
+        &self,
+        file: FileId,
+        element: ExprId,
+        is_fragment_tag: bool,
+    ) -> (Vec<Atom>, Option<Sym>) {
+        let entity = super::errors_jsx::classic_jsx_entity(
+            self.files(),
+            self.atoms(),
+            self.hir(file),
+            is_fragment_tag,
+        );
         let scope = match self.bound(file).expr_scope.get(&element) {
             Some(&scope) => scope,
             None => self.enclosing_scope_of_expr(file, element),
         };
-        let found = self.files().resolve_name(file, scope, entity[0], SymFlags::VALUE);
+        let found = self
+            .files()
+            .resolve_name(file, scope, entity[0], SymFlags::VALUE);
         (entity, found)
     }
 
-    pub fn value_named_at(&self, file: FileId, class: crate::hir::ClassId, name: Atom) -> Option<Sym> {
-        let scope = super::enclosing_declaration::or_file_scope(self.bound(file).class_scope[class.idx()]);
+    pub fn value_named_at(
+        &self,
+        file: FileId,
+        class: crate::hir::ClassId,
+        name: Atom,
+    ) -> Option<Sym> {
+        let scope =
+            super::enclosing_declaration::or_file_scope(self.bound(file).class_scope[class.idx()]);
         let files = self.files();
-        files.resolve_name(file, scope, name, SymFlags::VALUE).filter(|&found| files.means(found, SymFlags::VALUE) && files.type_only_alias_declaration_ex(found, SymFlags::VALUE).is_none())
+        files
+            .resolve_name(file, scope, name, SymFlags::VALUE)
+            .filter(|&found| {
+                files.means(found, SymFlags::VALUE)
+                    && files
+                        .type_only_alias_declaration_ex(found, SymFlags::VALUE)
+                        .is_none()
+            })
     }
 
     pub fn decorator_referenced_values(&self, file: FileId) -> Vec<Sym> {
@@ -2122,10 +2168,22 @@ impl<'p, 's> Checker<'p, 's> {
         let mut found = Vec::new();
         for &(owner, _) in hir.decorators.iter() {
             let (class, members): (crate::hir::ClassId, Vec<crate::hir::MemberId>) = match owner {
-                crate::hir::DecoratorOwner::Class(class) => (class, hir[class].members.iter().filter(|&member| hir[member].kind == crate::hir::MemberKind::Constructor).collect()),
+                crate::hir::DecoratorOwner::Class(class) => (
+                    class,
+                    hir[class]
+                        .members
+                        .iter()
+                        .filter(|&member| hir[member].kind == crate::hir::MemberKind::Constructor)
+                        .collect(),
+                ),
                 _ => {
-                    let Some(member) = files.decorated_member(file, owner) else { continue };
-                    let crate::bind::MemberOwner::Class(class) = bound.member_owner[member.idx()] else { continue };
+                    let Some(member) = files.decorated_member(file, owner) else {
+                        continue;
+                    };
+                    let crate::bind::MemberOwner::Class(class) = bound.member_owner[member.idx()]
+                    else {
+                        continue;
+                    };
                     (class, vec![member])
                 }
             };
@@ -2149,8 +2207,15 @@ impl<'p, 's> Checker<'p, 's> {
                     continue;
                 }
                 match hir[ty].kind {
-                    crate::hir::TypeNodeKind::Ref { name, .. } => found.extend(name.iter().next().and_then(|first| self.value_named_at(file, class, hir[first].text))),
-                    crate::hir::TypeNodeKind::Union(members) | crate::hir::TypeNodeKind::Intersection(members) => pending.extend(hir.ids(members)),
+                    crate::hir::TypeNodeKind::Ref { name, .. } => found.extend(
+                        name.iter()
+                            .next()
+                            .and_then(|first| self.value_named_at(file, class, hir[first].text)),
+                    ),
+                    crate::hir::TypeNodeKind::Union(members)
+                    | crate::hir::TypeNodeKind::Intersection(members) => {
+                        pending.extend(hir.ids(members))
+                    }
                     _ => {}
                 }
             }

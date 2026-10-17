@@ -10,7 +10,13 @@ const folder = join(import.meta.dir, "programs", "data-from-outside");
 const programs = readdirSync(folder).filter(name => /^(annotated-variable|read-narrowed-to-never)-.*\.ts$/.test(name));
 
 async function run(...args: string[]) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), "run", ...args], cwd: folder, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", ...args],
+    cwd: folder,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }

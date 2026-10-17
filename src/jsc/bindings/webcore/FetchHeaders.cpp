@@ -79,7 +79,8 @@ static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String&
     return true;
 }
 
-enum class NameIsToken : bool { Unknown, Yes };
+enum class NameIsToken : bool { Unknown,
+    Yes };
 
 static ExceptionOr<bool> canWriteHeader(const String& name, const String& value, const String& combinedValue, FetchHeaders::Guard guard, NameIsToken nameIsToken = NameIsToken::Unknown)
 {

@@ -42,17 +42,34 @@ pub struct Use {
 }
 
 pub enum SlotEvent {
-    Read { place: u32, value: u32 },
-    Store { place: u32, value: u32, may_be_nullish: bool },
+    Read {
+        place: u32,
+        value: u32,
+    },
+    Store {
+        place: u32,
+        value: u32,
+        may_be_nullish: bool,
+    },
     Anything,
 }
 
-pub fn reaching_stores_for_reads(function: &FunctionNullishFlows, events: &[Vec<SlotEvent>], names: &[u32]) -> FxHashMap<u32, Vec<u32>> {
+pub fn reaching_stores_for_reads(
+    function: &FunctionNullishFlows,
+    events: &[Vec<SlotEvent>],
+    names: &[u32],
+) -> FxHashMap<u32, Vec<u32>> {
     const NULLISH: u8 = UNDEFINED | NULL;
     type SlotValues = FxHashMap<u32, Vec<(u32, bool)>>;
     let blocks = function.blocks as usize;
     let mut found: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
-    if blocks == 0 || events.iter().all(|events| !events.iter().any(|event| matches!(event, SlotEvent::Read { .. }))) {
+    if blocks == 0
+        || events.iter().all(|events| {
+            !events
+                .iter()
+                .any(|event| matches!(event, SlotEvent::Read { .. }))
+        })
+    {
         return found;
     }
     let mut has_event = vec![false; names.len()];
@@ -60,10 +77,16 @@ pub fn reaching_stores_for_reads(function: &FunctionNullishFlows, events: &[Vec<
         SlotEvent::Read { place, .. } | SlotEvent::Store { place, .. } => Some(place),
         SlotEvent::Anything => None,
     };
-    if !events.iter().flatten().filter_map(place_of).any(|place| std::mem::replace(&mut has_event[place as usize], true)) {
+    if !events
+        .iter()
+        .flatten()
+        .filter_map(place_of)
+        .any(|place| std::mem::replace(&mut has_event[place as usize], true))
+    {
         return found;
     }
-    let (mut arriving, mut leaving): (Vec<Vec<u32>>, Vec<Vec<u32>>) = (vec![Vec::new(); blocks], vec![Vec::new(); blocks]);
+    let (mut arriving, mut leaving): (Vec<Vec<u32>>, Vec<Vec<u32>>) =
+        (vec![Vec::new(); blocks], vec![Vec::new(); blocks]);
     for (index, jump) in function.jumps.iter().enumerate() {
         arriving[jump.to as usize].push(index as u32);
         leaving[jump.from as usize].push(index as u32);
@@ -82,7 +105,13 @@ pub fn reaching_stores_for_reads(function: &FunctionNullishFlows, events: &[Vec<
             let jump = &function.jumps[index as usize];
             let mut coming = at_end[jump.from as usize].clone().unwrap_or_default();
             for values in coming.values_mut() {
-                values.retain(|&(value, may_be_nullish)| !(may_be_nullish && jump.shown.iter().any(|&(shown, what)| shown == value && what == NULLISH)));
+                values.retain(|&(value, may_be_nullish)| {
+                    !(may_be_nullish
+                        && jump
+                            .shown
+                            .iter()
+                            .any(|&(shown, what)| shown == value && what == NULLISH))
+                });
             }
             held = Some(match held {
                 None => coming,
@@ -110,7 +139,11 @@ pub fn reaching_stores_for_reads(function: &FunctionNullishFlows, events: &[Vec<
                         held.insert(place, vec![(value, true)]);
                     }
                 },
-                SlotEvent::Store { place, value, may_be_nullish } => {
+                SlotEvent::Store {
+                    place,
+                    value,
+                    may_be_nullish,
+                } => {
                     held.retain(|&other, _| names[other as usize] != names[place as usize]);
                     held.insert(place, vec![(value, may_be_nullish)]);
                 }
@@ -119,9 +152,17 @@ pub fn reaching_stores_for_reads(function: &FunctionNullishFlows, events: &[Vec<
         }
         at_end[block] = Some(held);
         is_done[block] = true;
-        for jump in leaving[block].iter().map(|&index| &function.jumps[index as usize]) {
+        for jump in leaving[block]
+            .iter()
+            .map(|&index| &function.jumps[index as usize])
+        {
             let next = jump.to as usize;
-            if !is_done[next] && arriving[next].iter().all(|&index| is_done[function.jumps[index as usize].from as usize] || loop_of[next] == loop_of[function.jumps[index as usize].from as usize]) {
+            if !is_done[next]
+                && arriving[next].iter().all(|&index| {
+                    is_done[function.jumps[index as usize].from as usize]
+                        || loop_of[next] == loop_of[function.jumps[index as usize].from as usize]
+                })
+            {
                 pending.push(next as u32);
             }
         }
@@ -132,7 +173,8 @@ pub fn reaching_stores_for_reads(function: &FunctionNullishFlows, events: &[Vec<
 fn innermost_loops(function: &FunctionNullishFlows, leaving: &[Vec<u32>]) -> Vec<u32> {
     const NONE: u32 = u32::MAX;
     let blocks = leaving.len();
-    let (mut number, mut lowest, mut loop_of) = (vec![NONE; blocks], vec![NONE; blocks], vec![NONE; blocks]);
+    let (mut number, mut lowest, mut loop_of) =
+        (vec![NONE; blocks], vec![NONE; blocks], vec![NONE; blocks]);
     let (mut open, mut path): (Vec<u32>, Vec<(u32, usize)>) = (Vec::new(), Vec::new());
     let (mut numbers, mut loops) = (0, 0);
     for start in 0..blocks as u32 {
@@ -178,16 +220,27 @@ fn innermost_loops(function: &FunctionNullishFlows, leaving: &[Vec<u32>]) -> Vec
 pub fn callback_element_parameters(method: &[u8], is_array: bool) -> &'static [usize] {
     match method {
         b"forEach" if !is_array => &[0, 1],
-        b"forEach" | b"map" | b"filter" | b"find" | b"findIndex" | b"findLast" | b"findLastIndex" | b"some" | b"every" | b"flatMap" | b"from" | b"fromAsync" | b"then" | b"groupBy" => &[0],
+        b"forEach" | b"map" | b"filter" | b"find" | b"findIndex" | b"findLast"
+        | b"findLastIndex" | b"some" | b"every" | b"flatMap" | b"from" | b"fromAsync" | b"then"
+        | b"groupBy" => &[0],
         b"sort" | b"toSorted" => &[0, 1],
         b"reduce" | b"reduceRight" => &[0, 1],
         _ => &[],
     }
 }
 
-pub fn add_function_nullish_flows(function: &FunctionNullishFlows, found: &mut NullishEdges, room: &mut FlowScratch) {
+pub fn add_function_nullish_flows(
+    function: &FunctionNullishFlows,
+    found: &mut NullishEdges,
+    room: &mut FlowScratch,
+) {
     let NullishEdges { edges, origins } = found;
-    add_function_edges(function, edges, &mut |node, nil| origins.push((node, nil)), room);
+    add_function_edges(
+        function,
+        edges,
+        &mut |node, nil| origins.push((node, nil)),
+        room,
+    );
 }
 
 #[derive(Default)]
@@ -260,14 +313,27 @@ impl EdgesByNode {
     }
 }
 
-pub fn edges_by_node(nodes: u32, runs: &[u32], parts: &[&[(u32, u32, u8)]], pick: impl Fn(&(u32, u32, u8)) -> Option<(u32, u32)> + Sync, in_parallel: InParallel<'_>) -> EdgesByNode {
+pub fn edges_by_node(
+    nodes: u32,
+    runs: &[u32],
+    parts: &[&[(u32, u32, u8)]],
+    pick: impl Fn(&(u32, u32, u8)) -> Option<(u32, u32)> + Sync,
+    in_parallel: InParallel<'_>,
+) -> EdgesByNode {
     const NODES_PER_BLOCK: u32 = 1 << 12;
     let end_of = |run: usize| runs.get(run + 1).copied().unwrap_or(nodes);
-    let mut split: Vec<(usize, usize, Vec<(u32, u32, u8)>)> = (0..parts.len()).map(|part| (part, 0, Vec::new())).collect();
+    let mut split: Vec<(usize, usize, Vec<(u32, u32, u8)>)> =
+        (0..parts.len()).map(|part| (part, 0, Vec::new())).collect();
     for_each_mut(&mut split, in_parallel, &|(part, own, strays)| {
-        let (low, high) = if *part < runs.len() { (runs[*part], end_of(*part)) } else { (0, 0) };
+        let (low, high) = if *part < runs.len() {
+            (runs[*part], end_of(*part))
+        } else {
+            (0, 0)
+        };
         for edge in parts[*part] {
-            let Some((node, other)) = pick(edge) else { continue };
+            let Some((node, other)) = pick(edge) else {
+                continue;
+            };
             if low <= node && node < high {
                 *own += 1;
             } else {
@@ -292,9 +358,17 @@ pub fn edges_by_node(nodes: u32, runs: &[u32], parts: &[&[(u32, u32, u8)]], pick
         }
         handed[run].push(*stray);
     }
-    let many: Vec<usize> = handed.iter().enumerate().map(|(run, handed)| handed.len() + split.get(run).map_or(0, |part| part.1)).collect();
+    let many: Vec<usize> = handed
+        .iter()
+        .enumerate()
+        .map(|(run, handed)| handed.len() + split.get(run).map_or(0, |part| part.1))
+        .collect();
     let all: usize = many.iter().sum();
-    let (mut first, mut other, mut nil) = (vec![0u32; nodes as usize + 1], vec![0u32; all], vec![0u8; all]);
+    let (mut first, mut other, mut nil) = (
+        vec![0u32; nodes as usize + 1],
+        vec![0u32; all],
+        vec![0u8; all],
+    );
     first[nodes as usize] = all as u32;
     struct Run<'a> {
         number: usize,
@@ -303,7 +377,12 @@ pub fn edges_by_node(nodes: u32, runs: &[u32], parts: &[&[(u32, u32, u8)]], pick
         other: &'a mut [u32],
         nil: &'a mut [u8],
     }
-    let (mut first_left, mut other_left, mut nullish_left, mut ahead) = (&mut first[..nodes as usize], &mut other[..], &mut nil[..], 0);
+    let (mut first_left, mut other_left, mut nullish_left, mut ahead) = (
+        &mut first[..nodes as usize],
+        &mut other[..],
+        &mut nil[..],
+        0,
+    );
     let mut tasks: Vec<Run<'_>> = Vec::with_capacity(runs.len());
     for (number, &many) in many.iter().enumerate() {
         let (first, left) = first_left.split_at_mut((end_of(number) - runs[number]) as usize);
@@ -312,47 +391,81 @@ pub fn edges_by_node(nodes: u32, runs: &[u32], parts: &[&[(u32, u32, u8)]], pick
         other_left = left;
         let (nil, left) = nullish_left.split_at_mut(many);
         nullish_left = left;
-        tasks.push(Run { number, ahead, first, other, nil });
+        tasks.push(Run {
+            number,
+            ahead,
+            first,
+            other,
+            nil,
+        });
         ahead += many as u32;
     }
-    for_each_mut(&mut tasks, in_parallel, &|Run { number, ahead, first, other, nil }| {
-        let (low, high) = (runs[*number], end_of(*number));
-        let own = parts.get(*number).copied().unwrap_or_default();
-        let edges = || own.iter().filter_map(|edge| pick(edge).filter(|picked| low <= picked.0 && picked.0 < high).map(|picked| (picked.0, picked.1, edge.2))).chain(handed[*number].iter().copied());
-        for edge in edges() {
-            first[(edge.0 - low) as usize] += 1;
-        }
-        let mut sum = 0;
-        for slot in first.iter_mut() {
-            sum += std::mem::replace(slot, sum);
-        }
-        for edge in edges() {
-            let at = &mut first[(edge.0 - low) as usize];
-            other[*at as usize] = edge.1;
-            nil[*at as usize] = edge.2;
-            *at += 1;
-        }
-        let mut begins = *ahead;
-        for slot in first.iter_mut() {
-            begins = std::mem::replace(slot, begins) + *ahead;
-        }
-    });
+    for_each_mut(
+        &mut tasks,
+        in_parallel,
+        &|Run {
+              number,
+              ahead,
+              first,
+              other,
+              nil,
+          }| {
+            let (low, high) = (runs[*number], end_of(*number));
+            let own = parts.get(*number).copied().unwrap_or_default();
+            let edges = || {
+                own.iter()
+                    .filter_map(|edge| {
+                        pick(edge)
+                            .filter(|picked| low <= picked.0 && picked.0 < high)
+                            .map(|picked| (picked.0, picked.1, edge.2))
+                    })
+                    .chain(handed[*number].iter().copied())
+            };
+            for edge in edges() {
+                first[(edge.0 - low) as usize] += 1;
+            }
+            let mut sum = 0;
+            for slot in first.iter_mut() {
+                sum += std::mem::replace(slot, sum);
+            }
+            for edge in edges() {
+                let at = &mut first[(edge.0 - low) as usize];
+                other[*at as usize] = edge.1;
+                nil[*at as usize] = edge.2;
+                *at += 1;
+            }
+            let mut begins = *ahead;
+            for slot in first.iter_mut() {
+                begins = std::mem::replace(slot, begins) + *ahead;
+            }
+        },
+    );
     EdgesByNode { first, other, nil }
 }
 
 const EDGE_WALK_TASKS: usize = 64;
 
 fn split_into_tasks(pending: &[u32]) -> Vec<Vec<u32>> {
-    pending.chunks(pending.len().div_ceil(EDGE_WALK_TASKS).max(1)).map(<[u32]>::to_vec).collect()
+    pending
+        .chunks(pending.len().div_ceil(EDGE_WALK_TASKS).max(1))
+        .map(<[u32]>::to_vec)
+        .collect()
 }
 
-pub fn reach_backward(entering: &EdgesByNode, is_reached: Vec<bool>, pending: &[u32], in_parallel: InParallel<'_>) -> Vec<bool> {
+pub fn reach_backward(
+    entering: &EdgesByNode,
+    is_reached: Vec<bool>,
+    pending: &[u32],
+    in_parallel: InParallel<'_>,
+) -> Vec<bool> {
     use std::sync::atomic::{AtomicBool, Ordering};
     let is_reached: Vec<AtomicBool> = is_reached.into_iter().map(AtomicBool::new).collect();
     for_each_mut(&mut split_into_tasks(pending), in_parallel, &|pending| {
         while let Some(node) = pending.pop() {
             for &from in &entering.other[entering.at(node)] {
-                if !is_reached[from as usize].load(Ordering::Relaxed) && !is_reached[from as usize].swap(true, Ordering::Relaxed) {
+                if !is_reached[from as usize].load(Ordering::Relaxed)
+                    && !is_reached[from as usize].swap(true, Ordering::Relaxed)
+                {
                     pending.push(from);
                 }
             }
@@ -361,7 +474,13 @@ pub fn reach_backward(entering: &EdgesByNode, is_reached: Vec<bool>, pending: &[
     is_reached.into_iter().map(AtomicBool::into_inner).collect()
 }
 
-pub fn propagate_nullish(leaving: &EdgesByNode, more: &[(u32, u32, u8)], origins: impl Iterator<Item = (u32, u8)>, is_cut: impl Fn(u32, u32) -> bool + Sync, in_parallel: InParallel<'_>) -> Vec<u8> {
+pub fn propagate_nullish(
+    leaving: &EdgesByNode,
+    more: &[(u32, u32, u8)],
+    origins: impl Iterator<Item = (u32, u8)>,
+    is_cut: impl Fn(u32, u32) -> bool + Sync,
+    in_parallel: InParallel<'_>,
+) -> Vec<u8> {
     use std::sync::atomic::{AtomicU8, Ordering};
     let mut reaching = vec![0u8; leaving.first.len() - 1];
     let mut pending: Vec<u32> = Vec::new();
@@ -380,7 +499,11 @@ pub fn propagate_nullish(leaving: &EdgesByNode, more: &[(u32, u32, u8)], origins
         while let Some(node) = pending.pop() {
             let here = reaching[node as usize].load(Ordering::Relaxed);
             let at = leaving.at(node);
-            let known = leaving.other[at.clone()].iter().copied().zip(leaving.nil[at].iter().copied()).filter(|edge| !is_cut(node, edge.0));
+            let known = leaving.other[at.clone()]
+                .iter()
+                .copied()
+                .zip(leaving.nil[at].iter().copied())
+                .filter(|edge| !is_cut(node, edge.0));
             for (to, nil) in known.chain(also_leaving.get(&node).into_iter().flatten().copied()) {
                 let (brought, there) = (here & nil, reaching[to as usize].load(Ordering::Relaxed));
                 if there | brought != there {
@@ -393,7 +516,12 @@ pub fn propagate_nullish(leaving: &EdgesByNode, more: &[(u32, u32, u8)], origins
     reaching.into_iter().map(AtomicU8::into_inner).collect()
 }
 
-fn add_function_edges(function: &FunctionNullishFlows, edges: &mut Vec<(u32, u32, u8)>, originate: &mut impl FnMut(u32, u8), room: &mut FlowScratch) {
+fn add_function_edges(
+    function: &FunctionNullishFlows,
+    edges: &mut Vec<(u32, u32, u8)>,
+    originate: &mut impl FnMut(u32, u8),
+    room: &mut FlowScratch,
+) {
     const NULLISH: u8 = UNDEFINED | NULL;
     const NONE: u32 = u32::MAX;
     let blocks = function.blocks as usize;
@@ -404,17 +532,50 @@ fn add_function_edges(function: &FunctionNullishFlows, edges: &mut Vec<(u32, u32
         for origin in &function.origins {
             originate(origin.node, origin.nil);
         }
-        edges.extend(function.uses.iter().map(|used| (used.from, used.to, NULLISH | UNTYPED_OBJECT)));
+        edges.extend(
+            function
+                .uses
+                .iter()
+                .map(|used| (used.from, used.to, NULLISH | UNTYPED_OBJECT)),
+        );
         return;
     }
-    let FlowScratch { following, preceding, dominated, uses_by_block, origins_by_block, single_jump, jumps_to, order, is_seen, stack, number, dominator, visited_for, shown, retracted, walk, is_entered } = room;
-    following.fill(blocks, function.jumps.iter().map(|jump| (jump.from, jump.to)));
-    preceding.fill(blocks, function.jumps.iter().map(|jump| (jump.to, jump.from)));
+    let FlowScratch {
+        following,
+        preceding,
+        dominated,
+        uses_by_block,
+        origins_by_block,
+        single_jump,
+        jumps_to,
+        order,
+        is_seen,
+        stack,
+        number,
+        dominator,
+        visited_for,
+        shown,
+        retracted,
+        walk,
+        is_entered,
+    } = room;
+    following.fill(
+        blocks,
+        function.jumps.iter().map(|jump| (jump.from, jump.to)),
+    );
+    preceding.fill(
+        blocks,
+        function.jumps.iter().map(|jump| (jump.to, jump.from)),
+    );
     filled(single_jump, blocks, NONE);
     filled(jumps_to, blocks, 0);
     for (index, jump) in function.jumps.iter().enumerate() {
         jumps_to[jump.to as usize] += 1;
-        single_jump[jump.to as usize] = if jumps_to[jump.to as usize] == 1 { index as u32 } else { NONE };
+        single_jump[jump.to as usize] = if jumps_to[jump.to as usize] == 1 {
+            index as u32
+        } else {
+            NONE
+        };
     }
     order.clear();
     filled(is_seen, blocks, false);
@@ -482,9 +643,29 @@ fn add_function_edges(function: &FunctionNullishFlows, edges: &mut Vec<(u32, u32
             break;
         }
     }
-    dominated.fill(blocks, order.iter().skip(1).map(|&block| (dominator[block as usize], block)));
-    uses_by_block.fill(blocks, function.uses.iter().enumerate().map(|(index, used)| (used.block, index as u32)));
-    origins_by_block.fill(blocks, function.origins.iter().enumerate().map(|(index, origin)| (origin.block, index as u32)));
+    dominated.fill(
+        blocks,
+        order
+            .iter()
+            .skip(1)
+            .map(|&block| (dominator[block as usize], block)),
+    );
+    uses_by_block.fill(
+        blocks,
+        function
+            .uses
+            .iter()
+            .enumerate()
+            .map(|(index, used)| (used.block, index as u32)),
+    );
+    origins_by_block.fill(
+        blocks,
+        function
+            .origins
+            .iter()
+            .enumerate()
+            .map(|(index, origin)| (origin.block, index as u32)),
+    );
     shown.clear();
     retracted.clear();
     walk.clear();
@@ -502,7 +683,9 @@ fn add_function_edges(function: &FunctionNullishFlows, edges: &mut Vec<(u32, u32
             }
             for &index in origins_by_block.of(block) {
                 let origin = &function.origins[index as usize];
-                if !origin.unless.iter().any(|&(value, what)| shown.get(&value).is_some_and(|&known| known & what == what)) {
+                if !origin.unless.iter().any(|&(value, what)| {
+                    shown.get(&value).is_some_and(|&known| known & what == what)
+                }) {
                     originate(origin.node, origin.nil);
                 }
             }
@@ -510,7 +693,11 @@ fn add_function_edges(function: &FunctionNullishFlows, edges: &mut Vec<(u32, u32
                 let used = &function.uses[index as usize];
                 let mut stopped = shown.get(&used.value).copied().unwrap_or(0);
                 if used.jump != NO_JUMP {
-                    stopped |= function.jumps[used.jump as usize].shown.iter().filter(|it| it.0 == used.value).fold(0, |all, it| all | it.1);
+                    stopped |= function.jumps[used.jump as usize]
+                        .shown
+                        .iter()
+                        .filter(|it| it.0 == used.value)
+                        .fold(0, |all, it| all | it.1);
                 }
                 edges.push((used.from, used.to, (NULLISH | UNTYPED_OBJECT) & !stopped));
             }

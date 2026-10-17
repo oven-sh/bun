@@ -2,7 +2,16 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";
 
-const tsconfig = JSON.stringify({ compilerOptions: { target: "ESNext", module: "Preserve", moduleResolution: "bundler", noEmit: true, strict: true, types: ["not-installed"] } });
+const tsconfig = JSON.stringify({
+  compilerOptions: {
+    target: "ESNext",
+    module: "Preserve",
+    moduleResolution: "bundler",
+    noEmit: true,
+    strict: true,
+    types: ["not-installed"],
+  },
+});
 
 async function run(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -11,7 +20,8 @@ async function run(cwd: string, ...args: string[]) {
 }
 
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
-const found = (said: string, category: string) => [...said.matchAll(new RegExp(`\\b${category}:? (TS\\d+)`, "g"))].map(match => match[1]).sort();
+const found = (said: string, category: string) =>
+  [...said.matchAll(new RegExp(`\\b${category}:? (TS\\d+)`, "g"))].map(match => match[1]).sort();
 
 const files = {
   "tsconfig.json": tsconfig,

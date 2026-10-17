@@ -46,11 +46,11 @@ RangeError: bad id -1
 
 What differs:
 
-| | without `--aot` | with `--aot` |
-| --- | --- | --- |
-| Reading a property of `null` | `null is not an object (evaluating 'a.b')` | `Cannot read properties of null (reading 'b')` |
-| Calling a value that is not a function | `a.b is not a function. (In 'a.b()', 'a.b' is undefined)` | `b is not a function, it is undefined` |
-| Frames of `eval` and `new Function` | `file:///$bunfs/root/app:1:35` | `unknown:1:35` |
+|                                        | without `--aot`                                           | with `--aot`                                   |
+| -------------------------------------- | --------------------------------------------------------- | ---------------------------------------------- |
+| Reading a property of `null`           | `null is not an object (evaluating 'a.b')`                | `Cannot read properties of null (reading 'b')` |
+| Calling a value that is not a function | `a.b is not a function. (In 'a.b()', 'a.b' is undefined)` | `b is not a function, it is undefined`         |
+| Frames of `eval` and `new Function`    | `file:///$bunfs/root/app:1:35`                            | `unknown:1:35`                                 |
 
 If you group errors by message, in Sentry for example, expect new groups for the first two.
 
@@ -99,7 +99,8 @@ A token is a lowercase letter followed by letters and digits, at least one of wh
 
 ```ts restore.ts icon="/icons/typescript.svg"
 const { tokens } = (await Bun.file(process.argv[2]).json()).x_bun_aot;
-const restore = (text: string) => text.replace(/[a-z][A-Za-z0-9]*/g, word => (Object.hasOwn(tokens, word) ? tokens[word] : word));
+const restore = (text: string) =>
+  text.replace(/[a-z][A-Za-z0-9]*/g, word => (Object.hasOwn(tokens, word) ? tokens[word] : word));
 console.log(restore(await Bun.stdin.text()));
 ```
 
@@ -189,12 +190,12 @@ BUN_OPTIONS="--heap-prof" ./app
 
 `--inspect`, `--inspect-wait` and `--inspect-brk` start the inspector, and VS Code and `debug.bun.sh` connect to it.
 
-| Works | Does not work |
-| --- | --- |
-| The console, with objects you can open | Breakpoints |
-| Evaluating expressions, calling your functions, reading your objects | Stepping and pausing |
-| Heap snapshots and garbage collection | `debugger` statements |
-| The CPU timeline | The list of sources |
+| Works                                                                | Does not work         |
+| -------------------------------------------------------------------- | --------------------- |
+| The console, with objects you can open                               | Breakpoints           |
+| Evaluating expressions, calling your functions, reading your objects | Stepping and pausing  |
+| Heap snapshots and garbage collection                                | `debugger` statements |
+| The CPU timeline                                                     | The list of sources   |
 
 The console shows a warning that says so when a debugger attaches. Code that the build did not compile, such as `eval` and files loaded from disk at run time, can be debugged. The part of Bun that serves the inspector is not compiled into your executable either: it loads only when the inspector starts, and Bun interprets it.
 
@@ -212,13 +213,13 @@ To find out whether a bug only shows with `--aot`, compare that with `bun run --
 
 Libraries that trace by replacing functions, such as OpenTelemetry's instrumentations, can replace some things and not others:
 
-| | |
-| --- | --- |
-| What Bun and Node.js provide: `fetch`, `setTimeout`, `console.*`, `process.*`, `Bun.serve`, `fs.readFileSync`, `http.request`, `EventEmitter.prototype.emit` | can be replaced |
-| Classes and exports of JavaScript packages: `pg.Client.prototype.query` | can be replaced |
-| Objects of the language: `Promise.prototype.then`, `JSON.parse`, `Date.now`, `Array.prototype.push` | throws a `TypeError` |
-| The prototypes of `Request`, `Response`, `Headers`, `Blob`, `URL`, `URLSearchParams` and `BunRequest`: `Response.prototype.json` | throws a `TypeError`. Replace the global with a subclass instead: `globalThis.Response = class extends Response { .. }` |
-| Classes written in TypeScript, in your program or in a [typed version of a package](/bundler/executables#typed-versions-of-packages) | throws a `TypeError`, unless TypeScript code of your program assigns to that method |
+|                                                                                                                                                              |                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| What Bun and Node.js provide: `fetch`, `setTimeout`, `console.*`, `process.*`, `Bun.serve`, `fs.readFileSync`, `http.request`, `EventEmitter.prototype.emit` | can be replaced                                                                                                         |
+| Classes and exports of JavaScript packages: `pg.Client.prototype.query`                                                                                      | can be replaced                                                                                                         |
+| Objects of the language: `Promise.prototype.then`, `JSON.parse`, `Date.now`, `Array.prototype.push`                                                          | throws a `TypeError`                                                                                                    |
+| The prototypes of `Request`, `Response`, `Headers`, `Blob`, `URL`, `URLSearchParams` and `BunRequest`: `Response.prototype.json`                             | throws a `TypeError`. Replace the global with a subclass instead: `globalThis.Response = class extends Response { .. }` |
+| Classes written in TypeScript, in your program or in a [typed version of a package](/bundler/executables#typed-versions-of-packages)                         | throws a `TypeError`, unless TypeScript code of your program assigns to that method                                     |
 
 To wrap a method of one of your own classes, use a subclass or a `Proxy`, or assign to the method in TypeScript: `Db.prototype.query = traced(Db.prototype.query)`.
 
@@ -258,7 +259,7 @@ bun build --compile --aot ./app.ts --outfile app --aot-deny=untyped-file,lost-la
 | `by-name`         | Typed code reads a property or calls a method of an object whose layout is not known: an `any`, external data, a dictionary    | off     |
 | `can-throw`       | A value is checked against its type when the program runs, and the check can fail. The findings of `--aot-explain=throws`      | off     |
 | `interpreted`     | `eval`, `new Function` or `node:vm` evaluates source text when the program runs. That code runs in the interpreter             | off     |
-| `reshaped-layout` | `Object.freeze`, `seal`, `preventExtensions` or `setPrototypeOf` gets a value of unknown type, so it could reach any object      | off     |
+| `reshaped-layout` | `Object.freeze`, `seal`, `preventExtensions` or `setPrototypeOf` gets a value of unknown type, so it could reach any object    | off     |
 
 `--aot-deny`, `--aot-warn` and `--aot-allow` take a list of rules, or `all`. If two flags name the same rule, the later one counts. An error from a rule is like a type error: nothing is written and the exit code is 1.
 
@@ -404,7 +405,24 @@ baseline = "aot-baseline.json"
 `--aot-explain=rules-json` prints one object per finding on stdout:
 
 ```json
-{"rule":"open-layout","severity":"deny","code":100022,"file":"app.ts","line":1,"column":11,"message":"'Point' can hold objects that typed code did not create, so every property access through it checks the object first.","because":[{"code":100040,"file":"app.ts","line":6,"column":10,"message":"A value of type 'any' or 'unknown' is assigned to it here."}]}
+{
+  "rule": "open-layout",
+  "severity": "deny",
+  "code": 100022,
+  "file": "app.ts",
+  "line": 1,
+  "column": 11,
+  "message": "'Point' can hold objects that typed code did not create, so every property access through it checks the object first.",
+  "because": [
+    {
+      "code": 100040,
+      "file": "app.ts",
+      "line": 6,
+      "column": 10,
+      "message": "A value of type 'any' or 'unknown' is assigned to it here."
+    }
+  ]
+}
 ```
 
 ### What costs the most
@@ -462,7 +480,38 @@ The order is an estimate. A place in a loop counts eight times, in a nested loop
 `--aot-explain=costs-json` prints every row on stdout, one object per line, for a script or a coding agent:
 
 ```json
-{"rank":1,"rule":"external-type","file":"config.ts","line":9,"column":23,"inDependency":false,"source":"export const config = JSON.parse(process.argv[2]) as Config;","message":"A value from outside the type system is used as 'Config' here.","because":[{"file":"config.ts","line":1,"column":11,"message":"'Server' is part of 'Config'."}],"types":["Server","Config"],"examples":[{"file":"config.ts","line":12,"column":17},{"file":"config.ts","line":12,"column":44},{"file":"config.ts","line":12,"column":10}],"otherCauses":[],"cost":{"score":45,"readsByName":4,"storesByName":0,"callsByName":0,"checks":1,"checksThatMayCopy":0,"checksOfParameters":0,"guardedAccesses":0,"unspecializedCalls":0,"functions":1,"functionsAfterStart":1},"fix":"check the value where it enters the program and build a new object from it in typed code, instead of asserting its type"}
+{
+  "rank": 1,
+  "rule": "external-type",
+  "file": "config.ts",
+  "line": 9,
+  "column": 23,
+  "inDependency": false,
+  "source": "export const config = JSON.parse(process.argv[2]) as Config;",
+  "message": "A value from outside the type system is used as 'Config' here.",
+  "because": [{ "file": "config.ts", "line": 1, "column": 11, "message": "'Server' is part of 'Config'." }],
+  "types": ["Server", "Config"],
+  "examples": [
+    { "file": "config.ts", "line": 12, "column": 17 },
+    { "file": "config.ts", "line": 12, "column": 44 },
+    { "file": "config.ts", "line": 12, "column": 10 }
+  ],
+  "otherCauses": [],
+  "cost": {
+    "score": 45,
+    "readsByName": 4,
+    "storesByName": 0,
+    "callsByName": 0,
+    "checks": 1,
+    "checksThatMayCopy": 0,
+    "checksOfParameters": 0,
+    "guardedAccesses": 0,
+    "unspecializedCalls": 0,
+    "functions": 1,
+    "functionsAfterStart": 1
+  },
+  "fix": "check the value where it enters the program and build a new object from it in typed code, instead of asserting its type"
+}
 ```
 
 To work through the report, take the first row whose `inDependency` is `false`, read `source`, `because` and `otherCauses`, apply `fix`, and run the report again. Then `--aot-deny` with the row's rule, or a baseline, keeps it from coming back.
@@ -474,9 +523,11 @@ By default the executable keeps the text of your functions, after TypeScript's t
 `--no-compile-function-source` leaves the text out, which makes the executable smaller and keeps your code out of it:
 
 ```ts
-String(function add(a, b) { return a + b; }); // "function add() { [native code] }"
-String(class Point {});                       // "class Point { [native code] }"
-String(async () => {});                       // "async () => { [native code] }"
+String(function add(a, b) {
+  return a + b;
+}); // "function add() { [native code] }"
+String(class Point {}); // "class Point { [native code] }"
+String(async () => {}); // "async () => { [native code] }"
 ```
 
 `name` and `length` stay as they are. Code that reads parameter names out of the text, as some dependency injection libraries do, finds none.

@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "./supported";
 
 const uses = `
   const Comparator = require("./comparator"), Range = require("./range");

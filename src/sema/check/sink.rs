@@ -314,7 +314,12 @@ impl super::Program<'_> {
     }
 
     pub fn unreported<R>(&self, run: impl FnOnce() -> R) -> R {
-        let lengths: Vec<usize> = self.sink.by_file.iter().map(|buffer| buffer.lock().len()).collect();
+        let lengths: Vec<usize> = self
+            .sink
+            .by_file
+            .iter()
+            .map(|buffer| buffer.lock().len())
+            .collect();
         let global_errors = self.global_errors.lock().clone();
         let result = run();
         for (buffer, length) in self.sink.by_file.iter().zip(lengths) {

@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, test } from "./supported";
 
 // `var __require = /* @__PURE__ */ createRequire(import.meta.url);` is what bundlers write at the head of the ES modules they emit.
 // A `var` or a `let` that is stored to once and never seen before that is as good as a `const`: the names written for it are files of
@@ -70,12 +70,21 @@ describe.concurrent.each(Object.keys({ ...compiled, ...ordinary }))("%s", entry 
   test("bun run --aot prints what bun run prints", async () => {
     using dir = tempDir("create-require-in-a-var", { ...files, [entry]: compiled[entry] ?? ordinary[entry] });
     const run = async (flags: string[], env: Record<string, string | undefined>) => {
-      await using proc = Bun.spawn({ cmd: [bunExe(), "run", ...flags, entry], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", ...flags, entry],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, stderr, exitCode };
     };
     const plain = await run([], bunEnv);
-    const aot = await run(["--debug-aot"], entry in compiled ? { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" } : bunEnv);
+    const aot = await run(
+      ["--debug-aot"],
+      entry in compiled ? { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" } : bunEnv,
+    );
     expect(plain.exitCode).toBe(0);
     expect(aot.stderr).not.toContain("crashIfInterpreterIsUsed");
     expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });

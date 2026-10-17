@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
+import { test } from "./supported";
 
 const folder = join(import.meta.dir, "programs", "modules");
 const programs = ["bun-wrap-computed-name", "bun-wrap-computed-name-alone", "bun-wrap-computed-name-required"];
@@ -17,7 +17,11 @@ test.concurrent.each(programs)(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: readFileSync(join(folder, name + ".expected.txt"), "utf8"), stderr: "", exitCode: 0 });
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: readFileSync(join(folder, name + ".expected.txt"), "utf8"),
+      stderr: "",
+      exitCode: 0,
+    });
   },
   120_000,
 );

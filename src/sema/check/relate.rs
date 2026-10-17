@@ -1944,17 +1944,23 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let with_constraint = self.prepend_type_mapping(param, constraint, mapper);
-        let instantiated = match self.cond_constraint_instantiations.get(&(file, node, with_constraint)) {
-            Some(&known) => known,
-            None => {
-                let mark = self.non_cacheable_mark();
-                let instantiated = self.conditional_type_uncached(file, node, with_constraint, true, None);
-                if self.non_cacheable_mark() == mark {
-                    self.cond_constraint_instantiations.insert((file, node, with_constraint), instantiated);
+        let instantiated =
+            match self
+                .cond_constraint_instantiations
+                .get(&(file, node, with_constraint))
+            {
+                Some(&known) => known,
+                None => {
+                    let mark = self.non_cacheable_mark();
+                    let instantiated =
+                        self.conditional_type_uncached(file, node, with_constraint, true, None);
+                    if self.non_cacheable_mark() == mark {
+                        self.cond_constraint_instantiations
+                            .insert((file, node, with_constraint), instantiated);
+                    }
+                    instantiated
                 }
-                instantiated
-            }
-        };
+            };
         (!instantiated.is_never()).then_some(instantiated)
     }
 
@@ -3948,8 +3954,16 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `relation.set(key, entry)`
     fn set_relation(&mut self, key: Key, entry: u8, stored: Stored) {
-        let entry = if self.is_warming_up() && self.fuel.get() != u64::MAX { entry | CREATED_DURING_WARMUP } else { entry };
-        let entry = if self.is_resolving_conditional_type() { entry | CREATED_IN_CONDITIONAL_TYPE } else { entry };
+        let entry = if self.is_warming_up() && self.fuel.get() != u64::MAX {
+            entry | CREATED_DURING_WARMUP
+        } else {
+            entry
+        };
+        let entry = if self.is_resolving_conditional_type() {
+            entry | CREATED_IN_CONDITIONAL_TYPE
+        } else {
+            entry
+        };
         if self.p.relations.get(&self.task, &key).is_none() {
             self.insert_relation(key, entry, stored);
         } else {
@@ -3959,13 +3973,22 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `relation.set(key, entry)` for a key that has no entry.
     fn needs_recomparison(&mut self, entry: u8, key: Key) -> bool {
-        let has_unrecorded_pairs = entry & CREATED_DURING_WARMUP != 0 || entry & CREATED_IN_CONDITIONAL_TYPE != 0 && !self.is_resolving_conditional_type();
+        let has_unrecorded_pairs = entry & CREATED_DURING_WARMUP != 0
+            || entry & CREATED_IN_CONDITIONAL_TYPE != 0 && !self.is_resolving_conditional_type();
         has_unrecorded_pairs && self.records_compared_pairs() && self.record_recompared(key)
     }
 
     fn insert_relation(&mut self, key: Key, entry: u8, stored: Stored) {
-        let entry = if self.is_warming_up() && self.fuel.get() != u64::MAX { entry | CREATED_DURING_WARMUP } else { entry };
-        let entry = if self.is_resolving_conditional_type() { entry | CREATED_IN_CONDITIONAL_TYPE } else { entry };
+        let entry = if self.is_warming_up() && self.fuel.get() != u64::MAX {
+            entry | CREATED_DURING_WARMUP
+        } else {
+            entry
+        };
+        let entry = if self.is_resolving_conditional_type() {
+            entry | CREATED_IN_CONDITIONAL_TYPE
+        } else {
+            entry
+        };
         self.generic_relation_entries_not_published += u64::from(key.is_hash_of_own_ids());
         self.relation_sizes[usize::from(key.2 & 0xf)] += 1;
         self.p.relations.insert(&self.task, key, entry, stored);
@@ -4025,7 +4048,10 @@ impl<'p, 's> Checker<'p, 's> {
                 .iter()
                 .map(|&on_stack| (on_stack, self.plain_recursion_identity(on_stack)))
                 .collect();
-            let not_plain = identities.iter().filter(|entry| entry.1 == NOT_PLAIN).count();
+            let not_plain = identities
+                .iter()
+                .filter(|entry| entry.1 == NOT_PLAIN)
+                .count();
             let can_reach_depth = not_plain >= max_depth
                 || identities.iter().any(|entry| {
                     entry.1 != NOT_PLAIN
@@ -4239,18 +4265,23 @@ impl<'p, 's> Checker<'p, 's> {
             return known.clone();
         }
         let mut by_identity = Vec::with_capacity(parts.len());
-        let found = self.add_member_identities(parts, &mut by_identity).then(|| {
-            by_identity.sort_unstable_by_key(|member| (member.0, member.1.0));
-            by_identity.dedup();
-            let mut by_type: Vec<(TypeId, RecursionId)> =
-                by_identity.iter().map(|member| (member.1, member.0)).collect();
-            by_type.sort_unstable_by_key(|member| member.0.0);
-            std::rc::Rc::new(MemberIdentities {
-                by_identity: by_identity.into_boxed_slice(),
-                by_type: by_type.into_boxed_slice(),
-            })
-        });
-        self.intersection_identities.insert(intersection, found.clone());
+        let found = self
+            .add_member_identities(parts, &mut by_identity)
+            .then(|| {
+                by_identity.sort_unstable_by_key(|member| (member.0, member.1.0));
+                by_identity.dedup();
+                let mut by_type: Vec<(TypeId, RecursionId)> = by_identity
+                    .iter()
+                    .map(|member| (member.1, member.0))
+                    .collect();
+                by_type.sort_unstable_by_key(|member| member.0.0);
+                std::rc::Rc::new(MemberIdentities {
+                    by_identity: by_identity.into_boxed_slice(),
+                    by_type: by_type.into_boxed_slice(),
+                })
+            });
+        self.intersection_identities
+            .insert(intersection, found.clone());
         found
     }
 
@@ -4270,9 +4301,16 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn some_member_has_identity(&self, members: &MemberIdentities, identity: RecursionId) -> bool {
-        let start = members.by_identity.partition_point(|member| member.0 < identity);
-        let kept_unchanged = members.by_identity[start..].iter().take_while(|member| member.0 == identity);
-        if kept_unchanged.into_iter().any(|member| self.recursion_identity_by_now(member.1, member.0) == identity) {
+        let start = members
+            .by_identity
+            .partition_point(|member| member.0 < identity);
+        let kept_unchanged = members.by_identity[start..]
+            .iter()
+            .take_while(|member| member.0 == identity);
+        if kept_unchanged
+            .into_iter()
+            .any(|member| self.recursion_identity_by_now(member.1, member.0) == identity)
+        {
             return true;
         }
         identity.0 == 0
@@ -4751,8 +4789,10 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         };
         let is_no_object = tf::PRIMITIVE | tf::NON_PRIMITIVE | tf::UNKNOWN;
-        if !matches!(r.relation, Relation::Assignable | Relation::AssignableAsStored)
-            || self.has_type_variables(object)
+        if !matches!(
+            r.relation,
+            Relation::Assignable | Relation::AssignableAsStored
+        ) || self.has_type_variables(object)
             || !self.every_type(source, |c, part| c.flags(part) & is_no_object != 0)
         {
             return false;
@@ -4769,8 +4809,15 @@ impl<'p, 's> Checker<'p, 's> {
                 written.push(ty);
             }
         }
-        let product = (written.iter()).fold(1usize, |size, &ty| size.saturating_mul(self.parts(ty).len()));
-        product < 100_000 && (written.iter()).any(|&ty| !self.is_related_to_ex::<false>(r, source, ty, REC_TARGET, STATE_TARGET).holds())
+        let product = (written.iter()).fold(1usize, |size, &ty| {
+            size.saturating_mul(self.parts(ty).len())
+        });
+        product < 100_000
+            && (written.iter()).any(|&ty| {
+                !self
+                    .is_related_to_ex::<false>(r, source, ty, REC_TARGET, STATE_TARGET)
+                    .holds()
+            })
     }
 
     /// `structuredTypeRelatedToWorker`. `sd`, `td`: the `TypeData` of `source` and `target`.
@@ -6268,7 +6315,9 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Ternary {
         let (source, target) = of;
         let (mut sf, tf) = (source_prop.flags, target_prop.flags);
-        if r.relation == Relation::AssignableAsStored && !tf.intersects(PropFlags::PRIVATE | PropFlags::PROTECTED) {
+        if r.relation == Relation::AssignableAsStored
+            && !tf.intersects(PropFlags::PRIVATE | PropFlags::PROTECTED)
+        {
             sf.remove(PropFlags::PRIVATE | PropFlags::PROTECTED);
         }
         if sf.contains(PropFlags::PRIVATE) || tf.contains(PropFlags::PRIVATE) {
@@ -6562,7 +6611,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // At run time a function is a function: no signature is there to be compared. What a call hands over is held to the types of the
         // parameters by the function that is called.
-        if r.relation == Relation::AssignableAsStored && !(sm.shape().call.is_empty() && sm.shape().construct.is_empty()) {
+        if r.relation == Relation::AssignableAsStored
+            && !(sm.shape().call.is_empty() && sm.shape().construct.is_empty())
+        {
             return Ternary::TRUE;
         }
         // Whatever can be called is a `Function`.

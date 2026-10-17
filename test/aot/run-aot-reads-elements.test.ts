@@ -13,8 +13,19 @@ test.concurrent.each([
   "arrays/element-getter-read-optional",
   "type-rules/out-of-bounds-array-reads",
 ])("%s", async name => {
-  const file = existsSync(join(programs, name + ".ts")) ? join(programs, name + ".ts") : join(programs, name, "main.ts");
-  await using proc = Bun.spawn({ cmd: [bunExe(), "run", "--aot", file], cwd: dirname(file), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const file = existsSync(join(programs, name + ".ts"))
+    ? join(programs, name + ".ts")
+    : join(programs, name, "main.ts");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "--aot", file],
+    cwd: dirname(file),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: readFileSync(join(programs, name + ".expected.txt"), "utf8"), exitCode: 0 });
+  expect({ stdout, exitCode }).toEqual({
+    stdout: readFileSync(join(programs, name + ".expected.txt"), "utf8"),
+    exitCode: 0,
+  });
 });

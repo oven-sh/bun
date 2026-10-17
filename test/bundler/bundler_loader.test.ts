@@ -547,6 +547,27 @@ describe("bundler", async () => {
   // Lazy-export modules (JSON, TOML, CSS modules, ...) used to crash the
   // printer when bundled with the dev server's module format.
   // https://github.com/oven-sh/bun/issues/31943
+  // The dev server prints a read of `require.main` as `false`. A write or a
+  // delete keeps the property reference.
+  itBundled("bake-dev/require-main-assignment-target", {
+    format: "internal_bake_dev",
+    files: {
+      "/entry.js": /* js */ `
+        require.main = 1;
+        delete require.main;
+        require.main ??= 2;
+        console.log(require.main);
+      `,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      expect(output).toContain("hmr.require.main = 1;");
+      expect(output).toContain("delete hmr.require.main;");
+      expect(output).toContain("hmr.require.main ??= 2;");
+      expect(output).toContain("console.log(false);");
+    },
+  });
+
   describe("internal_bake_dev lazy exports", () => {
     itBundled("bake-dev/loader-json-default-import", {
       format: "internal_bake_dev",

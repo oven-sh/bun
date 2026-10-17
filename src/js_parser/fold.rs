@@ -448,6 +448,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             });
                         } else if p.options.bundle
                             && name == b"id"
+                            && !identifier_opts.is_delete_target()
                             && identifier_opts.assign_target() == js_ast::AssignTarget::None
                         {
                             // inline module.id
@@ -455,6 +456,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return Some(p.new_expr(e_string_init(p.source.path.pretty), name_loc));
                         } else if p.options.bundle
                             && name == b"filename"
+                            && !identifier_opts.is_delete_target()
                             && identifier_opts.assign_target() == js_ast::AssignTarget::None
                         {
                             // inline module.filename
@@ -464,6 +466,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         } else if p.options.bundle
                             && name == b"path"
+                            && !identifier_opts.is_delete_target()
                             && identifier_opts.assign_target() == js_ast::AssignTarget::None
                         {
                             // inline module.path
@@ -545,7 +548,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EString(str_) => {
-                    if p.options.features.minify_syntax {
+                    if p.options.features.minify_syntax
+                        && !identifier_opts.is_delete_target()
+                        && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                    {
                         // minify "long-string".length to 11
                         if name == b"length" {
                             if let Some(len) = e_string_javascript_length(&str_) {
@@ -595,11 +601,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EImportMeta(_) => {
-                    if name == b"main" {
+                    let can_inline = !identifier_opts.is_delete_target()
+                        && identifier_opts.assign_target() == js_ast::AssignTarget::None;
+
+                    if can_inline && name == b"main" {
                         return Some(p.value_for_import_meta_main(false, target.loc));
                     }
 
-                    if name == b"hot" {
+                    if can_inline && name == b"hot" {
                         return Some(Expr {
                             data: js_ast::ExprData::ESpecial(
                                 if p.options.features.hot_module_reloading {
@@ -612,10 +621,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         });
                     }
 
-                    // Inline import.meta properties for Bake
-                    if p.options.framework.is_some()
-                        || (p.options.bundle
-                            && p.options.output_format == js_parser::options::Format::Cjs)
+                    // Inline import.meta properties for Bake. A CommonJS module cannot
+                    // read `import.meta`, so a delete folds too: `delete "str"` is `true`.
+                    if identifier_opts.assign_target() == js_ast::AssignTarget::None
+                        && (p.options.framework.is_some()
+                            || (p.options.bundle
+                                && p.options.output_format == js_parser::options::Format::Cjs))
                     {
                         if name == b"dir" || name == b"dirname" {
                             // Inline import.meta.dir
@@ -653,7 +664,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ));
                 }
                 js_ast::ExprData::ERequireCallTarget => {
-                    if name == b"main" {
+                    if name == b"main"
+                        && !identifier_opts.is_delete_target()
+                        && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                    {
                         return Some(Expr {
                             loc,
                             data: js_ast::ExprData::ERequireMain,
@@ -750,29 +764,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     E::Special::HotEnabled | E::Special::HotDisabled => {
                         let enabled = p.options.features.hot_module_reloading;
-                        if name == b"data" {
-                            return Some(if enabled {
-                                Expr {
-                                    data: js_ast::ExprData::ESpecial(E::Special::HotData),
-                                    loc,
-                                }
-                            } else {
-                                Expr::init(E::Object::default(), loc)
-                            });
-                        }
-                        if name == b"accept" {
-                            if !enabled {
-                                p.method_call_must_be_replaced_with_undefined = true;
-                                return Some(Expr {
-                                    data: js_ast::ExprData::EUndefined(E::Undefined),
-                                    loc,
-                                });
-                            }
-                            return Some(Expr {
-                                data: js_ast::ExprData::ESpecial(E::Special::HotAccept),
-                                loc,
-                            });
-                        }
                         // Membership check over 7 fixed keys.
                         let in_lookup_table = matches!(
                             name,
@@ -784,25 +775,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 | b"off"
                                 | b"send"
                         );
-                        if in_lookup_table {
-                            if enabled {
-                                return Some(Expr::init(
-                                    E::Dot {
-                                        target: Expr::init_identifier(p.hmr_api_ref, target.loc),
-                                        name: name_static,
-                                        name_loc,
-                                        ..Default::default()
-                                    },
-                                    loc,
-                                ));
-                            } else {
-                                p.method_call_must_be_replaced_with_undefined = true;
-                                return Some(Expr {
-                                    data: js_ast::ExprData::EUndefined(E::Undefined),
-                                    loc,
-                                });
-                            }
-                        } else {
+                        if !in_lookup_table && name != b"data" && name != b"accept" {
                             // This error is a bit out of place since the HMR
                             // API is validated in the parser instead of at
                             // runtime. When the API is not validated in this
@@ -821,6 +794,56 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 loc,
                             });
                         }
+                        // With HMR off these names fold to values, so a write or delete keeps the reference.
+                        if !enabled
+                            && (identifier_opts.is_delete_target()
+                                || identifier_opts.assign_target() != js_ast::AssignTarget::None)
+                        {
+                            return None;
+                        }
+                        if name == b"data" {
+                            return Some(if enabled {
+                                Expr {
+                                    data: js_ast::ExprData::ESpecial(E::Special::HotData),
+                                    loc,
+                                }
+                            } else {
+                                Expr::init(E::Object::default(), loc)
+                            });
+                        }
+                        if name == b"accept" {
+                            if !enabled {
+                                if identifier_opts.is_call_target() {
+                                    p.method_call_must_be_replaced_with_undefined = true;
+                                }
+                                return Some(Expr {
+                                    data: js_ast::ExprData::EUndefined(E::Undefined),
+                                    loc,
+                                });
+                            }
+                            return Some(Expr {
+                                data: js_ast::ExprData::ESpecial(E::Special::HotAccept),
+                                loc,
+                            });
+                        }
+                        if enabled {
+                            return Some(Expr::init(
+                                E::Dot {
+                                    target: Expr::init_identifier(p.hmr_api_ref, target.loc),
+                                    name: name_static,
+                                    name_loc,
+                                    ..Default::default()
+                                },
+                                loc,
+                            ));
+                        }
+                        if identifier_opts.is_call_target() {
+                            p.method_call_must_be_replaced_with_undefined = true;
+                        }
+                        return Some(Expr {
+                            data: js_ast::ExprData::EUndefined(E::Undefined),
+                            loc,
+                        });
                     }
                     _ => {}
                 },

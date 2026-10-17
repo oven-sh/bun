@@ -445,6 +445,13 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
       expect(await client.conn.nextFrames(3)).toEqual(['text "a" !fin', 'ping "p"', 'continuation "b"']);
     });
 
+    test("ignores inherited options", async () => {
+      await using client = await openClient(implementation, { perMessageDeflate: false });
+      client.ws.send("a", Object.create({ binary: true, fin: false }));
+      client.ws.send("b", Object.create({ binary: true, fin: false }));
+      expect(await client.conn.nextFrames(2)).toEqual(['text "a"', 'text "b"']);
+    });
+
     test("ignores non-object options and a missing callback", async () => {
       await using client = await openClient(implementation);
       const ws: any = client.ws;
@@ -984,10 +991,12 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
       });
       ws.on("message", data => {
         events.push(String(data));
-        ws.send("abcd", error => events.push(error instanceof Error));
+        ws.send("abcd", (error?: NodeJS.ErrnoException | null) => events.push(error?.code ?? error?.message));
       });
       await client.closed;
-      expect(events).toEqual(["one", "two", true, true]);
+      // npm ws is already CLOSING in these listeners.
+      const error = builtin ? "ERR_STREAM_DESTROYED" : "WebSocket is not open: readyState 2 (CLOSING)";
+      expect(events).toEqual(["one", "two", error, error]);
     });
 
     test("after a failed connection", async () => {

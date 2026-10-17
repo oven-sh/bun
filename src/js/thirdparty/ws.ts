@@ -1336,10 +1336,11 @@ class WebSocket extends EventEmitter {
     let compress: boolean | undefined = true;
     let fin: boolean | undefined = true;
 
+    // Upstream spreads `options`, so inherited properties don't count.
     if ($isObject(options)) {
-      if ("binary" in options) binary = options.binary;
-      if ("compress" in options) compress = options.compress;
-      if ("fin" in options) fin = options.fin;
+      if (Object.hasOwn(options, "binary")) binary = options.binary;
+      if (Object.hasOwn(options, "compress")) compress = options.compress;
+      if (Object.hasOwn(options, "fin")) fin = options.fin;
     }
 
     if (!data) data = EMPTY_BUFFER;

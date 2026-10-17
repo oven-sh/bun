@@ -884,7 +884,8 @@ describe.concurrent("wss://: a corrupt TLS record right behind the messages", ()
 
   describe.each(["direct", "http", "https"] as const)("%s", route => {
     // Only a direct connection reports the failed read.
-    const failure: ClientEvent[] = route === "direct" ? [{ error: expect.any(String) }] : [];
+    const failure: ClientEvent[] =
+      route === "direct" ? [{ error: expect.stringMatching(/ failed: TLS handshake failed$/) }] : [];
 
     test.each([
       ["open", "send"],

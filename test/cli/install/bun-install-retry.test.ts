@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
-import { lstatSync, readdirSync, rmSync } from "fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, rmSync } from "fs";
 import { access, writeFile } from "fs/promises";
 import {
   bunExe,
@@ -1500,5 +1500,1234 @@ describe.concurrent("a failed download that several dependencies share", () => {
       p.loseTarball("baz", "1.0.0");
       expect(await p.install(root)).toEqual(leftOut);
     });
+  });
+});
+
+// bun.lock has a package for an optional dependency, and the dependency is resolved again: `bun update` asks the
+// registry about every entry of package.json, and so does an install after a rule for its name changed. If the
+// registry then gives no manifest (the request fails, cannot be made, or --offline forbids it), the dependency takes
+// a package that bun.lock has in its range. `bun update` warns that it did not check that package, and leaves the
+// package.json entry as written.
+describe.concurrent("an optional dependency that gets no manifest", () => {
+  type Releases = Record<string, Record<string, object>>;
+  const LEAF: Releases = { leaf: { "1.0.0": {}, "1.1.0": {} } };
+  const OPTIONAL_LEAF = { optionalDependencies: { leaf: "^1.0.0" } };
+  const cataloged = (leaf: string) => ({
+    workspaces: { packages: [], catalog: { leaf } },
+    optionalDependencies: { leaf: "catalog:" },
+  });
+  const notChecked = (reason = "", version = "1.1.0") => [
+    `warn: leaf@${version} was not checked for updates${reason && `: ${reason}`}`,
+  ];
+  const notCached = 'error: --offline: no cached manifest for "leaf" (run once online, or use --prefer-offline)';
+  const unresolved = "error: leaf@^1.0.0 failed to resolve";
+  const ADDS_PATCHED_TXT = `diff --git a/patched.txt b/patched.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e728b8dad
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++hello world
+`;
+
+  // `releases` is read for every request, so a test can publish or take away a version after the install.
+  async function project(root: object, releases = LEAF, files: Record<string, string> = {}, bunfig: object = {}) {
+    const tarballs = new Map<string, Uint8Array>();
+    for (const [name, versions] of Object.entries(releases)) {
+      for (const [version, fields] of Object.entries(versions)) {
+        const packed = { "package/package.json": JSON.stringify({ name, version, ...fields }) };
+        tarballs.set(`/${name}-${version}.tgz`, await new Bun.Archive(packed, { compress: "gzip" }).bytes());
+      }
+    }
+    const statuses: Record<string, number> = {};
+    const headers: Record<string, string> = {};
+    let asked: string[] = [];
+    const registry = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { origin, pathname: encoded } = new URL(request.url);
+        // The manifest of `@scope/name` is asked for as `/@scope%2fname`.
+        const pathname = decodeURIComponent(encoded);
+        const tarball = tarballs.get(pathname);
+        if (tarball) return new Response(tarball);
+        const name = pathname.slice(1);
+        asked.push(name);
+        if (statuses[name]) return new Response("refused", { status: statuses[name] });
+        if (!releases[name]) return new Response("unexpected", { status: 404 });
+        const versions = Object.entries(releases[name]).map(([version, fields]) => [
+          version,
+          { name, version, ...fields, dist: { tarball: `${origin}/${name}-${version}.tgz` } },
+        ]);
+        const latest = Object.keys(releases[name]).sort(Bun.semver.order).at(-1);
+        return Response.json({ name, "dist-tags": { latest }, versions: Object.fromEntries(versions) }, { headers });
+      },
+    });
+    const configure = (install: object) =>
+      Bun.TOML.stringify({
+        install: {
+          cache: "./.bun-cache",
+          registry: registry.url.href,
+          saveTextLockfile: true,
+          linker: "hoisted",
+          ...install,
+        },
+      });
+    const dir = tempDir("optional-no-manifest", {
+      "package.json": JSON.stringify({ name: "foo", ...root }, null, 2),
+      "bunfig.toml": configure(bunfig),
+      ...files,
+    });
+    const path = (...parts: string[]) => join(String(dir), ...parts);
+    async function runIn(cwd: string, ...args: string[]) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: path(cwd),
+        env: { ...env, BUN_INSTALL_CACHE_DIR: undefined, BUN_CONFIG_HTTP_RETRY_COUNT: "0" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = (prefix: string) => err.split(/\r?\n/).filter(line => line.startsWith(prefix));
+      return {
+        warnings: lines("warn:"),
+        errors: lines("error:"),
+        saved: err.includes("Saved lockfile"),
+        out,
+        err,
+        exitCode,
+      };
+    }
+    return {
+      /** What the warning about a refused manifest says after its `warn: `. */
+      refused: (status: number, name = "leaf") => `GET ${registry.url.origin}/${name} - ${status}`,
+      path,
+      runIn,
+      run: (...args: string[]) => runIn("", ...args),
+      configure: (install: object) => writeFile(path("bunfig.toml"), configure(install)),
+      /** From now on the registry answers the request for this manifest with `status`; 0 serves it again. */
+      refuse(name: string, status: number) {
+        statuses[name] = status;
+      },
+      /** From now on a manifest is stale as soon as it is in the cache: an install asks for it again. */
+      expireManifests() {
+        headers["cache-control"] = "max-age=0";
+      },
+      /** The manifests that were requested since the last call. */
+      asked() {
+        const names = asked;
+        asked = [];
+        return names;
+      },
+      /** The file of the cache that has the manifest of `name`: the one with the URLs of its tarballs. */
+      manifest(name: string) {
+        const cached = readdirSync(path(".bun-cache")).filter(
+          f => f.endsWith(".npm") && readFileSync(path(".bun-cache", f)).includes(`/${name}-`),
+        );
+        expect(cached).toHaveLength(1);
+        return path(".bun-cache", cached[0]);
+      },
+      /** bun.lock and every package.json of the project. */
+      written: (...workspaces: string[]) =>
+        Promise.all(
+          ["bun.lock", "package.json", ...workspaces.map(w => `${w}/package.json`)].map(f => file(path(f)).text()),
+        ),
+      /** The versions of `name` that bun.lock has. */
+      async locked(name: string) {
+        const { packages } = Bun.JSONC.parse(await file(path("bun.lock")).text()) as {
+          packages: Record<string, [string]>;
+        };
+        return Object.values(packages)
+          .filter(([id]) => id.startsWith(`${name}@`))
+          .map(([id]) => id.slice(name.length + 1))
+          .sort(Bun.semver.order);
+      },
+      installed: async (...parts: string[]) => (await file(path(...parts, "package.json")).json()).version as string,
+      [Symbol.dispose]() {
+        registry.stop(true);
+        dir[Symbol.dispose]();
+      },
+    };
+  }
+  const unchanged = { warnings: [] as string[], errors: [], saved: false, exitCode: 0 };
+
+  // [the entry, the package.json key that reaches leaf, the fields that declare it, the update's arguments]
+  it.each<[string, string, object, string[]]>([
+    ["a plain entry", "leaf", OPTIONAL_LEAF, []],
+    ["a plain entry under --latest", "leaf", OPTIONAL_LEAF, ["--latest"]],
+    ["a `*` entry under --latest", "leaf", { optionalDependencies: { leaf: "*" } }, ["--latest"]],
+    ["an npm: alias", "aliased", { optionalDependencies: { aliased: "npm:leaf@^1.0.0" } }, []],
+    [
+      "an entry that an override renames",
+      "renamed",
+      { optionalDependencies: { renamed: "*" }, overrides: { renamed: "npm:leaf@^1.0.0" } },
+      [],
+    ],
+    ["a catalog: entry", "leaf", cataloged("^1.0.0"), []],
+    ["a plain entry under --lockfile-only", "leaf", OPTIONAL_LEAF, ["--lockfile-only"]],
+    ["a plain entry under --no-save", "leaf", OPTIONAL_LEAF, ["--no-save"]],
+  ])("%s: `bun update` changes nothing after a 404 for its manifest", async (_, key, fields, args) => {
+    using p = await project(fields);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const before = await p.written();
+
+    p.refuse("leaf", 404);
+    p.asked();
+    expect(await p.run("update", ...args)).toMatchObject({ ...unchanged, warnings: notChecked(p.refused(404)) });
+    expect(p.asked()).toEqual(["leaf"]);
+    expect(await p.written()).toEqual(before);
+    expect(await p.installed("node_modules", key)).toBe("1.1.0");
+  });
+
+  it("is installed from bun.lock afterwards, and the next `bun update` moves it", async () => {
+    const releases: Releases = { leaf: { "1.0.0": {}, "1.1.0": {}, "1.2.0": {} } };
+    using p = await project(OPTIONAL_LEAF, releases);
+    const { "1.2.0": newer, ...older } = releases.leaf;
+    releases.leaf = older;
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    p.refuse("leaf", 404);
+    expect(await p.run("update")).toMatchObject({ ...unchanged, warnings: notChecked(p.refused(404)) });
+
+    rmSync(p.path("node_modules"), { recursive: true, force: true });
+    expect(await p.run("install", "--frozen-lockfile")).toMatchObject({ errors: [], exitCode: 0 });
+    expect(await p.installed("node_modules", "leaf")).toBe("1.1.0");
+
+    releases.leaf = { ...older, "1.2.0": newer };
+    p.refuse("leaf", 0);
+    expect(await p.run("update")).toMatchObject({ ...unchanged, saved: true });
+    expect(await p.locked("leaf")).toEqual(["1.2.0"]);
+    expect(await file(p.path("package.json")).json()).toEqual({
+      name: "foo",
+      optionalDependencies: { leaf: "^1.2.0" },
+    });
+  });
+
+  // Nothing of it is installed here, so bun.lock is all that the platform it is for gets.
+  it("for another platform stays in bun.lock after a 404 for its manifest", async () => {
+    const os = [process.platform === "darwin" ? "linux" : "darwin"];
+    using p = await project(OPTIONAL_LEAF, { leaf: { "1.0.0": { os }, "1.1.0": { os } } });
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const before = await p.written();
+    expect(await p.locked("leaf")).toEqual(["1.1.0"]);
+
+    p.refuse("leaf", 404);
+    expect(await p.run("update")).toMatchObject({ ...unchanged, warnings: notChecked(p.refused(404)) });
+    expect(await p.written()).toEqual(before);
+    expect(existsSync(p.path("node_modules", "leaf"))).toBe(false);
+  });
+
+  // The kept package brings what it depends on. The update asks about those as about any dependency of a package:
+  // it moves them, or warns about them when it plans, which is before it warns about the kept package.
+  const WITH_DEPENDENCIES = { dependencies: { dep: "^1.0.0" }, optionalDependencies: { odep: "^1.0.0" } };
+  it("that has dependencies keeps them in bun.lock, and `bun update` still moves them", async () => {
+    const older = { "1.0.0": {} };
+    const newer = { ...older, "1.1.0": {} };
+    const releases: Releases = { leaf: { "1.0.0": WITH_DEPENDENCIES }, dep: newer, odep: newer };
+    using p = await project(OPTIONAL_LEAF, releases);
+    releases.dep = releases.odep = older;
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const packageJson = (await p.written())[1];
+    releases.dep = releases.odep = newer;
+
+    p.refuse("leaf", 404);
+    expect(await p.run("update")).toMatchObject({
+      ...unchanged,
+      warnings: notChecked(p.refused(404), "1.0.0"),
+      saved: true,
+    });
+    expect([await p.locked("leaf"), await p.locked("dep"), await p.locked("odep")]).toEqual([
+      ["1.0.0"],
+      ["1.1.0"],
+      ["1.1.0"],
+    ]);
+    expect((await p.written())[1]).toBe(packageJson);
+
+    rmSync(p.path("node_modules"), { recursive: true, force: true });
+    expect(await p.run("install", "--frozen-lockfile")).toMatchObject({ errors: [], exitCode: 0 });
+    expect(await Promise.all(["leaf", "dep", "odep"].map(name => p.installed("node_modules", name)))).toEqual([
+      "1.0.0",
+      "1.1.0",
+      "1.1.0",
+    ]);
+  });
+
+  it("that has dependencies: `bun update` changes nothing when no manifest of them arrives either", async () => {
+    const releases = { leaf: { "1.0.0": WITH_DEPENDENCIES }, dep: { "1.0.0": {} }, odep: { "1.0.0": {} } };
+    using p = await project(OPTIONAL_LEAF, releases);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const before = await p.written();
+
+    for (const name of ["leaf", "dep", "odep"]) p.refuse(name, 503);
+    expect(await p.run("update")).toMatchObject({
+      ...unchanged,
+      warnings: ["dep", "odep", "leaf"].map(
+        name => `warn: ${name}@1.0.0 was not checked for updates: ${p.refused(503, name)}`,
+      ),
+    });
+    expect(await p.written()).toEqual(before);
+    expect(await p.installed("node_modules", "dep")).toBe("1.0.0");
+  });
+
+  it.each([401, 500])("`bun update` changes nothing after a %d for its manifest", async status => {
+    using p = await project(OPTIONAL_LEAF);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const before = await p.written();
+
+    p.refuse("leaf", status);
+    expect(await p.run("update")).toMatchObject({ ...unchanged, warnings: notChecked(p.refused(status)) });
+    expect(await p.written()).toEqual(before);
+    expect(await p.installed("node_modules", "leaf")).toBe("1.1.0");
+  });
+
+  it("`bun update` changes nothing when the registry hangs up", async () => {
+    using hangsUp = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { open: socket => void socket.end(), data() {} },
+    });
+    using p = await project(OPTIONAL_LEAF);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const before = await p.written();
+
+    expect(await p.run("update", "--registry", `http://127.0.0.1:${hangsUp.port}/`)).toMatchObject({
+      ...unchanged,
+      warnings: [
+        expect.stringMatching(
+          /^warn: leaf@1\.1\.0 was not checked for updates: \w+ downloading package manifest leaf$/,
+        ),
+      ],
+    });
+    expect(await p.written()).toEqual(before);
+    expect(await p.installed("node_modules", "leaf")).toBe("1.1.0");
+  });
+
+  it("`bun update` changes nothing when no request can be made to the registry URL", async () => {
+    using p = await project(OPTIONAL_LEAF);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const before = await p.written();
+
+    await p.configure({ registry: "ftp://localhost/" });
+    expect(await p.run("update")).toMatchObject({
+      ...unchanged,
+      warnings: [...notChecked(), "warn: Registry URL must be http:// or https://", "warn: InvalidURL"],
+    });
+    expect(await p.written()).toEqual(before);
+    expect(await p.installed("node_modules", "leaf")).toBe("1.1.0");
+  });
+
+  // The manifest of `good` is in the cache, the one of leaf is not.
+  it("`bun update --offline` changes nothing without its manifest in the cache", async () => {
+    const root = { dependencies: { good: "^1.0.0" }, ...OPTIONAL_LEAF };
+    using p = await project(root, { ...LEAF, good: { "1.0.0": {} } });
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const before = await p.written();
+    rmSync(p.manifest("leaf"));
+
+    p.asked();
+    expect(await p.run("update", "--offline")).toMatchObject({ ...unchanged, warnings: notChecked() });
+    expect(p.asked()).toEqual([]);
+    expect(await p.written()).toEqual(before);
+    expect(await p.installed("node_modules", "leaf")).toBe("1.1.0");
+  });
+
+  // An online `bun update` moves bun.lock to 1.1.0 and package.json to ^1.1.0. The manifest in the cache is older
+  // than that: it lists 1.0.0 only, so it has no version in the range, and --offline cannot ask for a newer one.
+  // The entry keeps its package, as it does without a manifest. An update that names the entry fails, and so does
+  // one for a required dependency.
+  const noVersion = 'error: No version matching "^1.1.0" found for specifier "leaf" (but package exists)';
+  it.each<[string, object, string[], object]>([
+    ["`bun update --offline` changes nothing", OPTIONAL_LEAF, [], { warnings: notChecked() }],
+    ["`bun update <name> --offline` fails", OPTIONAL_LEAF, ["leaf"], { errors: [noVersion], exitCode: 1 }],
+    [
+      "`bun update --offline` fails for a required dependency",
+      { dependencies: { leaf: "^1.0.0" } },
+      [],
+      { errors: [noVersion, "error: leaf@^1.1.0 failed to resolve"], exitCode: 1 },
+    ],
+  ])("%s when the manifest in the cache is older than bun.lock", async (_, fields, args, printed) => {
+    const releases = { ...LEAF };
+    using p = await project(fields, releases);
+    const { "1.1.0": newer, ...older } = releases.leaf;
+    releases.leaf = older;
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const manifest = p.manifest("leaf");
+    const stale = readFileSync(manifest);
+    releases.leaf = { ...older, "1.1.0": newer };
+    expect(await p.run("update")).toMatchObject({ ...unchanged, saved: true });
+    // Whether or not the update has written the newer manifest to the cache.
+    await writeFile(manifest, stale);
+    const before = await p.written();
+    expect([await p.locked("leaf"), before[1]]).toEqual([["1.1.0"], expect.stringContaining('"leaf": "^1.1.0"')]);
+
+    p.asked();
+    expect(await p.run("update", ...args, "--offline")).toMatchObject({ ...unchanged, ...printed });
+    expect(p.asked()).toEqual([]);
+    expect(await p.written()).toEqual(before);
+    expect(await p.installed("node_modules", "leaf")).toBe("1.1.0");
+  });
+
+  it.each(["", "--latest"])("`bun update %s` still moves the other entries", async flag => {
+    const releases: Releases = { ...LEAF, other: { "1.0.0": {}, "1.1.0": {} } };
+    using p = await project({ dependencies: { other: "^1.0.0" }, ...OPTIONAL_LEAF }, releases);
+    const { "1.1.0": newer, ...older } = releases.other;
+    releases.other = older;
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    releases.other = { ...older, "1.1.0": newer };
+
+    p.refuse("leaf", 404);
+    expect(await p.run("update", ...(flag ? [flag] : []))).toMatchObject({
+      ...unchanged,
+      warnings: notChecked(p.refused(404)),
+      saved: true,
+    });
+    expect(await file(p.path("package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: { other: "^1.1.0" },
+      ...OPTIONAL_LEAF,
+    });
+    expect([await p.locked("other"), await p.locked("leaf")]).toEqual([["1.1.0"], ["1.1.0"]]);
+    expect(await p.run("install", "--frozen-lockfile")).toMatchObject({ errors: [], exitCode: 0 });
+  });
+
+  // An update also reads the entries of the workspaces that it does not target. What it prints for those is not
+  // pinned here.
+  it.each<[string, string, string[], boolean]>([
+    ["with -r", "", ["-r"], true],
+    ["inside the workspace", "packages/pkg1", [], true],
+    ["at the root", "", [], false],
+    ["inside the workspace, for another name", "packages/pkg1", ["other"], false],
+    ["inside another workspace", "packages/pkg2", [], false],
+    ["with --filter for another workspace", "", ["--filter", "pkg2"], false],
+  ])("in a workspace: `bun update` %s changes nothing after a 404 for its manifest", async (_, cwd, args, targeted) => {
+    const other = { dependencies: { other: "^1.0.0" } };
+    using p = await project(
+      { workspaces: ["packages/*"] },
+      { ...LEAF, other: { "1.0.0": {} } },
+      {
+        "packages/pkg1/package.json": JSON.stringify({ name: "pkg1", version: "1.0.0", ...other, ...OPTIONAL_LEAF }),
+        "packages/pkg2/package.json": JSON.stringify({ name: "pkg2", version: "1.0.0", ...other }),
+      },
+    );
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const before = await p.written("packages/pkg1", "packages/pkg2");
+
+    p.refuse("leaf", 404);
+    const updated = await p.runIn(cwd, "update", ...args);
+    expect(updated).toMatchObject({ errors: [], saved: false, exitCode: 0 });
+    if (targeted) expect(updated.warnings).toEqual(notChecked(p.refused(404)));
+    expect(await p.written("packages/pkg1", "packages/pkg2")).toEqual(before);
+    expect(await p.locked("leaf")).toEqual(["1.1.0"]);
+  });
+
+  it.each<[string, object, string]>([
+    ["the isolated linker", { linker: "isolated" }, "bun.lock"],
+    ["a binary lockfile", { saveTextLockfile: false }, "bun.lockb"],
+  ])("with %s: `bun update` changes nothing after a 404 for its manifest", async (_, bunfig, lockfile) => {
+    using p = await project(OPTIONAL_LEAF, LEAF, {}, bunfig);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const before = await Promise.all([file(p.path(lockfile)).bytes(), file(p.path("package.json")).text()]);
+
+    p.refuse("leaf", 404);
+    expect(await p.run("update")).toMatchObject({ ...unchanged, warnings: notChecked(p.refused(404)) });
+    expect(await Promise.all([file(p.path(lockfile)).bytes(), file(p.path("package.json")).text()])).toEqual(before);
+    expect(await p.installed("node_modules", "leaf")).toBe("1.1.0");
+  });
+
+  // The package is kept for both, and the update warns about it once. For a dependency of a package it has asked
+  // for the manifest, and has warned, before it resolves the entry.
+  it.each<[string, object, Record<string, string>, string[]]>([
+    ["a dependency of a package", { dependencies: { parent: "1.0.0" }, ...OPTIONAL_LEAF }, {}, []],
+    [
+      "an entry of a workspace",
+      { workspaces: ["packages/*"], ...OPTIONAL_LEAF },
+      { "packages/pkg1/package.json": JSON.stringify({ name: "pkg1", ...OPTIONAL_LEAF }) },
+      ["-r"],
+    ],
+  ])("that shares its package with %s: `bun update` warns once", async (_, root, files, args) => {
+    const workspaces = Object.keys(files).map(f => f.replace("/package.json", ""));
+    const releases = { ...LEAF, parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } } } };
+    using p = await project(root, releases, files);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const before = await p.written(...workspaces);
+
+    p.refuse("leaf", 404);
+    expect(await p.run("update", ...args)).toMatchObject({ ...unchanged, warnings: notChecked(p.refused(404)) });
+    expect(await p.written(...workspaces)).toEqual(before);
+  });
+
+  // bun.lock has two versions in the range: the entry shares 1.0.0 with `dep`, and `pin` has 1.1.0. The entry stays
+  // on the version that it had, and the update warns about both.
+  it.each([404, 503])("stays on its version next to a higher one, after a %d for its manifest", async status => {
+    const releases: Releases = {
+      ...LEAF,
+      dep: { "1.0.0": { dependencies: { leaf: "^1.0.0" } } },
+      pin: { "1.0.0": { dependencies: { leaf: "1.1.0" } } },
+    };
+    const root = (leaf: string) => ({ dependencies: { dep: "1.0.0", pin: "1.0.0" }, optionalDependencies: { leaf } });
+    using p = await project({ dependencies: { dep: "1.0.0" }, ...OPTIONAL_LEAF }, releases);
+    const { "1.1.0": newer, ...older } = releases.leaf;
+    releases.leaf = older;
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    releases.leaf = { ...older, "1.1.0": newer };
+    await writeFile(p.path("package.json"), JSON.stringify({ name: "foo", ...root("^1.0.0") }));
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const before = await p.written();
+    expect(await p.locked("leaf")).toEqual(["1.0.0", "1.1.0"]);
+
+    p.refuse("leaf", status);
+    expect(await p.run("update")).toMatchObject({
+      ...unchanged,
+      warnings: [...notChecked(p.refused(status), "1.0.0"), ...notChecked(p.refused(status))],
+    });
+    expect(await p.written()).toEqual(before);
+    expect(await p.installed("node_modules", "leaf")).toBe("1.0.0");
+
+    p.refuse("leaf", 0);
+    expect(await p.run("update")).toMatchObject({ ...unchanged, saved: true });
+    expect(await p.locked("leaf")).toEqual(["1.1.0"]);
+    expect(await file(p.path("package.json")).json()).toEqual({ name: "foo", ...root("^1.1.0") });
+  });
+
+  // The row is new, because the package that declares it moves in the same update. The update warns about the
+  // kept package once, however it was told to move `parent`. `<name> --latest` has the failed request on a line of
+  // its own.
+  it.each<[string, string[], (refused: string) => string[]]>([
+    ["", [], refused => notChecked(refused)],
+    [" <name>", ["parent"], refused => notChecked(refused)],
+    [" --latest", ["--latest"], refused => notChecked(refused)],
+    [" <name> --latest", ["parent", "--latest"], refused => [...notChecked(), `warn: ${refused}`]],
+  ])(
+    "of a package that `bun update%s` moves keeps its version after a 404 for its manifest",
+    async (_, args, warns) => {
+      const releases: Releases = { ...LEAF, parent: { "1.0.0": OPTIONAL_LEAF, "1.1.0": OPTIONAL_LEAF } };
+      using p = await project({ dependencies: { parent: "^1.0.0" } }, releases);
+      const { "1.1.0": newer, ...older } = releases.parent;
+      releases.parent = older;
+      expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+      releases.parent = { ...older, "1.1.0": newer };
+
+      p.refuse("leaf", 404);
+      expect(await p.run("update", ...args)).toMatchObject({
+        ...unchanged,
+        warnings: warns(p.refused(404)),
+        saved: true,
+      });
+      expect([await p.locked("parent"), await p.locked("leaf")]).toEqual([["1.1.0"], ["1.1.0"]]);
+      expect(await file(p.path("package.json")).json()).toEqual({ name: "foo", dependencies: { parent: "^1.1.0" } });
+      expect(await p.installed("node_modules", "leaf")).toBe("1.1.0");
+      expect(await p.run("install", "--frozen-lockfile")).toMatchObject({ errors: [], exitCode: 0 });
+    },
+  );
+
+  // The update warns that it did not check the package before it knows that `parent` moves. That line is not
+  // pinned here.
+  it("of a package that `bun update` moves is left out when the new version rejects its version", async () => {
+    const releases: Releases = {
+      ...LEAF,
+      parent: { "1.0.0": OPTIONAL_LEAF, "1.1.0": { optionalDependencies: { leaf: "^2.0.0" } } },
+    };
+    using p = await project({ dependencies: { parent: "^1.0.0" } }, releases);
+    const { "1.1.0": newer, ...older } = releases.parent;
+    releases.parent = older;
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    releases.parent = { ...older, "1.1.0": newer };
+
+    p.refuse("leaf", 404);
+    expect(await p.run("update")).toMatchObject({ errors: [], saved: true, exitCode: 0 });
+    expect([await p.locked("parent"), await p.locked("leaf")]).toEqual([["1.1.0"], []]);
+    expect(existsSync(p.path("node_modules", "leaf"))).toBe(false);
+  });
+
+  // The rows are in the order of their keys, and the warnings in the order of the names of the packages.
+  it("`bun update` warns about the kept packages in the order of their names", async () => {
+    const optionalDependencies = { a: "npm:zed@^1.0.0", b: "npm:alpha@^1.0.0", c: "npm:mid@^1.0.0" };
+    const releases = { zed: { "1.0.0": {} }, alpha: { "1.0.0": {} }, mid: { "1.0.0": {} } };
+    using p = await project({ optionalDependencies }, releases);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const before = await p.written();
+
+    for (const name of Object.keys(releases)) p.refuse(name, 404);
+    expect(await p.run("update")).toMatchObject({
+      ...unchanged,
+      warnings: ["alpha", "mid", "zed"].map(
+        name => `warn: ${name}@1.0.0 was not checked for updates: ${p.refused(404, name)}`,
+      ),
+    });
+    expect(await p.written()).toEqual(before);
+  });
+
+  // The reason is what the failed request logged, and not another warning that has the name of the package in it.
+  // `old` moves to a version that is deprecated, as all of its versions are: one that is not would be preferred.
+  it("`bun update` gives the failed request as the reason, next to the deprecation warning of another package", async () => {
+    const deprecated = "this package is unmaintained, use leaf instead";
+    const releases: Releases = { ...LEAF, old: { "1.0.0": {}, "1.1.0": {} } };
+    using p = await project({ dependencies: { old: "^1.0.0" }, ...OPTIONAL_LEAF }, releases);
+    releases.old = { "1.0.0": {} };
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    releases.old = { "1.0.0": { deprecated }, "1.1.0": { deprecated } };
+
+    p.refuse("leaf", 404);
+    expect(await p.run("update")).toMatchObject({
+      ...unchanged,
+      warnings: [...notChecked(p.refused(404)), `warn: deprecated old@1.1.0: ${deprecated}`],
+      saved: true,
+    });
+    expect([await p.locked("old"), await p.locked("leaf")]).toEqual([["1.1.0"], ["1.1.0"]]);
+    expect(await file(p.path("package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: { old: "^1.1.0" },
+      ...OPTIONAL_LEAF,
+    });
+  });
+
+  it("`bun update --silent` prints nothing and changes nothing after a 404 for its manifest", async () => {
+    using p = await project(OPTIONAL_LEAF);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const before = await p.written();
+
+    p.refuse("leaf", 404);
+    p.asked();
+    expect(await p.run("update", "--silent")).toMatchObject({ out: "", err: "", exitCode: 0 });
+    expect(p.asked()).toEqual(["leaf"]);
+    expect(await p.written()).toEqual(before);
+    expect(await p.installed("node_modules", "leaf")).toBe("1.1.0");
+  });
+
+  // Only the entry that was kept stays as written. The same key of another workspace is another package here.
+  it("leaves the entry of the same key in another workspace to `bun update`", async () => {
+    const releases: Releases = { ...LEAF, other: { "2.0.0": {}, "2.1.0": {} } };
+    const alias = (range: string) => ({ name: "pkg2", optionalDependencies: { leaf: `npm:other@${range}` } });
+    using p = await project({ workspaces: ["packages/*"] }, releases, {
+      "packages/pkg1/package.json": JSON.stringify({ name: "pkg1", ...OPTIONAL_LEAF }),
+      "packages/pkg2/package.json": JSON.stringify(alias("^2.0.0")),
+    });
+    const { "2.1.0": newer, ...older } = releases.other;
+    releases.other = older;
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    releases.other = { ...older, "2.1.0": newer };
+
+    p.refuse("leaf", 404);
+    expect(await p.run("update", "-r")).toMatchObject({
+      ...unchanged,
+      warnings: notChecked(p.refused(404)),
+      saved: true,
+    });
+    expect(await file(p.path("packages/pkg1/package.json")).json()).toEqual({ name: "pkg1", ...OPTIONAL_LEAF });
+    expect(await file(p.path("packages/pkg2/package.json")).json()).toEqual(alias("^2.1.0"));
+    expect([await p.locked("leaf"), await p.locked("other")]).toEqual([["1.1.0"], ["2.1.0"]]);
+  });
+
+  // Nor does the name of the workspace tell the two entries apart: it may be the name of the root.
+  it.each(["mylib", "core"])(
+    "in a root named mylib: leaves the entry of the same key in a workspace named %s to `bun update --latest`",
+    async name => {
+      const releases: Releases = { ...LEAF, other: { "2.0.0": {}, "3.0.0": {} } };
+      const alias = (range: string) => ({ name, optionalDependencies: { leaf: `npm:other@${range}` } });
+      const root = { name: "mylib", workspaces: ["packages/*"], ...OPTIONAL_LEAF };
+      using p = await project(root, releases, { "packages/m/package.json": JSON.stringify(alias("^2.0.0")) });
+      const { "3.0.0": newer, ...older } = releases.other;
+      releases.other = older;
+      expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+      releases.other = { ...older, "3.0.0": newer };
+
+      p.refuse("leaf", 404);
+      expect(await p.run("update", "--latest", "-r")).toMatchObject({
+        ...unchanged,
+        warnings: notChecked(p.refused(404)),
+        saved: true,
+      });
+      expect(await file(p.path("package.json")).json()).toEqual(root);
+      expect(await file(p.path("packages/m/package.json")).json()).toEqual(alias("^3.0.0"));
+      expect([await p.locked("leaf"), await p.locked("other")]).toEqual([["1.1.0"], ["3.0.0"]]);
+      expect(await p.run("install", "--frozen-lockfile")).toMatchObject({ errors: [], exitCode: 0 });
+    },
+  );
+
+  // The same holds for the entries of a catalog: the one of another dependency moves, and so does the one that
+  // another workspace has for the same key in another catalog.
+  it("leaves the catalog entry of another dependency to `bun update`", async () => {
+    const releases: Releases = { ...LEAF, other: { "2.0.0": {}, "2.1.0": {} } };
+    const root = (other: string) => ({
+      workspaces: { packages: [], catalog: { leaf: "^1.0.0", other } },
+      optionalDependencies: { leaf: "catalog:", other: "catalog:" },
+    });
+    using p = await project(root("^2.0.0"), releases);
+    const { "2.1.0": newer, ...older } = releases.other;
+    releases.other = older;
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    releases.other = { ...older, "2.1.0": newer };
+
+    p.refuse("leaf", 404);
+    expect(await p.run("update")).toMatchObject({ ...unchanged, warnings: notChecked(p.refused(404)), saved: true });
+    expect(await file(p.path("package.json")).json()).toEqual({ name: "foo", ...root("^2.1.0") });
+    expect([await p.locked("leaf"), await p.locked("other")]).toEqual([["1.1.0"], ["2.1.0"]]);
+  });
+
+  it("leaves the entry of the same key in another catalog to `bun update`", async () => {
+    const releases: Releases = { ...LEAF, other: { "2.0.0": {}, "2.1.0": {} } };
+    const root = (range: string) => ({
+      workspaces: {
+        packages: ["packages/*"],
+        catalog: { leaf: `npm:other@${range}` },
+        catalogs: { b: { leaf: "^1.0.0" } },
+      },
+      optionalDependencies: { leaf: "catalog:" },
+    });
+    const pkg1 = JSON.stringify({ name: "pkg1", optionalDependencies: { leaf: "catalog:b" } });
+    using p = await project(root("^2.0.0"), releases, { "packages/pkg1/package.json": pkg1 });
+    const { "2.1.0": newer, ...older } = releases.other;
+    releases.other = older;
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    releases.other = { ...older, "2.1.0": newer };
+
+    p.refuse("leaf", 404);
+    expect(await p.run("update", "-r")).toMatchObject({
+      ...unchanged,
+      warnings: notChecked(p.refused(404)),
+      saved: true,
+    });
+    expect(await file(p.path("package.json")).json()).toEqual({ name: "foo", ...root("^2.1.0") });
+    expect(await file(p.path("packages/pkg1/package.json")).text()).toBe(pkg1);
+    expect([await p.locked("leaf"), await p.locked("other")]).toEqual([["1.1.0"], ["2.1.0"]]);
+  });
+
+  // A plain install asks again when a rule for the name changes, and for an entry that is new or is written
+  // somewhere else. It prints nothing about a manifest that --offline does not have.
+  describe.each<[string, string[]]>([
+    ["after a 404 for its manifest", []],
+    ["under --offline without its manifest in the cache", ["--offline"]],
+  ])("%s", (_, args) => {
+    const offline = args.includes("--offline");
+
+    it.each<[string, string, string[]]>([
+      ["keeps its version under a new override that accepts it", "^1.0.0", ["1.1.0"]],
+      ["is left out under a new override that rejects its version", "1.0.0", []],
+    ])("%s", async (_, rule, locked) => {
+      const root = { dependencies: { parent: "1.0.0" } };
+      const releases = { ...LEAF, parent: { "1.0.0": { optionalDependencies: { leaf: "^1.0.0" } } } };
+      using p = await project(root, releases);
+      expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+      expect(await p.locked("leaf")).toEqual(["1.1.0"]);
+
+      await writeFile(p.path("package.json"), JSON.stringify({ name: "foo", ...root, overrides: { leaf: rule } }));
+      rmSync(p.path(".bun-cache"), { recursive: true, force: true });
+      p.refuse("leaf", 404);
+      p.asked();
+      expect(await p.run("install", ...args)).toMatchObject({
+        warnings: offline ? [] : [`warn: ${p.refused(404)}`],
+        errors: [],
+        exitCode: 0,
+      });
+      expect(p.asked()).toEqual(offline ? [] : ["leaf"]);
+      expect(await p.locked("leaf")).toEqual(locked);
+    });
+
+    it("that is new takes the version that bun.lock has for a dependency of a package", async () => {
+      const root = { dependencies: { parent: "1.0.0" } };
+      const releases = { ...LEAF, parent: { "1.0.0": { dependencies: { leaf: "1.0.0" } } } };
+      using p = await project(root, releases);
+      expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+
+      await writeFile(p.path("package.json"), JSON.stringify({ name: "foo", ...root, ...OPTIONAL_LEAF }));
+      rmSync(p.path(".bun-cache"), { recursive: true, force: true });
+      p.refuse("leaf", 404);
+      p.asked();
+      expect(await p.run("install", ...args)).toMatchObject({
+        warnings: offline ? [] : [`warn: ${p.refused(404)}`],
+        errors: [],
+        exitCode: 0,
+      });
+      expect(p.asked()).toEqual(offline ? [] : ["leaf"]);
+      expect(await p.locked("leaf")).toEqual(["1.0.0"]);
+      expect((await p.written())[0]).not.toContain('"unresolved"');
+      expect(await p.installed("node_modules", "leaf")).toBe("1.0.0");
+    });
+
+    // [the edit, package.json before, the other files before, the files after, the key that reaches leaf]
+    it.each<[string, object, Record<string, string>, Record<string, object>, string]>([
+      [
+        "moved from dependencies to optionalDependencies",
+        { dependencies: { leaf: "^1.0.0" } },
+        {},
+        { "package.json": OPTIONAL_LEAF },
+        "leaf",
+      ],
+      [
+        "moved from the root to a workspace",
+        { workspaces: ["packages/*"], ...OPTIONAL_LEAF },
+        { "packages/pkg1/package.json": JSON.stringify({ name: "pkg1" }) },
+        {
+          "package.json": { workspaces: ["packages/*"] },
+          "packages/pkg1/package.json": { name: "pkg1", ...OPTIONAL_LEAF },
+        },
+        "leaf",
+      ],
+      [
+        "renamed to an npm: alias of its package",
+        OPTIONAL_LEAF,
+        {},
+        { "package.json": { optionalDependencies: { aliased: "npm:leaf@^1.0.0" } } },
+        "aliased",
+      ],
+      ["moved to a catalog with its range", OPTIONAL_LEAF, {}, { "package.json": cataloged("^1.0.0") }, "leaf"],
+    ])("keeps its version when its entry is %s", async (_, before, files, after, key) => {
+      using p = await project(before, LEAF, files);
+      expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+      expect(await p.locked("leaf")).toEqual(["1.1.0"]);
+
+      for (const [name, fields] of Object.entries(after)) {
+        await writeFile(p.path(name), JSON.stringify({ name: "foo", ...fields }));
+      }
+      // Only the manifest goes. The extracted package stays, for --offline to install under the new key.
+      rmSync(p.manifest("leaf"));
+      p.refuse("leaf", 404);
+      p.asked();
+      expect(await p.run("install", ...args)).toMatchObject({
+        warnings: offline ? [] : [`warn: ${p.refused(404)}`],
+        errors: [],
+        exitCode: 0,
+      });
+      expect(p.asked()).toEqual(offline ? [] : ["leaf"]);
+      expect(await p.locked("leaf")).toEqual(["1.1.0"]);
+      expect((await p.written())[0]).not.toContain('"unresolved"');
+      expect(await p.installed("node_modules", key)).toBe("1.1.0");
+    });
+
+    // Nothing is kept for an entry that is a required one afterwards: the install fails and writes nothing.
+    it.each<[string, object, object]>([
+      [
+        "moved from dependencies to devDependencies",
+        { dependencies: { leaf: "^1.0.0" } },
+        { devDependencies: { leaf: "^1.0.0" } },
+      ],
+      ["moved from optionalDependencies to dependencies", OPTIONAL_LEAF, { dependencies: { leaf: "^1.0.0" } }],
+    ])("a required entry that is %s fails the install", async (_, before, after) => {
+      using p = await project(before);
+      expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+      const lock = (await p.written())[0];
+
+      await writeFile(p.path("package.json"), JSON.stringify({ name: "foo", ...after }));
+      rmSync(p.manifest("leaf"));
+      p.refuse("leaf", 404);
+      expect(await p.run("install", ...args)).toMatchObject({
+        warnings: [],
+        errors: [offline ? notCached : `error: ${p.refused(404)}`, unresolved],
+        saved: false,
+        exitCode: 1,
+      });
+      expect((await p.written())[0]).toBe(lock);
+    });
+  });
+
+  // As an install without the failure does: both rows move to the version that has a patch.
+  it("takes the patched version that a new override allows, after a 404 for its manifest", async () => {
+    const parent = { dependencies: { parent: "1.0.0" } };
+    const patched = {
+      ...parent,
+      optionalDependencies: { leaf: "1.0.0" },
+      patchedDependencies: { "leaf@1.0.0": "patches/leaf@1.0.0.patch" },
+    };
+    const releases = { ...LEAF, parent: { "1.0.0": { optionalDependencies: { leaf: "^1.0.0" } } } };
+    using p = await project(parent, releases, { "patches/leaf@1.0.0.patch": ADDS_PATCHED_TXT });
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    await writeFile(p.path("package.json"), JSON.stringify({ name: "foo", ...patched }));
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    expect(await p.locked("leaf")).toEqual(["1.0.0", "1.1.0"]);
+
+    await writeFile(p.path("package.json"), JSON.stringify({ name: "foo", ...patched, overrides: { leaf: "^1.0.0" } }));
+    rmSync(p.path(".bun-cache"), { recursive: true, force: true });
+    p.refuse("leaf", 404);
+    expect(await p.run("install")).toMatchObject({ warnings: [`warn: ${p.refused(404)}`], errors: [], exitCode: 0 });
+    expect(await p.locked("leaf")).toEqual(["1.0.0"]);
+    expect(await file(p.path("node_modules", "leaf", "patched.txt")).text()).toBe("hello world\n");
+  });
+
+  // bun.lock and package.json agree on an override, and a row is still bound outside of it, as after a merge. That
+  // row is resolved again once everything else is: it takes the version that bun.lock has for the rule.
+  it.each(["install", "update"])(
+    "`bun %s` moves a row that a merged bun.lock has outside an override",
+    async command => {
+      const root = { dependencies: { parent: "1.0.0", other: "1.0.0" } };
+      const releases = {
+        ...LEAF,
+        parent: { "1.0.0": { optionalDependencies: { leaf: "^1.0.0" } } },
+        other: { "1.0.0": { dependencies: { leaf: "1.0.0" } } },
+      };
+      using p = await project({ dependencies: { parent: "1.0.0" } }, releases);
+      expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+      await writeFile(p.path("package.json"), JSON.stringify({ name: "foo", ...root }));
+      expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+      expect(await p.locked("leaf")).toEqual(["1.0.0", "1.1.0"]);
+
+      const rule = '"overrides": {\n    "leaf": "1.0.0",\n  },\n  ';
+      const lock = await file(p.path("bun.lock")).text();
+      expect(lock).toContain('\n  "packages": {');
+      await writeFile(p.path("bun.lock"), lock.replace('"packages": {', rule + '"packages": {'));
+      await writeFile(p.path("package.json"), JSON.stringify({ name: "foo", ...root, overrides: { leaf: "1.0.0" } }));
+      rmSync(p.manifest("leaf"));
+      p.refuse("leaf", 404);
+      expect(await p.run(command)).toMatchObject({ errors: [], exitCode: 0 });
+      expect(await p.locked("leaf")).toEqual(["1.0.0"]);
+      expect((await p.written())[0]).not.toContain('"unresolved"');
+    },
+  );
+
+  // An entry that is new has no version of its own. `bun update` holds it on the patched version, and --latest does
+  // not, as when the registry answers.
+  it.each<[string[], string]>([
+    [[], "1.0.0"],
+    [["--latest"], "1.1.0"],
+  ])("that is new: `bun update %s` takes the patched version only without --latest", async (args, version) => {
+    const root = {
+      dependencies: { low: "1.0.0", high: "1.0.0" },
+      patchedDependencies: { "leaf@1.0.0": "patches/leaf@1.0.0.patch" },
+    };
+    const releases = {
+      ...LEAF,
+      low: { "1.0.0": { dependencies: { leaf: "1.0.0" } } },
+      high: { "1.0.0": { dependencies: { leaf: "1.1.0" } } },
+    };
+    using p = await project(root, releases, { "patches/leaf@1.0.0.patch": ADDS_PATCHED_TXT });
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    expect(await p.locked("leaf")).toEqual(["1.0.0", "1.1.0"]);
+
+    const packageJson = JSON.stringify({ name: "foo", ...root, ...OPTIONAL_LEAF }, null, 2);
+    await writeFile(p.path("package.json"), packageJson);
+    p.refuse("leaf", 404);
+    expect(await p.run("update", ...args)).toMatchObject({ errors: [], exitCode: 0 });
+    expect(await p.installed("node_modules", "leaf")).toBe(version);
+    expect(await file(p.path("package.json")).text()).toBe(packageJson);
+  });
+
+  it("whose key now asks for another package does not keep the package of the old name", async () => {
+    const releases = { ...LEAF, other: { "1.0.0": {} } };
+    using p = await project(OPTIONAL_LEAF, releases);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+
+    const packageJson = JSON.stringify({ name: "foo", optionalDependencies: { leaf: "npm:other@^1.0.0" } }, null, 2);
+    await writeFile(p.path("package.json"), packageJson);
+    p.refuse("other", 404);
+    expect(await p.run("update")).toMatchObject({ errors: [], exitCode: 0 });
+    expect([await p.locked("leaf"), await p.locked("other")]).toEqual([[], []]);
+    expect(await file(p.path("package.json")).text()).toBe(packageJson);
+  });
+
+  // The entry is on 1.1.0, and `pin` has 1.0.0, which has a patch. --latest does not hold an entry on a patched
+  // version, and a failed request does not move the entry down to one either. After a 404 or a 503 the failed
+  // request is on a line of its own.
+  it.each<[string, number, string[], (refused: string) => string[]]>([
+    ["after a 404 for its manifest", 404, [], refused => [`warn: ${refused}`, ...notChecked()]],
+    ["after a 503 for its manifest", 503, [], refused => [`warn: ${refused}`, ...notChecked()]],
+    ["under --offline without its manifest in the cache", 404, ["--offline"], () => notChecked()],
+  ])("`bun update --latest` does not move it down to a patched version %s", async (_, status, args, warns) => {
+    const root = { dependencies: { pin: "1.0.0" }, ...OPTIONAL_LEAF };
+    const patched = { ...root, patchedDependencies: { "leaf@1.0.0": "patches/leaf@1.0.0.patch" } };
+    const releases = { ...LEAF, pin: { "1.0.0": { dependencies: { leaf: "1.0.0" } } } };
+    using p = await project(root, releases, { "patches/leaf@1.0.0.patch": ADDS_PATCHED_TXT });
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    await writeFile(p.path("package.json"), JSON.stringify({ name: "foo", ...patched }));
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const before = await p.written();
+    expect(await p.locked("leaf")).toEqual(["1.0.0", "1.1.0"]);
+
+    rmSync(p.manifest("leaf"));
+    p.refuse("leaf", status);
+    expect(await p.run("update", "--latest", ...args)).toMatchObject({
+      ...unchanged,
+      warnings: warns(p.refused(status)),
+    });
+    expect(await p.written()).toEqual(before);
+    expect(await p.installed("node_modules", "leaf")).toBe("1.1.0");
+    expect(await file(p.path("node_modules", "pin", "node_modules", "leaf", "patched.txt")).text()).toBe(
+      "hello world\n",
+    );
+  });
+
+  // The registry lets no manifest be used again without a request. `aaa` asks for an exact version that the cached
+  // manifest lists, which needs no request: bun.lock has leaf@1.2.0 by the time the request for the range fails.
+  // The entry takes 1.1.0, which bun.lock had before, and not the version that this install added.
+  it("that is new takes no version that the same install added to bun.lock", async () => {
+    const root = { dependencies: { parent: "1.0.0" } };
+    const releases = {
+      leaf: { "1.0.0": {}, "1.1.0": {}, "1.2.0": {} },
+      parent: { "1.0.0": { optionalDependencies: { leaf: "~1.1.0" } } },
+    };
+    using p = await project(root, releases);
+    p.expireManifests();
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    expect(await p.locked("leaf")).toEqual(["1.1.0"]);
+
+    const optionalDependencies = { aaa: "npm:leaf@1.2.0", leaf: "^1.0.0" };
+    await writeFile(p.path("package.json"), JSON.stringify({ name: "foo", ...root, optionalDependencies }));
+    p.refuse("leaf", 503);
+    p.asked();
+    expect(await p.run("install")).toMatchObject({ warnings: [`warn: ${p.refused(503)}`], errors: [], exitCode: 0 });
+    expect(p.asked()).toEqual(["leaf"]);
+    expect(await p.locked("leaf")).toEqual(["1.1.0", "1.2.0"]);
+    expect((await p.written())[0]).not.toContain('"unresolved"');
+    expect([await p.installed("node_modules", "aaa"), await p.installed("node_modules", "leaf")]).toEqual([
+      "1.2.0",
+      "1.1.0",
+    ]);
+  });
+
+  // What a failed request must not turn into a package: an entry that asks for something else now, an entry that
+  // asks for a dist-tag, and a version that the registry no longer lists. --latest asks for the tag `latest` where
+  // a `catalog:` entry is written, so that entry is left out too.
+  it.each<[string, Releases, object, object, string[]]>([
+    [
+      "a catalog entry that now rejects its version",
+      { leaf: { "1.0.0-beta.1": {} } },
+      cataloged("*"),
+      cataloged("^2.0.0"),
+      [],
+    ],
+    ["a catalog entry that is now a tag", LEAF, cataloged("^1.0.0"), cataloged("next"), []],
+    ["a range that now rejects its version", LEAF, OPTIONAL_LEAF, { optionalDependencies: { leaf: "^2.0.0" } }, []],
+    ["--latest for a catalog entry", LEAF, cataloged("^1.0.0"), cataloged("^1.0.0"), ["--latest"]],
+  ])("is left out under %s, after a 404 for its manifest", async (_, releases, installed, edited, args) => {
+    using p = await project(installed, releases);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    expect(await p.locked("leaf")).toHaveLength(1);
+
+    const packageJson = JSON.stringify({ name: "foo", ...edited }, null, 2);
+    await writeFile(p.path("package.json"), packageJson);
+    p.refuse("leaf", 404);
+    expect(await p.run("update", ...args)).toMatchObject({ errors: [], exitCode: 0 });
+    expect(await p.locked("leaf")).toEqual([]);
+    expect(await file(p.path("package.json")).text()).toBe(packageJson);
+  });
+
+  it("that asks for a dist-tag and never resolved stays unresolved", async () => {
+    const releases = { ...LEAF, parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } } } };
+    const root = { dependencies: { parent: "1.0.0" }, optionalDependencies: { leaf: "no-such-tag" } };
+    using p = await project(root, releases);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const before = await p.written();
+    expect(before[0]).toContain('"unresolved"');
+
+    p.refuse("leaf", 404);
+    expect(await p.run("update")).toMatchObject({ errors: [], saved: false, exitCode: 0 });
+    expect(await p.written()).toEqual(before);
+  });
+
+  // An entry that asks for a range is another matter, whether or not it had a package. Its first install got a
+  // 404, and a later one brought `parent` without asking again about the entry: bun.lock lists it as unresolved,
+  // and has a package in its range.
+  it("that asks for a range and never resolved takes the version that bun.lock has for a dependency of a package", async () => {
+    const releases = { ...LEAF, parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } } } };
+    using p = await project(OPTIONAL_LEAF, releases);
+    p.refuse("leaf", 404);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    p.refuse("leaf", 0);
+    const root = { dependencies: { parent: "1.0.0" }, ...OPTIONAL_LEAF };
+    await writeFile(p.path("package.json"), JSON.stringify({ name: "foo", ...root }));
+    expect(await p.run("install")).toMatchObject({ errors: [], exitCode: 0 });
+    const before = await p.written();
+    expect(before[0]).toContain('"unresolved"');
+
+    p.refuse("leaf", 404);
+    expect(await p.run("update")).toMatchObject({ ...unchanged, warnings: notChecked(p.refused(404)), saved: true });
+    const after = await p.written();
+    expect(after[0]).not.toContain('"unresolved"');
+    expect(after[1]).toBe(before[1]);
+    expect(await p.locked("leaf")).toEqual(["1.1.0"]);
+    expect(await p.run("install", "--frozen-lockfile")).toMatchObject({ errors: [], exitCode: 0 });
+  });
+
+  it("is left out when the registry answers and no longer lists a version in its range", async () => {
+    const releases: Releases = { leaf: { "1.0.0": {}, "1.1.0": {}, "2.0.0": {} } };
+    using p = await project(OPTIONAL_LEAF, releases);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    expect(await p.locked("leaf")).toEqual(["1.1.0"]);
+    delete releases.leaf["1.0.0"];
+    delete releases.leaf["1.1.0"];
+
+    expect(await p.run("update")).toMatchObject({ warnings: [], errors: [], exitCode: 0 });
+    expect(await p.locked("leaf")).toEqual([]);
+    expect(await file(p.path("package.json")).json()).toEqual({ name: "foo", ...OPTIONAL_LEAF });
+  });
+
+  // A dependency that the install cannot do without still fails it, and then nothing is written. The update has
+  // warned about the package before that when it asked for a dependency of a package, or for the optional entry.
+  it.each<[string, object, Releases, Record<string, string>, string[], (refused: string) => object]>([
+    [
+      "the root requires the package",
+      { dependencies: { leaf: "^1.0.0" } },
+      LEAF,
+      {},
+      [],
+      refused => ({ warnings: [], errors: [`error: ${refused}`, unresolved] }),
+    ],
+    [
+      "the root requires the package that a dependency of a package also has",
+      { dependencies: { parent: "1.0.0", leaf: "^1.0.0" } },
+      { ...LEAF, parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } } } },
+      {},
+      [],
+      refused => ({ warnings: notChecked(refused), errors: [unresolved] }),
+    ],
+    [
+      "a workspace requires the package",
+      { workspaces: ["packages/*"], ...OPTIONAL_LEAF },
+      LEAF,
+      { "packages/pkg1/package.json": JSON.stringify({ name: "pkg1", dependencies: { leaf: "^1.0.0" } }) },
+      ["-r"],
+      refused => ({ warnings: notChecked(), errors: [`error: ${refused}`, unresolved] }),
+    ],
+  ])("`bun update` fails after a 404 for the manifest when %s", async (_, root, releases, files, args, printed) => {
+    const workspaces = Object.keys(files).map(f => f.replace("/package.json", ""));
+    using p = await project(root, releases, files);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const before = await p.written(...workspaces);
+
+    p.refuse("leaf", 404);
+    expect(await p.run("update", ...args)).toMatchObject({ ...printed(p.refused(404)), saved: false, exitCode: 1 });
+    expect(await p.written(...workspaces)).toEqual(before);
+    expect(await p.installed("node_modules", "leaf")).toBe("1.1.0");
+  });
+
+  // So does a dependency that the kept package cannot do without. New overrides make a plain install ask again
+  // for the package and for its dependency, and neither manifest arrives.
+  it("fails the install when a dependency that its package requires gets no manifest either", async () => {
+    const releases = { leaf: { "1.0.0": { dependencies: { dep: "^1.0.0" } } }, dep: { "1.0.0": {} } };
+    using p = await project(OPTIONAL_LEAF, releases);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const lock = (await p.written())[0];
+
+    const overrides = { leaf: "^1.0.0", dep: "^1.0.0" };
+    await writeFile(p.path("package.json"), JSON.stringify({ name: "foo", ...OPTIONAL_LEAF, overrides }));
+    rmSync(p.path(".bun-cache"), { recursive: true, force: true });
+    p.refuse("leaf", 404);
+    p.refuse("dep", 404);
+    expect(await p.run("install")).toMatchObject({
+      warnings: [`warn: ${p.refused(404)}`],
+      errors: [`error: ${p.refused(404, "dep")}`, "error: dep@^1.0.0 failed to resolve"],
+      saved: false,
+      exitCode: 1,
+    });
+    expect((await p.written())[0]).toBe(lock);
+    expect(await p.installed("node_modules", "leaf")).toBe("1.0.0");
+  });
+
+  // So does an entry that the command selects, by a name, a pattern or a flag: nothing is kept for it, and the
+  // refused request is the last one. A pattern asks about the dependencies of packages before that.
+  it.each<[string, string[], string[]]>([
+    ["<name> --latest", ["parent", "--latest"], ["parent"]],
+    ["<pattern>", ["*"], ["leaf", "parent"]],
+    ["--prod", ["--prod"], ["parent"]],
+    ["--depth 0", ["--depth", "0"], ["parent"]],
+  ])("`bun update %s` fails after a 404 for the manifest of the entry", async (_, args, asked) => {
+    const releases = { ...LEAF, parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } } } };
+    using p = await project({ optionalDependencies: { parent: "^1.0.0" } }, releases);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const before = await p.written();
+
+    p.refuse("parent", 404);
+    p.asked();
+    expect(await p.run("update", ...args)).toMatchObject({
+      ...unchanged,
+      warnings: [`warn: ${p.refused(404, "parent")}`],
+      exitCode: 1,
+    });
+    expect(p.asked()).toEqual(asked);
+    expect(await p.written()).toEqual(before);
+  });
+
+  // The same under --offline, where the manifest of `good` is in the cache and the one of leaf is not: the update
+  // fails as it does for a required dependency, whatever else it names.
+  it.each(["leaf", "leaf@^9.0.0", "leaf good", "leaf good -r"])(
+    "`bun update %s --offline` fails without the manifest of the entry in the cache",
+    async names => {
+      const root = { dependencies: { good: "^1.0.0" }, ...OPTIONAL_LEAF };
+      using p = await project(root, { ...LEAF, good: { "1.0.0": {} } });
+      expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+      const before = await p.written();
+      rmSync(p.manifest("leaf"));
+
+      p.asked();
+      expect(await p.run("update", ...names.split(" "), "--offline")).toMatchObject({
+        ...unchanged,
+        errors: [notCached],
+        exitCode: 1,
+      });
+      expect(p.asked()).toEqual([]);
+      expect(await p.written()).toEqual(before);
+      expect(await p.installed("node_modules", "leaf")).toBe("1.1.0");
+    },
+  );
+
+  // `bun add` names its entry too. bun.lock has a version in the range, for `parent`, and the entry does not take
+  // it.
+  it.each<[string, string[]]>([
+    ["", []],
+    [" --exact", ["--exact"]],
+  ])("`bun add --optional <name>@<range>%s --offline` fails without its manifest in the cache", async (_, flags) => {
+    const releases = { ...LEAF, parent: { "1.0.0": { dependencies: { leaf: "1.0.0" } } } };
+    using p = await project({ dependencies: { parent: "1.0.0" } }, releases);
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const before = await p.written();
+    rmSync(p.manifest("leaf"));
+
+    p.asked();
+    expect(await p.run("add", "--optional", "leaf@^1.0.0", ...flags, "--offline")).toMatchObject({
+      ...unchanged,
+      errors: [notCached],
+      exitCode: 1,
+    });
+    expect(p.asked()).toEqual([]);
+    expect(await p.written()).toEqual(before);
+  });
+
+  // No request can be made to the registry URL of its scope, and `dev` has a newer version by then. An update that
+  // names both asks about `dev`, fails and writes nothing, whether the row of `dev` comes before the entry or after.
+  const cannotAsk = ["warn: Registry URL must be http:// or https://", "warn: InvalidURL"];
+  const scoped = (group: string, dev: string) => ({
+    [group]: { dev },
+    optionalDependencies: { "@priv/leaf": "^1.0.0" },
+  });
+  it.each([
+    ["devDependency", "devDependencies"],
+    ["dependency", "dependencies"],
+  ])(
+    "`bun update <%s> <name>` fails when no request can be made to the registry URL of its scope",
+    async (_, group) => {
+      const releases: Releases = { dev: { "1.0.0": {}, "1.1.0": {} }, "@priv/leaf": LEAF.leaf };
+      using p = await project(scoped(group, "^1.0.0"), releases);
+      const { "1.1.0": newer, ...older } = releases.dev;
+      releases.dev = older;
+      expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+      releases.dev = { ...older, "1.1.0": newer };
+      const before = await p.written();
+
+      await p.configure({ scopes: { priv: "ftp://localhost/" } });
+      p.asked();
+      expect(await p.run("update", "dev", "@priv/leaf")).toMatchObject({
+        ...unchanged,
+        warnings: cannotAsk,
+        exitCode: 1,
+      });
+      expect(p.asked()).toEqual(["dev"]);
+      expect(await p.written()).toEqual(before);
+    },
+  );
+
+  // A bare update in the same state moves `dev` and keeps the entry.
+  it("`bun update` still moves the other entries when no request can be made to the registry URL of its scope", async () => {
+    const releases: Releases = { dev: { "1.0.0": {}, "1.1.0": {} }, "@priv/leaf": LEAF.leaf };
+    using p = await project(scoped("dependencies", "^1.0.0"), releases);
+    const { "1.1.0": newer, ...older } = releases.dev;
+    releases.dev = older;
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    releases.dev = { ...older, "1.1.0": newer };
+
+    await p.configure({ scopes: { priv: "ftp://localhost/" } });
+    expect(await p.run("update")).toMatchObject({
+      ...unchanged,
+      warnings: ["warn: @priv/leaf@1.1.0 was not checked for updates", ...cannotAsk],
+      saved: true,
+    });
+    expect(await file(p.path("package.json")).json()).toEqual({ name: "foo", ...scoped("dependencies", "^1.1.0") });
+    expect([await p.locked("dev"), await p.locked("@priv/leaf")]).toEqual([["1.1.0"], ["1.1.0"]]);
+    expect(await p.run("install", "--frozen-lockfile")).toMatchObject({ errors: [], exitCode: 0 });
   });
 });

@@ -338,6 +338,7 @@ fn edit_update_targets(
         ] {
             PackageJSONEditor::edit_update_entries(
                 &manager.lockfile,
+                &manager.kept_locked,
                 &manager.ast_arena,
                 &mut updating,
                 target.name_hash,

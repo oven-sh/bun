@@ -151,7 +151,9 @@ pub fn install_with_manager(
     // this defaults to false
     // but we force allowing updates to the lockfile when you do bun add
     let mut had_any_diffs = false;
-    let mut direct_deps_before = DirectDependencies::default();
+    manager.direct_before = DirectDependencies::default();
+    manager.kept_locked.clear();
+    manager.warned_unchecked.clear();
     manager.progress = Default::default();
 
     match &load_result {
@@ -297,7 +299,7 @@ pub fn install_with_manager(
                     crate::dedupe::dedupe_after_differ(manager);
                 }
                 if manager.summary.changes_resolutions() {
-                    direct_deps_before = DirectDependencies::snapshot(&manager.lockfile);
+                    manager.direct_before = DirectDependencies::snapshot(&manager.lockfile);
                 }
 
                 // Split-borrow `manager.lockfile` so the `StringBuilder`
@@ -323,7 +325,7 @@ pub fn install_with_manager(
                         .clone_into(&lockfile.buffers.string_bytes, builder);
                     builder.clamp();
                     if bare_update {
-                        transitive = TransitiveUpdate::plan(manager, &direct_deps_before)?;
+                        transitive = TransitiveUpdate::plan(manager)?;
                         transitive.enqueue(manager)?;
                     }
                 } else {
@@ -519,7 +521,7 @@ pub fn install_with_manager(
                         || manager.summary.catalogs_changed;
                     let mut pinned_rows = DynamicBitSet::default();
                     if bare_update {
-                        transitive = TransitiveUpdate::plan(manager, &direct_deps_before)?;
+                        transitive = TransitiveUpdate::plan(manager)?;
                         pinned_rows = transitive.enqueue(manager)?;
                     }
 
@@ -577,11 +579,7 @@ pub fn install_with_manager(
     let mut named = NamedUpdates::default();
     if !needs_new_lockfile {
         if named_update {
-            named = enqueue_named_updates(
-                manager,
-                &direct_deps_before,
-                loaded_lockfile_name(&load_result),
-            )?;
+            named = enqueue_named_updates(manager, loaded_lockfile_name(&load_result))?;
         }
         if !manager.audit_fix_pins.is_empty() {
             crate::audit_fix::enqueue_planned_fixes(manager)?;
@@ -638,7 +636,7 @@ pub fn install_with_manager(
 
     // `--depth 0`: a transitive edge that shared the old package with a moved entry stays.
     let direct_only = manager.options.do_.update_direct_only();
-    direct_deps_before.redirect_dependents(&mut manager.lockfile, direct_only);
+    (manager.direct_before).redirect_dependents(&mut manager.lockfile, direct_only);
     transitive.redirect_dependents(&mut manager.lockfile);
     redirect_moved_edges(&mut manager.lockfile, &named.moved, direct_only);
     // `bun audit fix` moved its rows to the fixed versions on purpose.
@@ -646,7 +644,8 @@ pub fn install_with_manager(
         crate::dedupe::collapse_appended(manager);
     }
     manager.log_held();
-    transitive.print_plan(manager, &direct_deps_before, &named.moved);
+    crate::update_transitive::warn_kept_locked(manager);
+    transitive.print_plan(manager, &named.moved);
     print_kept_patched(manager);
 
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
@@ -685,6 +684,9 @@ pub fn install_with_manager(
             manager.lockfile.mark_loaded_packages()?;
             clean_lockfile(manager, log_level)?;
             root = *manager.lockfile.packages.get(0);
+        }
+        if bun_core::Environment::CI_ASSERT {
+            crate::update_transitive::assert_kept_locked_in_range(manager);
         }
         if !manager.lockfile.overrides.is_empty() && !manager.options.dry_run {
             let outside = rows_outside_overrides(&manager.lockfile);
@@ -1789,11 +1791,10 @@ struct NamedUpdates {
 #[inline(never)]
 fn enqueue_named_updates(
     manager: &mut PackageManager,
-    direct: &DirectDependencies,
     lockfile_name: &'static str,
 ) -> crate::Result<NamedUpdates> {
     let walkable = crate::update_scope::UpdateScope::of(&*manager).walkable_rows(&manager.lockfile);
-    let plannable_peers = plannable_peer_rows(&manager.lockfile, direct);
+    let plannable_peers = plannable_peer_rows(&manager.lockfile, &manager.direct_before);
     let collect_latest_rows =
         manager.options.do_.update_to_latest() && !manager.options.do_.update_direct_only();
     let requests = manager.update_requests.len();

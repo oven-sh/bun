@@ -28,7 +28,7 @@ use crate::package_manager_real::directories::{
 use crate::package_manager_real::options::{Do, OfflineMode};
 use crate::package_manager_real::process_dependency_list::ListedDependencies;
 use crate::package_manager_real::{
-    self, HeldAbout, PackageManager, RemoteTurn, SuccessFn, TaskCallbackList, Wanted,
+    self, HeldAbout, KeptLocked, PackageManager, RemoteTurn, SuccessFn, TaskCallbackList, Wanted,
     get_cache_directory, get_temporary_directory, run_tasks,
 };
 use crate::package_manager_task as Task;
@@ -208,7 +208,8 @@ pub(crate) fn advance(this: &mut PackageManager) {
                         return;
                     }
                     Err(err) if head.from_command => add_dependency_error(this, &dependency, err),
-                    // It stays unresolved, which `verify_resolutions` reports if it matters.
+                    // Unless `keep_locked` gave it a package, it stays unresolved, which
+                    // `verify_resolutions` reports if it matters.
                     Err(_) => {}
                 }
             }
@@ -1868,7 +1869,9 @@ pub(crate) fn bind_row(
         dependency::version::Tag::DistTag
         | dependency::version::Tag::Folder
         | dependency::version::Tag::Npm => {
-            'retry_from_manifests_ptr: loop {
+            // A `break` is a row that the registry gave no answer for, with the task of a request
+            // that failed: the request could not be made, or `--offline` forbids it.
+            let unanswered: crate::Result<Option<Task::Id>> = 'retry_from_manifests_ptr: loop {
                 let mut resolve_result_ = get_or_put_resolved_package(
                     this,
                     name_hash,
@@ -1888,12 +1891,25 @@ pub(crate) fn bind_row(
                         Ok(v) => v,
                         Err(err) => {
                             let log_mark = this.log_mut().msgs.len();
+                            let from_cache =
+                                lacks_version_in_cache(this, id, dependency, name, &err);
+                            let fails_request = from_cache == Some(true);
                             report_resolve_error(
-                                this, id, dependency, name, version, err, is_root,
+                                this,
+                                id,
+                                dependency,
+                                name,
+                                version,
+                                err,
+                                is_root,
+                                fails_request,
                             )?;
                             // The manifest is there and has no such version.
                             if version.tag.is_npm() {
                                 this.hold_log_since(log_mark, id);
+                            }
+                            if from_cache.is_some() {
+                                break 'retry_from_manifests_ptr Ok(None);
                             }
                             return Ok(Row::Done);
                         }
@@ -1929,7 +1945,7 @@ pub(crate) fn bind_row(
                     if this.has_created_network_task(task_id, dependency.behavior.is_required()) {
                         if this.manifest_failures.contains_key(&task_id) {
                             report_manifest_failure(this, task_id, id, dependency, &name_str);
-                            return Ok(Row::Done);
+                            break 'retry_from_manifests_ptr Ok(Some(task_id));
                         }
                         // Whoever marked the task as failed also reported why, as `--offline` does.
                         if this.network_task_has_failed(task_id) {
@@ -2033,8 +2049,11 @@ pub(crate) fn bind_row(
                     }
 
                     if this.options.offline == OfflineMode::Offline {
-                        // Any other releases the reservation: a later required edge still reports.
-                        if dependency.behavior.is_required() {
+                        // A request of the command fails like a required dependency. Any other
+                        // releases the reservation: a later required edge still reports.
+                        if dependency.behavior.is_required()
+                            || fails_update_request(this, task_id, id, &name_str)
+                        {
                             this.mark_network_task_failed(task_id);
                             this.log_mut().add_error_fmt(
                                 None,
@@ -2047,7 +2066,7 @@ pub(crate) fn bind_row(
                         } else {
                             let _ = this.network_dedupe_map.remove(&task_id);
                         }
-                        return Ok(Row::Done);
+                        break 'retry_from_manifests_ptr Ok(None);
                     }
 
                     if verbose_install() {
@@ -2057,16 +2076,24 @@ pub(crate) fn bind_row(
                         );
                     }
 
-                    enqueue_manifest_download(
+                    if let Err(err) = enqueue_manifest_download(
                         this,
                         task_id,
                         &name_str,
                         loaded_manifest.as_ref(),
                         dependency.behavior.is_optional(),
-                    )?;
+                    ) {
+                        // The failure is on record as reported, which fails a request of the
+                        // command for the dependency.
+                        report_manifest_failure(this, task_id, id, dependency, &name_str);
+                        break 'retry_from_manifests_ptr Err(err);
+                    }
                     return Ok(wait_for(this, task_id));
                 }
-            }
+            };
+            let task = unanswered.as_ref().ok().copied().flatten();
+            keep_locked(this, id, dependency, &asked, task, success_fn);
+            unanswered.map(|_| Row::Done)
         }
         _ => {
             bind_row_without_manifest(
@@ -2465,6 +2492,119 @@ fn report_manifest_failure(
     run_tasks::fail_update_requests(this, task_id, name, None, is_unanswered);
 }
 
+/// Whether a request of the command names `dependency`, whose manifest cannot be had. That fails
+/// the request as a failed manifest request does: the command exits 1 and saves nothing.
+#[cold]
+fn fails_update_request(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    id: DependencyID,
+    name: &[u8],
+) -> bool {
+    if this.update_requests.is_empty() {
+        return false;
+    }
+    // `fail_update_requests` reads this list to see who needs the manifest.
+    task_callback_list(this, task_id).push(TaskCallbackContext::Dependency(id));
+    run_tasks::fail_update_requests(this, task_id, name, None, false);
+    this.update_requests.iter().any(|request| request.failed)
+}
+
+/// `err` is "no version in range" for an optional `dependency`, from a manifest that is not the
+/// registry's answer of this run: what a cached copy lacks may have been published since
+/// (`ManifestOrigin`), and `--offline` cannot ask. Returns whether that fails a request of the
+/// command.
+#[cold]
+fn lacks_version_in_cache(
+    this: &mut PackageManager,
+    id: DependencyID,
+    dependency: &Dependency,
+    name: SemverString,
+    err: &crate::Error,
+) -> Option<bool> {
+    use crate::network_task::ManifestOrigin;
+    if dependency.behavior.is_required() || !matches!(err, crate::Error::NoMatchingVersion) {
+        return None;
+    }
+    let name: Vec<u8> = this.lockfile.str(&name).to_vec();
+    let task_id = Task::Id::for_manifest(&name);
+    let is_answer = (this.network_dedupe_map.get(&task_id))
+        .is_some_and(|entry| entry.manifest == ManifestOrigin::Registry);
+    (!is_answer).then(|| fails_update_request(this, task_id, id, &name))
+}
+
+/// A patched package is held while the range allows it; `--latest` and audit fix move it.
+#[inline]
+fn holds_patched(latest_for_target: bool, behavior: Behavior) -> bool {
+    !latest_for_target && !behavior.is_peer()
+}
+
+/// The registry gave no answer for `dependency`. An optional one takes a package of bun.lock that
+/// its range accepts, as an install that asks the registry nothing leaves it.
+#[cold]
+#[inline(never)]
+fn keep_locked(
+    this: &mut PackageManager,
+    id: DependencyID,
+    dependency: &Dependency,
+    asked: &Asked<'_>,
+    task: Option<Task::Id>,
+    success_fn: SuccessFn,
+) {
+    // A required dependency fails the install, and a failed request of the command saves nothing.
+    if dependency.behavior.is_required()
+        || this.update_requests.iter().any(|request| request.failed)
+    {
+        return;
+    }
+    let &Asked {
+        name,
+        name_hash,
+        version,
+        version_was_replaced,
+    } = asked;
+    let latest_for_target = picks_latest_tag(
+        this,
+        dependency,
+        id,
+        name_hash,
+        name,
+        version,
+        version_was_replaced,
+    );
+    let lockfile = &*this.lockfile;
+    let declared_by = lockfile.declaring_workspace(id);
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let accepts = |package: &PackageID| {
+        let package = *package as usize;
+        lockfile.packages.items_name_hash().get(package) == Some(&name_hash)
+            && lockfile.packages.items_resolution()[package]
+                .satisfies_dependency_version(version, buf, buf)
+    };
+    // The package that the row had. A row that had none, or whose range now rejects it, takes a
+    // patched package as it does when the registry answers, else the highest.
+    let had = declared_by.and_then(|(owner, _)| this.direct_before.package_of(owner, dependency));
+    let Some(package) = had
+        .filter(accepts)
+        .or_else(|| {
+            (holds_patched(latest_for_target, dependency.behavior))
+                .then(|| lockfile.patched_package_satisfying(name_hash, version))
+                .flatten()
+        })
+        .or_else(|| locked_package_in_range(lockfile, name_hash, version))
+    else {
+        return;
+    };
+    let entry = declared_by.map(|(_, workspace)| (workspace, dependency.name_hash));
+    this.kept_locked.push(KeptLocked {
+        row: id,
+        package,
+        task,
+        entry,
+    });
+    success_fn(this, id, package);
+}
+
 /// Logs why `get_or_put_resolved_package` failed. An `Err` is left to the caller to report.
 #[cold]
 fn report_resolve_error(
@@ -2475,12 +2615,14 @@ fn report_resolve_error(
     version: &dependency::Version,
     err: crate::Error,
     is_root: bool,
+    // The command asked for the dependency by name, so it cannot do without it either.
+    fails_request: bool,
 ) -> crate::Result<()> {
     use crate::Error as E;
     use bun_fmt::escape_control_chars as escape;
     match err {
         E::DistTagNotFound | E::NoMatchingVersion | E::TooRecentVersion => {
-            if !dependency.behavior.is_required() {
+            if !dependency.behavior.is_required() && !fails_request {
                 return Ok(());
             }
             // `update_transitive::reresolve` passes a copy of a peer without its peer bit.
@@ -3194,13 +3336,13 @@ fn get_or_put_resolved_package_with_find_result(
         };
 
     // A patched package is held while the range allows it; `--latest` and audit fix move it.
-    if should_update && !latest_for_target && !behavior.is_peer() {
+    if should_update && holds_patched(latest_for_target, behavior) {
         if let Some(id) = this.lockfile.patched_package_satisfying(name_hash, version) {
             this.kept_patched.push(id);
             return bind_existing(this, dependency_id, id, success_fn);
         }
     }
-    let patched = if latest_for_target || behavior.is_peer() || !has_patched_versions(this) {
+    let patched = if !holds_patched(latest_for_target, behavior) || !has_patched_versions(this) {
         None
     } else {
         patched_version_in_range(
@@ -3942,14 +4084,23 @@ fn catalog_entry_before_latest<'a>(
 }
 
 /// The lockfile-loaded instance the row's range accepts (`package_index` lists highest first).
+fn locked_package_in_range(
+    lockfile: &Lockfile::Lockfile,
+    name_hash: PackageNameHash,
+    version: &dependency::Version,
+) -> Option<PackageID> {
+    let in_lockfile = |id| id < lockfile.loaded_package_count;
+    lockfile.package_satisfying(name_hash, version, in_lockfile)
+}
+
+/// The version of `locked_package_in_range`.
 fn locked_version_in_lockfile<'a>(
     this: &'a PackageManager,
     name_hash: PackageNameHash,
     version: &dependency::Version,
 ) -> Option<(Semver::Version, &'a [u8])> {
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
-    let in_lockfile = |id| id < lockfile.loaded_package_count;
-    let id = lockfile.package_satisfying(name_hash, version, in_lockfile)?;
+    let id = locked_package_in_range(lockfile, name_hash, version)?;
     let res = &lockfile.packages.items_resolution()[id as usize];
     (res.tag == ResolutionTag::Npm)
         .then(|| (res.npm().version, lockfile.buffers.string_bytes.as_slice()))

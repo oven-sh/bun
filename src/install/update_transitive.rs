@@ -65,6 +65,19 @@ impl DirectDependencies {
         out
     }
 
+    /// The package that bun.lock has for `dependency` of the root or workspace `owner`.
+    pub(crate) fn package_of(
+        &self,
+        owner: PackageID,
+        dependency: &crate::Dependency,
+    ) -> Option<PackageID> {
+        let &(_, start, len) = self.owners.iter().find(|&&(id, ..)| id == owner)?;
+        self.rows[start as usize..(start + len) as usize]
+            .iter()
+            .find(|row| row.0 == dependency.name_hash && row.1 == dependency.behavior)
+            .map(|row| row.2)
+    }
+
     /// Edges on the previous package of a moved direct dependency follow it if their range allows.
     pub fn redirect_dependents(&self, lockfile: &mut Lockfile, direct_only: bool) {
         if self.owners.is_empty() || lockfile.loaded_package_count == 0 {
@@ -289,10 +302,7 @@ pub struct TransitiveUpdate {
 
 impl TransitiveUpdate {
     /// Runs once the differ has installed package.json's overrides and catalogs, before anything is enqueued; the moves surface as update rows of the install summary, or via `print_plan`.
-    pub fn plan(
-        manager: &mut PackageManager,
-        direct: &DirectDependencies,
-    ) -> crate::Result<TransitiveUpdate> {
+    pub fn plan(manager: &mut PackageManager) -> crate::Result<TransitiveUpdate> {
         let edges = {
             let lockfile = &*manager.lockfile;
             let scope = UpdateScope::of(&*manager);
@@ -306,7 +316,7 @@ impl TransitiveUpdate {
             }
             edges
         };
-        let (pins, moved) = plan_edges(manager, &edges, direct)?;
+        let (pins, moved) = plan_edges(manager, &edges, true)?;
         register_moved(manager, &moved)?;
         Ok(TransitiveUpdate { pins })
     }
@@ -335,12 +345,7 @@ impl TransitiveUpdate {
     }
 
     /// `--dry-run` / `--lockfile-only` have no install summary: once everything is resolved this prints the update rows (transitive plan, moved direct dependencies, `named` moves) and, for a dry run, the count line.
-    pub fn print_plan(
-        &self,
-        manager: &mut PackageManager,
-        direct: &DirectDependencies,
-        named: &[(DependencyID, PackageID)],
-    ) {
+    pub fn print_plan(&self, manager: &mut PackageManager, named: &[(DependencyID, PackageID)]) {
         let options = &manager.options;
         if manager.subcommand != crate::Subcommand::Update
             || !(options.dry_run || options.lockfile_only)
@@ -352,7 +357,7 @@ impl TransitiveUpdate {
         // Read back from the resolutions so rows the collapse re-pointed print where they landed.
         let pinned: Vec<(DependencyID, PackageID)> =
             self.pins.iter().map(|pin| (pin.dep_id, pin.from)).collect();
-        let mut pairs = direct.moved_pairs(&manager.lockfile);
+        let mut pairs = manager.direct_before.moved_pairs(&manager.lockfile);
         pairs.extend(named_pairs(&manager.lockfile, named));
         pairs.extend(named_pairs(&manager.lockfile, &pinned));
         let mut rows = rows_between(manager, pairs);
@@ -418,7 +423,7 @@ pub(crate) fn refresh_children_of(
         }
         edges
     };
-    let (pins, moved) = plan_edges(manager, &edges, &DirectDependencies::default())?;
+    let (pins, moved) = plan_edges(manager, &edges, false)?;
     register_moved(manager, &moved)?;
     let update = TransitiveUpdate { pins };
     update.enqueue(manager)?;
@@ -971,6 +976,102 @@ fn warn_unchecked(
     log.warnings = log.warnings.saturating_sub(consumed as u32);
 }
 
+/// Once everything is resolved and the held messages are back in the log: `bun update` warns once about each package that `enqueue::keep_locked` gave to a row, as `plan_edges` does about the packages that it could not check. The failure of the manifest request, which the row has logged as a warning, becomes the reason.
+pub(crate) fn warn_kept_locked(manager: &mut PackageManager) {
+    if manager.kept_locked.is_empty() {
+        return;
+    }
+    // A later pass may have unbound the row again, or bound it to another package.
+    let resolutions = manager.lockfile.buffers.resolutions.as_slice();
+    (manager.kept_locked).retain(|kept| resolutions.get(kept.row as usize) == Some(&kept.package));
+    if manager.subcommand != crate::Subcommand::Update {
+        return;
+    }
+    let lockfile = &*manager.lockfile;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let names = lockfile.packages.items_name();
+    let res = lockfile.packages.items_resolution();
+    let mut unchecked: Vec<(
+        Box<[u8]>,
+        Box<[u8]>,
+        Option<crate::package_manager_task::Id>,
+    )> = Vec::new();
+    for kept in &manager.kept_locked {
+        if manager.warned_unchecked.contains(&kept.package) {
+            continue;
+        }
+        manager.warned_unchecked.push(kept.package);
+        let id = kept.package as usize;
+        let version = text(res[id].npm().version.fmt(buf));
+        unchecked.push((Box::from(names[id].slice(buf)), version, kept.task));
+    }
+    index_sort::sort_vec_unstable_by(&mut unchecked, |a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+
+    let silent = manager.options.log_level == LogLevel::Silent;
+    let log = manager.log_mut();
+    for (name, version, task) in &unchecked {
+        let mut reason: Option<Vec<u8>> = None;
+        if let Some(failure) = task.and_then(|task| manager.manifest_failures.get(&task)) {
+            let logged = log.msgs.len();
+            log.msgs.retain(|msg| {
+                let is_copy = msg.kind == bun_ast::Kind::Warn
+                    && (failure.msgs.iter()).any(|failed| failed.data.text == msg.data.text);
+                if is_copy && reason.is_none() {
+                    reason = Some(msg.data.text.to_vec());
+                }
+                !is_copy
+            });
+            log.warnings = (log.warnings).saturating_sub((logged - log.msgs.len()) as u32);
+        }
+        if silent {
+            continue;
+        }
+        match reason {
+            Some(reason) => bun_core::warn!(
+                "{}@{} was not checked for updates: {}",
+                BStr::new(name),
+                BStr::new(version),
+                BStr::new(&reason)
+            ),
+            None => bun_core::warn!(
+                "{}@{} was not checked for updates",
+                BStr::new(name),
+                BStr::new(version)
+            ),
+        }
+    }
+}
+
+/// `CI_ASSERT`, after the write-back: a package.json entry that `enqueue::keep_locked` kept still asks for a range that accepts its package.
+pub(crate) fn assert_kept_locked_in_range(manager: &PackageManager) {
+    let lockfile = &*manager.lockfile;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let res = lockfile.packages.items_resolution();
+    for kept in &manager.kept_locked {
+        let Some((workspace, key)) = kept.entry else {
+            continue;
+        };
+        let owner = lockfile.get_workspace_package_id(workspace) as usize;
+        let rows = lockfile.packages.items_dependencies()[owner];
+        for id in rows.begin()..rows.end() {
+            let dep = &lockfile.buffers.dependencies[id as usize];
+            let package = lockfile.buffers.resolutions[id as usize] as usize;
+            if dep.name_hash != key || dep.behavior.is_required() || package >= res.len() {
+                continue;
+            }
+            let Some(version) = dedupe::effective_version(lockfile, id, dep) else {
+                continue;
+            };
+            assert!(
+                version.tag != DependencyVersionTag::Npm
+                    || res[package].tag != ResolutionTag::Npm
+                    || res[package].satisfies_dependency_version(&version, buf, buf),
+                "a package.json entry that kept its package is bound outside its range"
+            );
+        }
+    }
+}
+
 /// The fetch failures name the package as a URL segment (`/` + name, `/` encoded as `%2f`) or after `manifest `, followed by a space, an escape, or the end.
 fn mentions(message: &[u8], name: &[u8]) -> bool {
     if mentions_spelling(message, name) {
@@ -1086,16 +1187,22 @@ pub(crate) fn plannable_peer_rows(
     rows
 }
 
-/// Also returns the pre-clean ids of the instances at least one row moves away from.
+/// Also returns the pre-clean ids of the instances at least one row moves away from. `with_direct`: the rows of the project (`PackageManager::direct_before`) decide which peers have a provider.
 fn plan_edges(
     manager: &mut PackageManager,
     edges: &DynamicBitSet,
-    direct: &DirectDependencies,
+    with_direct: bool,
 ) -> crate::Result<(Vec<Pin>, Vec<PackageID>)> {
     let mut instances: Vec<Instance> = Vec::new();
     let mut kept: Vec<PackageID> = Vec::new();
     {
         let lockfile = &*manager.lockfile;
+        let no_direct = DirectDependencies::default();
+        let direct = if with_direct {
+            &manager.direct_before
+        } else {
+            &no_direct
+        };
         let res = lockfile.packages.items_resolution();
         let has_patches = lockfile.patched_dependencies.count() > 0;
         const SKIP: u32 = u32::MAX - 1;
@@ -1206,6 +1313,7 @@ fn plan_edges(
     let mut pins: Vec<Pin> = Vec::new();
     let mut moved: Vec<PackageID> = Vec::new();
     let mut unchecked: Vec<(Box<[u8]>, Box<[u8]>)> = Vec::new();
+    let mut warned: Vec<PackageID> = Vec::new();
     // Non-inline prerelease strings of planned versions live in the manifest buffer; copied into the lockfile's below.
     let mut pre_strings: Vec<(core::ops::Range<usize>, u64, Box<[u8]>)> = Vec::new();
     for inst in &instances {
@@ -1226,6 +1334,7 @@ fn plan_edges(
             if !unchecked.contains(&entry) {
                 unchecked.push(entry);
             }
+            warned.push(inst.pkg_id);
             continue;
         };
         let manifest: &PackageManifest = manifest;
@@ -1276,6 +1385,7 @@ fn plan_edges(
     }
     index_sort::sort_vec_unstable_by(&mut unchecked, |a, b| a.cmp(b));
     warn_unchecked(manager, msgs_before, &unchecked);
+    manager.warned_unchecked.extend(warned);
     print_log(manager)?;
 
     for (range, hash, pre) in pre_strings {

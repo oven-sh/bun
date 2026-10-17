@@ -942,6 +942,21 @@ impl Lockfile {
             .any(|root_dependency| root_dependency.eql(dependency, buf, buf))
     }
 
+    /// The root or the workspace whose package.json declares the row `id`, with the name hash that
+    /// `get_workspace_package_id` finds it by (`None` for the root).
+    pub(crate) fn declaring_workspace(
+        &self,
+        id: DependencyID,
+    ) -> Option<(PackageID, Option<PackageNameHash>)> {
+        let owner = self.get_workspace_pkg_if_workspace_dep(id);
+        let tag = self.packages.items_resolution().get(owner as usize)?.tag;
+        let name_hash = self.packages.items_name_hash()[owner as usize];
+        Some((
+            owner,
+            (tag == ResolutionTag::Workspace).then_some(name_hash),
+        ))
+    }
+
     pub(crate) fn get_workspace_pkg_if_workspace_dep(&self, id: DependencyID) -> PackageID {
         let packages = self.packages.slice();
         (packages.items_resolution().iter())

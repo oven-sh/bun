@@ -52,6 +52,39 @@ describe("node:http client timeout", () => {
     }
   });
 
+  // The `timeout` option must cover the connect phase, not just an idle connected
+  // socket. A `lookup` that never answers keeps the socket connecting without
+  // sending a packet; `connecting` is asserted when the event fires because
+  // `timeout` is also emitted on the idle path above.
+  it("should emit timeout while the socket is still connecting", async () => {
+    const req = request({
+      host: "stalled.invalid",
+      port: 80,
+      path: "/",
+      timeout: 100,
+      lookup: () => {},
+    });
+
+    const { promise: timedOut, resolve: onTimeout } = Promise.withResolvers<boolean>();
+    let socket: import("node:net").Socket | undefined;
+    req.on("socket", s => {
+      socket = s;
+    });
+    req.on("timeout", () => onTimeout(socket?.connecting === true));
+    req.on("error", () => {});
+    req.end();
+
+    try {
+      const outcome = await Promise.race([
+        timedOut.then(stillConnecting => ({ outcome: "timeout", stillConnecting })),
+        Bun.sleep(2000).then(() => ({ outcome: "no timeout within 2000ms", stillConnecting: false })),
+      ]);
+      expect(outcome).toEqual({ outcome: "timeout", stillConnecting: true });
+    } finally {
+      req.destroy();
+    }
+  });
+
   it("should clear timeout when explicitly set to 0", async () => {
     const server = createServer((req, res) => {
       res.end("OK");

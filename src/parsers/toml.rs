@@ -30,15 +30,15 @@ use bun_ast::{self, E, Expr, Loc, Log, Source};
 use bun_collections::HashMap;
 use bun_core::{self, StackCheck};
 
-/// Tracks how a table or array came to exist, which decides whether later
+/// Tracks how a table or array was created or defined, which decides whether later
 /// syntax may extend it. See "Table" and "Array of Tables" in the spec.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Kind {
     /// `[a]` — explicitly defined by a table header.
     Header,
-    /// Created on the way to a deeper header (`[a.b]` creates `a`).
+    /// Created on the way to a deeper header (`[a.b]` creates `a`); not defined yet.
     HeaderImplicit,
-    /// Created by a dotted key (`a.b = 1` creates `a`); records the block so
+    /// Defined by a dotted key (`a.b = 1` defines `a`); records the block so
     /// only dotted keys from the same block may extend it.
     Dotted,
     /// An element of an array of tables.
@@ -1827,7 +1827,11 @@ impl<'a, 'log> Parser<'a, 'log> {
                                         "",
                                     ));
                                 }
-                                _ => {
+                                Kind::Header
+                                | Kind::Dotted
+                                | Kind::ArrayElem
+                                | Kind::AotArray
+                                | Kind::StaticArray => {
                                     return Err(self.scanner.err_keyed(
                                         header_pos,
                                         "Cannot redefine table",
@@ -1914,7 +1918,7 @@ impl<'a, 'log> Parser<'a, 'log> {
         self.assign_path(table, &path, value)
     }
 
-    /// Walks the dotted path from `table`, creating dotted tables as needed,
+    /// Walks the dotted path from `table`, creating or defining tables as needed,
     /// and inserts `value` at the final segment.
     fn assign_path(
         &mut self,
@@ -1942,15 +1946,32 @@ impl<'a, 'log> Parser<'a, 'log> {
                         ));
                     };
                     let ptr = obj.as_ptr();
-                    let meta = self.meta_of(ptr as usize);
-                    let extendable = meta.kind == Kind::Dotted && meta.block == self.block;
-                    if !extendable {
-                        return Err(self.scanner.err_keyed(
-                            seg.pos,
-                            "Cannot extend table",
-                            seg.text,
-                            " with a dotted key",
-                        ));
+                    let meta = self
+                        .meta
+                        .get_mut(&(ptr as usize))
+                        .expect("table/array was registered at creation");
+                    match meta.kind {
+                        Kind::Dotted if meta.block == self.block => {}
+                        // Created, not defined: this block defines it (toml-lang/toml#771).
+                        Kind::HeaderImplicit => {
+                            *meta = Meta {
+                                kind: Kind::Dotted,
+                                block: self.block,
+                            };
+                        }
+                        Kind::Dotted
+                        | Kind::Header
+                        | Kind::ArrayElem
+                        | Kind::Inline
+                        | Kind::AotArray
+                        | Kind::StaticArray => {
+                            return Err(self.scanner.err_keyed(
+                                seg.pos,
+                                "Cannot extend table",
+                                seg.text,
+                                " with a dotted key",
+                            ));
+                        }
                     }
                     cur = ptr;
                 }

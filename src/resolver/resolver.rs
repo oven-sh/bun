@@ -2495,8 +2495,8 @@ impl<'a> Resolver<'a> {
         first_bust || second_bust
     }
 
-    /// Busts the directory `path` and what the main fields of its package.json name. The key rules of `bust_dir_cache` apply.
-    pub fn bust_dir_cache_of_directory(&mut self, path: &[u8]) -> bool {
+    /// Busts what a resolve of the absolute `path` put in the cache when it found nothing. The key rules of `bust_dir_cache` apply.
+    pub fn bust_dir_cache_of_path(&mut self, path: &[u8]) -> bool {
         let mut busted = false;
         let package_json = self
             .dir_cache_mut()
@@ -2508,15 +2508,31 @@ impl<'a> Resolver<'a> {
                 let target = ::bun_paths::resolve_path::join_abs_string_buf::<
                     ::bun_paths::resolve_path::platform::Auto,
                 >(path, &mut buf.0, &[&main[..]]);
-                let target = strings::without_trailing_slash_windows_path(target);
-                busted |= self.bust_dir_cache(target);
-                if let Some(parent) = ::bun_paths::dirname(target) {
-                    busted |=
-                        self.bust_dir_cache(strings::without_trailing_slash_windows_path(parent));
-                }
+                busted |= self.bust_dir_cache_and_missing_parents(target);
             }
         }
-        self.bust_dir_cache(path) || busted
+        self.bust_dir_cache_and_missing_parents(path) || busted
+    }
+
+    /// Busts `path`, each parent that is cached as missing, and the first parent that is cached as a directory.
+    fn bust_dir_cache_and_missing_parents(&mut self, path: &[u8]) -> bool {
+        use strings::without_trailing_slash_windows_path as key_of;
+        let mut directory = key_of(path);
+        let mut busted = self.bust_dir_cache(directory);
+        // A parent that is cached as missing stops the walk up from a new directory, which then has no parent.
+        while let Some(parent) = ::bun_paths::dirname(directory).map(key_of) {
+            if parent.len() >= directory.len() {
+                break;
+            }
+            let exists = self.dir_cache_mut().get(parent).is_some();
+            let busted_parent = self.bust_dir_cache(parent);
+            busted |= busted_parent;
+            if exists || !busted_parent {
+                break;
+            }
+            directory = parent;
+        }
+        busted
     }
 
     /// bust both the named file and a parent directory, because `./hello` can resolve

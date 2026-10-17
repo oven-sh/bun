@@ -239,21 +239,29 @@ describe("fake node cli", () => {
       expect(result).toEqual({ stdout: join(temp, "link", "entry.js") + "\n", stderr: "", exitCode: 0 });
     });
 
+    // The entry point imports a package from `node_modules` above it, which needs the parents of each new directory.
     test.each([
-      { name: "the index file of the directory", pkg: {}, file: "pkg/index.js" },
-      { name: "the package.json main in a new directory", pkg: { main: "./dist/main.js" }, file: "pkg/dist/main.js" },
-    ])("a preload can create the entry point: $name", async ({ pkg, file }) => {
+      { name: "the index file of the directory", pkg: {}, arg: "./pkg", file: "pkg/index.js" },
+      {
+        name: "the package.json main in new directories",
+        pkg: { main: "./dist/esm/main.js" },
+        arg: "./pkg",
+        file: "pkg/dist/esm/main.js",
+      },
+      { name: "a file in new directories", pkg: {}, arg: "./out/esm/main.js", file: "out/esm/main.js" },
+    ])("a preload can create the entry point: $name", async ({ pkg, arg, file }) => {
       using temp = tempDir("fake-node-main", {
         "pkg/package.json": JSON.stringify(pkg),
+        "node_modules/dep/index.js": "module.exports = 'entry ran';",
         "pre.js": `
           const { mkdirSync, writeFileSync } = require("fs");
           const { dirname, join } = require("path");
           const file = join(__dirname, ${JSON.stringify(file)});
           mkdirSync(dirname(file), { recursive: true });
-          writeFileSync(file, "console.log('entry ran');");
+          writeFileSync(file, "console.log(require('dep'));");
         `,
       });
-      const result = await runAsNode(String(temp), ["-r", "./pre.js", "./pkg"]);
+      const result = await runAsNode(String(temp), ["-r", "./pre.js", arg]);
       expect(result).toEqual({ stdout: "entry ran\n", stderr: "", exitCode: 0 });
     });
 

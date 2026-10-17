@@ -1133,15 +1133,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_http::async_http::load_env(unsafe { vm.log.unwrap().as_mut() }, vm.env_loader());
 
         vm.load_extra_env_and_source_code_printer();
-        if entry_kind == EntryPath::Unresolved
-            && vm.module_loader.eval_source.is_none()
-            && let Some(resolved) =
-                Self::resolve_entry_path(vm, entry, Self::preserve_symlinks_main(ctx))
-            && resolved != entry
-        {
-            vm.set_main_for_argv(entry);
-            vm.set_main(resolved);
-            run_entry = resolved;
+        if entry_kind == EntryPath::Unresolved && vm.module_loader.eval_source.is_none() {
+            match Self::resolve_entry_path(vm, entry, Self::preserve_symlinks_main(ctx)) {
+                Some(resolved) if resolved != entry => {
+                    vm.set_main_for_argv(entry);
+                    vm.set_main(resolved);
+                    run_entry = resolved;
+                }
+                Some(_) => {}
+                // A preload can create the entry point, so this resolve must leave nothing in the resolver cache.
+                None => Self::forget_entry_path(vm, entry),
+            }
         }
         vm.is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
@@ -1204,6 +1206,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             &mut real_buf,
         );
         Some(real.map_or(path, |real| &*Box::leak(Box::<[u8]>::from(real))))
+    }
+
+    /// After [`Self::resolve_entry_path`] found nothing: removes what that resolve put in the resolver cache.
+    fn forget_entry_path(vm: &mut VirtualMachine, entry: &[u8]) {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        // The resolver keys an absolute path as it is given, or without its `..` when it has one.
+        let collapsed = vm.fs().abs_buf_checked(&[entry], &mut buf.0);
+        for path in [Some(entry), collapsed].into_iter().flatten() {
+            let key = strings::paths::without_trailing_slash_windows_path(path);
+            vm.transpiler.resolver.bust_dir_cache_of_path(key);
+        }
     }
 
     /// Node keeps a symlink in the path of the main module only with `--preserve-symlinks-main` (`resolveMainPath`).

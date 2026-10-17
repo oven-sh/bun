@@ -171,8 +171,6 @@ pub enum Metadata {
     MSymbol,
     MPromise,
     MIdentifier(Ref),
-    // `AstAlloc`: the AST node that holds this is never dropped, so a
-    // global-heap `Vec` would leak.
     MDot(Vec<Ref, AstAlloc>),
 }
 

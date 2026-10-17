@@ -4498,8 +4498,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(self.s(stmt, loc))
     }
 
-    /// "bun:bundle" does not exist at runtime and its statement is removed, so a
-    /// default or namespace binding would have no declaration in the output.
     #[cold]
     fn reject_bun_bundle_default_or_namespace_import(&mut self, stmt: &S::Import) {
         if let Some(default_name) = stmt.default_name {
@@ -4546,10 +4544,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
     }
 
-    /// The "bun:bundle" import is removed at parse time and only a direct
-    /// `feature("FLAG")` call is replaced, which also drops the use of its
-    /// target. A use that a part still has after the visit pass is any other
-    /// reference, in code that the visit pass did not know to be dead.
+    /// A replaced call un-counts its target, so a use that a part keeps is not a call.
     #[cold]
     pub(crate) fn reject_bundler_feature_value_uses(&mut self, parts: [&[js_ast::Part]; 3]) {
         let r#ref = self.bundler_feature_flag_ref;
@@ -4618,8 +4613,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A type that is named before the import statement is an unbound symbol
-    /// that the import then links to its own.
+    /// A type named before the import statement is an unbound symbol linked to the binding.
     fn is_bundler_feature_flag_ref(&self, r#ref: Ref) -> bool {
         if !self.bundler_feature_flag_ref.is_valid() {
             return false;
@@ -7987,8 +7981,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.maybe_defined_helper(e)?
             }
             M::MPromise => ident!(b"Promise"),
-            // A type with the name of the "bun:bundle" binding resolves to that
-            // binding here. It has no value at runtime, so the type is `Object`.
+            // The "bun:bundle" binding has no value at runtime.
             M::MIdentifier(ref_) if self.is_bundler_feature_flag_ref(ref_) => ident!(b"Object"),
             M::MDot(ref refs) if self.is_bundler_feature_flag_ref(refs[0]) => ident!(b"Object"),
             M::MIdentifier(ref_) => {

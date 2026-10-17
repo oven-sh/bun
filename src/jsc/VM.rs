@@ -27,6 +27,7 @@ unsafe extern "C" {
     safe fn JSC__VM__reportExtraMemory(vm: &VM, size: usize);
     safe fn JSC__VM__shrinkFootprint(vm: &VM);
     safe fn JSC__VM__runGC(vm: &VM, sync: bool) -> usize;
+    safe fn JSC__VM__completeAllJITPlans(vm: &VM);
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM, full: bool);
     safe fn JSC__VM__collectAsyncIdle(vm: &VM);
@@ -91,6 +92,10 @@ impl VM {
 
     pub fn run_gc(&self, sync: bool) -> usize {
         JSC__VM__runGC(self, sync)
+    }
+
+    pub(crate) fn complete_all_jit_plans(&self) {
+        JSC__VM__completeAllJITPlans(self)
     }
 
     pub(crate) fn heap_size(&self) -> usize {

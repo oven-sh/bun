@@ -1602,7 +1602,7 @@ fn frozen_changed_section(
     root_package_json_path: &ZStr,
 ) -> Option<&'static str> {
     if manager.summary.overrides_changed {
-        Some(overrides_field_name(manager, root_package_json_path))
+        Some(overrides_field(manager, root_package_json_path).json_name())
     } else if manager.summary.catalogs_changed {
         Some("the catalog")
     } else if manager.summary.package_extensions_changed {
@@ -1614,19 +1614,19 @@ fn frozen_changed_section(
 
 #[cold]
 #[inline(never)]
-fn overrides_field_name(
+fn overrides_field(
     manager: &mut PackageManager,
     root_package_json_path: &ZStr,
-) -> &'static str {
+) -> lockfile::override_map::Field {
+    use lockfile::override_map::Field;
     let log = manager.log_mut();
     let WorkspacePackageJsonCacheResult::Entry(entry) = manager
         .workspace_package_json_cache
         .get_with_path(log, root_package_json_path.as_bytes(), Default::default())
     else {
-        return "overrides";
+        return Field::Overrides;
     };
-    lockfile::override_map::Field::of(&entry.root)
-        .map_or("overrides", |(field, _)| field.json_name())
+    Field::of(&entry.root).map_or(Field::Overrides, |(field, _)| field)
 }
 
 pub(crate) fn loaded_lockfile_name(load_result: &lockfile::LoadResult) -> &'static str {
@@ -2384,6 +2384,23 @@ fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)>
         .collect()
 }
 
+/// Returns true if yarn would accept the locked version of `row`: it satisfies the `resolutions`
+/// rule that yarn applies to `row`, or `row`'s own range if yarn applies no rule to it.
+fn is_as_yarn_resolves(lockfile: &Lockfile, row: DependencyID, package_id: PackageID) -> bool {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let dependency = &lockfile.buffers.dependencies[row as usize];
+    crate::dedupe::effective_version_as_yarn(lockfile, row, dependency).is_some_and(|version| {
+        version.try_npm().is_some_and(|npm| {
+            let resolved = lockfile.packages.items_resolution()[package_id as usize].npm();
+            npm.name.slice(buf) == lockfile.packages.items_name()[package_id as usize].slice(buf)
+                // `*` and an empty range resolve to `latest`, which can be a prerelease.
+                && (npm.version.is_empty()
+                    || crate::npm::is_any_version_range(version.literal.slice(buf))
+                    || npm.version.satisfies(resolved.version, buf, buf))
+        })
+    })
+}
+
 /// Resolves the rows in `outside` again and returns the packages that they now resolve to. If the
 /// lockfile is frozen, `frozen` is its file name, and this exits with an error instead.
 #[cold]
@@ -2396,6 +2413,16 @@ fn reresolve_rows_outside_overrides(
     root: &mut lockfile::Package,
     log_level: Options::LogLevel,
 ) -> crate::Result<Vec<PackageID>> {
+    // yarn applies `"x@^1.0.0"` in `resolutions` only to dependencies declared as exactly `^1.0.0`.
+    // Bun also applies it to overlapping ranges like `^1.1.0`. Rows that follow yarn's rule are
+    // accepted too, so that a lockfile migrated from yarn.lock is not rejected.
+    if manager.lockfile.overrides.has_scoped()
+        && overrides_field(manager, root_package_json_path)
+            == lockfile::override_map::Field::Resolutions
+    {
+        let lockfile: &Lockfile = &manager.lockfile;
+        outside.retain(|&(row, package_id)| !is_as_yarn_resolves(lockfile, row, package_id));
+    }
     let lockfile: &Lockfile = &manager.lockfile;
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let mut is_outside = DynamicBitSet::init_empty(dependencies.len()).unwrap_or_oom();
@@ -2435,11 +2462,18 @@ fn reresolve_rows_outside_overrides(
     };
     if let Some(lockfile_name) = frozen {
         if log_level != Options::LogLevel::Silent {
-            let field = overrides_field_name(manager, root_package_json_path);
+            let field = overrides_field(manager, root_package_json_path);
             let lockfile: &Lockfile = &manager.lockfile;
             let dependency = &lockfile.buffers.dependencies[first_row as usize];
-            let wanted = crate::dedupe::effective_version(lockfile, first_row, dependency)
-                .map_or(dependency.version.literal, |version| version.literal);
+            let wanted = match field {
+                lockfile::override_map::Field::Overrides => {
+                    crate::dedupe::effective_version(lockfile, first_row, dependency)
+                }
+                lockfile::override_map::Field::Resolutions => {
+                    crate::dedupe::effective_version_as_yarn(lockfile, first_row, dependency)
+                }
+            }
+            .map_or(dependency.version.literal, |version| version.literal);
             bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
             );
@@ -2447,7 +2481,7 @@ fn reresolve_rows_outside_overrides(
                 "{} has {}, {} in package.json wants {}",
                 lockfile_name,
                 bstr::BStr::new(&crate::dedupe::label(lockfile, first_package)),
-                field,
+                field.json_name(),
                 bun_core::fmt::for_terminal(wanted.fmt(lockfile.buffers.string_bytes.as_slice())),
             );
             bun_core::note!(

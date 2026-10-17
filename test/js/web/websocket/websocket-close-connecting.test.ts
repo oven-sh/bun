@@ -40,10 +40,12 @@ describe.each(["close", "terminate"] as const)("%s() during CONNECTING", method 
       expect({
         readyState: ws.readyState,
         code: ev.code,
+        reason: ev.reason,
         wasClean: ev.wasClean,
       }).toEqual({
         readyState: WebSocket.CLOSED,
         code: 1006,
+        reason: "",
         wasClean: false,
       });
     } finally {

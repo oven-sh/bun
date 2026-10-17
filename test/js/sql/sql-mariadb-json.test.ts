@@ -14,8 +14,8 @@
 // MariaDB follows at the bottom.
 
 import { SQL, randomUUIDv7 } from "bun";
-import { describe, expect, test } from "bun:test";
-import { describeWithContainer, isCI, isDockerEnabled } from "harness";
+import { expect, test } from "bun:test";
+import { describeWithContainer } from "harness";
 import { readFileSync } from "node:fs";
 import type net from "node:net";
 import { join } from "node:path";
@@ -297,66 +297,82 @@ test.concurrent("an extended metadata length past the blob's end rejects the que
 // Real-server coverage. MariaDB negotiates extended metadata on every column
 // definition once the capability is agreed on, so these also verify decode
 // alignment for columns with empty / non-json extended metadata.
-//
-// Only attempt the container when something can actually provide it: an
-// explicit BUN_TEST_SERVICE_mariadb_plain override (point it at any MariaDB
-// 10.5+, e.g. 127.0.0.1:3306), the CI docker coordinator, or CI docker. A
-// bare isDockerEnabled() is deliberately not enough to auto-start outside CI:
-// a daemon that answers `docker info` but cannot pull or build images (seen
-// on partially provisioned machines) would fail the suite instead of
-// skipping it.
-const mariadbProvided =
-  !!process.env.BUN_TEST_SERVICE_mariadb_plain || !!process.env.BUN_DOCKER_COORDINATOR || (isCI && isDockerEnabled());
-if (!mariadbProvided) {
-  describe.todo("mariadb");
-} else {
-  describeWithContainer("mariadb", { image: "mariadb_plain" }, container => {
-    test("JSON columns and JSON function results parse into objects", async () => {
-      await container.ready;
-      await using sql = new SQL({ url: `mysql://root@${container.host}:${container.port}/bun_sql_test`, max: 1 });
+describeWithContainer("mariadb", { image: "mariadb_plain" }, container => {
+  test("JSON columns and JSON function results parse into objects", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: `mysql://root@${container.host}:${container.port}/bun_sql_test`, max: 1 });
 
-      const table = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
-      await sql`CREATE TEMPORARY TABLE ${sql(table)} (id INT, doc JSON, name VARCHAR(32))`;
-      await sql`INSERT INTO ${sql(table)} VALUES (1, ${JSON.stringify(jsonValue)}, 'alice'), (2, ${JSON.stringify([false, null, "x"])}, 'bob'), (3, NULL, 'carol')`;
+    const table = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+    await sql`CREATE TEMPORARY TABLE ${sql(table)} (id INT, doc JSON, name VARCHAR(32))`;
+    await sql`INSERT INTO ${sql(table)} VALUES (1, ${JSON.stringify(jsonValue)}, 'alice'), (2, ${JSON.stringify([false, null, "x"])}, 'bob'), (3, NULL, 'carol')`;
 
-      const expected = [
-        { id: 1, doc: jsonValue, name: "alice" },
-        { id: 2, doc: [false, null, "x"], name: "bob" },
-        { id: 3, doc: null, name: "carol" },
-      ];
-      // Prepared → binary protocol; the surrounding columns prove the extended
-      // metadata block is consumed without desyncing the row decoder.
-      expect(await sql`SELECT id, doc, name FROM ${sql(table)} ORDER BY id`).toEqual(expected);
-      // Re-running the same prepared statement re-decodes the column
-      // definitions (the server resends them on every execute).
-      expect(await sql`SELECT id, doc, name FROM ${sql(table)} ORDER BY id`).toEqual(expected);
-      // `.simple()` → text protocol.
-      expect(await sql`SELECT id, doc, name FROM ${sql(table)} ORDER BY id`.simple()).toEqual(expected);
+    const expected = [
+      { id: 1, doc: jsonValue, name: "alice" },
+      { id: 2, doc: [false, null, "x"], name: "bob" },
+      { id: 3, doc: null, name: "carol" },
+    ];
+    // Prepared → binary protocol; the surrounding columns prove the extended
+    // metadata block is consumed without desyncing the row decoder.
+    expect(await sql`SELECT id, doc, name FROM ${sql(table)} ORDER BY id`).toEqual(expected);
+    // Re-running the same prepared statement re-decodes the column
+    // definitions (the server resends them on every execute).
+    expect(await sql`SELECT id, doc, name FROM ${sql(table)} ORDER BY id`).toEqual(expected);
+    // `.simple()` → text protocol.
+    expect(await sql`SELECT id, doc, name FROM ${sql(table)} ORDER BY id`.simple()).toEqual(expected);
 
-      // JSON functions return LONGTEXT marked format=json, like MySQL's native
-      // JSON results.
-      expect(await sql`SELECT JSON_OBJECT('x', 1) AS j, JSON_EXTRACT(${jsonText}, '$.answer') AS n`).toEqual([
-        { j: { x: 1 }, n: 42 },
-      ]);
+    // JSON functions return LONGTEXT marked format=json, like MySQL's native
+    // JSON results.
+    expect(await sql`SELECT JSON_OBJECT('x', 1) AS j, JSON_EXTRACT(${jsonText}, '$.answer') AS n`).toEqual([
+      { j: { x: 1 }, n: 42 },
+    ]);
 
-      // `.raw()` still returns the bytes, not parsed values.
-      const [rawRow] = await sql`SELECT doc FROM ${sql(table)} WHERE id = 1`.raw();
-      expect(JSON.parse(Buffer.from(rawRow[0] as Uint8Array).toString("utf-8"))).toEqual(jsonValue);
-    });
-
-    test("extended type info for non-JSON MariaDB types is skipped, values stay strings", async () => {
-      await container.ready;
-      await using sql = new SQL({ url: `mysql://root@${container.host}:${container.port}/bun_sql_test`, max: 1 });
-
-      const table = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
-      // UUID and INET6 columns carry a kind-0 ("type") extended metadata entry;
-      // they must keep decoding as plain strings.
-      await sql`CREATE TEMPORARY TABLE ${sql(table)} (u UUID, addr INET6, note TEXT)`;
-      await sql`INSERT INTO ${sql(table)} VALUES ('5f8b6b9c-6b6f-11ee-8c99-0242ac120002', '::1', 'hi')`;
-
-      const expected = [{ u: "5f8b6b9c-6b6f-11ee-8c99-0242ac120002", addr: "::1", note: "hi" }];
-      expect(await sql`SELECT u, addr, note FROM ${sql(table)}`).toEqual(expected);
-      expect(await sql`SELECT u, addr, note FROM ${sql(table)}`.simple()).toEqual(expected);
-    });
+    // `.raw()` still returns the bytes, not parsed values.
+    const [rawRow] = await sql`SELECT doc FROM ${sql(table)} WHERE id = 1`.raw();
+    expect(JSON.parse(Buffer.from(rawRow[0] as Uint8Array).toString("utf-8"))).toEqual(jsonValue);
   });
-}
+
+  // MariaDB answers a parameter declared MYSQL_TYPE_JSON with errno 1210.
+  test("objects and arrays are accepted as parameters", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: `mysql://root@${container.host}:${container.port}/bun_sql_test`, max: 1 });
+
+    const table = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+    await sql`CREATE TEMPORARY TABLE ${sql(table)} (id INT, doc JSON, note TEXT)`;
+    await sql`INSERT INTO ${sql(table)} VALUES (1, ${jsonValue}, ${jsonValue})`;
+    // the same statement again, with other kinds of value
+    await sql`INSERT INTO ${sql(table)} VALUES (2, ${[false, null, "x"]}, ${"text"})`;
+    await sql`INSERT INTO ${sql(table)} VALUES (3, ${null}, ${[]})`;
+    await sql`INSERT INTO ${sql(table)} ${sql([
+      { id: 4, doc: { nested: { deep: [1] } }, note: null },
+      { id: 5, doc: null, note: { a: 1 } },
+    ])}`;
+    expect(await sql`SELECT id, doc, note FROM ${sql(table)} ORDER BY id`).toEqual([
+      { id: 1, doc: jsonValue, note: jsonText },
+      { id: 2, doc: [false, null, "x"], note: "text" },
+      { id: 3, doc: null, note: "[]" },
+      { id: 4, doc: { nested: { deep: [1] } }, note: null },
+      { id: 5, doc: null, note: '{"a":1}' },
+    ]);
+
+    expect(
+      await sql`SELECT JSON_VALID(${jsonValue}) AS valid, JSON_TYPE(${[1]}) AS type, JSON_CONTAINS(doc, ${{ answer: 42 }}) AS contains FROM ${sql(table)} WHERE id = 1`,
+    ).toEqual([{ valid: 1, type: "ARRAY", contains: 1 }]);
+
+    expect(await sql`SELECT ${{ ok: true }} AS v`).toEqual([{ v: '{"ok":true}' }]);
+  });
+
+  test("extended type info for non-JSON MariaDB types is skipped, values stay strings", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: `mysql://root@${container.host}:${container.port}/bun_sql_test`, max: 1 });
+
+    const table = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+    // UUID and INET6 columns carry a kind-0 ("type") extended metadata entry;
+    // they must keep decoding as plain strings.
+    await sql`CREATE TEMPORARY TABLE ${sql(table)} (u UUID, addr INET6, note TEXT)`;
+    await sql`INSERT INTO ${sql(table)} VALUES ('5f8b6b9c-6b6f-11ee-8c99-0242ac120002', '::1', 'hi')`;
+
+    const expected = [{ u: "5f8b6b9c-6b6f-11ee-8c99-0242ac120002", addr: "::1", note: "hi" }];
+    expect(await sql`SELECT u, addr, note FROM ${sql(table)}`).toEqual(expected);
+    expect(await sql`SELECT u, addr, note FROM ${sql(table)}`.simple()).toEqual(expected);
+  });
+});

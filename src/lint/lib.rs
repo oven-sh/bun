@@ -8,9 +8,10 @@
 //! - [`code_path`]: ESLint's code path analysis.
 //! - [`rule`]: what a rule is. Start there.
 //! - [`js_plugin`]: rules that are written in JavaScript.
+//! - [`languages`]: languages other than JavaScript.
 //!
-//! The rules are in the crates `bun_lint_eslint`, `bun_lint_typescript`, `bun_lint_plugins`, `bun_lint_unicorn`, `bun_lint_react`
-//! and `bun_lint_jest`.
+//! The rules are in the crates `bun_lint_eslint`, `bun_lint_typescript`, `bun_lint_plugins`, `bun_lint_unicorn`,
+//! `bun_lint_react`, `bun_lint_jest`, `bun_lint_json` and `bun_lint_markdown`.
 
 #![forbid(unsafe_code)]
 #![deny(clippy::iter_over_hash_type)]
@@ -30,6 +31,7 @@ pub mod ignore;
 pub mod js_plugin;
 pub mod json;
 pub mod language;
+pub mod languages;
 pub mod linter;
 pub mod literal;
 pub mod modules;

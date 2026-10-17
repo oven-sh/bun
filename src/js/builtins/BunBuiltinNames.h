@@ -65,6 +65,7 @@ using namespace JSC;
     macro(data) \
     macro(decode) \
     macro(dest) \
+    macro(detail) \
     macro(dirname) \
     macro(domain) \
     macro(drain) \
@@ -162,9 +163,11 @@ using namespace JSC;
     macro(requireMap) \
     macro(requireNativeModule) \
     macro(resolveSync) \
+    macro(runTail) \
     macro(sameSite) \
     macro(secure) \
     macro(self) \
+    macro(setColumnNameTransform) \
     macro(sharedFd) \
     macro(signal) \
     macro(size) \

@@ -118,4 +118,46 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetOwnNonIndexProperties, (JSGlobalObject * g
     RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), keys)));
 }
 
+// Whether String(object) throws before it runs code of the object: it has no Symbol.toPrimitive, toString or valueOf to call.
+extern "C" bool Bun__hasNoStringConversion(JSC::EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSObject* object = JSValue::decode(encodedValue).getObject();
+    ASSERT(object);
+
+    // A conversion to a string caches the toString that it called on the Structure.
+    JSValue cachedToString = object->structure()->cachedSpecialProperty(CachedSpecialPropertyKey::ToString);
+    if (cachedToString && cachedToString.isCallable())
+        return false;
+
+    enum class Method : uint8_t {
+        None,
+        Callable,
+        // An accessor or a Proxy decides: String(object) runs it.
+        Unknown,
+    };
+    JSValue function;
+    JSObject* holder = nullptr;
+    auto method = [&](PropertyName name) {
+        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool found = object->getPropertySlot(globalObject, name, slot);
+        scope.assertNoExceptionExceptTermination();
+        // A Proxy, and a module namespace object for a name that it exports, answer "not found" with the slot set.
+        if (!found)
+            return slot.isTaintedByOpaqueObject() && !slot.isUnset() ? Method::Unknown : Method::None;
+        if (!slot.isValue())
+            return Method::Unknown;
+        function = slot.getValue(globalObject, name);
+        holder = slot.slotBase();
+        return function.isCallable() ? Method::Callable : Method::None;
+    };
+
+    if (method(vm.propertyNames->toString) != Method::None || method(vm.propertyNames->toPrimitiveSymbol) != Method::None)
+        return false;
+    Method valueOf = method(vm.propertyNames->valueOf);
+    // Object.prototype.valueOf returns the object, which converts nothing.
+    return valueOf == Method::None || (valueOf == Method::Callable && function.asCell() == holder->realm()->objectProtoValueOfFunction());
+}
+
 }

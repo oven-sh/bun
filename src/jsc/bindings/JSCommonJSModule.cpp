@@ -388,9 +388,7 @@ static bool evaluateCommonJSModuleWithCompileHook(JSC::VM& vm, Zig::GlobalObject
     noteCommonJSEntryEvaluation(globalObject, moduleObject, filename);
     RETURN_IF_EXCEPTION(scope, false);
 
-    // A require() of this module from inside the hook gets the exports so far, as it does from
-    // inside the module body. The source stays on the module: the default _compile reuses it
-    // (with its bytecode and source map) when the hook hands the body back unchanged.
+    // Evaluated while the hook runs, as the body is; the default _compile reuses the source.
     moduleObject->hasEvaluated = true;
     MarkedArgumentBuffer args;
     args.append(jsString(vm, WTF::move(body)));
@@ -1069,8 +1067,7 @@ public:
 
 const JSC::ClassInfo JSCommonJSModulePrototype::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModulePrototype) };
 
-// Once `_compile` is redefined or deleted (shimmer's wrap, a delete) the accessor is gone, so
-// the loader looks the property up: the flag stays set with an empty override slot.
+// Flag set with an empty override slot: the accessor is gone, the loader looks `_compile` up.
 static void noteModulePrototypeCompileRedefined(JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName)
 {
     if (propertyName != PropertyName(Identifier::fromString(globalObject->vm(), "_compile"_s)))
@@ -1707,14 +1704,12 @@ void JSCommonJSModule::evaluate(
 {
     auto& vm = JSC::getVM(globalObject);
 
-    // With a hook, the default _compile applies the overridden wrapper to what the hook hands back.
     if (globalObject->hasOverriddenModuleWrapper && !hasCompileHook(globalObject, this)) [[unlikely]]
         applyModuleWrapperOverride(globalObject, source);
 
     auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
     this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
-    // An own _compile is a require.extensions hook's transform of this one file; the cache
-    // serves later test files before their hook runs, so it must not hold this module.
+    // The cache serves later test files before their require.extensions hook runs.
     if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && !this->m_overriddenCompile && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
         Bun::IsolatedModuleCache::insert(vm, key, sourceProvider.get());
     }

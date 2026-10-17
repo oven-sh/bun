@@ -153,6 +153,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
         }
+        p.import_meta_uses += 1;
     }
 
     fn e_identifier(p: &mut Self, e: &mut Expr, in_: ExprIn) {

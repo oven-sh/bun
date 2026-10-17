@@ -38,11 +38,8 @@ use crate::ZStr;
 // Declarations
 // ──────────────────────────────────────────────────────────────────────────────
 
-// Explicit override for AI agent detection. Agents set "1" or their name (crush sets
-// `AGENT=crush`, goose sets `AGENT=goose`). "0", "false", "no", "off" and "" opt out.
 new!(pub AGENT: boolean, "AGENT", {});
-// Cross-tool convention, also read by std-env, Jest and gh. The value names the agent
-// (Claude Code sets `claude-code_<version>_agent`, crush sets `crush`), so match any non-empty value.
+// Agents set this to their name (`crush`, `claude-code_<version>_agent`).
 new!(pub AI_AGENT: boolean, "AI_AGENT", {});
 new!(pub ANDROID_ROOT: string, "ANDROID_ROOT", {});
 new!(pub BUN_AGENT_RULE_DISABLED: boolean, "BUN_AGENT_RULE_DISABLED", { default: false });
@@ -153,8 +150,7 @@ new!(pub CI_COMMIT_SHA: string, "CI_COMMIT_SHA", {});
 new!(pub CI_JOB_URL: string, "CI_JOB_URL", {});
 new!(pub CLAUDE_CODE_AGENT_RULE_DISABLED: boolean, "CLAUDE_CODE_AGENT_RULE_DISABLED", { default: false });
 new!(pub CLAUDECODE: boolean, "CLAUDECODE", {});
-// Codex exports `CODEX_CI=1` (codex-rs/core/src/unified_exec/process_manager.rs) and
-// `CODEX_THREAD_ID=<id>` (codex-rs/protocol/src/shell_environment.rs) to the shells it spawns.
+// Codex exports both to the shells it spawns.
 new!(pub CODEX_CI: boolean, "CODEX_CI", {});
 new!(pub CODEX_THREAD_ID: boolean, "CODEX_THREAD_ID", {});
 new!(pub COLORTERM: string, "COLORTERM", {});
@@ -167,8 +163,7 @@ platform_specific_new!(pub DYLD_ROOT_PATH: string, posix = "DYLD_ROOT_PATH", win
 // indeed, an enum. The 80-20 is to make it an unsigned value (which also works well).
 new!(pub FORCE_COLOR: unsigned, "FORCE_COLOR", { deser: { error_handling: TruthyCast, empty_string_as: Value(1) } });
 platform_specific_new!(pub fpath: string, posix = "fpath", windows = None, {});
-// Gemini CLI exports `GEMINI_CLI=1` to the shells it spawns
-// (packages/core/src/services/shellExecutionService.ts).
+// Gemini CLI exports `GEMINI_CLI=1` to the shells it spawns.
 new!(pub GEMINI_CLI: boolean, "GEMINI_CLI", {});
 new!(pub GIT_SHA: string, "GIT_SHA", {});
 new!(pub GITHUB_ACTIONS: boolean, "GITHUB_ACTIONS", { default: false });

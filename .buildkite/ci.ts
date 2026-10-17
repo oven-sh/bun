@@ -5,7 +5,7 @@
  * @link https://buildkite.com/docs/pipelines/defining-steps
  */
 
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Arch, Abi as HostAbi, Os } from "../scripts/agent.ts";
 import { output, run } from "../scripts/agent.ts";
@@ -869,20 +869,62 @@ function getTraceOrderStep(target: Target, tracePlatform: Platform, options: Pip
 interface TestOptions {
   buildId?: string | undefined;
   testFiles?: string[] | undefined;
+  aot?: AotTests | undefined;
+}
+
+// test/aot costs several times the rest of test/, so it has steps of its own: test/aot/README.md, "What CI has to know".
+type AotTests = "all" | "a tenth";
+
+const aotSources =
+  /^(?:src\/aot\/|src\/sema\/|src\/builtin_syntax\/|packages\/bun-sound\/|test\/aot\/|scripts\/build\/deps\/webkit\.ts$)/;
+const aotGroupsOfLinuxX64 = ["aot/collector-stress/", "aot/bad-time/", "aot/instruction-counts/"];
+const aotGroupsOfTheCompiler = [...aotGroupsOfLinuxX64, "aot/startup-scaling/", "aot/variant-"];
+
+function getAotTests(platform: Platform, options: PipelineOptions): AotTests | undefined {
+  const { os, arch, distro, profile, tier } = platform;
+  if (options.testFiles?.length || distro === "ubuntu" || tier === "beta") return undefined;
+  if (!options.changedFiles?.some(file => aotSources.test(file))) {
+    return distro === "debian" && !profile ? "a tenth" : undefined;
+  }
+  return (os === "darwin" && arch === "x64") || (os === "windows" && arch === "aarch64") ? "a tenth" : "all";
+}
+
+function getAotExcludes({ arch, distro, profile }: Platform, aot: AotTests): string[] {
+  if (aot === "a tenth") return aotGroupsOfTheCompiler;
+  return arch === "x64" && distro === "debian" && !profile ? [] : aotGroupsOfLinuxX64;
+}
+
+function getAotParallelism(platform: Platform, aot: AotTests): number {
+  const { os, arch, abi, profile } = platform;
+  const windows = arch === "x64" ? "windows" : "windows-aarch64";
+  const lane = profile === "asan" ? "asan" : abi === "musl" ? "musl" : os === "windows" ? windows : "default";
+  const table = readFileSync(join(process.cwd(), "test", "expected-durations.json"), "utf8");
+  const excludes = getAotExcludes(platform, aot);
+  let milliseconds = 0;
+  for (const [path, durations] of Object.entries(JSON.parse(table) as Record<string, Record<string, number>>)) {
+    if (!path.startsWith("aot/") || excludes.some(group => path.includes(group))) continue;
+    milliseconds += durations[lane] ?? durations["default"] ?? 0;
+  }
+  const shards = Math.ceil(milliseconds / (aot === "all" ? 1 : 4) / (12 * 60_000));
+  return Math.max(1, Math.min(shards, os === "darwin" ? 4 : 40));
 }
 
 function getTestBunStep(platform: Platform, options: PipelineOptions, testOptions: TestOptions = {}): CommandStep {
   const { os, profile } = platform;
-  const { buildId, testFiles } = testOptions;
+  const { buildId, testFiles, aot } = testOptions;
 
   const args = [`--step=${getTargetKey(platform)}-build-bun`];
   if (buildId) {
     args.push(`--build-id=${buildId}`);
   }
 
-  if (testFiles?.length) {
+  if (aot) {
+    args.push("--include=aot/", "--retries=1");
+    args.push(...getAotExcludes(platform, aot).map(group => `--exclude=${group}`));
+  } else if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
   } else {
+    args.push("--exclude=aot/");
     // platform-independent tsc check; runs in .github/workflows/bun-types.yml instead
     args.push("--exclude=integration/bun-types");
     // source-tree lints and build-script unit tests that never touch the built
@@ -896,8 +938,8 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
   }
 
   return {
-    key: `${getPlatformKey(platform)}-test-bun`,
-    label: `${getPlatformLabel(platform)} - test-bun`,
+    key: `${getPlatformKey(platform)}-test-${aot ? "aot" : "bun"}`,
+    label: `${getPlatformLabel(platform)} - test-${aot ? "aot" : "bun"}`,
     depends_on: depends,
     agents: getTestAgent(platform),
 
@@ -912,7 +954,15 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     // connected at upload but drops off during the build wait, so the
     // step sits `scheduled` with nobody to take it. That holds only this
     // PR's own build, and a cancel clears it.
-    parallelism: platform.tier === "beta" ? 1 : os === "darwin" ? 2 : os === "windows" ? 8 : 20,
+    parallelism: aot
+      ? getAotParallelism(platform, aot)
+      : platform.tier === "beta"
+        ? 1
+        : os === "darwin"
+          ? 2
+          : os === "windows"
+            ? 8
+            : 20,
     ...(platform.tier === "beta" ? { soft_fail: true } : {}),
     // The beta lane runs the whole suite as one shard on one box (~35 min).
     timeout_in_minutes:
@@ -925,6 +975,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
       // darwin aarch64 "previous" and darwin x64 intentionally float across
       // macOS versions, and the windows "2019" label doesn't match the
       // kernel-style version the agent reports.
+      ...(aot === "a tenth" ? { AOT_PROGRAMS: "quick" } : {}),
       EXPECTED_PLATFORM_OS: platform.os,
       EXPECTED_PLATFORM_ARCH: platform.arch,
       ...(platform.abi ? { EXPECTED_PLATFORM_ABI: platform.abi } : {}),
@@ -1850,6 +1901,9 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
         ...relevantTestPlatforms.map(target => {
           const step = getTestBunStep(target, options, { testFiles, buildId });
           testStepKeys.push(step.key);
+          const aot = getAotTests(target, options);
+          const aotStep = aot && getTestBunStep(target, options, { buildId, aot });
+          if (aotStep) testStepKeys.push(aotStep.key);
           // Test shards run on their native platform image; when this build
           // bakes it, they wait for it.
           const dependsOn = getImageDependsOn(target, baking);
@@ -1857,7 +1911,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
             {
               key: getPlatformKey(target),
               group: getPlatformLabel(target),
-              steps: [step],
+              steps: aotStep ? [step, aotStep] : [step],
             },
             ...dependsOn,
           );

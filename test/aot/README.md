@@ -35,6 +35,15 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
 
 - **Nothing has to be registered.** `scripts/runner.node.ts` runs every file under `test/` whose name contains `.test.` or `spec.`.
   For the same reason no program or helper below this folder may have such a name.
+- **This folder has steps of its own**, `<platform>-test-aot` (`getAotTests()` in `.buildkite/ci.ts`), and the `test-bun` shards leave
+  it out: it costs eight times the rest of `test/`. A pull request that touches `src/aot`, `src/sema`, `src/builtin_syntax`,
+  `packages/bun-sound`, this folder or the pinned WebKit runs all of it, on every platform but Ubuntu; `collector-stress`, `bad-time`
+  and `instruction-counts` on Debian x64 alone. Any other build runs a tenth, on Debian x64 and arm64: `AOT_PROGRAMS=quick`, without
+  those three groups, `startup-scaling` and `variant-*`. macOS x64 and Windows arm64 only ever run that tenth. A failing file is run
+  once more, not three times.
+- **The number of shards follows from the `aot/` lines of `test/expected-durations.json`**, twelve minutes to a shard, and the files are
+  dealt out by those lines. A file without a line counts as the median of the folder. `scripts/update-test-durations.mjs` renews them
+  from builds that ran all of the folder.
 - **No platform refuses `--aot`**, and `every-platform.test.ts` never skips itself. Only a Bun that was built without the compiler
   refuses the flag. A test file that uses the flag skips itself there: `import { describe, test } from "./supported";` in place of the same names of `bun:test`, or
   `test.skipIf(!!unsupported)` with `unsupported` of `run-programs.ts` where only some of its tests use it. Never a list of

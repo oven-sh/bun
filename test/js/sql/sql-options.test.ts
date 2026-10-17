@@ -535,10 +535,18 @@ test.skipIf(isWindows).concurrent.each(["postgres", "mysql"] as const)(
 // A merge of untrusted JSON, or a package, can leave keys on Object.prototype. They are not options.
 // Last in the file: a key that was on Object.prototype makes what runs later in the process slower.
 describe("what Object.prototype holds", () => {
+  const plantedNames = new Set<string>();
+  const unplant = () => {
+    for (const name of plantedNames) delete (Object.prototype as Record<string, unknown>)[name];
+    plantedNames.clear();
+  };
+  // A test that times out does not reach its `finally`.
+  afterEach(unplant);
+
   /** Runs `run` with `values` on Object.prototype, the way an assignment leaves them. */
   async function planted<T>(values: Record<string, unknown>, run: () => T | Promise<T>): Promise<T> {
-    const names = Object.keys(values);
-    for (const name of names) {
+    for (const name of Object.keys(values)) {
+      plantedNames.add(name);
       Object.defineProperty(Object.prototype, name, {
         value: values[name],
         configurable: true,
@@ -549,7 +557,7 @@ describe("what Object.prototype holds", () => {
     try {
       return await run();
     } finally {
-      for (const name of names) delete (Object.prototype as Record<string, unknown>)[name];
+      unplant();
     }
   }
 

@@ -9931,6 +9931,7 @@ impl LowerUsingDeclarationsContext {
     ) -> ListManaged<'a, Stmt> {
         let mut result = BumpVec::new_in(p.arena);
         let mut exports = BumpVec::<js_ast::ClauseItem>::new_in(p.arena);
+        let mut commonjs_export_decls = bun_alloc::AstAlloc::vec();
         let mut end: u32 = 0;
         for i in 0..stmts.len() {
             let stmt = stmts[i];
@@ -10010,6 +10011,46 @@ impl LowerUsingDeclarationsContext {
                     }
                 }
                 js_ast::StmtData::SLocal(mut local) => {
+                    // The linker handles `var $x` (a lifted `exports.x`) only at part level.
+                    if local.origin.is_commonjs_export() {
+                        debug_assert!(local.decls.len() == 1);
+                        let decl = *local.decls.at(0);
+                        let (js_ast::b::B::BIdentifier(identifier), Some(value)) =
+                            (decl.binding.data, decl.value)
+                        else {
+                            unreachable!("a lifted CommonJS export is `var $x = value`")
+                        };
+                        VecExt::append(
+                            &mut commonjs_export_decls,
+                            Decl {
+                                binding: decl.binding,
+                                value: None,
+                            },
+                        );
+                        let target = p.new_expr(
+                            E::CommonJSExportIdentifier {
+                                ref_: identifier.r#ref,
+                            },
+                            decl.binding.loc,
+                        );
+                        let store = p.new_expr(
+                            E::Binary {
+                                op: js_ast::op::Code::BinAssign,
+                                left: target,
+                                right: value,
+                            },
+                            stmt.loc,
+                        );
+                        stmts[end as usize] = p.s(
+                            S::SExpr {
+                                value: store,
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        );
+                        end += 1;
+                        continue;
+                    }
                     // If any of these are exported, turn it into a "var" and add export clauses
                     if local.is_export {
                         local.is_export = false;
@@ -10153,7 +10194,20 @@ impl LowerUsingDeclarationsContext {
 
         // Wrap everything in a try/catch/finally block
         p.record_usage(caught_ref);
-        result.reserve(2 + usize::from(!exports.is_empty()));
+        result.reserve(
+            2 + usize::from(!exports.is_empty()) + usize::from(!commonjs_export_decls.is_empty()),
+        );
+        if !commonjs_export_decls.is_empty() {
+            result.push(p.s(
+                S::Local {
+                    kind: js_ast::s::Kind::KVar,
+                    origin: js_ast::s::LocalOrigin::CommonJsExport,
+                    decls: commonjs_export_decls,
+                    ..Default::default()
+                },
+                loc,
+            ));
+        }
         let stack_binding = p.b(
             B::Identifier {
                 r#ref: self.stack_ref,

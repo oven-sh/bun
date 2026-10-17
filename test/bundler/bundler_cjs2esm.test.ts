@@ -2620,4 +2620,292 @@ describe("bundler", () => {
       stdout: "var\nmain",
     },
   });
+  // A lowered top-level `using` moves the statements of the file into a `try`
+  // block. The `exports.x = value` statements in that block must still write
+  // to `exports` when the file gets the `__commonJS` wrapper.
+  for (const [target, backend] of [
+    ["browser", "api"],
+    ["node", "cli"],
+  ] as const) {
+    itBundled(`cjs2esm/TopLevelUsingKeepsExportsOfRequiredFile/${target}`, {
+      files: {
+        "/entry.cjs": /* js */ `
+          const lib = require("./lib.cjs");
+          console.log(JSON.stringify(lib));
+        `,
+        "/lib.cjs": /* js */ `
+          using resource = { [Symbol.dispose]() {} };
+          exports.a = 1;
+          exports.b = 2;
+        `,
+      },
+      target,
+      backend,
+      cjs2esm: { unhandled: ["/entry.cjs", "/lib.cjs"] },
+      // A wrapped file prints `exports.a`, and no `$a` binding.
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).not.toContain("$");
+      },
+      run: {
+        stdout: `{"a":1,"b":2}`,
+      },
+    });
+  }
+  itBundled("cjs2esm/TopLevelUsingKeepsExportsOfRequiredFileMinifySyntax", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const lib = require("./lib.cjs");
+        console.log(JSON.stringify(lib));
+      `,
+      "/lib.cjs": /* js */ `
+        using resource = { [Symbol.dispose]() {} };
+        exports.a = 1;
+        exports.b = 2;
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("$");
+    },
+    run: {
+      stdout: `{"a":1,"b":2}`,
+    },
+  });
+  itBundled("cjs2esm/TopLevelUsingKeepsExportsForImportsThatNeedTheWrapper", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import held from "./held.cjs";
+        const dynamic = await import("./dynamic.cjs");
+        console.log(JSON.stringify(held));
+        console.log(dynamic.a, JSON.stringify(dynamic.default));
+      `,
+      "/held.cjs": /* js */ `
+        using resource = { [Symbol.dispose]() {} };
+        exports.a = 1;
+      `,
+      "/dynamic.cjs": /* js */ `
+        using resource = { [Symbol.dispose]() {} };
+        exports.a = 1;
+      `,
+    },
+    cjs2esm: { unhandled: ["/held.cjs", "/dynamic.cjs"] },
+    run: {
+      stdout: `{"a":1}\n1 {"a":1}`,
+    },
+  });
+  // A raw `exports` use keeps the wrapper on a file, whatever imports it.
+  itBundled("cjs2esm/TopLevelUsingKeepsExportsOfFileThatWrapsItself", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { helper } from "./tsc-output.cjs";
+        import * as ns from "./tsc-output.cjs";
+        console.log(helper(), ns.helper === helper);
+      `,
+      "/tsc-output.cjs": /* js */ `
+        "use strict";
+        Object.defineProperty(exports, "__esModule", { value: true });
+        exports.helper = helper;
+        using resource = { [Symbol.dispose]() {} };
+        function helper() { return "helper"; }
+      `,
+    },
+    cjs2esm: { unhandled: ["/tsc-output.cjs"] },
+    run: {
+      stdout: "helper true",
+    },
+  });
+  itBundled("cjs2esm/TopLevelUsingKeepsExportsOfEntryPoint", {
+    files: {
+      "/entry.cjs": /* js */ `
+        using resource = { [Symbol.dispose]() {} };
+        exports.a = 1;
+        console.log(JSON.stringify(exports));
+      `,
+    },
+    run: {
+      stdout: `{"a":1}`,
+    },
+  });
+  itBundled("cjs2esm/TopLevelUsingKeepsExportsOfFileWithImport", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const lib = require("./mixed.js");
+        console.log(lib.a, lib.b);
+      `,
+      "/mixed.js": /* js */ `
+        import { value } from "./value.mjs";
+        using resource = { [Symbol.dispose]() {} };
+        exports.a = value;
+        exports.b = 2;
+      `,
+      "/value.mjs": /* js */ `
+        export const value = 1;
+      `,
+    },
+    run: {
+      stdout: "1 2",
+    },
+  });
+  itBundled("cjs2esm/TopLevelUsingKeepsEveryExportSpelling", {
+    files: {
+      "/entry.cjs": /* js */ `
+        console.log(JSON.stringify(require("./spellings.cjs")));
+        console.log(JSON.stringify(require("./reassigned.cjs")));
+        const { plain, arrow, reader } = require("./functions.cjs");
+        console.log(plain(), arrow(), reader.call({ value: "reader" }));
+      `,
+      "/spellings.cjs": /* js */ `
+        exports.before = 0;
+        using resource = { [Symbol.dispose]() {} };
+        exports.dot = 1;
+        exports["index"] = 2;
+        module.exports.moduleDot = 3;
+        exports.dot += 10;
+        exports.twice = 1;
+        exports.twice = 2;
+        exports.sum = exports.dot + exports.index;
+        exports.outer = exports.inner = 4;
+      `,
+      // swap() runs first, so `module.exports.x` must not print as `exports.x`.
+      "/reassigned.cjs": /* js */ `
+        using resource = { [Symbol.dispose]() {} };
+        swap();
+        module.exports.x = 1;
+        function swap() { module.exports = { y: 2 }; }
+      `,
+      "/functions.cjs": /* js */ `
+        using resource = { [Symbol.dispose]() {} };
+        exports.plain = function () { return "plain"; };
+        exports.arrow = () => "arrow";
+        exports.reader = function () { return this.value; };
+      `,
+    },
+    run: {
+      stdout: `{"before":0,"dot":11,"index":2,"moduleDot":3,"twice":2,"sum":13,"inner":4,"outer":4}\n{"y":2,"x":1}\nplain arrow reader`,
+    },
+  });
+  itBundled("cjs2esm/TopLevelUsingKeepsExportsInEvaluationOrder", {
+    files: {
+      "/entry.cjs": /* js */ `
+        console.log(JSON.stringify(require("./disposer.cjs")));
+        console.log(JSON.stringify(require("./cycle-a.cjs")));
+        try {
+          require("./throws.cjs");
+        } catch (error) {
+          console.log(error.message, JSON.stringify(globalThis.partial));
+        }
+        console.log(require("./disposer.cjs") === require("./disposer.cjs"));
+      `,
+      "/disposer.cjs": /* js */ `
+        using resource = { [Symbol.dispose]() { console.log("dispose sees", JSON.stringify(exports)); } };
+        exports.a = 1;
+      `,
+      "/cycle-a.cjs": /* js */ `
+        using resource = { [Symbol.dispose]() {} };
+        exports.first = 1;
+        exports.second = require("./cycle-b.cjs").seen;
+      `,
+      "/cycle-b.cjs": /* js */ `
+        exports.seen = JSON.stringify(require("./cycle-a.cjs"));
+      `,
+      "/throws.cjs": /* js */ `
+        using resource = { [Symbol.dispose]() { console.log("disposed"); } };
+        exports.a = 1;
+        globalThis.partial = exports;
+        throw new Error("thrown");
+      `,
+    },
+    run: {
+      stdout: `dispose sees {"a":1}\n{"a":1}\n{"first":1,"second":"{\\"first\\":1}"}\ndisposed\nthrown {"a":1}\ntrue`,
+    },
+  });
+  // The `__esm` wrapper hoists the `$a` and `$b` declarations out of its closure.
+  itBundled("cjs2esm/TopLevelUsingKeepsExportsInsideEsmWrapper", {
+    files: {
+      "/entry.cjs": /* js */ `
+        console.log(require("./esm.mjs").sum);
+      `,
+      "/esm.mjs": /* js */ `
+        import { a, b } from "./lib.cjs";
+        export const sum = a + b;
+      `,
+      "/lib.cjs": /* js */ `
+        using resource = { [Symbol.dispose]() {} };
+        exports.a = 1;
+        exports.b = 2;
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("var init_lib = __esm(");
+    },
+    run: {
+      stdout: "3",
+    },
+  });
+  // `get` leaves the `__esm` closure, and `k` stays in the `try` block inside
+  // it: "ReferenceError: k is not defined". https://github.com/oven-sh/bun/pull/38284
+  itBundled("cjs2esm/TopLevelUsingInsideEsmWrapperKeepsModuleBindings", {
+    todo: true,
+    files: {
+      "/entry.cjs": /* js */ `
+        console.log(require("./esm.mjs").value);
+      `,
+      "/esm.mjs": /* js */ `
+        import { get } from "./lib.cjs";
+        export const value = get();
+      `,
+      "/lib.cjs": /* js */ `
+        using resource = { [Symbol.dispose]() {} };
+        const k = 41;
+        function get() { return k + 1; }
+        exports.get = get;
+      `,
+    },
+    run: {
+      stdout: "42",
+    },
+  });
+  // These importers leave the file lifted.
+  itBundled("cjs2esm/TopLevelUsingStaysLiftedForNamedAndStarImports", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { a, b } from "./named.cjs";
+        import * as star from "./star.cjs";
+        console.log(a, b, star.a, star.b);
+      `,
+      "/named.cjs": /* js */ `
+        using resource = { [Symbol.dispose]() { console.log("named disposed"); } };
+        exports.a = 1;
+        exports.b = 2;
+      `,
+      "/star.cjs": /* js */ `
+        using resource = { [Symbol.dispose]() { console.log("star disposed"); } };
+        exports.a = 3;
+        exports.b = 4;
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "named disposed\nstar disposed\n1 2 3 4",
+    },
+  });
+  // minifySyntax folds `using resource = null` away, so nothing is lowered.
+  itBundled("cjs2esm/FoldedTopLevelUsingStaysLifted", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { a, b } from "./lib.cjs";
+        console.log(a, b);
+      `,
+      "/lib.cjs": /* js */ `
+        using resource = null;
+        exports.a = 1;
+        exports.b = 2;
+      `,
+    },
+    minifySyntax: true,
+    cjs2esm: true,
+    run: {
+      stdout: "1 2",
+    },
+  });
 });

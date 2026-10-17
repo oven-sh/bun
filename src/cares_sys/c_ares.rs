@@ -686,6 +686,18 @@ const _: () = assert!(core::mem::size_of::<Channel>() == 0);
 pub trait ChannelContainer: Sized {
     fn on_dns_socket_state(&self, socket: ares_socket_t, readable: bool, writable: bool);
     fn set_channel(&self, channel: *mut Channel);
+    /// A server of this channel answered a query, or failed to answer one.
+    fn on_dns_server_state(&self, answered: bool);
+}
+
+/// `BUN_INTERNAL_DNS_RESOLV_CONF` as `ARES_OPT_RESOLVCONF` wants it: NUL-terminated.
+fn resolv_conf_for_testing() -> Option<&'static std::ffi::CStr> {
+    static PATH: std::sync::OnceLock<Option<std::ffi::CString>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let path = bun_core::env_var::BUN_INTERNAL_DNS_RESOLV_CONF::get()?;
+        std::ffi::CString::new(path).ok()
+    })
+    .as_deref()
 }
 
 /// Trait for `Channel::resolve`: ties a lookup-name string to its NSType and
@@ -736,6 +748,19 @@ impl Channel {
             container.on_dns_socket_state(socket, readable != 0, writable != 0);
         }
 
+        // `ares_server_state_cb` for `C`: a server answered a query, or did not.
+        unsafe extern "C" fn on_server_state<C: ChannelContainer>(
+            _server: *const c_char,
+            success: c_int,
+            _flags: c_int,
+            ctx: *mut c_void,
+        ) {
+            // SAFETY: `ctx` is the `*const C` stored at init; c-ares calls this on
+            // the thread that owns the channel.
+            let container = unsafe { &*ctx.cast_const().cast::<C>() };
+            container.on_dns_server_state(success != 0);
+        }
+
         let mut opts = Options {
             // Android note: c-ares can't auto-discover servers (no /etc/resolv.conf,
             // no JNI), so it falls back to 127.0.0.1 and queries time out. We do
@@ -754,7 +779,7 @@ impl Channel {
             ..Default::default()
         };
 
-        let optmask: c_int =
+        let mut optmask: c_int =
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
 
         // SAFETY: idempotent Winsock init (uv_once); c-ares creates its sockets with
@@ -763,6 +788,11 @@ impl Channel {
         unsafe {
             bun_libuv_sys::uv__winsock_ensure()
         };
+        if let Some(path) = resolv_conf_for_testing() {
+            // c-ares copies the string.
+            opts.resolvconf_path = path.as_ptr().cast_mut();
+            optmask |= ARES_OPT_RESOLVCONF;
+        }
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
         let rc = unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) };
         if let Some(err) = Error::get(rc) {
@@ -772,8 +802,28 @@ impl Channel {
             return Some(err);
         }
 
+        // SAFETY: c-ares FFI; `channel` is the channel just created and `this`
+        // outlives it (it owns the channel and destroys it in its own Drop).
+        unsafe {
+            ares_set_server_state_callback(
+                channel,
+                on_server_state::<C>,
+                std::ptr::from_ref::<C>(this).cast_mut().cast::<c_void>(),
+            );
+        }
         this.set_channel(channel);
         None
+    }
+
+    /// Apply the system resolver config to this channel again, in place. A
+    /// query in flight on a server the new config drops moves to the new
+    /// servers, and counts that move as one of its tries.
+    pub fn reinit(&mut self) {
+        // SAFETY: `self` is a live channel. c-ares has no thread support here
+        // (`library_init` asserts it), so the read, the socket-state callbacks
+        // and any query callbacks run inside this call, on this thread. The
+        // status is then always success, also when the read found no file.
+        let _ = unsafe { ares_reinit(self) };
     }
 
     /// FFI destroy — `ares_destroy`.
@@ -964,6 +1014,12 @@ fn library_init() {
         if rc != ARES_SUCCESS {
             panic!("ares_library_init_mem failed: {}", rc);
         }
+        // A channel and its socket-state callback stay on one thread. c-ares
+        // with thread support applies `ares_reinit` on a thread of its own.
+        assert!(
+            ares_threadsafety() == 0,
+            "c-ares is built with CARES_THREADS (scripts/build/deps/cares.ts)"
+        );
     }}
 }
 
@@ -983,12 +1039,20 @@ unsafe extern "C" {
         afree: Option<unsafe extern "C" fn(*mut c_void)>,
         arealloc: Option<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void>,
     ) -> c_int;
+    /// `ares_bool_t`: nonzero when c-ares was built with `CARES_THREADS`.
+    safe fn ares_threadsafety() -> c_int;
     pub fn ares_init_options(
         channelptr: *mut *mut Channel,
         options: *mut Options,
         optmask: c_int,
     ) -> c_int;
     pub fn ares_destroy(channel: *mut Channel);
+    fn ares_reinit(channel: *mut Channel) -> c_int;
+    fn ares_set_server_state_callback(
+        channel: *mut Channel,
+        callback: unsafe extern "C" fn(*const c_char, c_int, c_int, *mut c_void),
+        user_data: *mut c_void,
+    );
     // Opaque handle by exclusive reference only — `Channel` is `!Freeze`/`!Sync`
     // (UnsafeCell + PhantomData<*mut u8>). Note: `ares_cancel`/`ares_process_fd`
     // synchronously invoke stored completion callbacks which may re-enter the
@@ -1856,6 +1920,7 @@ pub(crate) const ARES_FLAG_NOCHECKRESP: c_int = 1 << 7;
 pub(crate) const ARES_OPT_FLAGS: c_int = 1 << 0;
 pub(crate) const ARES_OPT_TRIES: c_int = 1 << 2;
 pub(crate) const ARES_OPT_SOCK_STATE_CB: c_int = 1 << 9;
+pub(crate) const ARES_OPT_RESOLVCONF: c_int = 1 << 17;
 pub(crate) const ARES_OPT_TIMEOUTMS: c_int = 1 << 13;
 pub(crate) const ARES_NI_NAMEREQD: c_int = 1 << 2;
 pub(crate) const ARES_NI_LOOKUPHOST: c_int = 1 << 8;

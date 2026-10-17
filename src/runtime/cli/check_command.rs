@@ -548,8 +548,8 @@ impl<'a> EntryPoint<'a> {
     }
 }
 
-/// Type checks `entry_points` and everything they import before they are run. Returns
-/// `Report::is_ok`. Reports the diagnostics on stderr, which leaves stdout to the program.
+/// Type checks `entry_points` and everything they import before they are run. Returns whether they
+/// have no errors. Reports the errors on stderr, which leaves stdout to the program.
 pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<BeforeRead>) -> bool {
     let cwd = working_directory();
     // `--loader`, `--conditions`
@@ -845,7 +845,7 @@ fn tsconfig_override() -> Option<&'static [u8]> {
         .as_deref()
 }
 
-/// Returns `Report::is_ok`.
+/// Returns whether there are no errors.
 fn check_and_report(paths: &Paths, provided: Provided) -> bool {
     let cwd = working_directory();
     let then = |report| report;

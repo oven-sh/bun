@@ -1015,10 +1015,7 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    /// Whether it fails the run, as an entry of `Report::diagnostics` and not of `related`.
-    /// `EmitFilesAndReportErrors` and `GetDiagnosticsOfAnyProgram` test how many diagnostics are
-    /// reported, of whatever category: `message TS1450` is a grammar error. A suggestion is never
-    /// one of them.
+    /// Whether it fails the run: `tsc` fails on whatever it reports (`message TS1450`), and it never reports a suggestion.
     pub fn fails(&self) -> bool {
         self.category != Category::Suggestion
     }
@@ -1179,8 +1176,7 @@ pub struct Report {
 }
 
 impl Report {
-    /// Whether the exit code is 0: nothing that fails the run was reported, and nothing was left
-    /// unchecked.
+    /// Whether the exit code is 0: nothing reported fails the run, and nothing was left unchecked.
     pub fn is_ok(&self) -> bool {
         self.failing().next().is_none() && self.incomplete.is_empty()
     }

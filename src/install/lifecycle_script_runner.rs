@@ -932,14 +932,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         if self.optional {
             let failed = match &status {
                 Status::Exited(exit) => exit.code > 0,
-                // A request to stop is not a failed script: where bun outlives the signal
-                // (ignored on entry, PID 1), the re-raise below is what ends the install.
                 Status::Signaled(_) => {
                     use SignalCode::{SIGHUP, SIGINT, SIGQUIT, SIGTERM};
-                    !matches!(
+                    // bun can outlive these (ignored on entry, PID 1), and then only the re-raise below ends the install.
+                    let asked_to_stop = matches!(
                         status.signal_code(),
                         Some(SIGINT | SIGTERM | SIGHUP | SIGQUIT)
-                    )
+                    );
+                    !asked_to_stop
                 }
                 Status::Err(_) => true,
                 Status::Running => false,

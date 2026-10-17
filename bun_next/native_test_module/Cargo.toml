@@ -1,0 +1,10 @@
+[package]
+name = "native_test_module"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+boa_engine = "0.20.0"

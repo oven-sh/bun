@@ -58,21 +58,7 @@ export type Field =
       passThis?: boolean;
       invalidThisBehavior?: InvalidThisBehavior;
     } & PropertyAttribute)
-  | { internal: true }
-  | {
-      /**
-       * The function is a builtin (its implementation is defined in
-       * src/js/builtins/), this value is the name of the code generator
-       * function: `camelCase(fileName + functionName + "CodeGenerator"`)
-       */
-      builtin: string;
-      /**
-       * Number of parameters accepted by the function.
-       *
-       * Sets [`function.length`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function/length).
-       */
-      length?: number;
-    };
+  | { internal: true };
 
 export class ClassDefinition {
   /**
@@ -213,7 +199,6 @@ export class ClassDefinition {
   isEventEmitter?: boolean;
 
   configurable?: boolean;
-  enumerable?: boolean;
   structuredClone?: { transferable: boolean; tag: number; storable: boolean };
   inspectCustom?: boolean;
 

@@ -210,7 +210,6 @@ void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t da
     recvbuf->buf = databuf;
     recvbuf->buflen = databuflen;
 #else
-    // assert(databuflen > LIBUS_UDP_MAX_SIZE * LIBUS_UDP_RECV_COUNT);
     memset(recvbuf, 0, sizeof(struct udp_recvbuf));
     for (size_t i = 0; i < LIBUS_UDP_RECV_COUNT; i++) {
         recvbuf->iov[i].iov_base = (char*)databuf + i * LIBUS_UDP_MAX_SIZE;

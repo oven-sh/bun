@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-// const { execSync } = require("child_process");
 const prefixes = require("autoprefixer/data/prefixes");
 const browsers = require("caniuse-lite").agents;
 const unpack = require("caniuse-lite").feature;

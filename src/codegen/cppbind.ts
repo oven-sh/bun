@@ -106,11 +106,10 @@ type CppType =
 type PositionedError = {
   position: Srcloc;
   message: string;
-  notes: { position: Srcloc; message: string }[];
 };
 const errors: PositionedError[] = [];
 function appendError(position: Srcloc, message: string): PositionedError {
-  const error: PositionedError = { position, message, notes: [] };
+  const error: PositionedError = { position, message };
   errors.push(error);
   return error;
 }
@@ -129,7 +128,6 @@ function throwError(position: Srcloc, message: string): never {
 }
 class PositionedErrorClass extends Error {
   position: Srcloc;
-  notes: { position: Srcloc; message: string }[] = [];
   constructor(position: Srcloc, message: string) {
     super(message);
     this.position = position;
@@ -943,9 +941,6 @@ async function main() {
 
   for (const message of errors) {
     await renderError(message.position, message.message, "error", "\x1b[31m");
-    for (const note of message.notes) {
-      await renderError(note.position, note.message, "note", "\x1b[36m");
-    }
     console.error();
   }
 

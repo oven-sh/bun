@@ -72,7 +72,7 @@ pub use string::{StringPointer, Tag, slice_to_nul};
 pub mod external_shared;
 pub use external_shared::{ExternalShared, ExternalSharedDescriptor, WTFString};
 pub mod bounded_array;
-pub use bounded_array::{BoundedArray, BoundedArrayAligned};
+pub use bounded_array::BoundedArray;
 
 /// Bit-cast between fn-pointer types — for erasing only the *pointee type*
 /// of one or more thin-pointer
@@ -641,8 +641,8 @@ pub mod build_options {
 // ── re-exports (the tier-0 surface downstream crates need) ────────────────
 pub use bun_alloc::oom_from_alloc;
 pub use bun_alloc::{
-    Alignment, AllocError, Allocator, is_slice_in_buffer, is_slice_in_buffer_t, out_of_memory,
-    page_size, range_of_slice_in_buffer,
+    Alignment, AllocError, Allocator, is_slice_in_buffer, out_of_memory, page_size,
+    range_of_slice_in_buffer,
 };
 // FFI ABI-safety primitives — `bun_opaque` is the zero-dep `#![no_std]` crate
 // that hosts both the opaque-handle macro and the layout-assert macro, so all
@@ -1193,20 +1193,10 @@ pub use fmt::{
 // to the crate root here for the `bun_core::X` spelling.
 // ──────────────────────────────────────────────────────────────────────────
 pub use crate::string::immutable::{
-    CodePoint, DecodeHexError, LineRange, PercentEncodeError, QuoteEscapeFormatFlags,
-    SplitIterator, StringOrTinyString, UNICODE_REPLACEMENT, WHITESPACE_CHARS, append, cat,
-    concat_with_length, contains_char, copy, count_char, decode_hex_to_bytes,
-    decode_hex_to_bytes_truncate, encode_bytes_to_hex, ends_with_any, ends_with_char,
-    ends_with_char_or_is_zero_length, eql_any_comptime, eql_comptime, eql_comptime_utf16,
-    format_escapes, has_prefix, has_prefix_case_insensitive, has_prefix_comptime,
-    has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, is_all_whitespace,
-    is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
-    is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_t,
-    length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
-    sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,
-    to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix, trim_prefix_comptime,
-    trim_suffix, utf8_byte_sequence_length, utf16_eql_string, without_prefix,
-    without_prefix_comptime, without_suffix_comptime, without_utf8_bom,
+    CodePoint, PercentEncodeError, StringOrTinyString, UNICODE_REPLACEMENT, contains_char,
+    decode_hex_to_bytes, ends_with_char, eql_any_comptime, has_prefix_comptime_utf16, index_of,
+    is_valid_utf8, memmem, order, percent_encode_write, split, starts_with_char, str_utf8,
+    trim_leading_char, utf8_byte_sequence_length,
 };
 
 /// Tier-0 surrogate/transcode primitives that [`crate::string::immutable`]

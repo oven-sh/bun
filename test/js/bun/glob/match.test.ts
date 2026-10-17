@@ -2944,6 +2944,8 @@ describe("Glob.match", () => {
       [`{${plain},src/[ab].ts}`, plain, true],
       [`{src/[ab].ts,${plain}}`, "src/a.ts", true],
       [`{src/[ab].ts,${plain}}`, plain + "x", false],
+      // `{a,aa}` gives the alternative two ends at once.
+      [`{{a,aa}${text.slice(1)}?,zz}c`, `a${path}`, true],
     ];
     for (const long of [text + "?c", text + "[bc]c"]) {
       cases.push(
@@ -2959,6 +2961,7 @@ describe("Glob.match", () => {
         [`{${long.slice(1)},${long}}e`, `${path}e`, true],
         [`{a{${long.slice(1)},q},zz}`, path, true],
         [`{{a,b}{a,b}${long.slice(2)},zz}`, path, true],
+        [`{{a,aa}${long.slice(1)},zz}`, path, true],
         [`{${long.slice(0, -1)},${long}}c`, `${path}c`, true],
         [`!{${long},zz}`, path, false],
         [`!{${long},zz}`, other, true],
@@ -2977,7 +2980,7 @@ describe("Glob.match", () => {
   test("a group with `?` or a class in a long alternative, after `**/`, `*/` or `?` and as `@(a|b)` or `?(a)`", async () => {
     const script = `
       const wrong = [];
-      for (const width of ${JSON.stringify(widths)}) {
+      for (const width of [63, 64, 65, 200]) {
         const text = Buffer.alloc(width - 2, "a").toString();
         const [path, other] = [text + "bc", text + "bd"];
         for (const long of [text + "?c", text + "[bc]c"]) {

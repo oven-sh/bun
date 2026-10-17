@@ -377,26 +377,25 @@ pub(crate) const MAX_KEEPALIVE_HINT_SECONDS: u32 = 600;
 pub(crate) const DEFAULT_H2_REUSE_SECONDS: u32 = 5 * 60;
 
 /// `timeout=N` from a `Keep-Alive` header value (`timeout=5, max=100`, RFC
-/// 9112 appendix C.2.2). Parameter names are case-insensitive. `None` when
-/// there is no such parameter, or its value is not a decimal integer. A
-/// value that does not fit in `u32` is `u32::MAX`.
+/// 9112 appendix C.2.2). Parameter names are case-insensitive. Like undici's
+/// `timeout=(\d+)`, the value is its leading run of digits, so
+/// `timeout=5; max=100` is 5. `None` when there is no such parameter or no
+/// digit starts its value. A value past `u32::MAX` is `u32::MAX`.
 pub(crate) fn parse_keepalive_timeout(value: &[u8]) -> Option<u32> {
     for param in HeaderValueIterator::init(value) {
-        let Some((name, digits)) = strings::split_once_char(param, b'=') else {
+        let Some((name, rest)) = strings::split_once_char(param, b'=') else {
             continue;
         };
         if !strings::eql_case_insensitive_ascii_check_length(name.trim_ascii(), b"timeout") {
             continue;
         }
-        let digits = digits.trim_ascii();
-        if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
-            return None;
+        let rest = rest.trim_ascii_start();
+        let digits = &rest[..rest.iter().take_while(|c| c.is_ascii_digit()).count()];
+        if digits.len() > u32::MAX.ilog10() as usize + 1 {
+            return Some(u32::MAX);
         }
-        let mut n: u32 = 0;
-        for &c in digits {
-            n = n.saturating_mul(10).saturating_add(u32::from(c - b'0'));
-        }
-        return Some(n);
+        return bun_http_types::parse_content_length_strict(digits)
+            .map(|n| u32::try_from(n).unwrap_or(u32::MAX));
     }
     None
 }

@@ -23,8 +23,12 @@ use crate::{ExtractTarball, PackageManager, TarballStream, Task};
 /// the pool keeps a registry connection for 5 minutes instead of the 4 s
 /// default that protects non-idempotent requests. One slow manifest then does
 /// not make every dependent discovered after it pay a new TLS handshake.
+///
+/// The id keeps these connections away from the default pool (id 0) and from
+/// every `Bun.FetchSession` (ids count up from 1), so a POST sent through
+/// either never rides a connection parked under this longer window.
 const REGISTRY_POOL: bun_http::PoolOptions = bun_http::PoolOptions {
-    id: 0,
+    id: u64::MAX,
     idle_timeout_seconds: 5 * 60,
     max_idle_sockets: 0,
 };

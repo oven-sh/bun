@@ -168,14 +168,15 @@ describe("Bun.FetchSession", () => {
     }
   });
 
+  // The idle window ends with nothing observable from JS, so these tests
+  // wait it out with a fixed sleep.
   test("keepAlive.idleTimeout is exact: a connection idle for that long is not reused", async () => {
     using server = await closeObservingServer();
-    using session = new Bun.FetchSession({ keepAlive: { idleTimeout: 1 } });
+    using session = new Bun.FetchSession({ keepAlive: { idleTimeout: 2 } });
     expect(await (await fetch(server.url, { session })).text()).toBe("ok");
     expect(await (await fetch(server.url, { session })).text()).toBe("ok");
     expect(server.connections).toBe(1);
-    // The timeout is the time the connection sat idle, so this waits for it.
-    await Bun.sleep(1_100);
+    await Bun.sleep(2_100);
     expect(await (await fetch(server.url, { session })).text()).toBe("ok");
     expect(server.connections).toBe(2);
   });
@@ -183,11 +184,11 @@ describe("Bun.FetchSession", () => {
   test("keepAlive.idleTimeout caps the origin's Keep-Alive: timeout", async () => {
     // The hint alone would allow 58 s of reuse.
     using server = await closeObservingServer("Keep-Alive: timeout=60\r\n");
-    using session = new Bun.FetchSession({ keepAlive: { idleTimeout: 1 } });
+    using session = new Bun.FetchSession({ keepAlive: { idleTimeout: 2 } });
     expect(await (await fetch(server.url, { session })).text()).toBe("ok");
     expect(await (await fetch(server.url, { session })).text()).toBe("ok");
     expect(server.connections).toBe(1);
-    await Bun.sleep(1_100);
+    await Bun.sleep(2_100);
     expect(await (await fetch(server.url, { session })).text()).toBe("ok");
     expect(server.connections).toBe(2);
   });
@@ -212,7 +213,6 @@ describe("Bun.FetchSession", () => {
       expect(await (await fetch(server.url, { session })).text()).toBe("ok");
       expect(server.connections).toBe(1);
     },
-    15_000,
   );
 
   // The socket timer sweeps every 4 seconds, so this takes two sweeps; it runs
@@ -243,7 +243,7 @@ describe("Bun.FetchSession", () => {
     }
     // The close crosses two threads after the collection; give it until a
     // deadline, and fail with a message instead of hanging.
-    for (const deadline = Date.now() + 5000; !done && Date.now() < deadline;) {
+    for (const deadline = Date.now() + 5000; !done && Date.now() < deadline; ) {
       await new Promise(resolve => setImmediate(resolve));
     }
     expect(done).toBe(true);

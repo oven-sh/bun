@@ -16,13 +16,15 @@
 declare module "bun" {
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
   type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
-    NodeJS.TypedArray<TArrayBuffer> | DataView<TArrayBuffer>;
+    | NodeJS.TypedArray<TArrayBuffer>
+    | DataView<TArrayBuffer>;
   type BufferSource = NodeJS.TypedArray<ArrayBufferLike> | DataView<ArrayBufferLike> | ArrayBufferLike;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
   type XMLHttpRequestBodyInit = Blob | BufferSource | FormData | URLSearchParams | string;
   type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
   type ReadableStreamDefaultReadResult<T> =
-    ReadableStreamDefaultReadValueResult<T> | ReadableStreamDefaultReadDoneResult;
+    | ReadableStreamDefaultReadValueResult<T>
+    | ReadableStreamDefaultReadDoneResult;
   type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
   type Transferable = ArrayBuffer | MessagePort;
   type MessageEventSource = Bun.__internal.UseLibDomIfAvailable<"MessageEventSource", undefined>;
@@ -3250,11 +3252,10 @@ declare module "bun" {
      *
      * @default "esm"
      */
-    format?:
-      /**
-       * ECMAScript Module format
-       */
-      | "esm"
+    format?: /**
+     * ECMAScript Module format
+     */
+    | "esm"
       /**
        * CommonJS format
        * **Experimental**
@@ -5160,7 +5161,10 @@ declare module "bun" {
      * The current state of the connection
      */
     readonly readyState:
-      typeof WebSocket.CONNECTING | typeof WebSocket.OPEN | typeof WebSocket.CLOSING | typeof WebSocket.CLOSED;
+      | typeof WebSocket.CONNECTING
+      | typeof WebSocket.OPEN
+      | typeof WebSocket.CLOSING
+      | typeof WebSocket.CLOSED;
 
     /**
      * The number of bytes of data that have been queued using send() but not yet transmitted to the network
@@ -5410,12 +5414,11 @@ declare module "bun" {
    */
   function color(
     input: ColorInput,
-    outputFormat?:
-      /**
-       * True color ANSI color string, for use in terminals
-       * @example \x1b[38;2;100;200;200m
-       */
-      | "ansi"
+    outputFormat?: /**
+     * True color ANSI color string, for use in terminals
+     * @example \x1b[38;2;100;200;200m
+     */
+    | "ansi"
       | "ansi-16"
       | "ansi-16m"
       /**
@@ -6170,7 +6173,27 @@ declare module "bun" {
      * The gzip header has no file name, no extra data, no comment, no modification time (set to zero) and no header CRC.
      */
     windowBits?:
-      -9 | -10 | -11 | -12 | -13 | -14 | -15 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 25 | 26 | 27 | 28 | 29 | 30 | 31;
+      | -9
+      | -10
+      | -11
+      | -12
+      | -13
+      | -14
+      | -15
+      | 9
+      | 10
+      | 11
+      | 12
+      | 13
+      | 14
+      | 15
+      | 25
+      | 26
+      | 27
+      | 28
+      | 29
+      | 30
+      | 31;
     /**
      * Tunes the compression algorithm.
      *
@@ -8021,17 +8044,11 @@ declare module "bun" {
       maxBuffer?: number;
     }
 
-    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
-      In,
-      Out,
-      Err
-    > {}
+    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>
+      extends BaseOptions<In, Out, Err> {}
 
-    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
-      In,
-      Out,
-      Err
-    > {
+    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable>
+      extends BaseOptions<In, Out, Err> {
       /**
        * If true, the stdout and stderr pipes don't automatically start reading
        * data. Reading begins only when you access the `stdout` or `stderr`
@@ -9065,11 +9082,11 @@ declare module "bun" {
       | boolean
       | {
           /**
-           * Seconds an idle connection is reused for. After that it is no
-           * longer handed to a request, and a coarse timer closes it soon
-           * after (within 8 seconds up to four minutes of idle time, within
-           * two minutes beyond that). The longest is 238 minutes (14280), and
-           * a larger value means that.
+           * Seconds an idle connection is reused for, rounded up to a whole
+           * second. After that it is no longer handed to a request, and a
+           * coarse timer closes it soon after (within 8 seconds up to four
+           * minutes of idle time, within two minutes beyond that). The
+           * longest is 238 minutes (14280), and a larger value means that.
            *
            * It replaces the 4 second default Bun uses when the server sends
            * no `Keep-Alive` header. The server's `Keep-Alive: timeout=N`

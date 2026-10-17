@@ -992,6 +992,7 @@ describe("keep-alive pool reuse window", () => {
     ["timeout=1", 2],
     ["timeout=2", 2],
     ["max=100, timeout=1", 2],
+    ["timeout=1; max=100", 2],
     ["TIMEOUT=2", 2],
     ["timeout=60", 1],
     ["max=100", 1],
@@ -1003,31 +1004,32 @@ describe("keep-alive pool reuse window", () => {
     expect(server.connections).toBe(connections);
   });
 
-  test("Keep-Alive: timeout=3 reuses the connection for 1 s, then dials a new one", async () => {
-    using server = await countingServer("Keep-Alive: timeout=3\r\n");
+  test("Keep-Alive: timeout=4 reuses the connection for 2 s, then dials a new one", async () => {
+    using server = await countingServer("Keep-Alive: timeout=4\r\n");
     const post = async () => (await fetch(server.url, { method: "POST", body: "select 1" })).text();
     expect(await post()).toBe("ok");
     expect(await post()).toBe("ok");
     expect(server.connections).toBe(1);
-    // The window is the time the connection sat idle, so this waits for it.
-    await Bun.sleep(1_100);
+    // The window is the time the connection sat idle, and nothing observable
+    // marks its end, so this waits it out.
+    await Bun.sleep(2_100);
     expect(await post()).toBe("ok");
     expect(server.connections).toBe(2);
     // The first connection was healthy: it retires with a FIN, not a reset.
-    while (server.closes.ended + server.closes.reset === 0) await Bun.sleep(10);
+    for (const deadline = Date.now() + 5_000; server.closes.ended + server.closes.reset === 0; ) {
+      if (Date.now() > deadline) throw new Error("the first connection was not closed");
+      await Bun.sleep(10);
+    }
     expect(server.closes).toEqual({ ended: 1, reset: 0 });
   });
 
-  test.concurrent(
-    "without a Keep-Alive hint the connection is not reused after 4 s idle",
-    async () => {
-      using server = await countingServer();
-      const post = async () => (await fetch(server.url, { method: "POST", body: "select 1" })).text();
-      expect(await post()).toBe("ok");
-      await Bun.sleep(4_100);
-      expect(await post()).toBe("ok");
-      expect(server.connections).toBe(2);
-    },
-    15_000,
-  );
+  test.concurrent("without a Keep-Alive hint the connection is not reused after 4 s idle", async () => {
+    using server = await countingServer();
+    const post = async () => (await fetch(server.url, { method: "POST", body: "select 1" })).text();
+    expect(await post()).toBe("ok");
+    // Nothing observable marks the end of the 4 s window, so this waits it out.
+    await Bun.sleep(4_100);
+    expect(await post()).toBe("ok");
+    expect(server.connections).toBe(2);
+  });
 });

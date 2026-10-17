@@ -358,7 +358,9 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
 
   // An HTTP/1 connection with no Keep-Alive hint is not reused after 4 s
   // idle. An h2 session announces its close with GOAWAY, so it keeps the
-  // 300 s window, and only a session idleTimeout bounds it.
+  // 300 s window, and only a session idleTimeout bounds it. The windows end
+  // with nothing observable from JS, so the script waits them out; the two
+  // waits add up to more than the default test timeout.
   test("an idle h2 session is reused past 4 s, and not past keepAlive.idleTimeout", async () => {
     let sessions = 0;
     await withH2Server(

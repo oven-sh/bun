@@ -1875,6 +1875,7 @@ fn remove_from_older_places(
         id: usize,
         dir: Dir,
         only_older: Vec<(&'a Dependency, PackageID)>,
+        shipped: Vec<u64>,
         stays: Vec<(&'a Dependency, PackageID)>,
     }
     let mut found: Vec<Folder<'_>> = Vec::new();
@@ -1902,10 +1903,9 @@ fn remove_from_older_places(
         // user's own. The packages that Bun installed in it are not.
         let mut same_version = same_version;
         let mut above = id;
-        let mut is_new = false;
         while above != 0 {
             let owner = tree_owner(lockfile, above);
-            is_new = replaced_places.binary_search(&folders[above]).is_ok();
+            let is_new = replaced_places.binary_search(&folders[above]).is_ok();
             if is_new || has_bundled_deps(lockfile, owner) {
                 break;
             }
@@ -1918,12 +1918,13 @@ fn remove_from_older_places(
             above = trees[above].parent as usize;
         }
         if above != 0 {
-            keeps_older_copy[id] = !is_new;
             continue;
         }
         let Some(dir) = open_tree_folder(lockfile, older.id, &mut plan.linked_folders) else {
             continue;
         };
+        // A clean install has what the owner ships too, so that is no older copy.
+        let mut shipped_names: Vec<u64> = Vec::new();
         let mut stays: Vec<(&Dependency, PackageID)> = (only_older.iter())
             .filter(|&&(dep, resolved)| {
                 let alias = dep.name.slice(buf);
@@ -1931,7 +1932,10 @@ fn remove_from_older_places(
                     return false;
                 };
                 let keeps_same_version = match shipped(manager, cache, owner, alias) {
-                    Shipped::Yes => return true,
+                    Shipped::Yes => {
+                        shipped_names.push(dep.name_hash);
+                        return false;
+                    }
                     Shipped::No => same_version == SameVersion::Keep,
                     Shipped::Unknown => true,
                 };
@@ -1964,7 +1968,10 @@ fn remove_from_older_places(
                             || (needs.get(deps).iter()).any(|need| need.name_hash == dep.name_hash)
                     }
                 };
-                if can_load && !stays.iter().any(|kept| kept.0.name_hash == dep.name_hash) {
+                if can_load
+                    && !shipped_names.contains(&dep.name_hash)
+                    && !stays.iter().any(|kept| kept.0.name_hash == dep.name_hash)
+                {
                     stays.push((dep, resolved));
                 }
             }
@@ -1974,6 +1981,7 @@ fn remove_from_older_places(
             id,
             dir,
             only_older,
+            shipped: shipped_names,
             stays,
         });
     }
@@ -1999,6 +2007,7 @@ fn remove_from_older_places(
                 let name_hash = bun_semver::semver_string::Builder::string_hash(entry.alias);
                 entry.kind != EntryKind::Directory
                     || !(folder.only_older.iter()).any(|(dep, _)| dep.name_hash == name_hash)
+                    || folder.shipped.contains(&name_hash)
                     || folder
                         .stays
                         .iter()

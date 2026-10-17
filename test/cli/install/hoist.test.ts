@@ -2221,7 +2221,7 @@ test.concurrent("a nested copy that stays for another one keeps what it loads fr
   await write(join(dir, "package.json"), file(join(dev, "package.json")));
   await write(join(dir, "bun.lock"), file(join(dev, "bun.lock")));
   await run(dir, "install", "--production", "--ignore-scripts");
-  expect(await run(dir, "--no-install", "-p", "require('n')")).toBeOneOf(["c@1.0.0 loads e@1.0.0\n", "c@1.1.0\n"]);
+  expect(await run(dir, "--no-install", "-p", "require('n')")).toBe("c@1.0.0 loads e@1.0.0\n");
 });
 
 // `x/node_modules/n/node_modules/b` stays. It needs e@1 and loads `x/node_modules/e`, one folder further up, which `x`

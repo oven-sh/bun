@@ -757,6 +757,52 @@ console.log(JSON.stringify({ count: fn?.ranges[0].count }));
       // Every range across every script satisfies startOffset < endOffset.
       expect(zeroWidth).toEqual([]);
     });
+
+    test.concurrent("lists a range only where its count is not that of the range it is in", async () => {
+      using dir = tempDir("inspector-coverage-nested", {
+        "fixture.cjs": `
+          const inspector = require("node:inspector");
+          const vm = require("node:vm");
+          const code = [
+            "function called(x) {",
+            "  if (x) {",
+            "    return 1;",
+            "  }",
+            "  return 2;",
+            "}",
+            "function neverCalled() {}",
+            "called(0);",
+          ].join("\\n");
+          const session = new inspector.Session();
+          session.connect();
+          session.post("Profiler.enable");
+          session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+          vm.runInThisContext(code, { filename: "/virtual/nested.js" });
+          session.post("Profiler.takePreciseCoverage", (error, { result }) => {
+            const { functions } = result.find(script => script.url.endsWith("/virtual/nested.js"));
+            console.log(JSON.stringify(functions.map(f => f.ranges.map(r => [code.slice(r.startOffset, r.endOffset), r.count]))));
+          });
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      const [script, called, neverCalled] = JSON.parse(stdout);
+      // The text between the two functions ran as often as the script: it is not a range,
+      // and so nothing but the function's own range is next to "function neverCalled".
+      expect(script).toHaveLength(1);
+      expect(called[0][1]).toBe(1);
+      expect(called.slice(1).map(([, count]) => count)).not.toContain(1);
+      expect(called.slice(1).map(([text]) => text)).toContainEqual(expect.stringContaining("return 1;"));
+      expect(neverCalled).toEqual([["function neverCalled() {}", 0]]);
+    });
   });
 
   describe("exports", () => {

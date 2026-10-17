@@ -765,7 +765,7 @@ impl ByteRangeMapping {
             functions,
             executable_lines,
             lines_which_have_executed,
-            line_hits: lines.hits,
+            line_hits: lines.hits(),
             stmts,
             functions_which_have_executed,
             stmts_which_have_executed,
@@ -923,34 +923,33 @@ impl ExecutionCounts {
 
 /// A line is executable once anything on it is, and ran as often as what ran most on it.
 #[derive(Default)]
-struct LineCounts {
-    executable: Vec<bool>,
-    hits: LinesHits,
-}
+struct LineCounts(Vec<Option<u32>>);
 
 impl LineCounts {
     fn add(&mut self, line: usize, count: u32) {
-        if line >= self.hits.len() {
-            self.hits.resize(line + 1, 0);
-            self.executable.resize(line + 1, false);
+        if line >= self.0.len() {
+            self.0.resize(line + 1, None);
         }
-        self.executable[line] = true;
-        self.hits[line] = self.hits[line].max(count);
+        self.0[line] = self.0[line].max(Some(count));
     }
 
     /// Executable lines, and those of them that ran.
     fn bitsets(&self) -> Result<(Bitset, Bitset), bun_alloc::AllocError> {
-        let mut executable = Bitset::init_empty(self.hits.len())?;
-        let mut executed = Bitset::init_empty(self.hits.len())?;
-        for (line, &hits) in self.hits.iter().enumerate() {
-            if self.executable[line] {
+        let mut executable = Bitset::init_empty(self.0.len())?;
+        let mut executed = Bitset::init_empty(self.0.len())?;
+        for (line, &hits) in self.0.iter().enumerate() {
+            if hits.is_some() {
                 executable.set(line);
             }
-            if hits > 0 {
+            if hits > Some(0) {
                 executed.set(line);
             }
         }
         Ok((executable, executed))
+    }
+
+    fn hits(&self) -> LinesHits {
+        self.0.iter().map(|hits| hits.unwrap_or(0)).collect()
     }
 }
 

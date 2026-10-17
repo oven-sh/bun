@@ -1,5 +1,6 @@
 // `import * as all` of a module whose value is a string, a number, a boolean or null: a text file, a file imported for its path, a JSON file
 // that holds a scalar, a CommonJS module that exports one. What runs has a namespace object with `default`, so that is its type.
+/// <reference path="./files/types.d.ts" />
 import * as text from "./files/words.txt"
 import * as note from "./files/note.md" with { type: "text" }
 import * as file from "./files/data.bin" with { type: "file" }

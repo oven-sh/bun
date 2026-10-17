@@ -6,7 +6,7 @@ const-arrow-via-namespace: 3 layouts, 0 given, 3 open, places 33 of 55, reads 4 
 duplicate-module-cast-to-original: 6 layouts, 0 given, 1 open, places 29 of 52, reads 12 of 16
 dynamic-import: 0 layouts, 0 given, 0 open, places 9 of 27, reads 0 of 1
 export-equals: 4 layouts, 0 given, 6 open, places 13 of 58, reads 7 of 22
-export-equals-namespace: 4 layouts, 0 given, 3 open, places 10 of 66, reads 2 of 29
+export-equals-namespace: 4 layouts, 0 given, 3 open, places 10 of 66, reads 3 of 29
 external-module-imports: 0 layouts, 0 given, 1 open, places 10 of 41, reads 0 of 22
 import-alias-global-member: 3 layouts, 0 given, 2 open, places 6 of 14, reads 0 of 19
 import-alias-module-member: 6 layouts, 0 given, 0 open, places 28 of 51, reads 19 of 30

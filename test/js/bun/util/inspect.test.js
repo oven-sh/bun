@@ -33,6 +33,38 @@ it("prototype", () => {
   Bun.gc(true);
 });
 
+// The inspect.custom of CompressionStream throws ERR_INVALID_THIS when `this` is the prototype.
+it.concurrent("console.log and reportError format a prototype whose class has an inspect.custom", async () => {
+  const code = `
+    console.log(CompressionStream.prototype);
+    try {
+      reportError({ prototype: CompressionStream.prototype });
+      console.log("reportError returned");
+    } catch (error) {
+      console.log("reportError threw " + error.code);
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout:
+      "CompressionStream {\n" +
+      "  readable: undefined,\n" +
+      "  writable: undefined,\n" +
+      "  [Symbol(nodejs.util.inspect.custom)]: [Function: anonymous],\n" +
+      "}\n" +
+      "reportError returned\n",
+    stderr: expect.stringContaining("\n  prototype: CompressionStream {\n"),
+    // reportError reports the value as an uncaught error, and that sets the exit code.
+    exitCode: 1,
+  });
+});
+
 it("getters", () => {
   const obj = {
     get foo() {

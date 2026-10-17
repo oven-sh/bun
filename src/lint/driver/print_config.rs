@@ -130,7 +130,14 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
         b"language",
         text(config.language_name.as_deref().unwrap_or(b"@/js")),
     ));
-    all.push((b"languageOptions", object(language_options)));
+    all.push((
+        b"languageOptions",
+        match &config.options_of_other_language {
+            Some(Json::Null) => object(Vec::new()),
+            Some(options) => options.clone(),
+            None => object(language_options),
+        },
+    ));
     if let Some(processor) = &config.processor {
         all.push((b"processor", text(processor)));
     }

@@ -287,6 +287,7 @@ pub(crate) fn list_objects(
         poll_ref: bun_io::KeepAlive::init(),
         signal_store: Default::default(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
+        signal_object: bun_jsc::StrongOptional::empty(),
         context: Default::default(),
     }));
     // SAFETY: just allocated, non-null
@@ -352,6 +353,8 @@ pub(crate) fn list_objects(
     unsafe {
         bun_jsc::AbortHandle::arm_owner(task_ptr, context);
         if let Some(signal) = signal {
+            task.signal_object
+                .set(vm.global(), signal.to_js(vm.global()));
             bun_jsc::AbortHandle::follow_owner(task_ptr, signal);
         }
     }
@@ -438,16 +441,13 @@ pub(crate) fn writable_stream(
             S3UploadResult::Failure(err) => {
                 let js_err =
                     error_jsc::s3_rejection(&err, task.signal.as_ref(), global, Some(&task.path));
-                if sink.flush_promise.has_value() || sink.end_promise.has_value() {
-                    if sink.flush_promise.has_value() {
-                        sink.flush_promise.reject(global, Ok(js_err))?;
-                    }
-                    if sink.end_promise.has_value() {
-                        sink.end_promise.reject(global, Ok(js_err))?;
-                    }
-                } else {
-                    // Nobody waits yet: the `end()` or `flush()` that comes rejects with it.
-                    sink.upstream_error.set(global, js_err);
+                // Every `end()` or `flush()` from here on rejects with it.
+                sink.upstream_error.set(global, js_err);
+                if sink.flush_promise.has_value() {
+                    sink.flush_promise.reject(global, Ok(js_err))?;
+                }
+                if sink.end_promise.has_value() {
+                    sink.end_promise.reject(global, Ok(js_err))?;
                 }
                 if !sink.done {
                     sink.abort();
@@ -540,12 +540,6 @@ pub(crate) fn writable_stream(
         }));
 
     task.callback_context.set(response_stream.cast::<c_void>());
-    // Followed once the completion has somewhere to go. The caller throws for a signal that
-    // has fired already, so this never fails the upload on the spot.
-    if let Some(signal) = &task.signal {
-        // SAFETY: as `arm_owner` above.
-        unsafe { bun_jsc::AbortHandle::follow_owner(task_ptr, signal.clone()) };
-    }
 
     // SAFETY: freshly heap-allocated; exclusive access here. Ownership transfers to the JS
     // wrapper via `to_js()` (the C++ side stores it as m_ctx and calls `finalize` on collect).
@@ -553,6 +547,12 @@ pub(crate) fn writable_stream(
     // `source` defaults to `SourceHandle::None`; no stream is attached on the
     // `writer()` path, so ready/close/start are no-ops.
     debug_assert!(sink.source.is_dead());
+    // Followed last: a signal that has fired already fails the upload right here, and the
+    // writer then rejects `end()` and `flush()` with the reason.
+    if let Some(signal) = &task.signal {
+        // SAFETY: as `arm_owner` above.
+        unsafe { bun_jsc::AbortHandle::follow_owner(task_ptr, signal.clone()) };
+    }
     Ok(sink.to_js(cx.global()))
 }
 

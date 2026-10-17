@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 // `timeout` bounds each request's idle time, `signal` aborts one operation.
 // Every server here accepts the connection and never answers, so without
@@ -16,6 +16,7 @@ const env = {
 // Accepts and never writes. Counts the request lines it sees.
 function silentServer() {
   const requests: string[] = [];
+  let waiters: ((line: string) => void)[] = [];
   const server = Bun.listen({
     hostname: "127.0.0.1",
     port: 0,
@@ -24,7 +25,12 @@ function silentServer() {
       data(_socket, data) {
         const text = new TextDecoder().decode(data);
         const line = text.slice(0, text.indexOf("\r\n"));
-        if (/^[A-Z]+ /.test(line)) requests.push(line.replace(/ HTTP\/1\.1$/, ""));
+        if (!/^[A-Z]+ /.test(line)) return;
+        const request = line.replace(/ HTTP\/1\.1$/, "");
+        requests.push(request);
+        const pending = waiters;
+        waiters = [];
+        for (const resolve of pending) resolve(request);
       },
       error() {},
     },
@@ -32,6 +38,10 @@ function silentServer() {
   return {
     requests,
     port: server.port,
+    /** Resolves with the next request line the server reads. */
+    nextRequest() {
+      return new Promise<string>(resolve => waiters.push(resolve));
+    },
     [Symbol.dispose]() {
       server.stop(true);
     },
@@ -136,6 +146,124 @@ describe("timeout", () => {
     45_000,
   );
 
+  test.concurrent(
+    "timeout: false or 0 turns off the client-level and the process-wide idle timeout",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open() {}, data() {} } });
+          const s3 = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", region: "us-east-1", endpoint: "http://127.0.0.1:" + server.port, timeout: ${TIMEOUT_MS} });
+          const name = p => p.then(() => "resolved", e => e.name === "S3Error" ? e.name + ":" + e.code : e.name);
+          console.log(JSON.stringify(await Promise.all([
+            name(s3.stat("off", { timeout: false, signal: AbortSignal.timeout(11_000) })),
+            name(s3.stat("zero", { timeout: 0, signal: AbortSignal.timeout(11_000) })),
+            name(s3.list({ prefix: "k" }, { timeout: ${TIMEOUT_MS} })),
+            name(s3.stat("default")),
+          ])));
+          process.exit(0);
+          `,
+        ],
+        env: { ...env, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["TimeoutError", "TimeoutError", "S3Error:Timeout", "S3Error:Timeout"]);
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+
+  // A multipart upload against a stub that answers CreateMultipartUpload, then
+  // behaves as `part` and `abort` say. The child prints the outcome and the
+  // request counts, and exits only once nothing holds the loop (the server is unref'd).
+  function multipartFixture(opts: { part: "stall" | "500"; abort: "stall" | "204"; retry: number }) {
+    return `
+      const reqs = { create: 0, part: 0, complete: 0, abort: 0 };
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const url = new URL(req.url);
+          if (req.method === "POST" && url.searchParams.has("uploads")) {
+            reqs.create++;
+            return new Response("<InitiateMultipartUploadResult><UploadId>u</UploadId></InitiateMultipartUploadResult>");
+          }
+          if (req.method === "PUT") {
+            reqs.part++;
+            await req.arrayBuffer();
+            ${opts.part === "stall" ? "await new Promise(() => {});" : 'return new Response("", { status: 500 });'}
+          }
+          if (req.method === "DELETE") {
+            reqs.abort++;
+            ${opts.abort === "stall" ? "await new Promise(() => {});" : 'return new Response("", { status: 204 });'}
+          }
+          reqs.complete++;
+          return new Response("<CompleteMultipartUploadResult/>");
+        },
+      });
+      server.unref();
+      const s3 = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", region: "us-east-1", endpoint: "http://127.0.0.1:" + server.port });
+      const partSize = 5 * 1024 * 1024;
+      const writer = s3.file("key").writer({ partSize, queueSize: 1, retry: ${opts.retry}, timeout: ${TIMEOUT_MS} });
+      writer.write(new Uint8Array(partSize));
+      const start = performance.now();
+      const outcome = await writer.end().then(() => "resolved", e => e.name + ":" + e.code);
+      console.log(JSON.stringify({ outcome, rejectedAfter: Math.round(performance.now() - start) }));
+      process.on("exit", () => console.log(JSON.stringify({ reqs, exitedAfter: Math.round(performance.now() - start) })));
+    `;
+  }
+
+  async function runMultipart(opts: Parameters<typeof multipartFixture>[0]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", multipartFixture(opts)],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const [outcome, exit] = stdout.trim().split("\n");
+    return { ...JSON.parse(outcome), ...JSON.parse(exit) };
+  }
+
+  test.concurrent(
+    "a multipart part that stalls is retried with a fresh timeout, then the upload is aborted",
+    async () => {
+      const result = await runMultipart({ part: "stall", abort: "204", retry: 1 });
+      expect(result).toEqual({
+        outcome: "S3Error:Timeout",
+        rejectedAfter: expect.any(Number),
+        reqs: { create: 1, part: 2, complete: 0, abort: 1 },
+        exitedAfter: expect.any(Number),
+      });
+      expect(result.rejectedAfter).toBeGreaterThan(2 * MIN_ELAPSED_MS);
+      expect(result.rejectedAfter).toBeLessThan(2 * MAX_ELAPSED_MS);
+    },
+    60_000,
+  );
+
+  test.concurrent(
+    "a rollback that times out is not retried, so the process exits after one timeout",
+    async () => {
+      const result = await runMultipart({ part: "500", abort: "stall", retry: 3 });
+      expect(result).toEqual({
+        outcome: "S3Error:UnknownError",
+        rejectedAfter: expect.any(Number),
+        reqs: { create: 1, part: 4, complete: 0, abort: 1 },
+        exitedAfter: expect.any(Number),
+      });
+      expect(result.rejectedAfter).toBeLessThan(MIN_ELAPSED_MS);
+      expect(result.exitedAfter).toBeGreaterThan(MIN_ELAPSED_MS);
+      expect(result.exitedAfter).toBeLessThan(MAX_ELAPSED_MS);
+    },
+    60_000,
+  );
+
   test("option parsing", () => {
     using server = silentServer();
     const s3 = client(server.port);
@@ -155,11 +283,55 @@ describe("signal", () => {
     const s3 = client(server.port);
     const controller = new AbortController();
     const promise = rejection(s3.stat("key", { signal: controller.signal }));
-    await Bun.sleep(50);
+    expect(await server.nextRequest()).toBe("HEAD /bucket/key");
     controller.abort(new Error("stop"));
     const { error, elapsed } = await promise;
     expect(error).toBe(controller.signal.reason);
     expect(elapsed).toBeLessThan(MIN_ELAPSED_MS);
+  });
+
+  test.concurrent("an abort in the same tick as the call stops the request before it connects", async () => {
+    using server = silentServer();
+    const s3 = client(server.port);
+    const controller = new AbortController();
+    const promise = rejection(s3.stat("key", { signal: controller.signal }));
+    controller.abort(new Error("stop"));
+    const { error } = await promise;
+    expect(error).toBe(controller.signal.reason);
+    expect(server.requests).toEqual([]);
+  });
+
+  test.concurrent("the reason survives a GC of the controller", async () => {
+    using server = silentServer();
+    const s3 = client(server.port);
+    const promise = (() => {
+      const controller = new AbortController();
+      const promise = rejection(s3.stat("key", { signal: controller.signal }));
+      controller.abort(new Error("custom reason"));
+      return promise;
+    })();
+    Bun.gc(true);
+    const { error } = await promise;
+    expect(error.message).toBe("custom reason");
+  });
+
+  test.concurrent("a signal that fires after the response arrived still rejects", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("", { headers: { etag: '"e"' } }) });
+    const s3 = client(server.port);
+    for (let i = 0; i < 20; i++) {
+      const controller = new AbortController();
+      const promise = s3.stat("key", { signal: controller.signal }).then(
+        () => {
+          if (controller.signal.aborted) throw new Error("resolved after abort");
+        },
+        e => {
+          if (e !== controller.signal.reason) throw e;
+        },
+      );
+      await Bun.sleep(i % 5);
+      controller.abort(new Error("late"));
+      await promise;
+    }
   });
 
   test.concurrent("AbortSignal.timeout bounds the whole operation", async () => {
@@ -174,16 +346,36 @@ describe("signal", () => {
     using server = silentServer();
     const s3 = client(server.port);
     const signal = AbortSignal.timeout(100);
+    using dir = tempDir("s3-signal", { "source.txt": "hello" });
+    const creds = {
+      accessKeyId: "key",
+      secretAccessKey: "secret",
+      bucket: "bucket",
+      region: "us-east-1",
+      endpoint: `http://127.0.0.1:${server.port}`,
+    };
+    const stream = () =>
+      new ReadableStream({
+        start(c) {
+          c.enqueue(new Uint8Array(16));
+          c.close();
+        },
+      });
     const results = await Promise.all([
       rejection(s3.exists("key", { signal })),
       rejection(s3.size("key", { signal })),
       rejection(s3.delete("key", { signal })),
       rejection(s3.write("key", "hello", { signal })),
+      rejection(s3.write("key", new Response(stream()), { signal })),
+      rejection(s3.write("key", Bun.file(`${dir}/source.txt`), { signal })),
       rejection(s3.list({ prefix: "k" }, { signal })),
       rejection(s3.file("key").stat({ signal })),
       rejection(s3.file("key").exists({ signal })),
       rejection(s3.file("key").unlink({ signal })),
       rejection(s3.file("key").write("hello", { signal })),
+      rejection(Bun.write(s3.file("key"), stream(), { signal })),
+      rejection(Bun.S3Client.stat("key", { ...creds, signal })),
+      rejection(Bun.S3Client.write("key", "hello", { ...creds, signal })),
     ]);
     expect(results.map(r => r.error.name)).toEqual(Array(results.length).fill("TimeoutError"));
   });
@@ -199,8 +391,10 @@ describe("signal", () => {
       rejection(s3.list(null, { signal })),
     ]);
     expect(results.map(r => r.error)).toEqual(Array(results.length).fill(signal.reason));
-    expect(() => s3.file("key").writer({ signal })).toThrow(signal.reason);
-    await Bun.sleep(50);
+    const writer = s3.file("key").writer({ signal });
+    expect(writer.write("hello")).toBe(0);
+    expect((await rejection(writer.flush())).error).toBe(signal.reason);
+    expect((await rejection(writer.end())).error).toBe(signal.reason);
     expect(server.requests).toEqual([]);
   });
 
@@ -244,10 +438,12 @@ describe("signal", () => {
     const writer = s3.file("key").writer({ partSize, queueSize: 1, retry: 3, signal: controller.signal });
     writer.write(new Uint8Array(partSize));
     await partSeen.promise;
+    const ending = rejection(writer.end());
     controller.abort(new Error("stop"));
-    const { error, elapsed } = await rejection(writer.end());
+    const { error, elapsed } = await ending;
     expect(error).toBe(controller.signal.reason);
     expect(elapsed).toBeLessThan(MIN_ELAPSED_MS);
+    expect((await rejection(writer.end())).error).toBe(controller.signal.reason);
     const deadline = Date.now() + 5_000;
     while (requests.abort === 0 && Date.now() < deadline) await Bun.sleep(10);
     expect(requests).toEqual({ create: 1, part: 1, complete: 0, abort: 1 });
@@ -275,7 +471,7 @@ describe("signal", () => {
         },
       }),
     );
-    await Bun.sleep(50);
+    expect(await server.nextRequest()).toBe("PUT /bucket/key");
     controller.abort(new Error("stop"));
     const { error } = await promise;
     expect(error).toBe(controller.signal.reason);
@@ -287,12 +483,11 @@ describe("signal", () => {
         bunExe(),
         "-e",
         `
-        const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open() {}, data() {} } });
+        const controller = new AbortController();
+        const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open() {}, data() { controller.abort(); } } });
         server.unref();
         const s3 = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", region: "us-east-1", endpoint: "http://127.0.0.1:" + server.port });
-        const controller = new AbortController();
         const promise = s3.stat("key", { signal: controller.signal }).then(() => "resolved", e => e === controller.signal.reason ? "aborted" : "other: " + e);
-        setTimeout(() => controller.abort(), 50);
         console.log(await promise);
         `,
       ],

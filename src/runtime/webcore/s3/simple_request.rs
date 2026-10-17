@@ -138,6 +138,9 @@ pub(crate) struct S3HttpSimpleTask {
     /// request still queued or in flight fails promptly and comes back.
     pub(crate) signal_store: bun_http::signals::Store,
     pub(crate) abort_handle: bun_jsc::AbortHandle,
+    /// The JS object of the signal the task follows. `AbortSignal` keeps its reason only
+    /// through that object: held until the completion has read `signal.reason`.
+    pub(crate) signal_object: bun_jsc::StrongOptional,
     /// The context of the script that asked (the handle forgets it when the context stops).
     pub(crate) context: bun_jsc::ContextId,
 }
@@ -316,6 +319,10 @@ impl S3HttpSimpleTask {
         // `this` is dropped at scope exit.
         let mut this = unsafe { bun_core::heap::take(this) };
 
+        // The signal fired after the HTTP thread was done with the request: aborted all the same.
+        if this.result.is_success() && this.signal_store.aborted.load(Ordering::Relaxed) {
+            this.result.fail = Some(bun_http::Error::Aborted);
+        }
         if !this.result.is_success() {
             this.error_with_body(ErrorType::Failure)?;
             return Ok(());
@@ -601,7 +608,7 @@ pub(crate) fn http_options(
 pub(crate) fn http_error_message(err: &bun_http::Error) -> &'static [u8] {
     match err {
         bun_http::Error::Timeout => {
-            b"The request timed out: the server sent no data within the idle timeout"
+            b"The request timed out: the connection was idle for longer than the timeout"
         }
         bun_http::Error::Aborted => b"The request was aborted",
         _ => b"an unexpected error has occurred",
@@ -727,6 +734,7 @@ pub(crate) fn execute_simple_s3_request(
         poll_ref,
         signal_store: Default::default(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
+        signal_object: bun_jsc::StrongOptional::empty(),
         context: Default::default(),
     });
     // SAFETY: `task_ptr` is a freshly heap-allocated pointer; shared reads only until
@@ -797,6 +805,9 @@ pub(crate) fn execute_simple_s3_request(
         (*task_ptr).context = context.id();
         bun_jsc::AbortHandle::arm_owner(task_ptr, context);
         if let Some(signal) = options.signal {
+            (*task_ptr)
+                .signal_object
+                .set(vm.global(), signal.to_js(vm.global()));
             bun_jsc::AbortHandle::follow_owner(task_ptr, signal);
         }
     }

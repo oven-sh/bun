@@ -294,16 +294,21 @@ declare module "bun" {
 
     /**
      * The socket idle timeout of each request, in milliseconds, as for `fetch()`.
-     * A request fails with an `S3Error` whose `code` is `"Timeout"` when the
-     * server sends nothing for this long. It is not a deadline for the whole
-     * request: a transfer that keeps moving is not cut off.
+     * The timer resets whenever bytes are sent or received on the connection.
+     * Once the request is fully sent it is the deadline for the response
+     * headers, and it resets on each chunk of the body after that. A request
+     * fails with an `S3Error` whose `code` is `"Timeout"` when the timer fires.
+     * It is not a deadline for the whole request: a transfer that keeps moving
+     * is not cut off. The timer runs on a 4 second wheel, so a short value fires
+     * a few seconds late.
      *
      * `false` and `0` turn the timeout off. When it is not set, the process-wide
      * HTTP idle timeout applies (5 minutes, `BUN_CONFIG_HTTP_IDLE_TIMEOUT`).
      *
-     * Each attempt gets a fresh timeout, so with `retry` an operation can take up
-     * to `(retry + 1) * timeout` before it fails. Use `signal` for a bound on the
-     * whole operation.
+     * Each request of an operation gets its own timeout. A multipart upload is
+     * several requests (create, each part, complete), and each of them can be
+     * retried `retry` times, each time with a fresh timeout. Use `signal` for a
+     * bound on the whole operation.
      *
      * @example
      * ```ts
@@ -433,17 +438,20 @@ declare module "bun" {
   }
 
   /**
-   * Options for generating presigned URLs
-   */
-  /**
    * Options of one S3 operation: {@link S3Options} and an `AbortSignal` for it.
    */
   interface S3RequestOptions extends S3Options {
     /**
      * Aborts the operation when the signal fires. The promise rejects with
      * `signal.reason`, so `AbortSignal.timeout(ms)` gives a `TimeoutError` and
-     * bounds the whole operation, retries included. An upload in progress is
-     * aborted on the server as well.
+     * bounds the whole operation, retries included. The parts of a multipart
+     * upload that are already on the server are removed with one
+     * `AbortMultipartUpload` request, which is bounded by `timeout`, not by the
+     * signal.
+     *
+     * Reads (`text()`, `arrayBuffer()`, `stream()`, `new Response(file)`) take no
+     * signal: they are bounded by the `timeout` of the handle. To cancel a read,
+     * use `fetch("s3://bucket/key", { signal })` or cancel the reader of `stream()`.
      *
      * @example
      * ```ts
@@ -453,6 +461,9 @@ declare module "bun" {
     signal?: AbortSignal;
   }
 
+  /**
+   * Options for generating presigned URLs
+   */
   interface S3FilePresignOptions extends S3Options {
     /**
      * Number of seconds until the presigned URL expires.

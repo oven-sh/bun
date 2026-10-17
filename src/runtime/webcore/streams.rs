@@ -2417,6 +2417,10 @@ impl NetworkSink {
         if self.flush_promise.has_value() {
             return bun_sys::Result::Ok(self.flush_promise.value());
         }
+        // The upload failed (or its signal fired) while nothing waited on it.
+        if let Some(err) = self.upstream_error.get() {
+            return bun_sys::Result::Ok(JSPromise::rejected_promise(cx.global(), err).to_js());
+        }
         if self.done {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
                 cx.global(),

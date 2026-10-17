@@ -1641,12 +1641,6 @@ impl BlobExt for Blob {
                 let credentials_with_options =
                     s3.get_credentials_with_options(Some(options), global_this)?;
                 let signal = s3_client::error_jsc::get_signal(Some(options), global_this)?;
-                if let Some(signal) = &signal {
-                    // A writer cannot reject: one made for a signal that fired throws.
-                    if signal.aborted() {
-                        return Err(global_this.throw_value(signal.js_reason(global_this)));
-                    }
-                }
                 // `defer credentialsWithOptions.deinit()` → Drop handles slices.
                 // `writable_stream` adopts the dup'd ref by value; the
                 // MultiPartUpload derefs on done.

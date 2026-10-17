@@ -66,6 +66,7 @@ const http1ServerPipeline: {
   maybePauseFallbackReads?: (socket: unknown) => void;
   resumeFallbackReadsOnDrain?: (socket: unknown) => void;
   finishDrainedResponse?: (res: unknown) => void;
+  abortIncoming?: (req: unknown) => void;
   kMustCloseConnection?: symbol;
 } = {};
 
@@ -132,7 +133,8 @@ function emitCloseNT(self) {
   }
 }
 
-function emitEOFIncomingMessageOuter(self) {
+// Node's parserOnMessageComplete (lib/_http_common.js): `complete`, then the trailers, then the EOF.
+function completeIncomingMessage(self) {
   self.complete = true;
   // node:http server: trailer fields received after a chunked request body
   // populate req.trailers/rawTrailers before 'end' is emitted, like Node's
@@ -150,26 +152,11 @@ function emitEOFIncomingMessageOuter(self) {
       self._addHeaderLines(rawTrailers, rawTrailers.length);
     }
   }
-  // The parser shim must not retain the request once it has ended. Node clears
-  // parser.incoming on the tick after 'end' so 'end' listeners still see
-  // `parser.incoming === req` (test-http-server-keepalive-end). push(null)
-  // schedules 'end' via nextTick (endReadableNT); a second nextTick scheduled
-  // here runs after that.
   self.push(null);
-  const socket = self.socket;
-  if (socket != null) {
-    const parser = socket.parser;
-    if (parser != null && parser.incoming === self) {
-      process.nextTick(clearServerParserIncoming, parser, self);
-    }
-  }
-}
-function clearServerParserIncoming(parser, req) {
-  if (parser.incoming === req) parser.incoming = null;
 }
 function emitEOFIncomingMessage(self) {
   self[eofInProgress] = true;
-  process.nextTick(emitEOFIncomingMessageOuter, self);
+  process.nextTick(completeIncomingMessage, self);
 }
 
 function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPResponseAbortEvent) {
@@ -537,6 +524,7 @@ export {
   abortedSymbol,
   callCloseCallback,
   checkShouldUseProxy,
+  completeIncomingMessage,
   drainMicrotasks,
   emitCloseNT,
   emitEOFIncomingMessage,

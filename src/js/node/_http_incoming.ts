@@ -349,15 +349,13 @@ IncomingMessage.prototype._read = function _read(_n) {
     return;
   }
 
-  if (this[noBodySymbol]) {
-    emitEOFIncomingMessage(this);
-    return;
-  }
+  // The dispatcher gives a request without a body its EOF at message-complete (completeIncomingMessage).
+  if (this[noBodySymbol]) return;
 
   const bodyReadState = handle.hasBody;
 
   // A dumped or aborted request is not complete: it ends only at its real last chunk, like Node.
-  if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0 || bodyReadState === NodeHTTPBodyReadState.none) {
+  if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
     emitEOFIncomingMessage(this);
   }
 

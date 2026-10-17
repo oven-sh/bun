@@ -15,8 +15,8 @@ import {
 import { exists, rm } from "fs/promises";
 import { bunEnv, bunExe, isASAN, isWindows, pack, readdirSorted, runBunInstall, tempDir } from "harness";
 import { dirname, join } from "path";
-import { pathToFileURL } from "url";
 import { installEnv, TestRegistry } from "registry";
+import { pathToFileURL } from "url";
 
 const registry = new TestRegistry();
 

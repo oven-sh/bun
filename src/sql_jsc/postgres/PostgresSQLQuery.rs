@@ -544,9 +544,8 @@ impl PostgresSQLQuery {
         let flags = this.flags.get();
         if !flags.simple {
             declared = Signature::declared_types(global_object, binding_value)?;
-            let describe_first = flags.describe_only
-                || !unnamed
-                || PostgresRequest::needs_parameter_types(global_object, binding_value)?;
+            let describe_first =
+                !unnamed || PostgresRequest::needs_parameter_types(global_object, binding_value)?;
             this.update_flags(|f| f.describe_first = describe_first);
             // The server takes what is written behind a COPY FROM STDIN for its data. Nothing is
             // written behind a simple query, and the server takes no parameter in a COPY.

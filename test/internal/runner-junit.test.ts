@@ -5,8 +5,12 @@
  * annotation. parseJunitFileSuites() in scripts/buildkite.ts is that parsing step.
  */
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
 import { join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { lstatSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "../../scripts/agent.ts";
 import { parseJunitFileSuites } from "../../scripts/buildkite.ts";
 
 const parse = (xml: string) => Object.fromEntries(parseJunitFileSuites(xml));
@@ -156,3 +160,101 @@ test("parseJunitFileSuites reads the report bun test --parallel --reporter=junit
   });
   expect(exitCode).toBe(1);
 });
+
+// The native runner uses /tmp on Linux/macOS, independently of TMPDIR.
+test.skipIf(process.platform !== "linux" && process.platform !== "darwin")(
+  "explicit Linux/macOS JUnit keeps per-file reports while default execution batches allowlisted files",
+  async () => {
+    const node = nodeExe();
+    if (
+      !node ||
+      execFileSync(node, ["-p", "process.release.name === 'node' && !process.versions.bun"], {
+        encoding: "utf8",
+        timeout: 5000,
+        maxBuffer: 1024,
+      }).trim() !== "true"
+    )
+      throw new Error("This runner regression requires genuine Node.js");
+    const files = Array.from({ length: 8 }, (_, i) => `test/js/node/module/fixture-${i}.test.ts`);
+    const fixture: Record<string, string> = {
+      "test/parallel-allowlist.json": JSON.stringify({ dirs: ["js/node/module"], excludeFiles: [] }),
+      "test/leaksan.supp": "",
+      "alternate-tmp/keep": "",
+    };
+    for (const file of [
+      "scripts/runner.node.ts",
+      "scripts/agent.ts",
+      "scripts/buildkite.ts",
+      "test/docker/prestart-map.mjs",
+    ])
+      fixture[file] = await Bun.file(join(import.meta.dir, "../..", file)).text();
+    for (const file of files)
+      fixture[file] = 'import { test, expect } from "bun:test"; test("passes", () => expect(1).toBe(1));';
+    using dir = tempDir("runner-junit-files", fixture);
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args], {
+        cwd: String(dir),
+        encoding: "utf8",
+        env: {
+          ...bunEnv,
+          GIT_AUTHOR_NAME: "Test",
+          GIT_AUTHOR_EMAIL: "test@example.com",
+          GIT_COMMITTER_NAME: "Test",
+          GIT_COMMITTER_EMAIL: "test@example.com",
+        },
+      }).trim();
+    git("init", "--quiet");
+    git("remote", "add", "origin", "https://github.com/oven-sh/bun.git");
+    git("add", ".");
+    git("commit", "--quiet", "-m", "fixture");
+    const prefix = `runner-junit-files-${randomUUID()}-`;
+    const nativeTemp = tmpdir();
+    const reports = () => readdirSync(nativeTemp).filter(name => name.startsWith(prefix));
+    expect(reports()).toEqual([]);
+    try {
+      for (const junit of [false, true]) {
+        await using proc = Bun.spawn({
+          cmd: [
+            node,
+            "scripts/runner.node.ts",
+            "--exec-path",
+            bunExe(),
+            "--quiet",
+            "--vendor=false",
+            "--retries=0",
+            ...(junit ? ["--junit", "--junit-temp-dir", prefix] : []),
+          ],
+          cwd: String(dir),
+          env: { ...bunEnv, CI: "", GITHUB_ACTIONS: "", BUILDKITE: "", TMPDIR: join(String(dir), "alternate-tmp") },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(exitCode, stderr).toBe(0);
+        expect(stdout.includes("8 files in parallel")).toBe(!junit);
+        if (!junit) {
+          expect(reports()).toEqual([]);
+          continue;
+        }
+        expect(reports()).toHaveLength(1);
+        const directory = join(nativeTemp, reports()[0]!);
+        expect(lstatSync(directory).isDirectory()).toBe(true);
+        expect(lstatSync(directory).isSymbolicLink()).toBe(false);
+        expect(readdirSync(join(String(dir), "alternate-tmp"))).toEqual(["keep"]);
+        const expected = files.map(file => `test-${createHash("sha1").update(file).digest("base64url")}.xml`);
+        expect(readdirSync(directory).sort()).toEqual(expected.sort());
+        for (const file of files) {
+          const name = `test-${createHash("sha1").update(file).digest("base64url")}.xml`;
+          const xml = await Bun.file(join(directory, name)).text();
+          expect(xml.match(/<testcase\b/g)).toHaveLength(1);
+          expect(parse(xml)).toEqual({ [file]: { failures: 0, seconds: expect.any(Number), cases: [] } });
+        }
+      }
+    } finally {
+      for (const name of reports()) {
+        const path = join(nativeTemp, name);
+        if (lstatSync(path).isDirectory() && !lstatSync(path).isSymbolicLink()) rmSync(path, { recursive: true });
+      }
+    }
+  },
+);

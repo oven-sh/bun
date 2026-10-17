@@ -689,11 +689,7 @@ impl QuicSession {
             }
         }
     }
-    /// The wrappers that wait for lsquic to create their stream, oldest
-    /// first. Each entry is one request that lsquic counts as delayed
-    /// (`Conn::cancel_pending_streams` / `cancel_pending_uni_streams`), and
-    /// lsquic serves the requests of one direction in order, so the front
-    /// entry takes the next stream it creates.
+    /// One wrapper per request that lsquic counts as delayed, oldest first.
     fn pending_local(&self, uni: bool) -> &JsCell<VecDeque<*mut super::stream::QuicStream>> {
         if uni {
             &self.pending_local_uni
@@ -719,9 +715,7 @@ impl QuicSession {
     }
     pub(super) fn remove_stream(&self, stream: *mut super::stream::QuicStream) {
         self.streams.with_mut(|v| v.retain(|&s| s != stream));
-        // A wrapper that leaves before its stream exists takes its request
-        // with it. lsquic would otherwise create a stream that nothing waits
-        // for, and spend a stream ID and a peer stream credit on it.
+        // lsquic would otherwise create a stream that nothing waits for.
         for uni in [false, true] {
             let queue = self.pending_local(uni);
             if let Some(at) = queue.get().iter().position(|&s| s == stream) {
@@ -732,10 +726,7 @@ impl QuicSession {
         }
         self.debug_assert_pending_paired();
     }
-    /// After `make_stream`: lsquic refuses a bidirectional request while the
-    /// connection is going away, with an `on_new_stream(NULL)` that names no
-    /// session. The wrapper then waits for nothing, and stays a pending
-    /// stream until the session ends.
+    /// While going away, lsquic refuses `make_stream` with an anonymous `on_new_stream(NULL)`.
     fn unqueue_if_refused(&self) {
         let queue = &self.pending_local_bidi;
         let waiting = queue.get().len();
@@ -747,9 +738,7 @@ impl QuicSession {
             queue.with_mut(VecDeque::pop_back);
         }
     }
-    /// Takes back every request of one direction that lsquic has not served
-    /// yet. The wrappers stay in `streams` as pending streams until the
-    /// session ends.
+    /// Takes back every request of one direction that lsquic has not served yet.
     fn drop_pending_local(&self, uni: bool) {
         let n = self.pending_local(uni).with_mut(|q| {
             let n = q.len();
@@ -760,15 +749,11 @@ impl QuicSession {
             self.cancel_delayed_requests(uni, n);
         }
     }
-    /// Once a GOAWAY is sent or received, lsquic drops its delayed
-    /// bidirectional requests (`service_streams`), each with an
-    /// `on_new_stream(NULL)` that names no session. Its unidirectional
-    /// requests stay: GOAWAY limits requests only (RFC 9114 §5.2).
+    /// At a GOAWAY lsquic drops its delayed bidi requests, anonymously, and keeps the uni ones.
     fn drop_pending_requests_on_goaway(&self) {
         self.drop_pending_local(false);
     }
-    /// Not valid inside `on_new_stream`: lsquic counts a delayed request as
-    /// served only after that callback returns.
+    /// Not valid inside `on_new_stream`: lsquic updates its count after that callback returns.
     fn debug_assert_pending_paired(&self) {
         #[cfg(debug_assertions)]
         if let Some(c) = self.conn() {

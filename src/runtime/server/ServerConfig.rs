@@ -188,17 +188,6 @@ pub(crate) enum RouteMethod {
     Specific(Method),
 }
 
-impl RouteMethod {
-    /// `None` for [`RouteMethod::Any`]: the method is not known until it is
-    /// read off the request.
-    pub(crate) fn specific(&self) -> Option<Method> {
-        match self {
-            RouteMethod::Any => None,
-            RouteMethod::Specific(method) => Some(*method),
-        }
-    }
-}
-
 impl Default for RouteDeclaration {
     fn default() -> Self {
         Self {

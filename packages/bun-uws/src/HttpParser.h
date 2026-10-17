@@ -534,6 +534,12 @@ struct HttpResponseData;
             return headers->key;
         }
 
+        /* The id of the method, or HTTP_METHOD_NONE for a token that is none of HTTP_METHOD_NAMES */
+        uint8_t getMethodId()
+        {
+            return methodIdFromWire(headers->key);
+        }
+
         /* Finds and decodes the URI component. */
         std::string_view getQuery(std::string_view key)
         {

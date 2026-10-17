@@ -273,13 +273,8 @@ impl Route {
                     }
 
                     // create the PendingResponse, add it to the list
-                    let Some(method) = Method::which(req.method()) else {
-                        resp.write_status(b"405 Method Not Allowed");
-                        resp.end_without_body(true);
-                        return;
-                    };
                     let pending = PendingResponse {
-                        method,
+                        method: req.method(),
                         resp,
                         _route: RefPtr::from_this(this),
                         is_response_pending: Cell::new(true),

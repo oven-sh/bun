@@ -216,6 +216,18 @@ public:
         BusyScope(BusyScope&&) = delete;
         BusyScope& operator=(BusyScope&&) = delete;
     };
+    // Around script that SQLite calls, whatever called SQLite. It leaves a close() to a BusyScope: SQLite is on the stack.
+    struct CallbackScope {
+        JSDatabaseSync* db;
+        explicit CallbackScope(JSDatabaseSync* d)
+            : db(d)
+        {
+            ++db->m_busyDepth;
+        }
+        ~CallbackScope() { --db->m_busyDepth; }
+        CallbackScope(const CallbackScope&) = delete;
+        CallbackScope& operator=(const CallbackScope&) = delete;
+    };
     void finishDeferredClose();
 
 private:
@@ -354,7 +366,7 @@ public:
     unsigned resetGeneration() const { return m_resetGeneration; }
     void bumpResetGeneration() { ++m_resetGeneration; }
 
-    // True while a sqlite3_step on this statement is on the C stack. A UDF
+    // True while a sqlite3_step or sqlite3_reset on this statement is on the C stack. A UDF
     // that re-enters run()/get()/all()/iterate() on the same statement would
     // sqlite3_reset a running VDBE and segfault; REQUIRE_STMT_IDLE checks
     // this. Not sqlite3_stmt_busy(): that also reports a parked iterator
@@ -373,6 +385,9 @@ public:
         SteppingScope(SteppingScope&&) = delete;
         SteppingScope& operator=(SteppingScope&&) = delete;
     };
+    // Ends the run. A write with RETURNING that has rows left commits here, which calls script as a step does.
+    // The caller holds a BusyScope.
+    int reset();
 
     // Bind callFrame->argument(anon_start..) to the statement using Node.js
     // semantics. Returns false and throws on failure.

@@ -3612,3 +3612,101 @@ describe.concurrent("a write statement that is left on its first row", () => {
     );
   });
 });
+
+// Each case runs in a child: what it guards against ends the process.
+describe.concurrent("a callback that comes back to node:sqlite while a call ends a statement", () => {
+  // `rows` is on the first row of a write, so that to end it is its commit, where the index asks the callbacks.
+  const script = (end: string) => `
+    const { DatabaseSync, constants } = require("node:sqlite");
+    const image = (() => {
+      using other = new DatabaseSync(":memory:");
+      return other.serialize();
+    })();
+    const comeBack = {
+      "db.close()": c => c.db.close(),
+      "db.deserialize()": c => c.db.deserialize(image),
+      "statement.all()": c => c.statement.all(),
+      "statement.run()": c => c.statement.run(),
+      "statement.iterate().next()": c => c.statement.iterate().next(),
+      "rows.next()": c => c.rows.next(),
+      "rows.return()": c => c.rows.return(),
+    };
+    const thrownBy = fn => {
+      try {
+        fn();
+      } catch (error) {
+        return error.message;
+      }
+      return "did not throw";
+    };
+    const results = {};
+    for (const callback of ["the authorizer", "a function"]) {
+      for (const [name, call] of Object.entries(comeBack)) {
+        const db = new DatabaseSync(":memory:");
+        db.exec("CREATE VIRTUAL TABLE ft USING fts5(x)");
+        let inner = "was not called";
+        let armed = false;
+        const once = () => {
+          if (!armed) return;
+          armed = false;
+          inner = thrownBy(() => call(c));
+        };
+        if (callback === "a function") {
+          db.function("f", { deterministic: true }, x => (once(), x));
+          db.exec("CREATE INDEX ix ON ft_data (f(id))");
+        }
+        const tag = db.createTagStore(4);
+        const insert = () => tag.iterate\`INSERT INTO ft VALUES ('a'), ('b'), ('c') RETURNING 1\`;
+        const statement = db.prepare("INSERT INTO ft VALUES ('a'), ('b'), ('c') RETURNING 1");
+        const c = { db, tag, statement, rows: ${end.includes("tag") ? "insert()" : "statement.iterate()"} };
+        c.rows.next();
+        if (callback === "the authorizer") db.setAuthorizer(() => (once(), constants.SQLITE_OK));
+        armed = true;
+        const outer = thrownBy(() => { ${end} });
+        (results[callback] ??= {})[name] = [inner, outer];
+      }
+    }
+    console.log(JSON.stringify(results));
+  `;
+  const executing = "statement is currently executing";
+  const fine = "did not throw";
+  // What the call that came back got, and what the call of the user got. A close() waits for the end of that call.
+  const expected = (statement: string) => ({
+    "db.close()": [fine, fine],
+    "db.deserialize()": ["cannot deserialize database while a statement is executing", fine],
+    "statement.all()": [statement, fine],
+    "statement.run()": [statement, fine],
+    "statement.iterate().next()": [statement, fine],
+    "rows.next()": [executing, fine],
+    "rows.return()": [fine, fine],
+  });
+  // The tag store has a statement of its own: `statement` is another write, in the middle of the commit of the first.
+  const another = expected("database table is locked");
+
+  test.each([
+    ["rows.return()", "c.rows.return();", expected(executing)],
+    ["break in a for...of", "for (const row of c.rows) break;", expected(executing)],
+    ["statement.run()", "c.statement.run();", expected(executing)],
+    ["statement.get()", "c.statement.get();", expected(executing)],
+    ["statement.all()", "c.statement.all();", expected(executing)],
+    ["statement.iterate()", "c.statement.iterate();", expected(executing)],
+    ["the tag store's run", "c.tag.run`INSERT INTO ft VALUES ('a'), ('b'), ('c') RETURNING 1`;", another],
+    ["the tag store's get", "c.tag.get`INSERT INTO ft VALUES ('a'), ('b'), ('c') RETURNING 1`;", another],
+    ["the tag store's all", "c.tag.all`INSERT INTO ft VALUES ('a'), ('b'), ('c') RETURNING 1`;", another],
+    ["the tag store's iterate", "c.tag.iterate`INSERT INTO ft VALUES ('a'), ('b'), ('c') RETURNING 1`;", another],
+  ])("%s", async (_, end, results) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script(end)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ results: stdout && JSON.parse(stdout), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+      results: { "the authorizer": results, "a function": results },
+      stderr: "",
+      signalCode: null,
+      exitCode: 0,
+    });
+  });
+});

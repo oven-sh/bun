@@ -2051,6 +2051,25 @@ function seedPruneCache(cache: string) {
 }
 const neverPruned = [".bunx-0", ".deadbeef-1.old-pkg", "0123456789abcdef.git", "0123456789abcdef.npm", "@t@", "links"];
 
+test.concurrent.each(["rm", "prune --max-age 0"])("several `bun pm cache %s` at once all succeed", async command => {
+  const files: Record<string, string> = { "package.json": JSON.stringify({ name: "cache-at-once" }) };
+  for (let pkg = 0; pkg < 150; pkg++) {
+    for (const file of ["package.json", "index.js", "lib/a.js", "lib/b.js"]) {
+      files[`cache/pkg-${pkg}@1.0.0@@@1/${file}`] = "{}";
+    }
+  }
+  using dir = tempDir("pm-cache-at-once", files);
+  const cache = join(String(dir), "cache");
+
+  const runs = await Promise.all(
+    Array.from({ length: 4 }, () => pmCache(command.split(" "), String(dir), { ...env, BUN_INSTALL_CACHE_DIR: cache })),
+  );
+  expect(runs.map(({ stderr, exitCode }) => ({ stderr, exitCode }))).toEqual(
+    Array.from({ length: 4 }, () => ({ stderr: "", exitCode: 0 })),
+  );
+  expect((await exists(cache)) ? await readdirSorted(cache) : []).toEqual([]);
+});
+
 describe.concurrent("bun pm cache prune", () => {
   const prune = (cwd: string, cache: string, ...args: string[]) =>
     pmCache(["prune", ...args], cwd, { ...env, BUN_INSTALL_CACHE_DIR: cache });

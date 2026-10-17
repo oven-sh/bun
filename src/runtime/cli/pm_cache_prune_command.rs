@@ -38,6 +38,8 @@ fn read_entries(dir: &Dir, path: &[u8]) -> Option<Vec<Entry>> {
                 entries.push(Entry { name, kind });
             }
             Ok(None) => return Some(entries),
+            // Another process removed this directory while it was being read.
+            Err(err) if err.get_errno() == E::ENOENT => return Some(entries),
             Err(err) => {
                 Output::err(err, "Could not read {s}", (BStr::new(path),));
                 return None;

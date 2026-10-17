@@ -151,7 +151,11 @@ impl Dir {
         });
 
         'process_stack: while let Some(top) = stack.last_mut() {
-            while let Some(entry) = top.iter.next()? {
+            while let Some(entry) = match top.iter.next() {
+                // Another process removed this directory while it was being read.
+                Err(e) if e.get_errno() == E::ENOENT => None,
+                next => next?,
+            } {
                 let mut treat_as_dir = matches!(entry.kind, EntryKind::Directory);
                 // Set on EPERM, returned on ENOTDIR: the entry is a file that cannot be deleted.
                 let mut unlink_err: Option<Error> = None;

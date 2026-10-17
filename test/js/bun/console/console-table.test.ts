@@ -363,3 +363,86 @@ console.log("calls=" + calls);`,
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: box("1") + "calls=1\n", stderr: "", exitCode: 0 });
   });
 });
+
+// The rows of an array or array-like are the elements that exist, like Node's
+// console.table (Object.keys). The Array iterator instead trusts whatever
+// `length` the object reports and yields `undefined` for every missing index,
+// so a Proxy that lies about `length`, or a sparse array, would produce one
+// row per reported index (up to 2^32 - 1 of them).
+describe("console.table rows come from the elements that exist, not from length", () => {
+  const table = (...lines: string[]) =>
+    `┌───┬───┐\n│   │ a │\n├───┼───┤\n${lines.map(l => l + "\n").join("")}└───┴───┘\n`;
+
+  test("a Proxy that reports a length far beyond its elements", () => {
+    const proxy = new Proxy([{ a: 1 }, { a: 2 }], {
+      get(t, p, r) {
+        return p === "length" ? 1_000 : Reflect.get(t, p, r);
+      },
+    });
+    expect(Bun.inspect.table(proxy)).toBe(table("│ 0 │ 1 │", "│ 1 │ 2 │"));
+  });
+
+  test("a Proxy around an array still reads its cells through the get trap", () => {
+    const proxy = new Proxy([{ a: 1 }], {
+      get(t, p, r) {
+        return p === "0" ? { a: 2 } : Reflect.get(t, p, r);
+      },
+    });
+    expect(Bun.inspect.table(proxy)).toBe(table("│ 0 │ 2 │"));
+  });
+
+  test("a sparse array shows only the indices that hold an element", () => {
+    const sparse = [{ a: 1 }, , { a: 2 }];
+    sparse.length = 1_000;
+    expect(Bun.inspect.table(sparse)).toBe(table("│ 0 │ 1 │", "│ 2 │ 2 │"));
+  });
+
+  test("an array with only holes is an empty table", () => {
+    expect(Bun.inspect.table(new Array(1_000))).toBe(Bun.inspect.table([]));
+  });
+
+  test("a properties filter applies to the elements that exist", () => {
+    const sparse = [{ a: 1, b: 2 }, , { a: 3, b: 4 }];
+    expect(Bun.inspect.table(sparse, ["a"])).toBe(table("│ 0 │ 1 │", "│ 2 │ 3 │"));
+  });
+
+  // Object.freeze moves every element of an array into its sparse map.
+  test("a frozen array with a hole", () => {
+    const frozen = Object.freeze([{ a: 1 }, , { a: 2 }]);
+    expect(Bun.inspect.table(frozen)).toBe(table("│ 0 │ 1 │", "│ 2 │ 2 │"));
+  });
+
+  test("an array is walked like an object: its named properties are rows too", () => {
+    const arr = Object.assign([{ a: 1 }], { foo: { a: 2 } });
+    expect(Bun.inspect.table(arr)).toBe(Bun.inspect.table({ 0: { a: 1 }, foo: { a: 2 } }));
+    expect(Bun.inspect.table(new Proxy(arr, {}))).toBe(Bun.inspect.table(arr));
+  });
+
+  test("an Array subclass with its own iterator is still walked by its elements", () => {
+    class Rows extends Array {
+      *[Symbol.iterator]() {
+        yield { a: "from the iterator" };
+      }
+    }
+    expect(Bun.inspect.table(Rows.from([{ a: 1 }]))).toBe(table("│ 0 │ 1 │"));
+  });
+
+  test("console.table", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const proxy = new Proxy([{ a: 1 }, { a: 2 }], {
+  get(t, p, r) {
+    return p === "length" ? 1_000 : Reflect.get(t, p, r);
+  },
+});
+console.table(proxy);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: table("│ 0 │ 1 │", "│ 1 │ 2 │"), stderr: "", exitCode: 0 });
+  });
+});

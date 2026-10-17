@@ -2552,7 +2552,10 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        debug_assert!(uses_test_api || !p.did_apply_test_feature);
+        // A test entry point has a cache key of its own.
+        debug_assert!(
+            uses_test_api || p.options.features.is_test_entry_point || !p.did_apply_test_feature
+        );
 
         let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
 

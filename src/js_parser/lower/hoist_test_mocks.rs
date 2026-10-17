@@ -237,8 +237,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         {
             return None;
         }
-        // The cache key of a test entry point has what `runs_imports_in_turn` reads.
-        self.did_apply_test_feature |= self.has_hoisted_mock_stmt;
+        self.did_apply_test_feature = true;
 
         let mut exported = RefMap::default();
         for stmt in stmts {

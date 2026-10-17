@@ -432,7 +432,7 @@ pub unsafe fn boxed_slices_as_borrowed<T, A: core::alloc::Allocator>(s: &[Box<[T
 //     bare `&'static [u8]` carries no proof, so a refactor can silently feed
 //     it a stack slice.
 //   • Population B (~24) — bytes are owned by a value with a `Drop` that runs
-//     before process exit (UserOptions arena, FetchTasklet, JSC slice, SSL
+//     before process exit (FetchTasklet, JSC slice, SSL
 //     session). The widen is unsound the moment the value escapes the holder.
 //
 // `Interned` is the type-level proof that a `&'static [u8]` came from
@@ -447,7 +447,7 @@ pub unsafe fn boxed_slices_as_borrowed<T, A: core::alloc::Allocator>(s: &[Box<[T
 // inherited via auto-traits (no `unsafe impl` needed).
 //
 // This does NOT cover `&'static mut [u8]` / `&'static mut T` forges (e.g.
-// `FileReader::pending_view`, `Decompressor::seat` output, `CmdHandle::cmd_mut`)
+// `Decompressor::seat` output, `CmdHandle::cmd_mut`)
 // — those are tracked under the sibling `static-widen-mut` pattern and want a
 // raw-pointer field or a future `RawSliceMut<T>`.
 // ─────────────────────────────────────────────────────────────────────────────

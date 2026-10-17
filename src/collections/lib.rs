@@ -41,7 +41,7 @@ pub use paste::paste as __mal_paste;
 pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt, prepend_from};
 
 pub use bit_set::{
-    AutoBitSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet,
+    AutoBitSet, ByteSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet,
 };
 
 // `multi_array_list` imports from here; canonical impl lives in
@@ -467,6 +467,3 @@ pub mod hash_map {
     /// re-exported from `array_hash_map` rather than duplicated.
     pub use crate::array_hash_map::KV;
 }
-
-pub mod array_list;
-pub use array_list::ArrayListDefault;

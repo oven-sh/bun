@@ -1,0 +1,9 @@
+<template>
+  <a   v-slot="/* a */"   b="c" />
+  <a   #default="/* d */"   b="c" />
+  <a   slot-scope="/* e */"   b="c" />
+  <a   v-for="(/* f */) in xs"   b="c" />
+  <a   v-for="/* g */ in xs"   b="c" />
+  <a   :x="/* h */"   b="c" />
+  <a   v-slot="{ /* i */ }"   b="c" />
+</template>

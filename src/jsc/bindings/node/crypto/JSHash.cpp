@@ -15,6 +15,14 @@
 
 namespace Bun {
 
+// The newest queue entry is the one the call that just failed pushed.
+static uint32_t takeLastError()
+{
+    uint32_t err = ERR_peek_last_error();
+    ERR_clear_error();
+    return err;
+}
+
 static const HashTableValue JSHashPrototypeTableValues[] = {
     { "update"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHashProtoFuncUpdate, 1 } },
     { "digest"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHashProtoFuncDigest, 1 } },
@@ -354,7 +362,8 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     }
 
     if (md == nullptr && zigHasher == nullptr) [[unlikely]] {
-        throwCryptoError(globalObject, scope, ERR_get_error(), "Digest method not supported"_s);
+        // A lookup miss pushes no BoringSSL error, so do not report a stale one.
+        throwCryptoError(globalObject, scope, 0, "Digest method not supported"_s);
         return {};
     }
 
@@ -376,19 +385,19 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
 
     if (zigHasher) {
         if (!hash->initZig(globalObject, scope, zigHasher.release(), xofLen)) {
-            throwCryptoError(globalObject, scope, ERR_get_error(), "Digest method not supported"_s);
+            throwCryptoError(globalObject, scope, takeLastError(), "Digest method not supported"_s);
             return {};
         }
         return JSValue::encode(hash);
     }
 
     if (!hash->init(globalObject, scope, md, xofLen)) {
-        throwCryptoError(globalObject, scope, ERR_get_error(), "Digest method not supported"_s);
+        throwCryptoError(globalObject, scope, takeLastError(), "Digest method not supported"_s);
         return {};
     }
 
     if (original != nullptr && !original->m_ctx.copyTo(hash->m_ctx)) {
-        throwCryptoError(globalObject, scope, ERR_get_error(), "Digest copy error"_s);
+        throwCryptoError(globalObject, scope, takeLastError(), "Digest copy error"_s);
         return {};
     }
 

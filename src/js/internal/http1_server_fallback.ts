@@ -528,6 +528,8 @@ function connectionListenerHTTP1(server, socket, options) {
     res.on("finish", function onFallbackResponseFinish() {
       const finishedReq = this.req;
       if (!finishedReq._consuming && !finishedReq._readableState.resumeScheduled) finishedReq._dump();
+      // A request that stream.pipeline() or `for await` destroyed never calls _read() again. Node leaves the socket stopped until the keep-alive timeout resets it.
+      if (finishedReq.destroyed && !finishedReq.complete) readStart(socket);
       this.detachSocket(socket);
       // `_last`: onHttp1SocketEnd saw the client's FIN while this response owned the socket.
       if (this[kMustCloseConnection] || this._last) {
@@ -589,8 +591,9 @@ function connectionListenerHTTP1(server, socket, options) {
     return 0;
   };
   // Node's parserOnBody: a full request buffer stops the socket, and req._read() restarts it.
+  // A destroyed request takes no bytes and has no _read() to come: Node stops the socket for it, which loses the connection.
   parser[kOnBody] = function onHttp1Body(chunk) {
-    if (req && !req._dumped && !req.push(chunk)) readStop(socket);
+    if (req && !req._dumped && !req.destroyed && !req.push(chunk)) readStop(socket);
   };
   parser[kOnMessageComplete] = function onHttp1MessageComplete() {
     socket[kHttp1MessageOpen] = false;

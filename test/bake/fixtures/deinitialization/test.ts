@@ -1,7 +1,7 @@
 import { getDevServerDeinitCount } from "bun:internal-for-testing";
 import html from "./index.html";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { fullGC, heapStats } from "bun:jsc";
+import { fullGC, generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
 
 expect(process.cwd()).toBe(import.meta.dir);
 
@@ -117,9 +117,11 @@ const cases = [
   { closeActiveConnections: true, sendAnyRequests: false, websocket: 8 },
 ];
 
+const serverClassNames = ["HTTPServer", "DebugHTTPServer", "HTTPSServer", "DebugHTTPSServer"];
+
 function liveServerWrappers() {
-  const c = heapStats().objectTypeCounts;
-  return (c.HTTPServer ?? 0) + (c.DebugHTTPServer ?? 0) + (c.HTTPSServer ?? 0) + (c.DebugHTTPSServer ?? 0);
+  const counts = heapStats().objectTypeCounts;
+  return serverClassNames.reduce((sum, name) => sum + (counts[name] ?? 0), 0);
 }
 
 async function drainServerWrappers(target: number) {
@@ -130,13 +132,77 @@ async function drainServerWrappers(target: number) {
   }
 }
 
+// For each live Server wrapper that a GC root reaches: the shortest chain from that root. A wrapper
+// that no root reaches is not a leak: a collection does not promise to free what nothing refers to,
+// because its scan of the machine stack may still see it (#43443).
+function retainedServerWrappers(): string[] {
+  const { nodes, nodeClassNames, edges, edgeTypes, edgeNames, roots, labels } =
+    generateHeapSnapshotForDebugging() as any;
+  // nodes: id, size, class name, flags, label, cell address, address of the wrapped native object.
+  const nodeOffsets = new Map<number, number>();
+  for (let i = 0; i < nodes.length; i += 7) nodeOffsets.set(nodes[i], i);
+  const className = (id: number) => nodeClassNames[nodes[nodeOffsets.get(id)! + 2]];
+  // edges: from, to, type, property name or array index.
+  const incomingEdges = new Map<number, number[]>();
+  for (let edge = 0; edge < edges.length; edge += 4) {
+    const list = incomingEdges.get(edges[edge + 1]);
+    if (list) list.push(edge);
+    else incomingEdges.set(edges[edge + 1], [edge]);
+  }
+  // roots: id, why it is a root, why an opaque root keeps it. An output constraint lists the
+  // listeners of every marked emitter (DOMGCOutput). Those follow from whatever marked the emitter.
+  const rootReasons = new Map<number, string>();
+  for (let i = 0; i < roots.length; i += 3) {
+    if (labels[roots[i + 1]] === "DOMGCOutput") continue;
+    rootReasons.set(roots[i], labels[roots[i + 2]] || labels[roots[i + 1]] || "root");
+  }
+
+  const chainFromRoot = (target: number) => {
+    // Breadth-first towards the roots: `next` holds, per cell, the edge that leads on to `target`.
+    const next = new Map<number, number>([[target, -1]]);
+    const queue = [target];
+    for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+      if (rootReasons.has(id)) {
+        let chain = `${className(id)} (${rootReasons.get(id)})`;
+        for (let edge = next.get(id)!; edge !== -1; edge = next.get(edges[edge + 1])!) {
+          const type = edgeTypes[edges[edge + 2]];
+          const name =
+            type === "Internal" ? "" : type === "Index" ? ` [${edges[edge + 3]}]` : ` .${edgeNames[edges[edge + 3]]}`;
+          chain += `${name} -> ${className(edges[edge + 1])}`;
+        }
+        return chain;
+      }
+      for (const edge of incomingEdges.get(id) ?? []) {
+        if (next.has(edges[edge])) continue;
+        next.set(edges[edge], edge);
+        queue.push(edges[edge]);
+      }
+    }
+  };
+
+  const retained: string[] = [];
+  let sawRootedPrototype = false;
+  for (let i = 0; i < nodes.length; i += 7) {
+    if (!serverClassNames.includes(nodeClassNames[nodes[i + 2]])) continue;
+    const chain = chainFromRoot(nodes[i]);
+    // Only an instance wraps a native server. The prototype shares the class name.
+    if (nodes[i + 6] !== "0x0") {
+      if (chain) retained.push(chain);
+    } else if (chain) {
+      sawRootedPrototype = true;
+    }
+  }
+  // The prototype is always alive and always rooted. If the walk cannot see that, it cannot clear
+  // a wrapper either.
+  if (!sawRootedPrototype) throw new Error("the heap snapshot has no rooted Server prototype");
+  return retained;
+}
+
 // `objectTypeCounts` includes the (lazily created) prototype object once the
 // first server has been constructed. Create-and-stop one trivial server here
-// so the prototype is materialized but the instance is freed; the afterAll
-// check then asserts every dev-server case returns to this baseline (i.e. zero
-// live wrapper instances and the native boxes were actually freed). Captured
-// in beforeAll so the baseline exists even when a name filter skips the
-// baseline test.
+// so the prototype is materialized but the instance is freed. Captured in
+// beforeAll so the baseline exists even when a name filter skips the baseline
+// test.
 let serverWrapperBaseline = 0;
 beforeAll(async () => {
   await (async () => {
@@ -153,12 +219,17 @@ test("baseline: stopped server wrapper collects", () => {
 });
 
 afterAll(async () => {
-  // Drain any deferred deinit task scheduled during the final case's GC, then
-  // assert every JS Server wrapper has actually been collected — i.e. the
-  // native NewServer boxes are freed, not just the embedded dev servers.
-  await drainServerWrappers(serverWrapperBaseline);
-  expect(liveServerWrappers()).toBe(serverWrapperBaseline);
-});
+  // Collect until only the prototype is left. The turn after each collection
+  // runs the deferred deinit tasks of what it finalized. Then assert nothing
+  // still holds a JS Server wrapper, so the native NewServer boxes are freed,
+  // not just the embedded dev servers.
+  await drainServerWrappers(1);
+  // One live cell is the prototype alone. More is a wrapper or, on libuv
+  // platforms, a second prototype: the snapshot tells which.
+  expect(liveServerWrappers() <= 1 ? [] : retainedServerWrappers()).toEqual([]);
+  // A wrapper that stays costs all 30 rounds and one snapshot. That is 6 to 12 s
+  // on a debug ASAN build, and the default is 5 s.
+}, 30_000);
 
 for (const { closeActiveConnections, sendAnyRequests, websocket } of cases) {
   test(

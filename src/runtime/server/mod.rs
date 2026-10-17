@@ -320,6 +320,11 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub(crate) on_connection: JSValue,
 
     pub(crate) inspector_server_id: jsc::DebuggerId,
+
+    /// Callbacks for the `ws` package's sockets, set by its first upgrade on this server. Boxed
+    /// because every such `ServerWebSocket` points at it. The wrapper's `wsPackageHandlers` slot
+    /// keeps the callbacks alive.
+    pub(crate) ws_package_handler: Option<Box<WebSocketServerHandler>>,
 }
 
 pub(crate) struct UserRoute<const SSL: bool, const DEBUG: bool> {
@@ -1240,22 +1245,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         );
     }
 
-    /// node:http compat path; thin wrapper
-    /// over [`Self::on_node_http_request_with_upgrade_ctx`] with no WS upgrade.
-    ///
-    /// # Safety
-    /// `this` must point to a live heap-allocated `NewServer` (the userdata
-    /// registered with uWS).
-    pub(crate) fn on_node_http_request(
-        this: *mut Self,
-        req: &mut uws_sys::Request,
-        resp: &mut uws_sys::NewAppResponse<SSL>,
-    ) {
-        jsc::mark_binding!();
-        // `upgrade_ctx` null is valid (no upgrade).
-        Self::on_node_http_request_with_upgrade_ctx(this, req, resp, core::ptr::null_mut());
-    }
-
     /// Invoke the JS-side
     /// `node:http` request handler (`NodeHTTPServer__onRequest_{http,https}`),
     /// then drive the returned promise / [`NodeHTTPResponse`] through the
@@ -1269,16 +1258,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     ///
     /// # Safety
     /// `this` must point to a live heap-allocated `NewServer` (the userdata
-    /// registered with uWS); `upgrade_ctx` must be null or a live uWS upgrade
-    /// context for this request.
-    fn on_node_http_request_with_upgrade_ctx(
+    /// registered with uWS).
+    pub(crate) fn on_node_http_request(
         this: *mut Self,
         req: &mut uws_sys::Request,
         resp: &mut uws_sys::NewAppResponse<SSL>,
-        upgrade_ctx: *mut uws_sys::WebSocketUpgradeContext,
     ) {
         use bun_http_jsc::method_jsc::MethodJsc as _;
         use node_http_response::Flags as NhrFlags;
+
+        jsc::mark_binding!();
 
         // SAFETY: `this` is the live server backref registered as the uws
         // userdata; only one borrow derived from it is alive at a time.
@@ -1353,7 +1342,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 method_string,
                 req,
                 std::ptr::from_mut::<uws_sys::NewAppResponse<SSL>>(resp).cast(),
-                upgrade_ctx.cast(),
                 &mut node_http_response,
             )
         })
@@ -1945,6 +1933,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 ws.handler.app = None;
                 ws.handler.server = None;
             }
+            if let Some(handler) = self.ws_package_handler.as_mut() {
+                handler.app = None;
+                handler.server = None;
+            }
 
             // Detach DevServer. This is needed because there are aggressive
             // tests that check for DevServer memory soundness. Keeping the JS
@@ -2221,6 +2213,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             on_clienterror: JSValue::ZERO,
             on_connection: JSValue::ZERO,
             inspector_server_id: jsc::DebuggerId::init(0),
+            ws_package_handler: None,
         }));
 
         // The packed `AnyServer` is a pure function of the (now-stable) heap
@@ -2232,7 +2225,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             (*server).any_server_packed = AnyServer::from(server.cast_const()).to_packed() as usize;
         }
 
-        // The bake options (and the arena that backs `root`) live in
+        // The bake options (`root`, and the arena the transpilers live in) are in
         // `(*server).config.bake` for the server's lifetime. Initialise
         // DevServer AFTER the server box exists so the `Options::arena` borrow
         // points into the heap-allocated config rather than the caller's
@@ -2248,15 +2241,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             };
             let dev = match crate::bake::DevServer::init(crate::bake::DevServer::Options {
                 arena: &bake_options.arena,
-                root: bake_options.root,
+                root: bake_options.root.as_zstr(),
                 // SAFETY: per-thread VM singleton; STATIC lifetime.
                 vm: jsc::VirtualMachine::get(),
-                // LAYERING: `UserOptions` carries the `bake_body` shapes;
-                // `DevServer::Options` consumes the keystone shapes;
-                // `From` impls in `bake/mod.rs` bridge
-                // until the duplicates are collapsed.
-                framework: core::mem::take(&mut bake_options.framework).into(),
-                bundler_options: core::mem::take(&mut bake_options.bundler_options).into(),
+                framework: core::mem::take(&mut bake_options.framework),
+                bundler_options: core::mem::take(&mut bake_options.bundler_options),
                 broadcast_console_log_from_browser_to_server: broadcast,
             }) {
                 Ok(d) => d,
@@ -2407,6 +2396,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             ud,
                             1, // id 1 means is a user route
                             ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
+                            self_ptr.cast::<c_void>(),
                         );
                     }
                 }
@@ -2437,6 +2427,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 ud,
                                 1, // id 1 means is a user route
                                 ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
+                                self_ptr.cast::<c_void>(),
                             );
                         }
                     }
@@ -2657,6 +2648,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     self_ptr.cast(),
                     0, // id 0 means is a fallback route and ctx is the server
                     ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
+                    self_ptr.cast::<c_void>(),
                 );
             }
         }
@@ -3304,7 +3296,8 @@ mod cached_values {
         ($ty:literal) => {
             bun_jsc::codegen_cached_accessors!(
                 $ty; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, onConnection,
-                wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong
+                wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong,
+                wsPackageHandlers
             );
         };
     }
@@ -3364,6 +3357,58 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     slot_setter!(js_gc_ws_on_error_set, ws_on_error_set_cached);
     slot_setter!(js_gc_ws_on_ping_set, ws_on_ping_set_cached);
     slot_setter!(js_gc_ws_on_pong_set, ws_on_pong_set_cached);
+    slot_setter!(
+        js_gc_ws_package_handlers_set,
+        ws_package_handlers_set_cached
+    );
+
+    /// Stores `handlers` (`{ message, ping, pong, drain, close }`) on the first call. Later calls
+    /// are no-ops. The object is private to `ws.ts`, so user code can't modify it.
+    fn init_ws_package_handlers(
+        &mut self,
+        global: &JSGlobalObject,
+        handlers: JSValue,
+    ) -> JsResult<()> {
+        if self.ws_package_handler.is_some() {
+            return Ok(());
+        }
+        let (Some(server_js), Some(app)) = (self.js_value_for_dispatch(), self.app) else {
+            return Ok(());
+        };
+        if !handlers.is_object() {
+            return Err(global.throw_invalid_arguments(format_args!("handlers must be an object")));
+        }
+        let mut handler = WebSocketServerHandler::from_js(global, handlers)?;
+        handler.app = Some(app.cast::<c_void>());
+        handler.server = Some(AnyServer::from(
+            std::ptr::from_mut::<Self>(self).cast_const(),
+        ));
+        handler
+            .flags
+            .set(web_socket_server_context::HandlerFlags::SSL, SSL);
+        Self::js_gc_ws_package_handlers_set(server_js, global, handlers);
+        self.ws_package_handler = Some(Box::new(handler));
+        Ok(())
+    }
+
+    /// The uWS context for `ws` sockets with these options. The app creates it on first use and owns it.
+    fn ws_package_context(
+        &mut self,
+        max_payload_length: u32,
+        auto_pong: bool,
+        skip_utf8_validation: bool,
+        compression: bool,
+    ) -> Option<core::ptr::NonNull<uws::WebSocketUpgradeContext>> {
+        // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+        core::ptr::NonNull::new(bun_opaque::opaque_deref_mut(self.app?).ws_package_context(
+            &server_web_socket::WsPackageSocket::behavior::<SSL>(
+                max_payload_length,
+                auto_pong,
+                skip_utf8_validation,
+                compression,
+            ),
+        ))
+    }
 
     /// Mirror all 7 `Handler.on_*` shadows into the wrapper's `m_wsOn*`
     /// WriteBarrier slots, applying the async-context wrap (deferred from
@@ -3601,7 +3646,7 @@ mod ffi {
         /// monomorphizations differ only in the `Response<SSL>` opaque type.
         ///
         /// `&JSGlobalObject` / `&mut *mut _` discharge the deref'd-param
-        /// preconditions; `request`/`response`/`upgrade_ctx` are opaque uws
+        /// preconditions; `request`/`response` are opaque uws
         /// handles (module-private — sole caller passes live pointers).
         pub(super) safe fn NodeHTTPServer__onRequest_http(
             any_server: usize,
@@ -3611,7 +3656,6 @@ mod ffi {
             method_string: jsc::JSValue,
             request: *mut uws_sys::Request,
             response: *mut c_void, // *uws.NewApp(false).Response
-            upgrade_ctx: *mut c_void,
             node_response_ptr: &mut *mut NodeHTTPResponse,
         ) -> jsc::JSValue;
 
@@ -3623,7 +3667,6 @@ mod ffi {
             method_string: jsc::JSValue,
             request: *mut uws_sys::Request,
             response: *mut c_void, // *uws.NewApp(true).Response
-            upgrade_ctx: *mut c_void,
             node_response_ptr: &mut *mut NodeHTTPResponse,
         ) -> jsc::JSValue;
     }
@@ -3968,10 +4011,50 @@ impl AnyServer {
         any_server_dispatch!(self, |s| &s.config)
     }
 
+    #[inline]
+    pub(crate) fn terminated(&self) -> bool {
+        any_server_dispatch!(self, |s| s.flags.contains(ServerFlags::TERMINATED))
+    }
+
     /// Same gate as [`NewServer::js_value_for_dispatch`].
     #[inline]
     pub(crate) fn js_value_for_dispatch(&self) -> Option<JSValue> {
         any_server_dispatch!(self, |s| s.js_value_for_dispatch())
+    }
+
+    /// See [`NewServer::init_ws_package_handlers`].
+    pub(crate) fn init_ws_package_handlers(
+        &mut self,
+        global: &jsc::JSGlobalObject,
+        handlers: JSValue,
+    ) -> jsc::JsResult<()> {
+        any_server_dispatch_mut!(self, |s| s.init_ws_package_handlers(global, handlers))
+    }
+
+    /// `None` before `init_ws_package_handlers`, and after the server has drained, because it no
+    /// longer counts open WebSockets.
+    pub(crate) fn ws_package_handler(&self) -> Option<bun_ptr::BackRef<WebSocketServerHandler>> {
+        any_server_dispatch!(self, |s| s
+            .ws_package_handler
+            .as_deref()
+            .filter(|handler| handler.server.is_some())
+            .map(bun_ptr::BackRef::new))
+    }
+
+    /// See [`NewServer::ws_package_context`].
+    pub(crate) fn ws_package_context(
+        &mut self,
+        max_payload_length: u32,
+        auto_pong: bool,
+        skip_utf8_validation: bool,
+        compression: bool,
+    ) -> Option<core::ptr::NonNull<uws::WebSocketUpgradeContext>> {
+        any_server_dispatch_mut!(self, |s| s.ws_package_context(
+            max_payload_length,
+            auto_pong,
+            skip_utf8_validation,
+            compression
+        ))
     }
 
     pub(crate) fn h3_alt_svc(&self) -> Option<&[u8]> {
@@ -4071,14 +4154,6 @@ impl AnyServer {
                 uws::SendStatus::Dropped
             }
         })
-    }
-
-    pub(crate) fn web_socket_handler(&mut self) -> Option<&mut WebSocketServerHandler> {
-        any_server_dispatch_mut!(self, |s| s
-            .config
-            .websocket
-            .as_mut()
-            .map(|ws| &mut ws.handler))
     }
 
     /// Wraps a stack-lifetime µWS request into a

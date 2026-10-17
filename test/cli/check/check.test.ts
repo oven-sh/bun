@@ -15263,6 +15263,61 @@ export function f<T>(rest: T) {
       expect(stdout).toBe(`a.ts(8,9): error TS2540: Cannot assign to 'model' because it is a read-only property.`);
       expect(exitCode).toBe(1);
     });
+
+    test("the type of a parameter is instantiated when it is asked for", async () => {
+      using dir = project({
+        // `useLoaderData()` of TanStack Router, where the contextual type is inferred for `Selected`.
+        "a.ts": `
+type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+type PageData = { flags: Record<string, Json> };
+type ValidateJSON<T> = ((...args: any[]) => any) extends T ? never : { [K in keyof T]: ValidateJSON<T[K]> };
+interface Sharing<T> { readonly structuralSharing?: T }
+type Options<Selected> = unknown extends Selected ? Sharing<boolean> : Selected extends ValidateJSON<Selected> ? Sharing<boolean> : Sharing<false>;
+type Result<Selected> = unknown extends Selected ? PageData : Selected;
+declare const route: { useLoaderData<Selected = unknown>(options?: Options<Selected>): Result<Selected> };
+interface Loader<T> { load(key?: string, options?: Options<T>): T }
+declare const loader: Loader<PageData>;
+declare function take(data: PageData): void;
+take(route.useLoaderData());
+take(loader.load());
+take(loader.load("a"));
+const data: PageData = route.useLoaderData();
+// An argument asks for the type of its parameter.
+take(loader.load("a", undefined));
+export {};
+`,
+        "b.ts": `
+type Json = string | Json[];
+type ValidateJSON<T> = ((...args: any[]) => any) extends T ? never : { [K in keyof T]: ValidateJSON<T[K]> };
+type Options<T> = T extends ValidateJSON<T> ? 1 : 2;
+declare function load<T = unknown>(options?: Options<T>): T;
+declare function take(data: Json): void;
+take(load());
+take(load(undefined));
+export {};
+`,
+        "c.ts": `
+type Json = string | Json[];
+type ValidateJSON<T> = ((...args: any[]) => any) extends T ? never : { [K in keyof T]: ValidateJSON<T[K]> };
+type Options<T> = T extends ValidateJSON<T> ? { shared?: true } : { shared?: false };
+interface Loader<T> {
+  load(key: string, options: Options<T>, retries: number): T;
+  load(key: number, options: { shared?: true }, retries: number): T;
+}
+declare const loader: Loader<Json>;
+declare const key: number;
+declare const options: { shared?: true };
+// The first overload fails at its first argument.
+export const loaded = loader.load(key, options, key);
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(17,6): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        b.ts(8,6): error TS2589: Type instantiation is excessively deep and possibly infinite."
+      `);
+      expect(exitCode).toBe(1);
+    });
   });
 
   describe("compiler options as flags", () => {
@@ -15780,7 +15835,7 @@ export function f<T>(rest: T) {
     const { stdout, exitCode } = await check(dir, ["--help"]);
     expect(stdout).toStartWith("Usage: bun check [flags] [...files or directories]");
     expect(stdout).toEndWith(
-      `note: package.json has a "check" script, so bun check runs that script\n  Change the script to "bun check" to use the built-in command`,
+      `note: package.json has a "check" script, so bun check runs that script\n  Change the script to "bun check" to use the built-in command, or pass --no-script`,
     );
     expect(exitCode).toBe(0);
   });

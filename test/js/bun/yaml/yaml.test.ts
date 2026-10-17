@@ -519,6 +519,72 @@ parent: &ref
       expect(result.parent.child.parent).toBe(result.parent);
     });
 
+    describe("a key that is a sequence or a mapping", () => {
+      const keys = [
+        "[]",
+        "[a]",
+        "[a, b]",
+        "[a, null, b]",
+        "[~, ~]",
+        "[1, 2.5, -0.0, 1e21, 1e-7, 0x10, .inf, -.inf, .nan]",
+        "[true, false]",
+        "[[a, [b, []]], c]",
+        "[{x: 1}, y, {}]",
+        '["", " ", "a,b"]',
+        '["\\xe9", "\\u65e5\\u672c", "\\U0001F600"]',
+        "{}",
+        "{x: 1}",
+        "{[a]: [b]}",
+        "&a [1, *a, 2]",
+        "&a [[*a], [x, *a]]",
+        "[&b [x], *b, *b]",
+      ];
+
+      test.each(keys)("%s is named as String() names it", key => {
+        const names = Object.keys(YAML.parse(`? ${key}\n: value\n`) as object);
+        expect(names).toEqual([String(YAML.parse(key))]);
+      });
+
+      test("it is named once the input has been read", () => {
+        const input = new TextEncoder().encode(
+          "before: a value\n? [a, b]\n: first\nafter: another value\n? {c: d}\n: second\nlast: [x, {y: z}]\n",
+        );
+        const { toString } = Array.prototype;
+        let calls = 0;
+        let result;
+        Array.prototype.toString = function () {
+          calls++;
+          input.fill(0x21);
+          return `replaced ${toString.call(this)}`;
+        };
+        try {
+          result = YAML.parse(input);
+        } finally {
+          Array.prototype.toString = toString;
+        }
+        expect(calls).toBe(1);
+        expect(Object.entries(result as object)).toEqual([
+          ["before", "a value"],
+          ["replaced a,b", "first"],
+          ["after", "another value"],
+          ["[object Object]", "second"],
+          ["last", ["x", { y: "z" }]],
+        ]);
+      });
+
+      test("the properties are in the order they are written in", () => {
+        expect(Object.entries(YAML.parse("x: 0\n? [a]\n: 1\nb: 2\na: 3\n? [x]\n: 4\n") as object)).toEqual([
+          ["x", 4],
+          ["a", 3],
+          ["b", 2],
+        ]);
+        expect(Object.entries(YAML.parse("? [k]\n: {? [n]: 1, m: 2}\nl: {m: 3, ? [n]: 4}\n") as object)).toEqual([
+          ["k", { n: 1, m: 2 }],
+          ["l", { m: 3, n: 4 }],
+        ]);
+      });
+    });
+
     describe("cyclic aliases", () => {
       test("block mapping referencing itself", () => {
         const root: any = YAML.parse("&a\nname: root\nself: *a\n");

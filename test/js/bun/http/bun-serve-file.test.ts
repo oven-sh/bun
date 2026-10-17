@@ -1375,6 +1375,35 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
   }
 });
 
+// A FIFO has no length, and neither has a slice of it with no end. slice(10)
+// used to store "size not known" minus 10 as the length of the slice, and HEAD
+// sent that number: Content-Length: 4503599627370485.
+test.skipIf(isWindows)(
+  "HEAD of Response(Bun.file(FIFO).slice(n)) declares the same length as the whole FIFO",
+  async () => {
+    using dir = tempDir("serve-fifo-slice-head", {});
+    const fifoPath = join(String(dir), "body.fifo");
+    mkfifo(fifoPath);
+
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const fifo = Bun.file(fifoPath);
+        return new Response(new URL(req.url).pathname === "/slice" ? fifo.slice(10) : fifo);
+      },
+    });
+
+    const head = async (path: string) => {
+      const res = await fetch(new URL(path, server.url), { method: "HEAD" });
+      return { status: res.status, contentLength: res.headers.get("content-length") };
+    };
+    const whole = await head("/whole");
+    expect(whole.status).toBe(200);
+    expect(await head("/slice")).toEqual(whole);
+  },
+);
+
 // A file route serves the window of the Bun.file() slice it was built from,
 // given either the slice or its unread stream (which is turned back into the
 // slice). FileRoute used to clamp the window to the file size without taking

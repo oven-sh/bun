@@ -220,11 +220,12 @@ pub(crate) trait BlobExt {
         options: &WriteFileOptions,
     ) -> JsResult<JSValue>;
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
+    /// `size` is the size of the slice, or `MAX_SIZE` when it is not known.
     fn get_slice_from(
         &self,
         global_this: &JSGlobalObject,
         relative_start: i64,
-        relative_end: i64,
+        size: SizeType,
         content_type: BlobContentType,
     ) -> JSValue;
     fn get_slice(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
@@ -1766,20 +1767,19 @@ impl BlobExt for Blob {
         &self,
         global_this: &JSGlobalObject,
         relative_start: i64,
-        relative_end: i64,
+        size: SizeType,
         content_type: BlobContentType,
     ) -> JSValue {
         let offset = self
             .offset
             .get()
             .saturating_add(SizeType::try_from(relative_start).expect("int cast"));
-        let len = SizeType::try_from((relative_end.saturating_sub(relative_start)).max(0)).unwrap();
 
         // This copies over the charset field
         // which is okay because this will only be a <= slice
         let blob = self.dupe();
         blob.offset.set(offset);
-        blob.size.set(len);
+        blob.size.set(size);
 
         let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
         // infer the content type if it was not specified
@@ -1819,6 +1819,7 @@ impl BlobExt for Blob {
         let mut relative_start: i64 = 0;
         // If the optional end parameter is not used, let relativeEnd be size.
         let mut relative_end: i64 = i64::try_from(self.size.get()).expect("int cast");
+        let mut start_counts_from_end = false;
 
         // Mutate the fixed-3 args array in place to shift the string arg into [2].
         if args[0].is_string() {
@@ -1835,6 +1836,7 @@ impl BlobExt for Blob {
             if start_.is_number() {
                 let start = start_.to_int64();
                 if start < 0 {
+                    start_counts_from_end = true;
                     relative_start = (start
                         .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
                     .max(0);
@@ -1875,7 +1877,15 @@ impl BlobExt for Blob {
             }
         }
 
-        Ok(self.get_slice_from(global_this, relative_start, relative_end, content_type))
+        // An end of `MAX_SIZE` is the end of a Blob whose size is not known. It is not a length
+        // to subtract the start from.
+        let size = if relative_end == MAX_SIZE as i64 {
+            size_to_unknown_end(self, relative_start, start_counts_from_end)
+        } else {
+            SizeType::try_from((relative_end.saturating_sub(relative_start)).max(0)).unwrap()
+        };
+
+        Ok(self.get_slice_from(global_this, relative_start, size, content_type))
     }
 
     fn get_mime_type_or_content_type(&self) -> Option<MimeType> {
@@ -1990,7 +2000,7 @@ impl BlobExt for Blob {
         // signal that the size is unknown.
         if let Some(store) = self.store.get() {
             if let store::Data::File(file) = &store.data {
-                // A slice has its size without a stat, and `clone()` learns the mode without filling `seekable`.
+                // A slice with an end has its size without a stat, and `clone()` learns the mode without filling `seekable`.
                 let mode_seen_by_clone = file.mode_seen_by_clone.filter(|_| has_size);
                 if !file
                     .seekable
@@ -5774,6 +5784,24 @@ fn window_size(current: SizeType, available: SizeType) -> SizeType {
         available
     } else {
         current.min(available)
+    }
+}
+
+/// The size of a slice from `relative_start` to the end of `blob`, when the size of `blob` is
+/// not known (`MAX_SIZE`): a `Bun.file()` that nothing has stat'd, a pipe, an S3 file.
+#[cold]
+fn size_to_unknown_end(blob: &Blob, relative_start: i64, start_counts_from_end: bool) -> SizeType {
+    let start = SizeType::try_from(relative_start).expect("int cast");
+    // A start that counts back from an unknown end is not known either, and `resolve_size()`
+    // stores 0 for an S3 Blob of unknown size. Both keep the length that the subtraction gives.
+    if start_counts_from_end || blob.is_s3() {
+        return MAX_SIZE.saturating_sub(start);
+    }
+    // No file has a byte at `MAX_SIZE`: a slice that starts there is empty.
+    if blob.offset.get().saturating_add(start) < MAX_SIZE {
+        MAX_SIZE
+    } else {
+        0
     }
 }
 

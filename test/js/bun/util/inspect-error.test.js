@@ -510,3 +510,27 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+test("lines of the message that look like stack frames are not printed as stack frames", () => {
+  const message = "my message\n    at fake (/nonexistent/fake.js:1:5)";
+  const print = err => {
+    const printed = Bun.inspect(err);
+    return printed.slice(printed.lastIndexOf("error: ")).replace(/\S*inspect-error\.test\.js:\d+:\d+/, "this file");
+  };
+
+  const err = new Error(message);
+  // Once the stack is a string, the frames to print are parsed out of it.
+  err.stack;
+  expect(print(err)).toBe(`error: ${message}\n      at this file\n`);
+
+  const renamed = new Error("my message");
+  renamed.stack;
+  renamed.message = "inspect-error.test.js";
+  expect(print(renamed)).toBe("error: inspect-error.test.js\n      at this file\n");
+
+  const origLimit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 0;
+  const withoutFrames = new Error(message);
+  Error.stackTraceLimit = origLimit;
+  expect(print(withoutFrames)).toBe(`error: ${message}\n`);
+});

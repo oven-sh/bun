@@ -595,6 +595,10 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                 if (!stack.isEmpty()) {
 
                     V8StackTraceIterator iterator(stack);
+                    // The message can have lines that look like frames.
+                    WTF::String header = makeString(except.name.toWTFString(BunString::ZeroCopy), ": "_s, except.message.toWTFString(BunString::ZeroCopy));
+                    if (stack.startsWith(header))
+                        iterator.offset = header.length();
                     const uint8_t frame_count = except.stack.frames_cap;
 
                     except.stack.frames_len = 0;

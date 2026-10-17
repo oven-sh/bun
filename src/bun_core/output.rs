@@ -856,15 +856,14 @@ pub fn is_ai_agent() -> bool {
     static ONCE: std::sync::Once = std::sync::Once::new();
 
     fn evaluate() -> bool {
-        // `AGENT` is the explicit override: any truthy value opts in, "0"/"false" opts out.
+        // Explicit override.
         if let Some(agent) = env_var::AGENT.get() {
             return agent;
         }
         if is_verbose() {
             return false;
         }
-        // Each agent exports its own variable. One set to a falsy value opts out:
-        // `CLAUDECODE=0` keeps the human output although Claude Code also exports `AI_AGENT`.
+        // An agent variable set to a falsy value (`CLAUDECODE=0`) opts out.
         let signals = [
             // Cross-tool convention.
             env_var::AI_AGENT.get(),

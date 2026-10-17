@@ -236,8 +236,9 @@ if (values["skip-emulation"]) {
   // Phase 1: SIMD code path verification
   const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
   // The default per-test timeout (5 s) assumes native speed. Intel SDE runs this file hundreds of
-  // times slower, so use the per-test timeout that runner.node.ts gives every native run in CI.
-  await runTest("SIMD baseline tests", ["test", "--timeout=90000", simdTestPath], { live: true });
+  // times slower, so the emulated run gets a per-test timeout of its own.
+  const emulatedTestTimeoutMs = 90_000;
+  await runTest("SIMD baseline tests", ["test", `--timeout=${emulatedTestTimeoutMs}`, simdTestPath], { live: true });
 }
 
 // Phase 2: JIT stress fixtures (only with --jit-stress, e.g. on WebKit changes)

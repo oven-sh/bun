@@ -798,8 +798,8 @@ pub(crate) fn tick_queue_with_count(
 /// `FileSink` / `DNSResolver` / etc.
 ///
 /// # Safety
-/// `poll` must point at a live [`FilePoll`] on entry (guaranteed by
-/// `FilePoll::on_update`, the only caller).
+/// `poll` must point at a live [`FilePoll`] for the duration of the call
+/// (guaranteed by `FilePoll::on_update`, the only caller).
 #[cfg(not(windows))]
 #[unsafe(no_mangle)]
 pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {

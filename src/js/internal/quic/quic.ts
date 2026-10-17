@@ -1534,6 +1534,7 @@ function isSyncIterable(obj) {
 let getQuicStreamState;
 let getQuicSessionState;
 let isQuicSessionDestroying;
+let isQuicSessionClosedByNative;
 let getQuicEndpointState;
 let assertIsQuicEndpoint;
 let assertIsQuicStream;
@@ -1643,7 +1644,6 @@ interface QuicStreamInner {
   ontrailers: Function | undefined;
   oninfo: Function | undefined;
   onwanttrailers: Function | undefined;
-  earlySnapshot?: boolean;
 }
 
 class QuicStream {
@@ -1741,19 +1741,30 @@ class QuicStream {
     inner.iteratorLocked = true;
 
     inner.reader ??= this.#handle?.getReader();
-    if (!inner.reader) return;
-
-    yield* createBlobReaderIterable(inner.reader, {
-      getReadError: () => {
-        if (inner.state.readEnded && !inner.state.finReceived) {
-          if (inner.state.reset) {
-            return ERR_QUIC_STREAM_RESET(Number(inner.state.resetCode ?? 0n));
+    // No reader means an outbound-only unidirectional stream, or a stream
+    // destroyed before it was read. The latter is still checked for
+    // truncation below.
+    if (inner.reader) {
+      yield* createBlobReaderIterable(inner.reader, {
+        getReadError: () => {
+          if (inner.state.readEnded && !inner.state.finReceived) {
+            if (inner.state.reset) {
+              return ERR_QUIC_STREAM_RESET(Number(inner.state.resetCode ?? 0n));
+            }
+            return ERR_QUIC_STREAM_ABORTED("Stream aborted before FIN was received");
           }
-          return ERR_QUIC_STREAM_ABORTED("Stream aborted before FIN was received");
-        }
-        return $ERR_INVALID_STATE("The stream is not readable");
-      },
-    });
+          return $ERR_INVALID_STATE("The stream is not readable");
+        },
+      });
+    }
+
+    // The stream was destroyed before a FIN arrived: the read is truncated.
+    // The close carries the reason (the session's error, or the error
+    // passed to destroy()), so a rejected `closed` rethrows here and a
+    // clean close ends the iteration.
+    if (this.destroyed && !inner.state.finReceived) {
+      await this.closed;
+    }
   }
 
   /**
@@ -1774,7 +1785,7 @@ class QuicStream {
    */
   get early() {
     assertIsQuicStream(this);
-    return this.#inner.state.early ?? this.#inner.earlySnapshot;
+    return this.#inner.state.early;
   }
 
   /**
@@ -2085,8 +2096,15 @@ class QuicStream {
         this.#handle.abortForDestroy(wantStop ? abortCode : undefined, wantReset ? abortCode : undefined);
       }
     }
+    // A stream the connection's own close takes down gets the session's
+    // error on `closed` but no `onerror` call: in Node the native close
+    // reports each such stream before the session's destroy() runs.
     const { onerror } = inner;
-    if (error !== undefined && typeof onerror === "function") {
+    if (
+      error !== undefined &&
+      typeof onerror === "function" &&
+      !(cascadingFromSessionDestroy && isQuicSessionClosedByNative(inner.session))
+    ) {
       invokeOnerror(onerror, error);
     }
     const handle = this.#handle;
@@ -2500,7 +2518,6 @@ class QuicStream {
       });
     }
     inner.stats?.[kFinishClose]();
-    inner.earlySnapshot = inner.state?.early;
     inner.state?.[kFinishClose]();
     inner.session![kRemoveStream](this);
     inner.writer?.fail(error);
@@ -2709,6 +2726,7 @@ interface QuicSessionInner {
   isPendingClose: boolean;
   selfInitiatedClose: boolean;
   destroying: boolean;
+  closedByNative: boolean;
   handshakeCompleted: boolean;
   pendingClose: PendingPromise;
   pendingOpen: PendingPromise;
@@ -2751,6 +2769,7 @@ class QuicSession {
     isPendingClose: false,
     selfInitiatedClose: false,
     destroying: false,
+    closedByNative: false,
     handshakeCompleted: false,
     pendingClose: PromiseWithResolvers(),
     pendingOpen: PromiseWithResolvers(),
@@ -2802,6 +2821,11 @@ class QuicSession {
     isQuicSessionDestroying = function (session) {
       assertIsQuicSession(session);
       return session.#inner.destroying;
+    };
+
+    isQuicSessionClosedByNative = function (session) {
+      assertIsQuicSession(session);
+      return session.#inner.closedByNative;
     };
   }
 
@@ -3630,6 +3654,7 @@ class QuicSession {
    * @param {string} [reason]
    */
   [kFinishClose](errorType, code, reason, errorName) {
+    this.#inner.closedByNative = true;
     if (code === 0n) {
       debug("finishing closing the session with no error");
       this.destroy();

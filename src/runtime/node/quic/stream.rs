@@ -128,6 +128,8 @@ pub(crate) struct QuicStream {
     blocked_reported: Cell<bool>,
     announce_suppressed: Cell<bool>,
     close_reported: Cell<bool>,
+    /// Set in `on_stream_close` when lsquic had not finished the stream.
+    closed_by_conn: Cell<bool>,
     destroyed: Cell<bool>,
 }
 
@@ -159,6 +161,7 @@ impl QuicStream {
             blocked_reported: Cell::new(false),
             announce_suppressed: Cell::new(false),
             close_reported: Cell::new(false),
+            closed_by_conn: Cell::new(false),
             destroyed: Cell::new(false),
         };
         let raw_ptr = bun_core::heap::into_raw(Box::new(stream));
@@ -333,6 +336,13 @@ impl QuicStream {
     }
     pub(super) fn pre_reset_code(&self) -> Option<u64> {
         self.with_state(|s| (s.reset != 0).then_some(s.reset_code))
+    }
+    /// The stream was still open when lsquic closed it: the connection's
+    /// teardown closed it, not its own end. Node destroys such streams with
+    /// the session's close error, so their close must wait for the session's
+    /// close instead of being reported as clean.
+    pub(super) fn closed_by_conn(&self) -> bool {
+        self.closed_by_conn.get()
     }
     pub(super) fn release_close_root(&self) {
         self.this_value.with_mut(|r| r.downgrade());
@@ -590,10 +600,10 @@ impl QuicStream {
             unsafe { (*session).remove_stream(core::ptr::from_ref(self).cast_mut()) };
         }
         self.outbound.with_mut(|o| o.data.clear());
-        self.inbound.with_mut(|i| {
-            i.chunks.clear();
-            i.ended = true;
-        });
+        // Received bytes stay readable: the reader drains them and then sees
+        // the end, as Node's CapReadable does. Only a peer reset discards
+        // them (`mark_reset`).
+        self.inbound.with_mut(|i| i.ended = true);
         self.with_state(|s| s.read_ended = 1);
         if let Some(wakeup) = self.take_wakeup() {
             let vm = global.bun_vm().as_mut();
@@ -1140,8 +1150,12 @@ lsquic_callback! {
 
     pub(super) fn on_stream_close(
         ctx: *mut c_void as qs: &QuicStream,
-        _s: *mut lsquic::lsquic_stream,
+        s: *mut lsquic::lsquic_stream,
     ) {
+        // SAFETY: `s` is live for the duration of this lsquic callback.
+        if let Some(stream) = unsafe { lsquic::Stream::from_raw(s) } {
+            qs.closed_by_conn.set(!stream.is_finished());
+        }
         // The lsquic_stream is freed immediately after this callback returns.
         qs.raw.set(null_mut());
         if let Some(session) = qs.session_ref() {

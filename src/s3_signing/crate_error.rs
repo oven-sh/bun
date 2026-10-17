@@ -8,8 +8,6 @@ pub enum Error {
     InvalidPath,
     #[error("InvalidEndpoint")]
     InvalidEndpoint,
-    #[error("InvalidSessionToken")]
-    InvalidSessionToken,
     #[error("SignError")]
     SignError,
 }
@@ -22,7 +20,6 @@ impl Error {
             Self::InvalidMethod => "InvalidMethod",
             Self::InvalidPath => "InvalidPath",
             Self::InvalidEndpoint => "InvalidEndpoint",
-            Self::InvalidSessionToken => "InvalidSessionToken",
             Self::SignError => "SignError",
         }
     }
@@ -42,10 +39,7 @@ impl From<crate::credentials::SignError> for Error {
             SignError::InvalidMethod => Self::InvalidMethod,
             SignError::InvalidPath => Self::InvalidPath,
             SignError::InvalidEndpoint => Self::InvalidEndpoint,
-            SignError::InvalidSessionToken => Self::InvalidSessionToken,
-            SignError::InvalidHeaderValue
-            | SignError::FailedToGenerateSignature
-            | SignError::NoSpaceLeft => Self::SignError,
+            SignError::InvalidHeaderValue | SignError::FailedToGenerateSignature => Self::SignError,
         }
     }
 }

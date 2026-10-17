@@ -1,6 +1,9 @@
 import { S3Client } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, MAX_PATH_BYTES } from "harness";
+import { serve } from "s3-server";
+
+const fill = (length: number, text: string) => Buffer.alloc(length, text).toString();
 
 describe("S3Client.list() option encoding", () => {
   it.each(["prefix", "delimiter", "continuationToken", "startAfter"])(
@@ -10,6 +13,191 @@ describe("S3Client.list() option encoding", () => {
       // Previously a fixed 1024-byte stack buffer caused `std.debug.panic` on overflow.
       const value = Buffer.alloc(1024, " ").toString();
       await expect(new S3Client().list({ [key]: value })).rejects.toThrow();
+    },
+  );
+});
+
+// Bun signs each request below, and the server of test/packages/s3-server checks the
+// signature with its own implementation: a request that gets its answer was signed correctly.
+// The first row of each test is a size that the signer always took. It refused the others
+// before it sent a request, because it kept the text that it signs in arrays of a fixed size.
+describe.concurrent("S3 requests with a long signed text", () => {
+  // Base64 text that has `+` and `/` as often as a real session token.
+  const base64Token = (length: number) =>
+    Buffer.from(Array.from({ length }, (_, i) => (i * 37 + 11) & 255))
+      .toString("base64")
+      .slice(0, length);
+  const credentials = (sessionToken: string) => ({
+    accessKeyId: "AKIAIOSFODNN7EXAMPLE",
+    secretAccessKey: "secret",
+    sessionToken,
+  });
+
+  // 4096 characters is the largest session token that AWS STS issues. Amazon S3 refuses more
+  // than 8 KB of headers, so the last row only shows that the signer has no limit of its own.
+  it.each([3800, 4000, 4096, 8000])("sends a PUT and a GET with a session token of %i characters", async length => {
+    const sessionToken = base64Token(length);
+    await using server = serve({ credentials: credentials(sessionToken), buckets: ["bucket"] });
+    const client = new S3Client(server.clientOptions("bucket"));
+
+    await client.write("object.txt", "Hello Bun!");
+    expect(await client.file("object.txt").text()).toBe("Hello Bun!");
+    expect(
+      server.requests.map(request => [request.operation, request.status, request.headers.get("x-amz-security-token")]),
+    ).toEqual([
+      ["PutObject", 200, sessionToken],
+      ["GetObject", 200, sessionToken],
+    ]);
+  });
+
+  it("sends a PUT and a GET through fetch with a session token of 4000 characters", async () => {
+    const sessionToken = base64Token(4000);
+    await using server = serve({ credentials: credentials(sessionToken), buckets: ["bucket"] });
+    const s3 = server.clientOptions();
+
+    await fetch("s3://bucket/object.txt", { method: "PUT", body: "Hello Bun!", s3 });
+    expect(await (await fetch("s3://bucket/object.txt", { s3 })).text()).toBe("Hello Bun!");
+    expect(
+      server.requests.map(request => [request.operation, request.status, request.headers.get("x-amz-security-token")]),
+    ).toEqual([
+      ["PutObject", 200, sessionToken],
+      ["GetObject", 200, sessionToken],
+    ]);
+  });
+
+  // Amazon S3 allows a key of 1024 bytes. Percent-encoding makes each of these keys three times as long.
+  it.each([
+    ["113 CJK characters", fill(113 * 3, "文")],
+    ["114 CJK characters", fill(114 * 3, "文")],
+    ["1023 bytes", fill(341 * 3, "文")],
+    // macOS refuses a path of 1024 bytes before the signer sees the key.
+    ...(MAX_PATH_BYTES > 1024 ? [["1024 bytes", fill(341 * 3, "文") + "a"]] : []),
+  ])("sends a PUT and a GET for a key of %s", async (_, key) => {
+    await using server = serve({ buckets: ["bucket"] });
+    const client = new S3Client(server.clientOptions("bucket"));
+
+    await client.write(key, "Hello Bun!");
+    expect(await client.file(key).text()).toBe("Hello Bun!");
+    expect(server.requests.map(request => [request.operation, request.status, request.key])).toEqual([
+      ["PutObject", 200, key],
+      ["GetObject", 200, key],
+    ]);
+  });
+
+  it.each([3000, 4200])("sends a PUT with a contentDisposition of %i characters", async length => {
+    await using server = serve({ buckets: ["bucket"] });
+    const client = new S3Client(server.clientOptions("bucket"));
+    const contentDisposition = `attachment; filename="${fill(length, "a")}.txt"`;
+
+    await client.write("object.txt", "Hello Bun!", { contentDisposition });
+    expect(
+      server.requests.map(request => [request.operation, request.status, request.headers.get("content-disposition")]),
+    ).toEqual([["PutObject", 200, contentDisposition]]);
+  });
+
+  it.each([3800, 4200])("sends a PUT with a contentEncoding of %i characters", async length => {
+    await using server = serve({ buckets: ["bucket"] });
+    const client = new S3Client(server.clientOptions("bucket"));
+    const contentEncoding = fill(length, "e");
+
+    await client.write("object.txt", "Hello Bun!", { contentEncoding });
+    expect(
+      server.requests.map(request => [request.operation, request.status, request.headers.get("content-encoding")]),
+    ).toEqual([["PutObject", 200, contentEncoding]]);
+  });
+
+  // The region is a part of the text that the signature is made from. That text goes to
+  // the heap from a region of 133 characters.
+  it.each([132, 133, 4000])("sends a PUT and a GET with a region of %i characters", async length => {
+    await using server = serve({ region: fill(length, "r"), buckets: ["bucket"] });
+    const client = new S3Client(server.clientOptions("bucket"));
+
+    await client.write("object.txt", "Hello Bun!");
+    expect(await client.file("object.txt").text()).toBe("Hello Bun!");
+    expect(server.requests.map(request => [request.operation, request.status])).toEqual([
+      ["PutObject", 200],
+      ["GetObject", 200],
+    ]);
+  });
+
+  it.each([300, 700])("lists with a prefix and a startAfter of %i spaces", async count => {
+    await using server = serve({ buckets: ["bucket"] });
+    const client = new S3Client(server.clientOptions("bucket"));
+    const prefix = `folder${fill(count, " ")}`;
+
+    await client.list({ prefix, startAfter: `${prefix}/after` });
+    expect(
+      server.requests.map(request => {
+        const query = new URL(request.url).searchParams;
+        return [request.operation, request.status, query.get("prefix"), query.get("start-after")];
+      }),
+    ).toEqual([["ListObjectsV2", 200, prefix, `${prefix}/after`]]);
+  });
+
+  it.each([300, 700])("lists with a delimiter and a continuationToken of %i spaces", async count => {
+    await using server = serve({ buckets: ["bucket"] });
+    const client = new S3Client(server.clientOptions("bucket"));
+    const spaces = fill(count, " ");
+
+    // The server did not issue this token. It says so only after it accepted the signature.
+    await expect(client.list({ delimiter: spaces, continuationToken: spaces })).rejects.toMatchObject({
+      code: "InvalidArgument",
+    });
+    expect(
+      server.requests.map(request => {
+        const query = new URL(request.url).searchParams;
+        return [request.operation, request.errorCode, query.get("delimiter"), query.get("continuation-token")];
+      }),
+    ).toEqual([["ListObjectsV2", "InvalidArgument", spaces, spaces]]);
+  });
+});
+
+describe("S3 limits that the signer keeps", () => {
+  const options = {
+    accessKeyId: "test",
+    secretAccessKey: "test",
+    bucket: "bucket",
+    region: "us-east-1",
+    endpoint: "https://s3.example.com",
+  };
+
+  // Amazon S3 counts the bytes of a key: not its characters, and not its encoded form.
+  it.each([
+    ["1025 bytes", fill(1025, "a")],
+    ["1025 bytes in 1024 characters", fill(1023, "a") + "é"],
+    ["1026 bytes in 342 characters", fill(342 * 3, "文")],
+  ])("rejects a key of %s", (_, key) => {
+    let code: string | undefined;
+    try {
+      new S3Client(options).presign(key);
+    } catch (error) {
+      code = (error as { code?: string }).code;
+    }
+    // A path of MAX_PATH_BYTES is refused before the signer sees the key. On macOS that is 1024 bytes.
+    expect(code).toBe(Buffer.byteLength(key) >= MAX_PATH_BYTES ? "ENAMETOOLONG" : "ERR_S3_INVALID_PATH");
+  });
+
+  // `fetch` takes the key from the URL and not from a path, so each platform has this limit.
+  it("sends a key of 1024 bytes through fetch and rejects a key of 1025 bytes", async () => {
+    await using server = serve({ buckets: ["bucket"] });
+    const s3 = server.clientOptions();
+    const key = fill(1024, "k");
+
+    await fetch(`s3://bucket/${key}`, { method: "PUT", body: "Hello Bun!", s3 });
+    await expect(fetch(`s3://bucket/${key}k`, { method: "PUT", body: "Hello Bun!", s3 })).rejects.toMatchObject({
+      code: "ERR_S3_INVALID_PATH",
+    });
+    expect(server.requests.map(request => [request.operation, request.status, request.key])).toEqual([
+      ["PutObject", 200, key],
+    ]);
+  });
+
+  // The bucket of a virtual hosted request is a part of the host name.
+  it.each(["evil.example.com/path", "evil.example.com\\path"])(
+    "rejects the virtual hosted bucket %j because a separator in it changes the host",
+    bucket => {
+      const client = new S3Client({ ...options, endpoint: undefined, bucket, virtualHostedStyle: true });
+      expect(() => client.presign("key.txt")).toThrow("Invalid S3 endpoint");
     },
   );
 });

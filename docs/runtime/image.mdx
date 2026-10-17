@@ -131,6 +131,8 @@ await img.write(Bun.s3.file("bucket/out.webp"));
 
 `.write()` accepts the same destinations as `Bun.write` — a path string, `Bun.file()`, `Bun.s3.file()`, or an fd. If you didn't chain a format method and the destination is a path string, the extension picks one (`.jpg`/`.png`/`.webp`/`.heic`/`.avif`).
 
+`Bun.write(dest, img)` and `Bun.file(dest).write(img)` also accept a pipeline. They encode in the chained format and do not infer a format from the destination path. When no format was chained, they use the source format, except that BMP, TIFF and GIF sources (decode only) are written as PNG.
+
 ## Placeholders
 
 `.placeholder()` returns a low-quality placeholder to inline in HTML before the real image loads. The placeholder is a [ThumbHash](https://evanw.github.io/thumbhash/)-rendered ≤32px blur as a `data:` URL. It is ~400–700 bytes and needs no client-side decoder:

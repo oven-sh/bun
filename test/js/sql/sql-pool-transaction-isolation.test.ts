@@ -1,8 +1,8 @@
 // Pool slot accounting across the paths that hand a connection back to the pool.
 // The mock servers record every statement per connection, so a transaction that
 // lands on a connection somebody else still holds shows up in the recorded order.
-// They also drop the socket on demand, which a real container will not do.
-// Wire bytes come from ./wire-frames.ts.
+// They also drop the socket on demand, and keep a query unanswered until the test
+// says so, which a real container will not do. Wire bytes come from ./wire-frames.ts.
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
@@ -19,10 +19,45 @@ import {
 } from "./wire-frames";
 
 type Received = { conn: number; sql: string };
-type MockServer = (received: Received[]) => Promise<{ port: number; server: net.Server }>;
+// A query the server has not answered yet. reply() sends the normal answer, once.
+type Held = Received & { reply: () => void };
+type MockServer = (received: Received[], held?: Holds) => Promise<{ port: number; server: net.Server }>;
+
+// Queries the server holds, in the order they arrived. next() waits for the next one.
+// A connection with a query in flight does not close, so replyAll() comes before close().
+class Holds {
+  #all: Held[] = [];
+  #unclaimed: Held[] = [];
+  #waiters: Array<(held: Held) => void> = [];
+  add(conn: number, sql: string, send: () => void) {
+    let replied = false;
+    const held: Held = {
+      conn,
+      sql,
+      reply() {
+        if (replied) return;
+        replied = true;
+        send();
+      },
+    };
+    this.#all.push(held);
+    const waiter = this.#waiters.shift();
+    if (waiter) waiter(held);
+    else this.#unclaimed.push(held);
+  }
+  next(): Promise<Held> {
+    const held = this.#unclaimed.shift();
+    if (held) return Promise.resolve(held);
+    return new Promise(resolve => this.#waiters.push(resolve));
+  }
+  replyAll() {
+    for (const held of this.#all) held.reply();
+  }
+}
 
 // Query text containing "KILL" destroys the socket without answering.
-const pgMockServer: MockServer = received => {
+// Query text containing "HOLD" is answered when the test calls reply() on it.
+const pgMockServer: MockServer = (received, held) => {
   let nextConn = 0;
   return listeningServer(socket => {
     const connId = nextConn++;
@@ -51,14 +86,19 @@ const pgMockServer: MockServer = received => {
           socket.destroy();
           return;
         }
-        socket.write(Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()]));
+        const reply = () => socket.write(Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()]));
+        if (sql.includes("HOLD")) {
+          held!.add(connId, sql, reply);
+          continue;
+        }
+        reply();
       }
     });
     socket.on("error", () => {});
   });
 };
 
-const mysqlMockServer: MockServer = received => {
+const mysqlMockServer: MockServer = (received, held) => {
   const COM_QUIT = 0x01;
   const COM_QUERY = 0x03;
   let nextConn = 0;
@@ -82,7 +122,12 @@ const mysqlMockServer: MockServer = received => {
             socket.destroy();
             return;
           }
-          socket.write(mysqlOkPacket(1));
+          const reply = () => socket.write(mysqlOkPacket(1));
+          if (sql.includes("HOLD")) {
+            held!.add(connId, sql, reply);
+            return;
+          }
+          reply();
         } else if (payload[0] === COM_QUIT) {
           socket.end();
         }
@@ -277,6 +322,103 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
 
       expect(firstInterleaving(received)).toBeNull();
     } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // The pool serves its waiters oldest first. A begin() or reserve() that arrives after a
+  // plain query does not overtake it, and a plain query that arrives after a reservation is
+  // kept off the connection that drains toward it. execute() hands the query to the pool at
+  // once; then() does so one microtask later.
+  test("a plain query runs before the transactions queued after it", async () => {
+    const received: Received[] = [];
+    const holds = new Holds();
+    const { port, server } = await mockServer(received, holds);
+    const sql = new SQL(options(port));
+    try {
+      await sql.unsafe("SELECT 'warm'");
+      const order: string[] = [];
+      const t1 = sql.begin(tx => tx.unsafe("SELECT 'HOLD t1'")).then(() => order.push("t1"));
+      const hold = await holds.next();
+
+      const query = sql
+        .unsafe("SELECT 'query'")
+        .execute()
+        .then(() => order.push("query"));
+      const t2 = sql.begin(tx => tx.unsafe("SELECT 't2'")).then(() => order.push("t2"));
+      const t3 = sql.begin(tx => tx.unsafe("SELECT 't3'")).then(() => order.push("t3"));
+
+      hold.reply();
+      await Promise.all([t1, query, t2, t3]);
+      expect(order).toEqual(["t1", "query", "t2", "t3"]);
+      expect(firstInterleaving(received)).toBeNull();
+    } finally {
+      holds.replyAll();
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test("a reservation is served before the plain queries queued after it", async () => {
+    const received: Received[] = [];
+    const holds = new Holds();
+    const { port, server } = await mockServer(received, holds);
+    const sql = new SQL(options(port));
+    try {
+      await sql.unsafe("SELECT 'warm'");
+      const order: string[] = [];
+      const busy = sql.unsafe("SELECT 'HOLD busy'").execute();
+      const hold = await holds.next();
+
+      const reserve = sql.reserve().then(reserved => {
+        order.push("reserve");
+        reserved.release();
+      });
+      // pipelined onto the busy connection, this would finish before the reservation
+      const query = sql
+        .unsafe("SELECT 'query'")
+        .execute()
+        .then(() => order.push("query"));
+
+      hold.reply();
+      await Promise.all([busy, reserve, query]);
+      expect(order).toEqual(["reserve", "query"]);
+    } finally {
+      holds.replyAll();
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test("with every connection in a transaction, the first to finish serves the oldest waiter", async () => {
+    const received: Received[] = [];
+    const holds = new Holds();
+    const { port, server } = await mockServer(received, holds);
+    const sql = new SQL({ ...options(port), max: 2 });
+    try {
+      const [a, b] = await Promise.all([sql.reserve(), sql.reserve()]);
+      a.release();
+      b.release();
+
+      const t1 = sql.begin(tx => tx.unsafe("SELECT 'HOLD t1'"));
+      const t2 = sql.begin(tx => tx.unsafe("SELECT 'HOLD t2'"));
+      const [hold1, hold2] = [await holds.next(), await holds.next()];
+
+      const query = sql.unsafe("SELECT 'query'").execute();
+      const t3 = sql.begin(tx => tx.unsafe("SELECT 't3'"));
+
+      hold1.reply();
+      await query;
+      // t3 was queued after the query, so it has not started on the freed connection
+      expect(received.filter(r => r.sql === beginCommand)).toHaveLength(2);
+
+      hold2.reply();
+      await Promise.all([t1, t2, t3]);
+      expect(received.filter(r => r.sql === beginCommand)).toHaveLength(3);
+      expect(firstInterleaving(received)).toBeNull();
+    } finally {
+      holds.replyAll();
       await sql.close({ timeout: 0 }).catch(() => {});
       await new Promise<void>(r => server.close(() => r()));
     }

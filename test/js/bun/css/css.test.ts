@@ -4611,6 +4611,243 @@ describe("css tests", () => {
     );
   });
 
+  // Browsers resolve a legacy name alias to the property it aliases when they
+  // parse it (`grid-gap` is `gap`, `-webkit-margin-start` is
+  // `margin-inline-start`), so the later of the two declarations wins. The alias
+  // has no typed property here. It must still print after a declaration that was
+  // written before it.
+  describe("legacy name aliases stay after the property they alias", () => {
+    // [alias, property, value of the property, value of the alias]
+    const aliases: [string, string, string, string][] = [
+      ["grid-gap", "gap", "9px", "1px"],
+      ["grid-row-gap", "row-gap", "9px", "1px"],
+      ["grid-column-gap", "column-gap", "9px", "1px"],
+      ["-webkit-column-gap", "column-gap", "9px", "1px"],
+      ["-webkit-justify-items", "justify-items", "center", "start"],
+      ["-webkit-margin-start", "margin-inline-start", "1px", "2px"],
+      ["-webkit-margin-end", "margin-inline-end", "1px", "2px"],
+      ["-webkit-margin-before", "margin-block-start", "1px", "2px"],
+      ["-webkit-margin-after", "margin-block-end", "1px", "2px"],
+      ["-moz-margin-start", "margin-inline-start", "1px", "2px"],
+      ["-moz-margin-end", "margin-inline-end", "1px", "2px"],
+      ["-webkit-padding-start", "padding-inline-start", "1px", "2px"],
+      ["-webkit-padding-end", "padding-inline-end", "1px", "2px"],
+      ["-webkit-padding-before", "padding-block-start", "1px", "2px"],
+      ["-webkit-padding-after", "padding-block-end", "1px", "2px"],
+      ["-moz-padding-start", "padding-inline-start", "1px", "2px"],
+      ["-moz-padding-end", "padding-inline-end", "1px", "2px"],
+      ["scroll-snap-margin", "scroll-margin", "1px", "2px"],
+      ["scroll-snap-margin-top", "scroll-margin-top", "1px", "2px"],
+      ["scroll-snap-margin-right", "scroll-margin-right", "1px", "2px"],
+      ["scroll-snap-margin-bottom", "scroll-margin-bottom", "1px", "2px"],
+      ["scroll-snap-margin-left", "scroll-margin-left", "1px", "2px"],
+      ["-webkit-logical-width", "inline-size", "1px", "2px"],
+      ["-webkit-logical-height", "block-size", "1px", "2px"],
+      ["-webkit-min-logical-width", "min-inline-size", "1px", "2px"],
+      ["-webkit-min-logical-height", "min-block-size", "1px", "2px"],
+      ["-webkit-max-logical-width", "max-inline-size", "1px", "2px"],
+      ["-webkit-max-logical-height", "max-block-size", "1px", "2px"],
+      ["-webkit-background-size", "background-size", "1px", "2px"],
+      ["-webkit-background-origin", "background-origin", "border-box", "content-box"],
+      ["font-width", "font-stretch", "75%", "expanded"],
+    ];
+    // [alias, a declaration that sets the same longhand in some writing mode, its value, value of the alias]
+    const overridden: [string, string, string, string][] = [
+      ["grid-gap", "column-gap", "9px", "1px"],
+      ["-webkit-justify-items", "place-items", "stretch center", "start"],
+      ["-webkit-margin-start", "margin-left", "1px", "2px"],
+      ["-webkit-margin-end", "margin-right", "1px", "2px"],
+      ["-webkit-margin-before", "margin-top", "1px", "2px"],
+      ["-webkit-margin-after", "margin-bottom", "1px", "2px"],
+      ["-moz-margin-start", "margin", "0", "2px"],
+      ["scroll-snap-margin", "scroll-margin-block-start", "1px", "2px"],
+      ["scroll-snap-margin-top", "scroll-margin-block", "1px", "2px"],
+      ["scroll-snap-margin-bottom", "scroll-margin-block-end", "1px", "2px"],
+      ["scroll-snap-margin-left", "scroll-margin-inline-start", "1px", "2px"],
+      ["scroll-snap-margin-right", "scroll-margin-inline-end", "1px", "2px"],
+      ["-webkit-border-start-color", "border", "1px solid red", "#00f"],
+      ["font-width", "font", "12px serif", "expanded"],
+    ];
+    for (const kind of ["", "min-", "max-"]) {
+      for (const axis of ["width", "height"]) {
+        overridden.push(
+          [`-webkit-${kind}logical-${axis}`, `${kind}width`, "1px", "2px"],
+          [`-webkit-${kind}logical-${axis}`, `${kind}height`, "1px", "2px"],
+        );
+      }
+    }
+    for (const [prefix, side, physical] of [
+      ["-webkit-border-start", "border-inline-start", "border-left"],
+      ["-webkit-border-end", "border-inline-end", "border-right"],
+      ["-webkit-border-before", "border-block-start", "border-top"],
+      ["-webkit-border-after", "border-block-end", "border-bottom"],
+      ["-moz-border-start", "border-inline-start", "border-left"],
+      ["-moz-border-end", "border-inline-end", "border-right"],
+    ]) {
+      aliases.push(
+        [prefix, side, "1px solid red", "2px dashed red"],
+        [`${prefix}-color`, `${side}-color`, "red", "#00f"],
+        [`${prefix}-style`, `${side}-style`, "solid", "dashed"],
+        [`${prefix}-width`, `${side}-width`, "1px", "2px"],
+      );
+      overridden.push([prefix, physical, "1px solid red", "2px dashed red"]);
+    }
+    for (const [alias, property, value, aliasValue] of aliases) {
+      minify_test(`a{${property}:${value};${alias}:${aliasValue}}`, `a{${property}:${value};${alias}:${aliasValue}}`);
+      minify_test(`a{${alias}:${aliasValue};${property}:${value}}`, `a{${alias}:${aliasValue};${property}:${value}}`);
+    }
+    for (const [alias, property, value, aliasValue] of overridden) {
+      minify_test(`a{${property}:${value};${alias}:${aliasValue}}`, `a{${property}:${value};${alias}:${aliasValue}}`);
+    }
+
+    // The gap aliases: values that do not parse, `!important`, and several in one rule.
+    minify_test("a{gap:9px;grid-gap:var(--g)}", "a{gap:9px;grid-gap:var(--g)}");
+    minify_test("a{column-gap:9px;grid-column-gap:var(--g)}", "a{column-gap:9px;grid-column-gap:var(--g)}");
+    minify_test("a{gap:9px!important;grid-gap:1px!important}", "a{gap:9px!important;grid-gap:1px!important}");
+    minify_test("a{gap:9px;grid-gap:1px!important}", "a{gap:9px;grid-gap:1px!important}");
+    minify_test("a{row-gap:1px;grid-gap:2px;column-gap:3px}", "a{row-gap:1px;grid-gap:2px;column-gap:3px}");
+    minify_test("a{grid-gap:1px;gap:9px;grid-gap:2px}", "a{grid-gap:1px;gap:9px;grid-gap:2px}");
+    minify_test("a{gap:3px;grid-row-gap:1px;grid-column-gap:2px}", "a{gap:3px;grid-row-gap:1px;grid-column-gap:2px}");
+    minify_test("a{gap:9px;color:red;grid-gap:1px}", "a{color:red;gap:9px;grid-gap:1px}");
+    minify_test("a{gap:9px;GRID-GAP:1px}", "a{gap:9px;GRID-GAP:1px}");
+    minify_test("a{b{gap:9px;grid-gap:1px}}", "a{& b{gap:9px;grid-gap:1px}}");
+    minify_test("@media (min-width:1px){a{gap:9px;grid-gap:1px}}", "@media (width>=1px){a{gap:9px;grid-gap:1px}}");
+    // Rules with the same selector merge, and the merged declarations keep their order.
+    minify_test("a{gap:9px} a{grid-gap:1px}", "a{gap:9px;grid-gap:1px}");
+    // Rules that differ only in this order do not merge.
+    minify_test("a{gap:9px;grid-gap:1px} .b{grid-gap:1px;gap:9px}", "a{gap:9px;grid-gap:1px}.b{grid-gap:1px;gap:9px}");
+    // A later rule that overrides every declaration still replaces the earlier rule.
+    minify_test("a{gap:9px;grid-gap:1px} b{color:red} a{gap:3px;grid-gap:4px}", "b{color:red}a{gap:3px;grid-gap:4px}");
+
+    // An alias between a declaration and the standard name, as Bootstrap 5 and fundamental-styles write it.
+    for (const rule of [
+      ".form-select{padding:.375rem 2.25rem .375rem .75rem;-moz-padding-start:calc(.75rem - 3px)}",
+      "a{margin:-.375rem -.75rem;-webkit-margin-end:.75rem;margin-inline-end:.75rem}",
+      "a{margin:0;-webkit-margin-after:.5rem;margin-block-end:.5rem}",
+      "a{margin-top:0;-webkit-margin-after:0;margin-block-end:0}",
+      "a{padding:0;-webkit-padding-start:2rem;padding-inline-start:2rem}",
+      "a{margin-block:0;margin-inline:0;-webkit-margin-end:.5rem;margin-inline-end:.5rem}",
+      "a{padding-block:0;padding-inline:0;-webkit-padding-before:.5rem;padding-block-start:.5rem}",
+      "a{margin-block:0;margin-inline:0;-webkit-margin-start:var(--m);margin-inline-start:var(--m)}",
+      "a{background:url(a.png) no-repeat;-webkit-background-size:cover;background-size:cover}",
+      // A prefixed gradient that waits for the end of the rule goes out first.
+      "a{background:-webkit-linear-gradient(red,#00f);background:linear-gradient(red,#00f);-webkit-background-size:cover;background-size:cover}",
+    ]) {
+      minify_test(rule, rule);
+    }
+    // The declarations on the two sides of an alias do not merge.
+    minify_test(
+      "a{margin-top:1px;-webkit-margin-start:2px;margin-right:1px;margin-bottom:1px;margin-left:1px}",
+      "a{margin-top:1px;-webkit-margin-start:2px;margin-bottom:1px;margin-left:1px;margin-right:1px}",
+    );
+
+    // An alias only moves the declarations it can override. The rest still merge.
+    minify_test("a{row-gap:9px;grid-column-gap:1px}", "a{grid-column-gap:1px;row-gap:9px}");
+    minify_test("a{column-gap:9px;grid-row-gap:1px}", "a{grid-row-gap:1px;column-gap:9px}");
+    minify_test(
+      "a{align-items:stretch;gap:1px;grid-gap:2px;justify-items:center}",
+      "a{gap:1px;grid-gap:2px;place-items:stretch center}",
+    );
+    minify_test(
+      "a{align-items:stretch;grid-gap:1px;justify-items:center}",
+      "a{grid-gap:1px;place-items:stretch center}",
+    );
+    minify_test(
+      "a{align-items:stretch;-webkit-justify-items:start;justify-items:center}",
+      "a{-webkit-justify-items:start;place-items:stretch center}",
+    );
+    minify_test(
+      "a{margin-block-start:1px;-webkit-margin-start:2px}",
+      "a{-webkit-margin-start:2px;margin-block-start:1px}",
+    );
+    minify_test(
+      "a{-webkit-margin-start:16px;margin-inline-start:16px;-webkit-margin-end:6px;margin-inline-end:6px}",
+      "a{-webkit-margin-start:16px;-webkit-margin-end:6px;margin-inline:16px 6px}",
+    );
+    minify_test(
+      "a{-webkit-margin-before:1em;margin-block-start:1em;-webkit-margin-after:1em;margin-block-end:1em;-webkit-margin-start:0px;margin-inline-start:0px;-webkit-margin-end:0px;margin-inline-end:0px}",
+      "a{-webkit-margin-before:1em;-webkit-margin-after:1em;-webkit-margin-start:0px;-webkit-margin-end:0px;margin-block:1em;margin-inline:0}",
+    );
+    minify_test("a{min-width:1px;-webkit-logical-width:2px}", "a{-webkit-logical-width:2px;min-width:1px}");
+    minify_test(
+      "a{border-block-start-color:red;-webkit-border-start-color:#00f}",
+      "a{-webkit-border-start-color:#00f;border-block-start-color:red}",
+    );
+    minify_test(
+      "a{background-color:red;-webkit-background-size:cover}",
+      "a{-webkit-background-size:cover;background-color:red}",
+    );
+    minify_test(
+      "a{background-color:red;-webkit-background-origin:content-box}",
+      "a{-webkit-background-origin:content-box;background-color:red}",
+    );
+    minify_test("a{font-size:12px;font-width:expanded}", "a{font-width:expanded;font-size:12px}");
+
+    // Names that no browser aliases print where they did before.
+    minify_test("a{row-gap:1px;--x:1;column-gap:2px}", "a{--x:1;gap:1px 2px}");
+    minify_test("a{gap:9px;unknown-prop:1px}", "a{unknown-prop:1px;gap:9px}");
+    minify_test("a{gap:9px;-webkit-grid-gap:1px}", "a{-webkit-grid-gap:1px;gap:9px}");
+    minify_test("a{gap:9px;-ms-gap:1px}", "a{-ms-gap:1px;gap:9px}");
+    minify_test("a{column-gap:9px;-moz-column-gap:1px}", "a{-moz-column-gap:1px;column-gap:9px}");
+    minify_test("a{margin-inline-start:1px;margin-start:2px}", "a{margin-start:2px;margin-inline-start:1px}");
+    minify_test("a{background-size:1px;-o-background-size:2px}", "a{-o-background-size:2px;background-size:1px}");
+
+    // An alias name prints as written everywhere else.
+    minify_test("a{grid-gap:1px}", "a{grid-gap:1px}");
+    minify_test("a{transition:grid-gap 1s}", "a{transition:grid-gap 1s}");
+    minify_test("@supports (grid-gap:1px){a{color:red}}", "@supports (grid-gap:1px){a{color:red}}");
+    minify_test(
+      "@container style(-webkit-margin-start:1px){a{color:red}}",
+      "@container style(-webkit-margin-start:1px){a{color:red}}",
+    );
+
+    // `bun build` for the browser minifies with these targets (`BROWSER_DEFAULT` in src/css/targets.rs).
+    const browserDefault = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
+    prefix_test("a{gap:9px;grid-gap:1px}", "a{gap:9px;grid-gap:1px;}", browserDefault);
+    prefix_test(
+      ".form-select{padding:.375rem 2.25rem .375rem .75rem;-moz-padding-start:calc(.75rem - 3px)}",
+      ".form-select{padding:.375rem 2.25rem .375rem .75rem;-moz-padding-start:calc(.75rem - 3px);}",
+      browserDefault,
+    );
+    prefix_test(
+      "a{margin-block:0;margin-inline:0;-webkit-margin-end:2rem;margin-inline-end:2rem}",
+      "a{margin-block-start:0;margin-block-end:0;margin-inline-start:0;margin-inline-end:0;-webkit-margin-end:2rem;margin-inline-end:2rem;}",
+      browserDefault,
+    );
+    prefix_test(
+      "a{background:-webkit-linear-gradient(red,#00f);background:linear-gradient(red,#00f);-webkit-background-size:cover;background-size:cover}",
+      "a{background:linear-gradient(red,#00f);-webkit-background-size:cover;background-size:cover;}",
+      browserDefault,
+    );
+    prefix_test(
+      "a{border-left-color:red;-webkit-border-before-color:blue}",
+      "a{border-left-color:red;-webkit-border-before-color:blue;}",
+      browserDefault,
+    );
+    // The handler lowers an equal `border-inline-color` pair to left and right when the rule ends.
+    prefix_test(
+      "a{border-inline-color:red;-webkit-border-before-color:blue}",
+      "a{-webkit-border-before-color:blue;border-left-color:red;border-right-color:red;}",
+      browserDefault,
+    );
+    // A value after the alias gets no generated fallback, as after a value that does not parse.
+    prefix_test(
+      "a{background-size:1px;-webkit-background-size:2px;background:lab(50% 10 10)}",
+      "a{background-size:1px;-webkit-background-size:2px;background:lab(50% 10 10);}",
+      browserDefault,
+    );
+    prefix_test(
+      "a{background-size:var(--s);background:lab(50% 10 10)}",
+      "a{background-size:var(--s);background:lab(50% 10 10);}",
+      browserDefault,
+    );
+    prefix_test(
+      "a{inline-size:1px;-webkit-logical-width:2px;inline-size:fit-content}",
+      "a{inline-size:1px;-webkit-logical-width:2px;inline-size:fit-content;}",
+      browserDefault,
+    );
+  });
+
   describe("linear-gradient", () => {
     minify_test(".foo { background: linear-gradient(yellow, blue) }", ".foo{background:linear-gradient(#ff0,#00f)}");
     minify_test(

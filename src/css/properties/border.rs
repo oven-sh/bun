@@ -442,6 +442,10 @@ impl BorderShorthand {
         self.width.is_some() && self.style.is_some() && self.color.is_some()
     }
 
+    fn is_empty(&self) -> bool {
+        self.width.is_none() && self.style.is_none() && self.color.is_none()
+    }
+
     /// Generic over the `P` const param so the same `BorderShorthand` data
     /// can populate any of `BorderTop`/`BorderLeft`/.../`Border`.
     fn to_border<const P: u8>(&self, arena: &Bump) -> GenericBorder<LineStyle, P> {
@@ -1466,6 +1470,44 @@ mod border_handler_body {
             self.flushed_properties = BorderProperty::empty();
             self.border_image_handler.finalize(dest, context);
             self.border_radius_handler.finalize(dest, context);
+        }
+
+        /// Emits what a legacy alias of `target` can override, so that the alias prints after it.
+        pub(crate) fn flush_before_alias(
+            &mut self,
+            target: PropertyIdTag,
+            dest: &mut DeclarationList,
+            context: &mut PropertyHandlerContext,
+        ) {
+            use PropertyIdTag as P;
+            let side = match target {
+                P::BorderBlockStart
+                | P::BorderBlockStartColor
+                | P::BorderBlockStartStyle
+                | P::BorderBlockStartWidth => &self.border_block_start,
+                P::BorderBlockEnd
+                | P::BorderBlockEndColor
+                | P::BorderBlockEndStyle
+                | P::BorderBlockEndWidth => &self.border_block_end,
+                P::BorderInlineStart
+                | P::BorderInlineStartColor
+                | P::BorderInlineStartStyle
+                | P::BorderInlineStartWidth => &self.border_inline_start,
+                P::BorderInlineEnd
+                | P::BorderInlineEndColor
+                | P::BorderInlineEndStyle
+                | P::BorderInlineEndWidth => &self.border_inline_end,
+                _ => return,
+            };
+            // The writing mode decides which physical side a logical side is.
+            if !(side.is_empty()
+                && self.border_top.is_empty()
+                && self.border_bottom.is_empty()
+                && self.border_left.is_empty()
+                && self.border_right.is_empty())
+            {
+                self.flush(dest, context);
+            }
         }
 
         fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {

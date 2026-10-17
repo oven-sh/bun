@@ -6,7 +6,7 @@ use crate::css_values::image::Image;
 use crate::css_values::length::LengthPercentageOrAuto;
 use crate::css_values::position::{HorizontalPosition, Position, VerticalPosition};
 use crate::generics::{CssEql, DeepClone};
-use crate::properties::{Property, PropertyId};
+use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::{
     DeclarationList, Parser, PrintErr, Printer, PropertyHandlerContext, SmallList, VendorPrefix,
 };
@@ -1132,6 +1132,33 @@ impl BackgroundHandler {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
+        self.flush_with_prefixed(dest, context);
+        self.flushed_properties = BackgroundProperty::empty();
+    }
+
+    /// Emits what a legacy alias of `target` can override, so that the alias prints after it.
+    pub(crate) fn flush_before_alias(
+        &mut self,
+        target: PropertyIdTag,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
+        let overridable = match target {
+            PropertyIdTag::BackgroundSize => self.sizes.is_some(),
+            PropertyIdTag::BackgroundOrigin => self.origins.is_some(),
+            _ => false,
+        };
+        if overridable {
+            self.flush_with_prefixed(dest, context);
+        }
+    }
+
+    /// Emits the prefixed declarations kept in `decls`, then the buffered ones.
+    fn flush_with_prefixed(
+        &mut self,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
         // If the last declaration is prefixed, pop the last value
         // so it isn't duplicated when we flush.
         if self.has_prefix {
@@ -1147,7 +1174,6 @@ impl BackgroundHandler {
         }
 
         self.flush(dest, context);
-        self.flushed_properties = BackgroundProperty::empty();
     }
 }
 

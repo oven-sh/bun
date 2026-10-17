@@ -794,9 +794,9 @@ mod inherent_bridge {
     );
 
     // ── properties/properties_generated ──
-    use crate::properties::PropertyId;
-    bridge_deep_clone_copy!(PropertyId);
-    bridge_eql_partialeq!(PropertyId);
+    use crate::properties::{PropertyId, PropertyIdTag};
+    bridge_deep_clone_copy!(PropertyId, PropertyIdTag);
+    bridge_eql_partialeq!(PropertyId, PropertyIdTag);
 }
 
 // Packed bitfields are `bitflags!` types whose derived `PartialEq` already
@@ -918,6 +918,13 @@ impl CssHash for VendorPrefix {
     #[inline]
     fn hash(&self, hasher: &mut Wyhash) {
         hasher.update(&[self.as_bits()]);
+    }
+}
+
+impl CssHash for crate::properties::PropertyIdTag {
+    #[inline]
+    fn hash(&self, hasher: &mut Wyhash) {
+        hasher.update(&(*self as u16).to_ne_bytes());
     }
 }
 

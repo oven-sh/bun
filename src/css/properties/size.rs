@@ -765,6 +765,48 @@ impl SizeHandler {
         true
     }
 
+    /// Emits what a legacy alias of `target` can override, so that the alias prints after it.
+    pub(crate) fn flush_before_alias(
+        &mut self,
+        target: PropertyIdTag,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
+        // The writing mode decides whether a logical size is the width or the height.
+        let overridable = match target {
+            PropertyIdTag::BlockSize => {
+                self.block_size.is_some() || self.width.is_some() || self.height.is_some()
+            }
+            PropertyIdTag::InlineSize => {
+                self.inline_size.is_some() || self.width.is_some() || self.height.is_some()
+            }
+            PropertyIdTag::MinBlockSize => {
+                self.min_block_size.is_some()
+                    || self.min_width.is_some()
+                    || self.min_height.is_some()
+            }
+            PropertyIdTag::MinInlineSize => {
+                self.min_inline_size.is_some()
+                    || self.min_width.is_some()
+                    || self.min_height.is_some()
+            }
+            PropertyIdTag::MaxBlockSize => {
+                self.max_block_size.is_some()
+                    || self.max_width.is_some()
+                    || self.max_height.is_some()
+            }
+            PropertyIdTag::MaxInlineSize => {
+                self.max_inline_size.is_some()
+                    || self.max_width.is_some()
+                    || self.max_height.is_some()
+            }
+            _ => false,
+        };
+        if overridable {
+            self.flush(dest, context);
+        }
+    }
+
     fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
         if !self.has_any {
             return;

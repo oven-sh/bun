@@ -394,6 +394,18 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
     ) {
         self.inner.flush(S::SPEC, dest, context);
     }
+
+    /// Emits what a legacy alias of `target` can override, so that the alias prints after it.
+    #[inline]
+    pub(crate) fn flush_before_alias(
+        &mut self,
+        target: PropertyIdTag,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
+        self.inner
+            .flush_before_alias(S::SPEC, target, dest, context);
+    }
 }
 
 #[derive(Default)]
@@ -731,6 +743,48 @@ impl SizeHandlerImpl {
         }
 
         true
+    }
+
+    fn flush_before_alias(
+        &mut self,
+        spec: &'static SizeSpec,
+        target: PropertyIdTag,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
+        let physical = self.top.is_some()
+            || self.bottom.is_some()
+            || self.left.is_some()
+            || self.right.is_some();
+        let logical = self.block_start.is_some()
+            || self.block_end.is_some()
+            || self.inline_start.is_some()
+            || self.inline_end.is_some();
+        // The writing mode decides which physical side a logical side is.
+        let overridable = if target == spec.shorthand {
+            physical || logical
+        } else if target == spec.top {
+            self.top.is_some() || logical
+        } else if target == spec.bottom {
+            self.bottom.is_some() || logical
+        } else if target == spec.left {
+            self.left.is_some() || logical
+        } else if target == spec.right {
+            self.right.is_some() || logical
+        } else if target == spec.block_start {
+            self.block_start.is_some() || physical
+        } else if target == spec.block_end {
+            self.block_end.is_some() || physical
+        } else if target == spec.inline_start {
+            self.inline_start.is_some() || physical
+        } else if target == spec.inline_end {
+            self.inline_end.is_some() || physical
+        } else {
+            false
+        };
+        if overridable {
+            self.flush(spec, dest, context);
+        }
     }
 
     // The flush helper is split into `flush_helper_physical` + `flush_helper_logical`

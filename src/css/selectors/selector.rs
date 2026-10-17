@@ -245,6 +245,13 @@ pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
                 _ => VendorPrefix::empty(),
             };
 
+            // A set widened by `downlevel_selectors` (`NONE | WEBKIT`) is still unprefixed.
+            let p = if p.contains(VendorPrefix::NONE) {
+                VendorPrefix::NONE
+            } else {
+                p
+            };
+
             if !p.is_empty() {
                 // Allow none to be mixed with a prefix.
                 let mut prefix_without_none = prefix;
@@ -1056,7 +1063,7 @@ pub(crate) mod serialize {
                     *prefix
                 };
                 vp.to_css(dest)?;
-                if vp.contains(VendorPrefix::WEBKIT) || vp.contains(VendorPrefix::MOZ) {
+                if vp == VendorPrefix::WEBKIT || vp == VendorPrefix::MOZ {
                     dest.write_str(b"full-screen")?;
                 } else {
                     dest.write_str(b"fullscreen")?;
@@ -1205,7 +1212,7 @@ pub(crate) mod serialize {
             }
             PseudoElement::Placeholder(prefix) => {
                 let vp = write_prefix(dest, *prefix)?;
-                if vp.contains(VendorPrefix::WEBKIT) || vp.contains(VendorPrefix::MS) {
+                if vp == VendorPrefix::WEBKIT || vp == VendorPrefix::MS {
                     dest.write_str(b"input-placeholder")?;
                 } else {
                     dest.write_str(b"placeholder")?;
@@ -1214,9 +1221,9 @@ pub(crate) mod serialize {
             PseudoElement::Backdrop(prefix) => write_prefixed(dest, *prefix, b"backdrop")?,
             PseudoElement::FileSelectorButton(prefix) => {
                 let vp = write_prefix(dest, *prefix)?;
-                if vp.contains(VendorPrefix::WEBKIT) {
+                if vp == VendorPrefix::WEBKIT {
                     dest.write_str(b"file-upload-button")?;
-                } else if vp.contains(VendorPrefix::MS) {
+                } else if vp == VendorPrefix::MS {
                     dest.write_str(b"browse")?;
                 } else {
                     dest.write_str(b"file-selector-button")?;

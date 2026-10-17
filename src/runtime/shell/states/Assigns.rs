@@ -63,7 +63,12 @@ impl Assigns {
             let assigns = node.slice();
             match interp.as_assigns(this).state {
                 AssignsState::Idle => {
-                    interp.as_assigns_mut(this).state = AssignsState::Expanding { idx: 0 };
+                    let me = interp.as_assigns_mut(this);
+                    // Prefix assignments keep what their `Cmd` recorded for argv.
+                    if me.ctx == AssignCtx::Shell {
+                        me.base.shell_mut().last_cmd_subst_status = None;
+                    }
+                    me.state = AssignsState::Expanding { idx: 0 };
                     continue;
                 }
                 AssignsState::Expanding { idx } => {
@@ -76,8 +81,16 @@ impl Assigns {
                     return Expansion::start(interp, child);
                 }
                 AssignsState::Done => {
-                    let parent = interp.as_assigns(this).base.parent;
-                    return interp.child_done(parent, this, 0);
+                    let (parent, exit_code) = {
+                        let me = interp.as_assigns(this);
+                        let exit_code = match me.ctx {
+                            AssignCtx::Shell => me.base.shell().last_cmd_subst_status.unwrap_or(0),
+                            // `Cmd` reads a nonzero status from this node as a failed expansion.
+                            AssignCtx::Cmd => 0,
+                        };
+                        (me.base.parent, exit_code)
+                    };
+                    return interp.child_done(parent, this, exit_code);
                 }
             }
         }

@@ -269,6 +269,8 @@ await $`
 `;
 ```
 
+Bun Shell removes the newlines at the end of the output, and any `\r` directly before them. A quoted substitution in a command (`"$(...)"`) keeps the rest of the output. An unquoted substitution also drops trailing spaces, tabs and `\r`. A variable assignment drops them too, also when the substitution is quoted.
+
 <Note>
 
 Because Bun internally uses the special [`raw`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Template_literals#raw_strings) property on the input template literal, using the backtick syntax for command substitution doesn't work:

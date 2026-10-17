@@ -16,8 +16,14 @@ const inTheExecutable: [string, string][] = [
   [`console.log(require?.("./data/two.cjs").n);`, "2"],
   [`console.log(module.require("./data/two.cjs").n);`, "2"],
   [`console.log(require("./data/" + "one.cjs").n);`, "1"],
-  [`function load(require) { return require("./data/one.cjs"); } console.log(load(() => ({ n: "shadowed" })).n);`, "shadowed"],
-  [`function load(module) { return module.require("./data/one.cjs"); } console.log(load({ require: () => ({ n: "shadowed" }) }).n);`, "shadowed"],
+  [
+    `function load(require) { return require("./data/one.cjs"); } console.log(load(() => ({ n: "shadowed" })).n);`,
+    "shadowed",
+  ],
+  [
+    `function load(module) { return module.require("./data/one.cjs"); } console.log(load({ require: () => ({ n: "shadowed" }) }).n);`,
+    "shadowed",
+  ],
   [`console.log(typeof require === "function" && require("./data/one.cjs").n);`, "1"],
   [`try { console.log(require("./data/one.cjs").n); } catch { console.log("caught"); }`, "1"],
   [`console.log([1].map(() => require("./data/two.cjs").n)[0]);`, "2"],
@@ -33,29 +39,53 @@ const leftToTheRunTime: string[] = [
   `console.log(require.call(null, "./data/one.cjs").n);`,
   `console.log(require.apply(null, ["./data/one.cjs"]).n);`,
   `const name = "one"; console.log(require("./data/" + name + ".cjs").n);`,
-  "const name = \"two\"; console.log(require(`./data/${name}.cjs`).n);",
+  'const name = "two"; console.log(require(`./data/${name}.cjs`).n);',
   `console.log(require("./data/one.cjs", "extra").n);`,
   `console.log(require(require("node:path").join(__dirname, "data", "one.cjs")).n);`,
   `console.log(import.meta.require("./data/one.cjs").n);`,
 ];
 
 async function answers(row: string) {
-  using dir = tempDir("aot-spellings-of-require", { "src/main.cjs": row + "\n", "src/data/one.cjs": "exports.n = 1;\n", "src/data/two.cjs": "exports.n = 2;\n", "away/empty": "" });
+  using dir = tempDir("aot-spellings-of-require", {
+    "src/main.cjs": row + "\n",
+    "src/data/one.cjs": "exports.n = 1;\n",
+    "src/data/two.cjs": "exports.n = 2;\n",
+    "away/empty": "",
+  });
   const folder = String(dir);
   const executables = ["bundle", "aot"].map(how => join(folder, "away", how + (isWindows ? ".exe" : "")));
   for (const [index, flags] of [[], ["--aot"]].entries()) {
-    const built = await spawned([bunExe(), "build", "--compile", ...flags, "main.cjs", "--outfile", executables[index]], join(folder, "src"), bunEnv);
-    expect({ row, flags, stderr: built.stderr, exitCode: built.exitCode }).toEqual({ row, flags, stderr: expect.any(String), exitCode: 0 });
+    const built = await spawned(
+      [bunExe(), "build", "--compile", ...flags, "main.cjs", "--outfile", executables[index]],
+      join(folder, "src"),
+      bunEnv,
+    );
+    expect({ row, flags, stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+      row,
+      flags,
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
   }
   renameSync(join(folder, "src"), join(folder, "moved"));
   const bundle = await spawned([executables[0]], join(folder, "away"), bunEnv);
-  const aot = await spawned([executables[1]], join(folder, "away"), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-  const told = (run: typeof bundle) => (run.signal ? `signal ${run.signal}` : run.exitCode ? `exit code ${run.exitCode}` : run.stdout.trim());
+  const aot = await spawned([executables[1]], join(folder, "away"), {
+    ...bunEnv,
+    BUN_JSC_crashIfInterpreterIsUsed: "1",
+  });
+  const told = (run: typeof bundle) =>
+    run.signal ? `signal ${run.signal}` : run.exitCode ? `exit code ${run.exitCode}` : run.stdout.trim();
   return { bundle: told(bundle), aot: told(aot) };
 }
 
 describe.concurrent("compile/aot/spellings of require", () => {
   if (unsupported) return void test.skip(unsupported, () => {});
-  for (const [row, prints] of inTheExecutable) test(row, () => slot(async () => expect(await answers(row)).toEqual({ bundle: prints, aot: prints })), 600_000);
-  for (const row of leftToTheRunTime) test("not seen: " + row, () => slot(async () => expect(await answers(row)).toEqual({ bundle: "exit code 1", aot: "exit code 1" })), 600_000);
+  for (const [row, prints] of inTheExecutable)
+    test(row, () => slot(async () => expect(await answers(row)).toEqual({ bundle: prints, aot: prints })), 600_000);
+  for (const row of leftToTheRunTime)
+    test(
+      "not seen: " + row,
+      () => slot(async () => expect(await answers(row)).toEqual({ bundle: "exit code 1", aot: "exit code 1" })),
+      600_000,
+    );
 });

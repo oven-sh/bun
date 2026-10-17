@@ -15,7 +15,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { join, relative } from "path";
+import { join } from "path";
 
 const root = join(import.meta.dir, "idioms");
 const pinsPath = join(import.meta.dir, `pins.${process.platform}-${process.arch}.json`);
@@ -53,7 +53,9 @@ describe.skipIf(!mode || !perf)("compile/aot/perf/idioms", () => {
     const env = { ...bunEnv, AOT_PERF_TURNS: String(n), BUN_JSC_useConcurrentJIT: "0" };
     const run = await spawned([perf!, "stat", "-x,", "-e", "instructions:u", "-o", report, "--", ...cmd], env);
     expect({ stderr: run.stderr, exitCode: run.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    const line = readFileSync(report, "utf8").split("\n").find(line => line.includes("instructions"));
+    const line = readFileSync(report, "utf8")
+      .split("\n")
+      .find(line => line.includes("instructions"));
     const count = Number(line!.split(",")[0]);
     expect(count).toBeFinite();
     return { count, printed: run.stdout };
@@ -65,8 +67,14 @@ describe.skipIf(!mode || !perf)("compile/aot/perf/idioms", () => {
   }
   async function compiled(source: string) {
     const executable = join(String(folder), "idiom");
-    const build = await spawned([bunExe(), "build", "--compile", "--aot", join(root, source), "--outfile", executable], bunEnv);
-    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.not.stringContaining("error"), exitCode: 0 });
+    const build = await spawned(
+      [bunExe(), "build", "--compile", "--aot", join(root, source), "--outfile", executable],
+      bunEnv,
+    );
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
+      stderr: expect.not.stringContaining("error"),
+      exitCode: 0,
+    });
     return executable;
   }
 
@@ -87,11 +95,14 @@ describe.skipIf(!mode || !perf)("compile/aot/perf/idioms", () => {
           jit: Math.round(jit.instructions * 10) / 10,
         });
         console.log([name.padEnd(64), now.typed, now.untyped, now.jit].join("\t"));
-        if (mode === "update") return void writeFileSync(pinsPath, JSON.stringify({ ...pins, ...measured }, null, 2) + "\n");
+        if (mode === "update")
+          return void writeFileSync(pinsPath, JSON.stringify({ ...pins, ...measured }, null, 2) + "\n");
         const pin = pins[name];
         expect(pin).toBeDefined();
         const worse = (["typed", "untyped"] as const).filter(
-          form => (now[form] > pin[form] * 1.1 && now[form] > pin[form] + 20) || (now[form] > pin[form] * 1.25 && now[form] > pin[form] + 4),
+          form =>
+            (now[form] > pin[form] * 1.1 && now[form] > pin[form] + 20) ||
+            (now[form] > pin[form] * 1.25 && now[form] > pin[form] + 4),
         );
         expect({ worse, now, pin }).toEqual({ worse: [], now, pin });
       },

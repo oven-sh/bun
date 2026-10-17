@@ -49,7 +49,8 @@ const tableRoom = 65536;
 const smallestIsland = 4096;
 const isCode = (output: string) => output === ".text" || output.startsWith(".text.");
 const isMovable = (output: string) => isCode(output) || output === ".rodata";
-const isOrdinary = (output: string) => isMovable(output) || [".data", ".data.rel.ro", ".bss"].includes(output) || islandOutput.test(output);
+const isOrdinary = (output: string) =>
+  isMovable(output) || [".data", ".data.rel.ro", ".bss"].includes(output) || islandOutput.test(output);
 const ignoredOutputs = /^\.(debug|gdb_index|symtab|strtab|comment|shstrtab|eh_frame|gcc_except_table|rela|tbss|tdata)/;
 const islandOutput = /^\.bun_[xr]\.(\d+)$/;
 const onlyForDebuggers = /^-Wl,--(gdb-index|compress-debug-sections=.*)$/;
@@ -82,7 +83,8 @@ function readDoors(path: string): Doors {
     }
   }
   const names = new Set(result.features.map(feature => feature.name));
-  for (const { feature } of [...result.doors, ...result.conditions]) if (!names.has(feature)) fail(`${path}: there is no feature ${feature}`);
+  for (const { feature } of [...result.doors, ...result.conditions])
+    if (!names.has(feature)) fail(`${path}: there is no feature ${feature}`);
   return result;
 }
 
@@ -194,7 +196,8 @@ function readObject(path: string, liveSections: Set<string>): ObjectReferences |
         const info = symbols[index * 24 + 4]!;
         const section = sectionOf(index);
         if ((info & 15) === 6) target = "";
-        else if (info >> 4 === 0) target = section > 0 && section < sections.length ? "L" + sections[section]!.name : "";
+        else if (info >> 4 === 0)
+          target = section > 0 && section < sections.length ? "L" + sections[section]!.name : "";
         else target = "G" + stringAt(strings, symbols.readUInt32LE(index * 24));
         targets[index] = target;
       }
@@ -333,7 +336,10 @@ function readGraph(executable: string, mapPath: string, log: string): Graph {
   }
   graph.successors = successors.map((set, node) => (set.delete(node), [...set]));
   for (let node = 0; node < count; node++) {
-    if (!isOrdinary(graph.output[node]!) || (graph.object[node] !== "<internal>" && objects.get(graph.object[node]!) === undefined)) {
+    if (
+      !isOrdinary(graph.output[node]!) ||
+      (graph.object[node] !== "<internal>" && objects.get(graph.object[node]!) === undefined)
+    ) {
       graph.roots.add(node);
     }
   }
@@ -363,7 +369,16 @@ function readMachOObject(path: string): MachOReferences | undefined {
   const data = readFileSync(path);
   if (data.length < 32 || data.readUInt32LE(0) !== 0xfeedfacf) return undefined;
   const sectionsAreWhole = (data.readUInt32LE(24) & 0x2000) === 0;
-  const sections: { name: string; segment: string; address: number; size: number; offset: number; relocations: number; count: number; flags: number }[] = [];
+  const sections: {
+    name: string;
+    segment: string;
+    address: number;
+    size: number;
+    offset: number;
+    relocations: number;
+    count: number;
+    flags: number;
+  }[] = [];
   let symbolTable: { offset: number; count: number; strings: number } | undefined;
   let at = 32;
   for (let command = data.readUInt32LE(16); command > 0; command--) {
@@ -383,7 +398,11 @@ function readMachOObject(path: string): MachOReferences | undefined {
         });
       }
     } else if (kind === 2) {
-      symbolTable = { offset: data.readUInt32LE(at + 8), count: data.readUInt32LE(at + 12), strings: data.readUInt32LE(at + 16) };
+      symbolTable = {
+        offset: data.readUInt32LE(at + 8),
+        count: data.readUInt32LE(at + 12),
+        strings: data.readUInt32LE(at + 16),
+      };
     }
     at += data.readUInt32LE(at + 4);
   }
@@ -438,7 +457,9 @@ function readMachOObject(path: string): MachOReferences | undefined {
   sections.forEach((section, index) => {
     if (section.segment === "__DWARF" || section.segment === "__LD") return;
     if (["__eh_frame", "__gcc_except_tab", "__compact_unwind"].includes(section.name)) return;
-    const runsBeforeMain = ["__mod_init_func", "__init_offsets", "__mod_term_func", "__thread_vars"].includes(section.name);
+    const runsBeforeMain = ["__mod_init_func", "__init_offsets", "__mod_term_func", "__thread_vars"].includes(
+      section.name,
+    );
     if (runsBeforeMain || section.flags & 0x10000000) for (const [, name] of atoms[index]!) result.kept.push(name);
     for (let entry = section.relocations; entry < section.relocations + section.count * 8; entry += 8) {
       const word = data.readUInt32LE(entry + 4);
@@ -477,11 +498,21 @@ function readMachOGraph(mapPath: string, exportedSymbols: string): Graph {
       if (match !== null) files.set(Number(match[1]), match[2]!);
     } else if (stage === "Sections") {
       const words = line.split(/\s+/);
-      if (words.length >= 4) sections.push({ address: parseInt(words[0]!, 16), size: parseInt(words[1]!, 16), name: `${words[2]},${words[3]}` });
+      if (words.length >= 4)
+        sections.push({
+          address: parseInt(words[0]!, 16),
+          size: parseInt(words[1]!, 16),
+          name: `${words[2]},${words[3]}`,
+        });
     } else if (stage === "Symbols") {
       const match = /^0x([0-9A-F]+)\s+0x([0-9A-F]+)\s+\[\s*(\d+)\] (.*)$/.exec(line);
       if (match === null) continue;
-      const symbol = { address: parseInt(match[1]!, 16), size: parseInt(match[2]!, 16), file: Number(match[3]), name: match[4]! };
+      const symbol = {
+        address: parseInt(match[1]!, 16),
+        size: parseInt(match[2]!, 16),
+        file: Number(match[3]),
+        name: match[4]!,
+      };
       if (symbol.size > 0) found.push(symbol);
       else folded.push(symbol);
     }
@@ -573,7 +604,12 @@ function readMachOGraph(mapPath: string, exportedSymbols: string): Graph {
   found.forEach((node, index) => {
     if (node.file === 0 || objects.get(node.file) === undefined) graph.roots.add(index);
   });
-  for (const name of ["_main", ...readFileSync(exportedSymbols, "utf8").split("\n").map(line => line.trim())]) {
+  for (const name of [
+    "_main",
+    ...readFileSync(exportedSymbols, "utf8")
+      .split("\n")
+      .map(line => line.trim()),
+  ]) {
     const node = external.get(name);
     if (node !== undefined) graph.roots.add(node);
   }
@@ -623,7 +659,10 @@ function foldedDoors(log: string, declared: Doors, demangler: string): string[] 
 
 function analyze(graph: Graph, declared: Doors, demangler: string, foldedAway: string[]): Analysis {
   const nodes = [...graph.functionName.keys()];
-  const plain = demangle(demangler, nodes.map(node => graph.functionName.get(node)!));
+  const plain = demangle(
+    demangler,
+    nodes.map(node => graph.functionName.get(node)!),
+  );
   const plainName = new Map(nodes.map((node, index) => [node, plain[index]!]));
   const doors = new Map<number, Door>();
   const matched = new Set<Door>();
@@ -638,10 +677,14 @@ function analyze(graph: Graph, declared: Doors, demangler: string, foldedAway: s
     for (const door of declared.doors) if (door.pattern.test(name)) matched.add(door);
   }
   for (const door of declared.doors) {
-    if (!matched.has(door) && !declared.smallest.has(door.feature)) fail(`no function matches the door ${door.pattern.source}`);
+    if (!matched.has(door) && !declared.smallest.has(door.feature))
+      fail(`no function matches the door ${door.pattern.source}`);
   }
   const folded = [...graph.aliases].filter(([node]) => doors.has(node));
-  const plainAliases = demangle(demangler, folded.flatMap(([, aliases]) => aliases.map(([, name]) => name.replace(/^_/, ""))));
+  const plainAliases = demangle(
+    demangler,
+    folded.flatMap(([, aliases]) => aliases.map(([, name]) => name.replace(/^_/, ""))),
+  );
   let foldedOpen = 0;
   let aliasAt = 0;
   for (const [node, aliases] of folded) {
@@ -730,7 +773,14 @@ interface Linker {
   demangler: string;
   command: string[];
   assemble(name: string, text: string): string;
-  link(name: string, rewrite: (path: string) => string | undefined, first: string[], last: string[], runs?: boolean, without?: RegExp): Link;
+  link(
+    name: string,
+    rewrite: (path: string) => string | undefined,
+    first: string[],
+    last: string[],
+    runs?: boolean,
+    without?: RegExp,
+  ): Link;
 }
 
 function tableOf(
@@ -749,13 +799,21 @@ function tableOf(
       .map(island => `island ${hex(island.start)} ${hex(island.end)} ${island.features}\n`)
       .join("") +
     doors
-      .map(({ address, size, door, name }) => `door ${hex(address)} ${hex(size)} ${door.feature} ${door.whenShut} ${name.slice(0, 60)}\n`)
+      .map(
+        ({ address, size, door, name }) =>
+          `door ${hex(address)} ${hex(size)} ${door.feature} ${door.whenShut} ${name.slice(0, 60)}\n`,
+      )
       .join("");
   if (table.length > tableRoom) fail(`the table takes ${table.length} bytes and there is room for ${tableRoom}`);
   return table;
 }
 
-function listedDoors(graph: Graph, check: Analysis, work: string, featuresOfIslandAt: (node: number) => string | undefined) {
+function listedDoors(
+  graph: Graph,
+  check: Analysis,
+  work: string,
+  featuresOfIslandAt: (node: number) => string | undefined,
+) {
   const listed: { address: number; size: number; door: Door; name: string }[] = [];
   const namedBy = new Map<number, number[]>();
   for (const node of check.core) {
@@ -767,14 +825,20 @@ function listedDoors(graph: Graph, check: Analysis, work: string, featuresOfIsla
       else list.push(node);
     }
   }
-  const spell = (node: number) => check.plainName.get(node) ?? `${graph.object[node]!.slice(graph.object[node]!.lastIndexOf("/") + 1)}:${graph.section[node]}`;
+  const spell = (node: number) =>
+    check.plainName.get(node) ??
+    `${graph.object[node]!.slice(graph.object[node]!.lastIndexOf("/") + 1)}:${graph.section[node]}`;
   const review: string[] = [];
   for (const [node, door] of check.doors) {
     if (featuresOfIslandAt(node) === door.feature) continue;
     if (door.whenShut === "exit" && graph.successors[node]!.every(next => check.core.has(next))) continue;
     const name = check.plainName.get(node)!;
-    if (graph.size[node]! < (door.whenShut === "exit" ? 12 : 8)) fail(`the door ${name} has ${graph.size[node]} bytes: too few to be shut`);
-    review.push(`${listed.length} ${door.feature} ${graph.size[node]} ${name}\n` + [...new Set((namedBy.get(node) ?? []).map(spell))].map(by => `    ${by}\n`).join(""));
+    if (graph.size[node]! < (door.whenShut === "exit" ? 12 : 8))
+      fail(`the door ${name} has ${graph.size[node]} bytes: too few to be shut`);
+    review.push(
+      `${listed.length} ${door.feature} ${graph.size[node]} ${name}\n` +
+        [...new Set((namedBy.get(node) ?? []).map(spell))].map(by => `    ${by}\n`).join(""),
+    );
     listed.push({ address: graph.address[node]!, size: graph.size[node]!, door, name });
   }
   writeFileSync(join(work, "doors.txt"), review.join(""));
@@ -796,12 +860,20 @@ function islandsBySize(graph: Graph, analysis: Analysis, declared: Doors, isMova
       `nothing lies behind the ${analysis.doors.size} doors: ${graph.address.length} sections, ` +
         `${graph.successors.reduce((sum, list) => sum + list.length, 0)} references, ${graph.roots.size} roots, ` +
         `${megabytes(analysis.unexplained)} that nothing names, ${graph.unreadObjects.length} inputs that could not be read` +
-        graph.unreadObjects.slice(0, 5).map(object => `\n  ${object}`).join(""),
+        graph.unreadObjects
+          .slice(0, 5)
+          .map(object => `\n  ${object}`)
+          .join(""),
     );
   }
   for (const [feature, smallest] of declared.smallest) {
-    const bytes = islands.filter(features => features.split(",").includes(feature)).reduce((sum, features) => sum + bytesOf.get(features)!, 0);
-    if (bytes < smallest) fail(`${megabytes(bytes)} can go with ${feature}, which is to be at least ${megabytes(smallest)}: something that stays has begun to name the rest`);
+    const bytes = islands
+      .filter(features => features.split(",").includes(feature))
+      .reduce((sum, features) => sum + bytesOf.get(features)!, 0);
+    if (bytes < smallest)
+      fail(
+        `${megabytes(bytes)} can go with ${feature}, which is to be at least ${megabytes(smallest)}: something that stays has begun to name the rest`,
+      );
   }
   return { islands, bytesOf, numberOf: new Map(islands.map((features, index) => [features, index + 1])) };
 }
@@ -832,11 +904,20 @@ function linkElf({ work, output, declared, demangler, assemble, link }: Linker):
     );
   link("listing", path => (inputDirectories.add(dirname(path)), undefined), [], [], false);
   for (const stale of compiledAtLinkTime()) rmSync(stale);
-  const first = link("first", path => path, [support], [...always, "-Wl,--save-temps=prelink", "-Wl,--strip-debug"], true, onlyForDebuggers);
+  const first = link(
+    "first",
+    path => path,
+    [support],
+    [...always, "-Wl,--save-temps=prelink", "-Wl,--strip-debug"],
+    true,
+    onlyForDebuggers,
+  );
   lap("first link");
   const empty = compiledAtLinkTime().filter(object => statSync(object).size === 0);
   if (empty.length > 0) {
-    fail(`the linker kept ${empty.length} empty files for what it compiled from bitcode: it does so when it has a ThinLTO cache; link without one`);
+    fail(
+      `the linker kept ${empty.length} empty files for what it compiled from bitcode: it does so when it has a ThinLTO cache; link without one`,
+    );
   }
   const graph = readGraph(first.executable, first.map, first.log);
   lap("graph");
@@ -902,13 +983,17 @@ function linkElf({ work, output, declared, demangler, assemble, link }: Linker):
     if (laidOut.size[node]! <= 16 && laidOut.object[node]!.startsWith(work)) continue;
     const needed = check.core.has(node) ? ["what always stays"] : (check.neededBy.get(node) ?? "").split(",");
     if (!needed.every(feature => features.split(",").includes(feature)) && faults++ < 10) {
-      console.error(`islands: ${laidOut.object[node]}:(${laidOut.section[node]}) lies in the island of ${features} but is needed by ${needed}`);
+      console.error(
+        `islands: ${laidOut.object[node]}:(${laidOut.section[node]}) lies in the island of ${features} but is needed by ${needed}`,
+      );
     }
   }
   if (faults > 0) fail(`${faults} sections lie in an island that can go while they are needed`);
 
   const elf = openElf(resolve(output), "r+") ?? fail(`${output} is not an ELF file`);
-  const placed = elf.sections.filter(section => (section.flags & 2) !== 0 && section.size > 0).sort((a, b) => a.address - b.address);
+  const placed = elf.sections
+    .filter(section => (section.flags & 2) !== 0 && section.size > 0)
+    .sort((a, b) => a.address - b.address);
   const ranges = placed.flatMap((section, index) => {
     const island = islandOutput.exec(section.name);
     if (island === null) return [];
@@ -916,7 +1001,8 @@ function linkElf({ work, output, declared, demangler, assemble, link }: Linker):
     const end = next !== undefined && islandOutput.test(next.name) ? next.address : section.address + section.size;
     return [{ start: section.address, end, features: islands[Number(island[1]) - 1]! }];
   });
-  const stub = [...check.plainName].find(([, name]) => name === "Bun__trimmedOut")?.[0] ?? fail("Bun__trimmedOut is gone");
+  const stub =
+    [...check.plainName].find(([, name]) => name === "Bun__trimmedOut")?.[0] ?? fail("Bun__trimmedOut is gone");
   const table = tableOf(
     declared,
     laidOut.address[stub]!,
@@ -927,7 +1013,12 @@ function linkElf({ work, output, declared, demangler, assemble, link }: Linker):
   writeSync(elf.fd, Buffer.from(table, "latin1"), 0, table.length, room.offset);
   closeSync(elf.fd);
   lap("check");
-  report(check.doors.size, islands, bytesOf, ranges.reduce((sum, range) => sum + range.end - range.start, 0));
+  report(
+    check.doors.size,
+    islands,
+    bytesOf,
+    ranges.reduce((sum, range) => sum + range.end - range.start, 0),
+  );
 }
 
 function linkMachO({ work, output, declared, demangler, command, assemble, link }: Linker): void {
@@ -963,14 +1054,19 @@ function linkMachO({ work, output, declared, demangler, command, assemble, link 
   lap("graph");
   const foldedNames = (of: Graph) => [...of.aliases.values()].flat().map(([, name]) => name.replace(/^_/, ""));
   const analysis = analyze(graph, declared, demangler, foldedNames(graph));
-  if (analysis.foldedOpen > 0) console.log(`${analysis.foldedOpen} doors were folded into other functions and stay open`);
+  if (analysis.foldedOpen > 0)
+    console.log(`${analysis.foldedOpen} doors were folded into other functions and stay open`);
   const { islands, bytesOf, numberOf } = islandsBySize(graph, analysis, declared, output => movable.has(output));
 
   const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
   const stem = (name: string) => name.split(".llvm.")[0]!.split(".__uniq.")[0]!;
   const spell = (object: string, name: string) => (graph.externalNames.has(name) ? name : `${base(object)}:${name}`);
-  const namesOf = (node: number): [string, string][] => [[graph.object[node]!, graph.section[node]!], ...(graph.aliases.get(node) ?? [])];
-  const moves = (node: number) => analysis.neededBy.has(node) && movable.has(graph.output[node]!) && !staysAsDoor(analysis, node);
+  const namesOf = (node: number): [string, string][] => [
+    [graph.object[node]!, graph.section[node]!],
+    ...(graph.aliases.get(node) ?? []),
+  ];
+  const moves = (node: number) =>
+    analysis.neededBy.has(node) && movable.has(graph.output[node]!) && !staysAsDoor(analysis, node);
   const taken = new Set<string>();
   const takenAnywhere = new Set<string>();
   for (let node = 0; node < graph.address.length; node++) {
@@ -986,7 +1082,9 @@ function linkMachO({ work, output, declared, demangler, command, assemble, link 
     namesOf(node).every(([object, name]) =>
       graph.externalNames.has(name)
         ? !takenAnywhere.has(stem(name))
-        : !taken.has(base(graph.object[node]!) + "\0" + stem(name)) && !taken.has(base(object) + "\0" + stem(name)) && !taken.has("\0" + stem(name)),
+        : !taken.has(base(graph.object[node]!) + "\0" + stem(name)) &&
+          !taken.has(base(object) + "\0" + stem(name)) &&
+          !taken.has("\0" + stem(name)),
     );
   let order: string[] = [];
   let markerText = "";
@@ -1002,7 +1100,12 @@ function linkMachO({ work, output, declared, demangler, command, assemble, link 
       }
       order.push(`_bun_island_${index + 1}_${short}_begin`);
       for (let node = 0; node < graph.address.length; node++) {
-        if (moves(node) && graph.output[node] === section && numberOf.get(analysis.neededBy.get(node)!) === index + 1 && canBeNamed(node)) {
+        if (
+          moves(node) &&
+          graph.output[node] === section &&
+          numberOf.get(analysis.neededBy.get(node)!) === index + 1 &&
+          canBeNamed(node)
+        ) {
           for (const [object, name] of namesOf(node)) order.push(spell(object, name));
         }
       }
@@ -1023,11 +1126,17 @@ function linkMachO({ work, output, declared, demangler, command, assemble, link 
     const laidOut = readMachOGraph(second.map, exportedSymbols);
     const check = analyze(laidOut, declared, demangler, foldedNames(laidOut));
     const marker = new Map<string, number>();
-    laidOut.section.forEach((name, node) => void (name.startsWith("_bun_island_") && marker.set(name, laidOut.address[node]!)));
+    laidOut.section.forEach(
+      (name, node) => void (name.startsWith("_bun_island_") && marker.set(name, laidOut.address[node]!)),
+    );
     const ranges = islands.flatMap((features, index) =>
       [...movable.values()].map(short => ({
         start: marker.get(`_bun_island_${index + 1}_${short}_begin`)!,
-        end: marker.get(index + 1 < islands.length ? `_bun_island_${index + 2}_${short}_begin` : `_bun_island_${index + 1}_${short}_end`)!,
+        end: marker.get(
+          index + 1 < islands.length
+            ? `_bun_island_${index + 2}_${short}_begin`
+            : `_bun_island_${index + 1}_${short}_end`,
+        )!,
         features,
       })),
     );
@@ -1069,7 +1178,12 @@ function linkMachO({ work, output, declared, demangler, command, assemble, link 
     if (room < 0) fail("the room for the table is gone");
     writeSync(fd, Buffer.from(table, "latin1"), 0, table.length, room);
     closeSync(fd);
-    report(check.doors.size, islands, bytesOf, ranges.reduce((sum, range) => sum + range.end - range.start, 0));
+    report(
+      check.doors.size,
+      islands,
+      bytesOf,
+      ranges.reduce((sum, range) => sum + range.end - range.start, 0),
+    );
     return;
   }
 }
@@ -1090,7 +1204,11 @@ function main(): void {
   const finalMap = command[mapAt]!.slice(mapFlag.length);
   const compiler = command[0]!;
   const targetFlags = command.flatMap((argument, index) =>
-    /^(--target=|-mmacosx-version-min=)/.test(argument) ? [argument] : argument === "-isysroot" ? [argument, command[index + 1]!] : [],
+    /^(--target=|-mmacosx-version-min=)/.test(argument)
+      ? [argument]
+      : argument === "-isysroot"
+        ? [argument, command[index + 1]!]
+        : [],
   );
   rmSync(work, { recursive: true, force: true });
   mkdirSync(work, { recursive: true });
@@ -1117,7 +1235,9 @@ function main(): void {
         if (without?.test(argument)) return [];
         const file = /^(-Wl,)?@(.*)$/.exec(argument);
         if (file === null) return [argument];
-        const lines = readFileSync(file[2]!, "utf8").split("\n").filter(line => line !== "");
+        const lines = readFileSync(file[2]!, "utf8")
+          .split("\n")
+          .filter(line => line !== "");
         const kept = lines.flatMap(line => {
           const path = line.replace(/^"(.*)"$/, "$1");
           if (path.startsWith("-")) return [line];

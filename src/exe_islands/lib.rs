@@ -72,7 +72,9 @@ impl Container {
             Container::Elf => elf_table_range(file),
             Container::MachO => {
                 let sections = macho::sections(file)?;
-                let section = sections.iter().find(|section| section.name == MACHO_TABLE_SECTION);
+                let section = sections
+                    .iter()
+                    .find(|section| section.name == MACHO_TABLE_SECTION);
                 let section = section.ok_or(Error::NoIslands)?;
                 let length = (section.addresses.end - section.addresses.start) as usize;
                 slice(file, section.offset, length)?;
@@ -86,7 +88,9 @@ impl Container {
             Container::Elf => elf_offset_of(file, address),
             Container::MachO => {
                 let sections = macho::sections(file)?;
-                let section = sections.iter().find(|section| section.addresses.contains(&address));
+                let section = sections
+                    .iter()
+                    .find(|section| section.addresses.contains(&address));
                 let section = section.ok_or(Error::InvalidExecutable)?;
                 Ok(section.offset + (address - section.addresses.start) as usize)
             }
@@ -140,7 +144,11 @@ const PT_LOAD: u32 = 1;
 fn elf_table_range(file: &[u8]) -> Result<Range<usize>> {
     let (first, count) = (usize_at(file, 0x28)?, usize::from(u16_at(file, 0x3c)?));
     let names = first + usize::from(u16_at(file, 0x3e)?) * SECTION_HEADER;
-    let names = slice(file, usize_at(file, names + 24)?, usize_at(file, names + 32)?)?;
+    let names = slice(
+        file,
+        usize_at(file, names + 24)?,
+        usize_at(file, names + 32)?,
+    )?;
     for at in (0..count).map(|index| first + index * SECTION_HEADER) {
         let name = names.get(u32_at(file, at)? as usize..).unwrap_or_default();
         if bytes::fixed_name(name) == ELF_TABLE_SECTION {
@@ -181,15 +189,23 @@ impl<'a> Table<'a> {
                 b"feature" => table.features.push(word()?),
                 b"when" => {
                     let feature = word()?;
-                    let fact = line.get(kind.len() + feature.len() + 2..).ok_or(Error::InvalidExecutable)?;
-                    table.conditions.push(Condition { feature: table.feature(feature)?, fact });
+                    let fact = line
+                        .get(kind.len() + feature.len() + 2..)
+                        .ok_or(Error::InvalidExecutable)?;
+                    table.conditions.push(Condition {
+                        feature: table.feature(feature)?,
+                        fact,
+                    });
                 }
                 b"island" => {
                     let addresses = hexadecimal(word()?)?..hexadecimal(word()?)?;
                     let needed_by = strings::split(word()?, b",")
                         .map(|name| table.feature(name))
                         .collect::<Result<Vec<usize>>>()?;
-                    table.islands.push(Island { addresses, needed_by });
+                    table.islands.push(Island {
+                        addresses,
+                        needed_by,
+                    });
                 }
                 b"door" => {
                     let start = hexadecimal(word()?)?;
@@ -200,7 +216,11 @@ impl<'a> Table<'a> {
                         b"return" => WhenShut::Return,
                         _ => return Err(Error::InvalidExecutable),
                     };
-                    table.doors.push(Door { addresses, feature, when_shut });
+                    table.doors.push(Door {
+                        addresses,
+                        feature,
+                        when_shut,
+                    });
                 }
                 _ => {}
             }
@@ -282,9 +302,17 @@ pub fn features_unused_by(file: &[u8], facts: &[u8]) -> Result<Vec<Vec<u8>>> {
             _ => line == fact,
         })
     };
-    let conditions_of = |feature: usize| table.conditions.iter().filter(move |condition| condition.feature == feature);
+    let conditions_of = |feature: usize| {
+        table
+            .conditions
+            .iter()
+            .filter(move |condition| condition.feature == feature)
+    };
     Ok((0..table.features.len())
-        .filter(|&feature| conditions_of(feature).next().is_some() && !conditions_of(feature).any(|condition| holds(condition.fact)))
+        .filter(|&feature| {
+            conditions_of(feature).next().is_some()
+                && !conditions_of(feature).any(|condition| holds(condition.fact))
+        })
         .map(|feature| table.features[feature].to_vec())
         .collect())
 }
@@ -316,7 +344,11 @@ pub fn without(mut file: Vec<u8>, excluded: &[&[u8]]) -> Result<Vec<u8>> {
         abuts
     });
 
-    let trap: &[u8] = if is_arm64 { &[0x20, 0x00, 0x20, 0xd4] } else { &[0xcc] };
+    let trap: &[u8] = if is_arm64 {
+        &[0x20, 0x00, 0x20, 0xd4]
+    } else {
+        &[0xcc]
+    };
     for addresses in &dead {
         let length = (addresses.end - addresses.start) as usize;
         let offset = container.offset_of(&file, addresses.start)?;
@@ -324,8 +356,16 @@ pub fn without(mut file: Vec<u8>, excluded: &[&[u8]]) -> Result<Vec<u8>> {
             chunk.copy_from_slice(&trap[..chunk.len()]);
         }
     }
-    for (number, door) in table.doors.iter().enumerate().filter(|(_, door)| is_excluded[door.feature]) {
-        if dead.iter().any(|addresses| addresses.contains(&door.addresses.start)) {
+    for (number, door) in table
+        .doors
+        .iter()
+        .enumerate()
+        .filter(|(_, door)| is_excluded[door.feature])
+    {
+        if dead
+            .iter()
+            .any(|addresses| addresses.contains(&door.addresses.start))
+        {
             continue;
         }
         let code = shut_door(door, number, table.stub, is_arm64)?;

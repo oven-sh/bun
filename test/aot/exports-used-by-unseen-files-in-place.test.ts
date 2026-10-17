@@ -2,8 +2,8 @@
 // What that file hands to an exported typed function is an ordinary object. Where the function takes its parameter apart, `function f({ a, b, c = "c" }: T)`, the object cannot be
 // named in the body, so all that may happen to it is what plain Bun does: the names of the pattern are read, by name, in the order written, once.
 import { expect } from "bun:test";
-import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { test } from "./supported";
 
 const part = `type Props = { a: string | readonly string[]; b: string; c?: string; d?: string; e?: boolean; n1?: number; n2?: number; k?: number };
 const text = (a: string | readonly string[]): string => (typeof a === "string" ? a : a.join("+"));
@@ -44,21 +44,45 @@ const asPlainBun: Record<string, string> = {
 
 // Still refused, and loudly. Whoever cures one of these moves its row up.
 const stillRefused: Record<string, [why: string, body: string]> = {
-  "default-calls": ["a default that calls a function would run behind the reads", `export function run() { return [part.callsForItsDefault({ a: "x", b: "y" }), part.callsForItsDefault({ a: "x", b: "y", c: "C" })]; }`],
-  "arguments": ["the object can be named: arguments[0]", `export function run() { return part.namesItByArguments({ a: "x", b: "y" }); }`],
-  "rest": ["a rest element makes an object of what is left", `export function run() { return part.withRest({ a: "x", b: "y" }); }`],
-  "nested": ["a pattern within the pattern", `export function run() { return part.nested({ a: "x", inner: { x: 1, y: 2 } }); }`],
-  "required-left-out": ["the pattern leaves out a required member of the type", `export function run() { return [part.leavesARequiredOneOut({ a: "x", must: 1 }), part.leavesARequiredOneOut({ a: "x" })]; }`],
-  "ordinary": ["the parameter has a name: it can be kept, changed and compared", `export function run() { return part.ordinary({ a: "x", b: "y" }); }`],
+  "default-calls": [
+    "a default that calls a function would run behind the reads",
+    `export function run() { return [part.callsForItsDefault({ a: "x", b: "y" }), part.callsForItsDefault({ a: "x", b: "y", c: "C" })]; }`,
+  ],
+  "arguments": [
+    "the object can be named: arguments[0]",
+    `export function run() { return part.namesItByArguments({ a: "x", b: "y" }); }`,
+  ],
+  "rest": [
+    "a rest element makes an object of what is left",
+    `export function run() { return part.withRest({ a: "x", b: "y" }); }`,
+  ],
+  "nested": [
+    "a pattern within the pattern",
+    `export function run() { return part.nested({ a: "x", inner: { x: 1, y: 2 } }); }`,
+  ],
+  "required-left-out": [
+    "the pattern leaves out a required member of the type",
+    `export function run() { return [part.leavesARequiredOneOut({ a: "x", must: 1 }), part.leavesARequiredOneOut({ a: "x" })]; }`,
+  ],
+  "ordinary": [
+    "the parameter has a name: it can be kept, changed and compared",
+    `export function run() { return part.ordinary({ a: "x", b: "y" }); }`,
+  ],
 };
 
 const illTyped = `export function run() { return part.label({ a: 5, b: "y" }); }`;
 
-const plugins = { ...asPlainBun, ...Object.fromEntries(Object.entries(stillRefused).map(([row, [, body]]) => [row, body])), "ill-typed": illTyped };
+const plugins = {
+  ...asPlainBun,
+  ...Object.fromEntries(Object.entries(stillRefused).map(([row, [, body]]) => [row, body])),
+  "ill-typed": illTyped,
+};
 const files = {
   "part.ts": part,
   "main.ts": main,
-  ...Object.fromEntries(Object.entries(plugins).map(([row, body]) => [`plugin-${row}.js`, `import * as part from "./part.ts";\n${body}\n`])),
+  ...Object.fromEntries(
+    Object.entries(plugins).map(([row, body]) => [`plugin-${row}.js`, `import * as part from "./part.ts";\n${body}\n`]),
+  ),
 };
 
 async function run(cwd: string, args: string[]) {

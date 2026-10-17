@@ -2487,7 +2487,11 @@ pub(crate) mod __gated_printer {
         fn record_audited_parameters(&mut self, function: bun_ast::Loc) {
             if let Some(audited) = self.options.audited {
                 for parameter in audited.parameters_of(function.start as u32) {
-                    bun_ast::audited::record_printed_parameter(self.writer.written() as u32, parameter.index, parameter.id);
+                    bun_ast::audited::record_printed_parameter(
+                        self.writer.written() as u32,
+                        parameter.index,
+                        parameter.id,
+                    );
                 }
             }
         }
@@ -2559,7 +2563,11 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_class(&mut self, class: &G::Class, text_start: i32) {
             if let Some(audited) = self.options.audited {
                 for parameter in audited.parameters_of(class.body_loc.start as u32) {
-                    bun_ast::audited::record_printed_parameter(text_start as u32, parameter.index, parameter.id);
+                    bun_ast::audited::record_printed_parameter(
+                        text_start as u32,
+                        parameter.index,
+                        parameter.id,
+                    );
                 }
             }
             if let Some(extends) = &class.extends {
@@ -3536,7 +3544,11 @@ pub(crate) mod __gated_printer {
                 ExprData::ECall(e) if matches!(e.target.data, ExprData::EMissing(..)) => {
                     let start = self.writer.written();
                     self.print_expr(e.args[0], level, flags);
-                    bun_ast::audited::record_printed_expression(start as u32, self.writer.written() as u32, e.close_paren_loc.start as u32);
+                    bun_ast::audited::record_printed_expression(
+                        start as u32,
+                        self.writer.written() as u32,
+                        e.close_paren_loc.start as u32,
+                    );
                 }
                 ExprData::ECall(e) => {
                     let mut wrap = level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall);

@@ -15,10 +15,7 @@ const {
   sameSettings,
   tryOtherPassword,
 } = require("internal/sql/pool");
-const {
-  QueryState,
-  stateOf,
-} = require("internal/sql/query");
+const { QueryState, stateOf } = require("internal/sql/query");
 
 const { PostgresError } = require("internal/sql/errors");
 

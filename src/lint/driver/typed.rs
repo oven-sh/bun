@@ -750,10 +750,9 @@ pub(crate) fn lint(
     let mut pending: Vec<usize> = (0..files.len()).collect();
     let mut is_first_pass = true;
     while !pending.is_empty() {
-        let changed = states
-            .iter()
-            .zip(files)
-            .filter_map(|(state, file)| Some((from_native(file.path), state.current.clone()?.into())));
+        let changed = states.iter().zip(files).filter_map(|(state, file)| {
+            Some((from_native(file.path), state.current.clone()?.into()))
+        });
         let changed = changed.collect();
         let linted = check_and_lint(
             context,

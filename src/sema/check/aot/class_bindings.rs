@@ -5,7 +5,9 @@ use crate::program::Sym;
 
 impl<'p, 's> Checker<'p, 's> {
     pub fn always_holds_class(&self, sym: Sym) -> bool {
-        let Some((file, decl @ Decl::Class(_))) = self.variable_declaration(sym) else { return false };
+        let Some((file, decl @ Decl::Class(_))) = self.variable_declaration(sym) else {
+            return false;
+        };
         let (hir, bound) = (self.hir(file), self.bound(file));
         let local = bound.symbol_of_declaration(decl);
         local.is_some()

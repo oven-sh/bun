@@ -23,21 +23,19 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-$overriddenName = "try"; export function try_(callback /*, ...args */)
-{
-    "use strict";
+$overriddenName = "try";
+export function try_(callback /*, ...args */) {
+  "use strict";
 
-    if (!$isObject(this))
-        throw new TypeError("|this| is not an object");
+  if (!$isObject(this)) throw new TypeError("|this| is not an object");
 
-    var args = [];
-    for (var i = 1; i < $argumentCount(); i++)
-        $putByValDirect(args, i - 1, arguments[i]);
+  var args = [];
+  for (var i = 1; i < $argumentCount(); i++) $putByValDirect(args, i - 1, arguments[i]);
 
-    try {
-        var value = callback.$apply(undefined, args);
-    } catch (error) {
-        return $promiseReject(this, error);
-    }
-    return $promiseResolve(this, value);
+  try {
+    var value = callback.$apply(undefined, args);
+  } catch (error) {
+    return $promiseReject(this, error);
+  }
+  return $promiseResolve(this, value);
 }

@@ -483,9 +483,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--compile-in-place               With --aot: the executable runs where it was built. Every module keeps its path on disk, and what was not compiled is loaded from there"
         ),
-        parse_param!(
-            "--rewrite-jest-for-tests         (internal) The entry points are test files"
-        ),
+        parse_param!("--rewrite-jest-for-tests         (internal) The entry points are test files"),
         parse_param!(
             "--expose-internals               (internal) What is built is run with --expose-internals"
         ),
@@ -1112,7 +1110,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             | CommandTag::BuildCommand
             | CommandTag::TestCommand
     ) {
-        crate::cli::aot::reject_unknown_flags(cmd == CommandTag::BuildCommand, ctx.passthrough.len());
+        crate::cli::aot::reject_unknown_flags(
+            cmd == CommandTag::BuildCommand,
+            ctx.passthrough.len(),
+        );
         if !args.options(b"--conditions").is_empty() {
             opts.conditions = slice_to_owned(args.options(b"--conditions"));
         }
@@ -1335,9 +1336,13 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.runtime_options.smol = args.flag(b"--smol");
         ctx.runtime_options.aot = args.flag(b"--debug-aot");
         let enforces_aot_rules = args.flag(b"--aot") && !ctx.runtime_options.aot;
-        ctx.runtime_options.aot_crash_if_interpreter_is_used = args.flag(b"--aot-crash-if-interpreter-is-used") && !enforces_aot_rules;
+        ctx.runtime_options.aot_crash_if_interpreter_is_used =
+            args.flag(b"--aot-crash-if-interpreter-is-used") && !enforces_aot_rules;
         ctx.runtime_options.aot_huge_heap = args.flag(b"--aot-huge-heap") && !enforces_aot_rules;
-        if ctx.runtime_options.aot_huge_heap && !ctx.runtime_options.aot && args.option(b"--aot-graph-fd").is_none() {
+        if ctx.runtime_options.aot_huge_heap
+            && !ctx.runtime_options.aot
+            && args.option(b"--aot-graph-fd").is_none()
+        {
             Output::err_generic("--aot-huge-heap requires --aot", ());
             Global::crash();
         }
@@ -1362,7 +1367,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.runtime_options.aot_graph_fd = args
             .option(b"--aot-graph-fd")
             .and_then(|fd| core::str::from_utf8(fd).ok()?.parse().ok());
-        ctx.runtime_options.aot_decode_crash_report = args.option(b"--aot-decode-crash-report").map(Box::from);
+        ctx.runtime_options.aot_decode_crash_report =
+            args.option(b"--aot-decode-crash-report").map(Box::from);
         // To `node`, `--check` means something else.
         ctx.runtime_options.check = args.flag(b"--check") && cmd != CommandTag::RunAsNodeCommand;
         // Nothing runs unchecked, so the process starts again, as under `--watch`. Decided here: on
@@ -2204,13 +2210,24 @@ fn parse_build_command_options(
     ctx.bundler_options.dts = args.flag(b"--dts");
     ctx.bundler_options.aot = args.flag(b"--aot");
     ctx.bundler_options.aot_explain = slice_to_owned(args.options(b"--aot-explain"));
-    if let Some(word) = ctx.bundler_options.aot_explain.iter().find(|word| !bun_aot::Explain::default().set(word)) {
-        Output::err_generic("--aot-explain does not take \"{}\": it is one of {}", (BStr::new(word), bun_aot::Explain::REPORTS.join(", ")));
+    if let Some(word) = ctx
+        .bundler_options
+        .aot_explain
+        .iter()
+        .find(|word| !bun_aot::Explain::default().set(word))
+    {
+        Output::err_generic(
+            "--aot-explain does not take \"{}\": it is one of {}",
+            (BStr::new(word), bun_aot::Explain::REPORTS.join(", ")),
+        );
         Global::exit(1);
     }
     let rule_flags = crate::cli::aot::rule_flags(bun_core::argv().into_iter().skip(1));
     if let Some(flag) = rule_flags.first().filter(|_| !ctx.bundler_options.aot) {
-        Output::err_generic("{} requires --aot", (BStr::new(strings::split(flag, b"=").next().unwrap_or(flag)),));
+        Output::err_generic(
+            "{} requires --aot",
+            (BStr::new(strings::split(flag, b"=").next().unwrap_or(flag)),),
+        );
         Global::exit(1);
     }
     ctx.bundler_options.aot_rules.extend(rule_flags);
@@ -2614,8 +2631,10 @@ fn parse_build_command_options(
             Global::crash();
         }
         // It resolves what it loads from disk as `bun run` does.
-        ctx.bundler_options.compile_autoload_tsconfig = !args.flag(b"--no-compile-autoload-tsconfig");
-        ctx.bundler_options.compile_autoload_package_json = !args.flag(b"--no-compile-autoload-package-json");
+        ctx.bundler_options.compile_autoload_tsconfig =
+            !args.flag(b"--no-compile-autoload-tsconfig");
+        ctx.bundler_options.compile_autoload_package_json =
+            !args.flag(b"--no-compile-autoload-package-json");
         // `a.cjs` and `a.mjs` of one folder are two files of the executable.
         ctx.bundler_options.entry_naming = Box::from(&b"./[dir]/[name]-[hash].[ext]"[..]);
     }
@@ -2623,7 +2642,8 @@ fn parse_build_command_options(
         Output::err_generic("--aot requires --compile", ());
         Global::crash();
     }
-    ctx.bundler_options.aot_crash_if_interpreter_is_used = args.flag(b"--aot-crash-if-interpreter-is-used");
+    ctx.bundler_options.aot_crash_if_interpreter_is_used =
+        args.flag(b"--aot-crash-if-interpreter-is-used");
     if ctx.bundler_options.aot_crash_if_interpreter_is_used && !ctx.bundler_options.aot {
         Output::err_generic("--aot-crash-if-interpreter-is-used requires --aot", ());
         Global::crash();
@@ -2654,23 +2674,46 @@ fn parse_build_command_options(
         };
     }
     if ctx.bundler_options.aot {
-        if let Some(why) = crate::cli::aot::unsupported_reason(&ctx.bundler_options.compile_target) {
+        if let Some(why) = crate::cli::aot::unsupported_reason(&ctx.bundler_options.compile_target)
+        {
             Output::err_generic("--aot: {}", format_args!("{}", why));
             Global::crash();
         }
         let ignored_flags = [
-            ("--banner with code", args.option(b"--banner").is_some_and(|text| !crate::cli::aot::is_only_comments(text))),
-            ("--footer with code", args.option(b"--footer").is_some_and(|text| !crate::cli::aot::is_only_comments(text))),
-            ("--bytecode-depth", args.option(b"--bytecode-depth").is_some()),
-            ("--bytecode-order", !args.options(b"--bytecode-order").is_empty()),
+            (
+                "--banner with code",
+                args.option(b"--banner")
+                    .is_some_and(|text| !crate::cli::aot::is_only_comments(text)),
+            ),
+            (
+                "--footer with code",
+                args.option(b"--footer")
+                    .is_some_and(|text| !crate::cli::aot::is_only_comments(text)),
+            ),
+            (
+                "--bytecode-depth",
+                args.option(b"--bytecode-depth").is_some(),
+            ),
+            (
+                "--bytecode-order",
+                !args.options(b"--bytecode-order").is_empty(),
+            ),
         ];
         if let Some((option, _)) = ignored_flags.iter().find(|option| option.1) {
             Output::err_generic("--aot does not support {}", format_args!("{}", option));
             Global::crash();
         }
-        let minifies_identifiers = ctx.bundler_options.minify_identifiers && !ctx.bundler_options.keep_names;
-        if args.option(b"--sourcemap").is_some_and(|setting| setting != b"none") && !args.flag(b"--compile-run") && !minifies_identifiers {
-            bun_core::note!("--sourcemap has no effect with --aot: stack traces from compiled code already show the original file, line and column, and any source map that is written is empty");
+        let minifies_identifiers =
+            ctx.bundler_options.minify_identifiers && !ctx.bundler_options.keep_names;
+        if args
+            .option(b"--sourcemap")
+            .is_some_and(|setting| setting != b"none")
+            && !args.flag(b"--compile-run")
+            && !minifies_identifiers
+        {
+            bun_core::note!(
+                "--sourcemap has no effect with --aot: stack traces from compiled code already show the original file, line and column, and any source map that is written is empty"
+            );
         }
     }
 

@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { describe, test } from "./supported";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "path";
+import { describe, test } from "./supported";
 
 // `import { name } from "node:fs"` where the built-in module has no such export is a SyntaxError when the module is linked,
 // before any code runs. Ahead-of-time compiled programs must fail the same way instead of running on with `undefined`.
@@ -24,27 +24,85 @@ async function inMode(mode: (typeof modes)[number], cwd: string, entry: string) 
 }
 
 const missing: [entry: string, text: string, message: string][] = [
-  ["crypto.mjs", `import { pseudoRandomBytes } from "node:crypto";\nconsole.log("ran", typeof pseudoRandomBytes);\n`, "Export named 'pseudoRandomBytes' not found in module 'node:crypto'."],
-  ["stream.mjs", `import { EventEmitter } from "node:stream";\nconsole.log("ran", typeof EventEmitter);\n`, "Export named 'EventEmitter' not found in module 'node:stream'."],
-  ["without-prefix.mjs", `import { readFileSync, noSuchExport } from "fs";\nconsole.log("ran", typeof readFileSync, typeof noSuchExport);\n`, "Export named 'noSuchExport' not found in module 'node:fs'."],
-  ["renamed.mjs", `import { noSuchExport as local } from "node:path";\nconsole.log("ran", typeof local);\n`, "Export named 'noSuchExport' not found in module 'node:path'."],
-  ["unused.mjs", `import { noSuchExport } from "node:os";\nconsole.log("ran");\n`, "Export named 'noSuchExport' not found in module 'node:os'."],
-  ["typescript.ts", `// @ts-nocheck\nimport { noSuchExport } from "node:util";\nconsole.log("ran", typeof noSuchExport);\n`, "Export named 'noSuchExport' not found in module 'node:util'."],
-  ["export-from.mjs", `export { noSuchExport } from "node:fs";\nconsole.log("ran");\n`, "export 'noSuchExport' not found in '"],
-  ["imported-and-exported.mjs", `import { noSuchExport } from "node:fs";\nexport { noSuchExport };\nconsole.log("ran");\n`, "export 'noSuchExport' not found in '"],
-  ["sqlite.mjs", `import { noSuchExport } from "bun:sqlite";\nconsole.log("ran", typeof noSuchExport);\n`, "Export named 'noSuchExport' not found in module 'bun:sqlite'."],
+  [
+    "crypto.mjs",
+    `import { pseudoRandomBytes } from "node:crypto";\nconsole.log("ran", typeof pseudoRandomBytes);\n`,
+    "Export named 'pseudoRandomBytes' not found in module 'node:crypto'.",
+  ],
+  [
+    "stream.mjs",
+    `import { EventEmitter } from "node:stream";\nconsole.log("ran", typeof EventEmitter);\n`,
+    "Export named 'EventEmitter' not found in module 'node:stream'.",
+  ],
+  [
+    "without-prefix.mjs",
+    `import { readFileSync, noSuchExport } from "fs";\nconsole.log("ran", typeof readFileSync, typeof noSuchExport);\n`,
+    "Export named 'noSuchExport' not found in module 'node:fs'.",
+  ],
+  [
+    "renamed.mjs",
+    `import { noSuchExport as local } from "node:path";\nconsole.log("ran", typeof local);\n`,
+    "Export named 'noSuchExport' not found in module 'node:path'.",
+  ],
+  [
+    "unused.mjs",
+    `import { noSuchExport } from "node:os";\nconsole.log("ran");\n`,
+    "Export named 'noSuchExport' not found in module 'node:os'.",
+  ],
+  [
+    "typescript.ts",
+    `// @ts-nocheck\nimport { noSuchExport } from "node:util";\nconsole.log("ran", typeof noSuchExport);\n`,
+    "Export named 'noSuchExport' not found in module 'node:util'.",
+  ],
+  [
+    "export-from.mjs",
+    `export { noSuchExport } from "node:fs";\nconsole.log("ran");\n`,
+    "export 'noSuchExport' not found in '",
+  ],
+  [
+    "imported-and-exported.mjs",
+    `import { noSuchExport } from "node:fs";\nexport { noSuchExport };\nconsole.log("ran");\n`,
+    "export 'noSuchExport' not found in '",
+  ],
+  [
+    "sqlite.mjs",
+    `import { noSuchExport } from "bun:sqlite";\nconsole.log("ran", typeof noSuchExport);\n`,
+    "Export named 'noSuchExport' not found in module 'bun:sqlite'.",
+  ],
 ];
 
 const fine: [entry: string, text: string, output: string][] = [
-  ["existing.mjs", `import path, { sep, posix as p } from "node:path";\nimport { readFileSync } from "fs";\nconsole.log("ran", typeof path, typeof sep, typeof p, typeof readFileSync);\n`, "ran object string object function\n"],
-  ["types-are-dropped.ts", `import { readFileSync, PathLike } from "node:fs";\nconst path: PathLike = "x";\nconsole.log("ran", typeof readFileSync, path);\n`, "ran function x\n"],
-  ["namespace.mjs", `import * as fs from "node:fs";\nconsole.log("ran", typeof fs.noSuchExport, "noSuchExport" in fs);\n`, "ran undefined false\n"],
+  [
+    "existing.mjs",
+    `import path, { sep, posix as p } from "node:path";\nimport { readFileSync } from "fs";\nconsole.log("ran", typeof path, typeof sep, typeof p, typeof readFileSync);\n`,
+    "ran object string object function\n",
+  ],
+  [
+    "types-are-dropped.ts",
+    `import { readFileSync, PathLike } from "node:fs";\nconst path: PathLike = "x";\nconsole.log("ran", typeof readFileSync, path);\n`,
+    "ran function x\n",
+  ],
+  [
+    "namespace.mjs",
+    `import * as fs from "node:fs";\nconsole.log("ran", typeof fs.noSuchExport, "noSuchExport" in fs);\n`,
+    "ran undefined false\n",
+  ],
   ["bun.mjs", `import { noSuchExport } from "bun";\nconsole.log("ran", typeof noSuchExport);\n`, "ran undefined\n"],
 ];
 
 const absentOnWindows: [entry: string, text: string, message: string, output: string][] = [
-  ["process-getuid.mjs", `import { getuid } from "node:process";\nconsole.log("ran", typeof getuid);\n`, "Export named 'getuid' not found in module 'node:process'.", "ran function\n"],
-  ["constants-sigusr1.mjs", `import { SIGUSR1 } from "node:constants";\nconsole.log("ran", typeof SIGUSR1);\n`, "Export named 'SIGUSR1' not found in module 'node:constants'.", "ran number\n"],
+  [
+    "process-getuid.mjs",
+    `import { getuid } from "node:process";\nconsole.log("ran", typeof getuid);\n`,
+    "Export named 'getuid' not found in module 'node:process'.",
+    "ran function\n",
+  ],
+  [
+    "constants-sigusr1.mjs",
+    `import { SIGUSR1 } from "node:constants";\nconsole.log("ran", typeof SIGUSR1);\n`,
+    "Export named 'SIGUSR1' not found in module 'node:constants'.",
+    "ran number\n",
+  ],
 ];
 for (const [entry, text, message, output] of absentOnWindows) {
   if (isWindows) missing.push([entry, text, message]);
@@ -52,21 +110,27 @@ for (const [entry, text, message, output] of absentOnWindows) {
 }
 
 describe.each(modes)("bun %s", mode => {
-  test.concurrent.each(missing)("a missing export of a built-in module is a SyntaxError: %s", async (entry, text, message) => {
-    using dir = tempDir("missing-builtin-export", { [entry]: text });
-    const { stdout, stderr, exitCode } = await inMode(mode, String(dir), entry);
-    // The bundler drops an import that nothing uses, so an executable never asks for the name.
-    if (mode.startsWith("build") && entry === "unused.mjs") {
-      expect({ stdout, exitCode }).toEqual({ stdout: "ran\n", exitCode: 0 });
-      return;
-    }
-    expect(stderr).toContain("SyntaxError: " + message);
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(1);
-  });
+  test.concurrent.each(missing)(
+    "a missing export of a built-in module is a SyntaxError: %s",
+    async (entry, text, message) => {
+      using dir = tempDir("missing-builtin-export", { [entry]: text });
+      const { stdout, stderr, exitCode } = await inMode(mode, String(dir), entry);
+      // The bundler drops an import that nothing uses, so an executable never asks for the name.
+      if (mode.startsWith("build") && entry === "unused.mjs") {
+        expect({ stdout, exitCode }).toEqual({ stdout: "ran\n", exitCode: 0 });
+        return;
+      }
+      expect(stderr).toContain("SyntaxError: " + message);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    },
+  );
 
   test.concurrent.each(fine)("what exists is imported: %s", async (entry, text, output) => {
-    using dir = tempDirWithBunTypes("missing-builtin-export", { [entry]: text, "tsconfig.json": `{ "compilerOptions": { "types": ["bun"], "skipLibCheck": true } }` });
+    using dir = tempDirWithBunTypes("missing-builtin-export", {
+      [entry]: text,
+      "tsconfig.json": `{ "compilerOptions": { "types": ["bun"], "skipLibCheck": true } }`,
+    });
     const { stdout, exitCode } = await inMode(mode, String(dir), entry);
     expect(stdout).toBe(output);
     expect(exitCode).toBe(0);
@@ -75,17 +139,36 @@ describe.each(modes)("bun %s", mode => {
 
 // The compiler skips the check at run time for the names in this list, so every name in it has to exist.
 test("every name in src/aot/builtin-export-names.txt is exported", async () => {
-  const lines = readFileSync(join(import.meta.dir, "../../src/aot/builtin-export-names.txt"), "utf8").trimEnd().split("\n");
+  const lines = readFileSync(join(import.meta.dir, "../../src/aot/builtin-export-names.txt"), "utf8")
+    .trimEnd()
+    .split("\n");
   const absent: string[] = [];
   for (const line of lines) {
     const [specifier, ...names] = line.split(" ");
     const namespace = await import(specifier);
     for (const name of names) if (!(name in namespace)) absent.push(specifier + " " + name);
   }
-  const takenLines = readFileSync(join(import.meta.dir, "../../src/aot/builtin-export-names-absent-on-windows.txt"), "utf8").trimEnd().split("\n");
-  const taken = takenLines.flatMap(line => line.split(" ").slice(1).map(name => line.split(" ")[0] + " " + name));
+  const takenLines = readFileSync(
+    join(import.meta.dir, "../../src/aot/builtin-export-names-absent-on-windows.txt"),
+    "utf8",
+  )
+    .trimEnd()
+    .split("\n");
+  const taken = takenLines.flatMap(line =>
+    line
+      .split(" ")
+      .slice(1)
+      .map(name => line.split(" ")[0] + " " + name),
+  );
   expect(absent).toEqual(isWindows ? taken : []);
-  const all = new Set(lines.flatMap(line => line.split(" ").slice(1).map(name => line.split(" ")[0] + " " + name)));
+  const all = new Set(
+    lines.flatMap(line =>
+      line
+        .split(" ")
+        .slice(1)
+        .map(name => line.split(" ")[0] + " " + name),
+    ),
+  );
   expect(taken.filter(name => !all.has(name))).toEqual([]);
   expect(lines.length).toBeGreaterThan(70);
   // The compiler finds a module, and a name, by binary search.

@@ -193,7 +193,6 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
             return;
         }
     }
-
 }
 
 impl ElfFile {
@@ -454,7 +453,6 @@ impl ElfFile {
     }
 
     // --- Internal helpers ---
-
 }
 
 impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
@@ -600,7 +598,10 @@ impl<'a> ElfFile<&'a mut [u8]> {
         Ok(ElfFile { data })
     }
 
-    pub fn bun_section_in_pieces(mut self, payload: &'a [u8]) -> Result<Option<[Piece<'a>; 6]>, ElfError> {
+    pub fn bun_section_in_pieces(
+        mut self,
+        payload: &'a [u8],
+    ) -> Result<Option<[Piece<'a>; 6]>, ElfError> {
         let ehdr = read_ehdr(self.data);
         let bun_section = self.find_bun_section(ehdr)?;
         let bun_section_offset = bun_section.file_offset;
@@ -662,31 +663,57 @@ impl<'a> ElfFile<&'a mut [u8]> {
         if old_shdr_offset < move_src_start || old_shdr_offset + shdr_table_size > move_src_end {
             return Err(ElfError::InvalidElfFile);
         }
-        let head_end = if replaces_payload { new_file_offset } else { move_src_start };
+        let head_end = if replaces_payload {
+            new_file_offset
+        } else {
+            move_src_start
+        };
         let phdr_offset = ehdr.e_phoff + rw_index as u64 * phdr_size as u64;
-        let is_in_head = |offset: u64, size: usize| offset.checked_add(size as u64).is_some_and(|end| end <= head_end);
-        if head_end > new_file_offset || !is_in_head(0, size_of::<Elf64_Ehdr>()) || !is_in_head(phdr_offset, phdr_size) || (!replaces_payload && !is_in_head(bun_section_offset, size_of::<u64>())) {
+        let is_in_head = |offset: u64, size: usize| {
+            offset
+                .checked_add(size as u64)
+                .is_some_and(|end| end <= head_end)
+        };
+        if head_end > new_file_offset
+            || !is_in_head(0, size_of::<Elf64_Ehdr>())
+            || !is_in_head(phdr_offset, phdr_size)
+            || (!replaces_payload && !is_in_head(bun_section_offset, size_of::<u64>()))
+        {
             return Ok(None);
         }
         if !replaces_payload {
-            write_u64_le(&mut self.data[usize::try_from(bun_section_offset).expect("int cast")..][..8], new_vaddr);
+            write_u64_le(
+                &mut self.data[usize::try_from(bun_section_offset).expect("int cast")..][..8],
+                new_vaddr,
+            );
         }
         self.write_ehdr_shoff(old_shdr_offset - move_src_start + move_dst_start);
         for i in 0..ehdr.e_shnum as usize {
-            let at = usize::try_from(old_shdr_offset).expect("int cast") + i * size_of::<Elf64_Shdr>();
+            let at =
+                usize::try_from(old_shdr_offset).expect("int cast") + i * size_of::<Elf64_Shdr>();
             let mut shdr: Elf64_Shdr = read_struct(&self.data[at..][..size_of::<Elf64_Shdr>()]);
             if i == bun_section.section_index as usize {
                 shdr.sh_offset = new_file_offset;
                 shdr.sh_size = new_content_size;
                 shdr.sh_addr = new_vaddr;
-            } else if shdr.sh_type != SHT_NOBITS && shdr.sh_offset >= move_src_start && shdr.sh_offset < move_src_end {
+            } else if shdr.sh_type != SHT_NOBITS
+                && shdr.sh_offset >= move_src_start
+                && shdr.sh_offset < move_src_end
+            {
                 shdr.sh_offset = shdr.sh_offset - move_src_start + move_dst_start;
             }
             write_struct(&mut self.data[at..][..size_of::<Elf64_Shdr>()], &shdr);
         }
         let new_segment_size = offset_in_segment + aligned_new_size;
-        let extended = Elf64_Phdr { p_filesz: new_segment_size, p_memsz: new_segment_size, ..rw_phdr };
-        write_struct(&mut self.data[usize::try_from(phdr_offset).expect("int cast")..][..phdr_size], &extended);
+        let extended = Elf64_Phdr {
+            p_filesz: new_segment_size,
+            p_memsz: new_segment_size,
+            ..rw_phdr
+        };
+        write_struct(
+            &mut self.data[usize::try_from(phdr_offset).expect("int cast")..][..phdr_size],
+            &extended,
+        );
         let data: &'a [u8] = self.data;
         Ok(Some([
             Piece::Bytes(&data[..usize::try_from(head_end).expect("int cast")]),
@@ -694,7 +721,10 @@ impl<'a> ElfFile<&'a mut [u8]> {
             Piece::Length((payload.len() as u64).to_le_bytes()),
             Piece::Bytes(payload),
             Piece::Zeros(move_dst_start - (new_file_offset + new_content_size)),
-            Piece::Bytes(&data[usize::try_from(move_src_start).expect("int cast")..usize::try_from(move_src_end).expect("int cast")]),
+            Piece::Bytes(
+                &data[usize::try_from(move_src_start).expect("int cast")
+                    ..usize::try_from(move_src_end).expect("int cast")],
+            ),
         ]))
     }
 }
@@ -749,7 +779,10 @@ pub fn symbols_tail(
         if shdr.sh_type == SHT_SYMTAB {
             return None;
         }
-        if names.get(shdr.sh_name as usize..).is_some_and(|name| slice_to_nul(name) == b".bun") {
+        if names
+            .get(shdr.sh_name as usize..)
+            .is_some_and(|name| slice_to_nul(name) == b".bun")
+        {
             bun = Some((index as u16, shdr.sh_addr));
         }
     }
@@ -778,7 +811,9 @@ pub fn symbols_tail(
     });
 
     let word = |at: usize| -> Option<u32> {
-        Some(u32::from_le_bytes(table.get(at..at.checked_add(4)?)?.try_into().ok()?))
+        Some(u32::from_le_bytes(
+            table.get(at..at.checked_add(4)?)?.try_into().ok()?,
+        ))
     };
     let count = word(0)? as usize;
     let rows_end = count.checked_mul(12)?.checked_add(16)?;
@@ -803,10 +838,16 @@ pub fn symbols_tail(
     names_section.sh_offset = place(&mut bytes);
     names_section.sh_size = names.len() as u64;
     bytes.extend_from_slice(&names);
-    write_struct(&mut headers[names_index * shdr_size..][..shdr_size], &names_section);
+    write_struct(
+        &mut headers[names_index * shdr_size..][..shdr_size],
+        &names_section,
+    );
     let mut bun_section = section(&headers, bun_index as usize);
     bun_section.sh_flags |= SHF_EXECINSTR;
-    write_struct(&mut headers[bun_index as usize * shdr_size..][..shdr_size], &bun_section);
+    write_struct(
+        &mut headers[bun_index as usize * shdr_size..][..shdr_size],
+        &bun_section,
+    );
 
     let strtab_offset = place(&mut bytes);
     bytes.push(0);
@@ -815,7 +856,9 @@ pub fn symbols_tail(
     let symtab_offset = place(&mut bytes);
     bytes.extend_from_slice(&[0u8; 24]);
     for row in rows.as_chunks::<12>().0 {
-        let at = |index: usize| u32::from_le_bytes([row[index], row[index + 1], row[index + 2], row[index + 3]]);
+        let at = |index: usize| {
+            u32::from_le_bytes([row[index], row[index + 1], row[index + 2], row[index + 3]])
+        };
         bytes.extend_from_slice(&at(8).checked_add(1)?.to_le_bytes());
         bytes.extend_from_slice(&[STT_FUNC, 0]);
         bytes.extend_from_slice(&bun_index.to_le_bytes());

@@ -24,41 +24,45 @@
  */
 
 // https://tc39.es/proposal-iterator-helpers/#sec-wrapforvaliditeratorprototype.next
-export function next()
-{
-    "use strict";
+export function next() {
+  "use strict";
 
-    // 1. Let O be this value.
-    // 2. Perform ? RequireInternalSlot(O, [[Iterated]]).
-    // 3. Let iteratorRecord be O.[[Iterated]].
-    if (!$isWrapForValidIterator(this))
-        throw new TypeError("%WrapForValidIteratorPrototype%.next requires that |this| be a WrapForValidIteratorPrototype object");
+  // 1. Let O be this value.
+  // 2. Perform ? RequireInternalSlot(O, [[Iterated]]).
+  // 3. Let iteratorRecord be O.[[Iterated]].
+  if (!$isWrapForValidIterator(this))
+    throw new TypeError(
+      "%WrapForValidIteratorPrototype%.next requires that |this| be a WrapForValidIteratorPrototype object",
+    );
 
-    // 4. Return ? Call(iteratorRecord.[[NextMethod]], iteratorRecord.[[Iterator]]).
-    return $getWrapForValidIteratorInternalField(this, $wrapForValidIteratorFieldIteratedNextMethod).$call($getWrapForValidIteratorInternalField(this, $wrapForValidIteratorFieldIteratedIterator));
+  // 4. Return ? Call(iteratorRecord.[[NextMethod]], iteratorRecord.[[Iterator]]).
+  return $getWrapForValidIteratorInternalField(this, $wrapForValidIteratorFieldIteratedNextMethod).$call(
+    $getWrapForValidIteratorInternalField(this, $wrapForValidIteratorFieldIteratedIterator),
+  );
 }
 
 // https://tc39.es/proposal-iterator-helpers/#sec-wrapforvaliditeratorprototype.return
-$overriddenName = "return"; export function return_()
-{
-    "use strict";
+$overriddenName = "return";
+export function return_() {
+  "use strict";
 
-    // 1. Let O be this value.
-    // 2. Perform ? RequireInternalSlot(O, [[Iterated]]).
-    // 3. Let iteratorRecord be O.[[Iterated]].
-    if (!$isWrapForValidIterator(this))
-        throw new TypeError("%WrapForValidIteratorPrototype%.next requires that |this| be a WrapForValidIteratorPrototype object");
+  // 1. Let O be this value.
+  // 2. Perform ? RequireInternalSlot(O, [[Iterated]]).
+  // 3. Let iteratorRecord be O.[[Iterated]].
+  if (!$isWrapForValidIterator(this))
+    throw new TypeError(
+      "%WrapForValidIteratorPrototype%.next requires that |this| be a WrapForValidIteratorPrototype object",
+    );
 
-    // 3. Let iterator be O.[[Iterated]].[[Iterator]].
-    var iterator = $getWrapForValidIteratorInternalField(this, $wrapForValidIteratorFieldIteratedIterator);
-    // 4. Assert: iterator is an Object.
-    $assert($isObject(iterator));
-    // 5. Let returnMethod be ? GetMethod(iterator, "return").
-    var returnMethod = iterator.return;
-    // 6. If returnMethod is undefined, then
-    //   a. Return CreateIterResultObject(undefined, true).
-    if ($isUndefinedOrNull(returnMethod))
-        return { value: undefined, done: true };
-    // 7. Return ? Call(returnMethod, iterator).
-    return returnMethod.$call(iterator);
+  // 3. Let iterator be O.[[Iterated]].[[Iterator]].
+  var iterator = $getWrapForValidIteratorInternalField(this, $wrapForValidIteratorFieldIteratedIterator);
+  // 4. Assert: iterator is an Object.
+  $assert($isObject(iterator));
+  // 5. Let returnMethod be ? GetMethod(iterator, "return").
+  var returnMethod = iterator.return;
+  // 6. If returnMethod is undefined, then
+  //   a. Return CreateIterResultObject(undefined, true).
+  if ($isUndefinedOrNull(returnMethod)) return { value: undefined, done: true };
+  // 7. Return ? Call(returnMethod, iterator).
+  return returnMethod.$call(iterator);
 }

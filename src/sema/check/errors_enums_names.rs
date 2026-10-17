@@ -211,7 +211,8 @@ impl Checker<'_, '_> {
                     && !hir[en].flags.contains(Flags::AMBIENT)
                     && files.decls(found).first().is_some_and(|d| d.0 != file)
                 {
-                    let option = super::errors_modules::isolated_modules_like_flag_name(files, file);
+                    let option =
+                        super::errors_modules::isolated_modules_like_flag_name(files, file);
                     let (of, member) = (self.atoms().bytes(hir[en].name), self.atoms().bytes(name));
                     let qualified = [of, b".", member].concat();
                     self.error_at(

@@ -3,13 +3,15 @@ use super::coerce::Ty;
 use crate::declared::{Declared, Part, prim};
 use crate::fragment::{LayoutKey, NO_FILE};
 use crate::id::{FuncId, LayoutId, StrId, TyId};
-use crate::ir::{Field, Layout, LayoutKind, Literal, CoerceReason, field_flags};
+use crate::ir::{CoerceReason, Field, Layout, LayoutKind, Literal, field_flags};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Decl, SymFlags};
 use bun_sema::check::{self, BuiltIn, Storage, kind};
 use bun_sema::hir::{ClassId, FileKind, ParamId};
 use bun_sema::program::{FileId, Sym};
-use bun_sema::types::{EnumValue, Intrinsic, Literalness, MapperId, Origin, Prop, PropFlags, TypeData, TypeId};
+use bun_sema::types::{
+    EnumValue, Intrinsic, Literalness, MapperId, Origin, Prop, PropFlags, TypeData, TypeId,
+};
 
 const MAX_LAYOUTS_IN_UNION: usize = 4;
 pub(super) const MAX_DESCRIPTION_DEPTH: u8 = 4;
@@ -24,17 +26,28 @@ mod cached {
     pub(super) const LEAF: u16 = 16;
 
     pub(super) fn pack(kind: u16, described: &Declared) -> u16 {
-        kind | (described.prims as u16) << 5 | u16::from(described.any_object) << 14 | u16::from(described.any_function) << 15
+        kind | (described.prims as u16) << 5
+            | u16::from(described.any_object) << 14
+            | u16::from(described.any_function) << 15
     }
 
     pub(super) fn unpack(packed: u16) -> Declared {
-        Declared { prims: u32::from(packed >> 5 & 0x1FF), any_object: packed >> 14 & 1 != 0, any_function: packed >> 15 & 1 != 0, ..Declared::default() }
+        Declared {
+            prims: u32::from(packed >> 5 & 0x1FF),
+            any_object: packed >> 14 & 1 != 0,
+            any_function: packed >> 15 & 1 != 0,
+            ..Declared::default()
+        }
     }
 }
 
 pub(crate) enum FieldTypes {
     Properties(TypeId),
-    Members { base: LayoutId, declared_by: Vec<(u32, Sym)>, implemented: Vec<(u32, TypeId, Atom)> },
+    Members {
+        base: LayoutId,
+        declared_by: Vec<(u32, Sym)>,
+        implemented: Vec<(u32, TypeId, Atom)>,
+    },
 }
 
 impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
@@ -54,7 +67,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn describe_nested(&mut self, ty: TypeId, depth: u8) -> TyId {
         let id = self.ty_at_depth(ty, depth);
-        self.description_is_layout_free &= self.cached_description(ty) & (cached::ANY | cached::PLAIN) != 0;
+        self.description_is_layout_free &=
+            self.cached_description(ty) & (cached::ANY | cached::PLAIN) != 0;
         self.description_is_leaf &= self.is_always_describable(ty);
         id
     }
@@ -62,12 +76,24 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     pub(crate) fn is_always_describable(&self, ty: TypeId) -> bool {
         matches!(
             self.c.data(ty),
-            TypeData::Intrinsic(_) | TypeData::StringLit { .. } | TypeData::BigIntLit { .. } | TypeData::BoolLit { .. } | TypeData::NumberLit { .. } | TypeData::EnumLit { .. } | TypeData::Enum { .. } | TypeData::UniqueSymbol { .. } | TypeData::Fns { .. }
+            TypeData::Intrinsic(_)
+                | TypeData::StringLit { .. }
+                | TypeData::BigIntLit { .. }
+                | TypeData::BoolLit { .. }
+                | TypeData::NumberLit { .. }
+                | TypeData::EnumLit { .. }
+                | TypeData::Enum { .. }
+                | TypeData::UniqueSymbol { .. }
+                | TypeData::Fns { .. }
         )
     }
 
     fn cached_description(&self, ty: TypeId) -> u16 {
-        if self.file == NO_FILE { 0 } else { self.c.cached_description(ty) }
+        if self.file == NO_FILE {
+            0
+        } else {
+            self.c.cached_description(ty)
+        }
     }
 
     fn publish_description(&self, ty: TypeId, description: u16) {
@@ -92,9 +118,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
             }
             let described = cached::unpack(known);
-            Some(self.out.tys.intern(if depth > 0 { described.with_literal_string_widened() } else { described }))
+            Some(self.out.tys.intern(if depth > 0 {
+                described.with_literal_string_widened()
+            } else {
+                described
+            }))
         } else if known & cached::RECORD != 0 {
-            self.record_layout(ty).map(|layout| self.out.tys.intern(Declared { parts: Declared::part(Part::Class(layout)).parts, ..cached::unpack(known) }))
+            self.record_layout(ty).map(|layout| {
+                self.out.tys.intern(Declared {
+                    parts: Declared::part(Part::Class(layout)).parts,
+                    ..cached::unpack(known)
+                })
+            })
         } else {
             None
         };
@@ -119,7 +154,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             {
                 let described = Declared::part(Part::Class(layout));
                 let around = std::mem::replace(&mut self.description_is_leaf, true);
-                let described = if self.c.is_coercion_result_type(ty) { described } else { self.with_primitives(ty, described) };
+                let described = if self.c.is_coercion_result_type(ty) {
+                    described
+                } else {
+                    self.with_primitives(ty, described)
+                };
                 let is_alone = std::mem::replace(&mut self.description_is_leaf, around);
                 let described = described.nullable();
                 if is_alone {
@@ -130,13 +169,25 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 return id;
             }
         }
-        let around = (std::mem::replace(&mut self.description_is_layout_free, true), std::mem::replace(&mut self.description_is_leaf, true));
+        let around = (
+            std::mem::replace(&mut self.description_is_layout_free, true),
+            std::mem::replace(&mut self.description_is_leaf, true),
+        );
         let id = self.describe_non_record(ty, depth);
-        let (is_plain, is_alone) = (std::mem::replace(&mut self.description_is_layout_free, around.0), std::mem::replace(&mut self.description_is_leaf, around.1));
+        let (is_plain, is_alone) = (
+            std::mem::replace(&mut self.description_is_layout_free, around.0),
+            std::mem::replace(&mut self.description_is_leaf, around.1),
+        );
         let described = self.out.tys.get(id);
-        let is_plain = is_plain && described.parts.is_empty() && described.ints.is_none() && (depth == 0 || described.prims & prim::STRING == 0);
+        let is_plain = is_plain
+            && described.parts.is_empty()
+            && described.ints.is_none()
+            && (depth == 0 || described.prims & prim::STRING == 0);
         if is_plain && is_alone {
-            self.publish_description(ty, cached::pack(cached::OTHER | cached::PLAIN | cached::LEAF, described));
+            self.publish_description(
+                ty,
+                cached::pack(cached::OTHER | cached::PLAIN | cached::LEAF, described),
+            );
         } else if is_plain && matches!(self.c.data(ty), TypeData::Union(_)) {
             self.publish_description(ty, cached::pack(cached::OTHER | cached::PLAIN, described));
         } else if known & cached::OTHER == 0 {
@@ -147,7 +198,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn describe_non_record(&mut self, ty: TypeId, depth: u8) -> TyId {
         let mut result = self.ty_at_depth_uncached(ty, depth);
-        if matches!(self.c.data(ty), TypeData::Ref { .. } | TypeData::Anon { origin: Origin::TypeLiteral(..), .. }) && !self.c.is_array(ty) && result.has_objects() {
+        if matches!(
+            self.c.data(ty),
+            TypeData::Ref { .. }
+                | TypeData::Anon {
+                    origin: Origin::TypeLiteral(..),
+                    ..
+                }
+        ) && !self.c.is_array(ty)
+            && result.has_objects()
+        {
             result = self.with_primitives(ty, result);
         }
         if result.has_multiple_primitive_kinds() {
@@ -176,7 +236,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn declared(&mut self, ty: TypeId) -> TyId {
         let described = self.ty_of(ty);
-        if described == self.out.tys.anything || self.out.tys.get(described).is_never() { TyId::NONE } else { described }
+        if described == self.out.tys.anything || self.out.tys.get(described).is_never() {
+            TyId::NONE
+        } else {
+            described
+        }
     }
 
     pub(crate) fn kinds_ty(&mut self, kinds: u16) -> TyId {
@@ -192,23 +256,42 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             (kind::BIGINT, prim::BIGINT),
             (kind::SYMBOL, prim::SYMBOL),
         ];
-        self.out.tys.intern(Declared::prims(primitives.iter().filter(|it| kinds & it.0 != 0).fold(0, |all, it| all | it.1)))
+        self.out.tys.intern(Declared::prims(
+            primitives
+                .iter()
+                .filter(|it| kinds & it.0 != 0)
+                .fold(0, |all, it| all | it.1),
+        ))
     }
 
     pub(crate) fn none_if_unranged_number(&self, ty: TyId) -> TyId {
-        if ty.is_some() && self.out.tys.get(ty).prims & prim::NUMBER != 0 { TyId::NONE } else { ty }
+        if ty.is_some() && self.out.tys.get(ty).prims & prim::NUMBER != 0 {
+            TyId::NONE
+        } else {
+            ty
+        }
     }
 
     fn ty_from_stores(&mut self, sym: Sym) -> Ty {
         let kinds = self.query(|c| c.symbol_kinds(sym));
-        let described = self.kinds_ty(if kinds & kind::SYMBOL != 0 { kinds | kind::UNDEFINED } else { kinds });
-        let integers = if kinds & (kind::NUMBER | kind::BIGINT) == kind::NUMBER { self.query(|c| c.symbol_integer_range(sym)) } else { None };
+        let described = self.kinds_ty(if kinds & kind::SYMBOL != 0 {
+            kinds | kind::UNDEFINED
+        } else {
+            kinds
+        });
+        let integers = if kinds & (kind::NUMBER | kind::BIGINT) == kind::NUMBER {
+            self.query(|c| c.symbol_integer_range(sym))
+        } else {
+            None
+        };
         let described = self.with_integers(described, integers);
         Ty::from_id(self.none_if_unranged_number(described))
     }
 
     pub(crate) fn symbol_ty(&mut self, sym: Sym) -> Ty {
-        let file = self.value_declaration(sym).map_or(sym.file, |(file, _)| file);
+        let file = self
+            .value_declaration(sym)
+            .map_or(sym.file, |(file, _)| file);
         if self.is_untyped_file(file) {
             return self.ty_from_stores(sym);
         }
@@ -217,17 +300,27 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     pub(crate) fn symbol_store_ty(&mut self, sym: Sym) -> Ty {
-        let Some((file, Decl::Var(_))) = self.value_declaration(sym) else { return self.symbol_ty(sym) };
+        let Some((file, Decl::Var(_))) = self.value_declaration(sym) else {
+            return self.symbol_ty(sym);
+        };
         if self.is_untyped_file(file) {
             return Ty::NONE;
         }
         let storage = self.c.symbol_storage(sym);
-        self.storage_ty(Storage { starts_undefined: false, ..storage }, Some(sym))
+        self.storage_ty(
+            Storage {
+                starts_undefined: false,
+                ..storage
+            },
+            Some(sym),
+        )
     }
 
     pub(crate) fn param_ty(&mut self, file: FileId, p: ParamId) -> Ty {
         let hir = self.hir(file);
-        let name = self.c.bound(file).pat_symbol[hir[p].pat.idx()].some().map(|name| self.files.sym(file, name));
+        let name = self.c.bound(file).pat_symbol[hir[p].pat.idx()]
+            .some()
+            .map(|name| self.files.sym(file, name));
         if self.is_untyped_file(file) {
             return name.map_or(Ty::NONE, |name| self.ty_from_stores(name));
         }
@@ -236,7 +329,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     pub(crate) fn param_cast_reason(&mut self, file: FileId, p: ParamId) -> CoerceReason {
-        if self.query(|c| c.is_param_annotated(file, p)) { CoerceReason::Cast } else { CoerceReason::Store }
+        if self.query(|c| c.is_param_annotated(file, p)) {
+            CoerceReason::Cast
+        } else {
+            CoerceReason::Store
+        }
     }
 
     fn storage_ty(&mut self, storage: Storage, sym: Option<Sym>) -> Ty {
@@ -258,14 +355,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if id.is_some() && storage.starts_undefined {
             id = self.or_undefined(id);
         }
-        Ty { id, checked: storage.ty }
+        Ty {
+            id,
+            checked: storage.ty,
+        }
     }
 
     fn base_classes(&self, layout: LayoutId) -> Vec<(FileId, ClassId)> {
         let mut extended = Vec::new();
         let mut at = self.out.layouts[layout.idx()].base;
         while at.is_some() {
-            let Some(&class) = self.fixed_layout_classes.get(&at) else { return Vec::new() };
+            let Some(&class) = self.fixed_layout_classes.get(&at) else {
+                return Vec::new();
+            };
             extended.push(class);
             at = self.out.layouts[at.idx()].base;
         }
@@ -282,9 +384,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         extended.is_empty() || self.c.this_escapes_during_construction(&extended)
     }
 
-    pub(crate) fn initializers_where_this_escapes(&mut self, layout: LayoutId, file: FileId, class: ClassId) -> Vec<bun_sema::hir::MemberId> {
+    pub(crate) fn initializers_where_this_escapes(
+        &mut self,
+        layout: LayoutId,
+        file: FileId,
+        class: ClassId,
+    ) -> Vec<bun_sema::hir::MemberId> {
         let extended = self.base_classes(layout);
-        self.c.initializers_where_this_escapes(file, class, &extended)
+        self.c
+            .initializers_where_this_escapes(file, class, &extended)
     }
 
     pub(crate) fn cast_target_ty(&mut self, ty: TyId) -> TyId {
@@ -294,13 +402,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return known;
         }
         let found = self.find_cast_target_ty(ty);
-        self.cast_targets.insert(ty, (self.layout_growth_epoch, found));
+        self.cast_targets
+            .insert(ty, (self.layout_growth_epoch, found));
         found
     }
 
     fn find_cast_target_ty(&mut self, ty: TyId) -> TyId {
         let described = self.out.tys.get(ty).clone();
-        let mut target = Declared { parts: Default::default(), ..described };
+        let mut target = Declared {
+            parts: Default::default(),
+            ..described
+        };
         for part in &described.parts {
             match part {
                 Part::Class(view) if self.union_part_layouts.contains_key(view) => {
@@ -315,7 +427,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 part => target = target.or(&Declared::part(part.clone())),
             }
         }
-        if target == described { ty } else { self.out.tys.intern(target) }
+        if target == described {
+            ty
+        } else {
+            self.out.tys.intern(target)
+        }
     }
 
     pub(crate) fn or_undefined(&mut self, ty: TyId) -> TyId {
@@ -331,8 +447,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn ty_at_depth_uncached(&mut self, ty: TypeId, depth: u8) -> Declared {
         match self.c.data(ty) {
             TypeData::Intrinsic(intrinsic) => match intrinsic {
-                Intrinsic::Never | Intrinsic::SilentNever | Intrinsic::UnreachableNever | Intrinsic::ImplicitNever | Intrinsic::UniqueLiteral => Declared::never(),
-                Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedWidening => Declared::prims(prim::UNDEFINED),
+                Intrinsic::Never
+                | Intrinsic::SilentNever
+                | Intrinsic::UnreachableNever
+                | Intrinsic::ImplicitNever
+                | Intrinsic::UniqueLiteral => Declared::never(),
+                Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedWidening => {
+                    Declared::prims(prim::UNDEFINED)
+                }
                 Intrinsic::Null | Intrinsic::NullWidening => Declared::prims(prim::NULL),
                 Intrinsic::String => Declared::prims(prim::STRING),
                 Intrinsic::Number => Declared::prims(prim::NUMBER),
@@ -343,9 +465,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             },
             TypeData::StringLit { .. } => Declared::prims(prim::LITERAL_STRING),
             TypeData::BigIntLit { .. } => Declared::prims(prim::BIGINT),
-            TypeData::BoolLit { value, .. } => Declared::prims(if *value { prim::TRUE } else { prim::FALSE }),
-            TypeData::EnumLit { value: EnumValue::String(_), .. } => Declared::prims(prim::LITERAL_STRING),
-            TypeData::NumberLit { .. } | TypeData::EnumLit { value: EnumValue::Number(_), .. } => match self.c.type_integer_range(ty) {
+            TypeData::BoolLit { value, .. } => {
+                Declared::prims(if *value { prim::TRUE } else { prim::FALSE })
+            }
+            TypeData::EnumLit {
+                value: EnumValue::String(_),
+                ..
+            } => Declared::prims(prim::LITERAL_STRING),
+            TypeData::NumberLit { .. }
+            | TypeData::EnumLit {
+                value: EnumValue::Number(_),
+                ..
+            } => match self.c.type_integer_range(ty) {
                 Some((minimum, maximum)) => Declared::ints(minimum, maximum),
                 None => Declared::prims(prim::NUMBER),
             },
@@ -357,7 +488,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let is_next_to_enum = self.c.has_numeric_enum_member(ty);
                 for &part in parts.iter() {
                     if matches!(self.c.data(part), TypeData::NumberLit { .. })
-                        && let Some((minimum, maximum)) = self.c.union_part_integer_range(part, is_next_to_enum)
+                        && let Some((minimum, maximum)) =
+                            self.c.union_part_integer_range(part, is_next_to_enum)
                     {
                         result.merge(&Declared::ints(minimum, maximum));
                         continue;
@@ -370,15 +502,30 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         result.merge(described);
                     }
                 }
-                let common = if objects.len() > MAX_LAYOUTS_IN_UNION { self.common_layout(&objects) } else { None };
+                let common = if objects.len() > MAX_LAYOUTS_IN_UNION {
+                    self.common_layout(&objects)
+                } else {
+                    None
+                };
                 match common {
                     Some(layout) => {
-                        let mut known_parts: bun_sema::util::FxHashSet<LayoutId> = self.union_part_layouts.get(&layout).into_iter().flatten().copied().collect();
+                        let mut known_parts: bun_sema::util::FxHashSet<LayoutId> = self
+                            .union_part_layouts
+                            .get(&layout)
+                            .into_iter()
+                            .flatten()
+                            .copied()
+                            .collect();
                         for &part in &objects {
                             let described = self.ty_of(part);
-                            let Some(part) = self.out.tys.get(described).single_layout() else { continue };
+                            let Some(part) = self.out.tys.get(described).single_layout() else {
+                                continue;
+                            };
                             if known_parts.insert(part) {
-                                self.union_part_layouts.entry(layout).or_default().push(part);
+                                self.union_part_layouts
+                                    .entry(layout)
+                                    .or_default()
+                                    .push(part);
                                 self.layout_growth_epoch += 1;
                             }
                         }
@@ -415,7 +562,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     let part = self.out.tys.get(part);
                     if !part.has_objects() && !part.is_never() {
                         let primitive = part.clone();
-                        return if self.c.is_primitive_wrapper(ty) { primitive.or(&Declared::any_object()) } else { primitive };
+                        return if self.c.is_primitive_wrapper(ty) {
+                            primitive.or(&Declared::any_object())
+                        } else {
+                            primitive
+                        };
                     }
                     if object.is_none() && !part.parts.is_empty() && part.prims == 0 {
                         object = Some(part.clone());
@@ -433,9 +584,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             TypeData::Tuple { .. } | TypeData::EvolvingArray(_) => self.array_of(ty, depth),
             TypeData::Fns { .. } => Declared::any_function(),
-            TypeData::Anon { origin: Origin::Function(_) | Origin::ClassStatic(_), .. } => Declared::any_function(),
-            TypeData::Anon { .. } | TypeData::Synth(_) | TypeData::ReverseMapped { .. } => Declared::any_object(),
-            TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::IndexedAccess { .. } | TypeData::Cond { .. } | TypeData::Substitution { .. } => {
+            TypeData::Anon {
+                origin: Origin::Function(_) | Origin::ClassStatic(_),
+                ..
+            } => Declared::any_function(),
+            TypeData::Anon { .. } | TypeData::Synth(_) | TypeData::ReverseMapped { .. } => {
+                Declared::any_object()
+            }
+            TypeData::TypeParam(..)
+            | TypeData::ThisParam(_)
+            | TypeData::IndexedAccess { .. }
+            | TypeData::Cond { .. }
+            | TypeData::Substitution { .. } => {
                 let bound = self.c.value_bound(ty);
                 if bound == ty {
                     return Declared::anything();
@@ -445,7 +605,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.out.tys.get(bound).clone()
             }
             TypeData::Keyof(_) => Declared::prims(prim::STRING | prim::NUMBER | prim::SYMBOL),
-            TypeData::Template { .. } | TypeData::StringMapping { .. } => Declared::prims(prim::STRING),
+            TypeData::Template { .. } | TypeData::StringMapping { .. } => {
+                Declared::prims(prim::STRING)
+            }
             _ => Declared::anything(),
         }
     }
@@ -457,18 +619,38 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 if self.c.is_array(ty) || self.files.flags(target).contains(SymFlags::CLASS) {
                     return false;
                 }
-                self.declares_records(target.file) && !self.c.is_ambient_interface(target) && self.c.array_subtype_element(ty).is_none() && self.c.extended_built_in(ty).is_none()
+                self.declares_records(target.file)
+                    && !self.c.is_ambient_interface(target)
+                    && self.c.array_subtype_element(ty).is_none()
+                    && self.c.extended_built_in(ty).is_none()
             }
             TypeData::Anon { origin, .. } => match *origin {
-                Origin::TypeLiteral(file, literal) => self.declares_records(file) || self.c.is_safe_validate_result(file, literal),
-                Origin::ObjectLiteral(file, ..) | Origin::WidenedLiteral(file, ..) => self.declares_records(file),
+                Origin::TypeLiteral(file, literal) => {
+                    self.declares_records(file) || self.c.is_safe_validate_result(file, literal)
+                }
+                Origin::ObjectLiteral(file, ..) | Origin::WidenedLiteral(file, ..) => {
+                    self.declares_records(file)
+                }
                 Origin::Mapped(file, _) => match self.c.alias_of_type(ty) {
                     _ if self.is_untyped_file(file) => false,
-                    Some((_, arguments)) if self.files.module(file).is_lib && arguments.iter().any(|&argument| argument.is_any() || argument == TypeId::UNKNOWN) => false,
-                    Some((_, arguments)) => arguments.into_iter().all(|argument| !self.c.is_object_type(argument) || self.is_record_type(argument) || self.is_program_class(argument)),
+                    Some((_, arguments))
+                        if self.files.module(file).is_lib
+                            && arguments.iter().any(|&argument| {
+                                argument.is_any() || argument == TypeId::UNKNOWN
+                            }) =>
+                    {
+                        false
+                    }
+                    Some((_, arguments)) => arguments.into_iter().all(|argument| {
+                        !self.c.is_object_type(argument)
+                            || self.is_record_type(argument)
+                            || self.is_program_class(argument)
+                    }),
                     None => self.is_written_in_typescript(file),
                 },
-                Origin::Module(namespace) => self.c.is_reified_namespace(namespace) && self.declares_records(namespace.file),
+                Origin::Module(namespace) => {
+                    self.c.is_reified_namespace(namespace) && self.declares_records(namespace.file)
+                }
                 _ => false,
             },
             TypeData::Intersection(parts) => parts.iter().all(|&part| self.is_record_type(part)),
@@ -500,10 +682,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if ty == TypeId::UNRESOLVED || self.c.is_uninformative(ty) {
             return false;
         }
-        self.c.parts(ty).to_vec().into_iter().any(|part| match *self.c.data(part) {
-            TypeData::Ref { target, .. } => self.is_declaration_only(target.file) && (!self.files.module(target.file).is_lib || self.ty_of(part) == self.out.tys.anything),
-            _ => false,
-        })
+        self.c
+            .parts(ty)
+            .to_vec()
+            .into_iter()
+            .any(|part| match *self.c.data(part) {
+                TypeData::Ref { target, .. } => {
+                    self.is_declaration_only(target.file)
+                        && (!self.files.module(target.file).is_lib
+                            || self.ty_of(part) == self.out.tys.anything)
+                }
+                _ => false,
+            })
     }
 
     fn allocation_ty(&mut self, file: FileId, e: bun_sema::hir::ExprId) -> Option<TyId> {
@@ -514,7 +704,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    pub(crate) fn call_result_ty(&mut self, file: FileId, e: bun_sema::hir::ExprId) -> Option<TyId> {
+    pub(crate) fn call_result_ty(
+        &mut self,
+        file: FileId,
+        e: bun_sema::hir::ExprId,
+    ) -> Option<TyId> {
         if !self.c.has_declared_type(file, e) {
             return None;
         }
@@ -522,9 +716,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.ty_of(created) != self.out.tys.anything {
             return None;
         }
-        let TypeData::Ref { target, .. } = *self.c.data(created) else { return None };
+        let TypeData::Ref { target, .. } = *self.c.data(created) else {
+            return None;
+        };
         let name = self.files.symbol(target).name;
-        if self.c.global_type_symbol(name) != Some(target) || !self.files.module(target.file).is_lib || !self.c.calls_global_static_method(file, e, name) {
+        if self.c.global_type_symbol(name) != Some(target)
+            || !self.files.module(target.file).is_lib
+            || !self.c.calls_global_static_method(file, e, name)
+        {
             return None;
         }
         Some(self.out.tys.intern(Declared::any_object()))
@@ -542,14 +741,24 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             Some(BuiltIn::Instance(root)) => root,
             _ => created,
         };
-        let TypeData::Ref { target, .. } = *self.c.data(root) else { return None };
+        let TypeData::Ref { target, .. } = *self.c.data(root) else {
+            return None;
+        };
         let name = self.files.symbol(target).name;
-        if self.c.global_type_symbol(name) != Some(target) || !self.files.module(target.file).is_lib {
+        if self.c.global_type_symbol(name) != Some(target) || !self.files.module(target.file).is_lib
+        {
             return None;
         }
-        if root == created && !matches!(self.c.atoms().bytes(name), b"Error" | b"Promise") && self.c.constructs_global_object(file, e, name) {
+        if root == created
+            && !matches!(self.c.atoms().bytes(name), b"Error" | b"Promise")
+            && self.c.constructs_global_object(file, e, name)
+        {
             let name = self.str(name);
-            return Some(self.out.tys.intern(Declared::part(Part::Global(name, Default::default()))));
+            return Some(
+                self.out
+                    .tys
+                    .intern(Declared::part(Part::Global(name, Default::default()))),
+            );
         }
         Some(self.out.tys.intern(Declared::any_object()))
     }
@@ -593,12 +802,26 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if self.c.atoms().bytes(name) == b"Promise" {
                 return Declared::anything();
             }
-            let is_only_predicted = matches!(self.c.atoms().bytes(name), b"ArrayBuffer" | b"SharedArrayBuffer" | b"DataView" | b"WeakMap" | b"WeakSet" | b"WeakRef" | b"FinalizationRegistry");
-            if self.is_declaration_only(target.file) && (is_only_predicted || !self.files.module(target.file).is_lib) {
+            let is_only_predicted = matches!(
+                self.c.atoms().bytes(name),
+                b"ArrayBuffer"
+                    | b"SharedArrayBuffer"
+                    | b"DataView"
+                    | b"WeakMap"
+                    | b"WeakSet"
+                    | b"WeakRef"
+                    | b"FinalizationRegistry"
+            );
+            if self.is_declaration_only(target.file)
+                && (is_only_predicted || !self.files.module(target.file).is_lib)
+            {
                 return Declared::anything();
             }
             let arguments: Vec<TypeId> = self.c.type_arguments(ty).to_vec();
-            let arguments = arguments.into_iter().map(|argument| self.ty_at_depth(argument, depth + 1)).collect();
+            let arguments = arguments
+                .into_iter()
+                .map(|argument| self.ty_at_depth(argument, depth + 1))
+                .collect();
             let name = self.str(name);
             return Declared::part(Part::Global(name, arguments));
         }
@@ -610,9 +833,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn refined_built_in_ty(&mut self, ty: TypeId, built_in: &BuiltIn, depth: u8) -> Declared {
         let is_call_with_narrower_type = matches!(built_in, BuiltIn::Function)
-            && (!self.c.signatures(ty, false).is_empty() || !self.c.signatures(ty, true).is_empty())
-            && self.c.members(ty).is_some_and(|members| !members.shape().props.is_empty());
-        if is_call_with_narrower_type { Declared::any_object() } else { self.built_in_ty(built_in, depth) }
+            && (!self.c.signatures(ty, false).is_empty()
+                || !self.c.signatures(ty, true).is_empty())
+            && self
+                .c
+                .members(ty)
+                .is_some_and(|members| !members.shape().props.is_empty());
+        if is_call_with_narrower_type {
+            Declared::any_object()
+        } else {
+            self.built_in_ty(built_in, depth)
+        }
     }
 
     fn built_in_ty(&mut self, built_in: &BuiltIn, depth: u8) -> Declared {
@@ -670,7 +901,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn merge_array_parts(&mut self, mut described: Declared) -> Declared {
-        let elements: Vec<TyId> = described.parts.iter().filter_map(|part| if let Part::Array(element) = part { Some(*element) } else { None }).collect();
+        let elements: Vec<TyId> = described
+            .parts
+            .iter()
+            .filter_map(|part| {
+                if let Part::Array(element) = part {
+                    Some(*element)
+                } else {
+                    None
+                }
+            })
+            .collect();
         if elements.len() < 2 {
             return described;
         }
@@ -680,7 +921,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let merged = self.merge_array_parts(merged);
         let merged = self.out.tys.intern(merged);
-        described.parts.retain(|part| !matches!(part, Part::Array(_)));
+        described
+            .parts
+            .retain(|part| !matches!(part, Part::Array(_)));
         described.parts.push(Part::Array(merged));
         described.parts.sort_unstable();
         described
@@ -701,8 +944,20 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn add_record_layout(&mut self, ty: TypeId) -> Option<LayoutId> {
-        let has_no_fields = self.c.members(ty).is_none_or(|members| !members.shape().call.is_empty() || !members.shape().construct.is_empty() || members.shape().props.is_empty());
-        let fields = if has_no_fields || self.c.is_instance_type(ty) || self.c.is_nested_too_deeply(ty) || self.c.may_be_redefined(ty) { None } else { self.declare_fields(ty) };
+        let has_no_fields = self.c.members(ty).is_none_or(|members| {
+            !members.shape().call.is_empty()
+                || !members.shape().construct.is_empty()
+                || members.shape().props.is_empty()
+        });
+        let fields = if has_no_fields
+            || self.c.is_instance_type(ty)
+            || self.c.is_nested_too_deeply(ty)
+            || self.c.may_be_redefined(ty)
+        {
+            None
+        } else {
+            self.declare_fields(ty)
+        };
         let Some(fields) = fields else {
             self.records.insert(ty, None);
             return None;
@@ -710,7 +965,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let name = match self.c.alias_of_type(ty) {
             Some((alias, _)) => self.str(self.files.symbol(alias).name),
             None => match self.c.data(ty) {
-                TypeData::Ref { target, .. } | TypeData::Anon { origin: Origin::Module(target), .. } => self.str(self.files.symbol(*target).name),
+                TypeData::Ref { target, .. }
+                | TypeData::Anon {
+                    origin: Origin::Module(target),
+                    ..
+                } => self.str(self.files.symbol(*target).name),
                 _ => StrId::NONE,
             },
         };
@@ -720,17 +979,27 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.out.layouts[id.idx()].methods = self.literal_accessors(ty);
         self.records.insert(ty, Some(id));
         self.layout_types.insert(id, ty);
-        self.layouts_pending_field_types.insert(id, FieldTypes::Properties(ty));
+        self.layouts_pending_field_types
+            .insert(id, FieldTypes::Properties(ty));
         Some(id)
     }
 
     fn literal_accessors(&mut self, ty: TypeId) -> Vec<crate::ir::Method> {
-        let TypeData::Anon { origin: Origin::ObjectLiteral(file, literal, ..) | Origin::WidenedLiteral(file, literal, ..), .. } = *self.c.data(ty) else { return Vec::new() };
+        let TypeData::Anon {
+            origin:
+                Origin::ObjectLiteral(file, literal, ..) | Origin::WidenedLiteral(file, literal, ..),
+            ..
+        } = *self.c.data(ty)
+        else {
+            return Vec::new();
+        };
         if self.is_declaration_only(file) {
             return Vec::new();
         }
         let hir = self.hir(file);
-        let bun_sema::hir::ExprKind::Object(props) = hir[literal].kind else { return Vec::new() };
+        let bun_sema::hir::ExprKind::Object(props) = hir[literal].kind else {
+            return Vec::new();
+        };
         let mut accessors = Vec::new();
         for p in props.iter() {
             let kind = match hir[p].kind {
@@ -738,19 +1007,50 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 bun_sema::hir::PropKind::Setter => crate::ir::MethodKind::Setter,
                 _ => continue,
             };
-            let (bun_sema::hir::PropKey::Name(name), bun_sema::hir::ExprKind::Fn(accessor)) = (hir[p].key, hir[hir[p].value].kind) else { continue };
-            let (name, func) = (self.str(name), self.forward_declare_function(file, accessor));
-            accessors.push(crate::ir::Method { name, func, kind, flags: 0, key: crate::ir::NO_VARIABLE });
+            let (bun_sema::hir::PropKey::Name(name), bun_sema::hir::ExprKind::Fn(accessor)) =
+                (hir[p].key, hir[hir[p].value].kind)
+            else {
+                continue;
+            };
+            let (name, func) = (
+                self.str(name),
+                self.forward_declare_function(file, accessor),
+            );
+            accessors.push(crate::ir::Method {
+                name,
+                func,
+                kind,
+                flags: 0,
+                key: crate::ir::NO_VARIABLE,
+            });
         }
         accessors
     }
 
-    pub(crate) fn set_class_field_types(&mut self, layout: LayoutId, class: Sym, base: LayoutId, declared_by: Vec<(u32, Sym)>, implemented: Vec<(u32, TypeId, Atom)>) {
+    pub(crate) fn set_class_field_types(
+        &mut self,
+        layout: LayoutId,
+        class: Sym,
+        base: LayoutId,
+        declared_by: Vec<(u32, Sym)>,
+        implemented: Vec<(u32, TypeId, Atom)>,
+    ) {
         let declarations = &self.c.bound(class.file).symbols[class.id.idx()].decls;
-        if let Some(&Decl::Class(declaration)) = declarations.iter().find(|decl| matches!(decl, Decl::Class(_))) {
-            self.fixed_layout_classes.insert(layout, (class.file, declaration));
+        if let Some(&Decl::Class(declaration)) = declarations
+            .iter()
+            .find(|decl| matches!(decl, Decl::Class(_)))
+        {
+            self.fixed_layout_classes
+                .insert(layout, (class.file, declaration));
         }
-        self.layouts_pending_field_types.insert(layout, FieldTypes::Members { base, declared_by, implemented });
+        self.layouts_pending_field_types.insert(
+            layout,
+            FieldTypes::Members {
+                base,
+                declared_by,
+                implemented,
+            },
+        );
     }
 
     pub(crate) fn is_field_name(name: &[u8]) -> bool {
@@ -763,7 +1063,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if !shape.call.is_empty() || !shape.construct.is_empty() || shape.props.is_empty() {
             return None;
         }
-        let is_of_literal = matches!(self.c.data(ty), TypeData::Anon { origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..), .. });
+        let is_of_literal = matches!(
+            self.c.data(ty),
+            TypeData::Anon {
+                origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..),
+                ..
+            }
+        );
         let mut fields = Vec::with_capacity(shape.props.len());
         for prop in shape.props.iter() {
             if prop.flags.contains(PropFlags::ACCESSOR) {
@@ -772,26 +1078,37 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
                 return None;
             }
-            let is_named_by_constant_symbol = self.c.constant_symbol_of_property(prop.name).is_some();
+            let is_named_by_constant_symbol =
+                self.c.constant_symbol_of_property(prop.name).is_some();
             let bytes = self.c.atoms().bytes(prop.name);
-            if bytes.first() == Some(&0xFE) && !is_named_by_constant_symbol || bytes == b"__proto__" || !Self::is_field_name(bytes) {
+            if bytes.first() == Some(&0xFE) && !is_named_by_constant_symbol
+                || bytes == b"__proto__"
+                || !Self::is_field_name(bytes)
+            {
                 return None;
             }
             let mut flags = 0;
-            if prop.flags.contains(PropFlags::OPTIONAL) || self.c.is_deleted_from_untyped_objects(prop.name) {
+            if prop.flags.contains(PropFlags::OPTIONAL)
+                || self.c.is_deleted_from_untyped_objects(prop.name)
+            {
                 flags |= field_flags::OPTIONAL;
             }
             if prop.flags.contains(PropFlags::METHOD) {
                 flags |= field_flags::METHOD;
             }
             let name = self.str(prop.name);
-            if is_named_by_constant_symbol && fields.iter().any(|field: &Field| field.name == name) {
+            if is_named_by_constant_symbol && fields.iter().any(|field: &Field| field.name == name)
+            {
                 return None;
             }
             fields.push(Field::new(name, TyId::NONE, flags));
         }
         for &(name, _) in self.c.undeclared_fields_for(ty).iter() {
-            fields.push(Field::new(self.str(name), TyId::NONE, field_flags::OPTIONAL));
+            fields.push(Field::new(
+                self.str(name),
+                TyId::NONE,
+                field_flags::OPTIONAL,
+            ));
         }
         Some(fields)
     }
@@ -810,31 +1127,64 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         match self.layouts_pending_field_types.remove(&layout) {
             None => {}
             Some(FieldTypes::Properties(ty)) => {
-                let Some(members) = self.c.members(ty) else { return };
-                let own = members.shape().props.iter().filter(|prop| !prop.flags.contains(PropFlags::ACCESSOR));
+                let Some(members) = self.c.members(ty) else {
+                    return;
+                };
+                let own = members
+                    .shape()
+                    .props
+                    .iter()
+                    .filter(|prop| !prop.flags.contains(PropFlags::ACCESSOR));
                 for (i, prop) in own.clone().enumerate() {
                     self.set_field_type_from_property(layout, i as u32, prop, members.mapper, ty);
                 }
                 for (i, &(name, declaring)) in self.c.undeclared_fields_for(ty).iter().enumerate() {
                     let field = (own.clone().count() + i) as u32;
-                    let Some(declared_by) = self.c.members(declaring) else { continue };
-                    let Some(prop) = declared_by.shape().props.iter().find(|prop| prop.name == name) else { continue };
-                    self.set_field_type_from_property(layout, field, prop, declared_by.mapper, declaring);
-                    let checked = self.c.union(&[self.checked_fields[&(layout, field)], TypeId::UNDEFINED]);
+                    let Some(declared_by) = self.c.members(declaring) else {
+                        continue;
+                    };
+                    let Some(prop) = declared_by
+                        .shape()
+                        .props
+                        .iter()
+                        .find(|prop| prop.name == name)
+                    else {
+                        continue;
+                    };
+                    self.set_field_type_from_property(
+                        layout,
+                        field,
+                        prop,
+                        declared_by.mapper,
+                        declaring,
+                    );
+                    let checked = self
+                        .c
+                        .union(&[self.checked_fields[&(layout, field)], TypeId::UNDEFINED]);
                     self.checked_fields.insert((layout, field), checked);
                     let of_layout = &mut self.out.layouts[layout.idx()].fields[field as usize];
                     of_layout.flags &= !field_flags::DECLARED_WITHOUT_UNDEFINED;
                     let declared = of_layout.declared;
                     if declared.is_some() && declared != self.out.tys.anything {
-                        self.out.layouts[layout.idx()].fields[field as usize].declared = self.or_undefined(declared);
+                        self.out.layouts[layout.idx()].fields[field as usize].declared =
+                            self.or_undefined(declared);
                     }
                 }
             }
-            Some(FieldTypes::Members { base, declared_by, implemented }) => {
+            Some(FieldTypes::Members {
+                base,
+                declared_by,
+                implemented,
+            }) => {
                 self.resolve_field_types(base);
-                let inherited = if base.is_some() { self.out.layouts[base.idx()].fields.len() } else { 0 };
+                let inherited = if base.is_some() {
+                    self.out.layouts[base.idx()].fields.len()
+                } else {
+                    0
+                };
                 for i in 0..inherited {
-                    self.out.layouts[layout.idx()].fields[i].declared = self.out.layouts[base.idx()].fields[i].declared;
+                    self.out.layouts[layout.idx()].fields[i].declared =
+                        self.out.layouts[base.idx()].fields[i].declared;
                     let literals = self.out.layouts[base.idx()].fields[i].literals.clone();
                     self.out.layouts[layout.idx()].fields[i].literals = literals;
                     if let Some(&checked) = self.checked_fields.get(&(base, i as u32)) {
@@ -849,14 +1199,26 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     let storage = self.c.field_storage(sym, &extended);
                     let declared = self.storage_ty(storage, Some(sym));
                     let name = self.files.symbol(sym).name;
-                    let is_widened_by_store = self.fixed_layout_classes.get(&layout).copied().is_some_and(|(file, class)| {
-                        let instances = self.c.class_instance_type(file, class);
-                        self.c.is_widened_by_checked_source_store(instances, name)
-                    });
-                    let declared = if is_widened_by_store { Ty { id: self.out.tys.anything, checked: TypeId::UNKNOWN } } else { declared };
+                    let is_widened_by_store =
+                        self.fixed_layout_classes.get(&layout).copied().is_some_and(
+                            |(file, class)| {
+                                let instances = self.c.class_instance_type(file, class);
+                                self.c.is_widened_by_checked_source_store(instances, name)
+                            },
+                        );
+                    let declared = if is_widened_by_store {
+                        Ty {
+                            id: self.out.tys.anything,
+                            checked: TypeId::UNKNOWN,
+                        }
+                    } else {
+                        declared
+                    };
                     self.out.layouts[layout.idx()].fields[field as usize].declared = declared.id;
-                    self.out.layouts[layout.idx()].fields[field as usize].literals = self.field_literals(declared.checked);
-                    self.checked_fields.insert((layout, field), declared.checked);
+                    self.out.layouts[layout.idx()].fields[field as usize].literals =
+                        self.field_literals(declared.checked);
+                    self.checked_fields
+                        .insert((layout, field), declared.checked);
                     if self.c.is_annotated(sym) {
                         self.annotated_fields.insert((layout, field));
                     } else {
@@ -864,46 +1226,119 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     }
                 }
                 for (field, interface, name) in implemented {
-                    let Some(members) = self.c.members(interface) else { continue };
-                    let Some(prop) = members.shape().props.iter().find(|prop| prop.name == name) else { continue };
+                    let Some(members) = self.c.members(interface) else {
+                        continue;
+                    };
+                    let Some(prop) = members.shape().props.iter().find(|prop| prop.name == name)
+                    else {
+                        continue;
+                    };
                     if prop.flags.contains(PropFlags::METHOD) {
-                        self.out.layouts[layout.idx()].fields[field as usize].flags |= field_flags::METHOD;
+                        self.out.layouts[layout.idx()].fields[field as usize].flags |=
+                            field_flags::METHOD;
                     }
-                    self.set_field_type_from_property(layout, field, prop, members.mapper, interface);
+                    self.set_field_type_from_property(
+                        layout,
+                        field,
+                        prop,
+                        members.mapper,
+                        interface,
+                    );
                     if !prop.flags.contains(PropFlags::OPTIONAL) {
-                        let declared = self.out.layouts[layout.idx()].fields[field as usize].declared;
-                        self.out.layouts[layout.idx()].fields[field as usize].declared = self.or_undefined(declared);
+                        let declared =
+                            self.out.layouts[layout.idx()].fields[field as usize].declared;
+                        self.out.layouts[layout.idx()].fields[field as usize].declared =
+                            self.or_undefined(declared);
                     }
                 }
             }
         }
     }
 
-    fn is_inferred_only_from_first_value(&mut self, prop: &Prop, found_in: TypeId, checked: TypeId) -> bool {
-        if !matches!(self.c.data(found_in), TypeData::Anon { origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..), .. }) || prop.flags.contains(PropFlags::READONLY) || self.c.is_prop_annotated(prop) {
+    fn is_inferred_only_from_first_value(
+        &mut self,
+        prop: &Prop,
+        found_in: TypeId,
+        checked: TypeId,
+    ) -> bool {
+        if !matches!(
+            self.c.data(found_in),
+            TypeData::Anon {
+                origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..),
+                ..
+            }
+        ) || prop.flags.contains(PropFlags::READONLY)
+            || self.c.is_prop_annotated(prop)
+        {
             return false;
         }
         let parts: Vec<TypeId> = match self.c.data(checked) {
             TypeData::Union(parts) => parts.to_vec(),
             _ => vec![checked],
         };
-        let is_nullish = |data: &TypeData| matches!(data, TypeData::Intrinsic(Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedWidening | Intrinsic::Null | Intrinsic::NullWidening));
-        parts.iter().all(|&part| is_nullish(self.c.data(part))) || parts.len() == 1 && matches!(self.c.data(parts[0]), TypeData::BoolLit { .. } | TypeData::NumberLit { .. } | TypeData::StringLit { .. } | TypeData::BigIntLit { .. })
+        let is_nullish = |data: &TypeData| {
+            matches!(
+                data,
+                TypeData::Intrinsic(
+                    Intrinsic::Undefined
+                        | Intrinsic::Missing
+                        | Intrinsic::UndefinedWidening
+                        | Intrinsic::Null
+                        | Intrinsic::NullWidening
+                )
+            )
+        };
+        parts.iter().all(|&part| is_nullish(self.c.data(part)))
+            || parts.len() == 1
+                && matches!(
+                    self.c.data(parts[0]),
+                    TypeData::BoolLit { .. }
+                        | TypeData::NumberLit { .. }
+                        | TypeData::StringLit { .. }
+                        | TypeData::BigIntLit { .. }
+                )
     }
 
-    fn set_field_type_from_property(&mut self, layout: LayoutId, field: u32, prop: &Prop, mapper: MapperId, found_in: TypeId) {
-        let is_predicted = self.c.is_prop_predicted(prop) || self.c.is_predicted_through_spread(found_in, prop.name) || self.c.is_widened_by_checked_source_store(found_in, prop.name);
-        let checked = if is_predicted { TypeId::UNKNOWN } else { self.c.prop_storage_type(prop, mapper) };
-        let checked = if self.is_inferred_only_from_first_value(prop, found_in, checked) { TypeId::UNKNOWN } else { checked };
-        let may_be_absent = prop.flags.contains(PropFlags::OPTIONAL) || self.out.layouts[layout.idx()].fields[field as usize].flags & field_flags::OPTIONAL != 0;
-        let checked = if may_be_absent && !self.c.accepts_undefined(checked) { self.c.union(&[checked, TypeId::UNDEFINED]) } else { checked };
+    fn set_field_type_from_property(
+        &mut self,
+        layout: LayoutId,
+        field: u32,
+        prop: &Prop,
+        mapper: MapperId,
+        found_in: TypeId,
+    ) {
+        let is_predicted = self.c.is_prop_predicted(prop)
+            || self.c.is_predicted_through_spread(found_in, prop.name)
+            || self
+                .c
+                .is_widened_by_checked_source_store(found_in, prop.name);
+        let checked = if is_predicted {
+            TypeId::UNKNOWN
+        } else {
+            self.c.prop_storage_type(prop, mapper)
+        };
+        let checked = if self.is_inferred_only_from_first_value(prop, found_in, checked) {
+            TypeId::UNKNOWN
+        } else {
+            checked
+        };
+        let may_be_absent = prop.flags.contains(PropFlags::OPTIONAL)
+            || self.out.layouts[layout.idx()].fields[field as usize].flags & field_flags::OPTIONAL
+                != 0;
+        let checked = if may_be_absent && !self.c.accepts_undefined(checked) {
+            self.c.union(&[checked, TypeId::UNDEFINED])
+        } else {
+            checked
+        };
         let declared = self.declared(checked);
         let written = self.c.annotated_prop_integer_range(prop);
         let declared = self.with_integers(declared, written);
         self.out.layouts[layout.idx()].fields[field as usize].declared = self.or_anything(declared);
-        self.out.layouts[layout.idx()].fields[field as usize].literals = self.field_literals(checked);
+        self.out.layouts[layout.idx()].fields[field as usize].literals =
+            self.field_literals(checked);
         if !self.c.accepts_undefined(checked) {
-            self.out.layouts[layout.idx()].fields[field as usize].flags |= field_flags::DECLARED_WITHOUT_UNDEFINED;
+            self.out.layouts[layout.idx()].fields[field as usize].flags |=
+                field_flags::DECLARED_WITHOUT_UNDEFINED;
         }
         self.checked_fields.insert((layout, field), checked);
         if self.c.is_prop_annotated(prop) {

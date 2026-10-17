@@ -1,6 +1,6 @@
 use crate::declared::prim;
 use crate::id::{FuncId, V};
-use crate::ir::{func_flags, Func, Op, Prediction, Program, Term};
+use crate::ir::{Func, Op, Prediction, Program, Term, func_flags};
 
 const ROPE_BYTES_BEYOND_ARRAY_ELEMENT: usize = 24;
 const MAX_CALL_DEPTH: u32 = 3;
@@ -24,10 +24,20 @@ fn minimum_length(program: &Program, func: &Func, v: V, depth: u32) -> usize {
         return 0;
     }
     match func.op(skip_coercions(func, v)) {
-        Some(&Op::Str(text)) => program.strs.get(text).iter().filter(|&&byte| byte & 0xc0 != 0x80).count(),
-        Some(Op::StrConcat(parts)) => parts.iter().map(|&part| minimum_length(program, func, part, depth)).sum(),
+        Some(&Op::Str(text)) => program
+            .strs
+            .get(text)
+            .iter()
+            .filter(|&&byte| byte & 0xc0 != 0x80)
+            .count(),
+        Some(Op::StrConcat(parts)) => parts
+            .iter()
+            .map(|&part| minimum_length(program, func, part, depth))
+            .sum(),
         Some(&Op::ToStr(value)) => minimum_length(program, func, value, depth),
-        Some(&Op::CallDirect { func: callee, .. }) if depth > 0 => minimum_result_length(program, callee, depth - 1),
+        Some(&Op::CallDirect { func: callee, .. }) if depth > 0 => {
+            minimum_result_length(program, callee, depth - 1)
+        }
         _ => 0,
     }
 }
@@ -68,7 +78,9 @@ fn is_only_concatenated(program: &Program, func: &Func, string: V, depth: u32) -
             }
             let is_harmless = match *op {
                 Op::StrConcat(_) => true,
-                Op::ToStr(_) | Op::Coerce { .. } => depth > 0 && is_only_concatenated(program, func, user, depth - 1),
+                Op::ToStr(_) | Op::Coerce { .. } => {
+                    depth > 0 && is_only_concatenated(program, func, user, depth - 1)
+                }
                 Op::StrictEq { a, b } => is_empty_string(a) || is_empty_string(b),
                 _ => false,
             };
@@ -77,15 +89,29 @@ fn is_only_concatenated(program: &Program, func: &Func, string: V, depth: u32) -
             }
         }
         let Some(term) = &block.term else { continue };
-        if let Term::Branch { cond: value, .. } | Term::Switch { value, .. } | Term::Return(value) | Term::Throw { value, .. } = *term
+        if let Term::Branch { cond: value, .. }
+        | Term::Switch { value, .. }
+        | Term::Return(value)
+        | Term::Throw { value, .. } = *term
             && value == string
         {
             return false;
         }
         let mut is_harmless = true;
         term.for_each_target(|target| {
-            for (index, _) in target.args.iter().enumerate().filter(|argument| *argument.1 == string) {
-                is_harmless &= depth > 0 && is_only_concatenated(program, func, func.blocks[target.block.idx()].params[index], depth - 1);
+            for (index, _) in target
+                .args
+                .iter()
+                .enumerate()
+                .filter(|argument| *argument.1 == string)
+            {
+                is_harmless &= depth > 0
+                    && is_only_concatenated(
+                        program,
+                        func,
+                        func.blocks[target.block.idx()].params[index],
+                        depth - 1,
+                    );
             }
         });
         if !is_harmless {
@@ -109,21 +135,46 @@ fn returns_only_strings(program: &Program, callback: FuncId) -> bool {
         && !result.any_function
 }
 
-fn rejection_of(program: &Program, func: &Func, ops: &[V], index: usize, mapped: V, callbacks: &[V], separators: &[V]) -> Option<String> {
-    let [separator] = separators else { return Some("join() is not passed exactly one argument".into()) };
+fn rejection_of(
+    program: &Program,
+    func: &Func,
+    ops: &[V],
+    index: usize,
+    mapped: V,
+    callbacks: &[V],
+    separators: &[V],
+) -> Option<String> {
+    let [separator] = separators else {
+        return Some("join() is not passed exactly one argument".into());
+    };
     if !matches!(func.op(*separator), Some(Op::Str(_))) {
         return Some("the separator is not a string literal".into());
     }
-    let [callback] = callbacks else { return Some("map() is not passed exactly one argument".into()) };
+    let [callback] = callbacks else {
+        return Some("map() is not passed exactly one argument".into());
+    };
     let callback = skip_coercions(func, *callback);
     let callback = match (func.op(callback), func.prediction(callback)) {
-        (Some(&Op::FuncRef(callback) | &Op::Closure { func: callback, .. } | &Op::ClosureOnce { func: callback, .. }), _) | (_, Prediction::Closure(callback)) => callback,
+        (
+            Some(
+                &Op::FuncRef(callback)
+                | &Op::Closure { func: callback, .. }
+                | &Op::ClosureOnce { func: callback, .. },
+            ),
+            _,
+        )
+        | (_, Prediction::Closure(callback)) => callback,
         _ => return Some("which function the callback is cannot be told at build time".into()),
     };
     if !returns_only_strings(program, callback) {
         return Some("the callback may return something other than a string".into());
     }
-    if ops[..index].iter().rev().find(|&&v| !matches!(func.op(v), Some(Op::Str(_)))) != Some(&mapped) {
+    if ops[..index]
+        .iter()
+        .rev()
+        .find(|&&v| !matches!(func.op(v), Some(Op::Str(_))))
+        != Some(&mapped)
+    {
         return Some("other code runs between map() and join(), or they are inside try".into());
     }
     if count_uses(func, mapped) != 1 {
@@ -132,17 +183,30 @@ fn rejection_of(program: &Program, func: &Func, ops: &[V], index: usize, mapped:
     if !is_only_concatenated(program, func, ops[index], MAX_USE_DEPTH) {
         return Some("the joined string is used for something other than concatenation".into());
     }
-    let length = minimum_result_length(program, callback, MAX_CALL_DEPTH) + minimum_length(program, func, *separator, 0);
+    let length = minimum_result_length(program, callback, MAX_CALL_DEPTH)
+        + minimum_length(program, func, *separator, 0);
     if length < ROPE_BYTES_BEYOND_ARRAY_ELEMENT {
-        return Some(format!("a piece and the separator are only known to be {length} characters long, and it takes {ROPE_BYTES_BEYOND_ARRAY_ELEMENT} for the fused form to allocate less"));
+        return Some(format!(
+            "a piece and the separator are only known to be {length} characters long, and it takes {ROPE_BYTES_BEYOND_ARRAY_ELEMENT} for the fused form to allocate less"
+        ));
     }
     None
 }
 
-pub(crate) fn find_join_sites(program: &Program, in_parallel: bun_sema::util::InParallel<'_>) -> Vec<JoinSite> {
+pub(crate) fn find_join_sites(
+    program: &Program,
+    in_parallel: bun_sema::util::InParallel<'_>,
+) -> Vec<JoinSite> {
     const FUNCTIONS_PER_TASK: usize = 256;
-    let (Some(map), Some(join)) = (program.strs.find(b"map"), program.strs.find(b"join")) else { return Vec::new() };
-    let mut tasks: Vec<(usize, &[Func], Vec<JoinSite>)> = program.funcs.chunks(FUNCTIONS_PER_TASK).enumerate().map(|(task, funcs)| (task * FUNCTIONS_PER_TASK, funcs, Vec::new())).collect();
+    let (Some(map), Some(join)) = (program.strs.find(b"map"), program.strs.find(b"join")) else {
+        return Vec::new();
+    };
+    let mut tasks: Vec<(usize, &[Func], Vec<JoinSite>)> = program
+        .funcs
+        .chunks(FUNCTIONS_PER_TASK)
+        .enumerate()
+        .map(|(task, funcs)| (task * FUNCTIONS_PER_TASK, funcs, Vec::new()))
+        .collect();
     bun_sema::util::for_each_mut(&mut tasks, in_parallel, &|(first, funcs, sites)| {
         for (offset, func) in funcs.iter().enumerate() {
             if func.has(func_flags::IS_BUILTIN) {
@@ -150,16 +214,31 @@ pub(crate) fn find_join_sites(program: &Program, in_parallel: bun_sema::util::In
             }
             for block in &func.blocks {
                 for (index, &v) in block.ops.iter().enumerate() {
-                    let Some(Op::CallMethod { obj: mapped, name, args: separators }) = func.op(v) else { continue };
+                    let Some(Op::CallMethod {
+                        obj: mapped,
+                        name,
+                        args: separators,
+                    }) = func.op(v)
+                    else {
+                        continue;
+                    };
                     if *name != join {
                         continue;
                     }
                     let callbacks = match func.op(*mapped) {
                         Some(Op::CallMethod { name, args, .. }) if *name == map => args,
-                        Some(Op::Call { callee, this, args }) if matches!(func.op(*callee), Some(Op::PropGet { obj, name }) if *name == map && obj == this) => args,
+                        Some(Op::Call { callee, this, args }) if matches!(func.op(*callee), Some(Op::PropGet { obj, name }) if *name == map && obj == this) => {
+                            args
+                        }
                         _ => continue,
                     };
-                    sites.push(JoinSite { func: FuncId::new(*first + offset), join: v, rejection: rejection_of(program, func, &block.ops, index, *mapped, callbacks, separators) });
+                    sites.push(JoinSite {
+                        func: FuncId::new(*first + offset),
+                        join: v,
+                        rejection: rejection_of(
+                            program, func, &block.ops, index, *mapped, callbacks, separators,
+                        ),
+                    });
                 }
             }
         }

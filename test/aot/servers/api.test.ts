@@ -31,9 +31,15 @@ async function sendRequest(origin: string, route: Route, body = route.request) {
   };
 }
 
-const expectedOf = (route: Route) => ({ status: route.status ?? 200, type: route.type === "-" ? expect.any(String) : route.type, added: ["r-1", "nosniff", "no-store"], body: route.expectedBody });
+const expectedOf = (route: Route) => ({
+  status: route.status ?? 200,
+  type: route.type === "-" ? expect.any(String) : route.type,
+  added: ["r-1", "nosniff", "no-store"],
+  body: route.expectedBody,
+});
 
-if (!requestedServers) console.error("SKIPPED: test/aot/servers/api.test.ts: it installs packages from npm. Set AOT_SERVERS=1 to run it");
+if (!requestedServers)
+  console.error("SKIPPED: test/aot/servers/api.test.ts: it installs packages from npm. Set AOT_SERVERS=1 to run it");
 
 describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/api", () => {
   const app = String(tempDir("aot-servers-api", {}));
@@ -46,35 +52,65 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/api", (
 
   describe.each(servers)("%s", name => {
     const executable = join(app, `${name}-compiled${isWindows ? ".exe" : ""}`);
-    const startCompiled = (env: Record<string, string> = {}) => startServer([executable], app, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", ...env });
+    const startCompiled = (env: Record<string, string> = {}) =>
+      startServer([executable], app, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", ...env });
 
     beforeAll(async () => {
-      built(await spawned([bunExe(), "build", "--compile", "--aot", "--define", 'process.env.NODE_ENV="production"', "--target=bun", `./${name}.ts`, "--outfile", executable], app, bunEnv));
+      built(
+        await spawned(
+          [
+            bunExe(),
+            "build",
+            "--compile",
+            "--aot",
+            "--define",
+            'process.env.NODE_ENV="production"',
+            "--target=bun",
+            `./${name}.ts`,
+            "--outfile",
+            executable,
+          ],
+          app,
+          bunEnv,
+        ),
+      );
     }, 120_000);
 
     test("serves every route", async () => {
       using server = await startCompiled();
-      for (const route of apiRoutes) expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({ route: route.name, ...expectedOf(route) });
+      for (const route of apiRoutes)
+        expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({
+          route: route.name,
+          ...expectedOf(route),
+        });
     });
 
     test.each([
       ["serves every route after a few thousand requests", {}],
-      ["serves every route in zombie mode", { BUN_JSC_useZombieMode: "1", BUN_JSC_sweepSynchronously: "1", BUN_JSC_slowPathAllocsBetweenGCs: "50" }],
-    ])("%s", async (_, env) => {
-      using server = await startCompiled(env);
-      for (const route of apiRoutes) {
-        let mismatch: unknown;
-        await Promise.all(
-          Array.from({ length: 16 }, async () => {
-            for (let n = 0; n < 200 && !mismatch; n++) {
-              const response = await sendRequest(server.origin, route);
-              if (response.status !== (route.status ?? 200) || response.body !== route.expectedBody) mismatch = response;
-            }
-          }),
-        );
-        expect({ route: route.name, mismatch }).toEqual({ route: route.name, mismatch: undefined });
-      }
-    }, 240_000);
+      [
+        "serves every route in zombie mode",
+        { BUN_JSC_useZombieMode: "1", BUN_JSC_sweepSynchronously: "1", BUN_JSC_slowPathAllocsBetweenGCs: "50" },
+      ],
+    ])(
+      "%s",
+      async (_, env) => {
+        using server = await startCompiled(env);
+        for (const route of apiRoutes) {
+          let mismatch: unknown;
+          await Promise.all(
+            Array.from({ length: 16 }, async () => {
+              for (let n = 0; n < 200 && !mismatch; n++) {
+                const response = await sendRequest(server.origin, route);
+                if (response.status !== (route.status ?? 200) || response.body !== route.expectedBody)
+                  mismatch = response;
+              }
+            }),
+          );
+          expect({ route: route.name, mismatch }).toEqual({ route: route.name, mismatch: undefined });
+        }
+      },
+      240_000,
+    );
 
     test("answers other requests like Bun without --aot", async () => {
       using server = await startCompiled();
@@ -82,8 +118,16 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/api", (
       const create = apiRoutes.find(route => route.name === "create")!;
       const others: Route[] = [
         { ...create, name: "text that is not JSON", request: '{"title":' },
-        { ...create, name: "a priority out of range", request: JSON.stringify({ title: "a", priority: 9, assigneeId: 5, tags: [] }) },
-        { ...create, name: "an unknown assignee", request: JSON.stringify({ title: "a", priority: 1, assigneeId: 500, tags: [] }) },
+        {
+          ...create,
+          name: "a priority out of range",
+          request: JSON.stringify({ title: "a", priority: 9, assigneeId: 5, tags: [] }),
+        },
+        {
+          ...create,
+          name: "an unknown assignee",
+          request: JSON.stringify({ title: "a", priority: 1, assigneeId: 500, tags: [] }),
+        },
         { ...create, name: "an unknown project", path: "/api/projects/77/tasks" },
         { ...create, name: "an unknown token", headers: { ...create.headers, authorization: "Bearer nobody" } },
         { ...create, name: "no request id", headers: { authorization: create.headers!.authorization! } },
@@ -91,7 +135,11 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/api", (
         { ...apiRoutes[1]!, name: "an unknown task", path: "/api/projects/3/tasks/999" },
         { ...apiRoutes[1]!, name: "an unknown path under /api", path: "/api/nothing" },
       ];
-      for (const route of others) expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({ route: route.name, ...(await sendRequest(reference.origin, route)) });
+      for (const route of others)
+        expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({
+          route: route.name,
+          ...(await sendRequest(reference.origin, route)),
+        });
     });
   });
 });

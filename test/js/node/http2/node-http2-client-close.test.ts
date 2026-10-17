@@ -17,9 +17,9 @@ import { describe, test } from "node:test";
 const { NGHTTP2_NO_ERROR, NGHTTP2_CANCEL, NGHTTP2_INTERNAL_ERROR, NGHTTP2_ENHANCE_YOUR_CALM } = http2.constants;
 
 // Raw h2c server: replies 200 + one DATA frame and never sends END_STREAM, so the only way the
-// stream ends is via the client's close(code).
-function rawH2Server(): net.Server {
-  const F = { DATA: 0, HEADERS: 1, SETTINGS: 4, PING: 6 };
+// stream ends is via the client's close(code). With `reset`, it replies RST_STREAM alone.
+function rawH2Server(reset?: number): net.Server {
+  const F = { DATA: 0, HEADERS: 1, RST_STREAM: 3, SETTINGS: 4, PING: 6 };
   const frame = (t: number, fl: number, sid: number, p: Buffer) => {
     const b = Buffer.alloc(9 + p.length);
     b.writeUIntBE(p.length, 0, 3);
@@ -58,7 +58,11 @@ function rawH2Server(): net.Server {
         buf = buf.slice(9 + len);
         if (t === F.SETTINGS && !(fl & 1)) s.write(frame(F.SETTINGS, 1, 0, Buffer.alloc(0)));
         else if (t === F.PING && !(fl & 1)) s.write(frame(F.PING, 1, 0, pay));
-        else if (t === F.HEADERS) {
+        else if (t === F.HEADERS && reset !== undefined) {
+          const code = Buffer.alloc(4);
+          code.writeUInt32BE(reset);
+          s.write(frame(F.RST_STREAM, 0, sid, code));
+        } else if (t === F.HEADERS) {
           s.write(frame(F.HEADERS, 0x4, sid, hp([[":status", "200"]])));
           s.write(frame(F.DATA, 0, sid, Buffer.alloc(600, 0x2e)));
         }
@@ -113,6 +117,36 @@ describe("ClientHttp2Stream.close(code) event sequence after data", () => {
       try {
         assert.deepStrictEqual(await collectEvents(port, code), expected);
       } finally {
+        srv.close();
+      }
+    });
+  }
+});
+
+describe("a request that the server resets before it responds, and that nothing reads", () => {
+  for (const [code, expected] of [
+    [NGHTTP2_NO_ERROR, ["end", "close:0"]],
+    [NGHTTP2_CANCEL, ["close:8"]],
+    [NGHTTP2_INTERNAL_ERROR, ["error:ERR_HTTP2_STREAM_ERROR", "close:2"]],
+  ] as const) {
+    test(`RST_STREAM(${code})`, async () => {
+      const srv = rawH2Server(code);
+      const client = http2.connect(`http://127.0.0.1:${await listen(srv)}`);
+      try {
+        const events: string[] = [];
+        const { promise, resolve } = Promise.withResolvers<void>();
+        const req = client.request({ ":path": "/" }, { endStream: true });
+        req.on("response", () => events.push("response"));
+        req.on("end", () => events.push("end"));
+        req.on("error", e => events.push("error:" + (e as NodeJS.ErrnoException).code));
+        req.on("close", () => {
+          events.push("close:" + req.rstCode);
+          resolve();
+        });
+        await promise;
+        assert.deepStrictEqual(events, expected);
+      } finally {
+        client.destroy();
         srv.close();
       }
     });

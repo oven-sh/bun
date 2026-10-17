@@ -67,34 +67,20 @@ JSPromise* writableStreamDefaultWriterCloseWithErrorPropagation(JSGlobalObject* 
 
 void writableStreamDefaultWriterEnsureClosedPromiseRejected(JSGlobalObject* globalObject, JSWritableStreamDefaultWriter* writer, JSValue error)
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* closedPromise = writer->m_closedPromise.get();
-    if (closedPromise->status() == JSPromise::Status::Pending) {
-        rejectPromise(globalObject, closedPromise, error);
-        RETURN_IF_EXCEPTION(scope, );
-    } else {
-        closedPromise = promiseRejectedWith(globalObject, error);
-        RETURN_IF_EXCEPTION(scope, );
-        writer->m_closedPromise.set(vm, writer, closedPromise);
-    }
-    markPromiseAsHandled(vm, closedPromise);
+    if (closedPromise->status() == JSPromise::Status::Pending)
+        rejectPromiseAsHandled(globalObject, closedPromise, error);
+    else
+        writer->m_closedPromise.set(getVM(globalObject), writer, promiseRejectedWithAsHandled(globalObject, error));
 }
 
 void writableStreamDefaultWriterEnsureReadyPromiseRejected(JSGlobalObject* globalObject, JSWritableStreamDefaultWriter* writer, JSValue error)
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* readyPromise = writer->m_readyPromise.get();
-    if (readyPromise && readyPromise->status() == JSPromise::Status::Pending) {
-        rejectPromise(globalObject, readyPromise, error);
-        RETURN_IF_EXCEPTION(scope, );
-    } else {
-        readyPromise = promiseRejectedWith(globalObject, error);
-        RETURN_IF_EXCEPTION(scope, );
-        writer->m_readyPromise.set(vm, writer, readyPromise);
-    }
-    markPromiseAsHandled(vm, readyPromise);
+    if (readyPromise && readyPromise->status() == JSPromise::Status::Pending)
+        rejectPromiseAsHandled(globalObject, readyPromise, error);
+    else
+        writer->m_readyPromise.set(getVM(globalObject), writer, promiseRejectedWithAsHandled(globalObject, error));
 }
 
 // Provably-non-throwing leaf: reads members and does queue arithmetic only.
@@ -121,10 +107,9 @@ void writableStreamDefaultWriterRelease(JSGlobalObject* globalObject, JSWritable
     ASSERT(stream);
     ASSERT(stream->m_writer.get() == writer);
     JSValue releasedError = Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Writer has been released"_s);
+    RETURN_IF_EXCEPTION(scope, );
     writableStreamDefaultWriterEnsureReadyPromiseRejected(globalObject, writer, releasedError);
-    RETURN_IF_EXCEPTION(scope, );
     writableStreamDefaultWriterEnsureClosedPromiseRejected(globalObject, writer, releasedError);
-    RETURN_IF_EXCEPTION(scope, );
     stream->m_writer.clear();
     writer->m_stream.clear();
 }

@@ -182,6 +182,35 @@ fi
 
 refresh_command=''
 
+# Appends the `# bun` block to the config file in $1. The remaining arguments
+# are the lines of the block. Returns 1 without a write when the file already
+# has every line, so a rerun with the same install dir adds nothing.
+append_shell_config() {
+    local config=$1
+    shift
+
+    local missing=false
+    for line in "$@"; do
+        if ! grep -Fxq -- "$line" "$config"; then
+            missing=true
+            break
+        fi
+    done
+
+    if [[ $missing = false ]]; then
+        return 1
+    fi
+
+    {
+        echo -e '\n# bun'
+
+        for line in "$@"; do
+            echo "$line"
+        done
+    } >>"$config" ||
+        error "Failed to write to \"$config\""
+}
+
 tilde_bin_dir=$(tildify "$bin_dir")
 quoted_install_dir=\"${install_dir//\"/\\\"}\"
 
@@ -205,15 +234,11 @@ fish)
     tilde_fish_config=$(tildify "$fish_config")
 
     if [[ -w $fish_config ]]; then
-        {
-            echo -e '\n# bun'
-
-            for command in "${commands[@]}"; do
-                echo "$command"
-            done
-        } >>"$fish_config"
-
-        info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_fish_config\""
+        if append_shell_config "$fish_config" "${commands[@]}"; then
+            info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_fish_config\""
+        else
+            info "\"$tilde_fish_config\" already adds \"$tilde_bin_dir\" to \$PATH"
+        fi
 
         refresh_command="source $tilde_fish_config"
     else
@@ -237,15 +262,11 @@ zsh)
     tilde_zsh_config=$(tildify "$zsh_config")
 
     if [[ -w $zsh_config ]]; then
-        {
-            echo -e '\n# bun'
-
-            for command in "${commands[@]}"; do
-                echo "$command"
-            done
-        } >>"$zsh_config"
-
-        info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_zsh_config\""
+        if append_shell_config "$zsh_config" "${commands[@]}"; then
+            info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_zsh_config\""
+        else
+            info "\"$tilde_zsh_config\" already adds \"$tilde_bin_dir\" to \$PATH"
+        fi
 
         refresh_command="exec $SHELL"
     else
@@ -265,10 +286,23 @@ bash)
         "export PATH=\"$bin_env:\$PATH\""
     )
 
-    bash_configs=(
-        "$HOME/.bash_profile"
-        "$HOME/.bashrc"
-    )
+    # A macOS or Git Bash terminal opens a login shell, which reads
+    # ~/.bash_profile and never ~/.bashrc. A Linux terminal opens a non-login
+    # shell, which reads only ~/.bashrc.
+    case $platform in
+    Darwin* | MINGW64*)
+        bash_configs=(
+            "$HOME/.bash_profile"
+            "$HOME/.bashrc"
+        )
+        ;;
+    *)
+        bash_configs=(
+            "$HOME/.bashrc"
+            "$HOME/.bash_profile"
+        )
+        ;;
+    esac
 
     if [[ ${XDG_CONFIG_HOME:-} ]]; then
         bash_configs+=(
@@ -284,15 +318,11 @@ bash)
         tilde_bash_config=$(tildify "$bash_config")
 
         if [[ -w $bash_config ]]; then
-            {
-                echo -e '\n# bun'
-
-                for command in "${commands[@]}"; do
-                    echo "$command"
-                done
-            } >>"$bash_config"
-
-            info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_bash_config\""
+            if append_shell_config "$bash_config" "${commands[@]}"; then
+                info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_bash_config\""
+            else
+                info "\"$tilde_bash_config\" already adds \"$tilde_bin_dir\" to \$PATH"
+            fi
 
             refresh_command="source $bash_config"
             set_manually=false
@@ -300,7 +330,21 @@ bash)
         fi
     done
 
+    # A login shell (ssh, tty) reads ~/.bash_profile instead of ~/.bashrc. The
+    # distro skeleton ~/.bash_profile sources ~/.bashrc. A hand-written one
+    # that does not gets the block too. The pattern matches a `. ~/.bashrc` or
+    # `source ~/.bashrc` command outside a comment.
+    bash_profile=$HOME/.bash_profile
+    if [[ $set_manually = false && $bash_config = "$HOME/.bashrc" && -w $bash_profile ]] &&
+        ! grep -Eq '^[^#]*(\.|source)[[:space:]]+[^#]*bashrc' "$bash_profile"; then
+        if append_shell_config "$bash_profile" "${commands[@]}"; then
+            info "Added \"$tilde_bin_dir\" to \$PATH in \"$(tildify "$bash_profile")\" for login shells"
+        fi
+    fi
+
     if [[ $set_manually = true ]]; then
+        tilde_bash_config=$(tildify "${bash_configs[0]}")
+
         echo "Manually add the directory to $tilde_bash_config (or similar):"
 
         for command in "${commands[@]}"; do

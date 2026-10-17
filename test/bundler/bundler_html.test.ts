@@ -1078,4 +1078,31 @@ body {
       expect(htmlContent).toMatch(/href=".*\.webmanifest"/);
     },
   });
+
+  // lol-html keeps one selector stack entry per open element and does not imply
+  // end tags: every <p> stays open until </body>. Under a 10 MiB memory limit
+  // the build failed at 65,536 open elements.
+  itBundled("html/many-unclosed-elements", {
+    outdir: "out/",
+    backend: "cli",
+    files: {
+      "/index.html": Buffer.concat([
+        Buffer.from(`<!DOCTYPE html><html><head><script src="./script.js"></script></head><body>\n`),
+        Buffer.alloc(70_000 * "<p>x".length, "<p>x"),
+        Buffer.from(`\n</body></html>`),
+      ]),
+      "/script.js": "console.log('Hello World')",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const pieces = api.readFile("out/index.html").split("<p>x");
+      // Count first: the other pieces are short only when every element is there.
+      expect(pieces.length - 1).toBe(70_000);
+      expect({ head: pieces[0], between: pieces.slice(1, -1).join(""), tail: pieces.at(-1)!.trim() }).toEqual({
+        head: expect.stringMatching(/<script type="module" crossorigin src="\.\/index-[a-z0-9]+\.js">/),
+        between: "",
+        tail: "</body></html>",
+      });
+    },
+  });
 });

@@ -75,7 +75,14 @@ async function runTestFile(source: string, args: string[] = [], preload?: string
     ...(preload && { "preload.ts": echoChildHelpers + preload }),
   });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--timeout=30000", ...(preload ? ["--preload=./preload.ts"] : []), ...args, "./kill.test.ts"],
+    cmd: [
+      bunExe(),
+      "test",
+      "--timeout=30000",
+      ...(preload ? ["--preload=./preload.ts"] : []),
+      ...args,
+      "./kill.test.ts",
+    ],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -510,6 +517,29 @@ testKill("a test timeout kills all of its children after an earlier child exited
   expect(combined).toContain(" 2 pass\n");
   expect(combined).toContain(" 1 fail\n");
   expect(exitCode).toBe(1);
+});
+
+// The timer of a test that finished stays armed. When it fires, the test that is
+// running has not timed out, so its child stays. The first test is not asserted on:
+// a slow machine can take longer than its timeout to return.
+testKill("the timer of a finished test does not kill the child of the test that is running", async () => {
+  const { combined } = await runTestFile(/* ts */ `
+    import { expect, test } from "bun:test";
+
+    const timeout = 100;
+    test("finishes and leaves its timer armed", () => {}, timeout);
+
+    test("is running when that timer fires", async () => {
+      const child = spawnEcho();
+      // This sleep ends after the deadline of the first test, so that timer fires first.
+      await Bun.sleep(timeout * 2);
+      expect(await echo(child, "still here")).toBe("still here");
+      child.kill();
+    }, 0);
+  `);
+
+  expect(combined).not.toContain("dangling process");
+  expect(combined).toContain("(pass) is running when that timer fires");
 });
 
 // The timer fires after the callback returned and before the runner steps past the entry.

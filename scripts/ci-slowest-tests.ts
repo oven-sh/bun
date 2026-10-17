@@ -11,6 +11,11 @@
 //   bun scripts/ci-slowest-tests.ts 47324           # specific build
 //   bun scripts/ci-slowest-tests.ts 47324 100       # top 100
 //   bun scripts/ci-slowest-tests.ts --json          # JSON output
+//   bun scripts/ci-slowest-tests.ts --allow-partial # exit 0 even if some job logs are missing
+//
+// Exit code 2 means that some job logs could not be fetched. The output is
+// there, but it is computed from partial data (`jobsFailed` in the JSON). Run
+// the same command again: only the missing logs are fetched.
 //
 // Requires BUILDKITE_TOKEN (or BUILDKITE_API_TOKEN) and `bk` + `gh` CLIs.
 
@@ -18,6 +23,7 @@ import { $, spawn } from "bun";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { fetchBuildkite, type BuildkiteFetchOptions } from "./buildkite-fetch.mjs";
 import { isPhaseGroupHeader } from "./ci-log-phase.mjs";
 
 // Per-file cost is the gap between the APC timestamps Buildkite injects into
@@ -78,9 +84,30 @@ export function parseLog(text: string): Map<string, number> {
   return out;
 }
 
+export type Job = { id: string; name: string; raw_log_url: string; retried?: boolean };
+
+// Returns the log of `job`. `cacheDir` holds one `<job id>.log` per downloaded
+// log, so a re-run only downloads what is missing.
+//
+// Do NOT use `bk job log`: it hangs indefinitely on some Windows/alpine jobs.
+// Fetching raw_log_url directly with the token works for all of them.
+//
+// One build has about 160 test-bun jobs and Buildkite allows 200 requests per
+// minute, shared by every user of the token. So a 429 is routine, and
+// fetchBuildkite waits it out.
+export async function fetchLog(job: Job, cacheDir: string, options: BuildkiteFetchOptions): Promise<string> {
+  const path = join(cacheDir, `${job.id}.log`);
+  if (existsSync(path)) return readFileSync(path, "utf8");
+  const response = await fetchBuildkite(job.raw_log_url, options);
+  const log = await response.text();
+  writeFileSync(path, log);
+  return log;
+}
+
 if (import.meta.main) {
   const args = process.argv.slice(2);
   const json = args.includes("--json");
+  const allowPartial = args.includes("--allow-partial");
   const positional = args.filter(a => !a.startsWith("-"));
   let BUILD = positional[0];
   const TOP_N = parseInt(positional[1] || "500", 10);
@@ -117,8 +144,7 @@ if (import.meta.main) {
 
   const CACHE = join(tmpdir(), `bun-ci-logs-${BUILD}`);
   mkdirSync(CACHE, { recursive: true });
-
-  type Job = { id: string; name: string; raw_log_url: string; retried?: boolean };
+  const buildkite: BuildkiteFetchOptions = { token: TOKEN };
 
   const buildJson = JSON.parse(
     await new Response(spawn({ cmd: ["bk", "build", "view", BUILD], stdout: "pipe" }).stdout).text(),
@@ -136,29 +162,18 @@ if (import.meta.main) {
       .replace(/^:([a-z]+):/, "$1")
       .trim();
 
-  // Do NOT use `bk job log` — it hangs indefinitely on some Windows/alpine jobs.
-  // Fetching raw_log_url directly with the token works for all of them.
-  async function fetchLog(job: Job): Promise<string> {
-    const path = join(CACHE, `${job.id}.log`);
-    if (existsSync(path)) return readFileSync(path, "utf8");
-    const res = await fetch(job.raw_log_url, { headers: { Authorization: `Bearer ${TOKEN}` } });
-    if (!res.ok) throw new Error(`${res.status} ${job.raw_log_url}`);
-    const out = await res.text();
-    writeFileSync(path, out);
-    return out;
-  }
-
   type Agg = { maxMs: number; maxPlat: string; perPlat: Map<string, number> };
   const agg = new Map<string, Agg>();
 
   let done = 0;
+  const failedJobs: { id: string; platform: string; error: string }[] = [];
   const queue = [...jobs];
   async function worker() {
     for (;;) {
       const job = queue.shift();
       if (!job) return;
       try {
-        const log = await fetchLog(job);
+        const log = await fetchLog(job, CACHE, buildkite);
         const plat = platOf(job.name);
         for (const [file, ms] of parseLog(log)) {
           let a = agg.get(file);
@@ -170,11 +185,16 @@ if (import.meta.main) {
             a.maxPlat = plat;
           }
         }
+        done++;
       } catch (e) {
-        console.error(`  failed ${job.id}: ${(e as Error).message}`);
+        const error = (e as Error).message;
+        console.error(`  failed ${job.id}: ${error}`);
+        failedJobs.push({ id: job.id, platform: platOf(job.name), error });
       }
-      done++;
-      if (done % 20 === 0 || done === jobs.length) console.error(`  ${done}/${jobs.length} logs`);
+      const settled = done + failedJobs.length;
+      if (settled % 20 === 0 || settled === jobs.length) {
+        console.error(`  ${done}/${jobs.length} logs` + (failedJobs.length ? `, ${failedJobs.length} failed` : ""));
+      }
     }
   }
   await Promise.all(Array.from({ length: 16 }, worker));
@@ -192,10 +212,29 @@ if (import.meta.main) {
   console.error(`logs cached at ${CACHE}`);
 
   if (json) {
-    console.log(JSON.stringify({ build: BUILD, count: agg.size, top: sorted }, null, 2));
+    const report = {
+      build: BUILD,
+      count: agg.size,
+      top: sorted,
+      jobs: jobs.length,
+      jobsFailed: failedJobs.length,
+      failedJobs,
+    };
+    console.log(JSON.stringify(report, null, 2));
   } else {
     console.log(`rank\tseconds\tfile\tslowest_platform`);
     sorted.forEach((t, i) => console.log(`${i + 1}\t${(t.maxMs / 1000).toFixed(2)}\t${t.file}\t${t.maxPlat}`));
   }
-  process.exit(0);
+
+  // After the table, so that it is the last thing on a terminal.
+  if (failedJobs.length) {
+    const perPlat = new Map<string, number>();
+    for (const { platform } of failedJobs) perPlat.set(platform, (perPlat.get(platform) ?? 0) + 1);
+    console.error(
+      `warning: ${failedJobs.length} of ${jobs.length} logs are missing, so the result is computed from partial data\n` +
+        `  missing: ${[...perPlat].map(([plat, n]) => `${plat} (${n})`).join(", ")}\n` +
+        `  run the same command again to fetch only the missing logs`,
+    );
+  }
+  process.exit(failedJobs.length && !allowPartial ? 2 : 0);
 }

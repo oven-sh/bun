@@ -15,6 +15,7 @@ import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { fetchBuildkite } from "./buildkite-fetch.mjs";
 import { isPhaseGroupHeader } from "./ci-log-phase.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -47,21 +48,10 @@ const lanes = {
   "windows-aarch64": "windows-aarch64-11-test-bun",
 };
 
-const api = async path => {
-  for (let attempt = 0; ; attempt++) {
-    const r = await fetch(`https://api.buildkite.com/v2/organizations/${opts.org}/pipelines/${opts.pipeline}/${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (r.ok) return r;
-    if ((r.status === 429 || r.status >= 500) && attempt < 5) {
-      const backoff = Number(r.headers.get("retry-after")) * 1000 || 1000 * 2 ** attempt;
-      await new Promise(resolve => setTimeout(resolve, backoff));
-      continue;
-    }
-    throw new Error(`${path}: ${r.status} ${r.statusText}`);
-  }
-};
+const api = path =>
+  fetchBuildkite(`https://api.buildkite.com/v2/organizations/${opts.org}/pipelines/${opts.pipeline}/${path}`, {
+    token,
+  });
 
 // Per-file cost is the gap between the APC timestamps Buildkite injects into
 // consecutive `[N/M] <path>` headers (ESC `_bk;t=<ms>` BEL). Serial tests

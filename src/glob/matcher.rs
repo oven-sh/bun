@@ -1575,15 +1575,6 @@ fn run<const STRICT: bool>(
                     state.wildcard = state.globstar;
                     continue 'main_loop;
                 }
-                // `**` can still match nothing, so it's handled below.
-                if STRICT
-                    && matches!(ch, b'*' | b'?' | b'[')
-                    && is_closed_segment_at(path, state.path_index, dots, is_windows)
-                    && !glob[state.glob_index as usize..].starts_with(b"**")
-                    && glob.get(state.glob_index as usize + 1) != Some(&b'(')
-                {
-                    break 'fallthrough;
-                }
                 'to_else: {
                     match ch {
                         b'*' | b'?' | b'+' | b'@' | b'!' | b'{'
@@ -1652,6 +1643,19 @@ fn run<const STRICT: bool>(
                                 continue 'main_loop;
                             }
                             stop!(Outcome::Group);
+                        }
+                        // A group may take the `.`, so the arm above comes first. `**` can match nothing, so it's handled below.
+                        b'*' | b'?' | b'['
+                            if STRICT
+                                && !glob[state.glob_index as usize..].starts_with(b"**")
+                                && is_closed_segment_at(
+                                    path,
+                                    state.path_index,
+                                    dots,
+                                    is_windows,
+                                ) =>
+                        {
+                            break 'fallthrough;
                         }
                         b'*' => {
                             // `**(a)` is `*` followed by `*(a)`.
@@ -3597,7 +3601,7 @@ struct Parsed {
     /// The alternatives of every group, sorted by start index.
     alternatives: SmallVec<[Alternative; 8]>,
     /// The loop finds every match of each stretch of the pattern that has no groups. It doesn't if a class or an escape can match
-    /// a separator, if a class starts with `(`, if a `**` isn't a whole segment, or if a bracket isn't closed.
+    /// a separator, if a `**` isn't a whole segment, or if a bracket isn't closed. `Parsed::read` adds a class that starts with `(`.
     is_regular: bool,
     /// All that keeps it from being regular are classes that can match a separator. It has neither `*` nor groups, so there's only
     /// one way to match it, and the loop finds that.
@@ -3868,7 +3872,7 @@ impl Parsed {
                 0x80.. => i += usize::from(strings::wtf8_byte_sequence_length(ch)) - 1,
                 b'[' if i < no_class_from => match class_shape(glob, i) {
                     Some((end, may_be_separator)) => {
-                        // The rules for dot segments overlook `[(`, so it can match where a `**` can't go on.
+                        // Stays until #45653, like the check in `ascii_class`, which keeps such a class out of `take_fixed_choice`.
                         is_regular &= glob[i + 1] != b'(';
                         has_separator_class |= may_be_separator;
                         i = end - 1;
@@ -4685,21 +4689,14 @@ impl Program {
                     to.imply_node(node);
                     i += 1;
                 }
-                // The rules for dot segments overlook `?(` and `[(`.
                 b'?' => {
-                    match next == Some(b'(') {
-                        true => node!(i, anys),
-                        false => node!(i, anys, wildcards),
-                    };
+                    node!(i, anys, wildcards);
                     i += 1;
                 }
                 b'[' if i < no_class_from
                     && let Some((end, _)) = class_shape(glob, i) =>
                 {
-                    match next == Some(b'(') {
-                        true => node!(i, classes),
-                        false => node!(i, classes, wildcards),
-                    };
+                    node!(i, classes, wildcards);
                     // The node after it matches wherever the node after the class does.
                     to.leave_out(i + 1 - start, end - start);
                     to.imply_node((i + 1 - start) as u32);

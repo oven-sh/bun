@@ -366,6 +366,48 @@ test.concurrent.each([
   expect(await reported(files, ["a.js"])).toEqual(expected);
 });
 
+// The answers are minimatch's: whether the pattern, with these patternOptions, matches the import.
+const dots: [pattern: string, patternOptions: string, source: string, matches: boolean][] = [
+  // Without `dot`, neither a class nor a `?` takes the `.` that starts a segment, whatever the class starts with.
+  ["~/[(.]a", "", "~/.a", false],
+  ["~/[.(]a", "", "~/.a", false],
+  ["~/[(a.]*", "", "~/.a", false],
+  ["~/?(a", "", "~/.(a", false],
+  ["~/[(.]a", "noext = true", "~/.a", false],
+  // Nor in a pattern that has a group.
+  ["~/{[(.]a,x}", "", "~/.a", false],
+  ["~/@([(.])a", "", "~/.a", false],
+  ["~/{x,?(a}", "", "~/.(a", false],
+  ["~/?(a{b,c}", "", "~/.(ab", false],
+  // With `dot`, they don't take a `.` or `..` segment.
+  ["~/[(.]/b", "dot = true", "~/./b", false],
+  ["~/[.(]/b", "dot = true", "~/./b", false],
+  ["~/[(.][(.]/b", "dot = true", "~/../b", false],
+  ["~/@([(.])/b", "dot = true", "~/./b", false],
+  // A `?(` or `*(` that starts a group decides for itself there.
+  ["~/.?(.)/b", "", "~/../b", true],
+  ["~/.*(x)/b", "dot = true", "~/./b", true],
+  // They take any other character.
+  ["~/[(x]a", "", "~/(a", true],
+  ["~/?(a", "", "~/x(a", true],
+  ["~/?(a{b,c}", "", "~/x(ab", true],
+  ["~/[(.]a", "dot = true", "~/.a", true],
+];
+test.concurrent("import/order: a `[(` class and a `?` before `(` take no dot that `*` doesn't take", async () => {
+  // One file for each row, with its own pattern.
+  const files: Record<string, string> = { "bunfig.toml": "" };
+  for (const [index, [pattern, options, source]] of dots.entries()) {
+    const patternOptions = options && `, patternOptions = { ${options} }`;
+    const group = `{ pattern = ${JSON.stringify(pattern)}, group = "builtin", position = "before"${patternOptions} }`;
+    const order = `["error", { pathGroups = [${group}], pathGroupsExcludedImportTypes = [] }]`;
+    files["bunfig.toml"] += `[[lint.overrides]]\nfiles = "${index}.js"\nrules = { "import/order" = ${order} }\n`;
+    files[`${index}.js`] = `import fs from "fs";\nimport a from ${JSON.stringify(source)};\nexport default [fs, a];\n`;
+  }
+  // A report on the second import means that the pattern matched it.
+  const reports = await reported(files, ["."]);
+  expect(dots.map((row, index) => [...row.slice(0, 3), reports.includes(`${index}.js:2`)])).toEqual(dots);
+});
+
 // The expected files come from ESLint 10.12.
 test.concurrent("brace sequences in `files` match the same files as ESLint", async () => {
   // prettier-ignore

@@ -3212,9 +3212,13 @@ test.concurrent.skipIf(!isLinux)("a script finds BUN_WHICH_IGNORE_CWD in PATH if
     "dep/package.json": JSON.stringify({
       name: "dep",
       version: "1.0.0",
-      scripts: { postinstall: "sh ./check.sh" },
+      scripts: { postinstall: `${bunExe()} check.js` },
     }),
-    "dep/check.sh": `case ":$PATH:" in *":$BUN_WHICH_IGNORE_CWD:"*) echo found ;; *) echo missing ;; esac > "$RESULT"`,
+    // latin1 keeps every byte. `process.env` and a shell's `case` on musl do not.
+    "dep/check.js": `const fs = require("fs");
+      const env = fs.readFileSync("/proc/self/environ", "latin1").split("\\0");
+      const get = name => env.find(entry => entry.startsWith(name + "=")).slice(name.length + 1);
+      fs.writeFileSync(process.env.RESULT, get("PATH").split(":").includes(get("BUN_WHICH_IGNORE_CWD")) ? "found" : "missing");`,
   });
   // A JavaScript string cannot hold the byte E9 alone, so a shell script that is written as bytes sets TMPDIR.
   await writeFile(
@@ -3234,7 +3238,7 @@ test.concurrent.skipIf(!isLinux)("a script finds BUN_WHICH_IGNORE_CWD in PATH if
     stderr: "pipe",
   });
   const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(readFileSync(join(dir, "result"), "utf8")).toBe("found\n");
+  expect(readFileSync(join(dir, "result"), "utf8")).toBe("found");
   expect(exitCode).toBe(0);
 });
 

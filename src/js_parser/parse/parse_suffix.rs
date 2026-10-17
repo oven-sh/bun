@@ -503,9 +503,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    /// `a++` is an UpdateExpression: no member access, call, template or `!` can continue it.
-    /// Every suffix loop checks `after_arrow_body_loc`. `forbid_suffix_after_as_loc` is only
-    /// checked for TypeScript.
+    /// No token in this list can continue `a++`. Every suffix loop stops at `after_arrow_body_loc`.
     fn sfx_end_after_update(p: &mut Self) {
         if matches!(
             p.lexer.token,

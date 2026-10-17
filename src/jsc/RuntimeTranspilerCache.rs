@@ -65,8 +65,7 @@ bun_core::declare_scope!(cache, visible);
 /// the cache-HIT path reinstates #33904 for them.
 /// Version 34: An import that a plugin `onResolve` answers is printed as it is written.
 /// Version 35: Long hexadecimal, octal and binary literals are rounded to the nearest double.
-/// Version 36: A postfix `++` / `--` ends its expression before a member access, a call or a
-/// template. Older entries hold `(i++)[a, b] = [b, a]` for `i++` + line break + `[a, b] = [b, a]`.
+/// Version 36: A postfix `++` / `--` ends its expression before a member access, call or template.
 const EXPECTED_VERSION: u32 = 36;
 
 /// Source files smaller than this are not written to / read from the on-disk

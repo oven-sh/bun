@@ -1108,12 +1108,11 @@ function consumeSNIResult(state, err, context) {
     return;
   }
   if (!context) return;
-  const innerContext = typeof context === "object" ? context.context : undefined;
-  if (innerContext) {
-    state.selected = innerContext;
-  } else if (state.server?.[kNativeSecureContextCtor] && context instanceof state.server[kNativeSecureContextCtor]) {
-    state.selected = context;
-  } else if (typeof context === "object" || typeof context === "function") {
+  const selected = context.context || context;
+  const NativeSecureContext = state.server?.[kNativeSecureContextCtor];
+  if (NativeSecureContext && selected instanceof NativeSecureContext) {
+    state.selected = selected;
+  } else if (typeof selected === "object" || typeof selected === "function") {
     state.failed = new TypeError("Invalid SNI context");
   }
 }

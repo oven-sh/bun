@@ -214,6 +214,8 @@ pub mod ssl_wrapper {
     const MAX_RECORD_PLAINTEXT: usize = 16384;
     /// `SSL3_RT_HEADER_LENGTH + SSL3_RT_SEND_MAX_ENCRYPTED_OVERHEAD`
     const MAX_RECORD_OVERHEAD: usize = 5 + 88;
+    /// `kMaxEarlyDataSkipped` in BoringSSL's tls_record.cc: the early data a server skips when it rejects it.
+    const MAX_EARLY_DATA_SKIPPED: usize = 16384;
 
     /// What the one BIO of the `SSL` reads and writes. No borrow spans an `SSL_*` call or a handler.
     #[derive(Default)]
@@ -1148,9 +1150,10 @@ pub mod ssl_wrapper {
                     if self.callbacks.server_name.get() == ServerName::Parked {
                         self.ask_server_name(ssl);
                     }
-                    // As on the fd engine: a peer that sends more before it has our answer broke the framing.
+                    // Early data can follow a ClientHello, and BoringSSL skips it after the answer. More than it
+                    // skips cannot end in a session, so the queue stops there.
                     if self.callbacks.server_name.get() == ServerName::Asked
-                        && self.has_pending_read()
+                        && self.ciphertext.incoming.borrow().len() > MAX_EARLY_DATA_SKIPPED
                     {
                         self.drop_suspended_handshake();
                     }
@@ -1193,9 +1196,10 @@ pub mod ssl_wrapper {
             // SAFETY: ssl is a live SSL*. The name belongs to it, and a `deinit` from inside this pass frees it only when the pass has unwound.
             let name = unsafe { boring_sys::SSL_get_servername(ssl.as_ptr(), 0) };
             match handlers.on_server_name {
-                // SAFETY: BoringSSL keeps the server name NUL-terminated.
                 Some(on_server_name) if !name.is_null() => {
-                    on_server_name(handlers.ctx, unsafe { core::ffi::CStr::from_ptr(name) })
+                    // SAFETY: BoringSSL keeps the server name NUL-terminated.
+                    let name = unsafe { core::ffi::CStr::from_ptr(name) };
+                    on_server_name(handlers.ctx, name)
                 }
                 _ => self.resolve_server_name(Ok(None)),
             }

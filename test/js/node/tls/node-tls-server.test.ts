@@ -5422,10 +5422,12 @@ describe("server names for a connection handed in with server.emit('connection')
   function openDoor(server: Server, door: Door, afterWrap?: () => void) {
     const wrapped = Promise.withResolvers<void>();
     let unflushed = 0;
+    let accepted: net.Socket | undefined;
     const front =
       door === "listen"
         ? server
         : net.createServer(raw => {
+            accepted = raw;
             raw.on("error", () => {});
             if (door === "Duplex") {
               server.emit("connection", asDuplex(raw));
@@ -5443,13 +5445,16 @@ describe("server names for a connection handed in with server.emit('connection')
           });
     if (door === "listen") wrapped.resolve();
     return {
-      // The raw connection of one client, past the plaintext of the door and after the server wrapped it.
-      async dial() {
+      async port() {
         if (!front.listening) {
           front.listen(0, "127.0.0.1");
           await once(front, "listening");
         }
-        const raw = net.connect((front.address() as AddressInfo).port, "127.0.0.1");
+        return (front.address() as AddressInfo).port;
+      },
+      // The raw connection of one client, past the plaintext of the door and after the server wrapped it.
+      async dial() {
+        const raw = net.connect(await this.port(), "127.0.0.1");
         raw.on("error", () => {});
         if (door === "net.Socket with unflushed writes") {
           let left = greeting.length;
@@ -5468,6 +5473,8 @@ describe("server names for a connection handed in with server.emit('connection')
         await wrapped.promise;
         return raw;
       },
+      // The server's side of the last connection.
+      accepted: () => accepted!,
       async close() {
         front.close();
         if (door === "listen") await once(front, "close");
@@ -5668,6 +5675,12 @@ describe("server names for a connection handed in with server.emit('connection')
           { cn: "agent2", authorized: true },
         ],
         ["false: the default context", (_, cb) => cb(null, false), agent1, { cn: "agent2", authorized: true }],
+        [
+          "a wrapper of a value that is no object: the default context",
+          (_, cb) => cb(null, { context: 5 }),
+          agent1,
+          { cn: "agent2", authorized: true },
+        ],
         ["an error", (name, cb) => cb(new Error(`no ${name}`)), agent1, { cn: noHandshake, refused: "no entry.test" }],
         [
           "an error, later",
@@ -5678,6 +5691,12 @@ describe("server names for a connection handed in with server.emit('connection')
         [
           "an object that is no context",
           (_, cb) => cb(null, {}),
+          agent1,
+          { cn: noHandshake, refused: "Invalid SNI context" },
+        ],
+        [
+          "a wrapper of an object that is no context",
+          (_, cb) => cb(null, { context: {} }),
           agent1,
           { cn: noHandshake, refused: "Invalid SNI context" },
         ],
@@ -5735,49 +5754,161 @@ describe("server names for a connection handed in with server.emit('connection')
     );
   });
 
-  // The engine holds the handshake for the answer. Both engines take more bytes from the peer in that time for broken framing.
-  it.each(["listen", ...emitDoors] as Door[])(
-    "%s: a peer that sends more before the SNICallback answered is dropped",
-    async door => {
-      const events: string[] = [];
-      const asked = Promise.withResolvers<void>();
-      let answer: ((err: Error | null, ctx?: unknown) => void) | undefined;
-      const server = createServer({
-        ...agent2,
-        SNICallback(name, cb) {
-          events.push(`SNICallback ${name}`);
-          answer = cb;
-          asked.resolve();
-        },
-      });
-      server.on("secureConnection", () => events.push("secureConnection"));
-      server.on("tlsClientError", err => events.push(`tlsClientError ${(err as NodeJS.ErrnoException).code}`));
-      const front = openDoor(server, door);
-      let raw: net.Socket | undefined;
-      let client: TLSSocket | undefined;
-      try {
-        raw = await front.dial();
-        const dropped = new Promise(resolve => raw!.once("close", resolve));
-        // The client's records go out as they are, so the test can add one of its own.
-        const transport = new Duplex({
-          read() {},
-          write(chunk, _encoding, callback) {
-            raw!.write(chunk);
-            callback();
+  // A client can send early data behind its ClientHello. BoringSSL skips it when the server takes none, up to 16384 bytes.
+  describe.each(["Duplex", "net.Socket with unflushed writes"] as Door[])(
+    "over a %s, what the peer sends before the SNICallback answered",
+    door => {
+      // One TLS record of `length` bytes behind the ClientHello, while the answer is pending.
+      async function sendBehindClientHello(length: number, untilDropped: boolean) {
+        const events: string[] = [];
+        const asked = Promise.withResolvers<void>();
+        const refused = Promise.withResolvers<void>();
+        let answer: ((err: Error | null, ctx?: unknown) => void) | undefined;
+        const server = createServer({
+          ...agent2,
+          SNICallback(name, cb) {
+            events.push(`SNICallback ${name}`);
+            answer = cb;
+            asked.resolve();
           },
         });
-        raw.on("data", chunk => transport.push(chunk));
-        client = connect({ socket: transport, servername: "pending.test", rejectUnauthorized: false });
-        client.on("error", () => {});
-        await asked.promise;
-        // One application data record behind the ClientHello.
-        raw.write(Buffer.from([0x17, 0x03, 0x03, 0x00, 0x01, 0x00]));
-        await dropped;
-        answer!(null, undefined);
-        expect(events).toEqual(["SNICallback pending.test", "tlsClientError ECONNRESET"]);
+        server.on("secureConnection", () => events.push("secureConnection"));
+        server.on("tlsClientError", err => {
+          events.push(`tlsClientError ${(err as NodeJS.ErrnoException).code}`);
+          refused.resolve();
+        });
+        const front = openDoor(server, door);
+        let raw: net.Socket | undefined;
+        let client: TLSSocket | undefined;
+        try {
+          raw = await front.dial();
+          // The client's records go out as they are, so the test can add one of its own.
+          let sent = 0;
+          const transport = new Duplex({
+            read() {},
+            write(chunk, _encoding, callback) {
+              sent += chunk.length;
+              raw!.write(chunk);
+              callback();
+            },
+          });
+          raw.on("data", chunk => transport.push(chunk));
+          client = connect({ socket: transport, servername: "pending.test", rejectUnauthorized: false });
+          client.on("error", () => {});
+          await asked.promise;
+          const record = Buffer.alloc(5 + length, 0);
+          record.set([0x17, 0x03, 0x03, length >> 8, length & 0xff]);
+          raw.write(record);
+          if (untilDropped) {
+            await refused.promise;
+            events.push("answer");
+            answer!(null, undefined);
+          } else {
+            // The engine takes the record from the 'data' listener it registered before this one.
+            const accepted = front.accepted();
+            while (accepted.bytesRead < sent + record.length) await once(accepted, "data");
+            events.push("answer");
+            answer!(null, undefined);
+            await refused.promise;
+          }
+          return events;
+        } finally {
+          client?.destroy();
+          raw?.destroy();
+          await front.close();
+        }
+      }
+
+      it("is kept for the handshake when it is no more than the early data BoringSSL skips", async () => {
+        // This record is no early data of a session, so BoringSSL fails the handshake on it after the answer.
+        expect(await sendBehindClientHello(1024, false)).toEqual([
+          "SNICallback pending.test",
+          "answer",
+          expect.stringMatching(/^tlsClientError ERR_SSL_/),
+        ]);
+      });
+
+      it("drops the connection when it is more", async () => {
+        expect(await sendBehindClientHello(16384, true)).toEqual([
+          "SNICallback pending.test",
+          "tlsClientError ECONNRESET",
+          "answer",
+        ]);
+      });
+    },
+  );
+
+  // The openssl command is the client here: neither bun nor node sends early data.
+  const openssl = isWindows ? null : Bun.which("openssl");
+  const sendsEarlyData =
+    openssl !== null && Bun.spawnSync([openssl, "s_client", "-help"]).stderr.toString().includes("-early_data");
+
+  it.skipIf(!sendsEarlyData)(
+    "over a Duplex, a client that sends early data with a ticket of another server gets a full handshake",
+    async () => {
+      using dir = tempDir("tls-early-data", {
+        "early.txt": "early",
+        "agent1-key.pem": agent1.key,
+        "agent1-cert.pem": agent1.cert,
+      });
+      const session = join(String(dir), "session.pem");
+      const run = (args: string[], stdin: "ignore" | Buffer = "ignore") =>
+        Bun.spawn({ cmd: [openssl!, ...args], cwd: String(dir), stdin, stdout: "pipe", stderr: "pipe" });
+
+      // A server that takes early data issues the ticket.
+      {
+        await using issuer = run(
+          "s_server -accept 127.0.0.1:0 -key agent1-key.pem -cert agent1-cert.pem -tls1_3 -early_data -www".split(" "),
+        );
+        let banner = "";
+        for await (const chunk of issuer.stdout) {
+          banner += Buffer.from(chunk).toString();
+          if (/ACCEPT \S+:\d+/.test(banner)) break;
+        }
+        const port = /ACCEPT \S+:(\d+)/.exec(banner)![1];
+        await using client = run(
+          `s_client -connect 127.0.0.1:${port} -tls1_3 -ign_eof -sess_out ${session}`.split(" "),
+          Buffer.from("GET / HTTP/1.0\r\n\r\n"),
+        );
+        await Promise.all([client.stdout.text(), client.stderr.text(), client.exited]);
+      }
+
+      const events: string[] = [];
+      const server = createServer(
+        {
+          ...agent2,
+          SNICallback(name, cb) {
+            events.push(`SNICallback ${name}`);
+            setImmediate(cb, null, tls.createSecureContext(agent3));
+          },
+        },
+        socket => {
+          events.push(`secureConnection ${socket.servername}`);
+          socket.on("error", () => {});
+          socket.end("served");
+        },
+      );
+      server.on("tlsClientError", err => events.push(`tlsClientError ${(err as NodeJS.ErrnoException).code}`));
+      const front = openDoor(server, "Duplex");
+      try {
+        await using client = run(
+          `s_client -connect 127.0.0.1:${await front.port()} -servername tenant.test -tls1_3 -ign_eof -sess_in ${session} -early_data early.txt`.split(
+            " ",
+          ),
+        );
+        const [stdout] = await Promise.all([client.stdout.text(), client.stderr.text(), client.exited]);
+        expect({
+          earlyData: /Early data was (\w+)/.exec(stdout)?.[1],
+          cn: /CN ?= ?(agent\d)/.exec(stdout.slice(stdout.lastIndexOf("subject=")))?.[1],
+          read: stdout.includes("served"),
+          events,
+        }).toEqual({
+          earlyData: "rejected",
+          cn: "agent3",
+          read: true,
+          events: ["SNICallback tenant.test", "secureConnection tenant.test"],
+        });
       } finally {
-        client?.destroy();
-        raw?.destroy();
         await front.close();
       }
     },

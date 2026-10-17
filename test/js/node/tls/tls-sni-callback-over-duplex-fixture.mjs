@@ -79,9 +79,9 @@ const options = {
     return current.action.call(this, cb, current);
   },
 };
+// One server for each case, so that a late error is reported for the case that caused it.
 // node also reports a bare destroy() as ECONNRESET to 'tlsClientError'.
-const onServerError = err => err.code === "ECONNRESET" || current.events.push(`server error ${err.message}`);
-const server = tls.createServer(options).on("tlsClientError", onServerError);
+const errorsTo = events => err => err.code === "ECONNRESET" || events.push(`server error ${err.message}`);
 
 const report = {};
 for (const [name, action] of Object.entries(actions)) {
@@ -99,8 +99,8 @@ for (const [name, action] of Object.entries(actions)) {
   };
   // "staged": the ClientHello is there before the server's engine starts.
   if (door === "staged") connect();
-  if (door === "emit") server.emit("connection", transport);
-  else new tls.TLSSocket(transport, { isServer: true, ...options }).on("error", onServerError);
+  if (door === "emit") tls.createServer(options).on("tlsClientError", errorsTo(events)).emit("connection", transport);
+  else new tls.TLSSocket(transport, { isServer: true, ...options }).on("error", errorsTo(events));
   if (door !== "staged") connect();
   await new Promise(resolve => current.client.on("close", resolve));
 }

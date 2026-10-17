@@ -429,10 +429,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
         return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, options);
     }
 
-    JSValue outputEncodingValue = callFrame->argument(1);
-    auto outputEncoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, outputEncodingValue).value_or(BufferEncodingType::buffer);
-    RETURN_IF_EXCEPTION(scope, {});
-
     // Get RSA padding mode and salt length if applicable
     int32_t padding = getPadding(lexicalGlobalObject, scope, options, {});
     RETURN_IF_EXCEPTION(scope, {});
@@ -469,6 +465,17 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     JSUint8Array* signature = signWithKey(lexicalGlobalObject, thisObject, keyPtr, dsaSigEnc, padding, saltLen);
     EXCEPTION_ASSERT(!!signature == !scope.exception());
     RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue outputEncodingValue = callFrame->argument(1);
+    BufferEncodingType outputEncoding = BufferEncodingType::buffer;
+    if (outputEncodingValue.toBoolean(lexicalGlobalObject)) {
+        auto parsed = WebCore::parseEnumerationAllowBuffer(*lexicalGlobalObject, outputEncodingValue);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!parsed) {
+            return Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, outputEncodingValue);
+        }
+        outputEncoding = parsed.value();
+    }
 
     // If output encoding is not buffer, convert the signature to the requested encoding
     if (outputEncoding != BufferEncodingType::buffer) {

@@ -1043,8 +1043,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ));
                 }
 
+                // "@" after "export default" starts a class declaration, never an expression.
                 if p.lexer.token == T::TFunction
                     || p.lexer.token == T::TClass
+                    || p.lexer.token == T::TAt
                     || p.lexer.is_contextual_keyword(b"interface")
                 {
                     let mut _opts = ParseStatementOptions {
@@ -1053,6 +1055,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         lexical_decl: LexicalDecl::AllowAll,
                         ..Default::default()
                     };
+                    let errors_before_decorators =
+                        (p.lexer.token == T::TAt).then(|| p.log().errors);
                     let stmt = p.parse_stmt(&mut _opts)?;
 
                     let default_name: LocRef = 'default_name_getter: {
@@ -1087,6 +1091,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // building an S.ExportDefault that the visit and print
                             // passes don't support.
                             _ => {
+                                // Decorators with no class after them: `t_at` has reported it.
+                                if errors_before_decorators
+                                    .is_some_and(|errors| p.log().errors > errors)
+                                {
+                                    return Err(crate::Error::SyntaxError);
+                                }
                                 let r = js_lexer::range_of_identifier(p.source, stmt.loc);
                                 p.log().add_range_error_fmt(
                                     Some(p.source),

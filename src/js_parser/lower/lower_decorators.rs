@@ -718,25 +718,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ── Public API ───────────────────────────────────────
 
+    /// `default_export`: the binding of an `export default class`, named "default" if anonymous.
     pub(crate) fn lower_standard_decorators_stmt(
         &mut self,
         stmt: Stmt,
+        default_export: Option<js_ast::LocRef>,
         out: &mut BumpVec<'a, Stmt>,
     ) {
         let mut s_class = match stmt.data {
             js_ast::StmtData::SClass(c) => c,
             _ => unreachable!(),
         };
-        let lowered = self.lower_class_body(&mut s_class.class, stmt.loc, None);
+        let name_from_context = default_export.map(|_| js_ast::ClauseItem::DEFAULT_ALIAS);
+        let lowered = self.lower_class_body(&mut s_class.class, stmt.loc, name_from_context);
         out.extend(lowered.temps);
         let Some(decorators) = lowered.class_decorators else {
             out.push(stmt);
             return;
         };
-        let name = s_class
+        let name = *s_class
             .class
             .class_name
-            .expect("a class statement has a name");
+            .get_or_insert_with(|| default_export.expect("a class statement has a name"));
         let decorated = self.use_ref(decorators.decorated, name.loc);
         let rebind = self.assign_to(name.ref_, decorated, name.loc);
         out.push(self.expr_stmt(decorators.evaluate, stmt.loc));

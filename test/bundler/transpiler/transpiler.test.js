@@ -670,6 +670,8 @@ describe("Bun.Transpiler", () => {
       err("function dec(c){return c}\n@dec declare\nclass Foo {}", 'Unexpected "declare"');
       err("function dec(c){return c}\n@dec abstract\nclass Foo {}", 'Unexpected "abstract"');
       err("function dec(c){return c}\n@dec export default abstract\nclass Foo {}", 'Unexpected "abstract"');
+      err("function dec(c){return c}\nexport default @dec declare\nclass Foo {}", 'Unexpected "declare"');
+      err("function dec(c){return c}\nexport default @dec abstract\nclass Foo {}", 'Unexpected "abstract"');
     });
 
     it("does not crash when export default abstract is an expression followed by a class", () => {
@@ -685,6 +687,11 @@ describe("Bun.Transpiler", () => {
 
       err("@dec export default abstract = 1", 'Expected "class" but found end of file');
       err("@dec(() => 0) export default abstract = 1\nclass Foo {}", 'Expected "class" but found "class"');
+
+      // After "export default", decorators that no class follows are a syntax error too.
+      err("export default @dec abstract = 1", 'Unexpected "abstract"');
+      err("export default @dec(() => 0) abstract = 1\nclass Foo {}", 'Unexpected "abstract"');
+      err("export default @dec(() => 0) declare = 1\nclass Foo {}", 'Unexpected "declare"');
     });
 
     it("scope tracking stays balanced when a contextual keyword starts a larger expression", () => {
@@ -2403,6 +2410,31 @@ export default class {
       expect(output.includes("__N_SSG")).toBe(true);
       expect(output.includes("localVarToReplace")).toBe(true);
       expect(output.includes("localVarToRemove")).toBe(false);
+    });
+
+    // A replacement for `default` discards an `export default class`, as it
+    // discards an `export default function`.
+    it.each(
+      [
+        ["js", { loader: "js" }],
+        ["ts", { loader: "ts" }],
+        [
+          "ts, experimentalDecorators",
+          { loader: "ts", tsconfig: { compilerOptions: { experimentalDecorators: true } } },
+        ],
+      ].flatMap(([mode, options]) =>
+        [
+          "export default class Df {}",
+          "export default class {}",
+          "@dec export default class Df {}",
+          "@dec export default class {}",
+          "export default @dec class Df {}",
+          "export default @dec class {}",
+        ].map(source => [source, mode, options]),
+      ),
+    )("replaces the default export of `%s` (%s)", (source, mode, options) => {
+      const replacer = new Bun.Transpiler({ ...options, exports: { replace: { default: 42 } } });
+      expect(replacer.transformSync(source)).toBe("export default 42;\n");
     });
   });
 

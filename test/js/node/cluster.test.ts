@@ -1898,27 +1898,36 @@ if (cluster.isPrimary) {
   },
 );
 
-test.skipIf(isWindows)("http worker binds a unix path longer than sun_path itself, as outside a cluster", async () => {
+test.skipIf(isWindows)("http workers share a unix path longer than sun_path through the primary", async () => {
   using dir = tempDir("cluster-http-long-path", {
     "fixture.js": /* js */ `
 const cluster = require("node:cluster");
 const http = require("node:http");
 const path = require("node:path");
 const fs = require("node:fs");
-// Bun.serve({ unix }) binds through a directory descriptor, so only the file name must fit sun_path.
+// The bind goes through a directory descriptor, so only the file name must fit sun_path.
 const dir = path.join(__dirname, "l".repeat(120));
 fs.mkdirSync(dir, { recursive: true });
 const SOCK = path.join(dir, "s.sock");
 
 if (cluster.isPrimary) {
-  const worker = cluster.fork();
-  worker.on("message", async message => {
-    const body = message.error ?? (await (await fetch("http://localhost/", { unix: SOCK })).text());
-    console.log(JSON.stringify({ address: message.address === SOCK, body }));
-    worker.process.kill();
-  });
+  const workers = [cluster.fork(), cluster.fork()];
+  const replies = [];
+  for (const worker of workers) {
+    worker.on("message", async message => {
+      replies.push(message.error ?? message.address === SOCK);
+      if (replies.length < workers.length) return;
+      const served = new Set();
+      for (let i = 0; i < 8; i++) served.add(await (await fetch("http://localhost/", { unix: SOCK })).text());
+      console.log(JSON.stringify({ replies, servers: served.size }));
+      for (const worker of workers) worker.process.kill();
+    });
+  }
 } else {
-  const server = http.createServer((req, res) => res.end("served"));
+  const server = http.createServer((req, res) => {
+    res.setHeader("Connection", "close");
+    res.end(String(process.pid));
+  });
   server.on("error", error => process.send({ error: error.code }));
   server.listen(SOCK, () => process.send({ address: server.address() }));
 }
@@ -1933,7 +1942,7 @@ if (cluster.isPrimary) {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
-    out: { address: true, body: "served" },
+    out: { replies: [true, true], servers: 2 },
     stderr: expect.any(String),
   });
   expect(exitCode).toBe(0);

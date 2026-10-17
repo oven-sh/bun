@@ -250,6 +250,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_socket_import(void *info, int *err);
 int bsd_socket_listen_error_is_benign(LIBUS_SOCKET_DESCRIPTOR fd);
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int options, int *out_port, int *error);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket_unix(const char *path, size_t len, int *error);
 
 #ifndef MSG_DONTWAIT
 #define MSG_DONTWAIT 0

@@ -202,6 +202,11 @@ pub mod socket_transfer {
             out_port: *mut c_int,
             error: *mut c_int,
         ) -> LIBUS_SOCKET_DESCRIPTOR;
+        pub fn bsd_create_bound_socket_unix(
+            path: *const c_char,
+            len: usize,
+            error: *mut c_int,
+        ) -> LIBUS_SOCKET_DESCRIPTOR;
     }
 }
 

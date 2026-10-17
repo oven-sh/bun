@@ -750,7 +750,8 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   #serveNext(): boolean {
     const queue = this.queue;
     let reservationsAhead = 0;
-    for (let i = 0; i < queue.length; i++) {
+    // Behind as many reservations as there are connections nobody can be served.
+    for (let i = 0; i < queue.length && reservationsAhead < this.connections.length; i++) {
       const waiter = queue[i];
       if (typeof waiter === "function") {
         // An even share of the demand over `max` connections.

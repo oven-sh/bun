@@ -1323,6 +1323,23 @@ describe.each(scripted)("$adapter, scripted server", script => {
     });
   });
 
+  test.concurrent.each([
+    [1, true],
+    [2, false],
+  ])("behind %d reservations that wait for 2 busy connections, a query gets one of them: %p", async (ahead, served) => {
+    await using server = await serverOf(ready);
+    const connected = new Calls();
+    const sql = new SQL({ url: url(server.port), max: 2, onconnect: connected.hit });
+    await using _ = unanswered(sql);
+    await sql.connect();
+    await connected.reached(2);
+    for (let i = 0; i < 2; i++) void outcome(sql.unsafe("select 1").execute());
+    for (let i = 0; i < ahead; i++) void outcome(sql.reserve());
+    const query = sql.unsafe("select 1").execute();
+    void outcome(query);
+    expect(query.active).toBe(served);
+  });
+
   describe("while a connection is ready, the pool grows with care", () => {
     const waits = (sql: SQL) => void outcome(sql.unsafe("select 1").execute());
 

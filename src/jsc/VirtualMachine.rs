@@ -348,6 +348,9 @@ pub struct VirtualMachine {
 
     pub channel_ref: Async::KeepAlive,
     pub channel_ref_overridden: bool,
+    /// Node's `Control.#refs`: 'message' and 'disconnect' listeners plus `refCounted()` calls.
+    pub channel_ref_count: i32,
+    pub channel_listener_count: u32,
     pub channel_ref_should_ignore_one_disconnect_event_listener: bool,
 
     /// A set of extensions that exist in the require.extensions map.

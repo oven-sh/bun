@@ -1511,7 +1511,7 @@ class ChildProcess extends EventEmitter {
       if (has_ipc) {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
-        this.channel = new Control();
+        this.channel = new Control(this.#handle);
         Object.defineProperty(this, "_channel", {
           get() {
             return this.channel;
@@ -1921,9 +1921,40 @@ function abortChildProcess(child, killSignal, reason) {
   }
 }
 
+const setRefSubprocess = $newRustFunction("node_cluster_binding.rs", "setRefSubprocess", 2);
+
+// Node's Control in lib/internal/child_process.js.
 class Control extends EventEmitter {
-  constructor() {
+  #handle;
+  #refs = 0;
+  #refExplicitlySet = false;
+
+  constructor(handle) {
     super();
+    this.#handle = handle;
+    setRefSubprocess(handle, true);
+  }
+
+  refCounted() {
+    if (++this.#refs === 1 && !this.#refExplicitlySet) {
+      setRefSubprocess(this.#handle, true);
+    }
+  }
+
+  unrefCounted() {
+    if (--this.#refs === 0 && !this.#refExplicitlySet) {
+      setRefSubprocess(this.#handle, false);
+    }
+  }
+
+  ref() {
+    this.#refExplicitlySet = true;
+    setRefSubprocess(this.#handle, true);
+  }
+
+  unref() {
+    this.#refExplicitlySet = true;
+    setRefSubprocess(this.#handle, false);
   }
 }
 

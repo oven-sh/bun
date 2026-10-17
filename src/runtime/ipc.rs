@@ -903,6 +903,8 @@ pub(crate) struct SendQueue {
 
     pub(crate) retry_count: Cell<u32>,
     pub(crate) keep_alive: JsCell<KeepAlive>,
+    /// node:child_process's `subprocess.channel` is ref'd: the open socket holds the event loop.
+    pub(crate) channel_ref: Cell<bool>,
     #[cfg(debug_assertions)]
     pub(crate) has_written_version: Cell<u8>,
     pub(crate) mode: Mode,
@@ -1031,6 +1033,7 @@ impl SendQueue {
             waiting_for_ack: JsCell::new(None),
             retry_count: Cell::new(0),
             keep_alive: JsCell::new(KeepAlive::default()),
+            channel_ref: Cell::new(false),
             #[cfg(debug_assertions)]
             has_written_version: Cell::new(0),
             mode,
@@ -1433,8 +1436,8 @@ impl SendQueue {
         if self.waiting_for_ack.get().is_some() {
             return true; // waiting to receive an ack/nack from the other side
         }
-        if self.queue.get().is_empty() {
-            return false; // nothing to send
+        if self.queue.get().is_empty() && !self.channel_ref.get() {
+            return false; // nothing to send, and the channel is not ref'd
         }
         // Anything still queued (including head with cursor==0 under backpressure) must keep the loop alive; a closed socket does not.
         self.socket_is_open()

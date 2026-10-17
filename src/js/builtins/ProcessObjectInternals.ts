@@ -599,9 +599,18 @@ export function windowsEnv(
 export function getChannel() {
   const EventEmitter = require("node:events");
   const setRef = $newRustFunction("node_cluster_binding.rs", "setRef", 1);
+  const setRefCounted = $newRustFunction("node_cluster_binding.rs", "setRefCounted", 1);
   return new (class Control extends EventEmitter {
     constructor() {
       super();
+    }
+
+    refCounted() {
+      setRefCounted(true);
+    }
+
+    unrefCounted() {
+      setRefCounted(false);
     }
 
     ref() {

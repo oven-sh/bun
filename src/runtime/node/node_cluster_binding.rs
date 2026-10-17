@@ -267,6 +267,13 @@ pub(crate) fn handle_internal_message_primary(
 //
 //
 
+/// Starts reading the channel too: one that holds the event loop unread never sees the parent disconnect.
+fn ref_channel(global: &JSGlobalObject) {
+    crate::ipc_host::ensure_process_ipc_initialized(global);
+    let vm = global.bun_vm().as_mut();
+    vm.channel_ref.ref_(bun_io::js_vm_ctx());
+}
+
 #[bun_jsc::host_fn]
 pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments_as_array::<1>();
@@ -282,27 +289,53 @@ pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     let vm = global.bun_vm().as_mut();
     vm.channel_ref_overridden = true;
     if enabled {
-        vm.channel_ref.ref_(bun_io::js_vm_ctx());
+        ref_channel(global);
     } else {
         vm.channel_ref.unref(bun_io::js_vm_ctx());
     }
     Ok(JSValue::UNDEFINED)
 }
 
-// HOST_EXPORT(Bun__refChannelUnlessOverridden, c)
-pub(crate) fn ref_channel_unless_overridden(global: &JSGlobalObject) {
+/// `by` calls of Node's `Control#refCounted`, or of `#unrefCounted` when negative.
+fn channel_ref_counted(global: &JSGlobalObject, by: i32) {
     let vm = global.bun_vm().as_mut();
-    if !vm.channel_ref_overridden {
-        vm.channel_ref.ref_(bun_io::js_vm_ctx());
+    let before = vm.channel_ref_count;
+    let after = before.saturating_add(by);
+    vm.channel_ref_count = after;
+    if vm.channel_ref_overridden {
+        return;
+    }
+    if before < 1 && after >= 1 {
+        ref_channel(global);
+    } else if before > 0 && after <= 0 {
+        vm.channel_ref.unref(bun_io::js_vm_ctx());
     }
 }
 
-// HOST_EXPORT(Bun__unrefChannelUnlessOverridden, c)
-pub(crate) fn unref_channel_unless_overridden(global: &JSGlobalObject) {
+#[bun_jsc::host_fn]
+pub(crate) fn set_ref_counted(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [enabled] = frame.arguments_as_array::<1>();
+    channel_ref_counted(global, if enabled.to_boolean() { 1 } else { -1 });
+    Ok(JSValue::UNDEFINED)
+}
+
+// HOST_EXPORT(Bun__setChannelListenerCount, c)
+pub(crate) fn set_channel_listener_count(global: &JSGlobalObject, count: u32) {
     let vm = global.bun_vm().as_mut();
-    if !vm.channel_ref_overridden {
-        vm.channel_ref.unref(bun_io::js_vm_ctx());
+    let by = count as i32 - vm.channel_listener_count as i32;
+    vm.channel_listener_count = count;
+    channel_ref_counted(global, by);
+}
+
+#[bun_jsc::host_fn]
+pub(crate) fn set_ref_subprocess(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [subprocess, enabled] = frame.arguments_as_array::<2>();
+    let subprocess = subprocess.as_class_ref::<Subprocess<'_>>();
+    if let Some(ipc_data) = subprocess.and_then(|s| s.ipc()) {
+        ipc_data.channel_ref.set(enabled.to_boolean());
+        ipc_data.update_ref(global);
     }
+    Ok(JSValue::UNDEFINED)
 }
 
 #[bun_jsc::host_fn]

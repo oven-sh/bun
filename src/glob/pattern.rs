@@ -326,6 +326,46 @@ fn in_any_directory(pattern: &[u8]) -> Cow<'_, [u8]> {
     }
 }
 
+/// Converts a pattern for paths without `.` and empty components: `./a` and `a//b` become `a` and `a/b`. A leading `/` stays.
+pub fn of_normalized_paths(written: &[u8]) -> Vec<u8> {
+    let mut rest = written;
+    while let Some(after) = rest.strip_prefix(b"./") {
+        rest = strings::trim_leading_char(after, b'/');
+    }
+    // Leading `!`s negate the whole pattern, so they stay in front. A group or a class stays as written.
+    let (bangs, rest) = rest.split_at(matcher::negations(rest));
+    let shape = Shape::of(rest);
+    let mut pattern = bangs.to_vec();
+    if rest.first() == Some(&b'/') {
+        pattern.push(b'/');
+    }
+    let (mut at, mut component, mut is_first) = (0, 0, true);
+    loop {
+        let is_end = at == rest.len();
+        if !is_end && rest[at] != b'/' {
+            at = matcher::token_at(rest, at, &shape).1;
+            continue;
+        }
+        let text = &rest[component..at];
+        if !text.is_empty() && text != b"." {
+            if !is_first {
+                pattern.push(b'/');
+            }
+            pattern.extend_from_slice(text);
+            is_first = false;
+        }
+        if is_end {
+            // The normalizer keeps one `/` at the end.
+            if component == at && !is_first {
+                pattern.push(b'/');
+            }
+            return pattern;
+        }
+        at += 1;
+        component = at;
+    }
+}
+
 /// `glob_match` of the `fast-glob` crate. A pattern with an unclosed `[` or `{` or a trailing `\` never matches there.
 pub fn fast_glob_match(pattern: &[u8], text: &[u8]) -> bool {
     unclosed(pattern).is_none()

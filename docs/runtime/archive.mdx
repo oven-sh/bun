@@ -146,7 +146,7 @@ console.log(`Extracted ${count} entries`);
 
 ### Filtering Extracted Files
 
-Use glob patterns to extract only specific files. Bun matches patterns against archive entry paths normalized to use forward slashes (`/`). Positive patterns specify what to include, and negative patterns (prefixed with `!`) specify what to exclude. When you pass only negative patterns, Bun includes all entries that don't match them:
+Use glob patterns to extract only specific files. Bun matches patterns against archive entry paths normalized to use forward slashes (`/`). A normalized path has no `./`, and a `./` in a pattern is ignored too (outside of `{}` groups), so `./src/*` means `src/*`. Positive patterns specify what to include, and negative patterns (prefixed with `!`) specify what to exclude. When you pass only negative patterns, Bun includes all entries that don't match them:
 
 ```ts
 const tarball = await Bun.file("package.tar.gz").bytes();
@@ -267,7 +267,7 @@ if (matches.size === 0) {
 
 ### Filtering with Glob Patterns
 
-Pass a glob pattern to filter which files are returned:
+Pass a glob pattern to filter which files are returned. Bun matches a pattern against the same normalized path as in `extract()`. An entry whose name has a `..` component or is an absolute path is matched by its stored name:
 
 ```ts
 // Get only TypeScript files

@@ -84,20 +84,20 @@ Bun works with React Testing Library for testing React components. After setting
 bun add -d @testing-library/react @testing-library/jest-dom
 ```
 
-```ts title="component.test.tsx" icon="/icons/typescript.svg"
+```tsx title="component.test.tsx" icon="/icons/typescript.svg"
 /// <reference lib="dom" />
 
-import { test, expect } from 'bun:test';
-import { render, screen } from '@testing-library/react';
-import '@testing-library/jest-dom';
+import { test, expect } from "bun:test";
+import { render, screen } from "@testing-library/react";
+import "@testing-library/jest-dom";
 
 function Button({ children }: { children: React.ReactNode }) {
   return <button>{children}</button>;
 }
 
-test('renders button', () => {
+test("renders button", () => {
   render(<Button>Click me</Button>);
-  expect(screen.getByRole('button')).toHaveTextContent('Click me');
+  expect(screen.getByRole("button")).toHaveTextContent("Click me");
 });
 ```
 

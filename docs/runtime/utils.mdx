@@ -330,7 +330,7 @@ The API matches the "string-width" npm package, so you can port existing code to
 
 [In this benchmark](https://github.com/oven-sh/bun/blob/5147c0ba7379d85d4d1ed0714b84d6544af917eb/bench/snippets/string-width.mjs#L13), `Bun.stringWidth` is ~6,756x faster than the `string-width` npm package for input larger than about 500 characters. Big thanks to [sindresorhus](https://github.com/sindresorhus) for their work on `string-width`.
 
-```ts
+```txt
 ❯ bun string-width.mjs
 cpu: 13th Gen Intel(R) Core(TM) i9-13900
 runtime: bun 1.0.29 (x64-linux)

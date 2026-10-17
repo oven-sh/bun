@@ -184,6 +184,14 @@ export const memfd_create: (size: number) => number = $newRustFunction(
   1,
 );
 
+// POSIX-only. Finish `fs.writevSync(fd, buffers, position)` as if its first write(2) had taken `amt` bytes, and return the total.
+export const fsWriteRest: (
+  fd: number,
+  buffers: ArrayBufferView[],
+  position: number | null | undefined,
+  amt: number,
+) => number = $newRustFunction("node_fs_binding.rs", "write_rest_for_testing", 4);
+
 export const createStatsForIno: (ino: bigint, big: boolean) => any = $newRustFunction(
   "Stat.rs",
   "createStatsForIno",

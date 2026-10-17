@@ -36,10 +36,6 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
     } else {
         CAPACITY.div_ceil(WORD_BITS)
     };
-    const _FITS: () = assert!(
-        CAPACITY <= HIVE_BITSET_WORDS * WORD_BITS,
-        "HiveArray CAPACITY exceeds HiveBitSet backing (raise HIVE_BITSET_WORDS)"
-    );
     /// Mask of valid bits in the last live word (all-ones when CAPACITY is a
     /// multiple of 64; otherwise zeros in the high padding bits).
     const LAST_WORD_MASK: usize = {
@@ -52,6 +48,13 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
     };
 
     pub const fn init_empty() -> Self {
+        // The only constructor, so this check covers every HiveArray capacity.
+        const {
+            assert!(
+                CAPACITY <= HIVE_BITSET_WORDS * WORD_BITS,
+                "HiveArray CAPACITY exceeds HiveBitSet backing (raise HIVE_BITSET_WORDS)"
+            )
+        };
         Self {
             masks: [const { Cell::new(0) }; HIVE_BITSET_WORDS],
         }
@@ -793,6 +796,20 @@ impl<T, const CAP: usize> Drop for HiveRefHandle<T, CAP> {
         unsafe { HiveRef::unref(self.ptr.as_ptr()) };
     }
 }
+
+#[cfg(doctest)]
+#[doc = "
+```
+use bun_collections::hive_array::HiveBitSet;
+const _: HiveBitSet<2048> = HiveBitSet::init_empty();
+```
+
+```compile_fail,E0080
+use bun_collections::hive_array::HiveBitSet;
+const _: HiveBitSet<2049> = HiveBitSet::init_empty();
+```
+"]
+mod capacity_guard {}
 
 #[cfg(test)]
 mod tests {

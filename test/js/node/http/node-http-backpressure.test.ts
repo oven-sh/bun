@@ -1675,6 +1675,48 @@ describe("backpressure", () => {
           sock.destroy();
         }
       });
+
+      // The handler never reads the body. It answers once the body has filled the request's buffer
+      // and stopped the socket. The server then takes the rest of the body off the connection, and
+      // the next request on it is served.
+      it("serves the next request after a response that did not read the request body", async () => {
+        const BODY = 4 * 1024 * 1024;
+        const urls: string[] = [];
+        await using server = transport.createServer((req, res) => {
+          urls.push(req.url!);
+          if (req.url !== "/first") return void res.end("second");
+          const socket = req.socket;
+          const answerOnceStopped = () => {
+            if (!socket.isPaused() || req.readableLength < req.readableHighWaterMark) return;
+            socket.removeListener("pause", answerOnceStopped);
+            res.writeHead(401, { "Content-Length": 0 }).end();
+          };
+          socket.on("pause", answerOnceStopped);
+          answerOnceStopped();
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+
+        const sock = await transport.connect((server.address() as AddressInfo).port);
+        try {
+          const answered = Promise.withResolvers<string[]>();
+          let received = "";
+          sock.on("data", chunk => {
+            received += chunk.toString("latin1");
+            const statuses = [...received.matchAll(/HTTP\/1\.1 (\d+)/g)].map(match => match[1]);
+            if (statuses.length === 2 && received.endsWith("second")) answered.resolve(statuses);
+          });
+          sock.on("close", () => answered.reject(new Error(`the connection closed after ${JSON.stringify(received)}`)));
+          sock.write(`POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${BODY}\r\n\r\n`);
+          for (let sent = 0; sent < BODY; sent += BLOCK.byteLength) sock.write(BLOCK);
+          sock.write("GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
+          expect({ statuses: await answered.promise, urls }).toEqual({
+            statuses: ["401", "200"],
+            urls: ["/first", "/second"],
+          });
+        } finally {
+          sock.destroy();
+        }
+      });
     });
 
     // A stopped socket reads nothing, so it does not see the FIN of a client that
@@ -1729,6 +1771,47 @@ describe("backpressure", () => {
           sock.destroy();
         }
       });
+    });
+
+    // The chunk that fills the request's buffer also ends the request, so nothing will read the
+    // request to restart the socket. Node restarts it at the end of the message.
+    it("reads the next request when the body that stopped the socket has already ended", async () => {
+      const BODY = 128 * 1024;
+      const requests: http.IncomingMessage[] = [];
+      const second = Promise.withResolvers<void>();
+      const server = http.createServer((req, res) => {
+        requests.push(req);
+        if (req.url === "/ping") res.end("pong");
+        if (req.url === "/second") second.resolve();
+      });
+      const [clientSide, serverSide] = duplexPair();
+      const [pingClientSide, pingServerSide] = duplexPair();
+      try {
+        server.emit("connection", serverSide);
+        clientSide.resume();
+        // One write is one 'data' event on the other side: the head and the whole body.
+        clientSide.write(
+          Buffer.concat([
+            Buffer.from(`POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${BODY}\r\n\r\n`),
+            Buffer.alloc(BODY, "b"),
+          ]),
+        );
+        clientSide.write("GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        // A complete exchange on a second connection: by its end the first one has been read as far as it will be.
+        server.emit("connection", pingServerSide);
+        pingClientSide.end("GET /ping HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        const pong = Array.fromAsync(pingClientSide);
+        await Promise.race([second.promise, pong]);
+        expect((await pong).join("")).toEndWith("pong");
+        expect(
+          requests.filter(req => req.url !== "/ping").map(req => [req.url, req.complete, req.readableLength]),
+        ).toEqual([
+          ["/first", true, BODY],
+          ["/second", true, 0],
+        ]);
+      } finally {
+        for (const side of [clientSide, serverSide, pingClientSide, pingServerSide]) side.destroy();
+      }
     });
 
     // The handler restarts the stopped socket from inside its own AsyncLocalStorage store when it

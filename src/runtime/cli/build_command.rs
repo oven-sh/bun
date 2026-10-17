@@ -864,7 +864,10 @@ impl BuildCommand {
                     // SAFETY: `env` is a process-lifetime singleton.
                     unsafe { &mut *env_ptr },
                     opt_output_format,
-                    &ctx.bundler_options.windows,
+                    &bun_standalone_module_graph::StandaloneModuleGraph::InjectOptions {
+                        windows: &ctx.bundler_options.windows,
+                        macos: &ctx.bundler_options.macos,
+                    },
                     ctx.bundler_options
                         .compile_exec_argv
                         .as_deref()

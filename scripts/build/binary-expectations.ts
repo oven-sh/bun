@@ -130,6 +130,15 @@ export interface BinaryExpectations {
     flags: string[];
     /** Segment name → maxprot, for the segments that must not gain W or X. */
     segmentMaxProt: Record<string, string>;
+    /**
+     * `segment,section` → exact size, zero-filled. Room `bun build --compile`
+     * writes into in place (src/exe_format/macho.rs finds it by name in the
+     * executable it copies, which may be another version's), so the name and
+     * the size are a contract with every bun that compiles against this one.
+     */
+    reservedSections: Record<string, number>;
+    /** `segment,section` names bun itself must not have. */
+    forbiddenSections: string[];
   };
   /**
    * The profile executable keeps a symbol table and debug sections (ELF; on
@@ -477,6 +486,11 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
         macho: {
           flags: ["PIE", "TWOLEVEL", "DYLDLINK"],
           segmentMaxProt: { __TEXT: "r-x", __DATA_CONST: "rw-", __DATA: "rw-", __LINKEDIT: "r--" },
+          // --macos-info-plist renames the slot to __info_plist in a compiled
+          // executable. In bun itself that name would be bun's own Info.plist
+          // to macOS, and codesign refuses one that is not a property list.
+          reservedSections: { "__TEXT,__bun_plist": 4096 },
+          forbiddenSections: ["__TEXT,__info_plist"],
         },
       };
 

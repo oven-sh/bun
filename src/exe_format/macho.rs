@@ -7,9 +7,17 @@ use crate::macho_types::{BlobIndex, CodeDirectory, SuperBlob};
 use crate::{read_struct, write_struct};
 
 use bun_core::env_var::feature_flag;
+use bun_core::strings;
 
 const SEGNAME_BUN: [u8; 16] = *b"__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
 const SECTNAME: [u8; 16] = *b"__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+
+const SEG_TEXT: &[u8] = b"__TEXT";
+const SECT_INFO_PLIST: &[u8] = b"__info_plist";
+/// The zero-filled `__TEXT` section a darwin bun reserves for [`MachoFile::set_info_plist`] (c-bindings.cpp). Its
+/// `size` is the capacity. It only becomes `__info_plist` once it holds a plist: `codesign` refuses to sign an
+/// executable whose `__TEXT,__info_plist` is not a property list dictionary.
+const SECT_INFO_PLIST_SLOT: &[u8] = b"__bun_plist";
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
 pub enum MachoError {
@@ -32,6 +40,15 @@ pub enum MachoError {
     /// A shifted `__LINKEDIT` load command offset no longer fits the u32 Mach-O stores.
     #[error("executable would exceed 4 GiB (Mach-O load commands store 32-bit file offsets)")]
     ExecutableTooLarge,
+    /// The segment named `__TEXT` has neither a `__bun_plist` nor an `__info_plist` section.
+    #[error(
+        "the base Bun executable has no section reserved for an Info.plist (it is from a Bun version that cannot embed one)"
+    )]
+    MissingInfoPlistSection,
+    #[error(
+        "the Info.plist is {len} bytes, but the base Bun executable reserves {capacity} bytes for it"
+    )]
+    InfoPlistTooLarge { len: usize, capacity: usize },
 }
 bun_core::oom_from_alloc!(MachoError);
 
@@ -86,6 +103,118 @@ impl MachoFile {
             // SAFETY: all-zero is a valid section_64 (#[repr(C)] POD, no NonZero/NonNull fields)
             section: unsafe { bun_core::ffi::zeroed_unchecked() },
         }))
+    }
+
+    /// Make `plist` the embedded Info.plist: the contents of section `__info_plist` in the segment named `__TEXT`,
+    /// which is where CoreFoundation and `codesign` read it in an executable that is not inside a bundle (what
+    /// `ld -sectcreate __TEXT __info_plist` produces).
+    ///
+    /// `__TEXT` cannot grow in a linked image, so nothing moves. The base either reserves a `__TEXT,__bun_plist`
+    /// section, which is renamed and resized in place, or already has a `__TEXT,__info_plist` (a compiled executable
+    /// used as the base), which is refilled up to the end of the zero fill behind it.
+    pub fn set_info_plist(&mut self, plist: &[u8]) -> Result<(), MachoError> {
+        let lc_base = size_of::<macho::mach_header_64>();
+        let seg_sz = size_of::<macho::segment_command_64>();
+        let sect_sz = size_of::<macho::section_64>();
+
+        // Only the first segment named `__TEXT` counts: it is the one libmacho's getsectbyname and codesign search.
+        let mut iter = self.iterator();
+        let (seg, sections_base) = loop {
+            let Some(entry) = iter.next() else {
+                return Err(MachoError::MissingInfoPlistSection);
+            };
+            if entry.hdr.cmd != macho::LC::SEGMENT_64 {
+                continue;
+            }
+            let seg = entry
+                .cast::<macho::segment_command_64>()
+                .ok_or(MachoError::InvalidObject)?;
+            if seg.seg_name() != SEG_TEXT {
+                continue;
+            }
+            let table_end = (seg.nsects as usize)
+                .checked_mul(sect_sz)
+                .and_then(|s| s.checked_add(seg_sz))
+                .ok_or(MachoError::InvalidObject)?;
+            if table_end > entry.data.len() {
+                return Err(MachoError::InvalidObject);
+            }
+            break (seg, lc_base + entry.offset + seg_sz);
+        };
+        let nsects = seg.nsects as usize;
+        let section_at = |data: &[u8], i: usize| -> macho::section_64 {
+            read_struct(&data[sections_base + i * sect_sz..][..sect_sz])
+        };
+
+        // An `__info_plist` that is already there is the one macOS reads, so it wins over an unused slot.
+        let mut found: Option<(usize, macho::section_64)> = None;
+        for i in 0..nsects {
+            let sect = section_at(&self.data, i);
+            if sect.seg_name() != SEG_TEXT {
+                continue;
+            }
+            if sect.sect_name() == SECT_INFO_PLIST {
+                found = Some((i, sect));
+                break;
+            }
+            if sect.sect_name() == SECT_INFO_PLIST_SLOT && found.is_none() {
+                found = Some((i, sect));
+            }
+        }
+        let Some((index, mut sect)) = found else {
+            return Err(MachoError::MissingInfoPlistSection);
+        };
+
+        let start = u64::from(sect.offset);
+        let mut end = start
+            .checked_add(sect.size)
+            .ok_or(MachoError::OffsetOverflow)?;
+        let seg_end = seg
+            .fileoff
+            .checked_add(seg.filesize)
+            .ok_or(MachoError::OffsetOverflow)?
+            .min(self.data.len() as u64);
+        let cmds_end = (lc_base + self.header.sizeofcmds as usize) as u64;
+        if start < cmds_end || start < seg.fileoff || end > seg_end {
+            return Err(MachoError::OffsetOutOfRange);
+        }
+        // CoreFoundation reads the section at its address and codesign at its file offset: both must name these bytes.
+        if sect.addr.wrapping_sub(seg.vmaddr) != start - seg.fileoff {
+            return Err(MachoError::InvalidObject);
+        }
+        if sect.sect_name() != SECT_INFO_PLIST_SLOT {
+            // An earlier compile set `size` to the length of its plist. The rest of the slot is the zero fill behind
+            // it, which stops at the next section or the end of the segment.
+            let mut limit = seg_end;
+            for i in 0..nsects {
+                let other = u64::from(section_at(&self.data, i).offset);
+                if other >= end && other < limit && i != index {
+                    limit = other;
+                }
+            }
+            let gap = &self.data[end as usize..limit as usize];
+            end += strings::index_of_not_char(gap, 0).map_or(gap.len(), |i| i as usize) as u64;
+        }
+
+        let capacity = (end - start) as usize;
+        if plist.len() > capacity {
+            return Err(MachoError::InfoPlistTooLarge {
+                len: plist.len(),
+                capacity,
+            });
+        }
+
+        sect.sectname = [0; 16];
+        sect.sectname[..SECT_INFO_PLIST.len()].copy_from_slice(SECT_INFO_PLIST);
+        sect.size = plist.len() as u64;
+        write_struct(
+            &mut self.data[sections_base + index * sect_sz..][..sect_sz],
+            &sect,
+        );
+        let slot = &mut self.data[start as usize..end as usize];
+        slot[..plist.len()].copy_from_slice(plist);
+        slot[plist.len()..].fill(0);
+        Ok(())
     }
 
     pub fn write_section(&mut self, data: &[u8]) -> Result<(), MachoError> {

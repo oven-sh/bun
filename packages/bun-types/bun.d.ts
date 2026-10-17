@@ -3818,6 +3818,27 @@ declare module "bun" {
       description?: string;
       copyright?: string;
     };
+    macos?: {
+      /**
+       * Path to an `Info.plist` to embed in the executable. It becomes the
+       * `__TEXT,__info_plist` section, which is where macOS reads the
+       * `Info.plist` of a program that is not inside an `.app` bundle (the
+       * same section that `ld -sectcreate __TEXT __info_plist` creates).
+       *
+       * The file is an XML or binary property list with a dictionary at its
+       * root, and at most 4096 bytes. A relative path resolves against the
+       * current working directory. The option also works when cross-compiling.
+       * It has no effect when the target is not macOS.
+       *
+       * The ad-hoc signature Bun puts on the executable does not cover the
+       * `Info.plist`. Sign the executable with `codesign` to seal it.
+       *
+       * Equivalent CLI flag: `--macos-info-plist <path>`
+       *
+       * @see https://bun.com/docs/bundler/executables#macos-specific-flags
+       */
+      infoPlist?: string | undefined;
+    };
   }
 
   /**

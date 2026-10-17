@@ -1129,6 +1129,57 @@ Available Windows options:
 
 ---
 
+## macOS-specific flags
+
+When compiling a standalone executable for macOS, you can embed an `Info.plist` in it:
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build --compile --macos-info-plist=./Info.plist ./app.ts --outfile myapp
+    ```
+
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./app.ts"],
+      compile: {
+        outfile: "./myapp",
+        macos: {
+          infoPlist: "./Info.plist",
+        },
+      },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+```xml Info.plist icon="file-code"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.example.myapp</string>
+    <key>CFBundleName</key>
+    <string>My App</string>
+</dict>
+</plist>
+```
+
+A program that is not inside an `.app` bundle has no `Info.plist` file. macOS reads its `Info.plist` from the `__TEXT,__info_plist` section of the executable instead, and that is where Bun puts the file. It is the same section that `ld -sectcreate __TEXT __info_plist Info.plist` creates. The compiled program then has the bundle identifier and the other keys of that `Info.plist` (`CFBundleGetMainBundle()`, `NSBundle.mainBundle`).
+
+- The file is an XML or binary property list with a dictionary at its root.
+- The file can be at most 4096 bytes. A binary property list is smaller than the XML form. To convert one, run `plutil -convert binary1 Info.plist`.
+- The option works when cross-compiling, for example with `--target=bun-darwin-arm64` on Linux.
+- The Bun executable that the program is built from must support the option. An older one, from `--target=bun-darwin-arm64-v1.x.y` or `--compile-executable-path`, fails with an error.
+- In the JavaScript API, `compile.macos` has no effect when the target is not macOS. The CLI flag is an error for such a target.
+
+The ad-hoc signature that Bun puts on an arm64 executable does not cover the `Info.plist`. To seal the `Info.plist` into the signature, sign the executable with `codesign` (see below). `codesign` also takes the signing identifier from `CFBundleIdentifier`.
+
+---
+
 ## Code signing on macOS
 
 To codesign a standalone executable on macOS (which fixes Gatekeeper warnings), use the `codesign` command.
@@ -1312,6 +1363,9 @@ interface CompileBuildOptions {
     version?: string; // Version string
     description?: string; // Description
     copyright?: string; // Copyright notice
+  };
+  macos?: {
+    infoPlist?: string; // Path to an Info.plist to embed
   };
 }
 ```

@@ -2025,6 +2025,13 @@ where
         resp.clear_on_writable();
         resp.clear_timeout();
 
+        debug_assert!(
+            upgrader.sink.get().is_none()
+                && upgrader.byte_stream.get().is_none()
+                && !upgrader.flags.has_sendfile_ctx(),
+            "a body writer still holds the response"
+        );
+
         // The upgrade detaches the response and disarms onAborted, so neither
         // on_abort nor an end path can reclaim a parked handler promise's
         // claim later. Reclaim it here.

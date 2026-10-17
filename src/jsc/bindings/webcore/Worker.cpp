@@ -46,6 +46,7 @@
 #include "CloseEvent.h"
 #include "JSDOMConvertObject.h"
 #include "JSDOMConvertSequences.h"
+#include "JSEventListener.h"
 #include "JSMessagePort.h"
 #include "JSMessageChannel.h"
 #include "JSWorker.h"
@@ -204,7 +205,9 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     init.error = error;
     init.cancelable = false;
     init.bubbles = false;
-    globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    Ref event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
+    // For the on('error') listeners of the parentPort that node:worker_threads gives a web Worker: the error.
+    NodeStyleEventValue::dispatch(globalObject->vm(), globalObject->globalEventScope.get(), event.get(), error);
     proxy->postErrorToWorkerObject(*globalObject, messageStr, error);
 }
 

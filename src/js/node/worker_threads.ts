@@ -11,7 +11,6 @@ type WebWorker = InstanceType<typeof globalThis.Worker> & {
 };
 
 const EventEmitter = require("node:events");
-const { SafeMap } = require("internal/primordials");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
 const {
   validateString,
@@ -114,159 +113,78 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 
+// fakeParentPort(): the parentPort of a web Worker. Its listeners live on the worker's global scope.
+let fakePort: object | null = null;
+
 function injectFakeEmitter(Class) {
-  // Per-instance registry mapping each event to (user listener -> wrapper), so
-  // listenerCount/eventNames/removeAllListeners work over EventTarget's opaque
-  // internal map and off() can find the wrapper a given listener registered.
-  // SafeMap: its prototype is a frozen, null-proto snapshot of Map.prototype, so
-  // .get/.set/.size/.values()/iteration all bypass a user-replaced Map.prototype.
-  // (It has no @get/@set private names, so the $-intrinsics don't apply to it.)
-  // Keyed by a module-local symbol, not a WeakMap — WeakMap has neither defence.
-  const kListenerRegistry = Symbol("listenerRegistry");
-  function registryFor(target, create) {
-    let map = target[kListenerRegistry];
-    if (!map && create) target[kListenerRegistry] = map = new SafeMap();
-    return map;
+  // node's NodeEventTarget: on()/once() put the listener itself, marked node-style, in the native listener list.
+  const addNodeStyleListener = $newCppFunction("JSEventTargetNode.cpp", "jsFunctionNodeEventTargetAddListener", 5);
+  const assertMessagePort = $newCppFunction("JSEventTargetNode.cpp", "jsFunctionNodeEventTargetAssert", 1);
+  const countListeners = $newCppFunction("JSEventTargetNode.cpp", "jsFunctionNodeEventTargetListenerCount", 3);
+  const listEventNames = $newCppFunction("JSEventTargetNode.cpp", "jsFunctionNodeEventTargetEventNames", 2);
+  const removeListeners = $newCppFunction("JSEventTargetNode.cpp", "jsFunctionNodeEventTargetRemoveAllListeners", 3);
+  const dispatchWithValue = $newCppFunction("JSEventTargetNode.cpp", "jsFunctionNodeEventTargetEmit", 3);
+  const { kMaxEventTargetListeners, kMaxEventTargetListenersWarned } = EventEmitter as typeof EventEmitter &
+    Record<"kMaxEventTargetListeners" | "kMaxEventTargetListenersWarned", symbol>;
+
+  function isStandIn(self) {
+    return fakePort !== null && self === fakePort;
   }
 
-  function messageEventHandler(event: MessageEvent) {
-    return event.data;
+  // The receiver check of the methods that have no other native part.
+  function assertNodeEventTarget(self) {
+    if (!isStandIn(self)) assertMessagePort(self);
   }
 
-  function errorEventHandler(event: ErrorEvent) {
-    return event.error;
-  }
-
-  function customEventHandler(event) {
-    return event.detail;
-  }
-
-  function wrapped(run, listener) {
-    return function (event) {
-      return listener(run(event));
-    };
-  }
-
-  function functionForEventType(event, listener) {
-    switch (event) {
-      case "error":
-      case "messageerror": {
-        return wrapped(errorEventHandler, listener);
-      }
-
-      case "message": {
-        return wrapped(messageEventHandler, listener);
-      }
-
-      default: {
-        return wrapped(customEventHandler, listener);
-      }
-    }
-  }
-
-  function EventClass(eventName) {
-    if (eventName === "error" || eventName === "messageerror") {
-      return ErrorEvent;
-    }
-
-    return MessageEvent;
-  }
-
-  // EventTarget dedupes on (type, callback), so in node the FIRST registration of
-  // a listener wins outright -- including its once-ness -- and later adds of the
-  // same function are no-ops. Keying wrappers per listener reproduces that.
-  function register(target, event, listener, wrapper, options) {
-    const map = registryFor(target, true)!;
-    let byListener = map.get(event);
-    if (!byListener) map.set(event, (byListener = new SafeMap()));
-    if (byListener.has(listener)) return false;
-    target.addEventListener(event, wrapper, options);
-    byListener.set(listener, wrapper);
-    return true;
-  }
-
-  function on(event, listener) {
-    register(this, event, listener, functionForEventType(event, listener), undefined);
+  function on(type, listener) {
+    const standIn = isStandIn(this);
+    // False for a null or undefined listener, which adds nothing: addEventListener() gives the warning.
+    if (!addNodeStyleListener(standIn ? globalThis : this, type, listener, false, standIn))
+      this.addEventListener(type, listener);
     return this;
   }
 
-  function off(event, listener) {
-    if (listener) {
-      const byListener = registryFor(this, false)?.get(event);
-      const wrapper = byListener?.get(listener) ?? listener;
-      this.removeEventListener(event, wrapper);
-      byListener?.delete(listener);
-    } else {
-      this.removeEventListener(event);
-    }
+  function off(type, listener, options) {
+    assertNodeEventTarget(this);
+    // removeEventListener() rejects the same listeners. This is node's error for them.
+    if (listener != null && !$isObject(listener)) throw $ERR_INVALID_ARG_TYPE("listener", ["EventListener"], listener);
+    this.removeEventListener(type, listener, options);
     return this;
   }
 
-  function once(event, listener) {
-    const wrapper = functionForEventType(event, listener);
-    const target = this;
-    // EventTarget drops a {once:true} listener natively, without telling the
-    // registry — so purge it here or listenerCount()/eventNames() keep counting
-    // a listener that already fired.
-    function onceWrapper(ev) {
-      registryFor(target, false)?.get(event)?.delete(listener);
-      return wrapper(ev);
-    }
-    register(this, event, listener, onceWrapper, { once: true });
+  function once(type, listener) {
+    const standIn = isStandIn(this);
+    if (!addNodeStyleListener(standIn ? globalThis : this, type, listener, true, standIn))
+      this.addEventListener(type, listener);
     return this;
   }
 
-  function emit(event, ...args) {
-    switch (event) {
-      case "error":
-      case "messageerror":
-      case "message":
-        this.dispatchEvent(new (EventClass(event))(event, ...args));
-        break;
-      default:
-        // Non-standard events surface as CustomEvent (detail = first arg) to
-        // addEventListener and as the raw argument to .on(), matching node.
-        this.dispatchEvent(new CustomEvent(event, { detail: args[0] }));
-        break;
-    }
-    return this;
+  function emit(type, arg) {
+    return dispatchWithValue(this, type, arg);
   }
 
-  const kMaxListeners = Symbol("kMaxListeners");
   function setMaxListeners(n) {
-    this[kMaxListeners] = n;
-    return this;
+    assertNodeEventTarget(this);
+    if (n === undefined) n = EventEmitter.defaultMaxListeners;
+    validateNumber(n, "setMaxListeners", 0);
+    this[kMaxEventTargetListeners] = n;
+    this[kMaxEventTargetListenersWarned] = false;
   }
   function getMaxListeners() {
-    return this[kMaxListeners] ?? 10;
+    assertNodeEventTarget(this);
+    return (this[kMaxEventTargetListeners] ??= EventEmitter.defaultMaxListeners);
   }
   function listenerCount(type) {
-    return registryFor(this, false)?.get(type)?.size ?? 0;
+    const standIn = isStandIn(this);
+    return countListeners(standIn ? globalThis : this, type, standIn);
   }
   function eventNames() {
-    const map = registryFor(this, false);
-    if (!map) return [];
-    const out: string[] = [];
-    for (const [k, v] of map) if (v.size > 0) out.push(k);
-    return out;
+    const standIn = isStandIn(this);
+    return listEventNames(standIn ? globalThis : this, standIn);
   }
   function removeAllListeners(type) {
-    const map = registryFor(this, false);
-    if (!map) return this;
-    const removeType = t => {
-      const byListener = map.get(t);
-      if (byListener) {
-        for (const w of byListener.values()) this.removeEventListener(t, w);
-        map.delete(t);
-      }
-    };
-    if (arguments.length === 0) {
-      // removeType only deletes `t`, and a Map iterator tolerates deleting the
-      // entry it just yielded — so no snapshot copy is needed here.
-      for (const t of map.keys()) removeType(t);
-    } else {
-      removeType(type);
-    }
+    const standIn = isStandIn(this);
+    removeListeners(standIn ? globalThis : this, type, standIn);
     return this;
   }
 
@@ -706,16 +624,7 @@ function fakeParentPort() {
     value: self.removeEventListener.bind(self),
   });
 
-  Object.defineProperty(fake, "removeListener", {
-    value: self.removeEventListener.bind(self),
-    enumerable: false,
-  });
-
-  Object.defineProperty(fake, "addListener", {
-    value: self.addEventListener.bind(self),
-    enumerable: false,
-  });
-
+  fakePort = fake;
   return fake;
 }
 

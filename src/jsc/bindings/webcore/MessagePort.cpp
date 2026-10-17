@@ -32,6 +32,7 @@
 #include "BunClientData.h"
 #include "EventNames.h"
 #include "GlobalEventScope.h"
+#include "JSEventListener.h"
 #include "JSMessagePort.h"
 #include "MessageEvent.h"
 #include "MessagePortPipe.h"
@@ -371,10 +372,13 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
         if (vm->hasPendingTerminationException())
             return;
         scope.clearException();
-        dispatchEvent(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull() }, MessageEvent::IsTrusted::Yes));
+        Ref messageError = MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull() }, MessageEvent::IsTrusted::Yes);
+        // node hands on('messageerror') listeners the error that deserialization threw. They get undefined here.
+        NodeStyleEventValue::dispatch(vm, *this, messageError.get(), jsUndefined());
         return;
     }
-    dispatchEvent(event->event);
+    // on('message') listeners get the message, not the MessageEvent.
+    NodeStyleEventValue::dispatch(vm, *this, event->event.get(), event->event->cachedData().getValue());
 }
 
 JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject, bool& hadMessage)

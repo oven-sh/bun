@@ -1892,6 +1892,186 @@ describe("tsconfig paths skip `.d.ts` substitutions", () => {
   });
 });
 
+// A tsconfig `paths` target that does not start with `./`, `../` or `/` joins
+// onto `baseUrl`. With no `baseUrl` in the `extends` chain it joins onto the
+// folder of the file that declares `paths`, as in tsc. tsc also reports TS5090
+// for such a target. The runtime prints nothing: TS5090 is for `bun check`.
+describe("tsconfig paths target that is not relative, without baseUrl", () => {
+  // `--no-install`: a specifier that misses `paths` fails. It never asks a registry.
+  async function run(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-install", ...args],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr: stripAsanWarning(stderr), exitCode };
+  }
+
+  const alias = { compilerOptions: { paths: { "zz-components/*": ["zz-components/*"] } } };
+
+  test.concurrent("resolves against the tsconfig's folder in every resolve API", async () => {
+    using dir = tempDir("tsconfig-paths-bare-target", {
+      "tsconfig.json": JSON.stringify(alias),
+      "zz-components/Button.ts": `export default "Button";`,
+      "entry.ts": `
+        import Button from "zz-components/Button";
+        import { relative, sep } from "path";
+        const here = (file: string) => relative(import.meta.dir, file).split(sep).join("/");
+        console.log(
+          JSON.stringify({
+            static: Button,
+            dynamic: (await import("zz-components/Button")).default,
+            require: require("zz-components/Button").default,
+            requireResolve: here(require.resolve("zz-components/Button")),
+            importMetaResolve: here(Bun.fileURLToPath(import.meta.resolve("zz-components/Button"))),
+            resolveSync: here(Bun.resolveSync("zz-components/Button", import.meta.dir)),
+          }),
+        );
+      `,
+    });
+
+    expect(await run(String(dir), "entry.ts")).toEqual({
+      stdout: JSON.stringify({
+        static: "Button",
+        dynamic: "Button",
+        require: "Button",
+        requireResolve: "zz-components/Button.ts",
+        importMetaResolve: "zz-components/Button.ts",
+        resolveSync: "zz-components/Button.ts",
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent.each([
+    ["jsconfig.json", "jsconfig.json", []],
+    ["the --tsconfig-override file", "custom.json", ["--tsconfig-override", "custom.json"]],
+  ] as [name: string, file: string, args: string[]][])("also from %s", async (_name, file, args) => {
+    using dir = tempDir("tsconfig-paths-bare-target-source", {
+      [file]: JSON.stringify(alias),
+      "zz-components/Button.js": `export default "Button";`,
+      "entry.js": `
+        import Button from "zz-components/Button";
+        console.log(Button);
+      `,
+    });
+
+    expect(await run(String(dir), ...args, "entry.js")).toEqual({ stdout: "Button", stderr: "", exitCode: 0 });
+  });
+
+  const lib = { compilerOptions: { paths: { "zz-lib/*": ["lib/*"] } } };
+  test.concurrent.each([
+    [
+      "`paths` in the base, `baseUrl` in the file that extends it",
+      { extends: "./cfg/base.json", compilerOptions: { baseUrl: "./root2" } },
+      lib,
+      "root2",
+    ],
+    [
+      "`baseUrl` in the base, `paths` in the file that extends it",
+      { extends: "./cfg/base.json", ...lib },
+      { compilerOptions: { baseUrl: "../root2" } },
+      "root2",
+    ],
+    ["`paths` in the base, no `baseUrl`", { extends: "./cfg/base.json" }, lib, "cfg"],
+  ] as [name: string, tsconfig: object, base: object, expected: string][])(
+    "extends: %s",
+    async (_name, tsconfig, base, expected) => {
+      using dir = tempDir("tsconfig-paths-bare-target-extends", {
+        "tsconfig.json": JSON.stringify(tsconfig),
+        "cfg/base.json": JSON.stringify(base),
+        "lib/x.ts": `export default "root";`,
+        "cfg/lib/x.ts": `export default "cfg";`,
+        "root2/lib/x.ts": `export default "root2";`,
+        "entry.ts": `
+          import where from "zz-lib/x";
+          console.log(where);
+        `,
+      });
+
+      expect(await run(String(dir), "entry.ts")).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+    },
+  );
+
+  test.concurrent("targets of zero, one and two characters", async () => {
+    using dir = tempDir("tsconfig-paths-short-target", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { paths: { "zz-root": [""], "zz-one": ["a"], "zz-two": ["ab"] } },
+      }),
+      "index.ts": `export default "index";`,
+      "a.ts": `export default "a";`,
+      "ab.ts": `export default "ab";`,
+      "entry.ts": `
+        import root from "zz-root";
+        import one from "zz-one";
+        import two from "zz-two";
+        console.log(root, one, two);
+      `,
+    });
+
+    expect(await run(String(dir), "entry.ts")).toEqual({ stdout: "index a ab", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("a package of the same name loses to a project path that exists", async () => {
+    using dir = tempDir("tsconfig-paths-bare-target-package", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "zz-shared/*": ["zz-shared/*"] } } }),
+      "zz-shared/in-both.ts": `export default "project";`,
+      "node_modules/zz-shared/package.json": JSON.stringify({ name: "zz-shared", version: "1.0.0", type: "module" }),
+      "node_modules/zz-shared/in-both.js": `export default "package";`,
+      "node_modules/zz-shared/in-package.js": `export default "package";`,
+      "entry.ts": `
+        import inBoth from "zz-shared/in-both";
+        import inPackage from "zz-shared/in-package";
+        console.log(inBoth, inPackage);
+      `,
+    });
+
+    expect(await run(String(dir), "entry.ts")).toEqual({ stdout: "project package", stderr: "", exitCode: 0 });
+  });
+
+  // As in tsc and esbuild, only the key with the longest prefix is tried.
+  test.concurrent("the key with the longest prefix is the only one tried", async () => {
+    using dir = tempDir("tsconfig-paths-bare-target-longest", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { paths: { "@zz/*": ["./src/*"], "@zz/gen/*": ["gen/*"] } },
+      }),
+      "gen/in-gen.ts": `export default "gen";`,
+      "src/gen/in-src.ts": `export default "src";`,
+      "hit.ts": `
+        import where from "@zz/gen/in-gen";
+        console.log(where);
+      `,
+      "miss.ts": `
+        import where from "@zz/gen/in-src";
+        console.log(where);
+      `,
+    });
+
+    expect(await run(String(dir), "hit.ts")).toEqual({ stdout: "gen", stderr: "", exitCode: 0 });
+    const miss = await run(String(dir), "miss.ts");
+    expect(miss.stderr).toContain(`Cannot find module '@zz/gen/in-src'`);
+    expect(miss.exitCode).toBe(1);
+  });
+
+  test.concurrent("a catch-all key that misses still resolves a package in node_modules", async () => {
+    using dir = tempDir("tsconfig-paths-bare-target-catch-all", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "*": ["types/*"] } } }),
+      "node_modules/zz-package/package.json": JSON.stringify({ name: "zz-package", version: "1.0.0", type: "module" }),
+      "node_modules/zz-package/index.js": `export default "package";`,
+      "entry.ts": `
+        import where from "zz-package";
+        console.log(where);
+      `,
+    });
+
+    expect(await run(String(dir), "entry.ts")).toEqual({ stdout: "package", stderr: "", exitCode: 0 });
+  });
+});
+
 it.skipIf(isWindows)("runs a script from a working directory nested 256 directories deep", async () => {
   using dir = tempDir("resolver-deep-cwd", { ".keep": "" });
   const base = realpathSync(String(dir));

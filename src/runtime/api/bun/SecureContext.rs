@@ -215,13 +215,14 @@ impl SecureContext {
         Ok(result)
     }
 
-    /// `SecureContext.dhParamSize(dhparam)` - the byte length of the prime in
-    /// a "DH PARAMETERS" PEM given as a string or ArrayBufferView, or -1 when
-    /// the value is neither or does not parse. node:tls rejects a prime under
-    /// 128 bytes the way Node's `SecureContext::SetDHParam` does; a value that
-    /// does not parse is ignored, as in Node. Same codegen shim arrangement as
-    /// `intern` (no `#[host_fn]` attribute here).
-    pub(crate) fn dh_param_size(
+    /// `SecureContext.dhParamBits(dhparam)` - the bit length of the prime in
+    /// a PKCS#3 "DH PARAMETERS" PEM given as a string or a buffer, or -1 when
+    /// the value does not parse, which node:tls ignores the way Node's
+    /// `SecureContext::SetDHParam` does. BoringSSL has no parser for the
+    /// "X9.42 DH PARAMETERS" form (`openssl dhparam -dsaparam`), so that form
+    /// is also -1 here while Node's OpenSSL reads it. Same codegen shim
+    /// arrangement as `intern` (no `#[host_fn]` attribute here).
+    pub(crate) fn dh_param_bits(
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -270,12 +271,12 @@ impl SecureContext {
             return Ok(not_dh);
         }
         // SAFETY: `dh` is the parsed group, owned here until `DH_free`.
-        let size = unsafe {
-            let size = boringssl::DH_size(dh);
+        let bits = unsafe {
+            let bits = boringssl::DH_bits(dh);
             boringssl::DH_free(dh);
-            size
+            bits
         };
-        Ok(JSValue::js_number_from_int32(size))
+        Ok(JSValue::js_number_from_uint64(bits as u64))
     }
 
     /// `tls.createSecureContext()` / `new tls.SecureContext()` entry - builds a context that owns its

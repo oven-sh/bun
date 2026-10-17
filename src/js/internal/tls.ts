@@ -243,19 +243,23 @@ function validateSecureContextOptions(options) {
   if (dhparam === "auto") {
     throw $ERR_CRYPTO_UNSUPPORTED_OPERATION("Automatic DH parameter selection is not supported");
   } else if (dhparam !== undefined && dhparam !== null) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L254-L259
+    if (typeof dhparam !== "string" && !isArrayBufferView(dhparam)) {
+      throw $ERR_INVALID_ARG_TYPE("options.dhparam", ["string", "Buffer", "TypedArray", "DataView"], dhparam);
+    }
     // Node's SecureContext::SetDHParam: a value that does not parse as a DH
     // PEM is ignored, a prime under 1024 bits throws, one under 2048 warns.
-    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L871-L901
+    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1978-L2028
     NativeSecureContext ??= $rust("SecureContext.rs", "js.getConstructor");
-    const size = NativeSecureContext.dhParamSize(dhparam);
-    if (size !== -1) {
-      if (size < 128) {
+    const bits = NativeSecureContext.dhParamBits(dhparam);
+    if (bits !== -1) {
+      if (bits < 1024) {
         // Not $ERR_INVALID_ARG_VALUE: that formats "The argument 'x' is invalid";
         // Node's native THROW_ERR_INVALID_ARG_VALUE takes the bare message.
         const err = new TypeError("DH parameter is less than 1024 bits") as TypeError & { code: string };
         err.code = "ERR_INVALID_ARG_VALUE";
         throw err;
-      } else if (size < 256) {
+      } else if (bits < 2048) {
         process.emitWarning("DH parameter is less than 2048 bits", "SecurityWarning");
       }
     }

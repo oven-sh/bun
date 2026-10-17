@@ -1143,8 +1143,8 @@ unsafe extern "C" {
         cb: Option<pem_password_cb>,
         u: *mut c_void,
     ) -> *mut DH;
-    /// The byte length of the group's prime.
-    pub fn DH_size(dh: *const DH) -> c_int;
+    /// The bit length of the group's prime.
+    pub fn DH_bits(dh: *const DH) -> c_uint;
     pub fn DH_free(dh: *mut DH);
 
     /// Returns a NEW reference (caller frees) or null when the peer sent no

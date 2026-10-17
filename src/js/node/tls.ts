@@ -1056,6 +1056,9 @@ function buildSharedCreds(server, options) {
     ...options,
     pfx: undefined,
     _pfxExtraCACerts: undefined,
+    // Validated by setSecureContext() already; never applied natively. Not
+    // blanked, the size warning would be emitted twice.
+    dhparam: undefined,
     key: server.key,
     cert: server.cert,
     ca: server.ca,
@@ -1176,17 +1179,19 @@ function Server(options, secureConnectionListener): void {
     }
     if (options) {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1456: falsy counts as absent
-      const { minVersion, maxVersion, secureProtocol } = options;
+      const { minVersion, maxVersion, secureProtocol, dhparam } = options;
       if (
         (minVersion != null && !minVersion) ||
         (maxVersion != null && !maxVersion) ||
-        (secureProtocol != null && !secureProtocol)
+        (secureProtocol != null && !secureProtocol) ||
+        (dhparam != null && !dhparam)
       ) {
         options = {
           ...options,
           minVersion: minVersion || undefined,
           maxVersion: maxVersion || undefined,
           secureProtocol: secureProtocol || undefined,
+          dhparam: dhparam || undefined,
         };
       }
       validateSecureContextOptions(options);

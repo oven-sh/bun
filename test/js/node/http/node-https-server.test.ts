@@ -10,13 +10,6 @@ import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
 
-// `openssl dhparam 512`: Node rejects a DH parameter under 1024 bits.
-const dh512 = `-----BEGIN DH PARAMETERS-----
-MEkCQQDC31d/lprCPy5Q5Zk0PpZvSAlwFGE0qTRG6WGxVF7KVWLyjHs59LjjdAHv
-wqiwog1pBprJxEwQKX2BiMzgfjI3AgECAgF9
------END DH PARAMETERS-----
-`;
-
 function listen(server: http.Server): Promise<number> {
   const { promise, resolve, reject } = Promise.withResolvers<number>();
   server.once("error", reject);
@@ -259,7 +252,7 @@ describe("https.createServer forwards every TLS server option", () => {
 
   test.each([
     ["ecdhCurve", "not-a-curve", "ERR_CRYPTO_OPERATION_FAILED"],
-    ["dhparam", dh512, "ERR_INVALID_ARG_VALUE"],
+    ["dhparam", readFileSync(join(import.meta.dirname, "../test/fixtures/keys/dh512.pem")), "ERR_INVALID_ARG_VALUE"],
     ["sessionTimeout", -1, "ERR_OUT_OF_RANGE"],
     ["sigalgs", "", "ERR_INVALID_ARG_VALUE"],
     ["crl", 42, "ERR_INVALID_ARG_TYPE"],
@@ -272,6 +265,8 @@ describe("https.createServer forwards every TLS server option", () => {
   test.each([
     // BoringSSL has no DHE suites to apply it to.
     ["dhparam", "auto"],
+    ["dhparam", 0],
+    ["dhparam", false],
     // tls.Server#setSecureContext() drops these when they are falsy.
     ["clientCertEngine", 0],
     ["clientCertEngine", ""],

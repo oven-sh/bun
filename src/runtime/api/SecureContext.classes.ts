@@ -16,10 +16,10 @@ export default [
       // Parses a PKCS#12 (`pfx`) blob into { key, cert, ca } PEM strings so
       // the regular key/cert/ca option plumbing can consume it.
       parsePkcs12: { fn: "parse_pkcs12", length: 2 },
-      // Byte length of the prime in a "DH PARAMETERS" PEM (string or
-      // ArrayBufferView), or -1 when the value does not parse. Backs the
-      // node:tls `dhparam` size check.
-      dhParamSize: { fn: "dh_param_size", length: 1 },
+      // Bit length of the prime in a PKCS#3 "DH PARAMETERS" PEM, or -1 when
+      // the value does not parse. Backs the node:tls `dhparam` size check;
+      // the argument type check lives in validateSecureContextOptions.
+      dhParamBits: { fn: "dh_param_bits", length: 1 },
     },
     // node:tls hands out the SecureContext object itself as `.context`. We
     // deliberately do NOT expose the underlying SSL_CTX* to JS: a Number

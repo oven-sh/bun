@@ -14,6 +14,7 @@ const ObjectDefineProperties = Object.defineProperties;
 const ObjectFreeze = Object.freeze;
 const TypedArrayPrototypeFill = Uint8Array.prototype.fill;
 const ArrayPrototypeForEach = Array.prototype.forEach;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const NumberIsNaN = Number.isNaN;
 const NumberIsInteger = Number.isInteger;
 const MathMax = Math.max;
@@ -702,7 +703,7 @@ function Unzip(opts): void {
 }
 $toClass(Unzip, "Unzip", Zlib);
 
-function createConvenienceMethod(ctor, sync, methodName, isZstd?) {
+function createConvenienceMethod(ctor, sync, methodName, prepareOpts?) {
   if (sync) {
     const fn = function (buffer, opts) {
       return zlibBufferSync(new ctor(opts), buffer);
@@ -715,30 +716,58 @@ function createConvenienceMethod(ctor, sync, methodName, isZstd?) {
         callback = opts;
         opts = {};
       }
-      // For zstd compression, we need to set pledgedSrcSize to the buffer size
-      // so that the content size is included in the frame header
-      if (isZstd) {
-        // Calculate buffer size
-        let bufferSize;
-        if (typeof buffer === "string") {
-          bufferSize = Buffer.byteLength(buffer);
-        } else if (isArrayBufferView(buffer)) {
-          bufferSize = buffer.byteLength;
-        } else if (isAnyArrayBuffer(buffer)) {
-          bufferSize = buffer.byteLength;
-        } else {
-          bufferSize = 0;
-        }
-        // Set pledgedSrcSize if not already set
-        if (!opts?.pledgedSrcSize && bufferSize > 0) {
-          opts = { ...opts, pledgedSrcSize: bufferSize };
-        }
+      if (prepareOpts !== undefined) {
+        opts = prepareOpts(buffer, opts);
       }
       return zlibBuffer(new ctor(opts), buffer, callback);
     };
     ObjectDefineProperty(fn, "name", { value: methodName });
     return fn;
   }
+}
+
+// Not hex or base64: Buffer.byteLength() also counts the characters that Buffer.from() skips.
+function hasExactByteLength(encoding) {
+  if (typeof encoding !== "string") return false;
+  switch (StringPrototypeToLowerCase.$call(encoding)) {
+    case "utf8":
+    case "utf-8":
+    case "ucs2":
+    case "ucs-2":
+    case "utf16le":
+    case "utf-16le":
+    case "latin1":
+    case "binary":
+    case "ascii":
+      return true;
+  }
+  return false;
+}
+
+// Port of https://github.com/nodejs/node/blob/fa4af164144545f15dbc46bc5fe72fef80da278a/lib/zlib.js#L813-L833
+function withPledgedSrcSize(buffer, opts) {
+  if (opts?.pledgedSrcSize !== undefined) {
+    return opts;
+  }
+  if (typeof buffer === "string") {
+    // The engine gets this copy, so the string is measured in the defaultEncoding that the stream decodes it with.
+    const pledged = { __proto__: null, ...opts };
+    const encoding = pledged.defaultEncoding;
+    if (encoding == null || encoding === "utf8" || encoding === "utf-8") {
+      pledged.pledgedSrcSize = Buffer.byteLength(buffer);
+    } else if (hasExactByteLength(encoding)) {
+      // Node pledges only for "utf8" and "utf-8". Bun also pledges for each encoding with an exact byte length.
+      pledged.pledgedSrcSize = Buffer.byteLength(buffer, encoding);
+    } else {
+      return opts;
+    }
+    return pledged;
+  }
+  if (isArrayBufferView(buffer) || isAnyArrayBuffer(buffer)) {
+    return { __proto__: null, ...opts, pledgedSrcSize: buffer.byteLength };
+  }
+  // Leave invalid input to the existing validation.
+  return opts;
 }
 
 const kMaxBrotliParam = 9;
@@ -916,7 +945,7 @@ const zlib = {
   brotliCompressSync: createConvenienceMethod(BrotliCompress, true, "brotliCompressSync"),
   brotliDecompress: createConvenienceMethod(BrotliDecompress, false, "brotliDecompress"),
   brotliDecompressSync: createConvenienceMethod(BrotliDecompress, true, "brotliDecompressSync"),
-  zstdCompress: createConvenienceMethod(ZstdCompress, false, "zstdCompress", true),
+  zstdCompress: createConvenienceMethod(ZstdCompress, false, "zstdCompress", withPledgedSrcSize),
   zstdCompressSync: createConvenienceMethod(ZstdCompress, true, "zstdCompressSync"),
   zstdDecompress: createConvenienceMethod(ZstdDecompress, false, "zstdDecompress"),
   zstdDecompressSync: createConvenienceMethod(ZstdDecompress, true, "zstdDecompressSync"),

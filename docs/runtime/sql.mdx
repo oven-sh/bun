@@ -348,6 +348,8 @@ See [Numbers and BigInt](#numbers-and-bigint) for numbers and [Dates and time zo
 
 JSON is what `JSON.stringify(value)` returns, so a `toJSON()` method counts, also that of a `Date`. A value for which it returns `undefined` is an error.
 
+`bytea` is not one of the "every other type" above. It takes a `Buffer`, an `ArrayBuffer`, a `DataView`, a typed array or a string, and every other object is an error. With `prepare: false`, Bun does not ask the server for the parameter types for a `Date` or a plain object, so the server stores their text.
+
 Bun never calls `valueOf()`, and it calls `Symbol.toPrimitive` with the hint `"string"`, also for a numeric parameter. An object that only has `valueOf()` is a plain object. Pass `Number(value)` to bind the number:
 
 ```ts
@@ -750,7 +752,7 @@ After `.execute()`, Bun does report the failure when:
 
 - It cannot connect: nothing listens, the login fails or the connection times out.
 - The pool was already closed.
-- The time of `close({ timeout })` runs out while the query waits for a connection.
+- The time of `close({ timeout })`, with a timeout above 0, runs out while the query waits for a connection.
 - You call `.cancel()` while the query waits for a connection.
 - It cannot build the query or read the file of `sql.file()`.
 - The adapter is SQLite and the query runs outside a transaction.

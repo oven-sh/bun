@@ -82,6 +82,150 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+  itBundled("browser/NodeBufferIndexOfEmptyAndEnd#43655", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Buffer } from "node:buffer";
+        const b = Buffer.from("abcabc");
+        // An empty value returns the byteOffset, like String#indexOf.
+        console.log(b.indexOf(""), b.lastIndexOf(""), b.includes(""));
+        // Empty value with an explicit offset returns the clamped offset (Node parity).
+        console.log(b.indexOf("", 3), b.lastIndexOf("", 3));
+        // A value can be empty only after decoding. Node.js reads a hex pair as two
+        // digits and stops at the first pair containing anything else, so "0z" and
+        // "a<NUL>c" decode to no bytes at all and the search reports the offset, like
+        // an empty value. Decoding the pair with parseInt instead wrote a byte Node.js
+        // never decodes, so the search ran against a value that does not exist.
+        const nul = String.fromCharCode(0);
+        const viaHex = "a" + nul + "c";
+        console.log(Buffer.from(viaHex, "hex").length, Buffer.from("0z", "hex").length);
+        console.log(b.indexOf(viaHex, 1, "hex"), b.lastIndexOf(viaHex, 5, "hex"), b.includes(viaHex, 0, "hex"));
+        // A pair whose second digit is missing, and a sign prefix, are the same case.
+        console.log(b.indexOf("0z", 1, "hex"), b.indexOf("zz", 0, "hex"), b.lastIndexOf(viaHex, 5, "hex"));
+        // base64 reaches the same state: Node.js decodes "=" to no bytes, so the offset
+        // is reported here too.
+        console.log(b.indexOf("=", 2, "base64"), b.lastIndexOf("=", 5, "base64"), b.includes("=", 0, "base64"));
+        // An empty value decoded from hex is still bounded by end.
+        console.log(b.indexOf(viaHex, 3, 3, "hex"), b.indexOf(viaHex, 4, 3, "hex"), b.lastIndexOf(viaHex, 4, 3, "hex"));
+        console.log(b.indexOf(viaHex, 0, -1, "hex"), b.lastIndexOf(viaHex, 5, 0, "hex"), b.includes(viaHex, 0, 0, "hex"));
+        // The phantom byte used to report a match Node.js never made: the haystack has
+        // one 0x0a at index 1, and the two empties report index 2.
+        const lf = Buffer.from([0x0a, 0x0a]);
+        console.log(lf.indexOf(viaHex, 1, "hex"), lf.lastIndexOf(viaHex, 5, "hex"), lf.includes(viaHex, 2, "hex"));
+        // A Uint8Array value that is not a Buffer is accepted.
+        console.log(b.indexOf(new Uint8Array([98])));
+        // ...including on the UTF-16 search path, where the value is read two
+        // bytes at a time. A plain Uint8Array has no readUInt16BE.
+        const u16 = Buffer.from("abc", "ucs2");
+        console.log(u16.indexOf(new Uint8Array([0x62, 0x00]), 0, "ucs2"));
+        console.log(u16.includes(new Uint8Array([0x63, 0x00]), 0, "ucs2"));
+        // UTF-16 on an odd-length haystack: Node.js truncates the unit counts,
+        // so the trailing odd byte is never a match position.
+        const odd = Buffer.from([0x61, 0x62, 0x63]);
+        console.log(odd.indexOf("c", 0, "ucs2"), odd.includes("c", 0, "ucs2"));
+        console.log(odd.lastIndexOf("c", 0, "ucs2"), odd.indexOf("c", 0, "utf16le"));
+        // Odd-length haystack plus a Uint8Array value: a miss is -1, for a string
+        // value and a Uint8Array value alike. Node.js rounds the search range down
+        // to whole 2-byte units before searching, so the trailing odd byte of the
+        // haystack is never searched. The trailing odd byte of the *value* is
+        // dropped too, so 0x63 0x01 reads as 0x63 0x00.
+        const odd5 = Buffer.from([0x61, 0x62, 0x63, 0x61, 0x62]);
+        console.log(odd5.indexOf(new Uint8Array([0x62, 0x00]), 0, "ucs2"), odd5.includes(new Uint8Array([0x62, 0x00]), 0, "ucs2"));
+        console.log(odd5.indexOf(new Uint8Array([0x63, 0x01]), 0, "ucs2"), odd5.indexOf(new Uint8Array([0xff, 0xff]), 0, "ucs2"));
+        console.log(odd5.lastIndexOf(new Uint8Array([0x00, 0x61]), 0, "ucs2"), odd5.lastIndexOf(new Uint8Array([0x00, 0x61, 0x00, 0x62]), 0, "ucs2"));
+        console.log(odd5.indexOf(new Uint8Array([0x00, 0x61, 0x00, 0x62, 0x00]), 0, "ucs2"));
+        // Odd-length value: the trailing byte is not half-compared.
+        console.log(odd.indexOf(new Uint8Array([0x00, 0x61, 0x62]), 0, "ucs2"));
+        // The end argument bounds the search range (Node v26).
+        console.log(b.indexOf("c", 0, 2), b.lastIndexOf("c", undefined, 4));
+        console.log(b.lastIndexOf("a", 5, 4));
+        // end beyond the buffer length, and end of 0, are both clamped.
+        console.log(b.indexOf("a", 0, 999), b.lastIndexOf("a", 0, 999), b.includes("a", 0, 999));
+        console.log(b.indexOf("a", 0, 0), b.lastIndexOf("a", 0, 0), b.includes("a", 0, 0));
+        // A negative end clamps to 0, so a non-empty value misses and an empty
+        // one still reports the offset.
+        console.log(b.indexOf("a", 0, -1), b.lastIndexOf("a", 0, -1), b.includes("a", 0, -1));
+        console.log(b.indexOf("", 0, 0), b.lastIndexOf("", 0, 0), b.includes("", 0, 0));
+        console.log(b.indexOf("", 0, -1), b.lastIndexOf("", 0, -1));
+        console.log(b.indexOf("c", 0, NaN), b.lastIndexOf("a", 0, NaN));
+        // end before byteOffset: forward misses, backward clamps into range.
+        console.log(b.indexOf("c", 5, 2), b.lastIndexOf("a", 5, 2));
+        // end combined with an odd-length haystack: the range is rounded down to
+        // whole 2-byte units, so end of 4 and end of 5 search the same range.
+        console.log(odd5.indexOf(new Uint8Array([0x62, 0x00]), 0, 4, "ucs2"), odd5.indexOf(new Uint8Array([0x62, 0x00]), 0, 5, "ucs2"));
+        console.log(odd5.lastIndexOf(new Uint8Array([0x00, 0x61]), 0, 4, "ucs2"));
+        // Node.js tests whether the value fits against the rounded search range, so
+        // a value that would start on the trailing odd byte is rejected outright
+        // rather than read one unit past the end.
+        console.log(odd.indexOf(new Uint8Array([0x61, 0x62]), 1, "ucs2"), odd.includes(new Uint8Array([0x61, 0x62]), 1, "ucs2"));
+        console.log(odd.lastIndexOf(new Uint8Array([0x61, 0x62]), 1, "ucs2"), odd.indexOf(new Uint8Array([0x61, 0x62]), 1, "utf16le"));
+        // Thrown errors carry code + message.
+        try {
+          b.indexOf({});
+        } catch (e) {
+          console.log(e.code, e.message);
+        }
+        try {
+          b.indexOf("a", 0, "nope");
+        } catch (e) {
+          console.log(e.code, e.message);
+        }
+        try {
+          b.indexOf("a", 0, "");
+        } catch (e) {
+          // "" is not a known encoding in Node (Buffer.isEncoding("") === false).
+          console.log(e.code, e.message);
+        }
+        // Scope note: base64url is not in this polyfill's Buffer.isEncoding
+        // list (pre-existing gap, out of scope for #43655).
+      `,
+    },
+    target: "browser",
+    run: {
+      // Every expected value below is the stdout Node.js v26.10.0 prints for this
+      // exact entry, captured from the official darwin-arm64 binary.
+      stdout: `
+        0 6 true
+        3 3
+        0 0
+        1 5 true
+        1 0 5
+        2 5 true
+        3 3 3
+        0 0 true
+        1 2 true
+        1
+        2
+        true
+        -1 false
+        -1 -1
+        -1 false
+        -1 -1
+        -1 -1
+        -1
+        -1
+        -1 2
+        3
+        0 0 true
+        -1 -1 false
+        -1 -1 false
+        0 0 true
+        0 0
+        -1 -1
+        -1 0
+        -1 -1
+        -1
+        -1 false
+        0 -1
+        ERR_INVALID_ARG_TYPE The "value" argument must be one of type number or string or an instance of Buffer or Uint8Array. Received an instance of Object
+        ERR_UNKNOWN_ENCODING Unknown encoding: nope
+        ERR_UNKNOWN_ENCODING Unknown encoding:\x20
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("import ");
+    },
+  });
   itBundled("browser/NodeFS", {
     files: {
       "/entry.js": /* js */ `

@@ -4808,6 +4808,7 @@ impl<'s> Files<'s> {
             return None;
         }
         files_are_found(resolving.allocated_bytes());
+        // A `Module` is large, and growing copies them all.
         let expected = ahead.len() + roots.len();
         modules.reserve(expected);
         depths.reserve(expected);
@@ -7038,6 +7039,7 @@ impl<'s> Files<'s> {
         let passes = (0..count)
             .map(|at| (at, false))
             .chain((0..count).map(|at| (at, true)));
+        let mut only_if_undeclared: Vec<(Atom, Sym)> = Vec::new();
         for (at, augmentations) in passes {
             let id = self.order[at];
             let file = id.idx();
@@ -7048,13 +7050,16 @@ impl<'s> Files<'s> {
             let mut additions: Vec<(Atom, Sym)> = Vec::new();
             if !augmentations && !module.is_module() {
                 let locals = module.bound.scopes[0].locals;
-                additions.extend(
-                    module
-                        .bound
-                        .table(locals)
-                        .iter()
-                        .map(|&(name, s)| (name, Sym { file: id, id: s })),
-                );
+                let declared = module
+                    .bound
+                    .table(locals)
+                    .iter()
+                    .map(|&(name, s)| (name, Sym { file: id, id: s }));
+                if module.file_name().ends_with(b"/.bun-aot-prelude/test-globals.d.ts") {
+                    only_if_undeclared.extend(declared);
+                } else {
+                    additions.extend(declared);
+                }
             }
             if augmentations && !module.bound.global_augmentations.is_empty() {
                 let collected = module_augmentations(&module.hir, &self.atoms);
@@ -7094,6 +7099,12 @@ impl<'s> Files<'s> {
                         );
                     }
                 }
+            }
+        }
+        for (name, sym) in only_if_undeclared {
+            if !self.globals.contains_key(name) {
+                let merged = self.get_merged_symbol(sym);
+                self.globals.insert(name, merged);
             }
         }
         let mut augmentations: Vec<(FileId, Atom, Sym)> = Vec::new();

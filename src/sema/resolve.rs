@@ -236,12 +236,12 @@ pub trait Host: Sync {
     }
     /// Calls `work` with every index below `count`, on any number of threads.
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync));
-    /// Whether `parallel` is `on_this_thread`, whatever the number of threads asked for.
+    /// Whether `parallel` would run on the calling thread alone now, whatever the number of threads asked for.
     fn is_of_one_thread(&self) -> bool {
         false
     }
-    /// `parallel`, on the calling thread alone.
-    fn on_this_thread(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
+    /// `parallel`, on the calling thread and on at most `helpers` others.
+    fn with_helpers(&self, _helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
         for index in 0..count {
             work(index);
         }
@@ -1477,6 +1477,14 @@ pub fn is_same_path(a: &[u8], b: &[u8], is_case_sensitive: bool) -> bool {
                 true => strings::eql_case_insensitive_ascii_check_length(a, b),
                 false => to_file_name_lower_case(a) == to_file_name_lower_case(b),
             }
+}
+
+/// The same for two file names that [`is_same_path`] takes for one if the case does not count.
+pub fn hash_without_case(file_name: &[u8]) -> u64 {
+    match file_name.is_ascii() {
+        true => bun_wyhash::hash_ascii_lowercase(0, file_name),
+        false => bun_wyhash::hash(&to_file_name_lower_case(file_name)),
+    }
 }
 
 /// `ToFileNameLowerCase`
@@ -3123,7 +3131,8 @@ impl<'h> Resolver<'h> {
             return self
                 .through_root_dirs(spec, from_dir, look)
                 .or_else(|| self.relative(spec, from_dir, look))
-                .map(real);
+                .map(real)
+                .map(|found| self.typescript_beside_declarations(found, look));
         }
         // Tries each location in turn until one produces a result.
         let mut found = Found::No;

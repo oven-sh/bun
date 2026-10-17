@@ -2660,7 +2660,7 @@ describe("bun update <name> semantics", () => {
       await writeFile(foreign, "not a bin of map-bin");
 
       const { stderr, exitCode } = await runGlobal("update");
-      expect(stderr).toContain("Failed to link map-bin: EEXIST");
+      expect(stderr).toContain("failed to link map-bin: EEXIST");
       expect(await readFile(foreign, "utf8")).toBe("not a bin of map-bin");
       expect(join(globalBinDir, "map_bin")).toBeValidBin(globalBinTarget("map-bin", "bin", "map-bin"));
       expect(exitCode).toBe(1);

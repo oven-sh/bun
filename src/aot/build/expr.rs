@@ -34,6 +34,7 @@ struct ConditionResult {
 
 impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     pub(crate) fn number(&mut self, fx: &mut Fx, value: f64) -> V {
+        let value = if value.is_nan() { f64::NAN } else { value };
         if value.fract() == 0.0 && value.abs() <= (1i64 << 53) as f64 && !(value == 0.0 && value.is_sign_negative()) {
             self.emit(fx, Op::Int(value as i64))
         } else {

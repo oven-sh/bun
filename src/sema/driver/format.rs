@@ -10,6 +10,7 @@ use bstr::{BStr, BString, ByteSlice};
 use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
+use bun_sema::aot_rules::{Rule, Severity};
 use bun_sema::resolve::get_relative_path_from_directory;
 use bun_sema::util::FxHashMap;
 use bun_sema::util::SharedSort;
@@ -69,6 +70,28 @@ fn relative_path(path: &[u8], from: &[u8], style: &Style) -> BString {
     get_relative_path_from_directory(from, path, style.is_case_sensitive).into()
 }
 
+pub fn rule_findings_as_json(report: &Report, cwd: &[u8]) -> Vec<String> {
+    let quoted = |text: &[u8]| {
+        let mut out = String::new();
+        let _ = bun_core::fmt::encode_json_string(&mut out, text);
+        out
+    };
+    let place = |d: &Diagnostic| match d.path.is_empty() {
+        true => String::new(),
+        false => format!("\"file\":{},\"line\":{},\"column\":{},", quoted(&get_relative_path_from_directory(cwd, &d.path, report.is_case_sensitive)), d.line, d.column),
+    };
+    let findings = report.diagnostics.iter().filter_map(|d| Some((Rule::of_code(d.code)?, d)));
+    findings
+        .map(|(rule, d)| {
+            let suffix = format!(" [{}]", rule.name());
+            let message = d.text.strip_suffix(suffix.as_bytes()).unwrap_or(&d.text);
+            let severity = if d.category == Category::Error { Severity::Deny } else { Severity::Warn };
+            let because: Vec<String> = d.related.iter().map(|related| format!("{{\"code\":{},{}\"message\":{}}}", related.code, place(related), quoted(&related.text))).collect();
+            format!("{{\"rule\":\"{}\",\"severity\":\"{}\",\"code\":{},{}\"message\":{},\"because\":[{}]}}", rule.name(), severity.name(), d.code, place(d), quoted(message), because.join(","))
+        })
+        .collect()
+}
+
 /// `1234` as `1,234`.
 fn with_commas(n: usize) -> BString {
     let digits = alloc_print!("{n}");
@@ -82,7 +105,7 @@ fn with_commas(n: usize) -> BString {
     out
 }
 
-fn plural(n: usize, one: &[u8], many: &[u8]) -> BString {
+pub fn plural(n: usize, one: &[u8], many: &[u8]) -> BString {
     let noun = if n == 1 { one } else { many };
     alloc_print!("{} {}", with_commas(n), noun.as_bstr())
 }
@@ -145,7 +168,7 @@ pub fn metadata_of(d: &Diagnostic) -> bun_ast::Metadata {
 
 /// `d` as a message of Bun's own log, with the related information as its notes.
 fn to_msg(d: &Diagnostic, style: &Style) -> bun_ast::Msg {
-    let related = d.related.iter().take(MAX_RELATED);
+    let related = d.related.iter().take(if Rule::of_code(d.code).is_some() { usize::MAX } else { MAX_RELATED });
     bun_ast::Msg {
         kind: match d.category {
             Category::Error => bun_ast::Kind::Err,
@@ -294,6 +317,11 @@ fn write_plain(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
             let _ = writeln!(out, "{} TS{code}: {}", d.category.name(), d.text.as_bstr());
         }
     }
+    if Rule::of_code(d.code).is_some() {
+        for related in &d.related {
+            let _ = writeln!(out, "  {}({},{}): {}", relative_path(&related.path, style.cwd, style), related.line, related.column, related.text.as_bstr());
+        }
+    }
 }
 
 /// An attribute value, without the quotes.
@@ -323,7 +351,11 @@ pub fn write_agent_source(
         let text = strings::replace_owned(text, b"\t", b" ");
         let _ = writeln!(out, "{line:>gutter$} | {}", text.trim_ascii_end().as_bstr());
         if line == at {
-            let carets = "^".repeat(to.unwrap_or(text.len()).saturating_sub(from).max(1));
+            let (from, to) = (
+                from.min(text.len()),
+                to.unwrap_or(text.len()).min(text.len()),
+            );
+            let carets = "^".repeat(to.saturating_sub(from).max(1));
             let _ = writeln!(out, "{:1$}{carets}", "", gutter + 3 + from);
         }
     }

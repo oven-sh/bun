@@ -346,11 +346,21 @@ impl<'p, 's> Checker<'p, 's> {
         let found = self.is_unlisted_property(receiver, name)
             || self.has_predicted_prop(receiver, name)
             || self.has_ambient_class_member(receiver, name)
-            || self.is_host_global(receiver, name);
+            || self.is_host_global(receiver, name)
+            || self.is_property_of_every_object(receiver, name);
         if self.is_assumption_free(asked) && is_settled {
             self.aot.trust.of_properties.insert((receiver, name), found);
         }
         found
+    }
+
+    fn is_property_of_every_object(&mut self, receiver: TypeId, name: Atom) -> bool {
+        let Some(object) = self.global_type_symbol(known::Object) else { return false };
+        let receiver = self.non_nullable(receiver);
+        self.parts(receiver).to_vec().into_iter().any(|part| match self.get_property_of_type(part, name) {
+            Some((&Prop { source: PropSource::Symbol(declared), flags, .. }, _)) => !flags.contains(PropFlags::METHOD) && self.files.parent_of_symbol(declared) == Some(object),
+            _ => false,
+        })
     }
 
     fn declared_type_has_unknown_fields(&mut self, sym: Sym) -> bool {

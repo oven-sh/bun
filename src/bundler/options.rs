@@ -780,20 +780,6 @@ impl ESMConditions {
         })
     }
 
-    pub fn clone(&self) -> Result<ESMConditions, bun_alloc::AllocError> {
-        let default = self.default.clone()?;
-        let import = self.import.clone()?;
-        let require = self.require.clone()?;
-        let style = self.style.clone()?;
-
-        Ok(ESMConditions {
-            default,
-            import,
-            require,
-            style,
-        })
-    }
-
     pub fn append_slice(&mut self, conditions: &[&[u8]]) -> Result<(), bun_alloc::AllocError> {
         self.default.reserve(conditions.len());
         self.import.reserve(conditions.len());
@@ -1274,6 +1260,7 @@ pub struct TypeChecked<'a, 'i> {
     pub function_source_printing: std::sync::Arc<bun_threading::thread_pool::DeferredStart>,
     pub explain: &'a [Box<[u8]>],
     pub explain_to_log: bool,
+    pub rules: &'a [Box<[u8]>],
     pub logs_type_errors: bool,
     pub early_analysis: Option<EarlyAnalysis>,
     pub early_sources: Option<(std::sync::Arc<EarlySources>, PrintedReactCompilerOutputs)>,
@@ -1588,6 +1575,7 @@ pub struct BundleOptions<'a> {
     pub aot: bool,
     pub aot_explain: Vec<Box<[u8]>>,
     pub aot_explain_to_log: bool,
+    pub aot_rules: Vec<Box<[u8]>>,
     pub aot_logs_type_errors: bool,
     pub preserve_source_paths: bool,
     pub compile_function_source: bool,
@@ -1832,6 +1820,7 @@ impl<'a> BundleOptions<'a> {
             aot: self.aot,
             aot_explain: self.aot_explain.clone(),
             aot_explain_to_log: self.aot_explain_to_log,
+            aot_rules: self.aot_rules.clone(),
             aot_logs_type_errors: self.aot_logs_type_errors,
             preserve_source_paths: self.preserve_source_paths,
             compile_function_source: self.compile_function_source,
@@ -2096,6 +2085,7 @@ impl<'a> BundleOptions<'a> {
             aot: false,
             aot_explain: Vec::new(),
             aot_explain_to_log: false,
+            aot_rules: Vec::new(),
             aot_logs_type_errors: false,
             preserve_source_paths: false,
             compile_function_source: true,

@@ -30,6 +30,7 @@ struct Options {
     timing: bool,
     aot: bool,
     aot_explain: Vec<Box<[u8]>>,
+    aot_rules: bun_aot::rules::Settings,
     aot_out: Option<Box<[u8]>>,
     without_builtin_modules: bool,
     logs_type_errors: bool,
@@ -65,15 +66,19 @@ const OTHERS: &[clap::Param<clap::Help>] = &[
     ),
     clap::param!("--aot-explain <word>...  With <b>--aot<r>: print a report. <b>throws<r> lists every type check that can fail when the program runs"),
     clap::param!("--cwd <path>       Set the working directory"),
+    // `script_or_command` reads it.
+    clap::param!(
+        "--no-script        Run the type checker even if the project has a <b>check<r> script"
+    ),
     clap::param!("-h, --help         Print this help menu"),
     // Nothing is ever emitted. `--noEmit` is a compiler option like any other, which the driver sets last.
     clap::param!("--no-emit"),
     clap::param!("<POS>..."),
 ];
-pub(crate) const PARAMS: &[clap::Param<clap::Help>] = clap::concat_params!(PROJECT, PRETTY, OTHERS);
+pub(crate) const PARAMS: &[clap::Param<clap::Help>] = clap::concat_params!(PROJECT, PRETTY, OTHERS, crate::cli::aot::RULE_PARAMS);
 /// A compiler option is not in the table: see `unknown_long_flags_are_positional`.
 static TABLE: &clap::ConvertedTable =
-    clap::comptime_table!(clap::concat_params!(PROJECT, OTHERS), cold);
+    clap::comptime_table!(clap::concat_params!(PROJECT, OTHERS, crate::cli::aot::RULE_PARAMS), cold);
 
 /// Whether `--build` is among `args`, in any spelling that `clap` takes: by itself, or in a chain of
 /// short flags, before the one that takes a value.
@@ -90,7 +95,7 @@ fn names_build(args: &[&ZStr]) -> bool {
 }
 
 /// `args`: what follows `check`.
-fn parse(args: &[&ZStr]) -> Options {
+fn parse(ctx: &mut crate::cli::command::ContextData, args: &[&ZStr]) -> Options {
     let mut diagnostic = clap::Diagnostic::default();
     let parsed = clap::parse_with_table::<clap::Help>(
         TABLE,
@@ -137,6 +142,21 @@ fn parse(args: &[&ZStr]) -> Options {
     }
     if !options.aot && !options.aot_explain.is_empty() {
         usage_error(format_args!("--aot-explain requires --aot"));
+    }
+    let rule_flags = crate::cli::aot::rule_flags(args.iter().map(|arg| arg.as_bytes()));
+    if let Some(flag) = rule_flags.first().filter(|_| !options.aot) {
+        usage_error(format_args!("{} requires --aot", BStr::new(bun_core::strings::split(flag, b"=").next().unwrap_or(flag))));
+    }
+    if options.aot
+        && let Err(err) = bun_bunfig::load_config_for_tool(crate::cli::command::Tag::CheckCommand, crate::cli::lint_command::bunfig_before(b"check"), ctx, None)
+    {
+        Output::err(err, "failed to load bunfig", ());
+        Global::exit(1);
+    }
+    let rule_flags = [std::mem::take(&mut ctx.bundler_options.aot_rules), rule_flags].concat();
+    match crate::cli::aot::rule_settings(&rule_flags) {
+        Ok(settings) => options.aot_rules = settings,
+        Err(problem) => usage_error(format_args!("{problem}")),
     }
     if let Some(threads) = parsed.option(b"--threads") {
         match bun_core::fmt::parse_decimal::<usize>(threads) {
@@ -463,7 +483,7 @@ const CAN_EMIT_PROGRAM: bool =
     bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;
 
 impl CheckCommand {
-    pub(crate) fn exec(args: &[&ZStr]) -> ! {
+    pub(crate) fn exec(ctx: &mut crate::cli::command::ContextData, args: &[&ZStr]) -> ! {
         if HAS_TYPESCRIPT_TEST_RUNNER
             && let [first, rest @ ..] = args
             && first.as_bytes() == b"--run-typescript-tests"
@@ -472,7 +492,7 @@ impl CheckCommand {
             let passed = bun_sema_baselines::run_from_command_line(&rest);
             Global::exit(u32::from(!passed));
         }
-        Self::exec_with(&parse(args))
+        Self::exec_with(&parse(ctx, args))
     }
 
     /// `bun --check` without an entry point: `bun check` without an argument. The arguments are
@@ -501,7 +521,7 @@ impl CheckCommand {
             code.push(path);
         }
         let said: bun_threading::Guarded<(Vec<String>, Vec<String>)> = bun_threading::Guarded::new(Default::default());
-        let translation = bun_aot::Translation::new(&constants).explaining(explaining(&options.aot_explain));
+        let translation = bun_aot::Translation::new(&constants).explaining(explaining(&options.aot_explain)).enforcing(options.aot_rules.clone());
         let begin = |program: &bun_sema_driver::Program, in_parallel: bun_sema_driver::InParallel<'_>| {
             let roots = command_line.paths.iter().filter_map(|path| program.files.by_path.get(&from_argument(&from_native(&cwd), path)));
             let entry_points: Vec<Vec<_>> = roots.map(|root| vec![root]).collect();
@@ -520,6 +540,7 @@ impl CheckCommand {
                 let _ = bun_sys::File::write_file(bun_sys::Fd::cwd(), &bun_core::ZBox::from_bytes(path), &written);
             }
             *said.lock() = (translated.explained, translated.problems);
+            *TYPEDNESS_OF_LAST_BUILD.lock() = Some(translated.typedness);
             bun_aot::release(translated.program, in_parallel);
             translated.kept_errors
         };
@@ -537,6 +558,9 @@ impl CheckCommand {
         let report = bun_sema_driver::check_provided_then(&request, with_pages(&cwd, provided), |report| report);
         let said = said.lock();
         print_explained(&said.0);
+        if explaining(&options.aot_explain).rules_json {
+            print_explained(&format::rule_findings_as_json(&report, &from_native(&cwd)));
+        }
         for problem in &said.1 {
             Output::err_generic("{}", (problem,));
         }
@@ -621,6 +645,9 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
                 report.files_parsed_for_all,
             );
         }
+    }
+    if let Some(line) = take_typedness_line().filter(|_| report.is_ok()) {
+        summary.extend_from_slice(line.as_bytes());
     }
     let _ = Output::error_writer().write_all(&summary);
     Output::flush();
@@ -1112,6 +1139,7 @@ struct CompleteRequest {
     has_late_strings: bool,
     explain_to_log: bool,
     explains_plugins: bool,
+    explains_rules_as_json: bool,
     deferred_source_count: usize,
 }
 
@@ -1260,6 +1288,7 @@ fn analyze_sources<'c, 'i, 'l>(
             function_source_printing,
             explain,
             explain_to_log,
+            rules,
             logs_type_errors,
             early_analysis: _,
             early_sources: _,
@@ -1383,8 +1412,8 @@ fn analyze_sources<'c, 'i, 'l>(
         }
         let explain = explaining(explain);
         let deferred_source_count = deferred.code.len();
-        let complete_request = complete_request_cell.get_or_init(|| CompleteRequest { constants, function_source_printing, has_late_strings, explain_to_log, explains_plugins: explain.plugins, deferred_source_count });
-        let _ = translation_cell.set(bun_aot::Translation::new(&complete_request.constants).explaining(explain));
+        let complete_request = complete_request_cell.get_or_init(|| CompleteRequest { constants, function_source_printing, has_late_strings, explain_to_log, explains_plugins: explain.plugins, explains_rules_as_json: explain.rules_json, deferred_source_count });
+        let _ = translation_cell.set(bun_aot::Translation::new(&complete_request.constants).explaining(explain).enforcing(crate::cli::aot::rule_settings(rules).unwrap_or_default()));
         *received_log.lock() = Some(Handed(log));
         deferred
     };
@@ -1487,8 +1516,9 @@ fn analyze_sources<'c, 'i, 'l>(
         let has_late_strings = complete_request.get().is_some_and(|complete_request| complete_request.has_late_strings);
         let engine: bun_threading::Guarded<Option<bun_ast::type_tags::EarlyEngine>> = bun_threading::Guarded::new(None);
         let on_written = |typed: &[u8]| *engine.lock() = Some(bun_jsc::cached_bytecode::start_typed_program(typed, has_late_strings));
-        let bun_aot::EngineProgram { written: typed, kept_errors, explained: lines, tokens } = translation().finish_for_engine(program, in_parallel, errors, &on_written);
+        let bun_aot::EngineProgram { written: typed, kept_errors, explained: lines, typedness, tokens } = translation().finish_for_engine(program, in_parallel, errors, &on_written);
         *explained.lock() = lines;
+        *TYPEDNESS_OF_LAST_BUILD.lock() = Some(typedness);
         match typed {
             Ok(typed) => {
                 *found.lock() = Some(bun_ast::type_tags::ProgramFacts {
@@ -1541,6 +1571,9 @@ fn analyze_sources<'c, 'i, 'l>(
         explained.push(format!("aot: plugins: {} early sources, {} deferred sources, {started}", early_sources.sources.len(), complete_request.deferred_source_count));
         explained.extend(report.reloaded_paths.iter().map(|path| format!("aot: plugins: loaded again without {}, which a plugin module imports", BStr::new(path))));
     }
+    if complete_request.get().is_some_and(|complete_request| complete_request.explains_rules_as_json) {
+        explained.lock().extend(format::rule_findings_as_json(&report, &from_native(cwd)));
+    }
     if complete_request.get().is_some_and(|complete_request| complete_request.explain_to_log) {
         for line in std::mem::take(&mut *explained.lock()) {
             log.add_msg(bun_ast::Msg { kind: bun_ast::Kind::Verbose, data: bun_ast::Data { text: std::borrow::Cow::Owned(line.into_bytes()), location: None }, ..Default::default() });
@@ -1554,6 +1587,39 @@ fn analyze_sources<'c, 'i, 'l>(
         log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("{}: internal error: the module could not be printed as the React Compiler or the lowering of decorators leaves it; please report it", BStr::new(path)));
     }
     Analyzed::Finished(found.lock().take().filter(|_| report.is_ok()))
+}
+
+static TYPEDNESS_OF_LAST_BUILD: bun_threading::Guarded<Option<bun_aot::Typedness>> = bun_threading::Guarded::new(None);
+
+pub(crate) fn take_typedness_line() -> Option<String> {
+    TYPEDNESS_OF_LAST_BUILD.lock().take().map(|typedness| typedness_line(&typedness))
+}
+
+fn typedness_line(typedness: &bun_aot::Typedness) -> String {
+    let with_commas = |n: usize| {
+        let digits = n.to_string();
+        let mut out = String::new();
+        for (i, digit) in digits.chars().enumerate() {
+            if i > 0 && (digits.len() - i).is_multiple_of(3) {
+                out.push(',');
+            }
+            out.push(digit);
+        }
+        out
+    };
+    let counted = |n: usize, one: &str, many: &str| format!("{} {}", with_commas(n), if n == 1 { one } else { many });
+    let bun_aot::Typedness { reads, typed_reads, layouts, open_layouts, classes_without_layout, untyped_packages, untyped_files } = *typedness;
+    let is_fully_typed = typed_reads == reads && open_layouts + classes_without_layout + untyped_packages + untyped_files == 0;
+    format!(
+        "aot: {:.1}% of reads typed, {} of {} open, {} without a layout, {} and {} untyped{}\n",
+        100.0 * typed_reads as f64 / reads.max(1) as f64,
+        with_commas(open_layouts),
+        counted(layouts, "type", "types"),
+        counted(classes_without_layout, "class", "classes"),
+        counted(untyped_packages, "package", "packages"),
+        counted(untyped_files, "file", "files"),
+        if is_fully_typed { "" } else { " (--aot-warn=all lists them)" },
+    )
 }
 
 fn explaining(words: &[Box<[u8]>]) -> bun_aot::Explain {
@@ -1730,6 +1796,7 @@ fn check_and_emit_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_
         function_source_printing: _,
         explain: _,
         explain_to_log: _,
+        rules: _,
         logs_type_errors: _,
         early_analysis: _,
         early_sources: _,
@@ -1880,14 +1947,30 @@ pub(crate) fn has_types(path: &[u8]) -> bool {
 /// The files to name in the check of `entry_points`, which are relative to `cwd`, and
 /// `Request::script_kinds`. `None` if none of them has types to check.
 fn test_runner_declarations() -> Vec<u8> {
-    let also = br#"
-declare module "@jest/globals*" { export * from "bun:test"; }
-declare module "vitest*" { export * from "bun:test"; }
+    let globals = br#"// @ts-nocheck
+type BunTestRunnerInstalled = typeof import("vitest") extends { isDeclaredByBun: true } ? typeof import("@jest/globals") : typeof import("vitest");
+type BunTestRunnerGlobal<Name extends keyof typeof import("bun:test")> = Name extends keyof BunTestRunnerInstalled ? BunTestRunnerInstalled[Name] : (typeof import("bun:test"))[Name];
+declare var test: BunTestRunnerGlobal<"test">;
+declare var it: BunTestRunnerGlobal<"it">;
+declare var describe: BunTestRunnerGlobal<"describe">;
+declare var expect: BunTestRunnerGlobal<"expect">;
+declare var expectTypeOf: BunTestRunnerGlobal<"expectTypeOf">;
+declare var beforeAll: BunTestRunnerGlobal<"beforeAll">;
+declare var beforeEach: BunTestRunnerGlobal<"beforeEach">;
+declare var afterEach: BunTestRunnerGlobal<"afterEach">;
+declare var afterAll: BunTestRunnerGlobal<"afterAll">;
+declare var jest: BunTestRunnerGlobal<"jest">;
+declare var vi: BunTestRunnerGlobal<"vi">;
+declare var xit: BunTestRunnerGlobal<"xit">;
+declare var xtest: BunTestRunnerGlobal<"xtest">;
+declare var xdescribe: BunTestRunnerGlobal<"xdescribe">;
+declare module "@jest/globals*" { export * from "bun:test"; export const isDeclaredByBun: true; }
+declare module "vitest*" { export * from "bun:test"; export const isDeclaredByBun: true; }
 "#;
     let module = &include_bytes!("../../../packages/bun-types/test.d.ts")[..];
     let named = &b"declare module \"bun:test\" {"[..];
     let at = module.windows(named.len()).position(|text| text == named).expect("bun-types declares the module");
-    [&b"// @ts-nocheck\n"[..], &include_bytes!("../../../packages/bun-types/test-globals.d.ts")[..], &also[..], &module[..at], &b"declare module \"bun:test*\" {"[..], &module[at + named.len()..]].concat()
+    [&globals[..], &module[..at], &b"declare module \"bun:test*\" {"[..], &module[at + named.len()..]].concat()
 }
 
 fn what_to_check(

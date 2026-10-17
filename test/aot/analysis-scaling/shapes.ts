@@ -38,7 +38,24 @@ function declaredInterfaceOverConditionalTypes(properties: number) {
   };
 }
 
+function genericWrapperUsedFromJavaScript(methods: number) {
+  const puts = Array.from({ length: methods }, (_, index) => `  put${index}<Inner extends T>(next: Inner | Held<Inner>): void { this.value = next instanceof Wrapper ? next.value : next; }\n`);
+  return {
+    "model.ts": `export type Held<T extends object> = Wrapper<T> | (Wrapper<T> & { readonly tag: T });\nexport class Wrapper<T extends object> {\n  constructor(public value: T) {}\n${puts.join("")}}\nexport function make(): Wrapper<{ id: number }> { return new Wrapper({ id: 1 }); }\n`,
+    "use.js": `import { make } from "./model.ts";\nexport function read() { return make().value.id; }\n`,
+    "main.ts": `import { read } from "./use.js";\nconsole.log(read());\n`,
+  };
+}
+
 export const shapes: Shape[] = [
+  {
+    name: "generic class used from an untyped file",
+    counted: "generic methods that mention the class applied to their own type parameter",
+    sizes: [1, 4, 16],
+    instructionsPerItem: 10_000_000,
+    bytesPerItem: 1024 * 1024,
+    write: genericWrapperUsedFromJavaScript,
+  },
   {
     name: "union of generic classes with generic methods",
     counted: "methods of each class",

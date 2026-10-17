@@ -666,7 +666,7 @@ const registryModuleKeys = [
 ];
 const builtinModuleKeyList = [
   ...registryModuleKeys,
-  ...["bun", "bun:main", "bun:wrap", "bun:test", "bun:app", "node:buffer"].filter(k => !registryModuleKeys.includes(k)),
+  ...["bun", "bun:main", "bun:wrap", "bun:test", "node:buffer"].filter(k => !registryModuleKeys.includes(k)),
 ];
 
 // C++: canonical key string per InternalModuleRegistry id (+ extras), for handing JSC an Identifier without a round

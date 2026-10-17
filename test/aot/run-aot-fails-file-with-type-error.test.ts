@@ -94,3 +94,19 @@ test("refusing one test file after another does not refuse a third", async () =>
   expect(errors(said)).toEqual(["1-wrong.test.ts TS2322"]);
   expect(passed(said)).toEqual(["uses the first", "uses the second"]);
 });
+
+test("a syntax error fails the test files that reach it, and the others run", async () => {
+  using dir = tempDir("run-aot-fails-file-with-type-error", {
+    "tsconfig.json": files["tsconfig.json"],
+    "broken.ts": `export const two = ;\n`,
+    "a-fine.test.ts": `test("a fine test", () => { expect(1).toBe(1); });`,
+    "b-wrong.test.ts": `export const n = ;\ntest("never run, its own error", () => { expect(1).toBe(1); });`,
+    "c-imports-wrong.test.ts": `import { two } from "./broken"; test("never run, an imported error", () => { expect(two).toBe(2); });`,
+    "d-fine.test.ts": `test("another fine test", () => { expect(2).toBe(2); });`,
+  });
+  const { said, exitCode } = await run(String(dir));
+  expect(passed(said)).toEqual(["a fine test", "another fine test"]);
+  expect(said).not.toContain("never run");
+  expect(said.split("bun test --aot does not run this file").length - 1).toBe(2);
+  expect(exitCode).toBe(1);
+});

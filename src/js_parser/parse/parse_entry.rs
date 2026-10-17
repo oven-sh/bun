@@ -2461,13 +2461,6 @@ impl<'a> Parser<'a> {
             )?;
         }
 
-        // Bake: transform global `Response` to use `import { Response } from 'bun:app'`
-        if !p.response_ref.is_null()
-            && p.symbols.as_slice()[p.response_ref.inner_index() as usize].use_count_estimate > 0
-        {
-            p.generate_import_stmt_for_bake_response(&mut before)?;
-        }
-
         if !before.is_empty() || !after.is_empty() {
             // Single up-front reserve; the inner
             // reserve() calls in prepend_from / append become no-ops.

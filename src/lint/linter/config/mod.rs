@@ -236,7 +236,7 @@ impl Pattern {
 
     /// A `files` or `excludeFiles` pattern from an override in an `.oxlintrc.json`.
     fn of_oxlint(written: &[u8]) -> Pattern {
-        Pattern::of_override(bun_glob::Pattern::of_oxc_glob_set(written))
+        Pattern::of_override(bun_glob::Pattern::of_oxlint(written))
     }
 
     /// A `files` or `excludeFiles` pattern from `[[lint.overrides]]` in bunfig.toml.

@@ -1325,7 +1325,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let sym = self.resolved_symbol_for(file, e, name);
                 let Some(sym) = sym.filter(|&sym| matches!(self.variable_declaration(sym), Some((_, Decl::Var(_) | Decl::Param(_))))) else { return own };
                 let declared = self.type_of_symbol(sym);
-                if own == declared {
+                if own == declared || self.is_base_constraint_too_narrow(declared) {
                     return self.stored_type(sym);
                 }
                 if self.is_array_or_tuple(own) && self.is_array_or_tuple(declared) && self.is_container_filled_with_external_data(file, sym, declared) {
@@ -4218,6 +4218,21 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
+    pub(super) fn redefinition_site(&mut self, ty: TypeId) -> Option<(FileId, ExprId)> {
+        if !self.may_be_redefined(ty) {
+            return None;
+        }
+        let is_of_class = self.is_instance_type(ty);
+        self.calls_that_may_redefine().iter().copied().find(|&(file, call)| {
+            let mut found = Vec::new();
+            self.find_redefinition_in_call(file, call, &mut found);
+            found.iter().any(|(target, names)| {
+                names.as_ref().is_none_or(|names| names.iter().any(|&name| self.get_property_of_type(ty, name).is_some()))
+                    && (self.is_assignable(ty, *target) || is_of_class && self.is_assignable(*target, ty))
+            })
+        })
+    }
+
     fn redefinitions(&mut self) -> Rc<[Redefinition]> {
         if let Some(known) = &self.aot.storage.redefinitions {
             return known.clone();
@@ -4539,13 +4554,24 @@ impl<'p, 's> Checker<'p, 's> {
                 };
                 Some(ReferenceRead { declared: read.declared, is_narrowing_reliable, may_be_undefined: read.may_be_undefined, is_asserted: read.is_asserted })
             }
-            ExprKind::Dot { obj, name, .. } if !matches!(hir[obj].kind, ExprKind::Super) => {
+            ExprKind::Dot { obj, name, name_pos, .. } if !matches!(hir[obj].kind, ExprKind::Super) => {
                 let object = if self.is_asserted_at_use(file, obj) { self.type_of_expr(file, obj) } else { self.result_type_of(file, obj) };
                 let mut object = self.non_nullable(object);
                 if self.is_union(object) && self.property_type(object, object, name, shape::Access::Read).is_none() {
                     object = self.union_all_members_type(object);
                 }
-                let found = self.property_type_within(object, object, name, shape::Access::Read, Some(file));
+                let mut found = self.property_type_within(object, object, name, shape::Access::Read, Some(file));
+                if let Some((inherited, Found::Property)) = found
+                    && crate::hir::is_bracket_access(hir, name_pos)
+                    && self.is_string_index_signature_only(object)
+                {
+                    let outer = self.aot.storage.accessed_within.replace(file);
+                    let by_index = self.indexed_access_if_any(object, TypeId::STRING, true);
+                    self.aot.storage.accessed_within = outer;
+                    if let Some(by_index) = by_index {
+                        found = Some((self.union(&[by_index, inherited]), Found::ByIndex));
+                    }
+                }
                 let mut declared = found.map_or(TypeId::UNRESOLVED, |found| found.0);
                 let apparent = self.apparent_type(object);
                 let field = self.prop_ref(apparent, name).and_then(|(prop, _)| match prop.source {
@@ -4782,7 +4808,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn operator_result_type(&mut self, file: FileId, e: ExprId, operands: &[ExprId], may_concatenate: bool) -> TypeId {
         let own = self.type_of_expr(file, e);
-        let held: Vec<TypeId> = operands.iter().map(|&operand| self.checked_type_of(file, operand).0).collect();
+        let checked: Vec<(TypeId, bool)> = operands.iter().map(|&operand| self.checked_type_of(file, operand)).collect();
+        let held: Vec<TypeId> = checked.iter().map(|&(held, _)| held).collect();
+        let may_add_undefined = may_concatenate
+            && checked.iter().any(|&(_, may_be_undefined)| may_be_undefined)
+            && self.some_type(own, |c, part| c.is_string_like(part))
+            && !checked.iter().any(|&(held, may_be_undefined)| !may_be_undefined && !self.is_uninformative(held) && self.every_type(held, |c, part| c.is_string_like(part)));
+        let own = if may_add_undefined { self.union(&[own, TypeId::NUMBER]) } else { own };
         if operands.iter().zip(&held).all(|(&operand, &held)| !self.is_uninformative(held) && (held == self.type_of_expr(file, operand) || self.is_asserted_as_operand(file, operand, held))) {
             return own;
         }
@@ -5208,6 +5240,7 @@ impl<'p, 's> Checker<'p, 's> {
                     text.extend_from_slice(self.primitive_text(value));
                     text.extend_from_slice(self.atoms().bytes(hir.id_at(texts, i + 1)));
                 }
+                crate::check::mapped::combine_surrogate_pairs(&mut text);
                 Primitive::String(self.atoms().intern(&text))
             }
             ExprKind::TaggedTemplate(call) if self.is_string_raw_tag(file, call) => {
@@ -5218,6 +5251,7 @@ impl<'p, 's> Checker<'p, 's> {
                     text.extend_from_slice(self.primitive_text(value));
                     text.extend_from_slice(raw.get(i + 1)?);
                 }
+                crate::check::mapped::combine_surrogate_pairs(&mut text);
                 Primitive::String(self.atoms().intern(&text))
             }
             ExprKind::Ident(name) if self.refers_to_global_constant(file, e, name) => match self.atoms().bytes(name) {
@@ -5280,7 +5314,8 @@ impl<'p, 's> Checker<'p, 's> {
                             _ => None,
                         }),
                         (Primitive::Number(_) | Primitive::String(_), Primitive::Number(_) | Primitive::String(_)) if op == BinOp::Add => {
-                            let text = [self.primitive_text(a), self.primitive_text(b)].concat();
+                            let mut text = [self.primitive_text(a), self.primitive_text(b)].concat();
+                            crate::check::mapped::combine_surrogate_pairs(&mut text);
                             Some(Primitive::String(self.atoms().intern(&text)))
                         }
                         _ => None,

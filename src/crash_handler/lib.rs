@@ -1217,7 +1217,41 @@ mod draft {
                         let _ = writer.write_all(b"\n");
                     }
                 }
-                #[cfg(not(unix))]
+                #[cfg(windows)]
+                {
+                    let is_compiled = |address: &usize| Bun__AOT__offsetInCode(*address as *const core::ffi::c_void) >= 0;
+                    if addresses_in_trace[..trace_address_count].iter().any(is_compiled) {
+                        static IS_DONE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+                        unsafe extern "system" {
+                            safe fn GetCurrentProcess() -> *mut core::ffi::c_void;
+                            safe fn TerminateProcess(process: *mut core::ffi::c_void, exit_code: u32) -> i32;
+                        }
+                        let _ = std::thread::Builder::new().spawn(|| {
+                            std::thread::sleep(core::time::Duration::from_secs(2));
+                            if !IS_DONE.load(core::sync::atomic::Ordering::Acquire) {
+                                TerminateProcess(GetCurrentProcess(), 3);
+                            }
+                        });
+                        let mut compiled_frames = [0u8; 4096];
+                        // SAFETY: that many entries of the trace are initialized, and no more than the buffer's length is written
+                        let compiled_frames_len = unsafe {
+                            Bun__AOT__describeAddresses(
+                                addresses_in_trace.as_ptr(),
+                                trace_address_count,
+                                compiled_frames.as_mut_ptr(),
+                                compiled_frames.len(),
+                            )
+                        };
+                        IS_DONE.store(true, core::sync::atomic::Ordering::Release);
+                        if compiled_frames_len > 0 {
+                            let writer = &mut stderr_writer();
+                            let _ = writer.write_all(b"Compiled JavaScript on the stack:\n");
+                            let _ = writer.write_all(&compiled_frames[..compiled_frames_len]);
+                            let _ = writer.write_all(b"\n");
+                        }
+                    }
+                }
+                #[cfg(not(any(unix, windows)))]
                 let _ = (addresses_in_trace, trace_address_count);
 
                 if bun_core::auto_reload_on_crash()

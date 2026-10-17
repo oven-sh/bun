@@ -56,6 +56,11 @@
       "WatchChangedPaths"
     ]
   },
+  "src/jsc/thread_isolated.rs": {
+    "unsafe impl Send": [
+      "ThreadIsolated<T>"
+    ]
+  },
   "src/jsc/web_worker.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
@@ -92,7 +97,7 @@
       "JSBundleCompletionTask"
     ]
   },
-  "src/runtime/bake/production.rs": {
+  "src/runtime/bake/production/mod.rs": {
     "unsafe impl Sync": [
       "DotenvSingleton"
     ]
@@ -194,11 +199,6 @@
     ],
     "unsafe impl Sync": [
       "PathWatcherManager"
-    ]
-  },
-  "src/runtime/node/types.rs": {
-    "unsafe impl Send": [
-      "ThreadIsolated<T>"
     ]
   },
   "src/runtime/shell/IOReader.rs": {

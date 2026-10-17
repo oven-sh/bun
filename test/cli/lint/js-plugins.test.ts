@@ -2907,6 +2907,421 @@ describe.concurrent("context.report() in JavaScript plugins", () => {
     },
     timeout,
   );
+
+  describe("a `loc` that is not in the file", () => {
+    const outOfRange = "RangeError: Line/column pair translates to an out of range offset";
+    const noLine = (line: number) =>
+      `RangeError: Line number out of range (line ${line} requested). Line numbers should be 1-based, and less than or equal to number of lines in file (5).`;
+    const notIntegers = "TypeError: Expected an object with integer `line` and `column` properties";
+    type Place = (number | null)[];
+    // The `loc`. Then `line`, `column`, `endLine` and `endColumn` of ESLint 10.12.0. Then the line and column of oxlint 1.87.0, or
+    // what it says the rule threw. Then the same as for ESLint without a config, if that is something else.
+    const places: Record<string, [string, Place, string, Place?]> = {
+      "line-0": ["{ line: 0, column: 0 }", [0, 1], "1:1", [1, 1]],
+      "line-0-column-5": ["{ line: 0, column: 5 }", [0, 6], noLine(0), [1, 1]],
+      "line-0-column-100": ["{ line: 0, column: 100 }", [0, 101], noLine(0), [1, 1]],
+      "line-below-0": ["{ line: -1, column: 0 }", [-1, 1], noLine(-1), [1, 1]],
+      "column-below-0": ["{ line: 1, column: -1 }", [1, 0], outOfRange],
+      "column-far-below-0": ["{ line: 1, column: -5 }", [1, -4], outOfRange, [1, 0]],
+      "column-below-0-in-line-2": ["{ line: 2, column: -1 }", [2, 0], "1:20"],
+      "both-below-0": ["{ line: -3, column: -3 }", [-3, -2], noLine(-3), [1, 1]],
+      "line-after-the-last": ["{ line: 6, column: 0 }", [6, 1], "5:1"],
+      "line-far-after-the-last": ["{ line: 99, column: 0 }", [99, 1], noLine(99)],
+      "column-after-the-line": ["{ line: 1, column: 21 }", [1, 22], "2:2"],
+      "column-after-the-file": ["{ line: 1, column: 100 }", [1, 101], outOfRange],
+      "huge-column": ["{ line: 1, column: 2000000000 }", [1, 2000000001], outOfRange],
+      "huge-line": ["{ line: 2000000000, column: 0 }", [2000000000, 1], noLine(2000000000)],
+      "start-in-line-0": [
+        "{ start: { line: 0, column: 0 }, end: { line: 1, column: 6 } }",
+        [0, 1, 1, 7],
+        "1:1",
+        [1, 1, 1, 7],
+      ],
+      "end-in-line-0": ["{ start: { line: 1, column: 0 }, end: { line: 0, column: 0 } }", [1, 1, 0, 1], "1:1", [1, 1]],
+      "both-in-line-0": ["{ start: { line: 0, column: 0 }, end: { line: 0, column: 0 } }", [0, 1, 0, 1], "1:1", [1, 1]],
+      "end-after-the-last-line": [
+        "{ start: { line: 1, column: 0 }, end: { line: 99, column: 0 } }",
+        [1, 1, 99, 1],
+        noLine(99),
+      ],
+      "end-below-0": [
+        "{ start: { line: 1, column: 0 }, end: { line: -1, column: -1 } }",
+        [1, 1, -1, 0],
+        noLine(-1),
+        [1, 1],
+      ],
+      "huge-end": [
+        "{ start: { line: 1, column: 0 }, end: { line: 1, column: 2000000000 } }",
+        [1, 1, 1, 2000000001],
+        outOfRange,
+      ],
+      "end-before-start": [
+        "{ start: { line: 2, column: 3 }, end: { line: 1, column: 0 } }",
+        [2, 4, 1, 1],
+        "2:4",
+        [2, 4],
+      ],
+      "line-NaN": ["{ line: NaN, column: 0 }", [null, 1], notIntegers, [1, 1]],
+      "column-NaN": ["{ line: 1, column: NaN }", [1, null], notIntegers, [1, 0]],
+      "line-null": ["{ line: null, column: 2 }", [0, 3], notIntegers, [1, 1]],
+      "line-true": ["{ line: true, column: true }", [1, 2], notIntegers],
+      "no-column": ["{ line: 2 }", [2, null], notIntegers, [2, 0]],
+      "no-line": ["{ column: 2 }", [null, 3], notIntegers, [1, 1]],
+      "empty": ["{}", [null, null], notIntegers, [1, 1]],
+      "a-string": [`"abc"`, [null, null], "TypeError: `loc` must be an object if provided", [1, 1]],
+      "start-null": ["{ start: null, line: 2, column: 2 }", [2, 3], "TypeError: `loc.start` must be an object"],
+      // ESLint also has an `endLine` and an `endColumn` here, which are null.
+      "end-a-string": [
+        `{ start: { line: 1, column: 2 }, end: "x" }`,
+        [1, 3],
+        "TypeError: `loc.end` must be an object or null/undefined",
+      ],
+    };
+    const names = Object.keys(places);
+    const all = names.map(name => `${name}.js`);
+    const files = {
+      // The rule reports at the place that the file is called after.
+      "plugin.mjs": `const places = { ${names.map(name => `"${name}": ${places[name][0]}`).join(", ")} };
+        const nameOf = context => context.filename.replace(/^.*[\\\\/]/, "").replace(".js", "");
+        const create = context => ({
+          "Program:exit": () => context.report({ message: nameOf(context), loc: places[nameOf(context)] }),
+        });
+        export default { meta: { name: "demo" }, rules: { at: { create } } };`,
+      ...Object.fromEntries(
+        all.map(file => [file, 'export const a = 1;\nexport const b = "é😀x";\n\nexport default a;\n']),
+      ),
+    };
+    const eslint = {
+      ...files,
+      "eslint.config.mjs": `import demo from "./plugin.mjs";
+        export default [{ files: ["*.js"], plugins: { demo }, rules: { "demo/at": "error" } }];`,
+    };
+    const oxlint = {
+      ...files,
+      ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "demo/at": "error" } }),
+    };
+    const alone = {
+      ...files,
+      "bunfig.toml": `[lint]\nplugins = ["./plugin.mjs"]\nignorePatterns = ["plugin.mjs"]\n[lint.rules]\n"demo/at" = "error"\n`,
+    };
+    const nameOf = (path: string) => path.replace(/^.*[\\/]/, "").replace(".js", "");
+    const inJson = (raw: string) =>
+      Object.fromEntries(
+        JSON.parse(raw).map((result: any) => [
+          nameOf(result.filePath),
+          result.messages.map((it: any) =>
+            [it.line, it.column, it.endLine, it.endColumn].filter(it => it !== undefined),
+          ),
+        ]),
+      );
+
+    test(
+      "with an ESLint config it is passed on, as in ESLint",
+      async () => {
+        const some = ["line-0.js", "line-below-0.js", "column-far-below-0.js"];
+        const [json, stylish, unix] = await Promise.all([
+          lint(eslint, ["-f", "json", ...all]),
+          lint(eslint, ["-f", "stylish", ...some]),
+          lint(eslint, ["-f", "unix", ...some]),
+        ]);
+        expect(inJson(json.raw)).toEqual(Object.fromEntries(names.map(name => [name, [places[name][1]]])));
+        expect(stylish.stdout.split("\n").filter(line => line.includes("error  "))).toEqual([
+          "  1  -4  error  column-far-below-0  demo/at",
+          "  0:1  error  line-0  demo/at",
+          "  -1:1  error  line-below-0  demo/at",
+        ]);
+        expect(unix.stdout.split("\n").slice(0, 3)).toEqual([
+          "<dir>/column-far-below-0.js:1:-4: column-far-below-0 [Error/demo/at]",
+          "<dir>/line-0.js:0:1: line-0 [Error/demo/at]",
+          "<dir>/line-below-0.js:-1:1: line-below-0 [Error/demo/at]",
+        ]);
+        expect(json.exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    test(
+      "with an ESLint config, a comment does not disable what is reported before it",
+      async () => {
+        const text = "/* eslint-disable */\nfoo();\n/* eslint-enable */\nbar();\n";
+        const { raw, exitCode } = await lint(
+          {
+            "eslint.config.mjs": `const create = context => ({
+                Program() {
+                  for (const line of [-1, 0, 1, 2, 4]) context.report({ message: "line " + line, loc: { line, column: 0 } });
+                },
+              });
+              export default [{ plugins: { demo: { rules: { at: { create } } } }, rules: { "demo/at": "error" } }];`,
+            "a.js": text,
+          },
+          ["-f", "json", "a.js"],
+        );
+        // As ESLint 10.12.0.
+        expect(JSON.parse(raw)[0].messages.map((it: any) => it.message)).toEqual(["line -1", "line 0", "line 4"]);
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    test(
+      "with an oxlint config it is where oxlint has it, and the rule throws where it does in oxlint",
+      async () => {
+        const [json, pretty, agent] = await Promise.all([
+          lint(oxlint, ["-f", "json", ...all]),
+          lint(oxlint, ["line-0.js"]),
+          lint(oxlint, ["-f", "agent", "line-0.js"]),
+        ]);
+        const said = JSON.parse(json.raw).diagnostics.map((it: any) => {
+          const span = it.labels[0]?.span;
+          return [nameOf(it.filename), span ? `${span.line}:${span.column}` : it.message.split("\n")[2]];
+        });
+        expect(Object.fromEntries(said)).toEqual(Object.fromEntries(names.map(name => [name, places[name][2]])));
+        expect(pretty.stdout).toStartWith(`1 | export const a = 1;
+    ^
+error: line-0  demo/at
+    at line-0.js:1:1
+`);
+        expect(agent.stdout).toBe("line-0.js:1:1: error demo(at): line-0");
+        expect(json.exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    test(
+      "without a config, what is before the first line is at the start of the file",
+      async () => {
+        const [json, pretty] = await Promise.all([lint(alone, ["-f", "json", ...all]), lint(alone, ["line-0.js"])]);
+        expect(inJson(json.raw)).toEqual(
+          Object.fromEntries(names.map(name => [name, [places[name][3] ?? places[name][1]]])),
+        );
+        expect(pretty.stdout).toStartWith(`1 | export const a = 1;
+    ^
+error: line-0  demo/at
+    at line-0.js:1:1
+`);
+        expect(json.exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    describe("and the comments that disable rules", () => {
+      const found = "demo/line-0";
+      // The text. Then what ESLint 10.12.0 has, what oxlint 1.87.0 has, and what there is without a config, where a report is
+      // compared with the comments at the place where it is shown.
+      const texts: Record<string, [string, string[], string[], string[]]> = {
+        "none": ["export {};\n", [`${found} 0:1`], [`${found} 1:1`], [`${found} 1:1`]],
+        "block": [
+          "/* eslint-disable */\nexport {};\n",
+          [`${found} 0:1`, "unused 1:1"],
+          [`${found} 1:1`, "unused 1:1"],
+          [],
+        ],
+        "block-rule": [
+          "/* eslint-disable demo/line-0 */\nexport {};\n",
+          [`${found} 0:1`, "unused 1:1"],
+          [`${found} 1:1`, "unused 1:1"],
+          [],
+        ],
+        "oxlint-block": ["/* oxlint-disable */\nexport {};\n", [`${found} 0:1`], [`${found} 1:1`, "unused 1:1"], []],
+        "enabled-again": [
+          "/* eslint-disable */ /* eslint-enable */\nexport {};\n",
+          [`${found} 0:1`, "unused 1:1"],
+          [`${found} 1:1`, "unused 1:22"],
+          [],
+        ],
+        "line": [
+          "export {}; // eslint-disable-line\n",
+          [`${found} 0:1`, "unused 1:12"],
+          [`${found} 1:1`, "unused 1:12"],
+          [],
+        ],
+        "line-rule": [
+          "export {}; // eslint-disable-line demo/line-0\n",
+          [`${found} 0:1`, "unused 1:12"],
+          [`${found} 1:1`, "unused 1:12"],
+          [],
+        ],
+        "next-line": [
+          "// eslint-disable-next-line\nexport {};\n",
+          [`${found} 0:1`, "unused 1:1"],
+          [`${found} 1:1`, "unused 1:1"],
+          [`${found} 1:1`, "unused 1:1"],
+        ],
+        "indented": [
+          "  /* eslint-disable */\nexport {};\n",
+          [`${found} 0:1`, "unused 1:3"],
+          [`${found} 1:1`, "unused 1:3"],
+          [`${found} 1:1`, "unused 1:3"],
+        ],
+        "second-line": [
+          "export {};\n/* eslint-disable */\n",
+          [`${found} 0:1`, "unused 2:1"],
+          [`${found} 1:1`, "unused 2:1"],
+          [`${found} 1:1`, "unused 2:1"],
+        ],
+      };
+      const names = Object.keys(texts);
+      const args = ["--report-unused-disable-directives", "-f", "json", ...names.map(name => `${name}.js`)];
+      const files = {
+        "plugin.mjs": `const loc = { line: 0, column: 0 };
+          const create = context => ({ "Program:exit": () => context.report({ message: "whole file", loc }) });
+          export default { meta: { name: "demo" }, rules: { "line-0": { create } } };`,
+        ...Object.fromEntries(names.map(name => [`${name}.js`, texts[name][0]])),
+      };
+      const expected = (at: 1 | 2 | 3) => Object.fromEntries(names.map(name => [name, texts[name][at]]));
+      const said = (raw: string) =>
+        Object.fromEntries(
+          JSON.parse(raw).map((result: any) => [
+            nameOf(result.filePath),
+            result.messages.map((it: any) => `${it.ruleId ?? "unused"} ${it.line}:${it.column}`),
+          ]),
+        );
+
+      test(
+        "with an ESLint config no comment disables a report at line 0, as in ESLint",
+        async () => {
+          const config = `import demo from "./plugin.mjs";
+            export default [{ files: ["*.js"], plugins: { demo }, rules: { "demo/line-0": "error" } }];`;
+          const { raw, exitCode } = await lint({ ...files, "eslint.config.mjs": config }, args);
+          expect(said(raw)).toEqual(expected(1));
+          expect(exitCode).toBe(1);
+        },
+        timeout,
+      );
+
+      test(
+        "with an oxlint config no comment disables it either, as in oxlint",
+        async () => {
+          const config = oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "demo/line-0": "error" } });
+          const { raw, exitCode } = await lint({ ...files, ".oxlintrc.json": config }, args);
+          const all: Record<string, string[]> = {};
+          for (const it of JSON.parse(raw).diagnostics) {
+            const { line, column } = it.labels[0].span;
+            (all[nameOf(it.filename)] ??= []).push(`${it.code ? found : "unused"} ${line}:${column}`);
+          }
+          expect(all).toEqual(expected(2));
+          expect(exitCode).toBe(1);
+        },
+        timeout,
+      );
+
+      test(
+        "without a config, a comment at the start of the file disables it, and counts as used",
+        async () => {
+          const config = `[lint]\nplugins = ["./plugin.mjs"]\n[lint.rules]\n"demo/line-0" = "error"\n`;
+          const { raw, exitCode } = await lint({ ...files, "bunfig.toml": config }, args);
+          expect(said(raw)).toEqual(expected(3));
+          expect(exitCode).toBe(1);
+        },
+        timeout,
+      );
+
+      describe("of the built-in rules that report about the whole file", () => {
+        const files = {
+          "tsconfig.json": JSON.stringify({ compilerOptions: { strictNullChecks: false } }),
+          "reported.ts": "export const a = 1;\n",
+          "disabled.ts": "/* eslint-disable */\nexport const a = 1;\n",
+          "reported.spec.js": "export const a = 1;\n",
+          "disabled.spec.js": "/* eslint-disable vitest/consistent-test-filename */\nexport const a = 1;\n",
+        };
+        const rules = ["@typescript-eslint/no-unnecessary-condition", "vitest/consistent-test-filename"];
+        const args = ["--report-unused-disable-directives", "-f", "json"];
+
+        test("without a config, a comment at the start of the file disables them", async () => {
+          const config = `[lint.rules]\n${rules.map(rule => `"${rule}" = "error"\n`).join("")}`;
+          const { raw, exitCode } = await lint({ ...files, "bunfig.toml": config }, [...args, "."]);
+          expect(
+            JSON.parse(raw).map((result: any) => [
+              result.filePath.replace(/^.*[\\/]/, ""),
+              ...result.messages.map((it: any) => `${it.ruleId ?? "unused"} ${it.line}:${it.column}`),
+            ]),
+          ).toEqual([
+            ["disabled.spec.js"],
+            ["disabled.ts"],
+            ["reported.spec.js", `${rules[1]} 1:1`],
+            ["reported.ts", `${rules[0]} 1:1`],
+          ]);
+          expect(exitCode).toBe(1);
+        });
+
+        test("with an oxlint config they have no place and no comment disables them, as in oxlint", async () => {
+          const config = oxlintrc({ plugins: ["vitest"], rules: { [rules[1]]: "error" } });
+          const project = { ...files, ".oxlintrc.json": config };
+          const [json, agent] = await Promise.all([
+            lint(project, [...args, "reported.spec.js", "disabled.spec.js"]),
+            lint(project, ["-f", "agent", "reported.spec.js"]),
+          ]);
+          // As oxlint 1.87.0.
+          expect(
+            JSON.parse(json.raw)
+              .diagnostics.map((it: any) => [it.filename, it.code ?? "unused", it.labels.length])
+              .sort(),
+          ).toEqual([
+            ["disabled.spec.js", "unused", 1],
+            ["disabled.spec.js", "vitest(consistent-test-filename)", 0],
+            ["reported.spec.js", "vitest(consistent-test-filename)", 0],
+          ]);
+          expect(agent.stdout).toStartWith("reported.spec.js: error vitest(consistent-test-filename): ");
+          expect(json.exitCode).toBe(1);
+        });
+      });
+    });
+
+    // ESLint has none of these formats.
+    test.each([
+      ["an ESLint config", eslint],
+      ["no config", alone],
+    ])(
+      "the other formats have it in the file, with %s",
+      async (_, config) => {
+        const some = ["line-0.js", "line-below-0.js", "column-far-below-0.js", "huge-column.js", "huge-end.js"];
+        const [pretty, agent, github, junit] = await Promise.all(
+          ["pretty", "agent", "github", "junit"].map(format => lint(config, ["-f", format, ...some])),
+        );
+        expect(pretty.stdout.split("\n").filter(line => line.includes(" at "))).toEqual([
+          "    at column-far-below-0.js:1:0",
+          "    at huge-column.js:1:2000000001",
+          "    at huge-end.js:1:1",
+          "    at line-0.js:1:1",
+          "    at line-below-0.js:1:1",
+        ]);
+        // The mark is no further right than the end of the line.
+        expect(pretty.stdout).toContain("1 | export const a = 1;\n                       ^\nerror: huge-column");
+        expect(agent.stdout.split("\n").filter(line => line.startsWith("<error") || line.includes("^"))).toEqual([
+          `<error file="column-far-below-0.js" line="1" column="0" rule="demo/at">`,
+          "    ^^^^^^^^^^^^^^^^^^^",
+          `<error file="huge-column.js" line="1" column="2000000001" rule="demo/at">`,
+          "                       ^",
+          `<error file="huge-end.js" line="1" column="1" rule="demo/at">`,
+          "    ^^^^^^^^^^^^^^^^^^^",
+          `<error file="line-0.js" line="1" column="1" rule="demo/at">`,
+          "    ^^^^^^^^^^^^^^^^^^^",
+          `<error file="line-below-0.js" line="1" column="1" rule="demo/at">`,
+          "    ^^^^^^^^^^^^^^^^^^^",
+        ]);
+        expect(github.stdout.split("\n")).toEqual([
+          "::error file=column-far-below-0.js,line=1,col=1,endLine=1,endColumn=1,title=demo/at::column-far-below-0",
+          "::error file=huge-column.js,line=1,col=2000000001,endLine=1,endColumn=2000000001,title=demo/at::huge-column",
+          "::error file=huge-end.js,line=1,col=1,endLine=1,endColumn=2000000001,title=demo/at::huge-end",
+          "::error file=line-0.js,line=1,col=1,endLine=1,endColumn=1,title=demo/at::line-0",
+          "::error file=line-below-0.js,line=1,col=1,endLine=1,endColumn=1,title=demo/at::line-below-0",
+        ]);
+        expect(
+          junit.stdout
+            .split("\n")
+            .filter(line => line.includes("<error"))
+            .map(line => line.trim()),
+        ).toEqual([
+          `<error message="column-far-below-0">line 1, column 1, column-far-below-0</error>`,
+          `<error message="huge-column">line 5, column 1, huge-column</error>`,
+          `<error message="huge-end">line 1, column 1, huge-end</error>`,
+          `<error message="line-0">line 1, column 1, line-0</error>`,
+          `<error message="line-below-0">line 1, column 1, line-below-0</error>`,
+        ]);
+      },
+      timeout,
+    );
+  });
 });
 
 // Recorded with ESLint 10.12.0 and @typescript-eslint/parser 8.71.1 by record.mjs in that directory.

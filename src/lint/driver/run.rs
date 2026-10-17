@@ -973,6 +973,10 @@ impl Run<'_> {
         let is_native = (of_cwd.as_ref()).is_some_and(|it| it.flavor == Flavor::BuiltIn);
         let store = bun_lint_graph::Store::new(&environment.cwd);
         let store = if is_native { store.by_file() } else { store };
+        let store = match &options.tsconfig {
+            Some(path) => store.with_tsconfig(path),
+            None => store,
+        };
         let modules = bun_lint_graph::Graph::new(&store);
         modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
             let of_the_run = (&linter, environment, &js_plugins);
@@ -1025,6 +1029,7 @@ impl Run<'_> {
         let memory = bun_sema::session::Session::new();
         let (skipped_in_comments, out_of_stack) =
             (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
+        let without_include = Guarded::new(Vec::new());
         let broken_fixes = Guarded::new(Vec::new());
         let handed_back = Guarded::new(Vec::new());
         let unread = Guarded::new(Vec::new());
@@ -1043,6 +1048,7 @@ impl Run<'_> {
         let context = Context {
             skipped_in_comments: &skipped_in_comments,
             out_of_stack: &out_of_stack,
+            without_include: &without_include,
             broken_fixes: &broken_fixes,
             handed_back: &handed_back,
             unread: &unread,
@@ -1189,6 +1195,54 @@ impl Run<'_> {
                     &shown.join(&b", "[..])[..],
                     more,
                     b"\n  Rules that need type information may have missed problems there. This is a bug in Bun.",
+                ]
+                .concat(),
+            );
+        }
+        // Who lints with `--staged` or `--changed`, or from standard input, knows that the files are few.
+        let mut without_include = std::mem::take(&mut *without_include.lock());
+        if options.only.is_some() || options.stdin || options.silent {
+            without_include.clear();
+        }
+        without_include.retain(typed::is_out_of_proportion);
+        for program in without_include {
+            let plural = bun_sema_driver::format::plural;
+            let seconds = program.load_time.as_secs_f64();
+            let took = match seconds >= 1.0 {
+                true => format!("{seconds:.1}s"),
+                false => format!("{:.0}ms", seconds * 1e3),
+            };
+            let relative =
+                |path: &[u8]| paths::relative(&environment.cwd, &paths::from_native(path));
+            let (config, example) = (relative(&program.config_path), relative(&program.example));
+            let linted = match program.requested {
+                1 => example,
+                many => [
+                    &plural(many, b"file", b"files")[..],
+                    b" (",
+                    &example,
+                    b", ..)",
+                ]
+                .concat(),
+            };
+            // With an oxlint config the flag does not choose the project.
+            let or_the_flag: &[u8] = match options.tsconfig.is_some() || is_oxlint {
+                true => b".",
+                false => b" or pass --tsconfig.",
+            };
+            self.warn(
+                &[
+                    b"Loaded ",
+                    &plural(program.included, b"file", b"files")[..],
+                    b" in ",
+                    took.as_bytes(),
+                    b" to lint ",
+                    &linted,
+                    b"\n  ",
+                    &config,
+                    b" has no \"include\", so it covers every file under it.",
+                    b"\n  To speed this up, add \"include\" to it",
+                    or_the_flag,
                 ]
                 .concat(),
             );

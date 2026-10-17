@@ -6,6 +6,7 @@
 
 #![feature(allocator_api)]
 
+pub mod aot_rules;
 pub mod atom;
 pub mod bind;
 pub mod check;

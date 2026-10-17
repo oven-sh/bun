@@ -166,6 +166,12 @@ pub(super) static BUILTINS: &[Builtin] = &[
         properties: "!prototype:object -length:number -name:string",
     },
     Builtin {
+        name: "File.prototype",
+        inherits: "Object.prototype",
+        is_extensible: false,
+        properties: "!lastModified:accessor !name:accessor !size:accessor !type:accessor =arrayBuffer =bytes =delete =exists =formData =image =json =slice =stat =stream =text =unlink =write =writer constructor ~@@toStringTag:string",
+    },
+    Builtin {
         name: "FinalizationRegistry",
         inherits: "Function.prototype",
         is_extensible: true,
@@ -224,6 +230,12 @@ pub(super) static BUILTINS: &[Builtin] = &[
         inherits: "Object.prototype",
         is_extensible: false,
         properties: "!@@hasInstance apply bind call constructor toString ~arguments:accessor ~caller:accessor ~length:number? ~name:string?",
+    },
+    Builtin {
+        name: "Headers.prototype",
+        inherits: "Object.prototype",
+        is_extensible: false,
+        properties: "!count:accessor @@iterator append constructor delete entries forEach get getAll getSetCookie has keys set toJSON values ~@@toStringTag:string",
     },
     Builtin {
         name: "Int16Array",
@@ -496,6 +508,18 @@ pub(super) static BUILTINS: &[Builtin] = &[
         properties: "@@match @@matchAll @@replace @@search @@split compile constructor exec test toString ~dotAll:accessor ~flags:accessor ~global:accessor ~hasIndices:accessor ~ignoreCase:accessor ~multiline:accessor ~source:accessor ~sticky:accessor ~unicode:accessor ~unicodeSets:accessor",
     },
     Builtin {
+        name: "Request.prototype",
+        inherits: "Object.prototype",
+        is_extensible: false,
+        properties: "!body:accessor !bodyUsed:accessor !cache:accessor !credentials:accessor !destination:accessor !headers:accessor !integrity:accessor !method:accessor !mode:accessor !redirect:accessor !referrer:accessor !referrerPolicy:accessor !signal:accessor !url:accessor =arrayBuffer =blob =bytes =clone =formData =json =text =textStream constructor ~@@toStringTag:string",
+    },
+    Builtin {
+        name: "Response.prototype",
+        inherits: "Object.prototype",
+        is_extensible: false,
+        properties: "!body:accessor !bodyUsed:accessor !headers:accessor !ok:accessor !redirected:accessor !status:accessor !statusText:accessor !type:accessor !url:accessor =arrayBuffer =blob =bytes =clone =formData =json =text =textStream constructor ~@@toStringTag:string",
+    },
+    Builtin {
         name: "Set",
         inherits: "Function.prototype",
         is_extensible: true,
@@ -686,6 +710,18 @@ pub(super) static BUILTINS: &[Builtin] = &[
         inherits: "Error",
         is_extensible: true,
         properties: "!prototype:object -length:number -name:string",
+    },
+    Builtin {
+        name: "URL.prototype",
+        inherits: "Object.prototype",
+        is_extensible: false,
+        properties: "@@nodejs.util.inspect.custom constructor toJSON toString ~@@toStringTag:string ~hash:accessor ~host:accessor ~hostname:accessor ~href:accessor ~origin:accessor ~password:accessor ~pathname:accessor ~port:accessor ~protocol:accessor ~search:accessor ~searchParams:accessor ~username:accessor",
+    },
+    Builtin {
+        name: "URLSearchParams.prototype",
+        inherits: "Object.prototype",
+        is_extensible: false,
+        properties: "!length:accessor @@iterator @@nodejs.util.inspect.custom append constructor delete entries forEach get getAll has keys set sort toJSON toString values ~@@toStringTag:string ~size:accessor",
     },
     Builtin {
         name: "Uint16Array",

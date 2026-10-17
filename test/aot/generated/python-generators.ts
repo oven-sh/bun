@@ -59,8 +59,9 @@ export const generators: [name: string, extension: "ts" | "js", options?: Option
   ["literals-escape-through-untyped-slots", "ts"],
   ["many-structures-many-names", "js", { seeds: [200, 400, 600, 1000, 3000] }],
   ["maps-and-sets", "ts"],
-  ["external-data-in-containers", "ts", { seeds: upTo(60), failsToday: Object.fromEntries([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59].map(seed => [seed, X])) }],
-  ["external-data-in-inferred-places", "ts", { seeds: upTo(146), failsToday: Object.fromEntries([58, 59, 60, 61, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 88, 89, 94, 95, 96, 97, 98, 99, 110, 111, 112, 113, 114, 115, 120, 121, 134, 135, 136, 137, 138, 139, 140, 141].map(seed => [seed, X])) }],
+  ["external-data-in-containers", "ts", { seeds: upTo(60), failsToday: Object.fromEntries([20, 21, 22, 23, 38, 39, 44, 45, 46, 47, 52, 53, 54, 55, 58, 59].map(seed => [seed, X])) }],
+  // 94 to 97 write a cast or an annotation that the value does not satisfy, and written types are checked.
+  ["external-data-in-inferred-places", "ts", { seeds: upTo(146), leftOut: [94, 95, 96, 97], failsToday: Object.fromEntries([70, 71, 72, 73, 74, 75, 88, 89, 98, 99, 120, 121, 138, 139, 140, 141].map(seed => [seed, X])) }],
   ["optional-number-and-boolean-fields", "ts", { seeds: upTo(9) }],
   // CET and WET are time zones of some ICU data only.
   ["intl-constant-arguments", "ts", { seeds: upTo(121), leftOut: [50, 51] }],

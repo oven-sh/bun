@@ -147,6 +147,7 @@ const ROWS: &[(&[u8], Position, Intrinsic)] = &[
     (b"defineProperty", Position::Member, Intrinsic::PrivateName),
     (b"delete", Position::Member, Intrinsic::PrivateName),
     (b"deleteByValSloppy", Position::Call, Intrinsic::Operation(Operation::DeleteByValSloppy)),
+    (b"detail", Position::Member, Intrinsic::PrivateName),
     (b"disposableStackFieldCapability", Position::Value, Intrinsic::Int(1)),
     (b"disposableStackFieldState", Position::Value, Intrinsic::Int(0)),
     (b"entries", Position::Member, Intrinsic::PrivateName),

@@ -1705,7 +1705,6 @@ impl Run<'_> {
         // (Rust-defined `#[no_mangle]` exports don't need this; the imported
         // C symbols do.)
         crate::napi::fix_dead_code_elimination();
-        crate::webcore::bake_response::fix_dead_code_elimination();
         bun_crash_handler::fix_dead_code_elimination();
         vm.global_exit();
     }

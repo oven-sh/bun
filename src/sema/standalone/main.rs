@@ -257,8 +257,8 @@ fn run(args: &[String]) {
             }
             // ECMAScript-exact unless asked otherwise: a type annotation promises nothing, and nothing throws because one is wrong.
             constants.features.extend(args.iter().filter_map(|a| a.strip_prefix("--feature=")).map(|flag| flag.as_bytes().to_vec()));
-            const OWN_FLAGS: [&str; 49] = ["--agent", "--all", "--aot", "--aot-explain", "--aot-out", "--aot-type-errors", "--audit-only", "--audit-sites-out", "--builtin-sources", "--checkers", "--chunk-bytes", "--declarations-out", "--define", "--error-types", "--every-stage", "--feature", "--file-cost", "--file-instructions", "--github", "--keep", "--keep-names", "--memory", "--min-tasks", "--minify", "--minify-identifiers", "--no-builtin-modules", "--no-color", "--only", "--order", "--own-paths", "--plain", "--progress", "--projects-at-once", "--removable", "--repeat", "--slices", "--snapshot", "--split-files", "--split-publishes-everything", "--split-tolerates", "--step-growth", "--task-instructions", "--test-globals", "--threads", "--timing", "--type-node-cost", "--warm-up-files", "--warm-up-max-bytes", "--width"];
-            const EXPLAINED: [&str; 17] = ["mutations", "builtins", "deferred", "errors", "fields", "foreign", "given", "integers", "joins", "progress", "react", "react-locations", "rows", "throws", "throws-all", "throws-all-json", "throws-json"];
+            const OWN_FLAGS: [&str; 52] = ["--agent", "--all", "--aot", "--aot-allow", "--aot-deny", "--aot-explain", "--aot-out", "--aot-type-errors", "--aot-warn", "--audit-only", "--audit-sites-out", "--builtin-sources", "--checkers", "--chunk-bytes", "--declarations-out", "--define", "--error-types", "--every-stage", "--feature", "--file-cost", "--file-instructions", "--github", "--keep", "--keep-names", "--memory", "--min-tasks", "--minify", "--minify-identifiers", "--no-builtin-modules", "--no-color", "--only", "--order", "--own-paths", "--plain", "--progress", "--projects-at-once", "--removable", "--repeat", "--slices", "--snapshot", "--split-files", "--split-publishes-everything", "--split-tolerates", "--step-growth", "--task-instructions", "--test-globals", "--threads", "--timing", "--type-node-cost", "--warm-up-files", "--warm-up-max-bytes", "--width"];
+            const EXPLAINED: [&str; 18] = ["mutations", "builtins", "deferred", "errors", "fields", "foreign", "given", "integers", "joins", "progress", "react", "react-locations", "rows", "rules-json", "throws", "throws-all", "throws-all-json", "throws-json"];
             for rejected in &command_line.rejected {
                 let flag = text(&rejected.flag);
                 // A flag that is no compiler option is one of the tool's own, looked for below, or an error.
@@ -357,8 +357,16 @@ fn run(args: &[String]) {
             // `--aot-explain=integers`: by name of a field, whether the numbers stored under it are expected to be int32s, and if not, the first evidence to the contrary.
             // `--aot-explain=progress`: where the soundness closure of the link is, on stderr as it goes, with the sizes of its tables, and at the end what has grown, in numbers alone.
             // `--aot-explain=deferred`: how many modules and top-level statements may run at their first use, and what stands in the way for the others. Numbers alone.
-            let explain = bun_aot::Explain { throws: has("--aot-explain=throws") || has("--aot-explain=throws-all"), throws_json: has("--aot-explain=throws-json") || has("--aot-explain=throws-all-json"), throws_all: has("--aot-explain=throws-all") || has("--aot-explain=throws-all-json"), rows: has("--aot-explain=rows"), joins: has("--aot-explain=joins"), given: has("--aot-explain=given"), foreign: has("--aot-explain=foreign"), includes_builtin_modules: true, mutations: has("--aot-explain=mutations"), fields: has("--aot-explain=fields"), integers: has("--aot-explain=integers"), plugins: false, progress: has("--aot-explain=progress").then_some((|line: std::fmt::Arguments<'_>| eprintln!("{line}")) as fn(std::fmt::Arguments<'_>)), deferred: has("--aot-explain=deferred") };
-            let translation = bun_aot::Translation::new(&constants).explaining(explain);
+            let explain = bun_aot::Explain { throws: has("--aot-explain=throws") || has("--aot-explain=throws-all"), throws_json: has("--aot-explain=throws-json") || has("--aot-explain=throws-all-json"), throws_all: has("--aot-explain=throws-all") || has("--aot-explain=throws-all-json"), rows: has("--aot-explain=rows"), joins: has("--aot-explain=joins"), given: has("--aot-explain=given"), foreign: has("--aot-explain=foreign"), includes_builtin_modules: true, mutations: has("--aot-explain=mutations"), fields: has("--aot-explain=fields"), integers: has("--aot-explain=integers"), plugins: false, rules_json: has("--aot-explain=rules-json"), progress: has("--aot-explain=progress").then_some((|line: std::fmt::Arguments<'_>| eprintln!("{line}")) as fn(std::fmt::Arguments<'_>)), deferred: has("--aot-explain=deferred") };
+            let mut rules = bun_aot::rules::Settings::default();
+            let rule_flags = [("--aot-allow=", bun_aot::rules::Severity::Allow), ("--aot-warn=", bun_aot::rules::Severity::Warn), ("--aot-deny=", bun_aot::rules::Severity::Deny)];
+            for (list, severity) in args.iter().filter_map(|a| rule_flags.iter().find_map(|&(flag, severity)| Some((a.strip_prefix(flag)?, severity)))) {
+                if let Err(unknown) = rules.add(severity, list.as_bytes()) {
+                    error_line!("error: Unknown rule \"{}\"", text(&unknown.written));
+                    std::process::exit(1);
+                }
+            }
+            let translation = bun_aot::Translation::new(&constants).explaining(explain).enforcing(rules);
             // `--aot-explain=react`, with or without `--aot`: what the React Compiler makes of the checker's tree of each `.jsx` and `.tsx` file: the candidates, the compiled functions with their scopes and slots, the bail-outs with their reasons.
             // `--aot-explain=react-locations`: the same, and each function is compiled again with its locations renumbered, which is to make no difference.
             let explains_react = has("--aot-explain=react") || has("--aot-explain=react-locations");
@@ -458,6 +466,8 @@ fn run(args: &[String]) {
                     error_line!("{problem}");
                 }
                 error_line!("aot: members: {}", translated.members);
+                let bun_aot::Typedness { reads, typed_reads, layouts, open_layouts, classes_without_layout, untyped_packages, untyped_files } = translated.typedness;
+                error_line!("aot: typedness: {typed_reads} of {reads} reads typed, {open_layouts} of {layouts} types open, {classes_without_layout} classes without a layout, {untyped_packages} packages and {untyped_files} files untyped");
                 for line in &translated.explained {
                     if line.starts_with('{') {
                         output_line!("{line}");
@@ -573,10 +583,6 @@ fn run(args: &[String]) {
                 checkers: number("--checkers=", defaults.checkers),
                 reproduces_symbol_ids: defaults.reproduces_symbol_ids,
                 projects_at_once: number("--projects-at-once=", defaults.projects_at_once),
-                files_of_a_small_project: number(
-                    "--files-of-a-small-project=",
-                    defaults.files_of_a_small_project,
-                ),
                 after_file_is_for_checked_files: defaults.after_file_is_for_checked_files,
                 checks_only_named: defaults.checks_only_named,
                 reads_sources_of_references: defaults.reads_sources_of_references,
@@ -735,6 +741,11 @@ fn run(args: &[String]) {
                 let mut out = Vec::new();
                 write_diagnostics(&mut out, &report, &style);
                 let _ = std::io::stdout().write_all(&out);
+                if has("--aot-explain=rules-json") {
+                    for line in bun_sema_driver::format::rule_findings_as_json(&report, style.cwd) {
+                        output_line!("{line}");
+                    }
+                }
                 if explains_react {
                     for line in react.finish() {
                         output_line!("react: {line}");

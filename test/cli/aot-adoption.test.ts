@@ -340,6 +340,7 @@ console.log(five, later);
     expect(said.slice(3)).toEqual([
       "[aot] type-check summary: 3 checks can fail when the program runs, 0 always fail",
       "[aot] type-check summary: those that can fail: 1 at an `as`, 1 where a value that an `as` let through is used, 1 on an `any`",
+      "aot: 25.0% of reads typed, 0 of 0 types open, 0 classes without a layout, 0 packages and 0 files untyped (--aot-warn=all lists them)",
     ]);
     expect(said[0]).toContain("; value from JSON.parse(..) at app.ts:5:24; fix: ");
     expect(exitCode).toBe(0);

@@ -7,7 +7,7 @@ groups of tests, the one command that runs each, what CI has to know, and where 
 
 | Group | Command | What it runs | What it needs |
 | --- | --- | --- | --- |
-| **Fast**: what CI runs | `bun test test/aot` | Every `*.test.ts` in this folder: each program under `programs/` is built, run and compared with plain Bun; of `packages/` one importer in ten; of `generated/` the part of each generator's programs that always runs | A Bun that includes the compiler (macOS arm64, Linux x64 with glibc). Elsewhere every file skips itself. `python3` for `generated-by-python`, `external-sources-of-typed-objects` and `made-cases-three-ways`; `python3` and a `jsc` shell beside the Bun for `generated-code` and `collector-stress/`. Each says on stderr what it lacks where it is skipped |
+| **Fast**: what CI runs | `bun test test/aot` | Every `*.test.ts` in this folder: each program under `programs/` is built, run and compared with plain Bun; of `packages/` one importer in ten; of `generated/` the part of each generator's programs that always runs | A Bun that includes the compiler, as every released build does. `python3` for `generated-by-python`, `external-sources-of-typed-objects` and `made-cases-three-ways`; `python3` and a `jsc` shell beside the Bun for `generated-code` and `collector-stress/`. Each says on stderr what it lacks where it is skipped |
 | **A tenth of it** | `AOT_PROGRAMS=quick bun test test/aot` | One program in ten, the same ones every time. A debug or ASAN build of Bun chooses this by itself | The same |
 | **Slow**: everything | `AOT_PROGRAMS= AOT_GENERATED=all AOT_REPEATED_BUILDS=300 bun test test/aot` | All importers of `packages/`, every generated program, the long form of `repeated-builds` | The same, and hours |
 | **All of Bun's tests under `--aot`** | `bun test/aot/whole-suite.ts` | Every test file of the repository twice with `scripts/runner.node.ts`: as it is, and with `--aot` behind each `bun test` and `bun run`. It lists the files that pass only as they are | What the whole suite needs, twice the time |
@@ -35,8 +35,8 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
 
 - **Nothing has to be registered.** `scripts/runner.node.ts` runs every file under `test/` whose name contains `.test.` or `spec.`.
   For the same reason no program or helper below this folder may have such a name.
-- **Seven of the twelve lanes refuse `--aot`** (Linux arm64, musl, macOS x64, Windows), `bun run --aot` too. A test file that uses
-  the flag skips itself there: `import { describe, test } from "./supported";` in place of the same names of `bun:test`, or
+- **No platform refuses `--aot`**, and `every-platform.test.ts` never skips itself. Only a Bun that was built without the compiler
+  refuses the flag. A test file that uses the flag skips itself there: `import { describe, test } from "./supported";` in place of the same names of `bun:test`, or
   `test.skipIf(!!unsupported)` with `unsupported` of `run-programs.ts` where only some of its tests use it. Never a list of
   platforms: the Bun under test is asked. `test-files-self-skip.test.ts` reads every test file of the repository that is in
   this folder or whose text uses the flag, and is red if one does not ask.

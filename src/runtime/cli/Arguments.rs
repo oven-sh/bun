@@ -471,6 +471,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--aot-huge-heap                  With --aot: let each thread have more than 32 GB of objects. The executable uses more memory and runs slower"
         ),
         parse_param!("--aot-crash-if-interpreter-is-used"),
+    ],
+    crate::cli::aot::RULE_PARAMS,
+    &[
         parse_param!(
             "--compile-run                    (internal) Run what was built in place of this process instead of writing an executable"
         ),
@@ -604,7 +607,6 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake."
         ),
-        parse_param!("--server-components              (EXPERIMENTAL) Enable server components"),
         parse_param!(
             "--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'."
         ),
@@ -2203,6 +2205,16 @@ fn parse_build_command_options(
         Output::err_generic("--aot-explain does not take \"{}\": it is one of {}", (BStr::new(word), bun_aot::Explain::REPORTS.join(", ")));
         Global::exit(1);
     }
+    let rule_flags = crate::cli::aot::rule_flags(bun_core::argv().into_iter().skip(1));
+    if let Some(flag) = rule_flags.first().filter(|_| !ctx.bundler_options.aot) {
+        Output::err_generic("{} requires --aot", (BStr::new(strings::split(flag, b"=").next().unwrap_or(flag)),));
+        Global::exit(1);
+    }
+    ctx.bundler_options.aot_rules.extend(rule_flags);
+    if let Err(problem) = crate::cli::aot::rule_settings(&ctx.bundler_options.aot_rules) {
+        Output::err_generic("{}", (problem,));
+        Global::exit(1);
+    }
     ctx.bundler_options.compile_run = args.flag(b"--compile-run");
     ctx.bundler_options.rewrite_jest_for_tests = args.flag(b"--rewrite-jest-for-tests");
     if args.flag(b"--expose-internals") {
@@ -2926,26 +2938,6 @@ fn parse_build_command_options(
                 Global::exit(1);
             }
             *slot = strings::concat(&[b"./", strings::remove_leading_dot_slash(value)]);
-        }
-    }
-
-    if args.flag(b"--server-components") {
-        ctx.bundler_options.server_components = true;
-        if let Some(target) = opts.target {
-            if !<bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))
-                .is_server_side()
-            {
-                Output::err_generic(
-                    "Cannot use client-side --target={} with --server-components",
-                    format_args!(
-                        "{:?}",
-                        <bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))
-                    ),
-                );
-                Global::crash();
-            } else {
-                opts.target = Some(api::Target::Bun);
-            }
         }
     }
 

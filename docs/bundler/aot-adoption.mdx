@@ -168,8 +168,9 @@ bun check --aot --aot-explain=throws app.ts
 | `throws-all`      | also the checks that fail only if your TypeScript code itself produces a value of the wrong type |
 | `throws-json`     | the same as `throws`, one JSON object per line, on stdout                                 |
 | `throws-all-json` | the same as `throws-all`, one JSON object per line, on stdout                             |
+| `rules-json`      | what the [rules](/bundler/aot-debugging#rules) found, one JSON object per line, on stdout |
 
-On a large program, `throws` prints at most 200 lines of each category and counts the rest. The other three reports are never cut short. To look up the id of a line from the log, use `throws-all-json`.
+On a large program, `throws` prints at most 200 lines of each category and counts the rest. The other reports are never cut short. To look up the id of a line from the log, use `throws-all-json`.
 
 The last line counts the checks that can fail by what causes them. Start with the causes that you wrote yourself: an `as`, a `!`, an `any`. In the JSON reports, each object has its cause as `cause`:
 
@@ -354,7 +355,21 @@ TypeError: Cannot change 'call$0' of Function.prototype: built-ins are locked in
 | `core-js` 3                         | Every entry point, even `core-js/actual/array/at`, replaces `Function.prototype.toString` | `Cannot change 'toString' of Function.prototype`, on import             | Remove the import: Bun implements what it fills in. With Babel, set `useBuiltIns: false`. Or import one feature at a time from `core-js-pure`, such as `core-js-pure/actual/array/at`. `core-js-pure/stable` throws `Cannot change 'isError' of Error` |
 | `envinfo` 7, `@webpack-cli/info`    | They contain `core-js` 2, which deletes `Function.prototype.toString`                     | `Cannot delete 'toString' of Function.prototype`, on import             | Nothing that we know of                                                                                                                                                                                    |
 
-[`bun --aot-audit`](#1-audit-while-you-develop) reports these writes while your program still runs as usual, and the lint rule [`bun/aot-locked-builtin-write`](/lint/rules/bun/aot-locked-builtin-write) finds them in your own code. `Error.prototype` and the prototypes that inherit from it are not locked, and neither is anything that Bun or your program defines, such as `process`, `console` or `setTimeout`.
+[`bun --aot-audit`](#1-audit-while-you-develop) reports these writes while your program still runs as usual, and the lint rule [`bun/aot-locked-builtin-write`](/lint/rules/bun/aot-locked-builtin-write) finds them in your own code. `Error.prototype` and the prototypes that inherit from it are not locked, and neither is what Bun or your program defines, such as `process`, `console` or `setTimeout`.
+
+Six prototypes that Bun defines are locked too: those of `Request`, `Response`, `Headers`, `Blob`, `URL` and `URLSearchParams`. The compiler relies on their getters and methods the way it relies on `Array.prototype.push`. The `TypeError` says what to do instead:
+
+```txt
+TypeError: Cannot change 'json' of Response.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Response or a wrapper function instead
+```
+
+Subclasses are not affected. `class NextRequest extends Request`, as in Next.js, has a prototype of its own: it can override getters and methods, add fields and call `super`. Compiled code checks the exact class of each object, so an instance of a subclass gets its overrides wherever a `Request` is expected. These also work as they do without `--aot`:
+
+- a property on one instance: `Object.defineProperty(response, "url", { value })`
+- another prototype for one instance: `Object.setPrototypeOf(request, other)`
+- replacing a static function: `URL.createObjectURL = stub`
+- replacing the global variable: `globalThis.Request = MyRequest`
+- a polyfill that checks first: `Headers.prototype.getSetCookie ??= ...` assigns nothing, so nothing throws
 
 ## Frameworks that load your pages by path
 

@@ -1154,6 +1154,18 @@ pub fn matched_include_spec<'s>(
         .filter(|spec| !spec.is_empty())
 }
 
+pub struct PathPattern(Option<GlobPattern>);
+
+impl PathPattern {
+    pub fn new(spec: &[u8], base: &[u8], case_sensitive: bool) -> PathPattern {
+        PathPattern(GlobPattern::compile(spec, base, Usage::Exclude, case_sensitive))
+    }
+
+    pub fn matches(&self, path: &[u8]) -> bool {
+        self.0.as_ref().is_some_and(|pattern| pattern.matches_path(typescript_path(path)))
+    }
+}
+
 /// `getFileNamesFromConfigSpecs`
 fn file_names_from_specs(
     host: &dyn Host,

@@ -5172,7 +5172,7 @@ impl<'p, 's> Checker<'p, 's> {
         sig: SigId,
         fallback_type: TypeId,
     ) -> TypeId {
-        let params = self.sig_params(sig);
+        let params = self.sig_params_with_first(sig, 1);
         if params.is_empty() {
             fallback_type
         } else {
@@ -6074,8 +6074,8 @@ impl<'p, 's> Checker<'p, 's> {
         let mut iterators = Vec::new();
         let all_signatures = self.signatures(method, false);
         for &sig in &all_signatures {
-            let params = self.sig_params(sig);
-            if self.min_argument_count(&params) == 0 {
+            let params = self.sig_params_with_first(sig, 0);
+            if self.min_argument_count_asked(Some(sig), &params) == 0 {
                 iterators.push(self.sig_return(sig));
             }
         }
@@ -6234,7 +6234,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (mut parameters, mut results) = (Vec::new(), Vec::new());
         for &sig in &signatures {
-            let params = self.sig_params(sig);
+            let params = self.sig_params_with_first(sig, 1);
             if which != IteratorMethod::Throw && !params.is_empty() {
                 // `getTypeAtPosition`
                 parameters.push(self.param_type_at(&params, 0).unwrap_or(TypeId::ANY));

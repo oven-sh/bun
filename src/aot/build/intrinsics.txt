@@ -74,6 +74,7 @@ defaultAsyncFromAsyncIteratorWithNext	Value
 defineProperty	Member
 delete	Member
 deleteByValSloppy	Call
+detail	Member
 disposableStackFieldCapability	Value
 disposableStackFieldState	Value
 entries	Member

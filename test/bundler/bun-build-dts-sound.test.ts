@@ -335,6 +335,29 @@ console.log(serve(server, "a", "b"), new Polite("hi").greet({ name: "you" }, 2))
     expect(await spawned([join(String(app), "app")], String(app))).toEqual(plain);
   });
 
+  test.skipIf(!!unsupported)("--no-bundle: a declaration file that says ./x.ts finds the same class as the typed file", async () => {
+    using dir = tempDir("build-sound-one-class", {
+      "package.json": JSON.stringify({ name: "welcome", version: "1.0.0", type: "module", main: "./dist/index.js", types: "./dist/index.d.ts", exports: { ".": "./dist/index.js", "./*": "./dist/*.js" } }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "nodenext", target: "esnext", types: [], lib: ["esnext"], rewriteRelativeImportExtensions: true, verbatimModuleSyntax: true } }),
+      "src/index.ts": `import { Issue } from "./issue.ts";\nexport function make(text: string): Issue {\n  return new Issue(text);\n}\n`,
+      "src/issue.ts": `export class Issue {\n  #text: string;\n  constructor(text: string) {\n    this.#text = text;\n  }\n  get text(): string {\n    return this.#text;\n  }\n}\n`,
+      "src/named.ts": `import type { Issue } from "./issue.ts";\nexport function read(issue: Issue): string {\n  return issue.text;\n}\n`,
+    });
+    const built = await spawned([bunExe(), "build", "src/index.ts", "src/issue.ts", "src/named.ts", "--no-bundle", "--outdir", "dist", "--target", "bun", "--dts"], String(dir));
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    using app = tempDir("build-sound-one-class-application", {
+      ...application,
+      "app.ts": `import { make } from "welcome";\nimport { read } from "welcome/named";\nconsole.log(read(make("one class")));\n`,
+    });
+    await install(String(dir), String(app), "welcome");
+    const compiled = await spawned([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], String(app));
+    expect({ said: (compiled.stdout + compiled.stderr).split("\n").filter(line => /^(note|warn|error)/.test(line)), exitCode: compiled.exitCode }).toEqual({
+      said: [`note: "welcome" 1.0.0 is compiled from its typed version in node_modules/welcome/dist`],
+      exitCode: 0,
+    });
+    expect(await spawned([join(String(app), "app")], String(app))).toEqual({ stdout: "one class\n", stderr: "", exitCode: 0 });
+  });
+
   test("require() in a bundle for the browser", async () => {
     using dir = library("odd-names");
     expect(await spawned([bunExe(), "build", "src/index.ts", "--outdir", "dist", "--packages", "external", "--dts"], String(dir))).toMatchObject({ stderr: "", exitCode: 0 });

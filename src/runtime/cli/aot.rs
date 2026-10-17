@@ -1,3 +1,4 @@
+use bun_aot::rules::{EVERY_RULE, RULES, Settings, Severity};
 use bun_core::{Global, pretty_errorln};
 use bun_options_types::compile_target::CompileTarget;
 
@@ -150,12 +151,60 @@ pub(crate) fn is_only_comments(mut text: &[u8]) -> bool {
     }
 }
 
-const BUILD_FLAGS: [&[u8]; 4] = [b"--aot", b"--aot-explain", b"--aot-huge-heap", b"--aot-type-errors"];
+const BUILD_FLAGS: [&[u8]; 7] = [b"--aot", b"--aot-allow", b"--aot-deny", b"--aot-explain", b"--aot-huge-heap", b"--aot-type-errors", b"--aot-warn"];
 const RUN_FLAGS: [&[u8]; 4] = [b"--aot", b"--aot-audit", b"--aot-huge-heap", b"--aot-type-errors"];
 const RUN_INTERNAL_FLAGS: [&[u8]; 3] = [b"--aot-decode-crash-report", b"--aot-graph-fd", b"--aot-stamp"];
 const SHARED_INTERNAL_FLAGS: [&[u8]; 1] = [b"--aot-crash-if-interpreter-is-used"];
 pub(crate) const COMPILE_OPTIONS: [&[u8]; 3] = [b"aot", b"aotExplain", b"aotTypeErrors"];
 pub(crate) const COMPILE_INTERNAL_OPTIONS: [&[u8]; 1] = [b"aotCrashIfInterpreterIsUsed"];
+
+pub(crate) const RULE_PARAMS: &[bun_clap::Param<bun_clap::Help>] = &[
+    bun_clap::parse_param!(
+        "--aot-deny <STR>...              With --aot: fail where a rule finds something. --aot-deny=untyped-file,open-layout, or all. Limit a rule to some files with --aot-deny=open-layout:src/server/**"
+    ),
+    bun_clap::parse_param!("--aot-warn <STR>...              With --aot: the same, as warnings"),
+    bun_clap::parse_param!("--aot-allow <STR>...             With --aot: turn a rule off. Of two flags that name the same rule and file, the later one counts"),
+];
+
+const RULE_FLAGS: [(&[u8], Severity); 3] = [(b"--aot-allow", Severity::Allow), (b"--aot-deny", Severity::Deny), (b"--aot-warn", Severity::Warn)];
+const RULE_KEYS: [(&[u8], Severity); 3] = [(b"aot.allow", Severity::Allow), (b"aot.deny", Severity::Deny), (b"aot.warn", Severity::Warn)];
+
+pub(crate) fn rule_flags<'a>(args: impl Iterator<Item = &'a [u8]>) -> Vec<Box<[u8]>> {
+    let mut written = Vec::new();
+    let mut args = args.take_while(|arg| *arg != b"--");
+    while let Some(arg) = args.next() {
+        let (name, value) = match bun_core::strings::index_of_char_usize(arg, b'=') {
+            Some(at) => (&arg[..at], Some(&arg[at + 1..])),
+            None => (arg, None),
+        };
+        if RULE_FLAGS.iter().any(|flag| flag.0 == name)
+            && let Some(value) = value.or_else(|| args.next())
+        {
+            written.push([name, b"=", value].concat().into_boxed_slice());
+        }
+    }
+    written
+}
+
+pub(crate) fn rule_settings(written: &[Box<[u8]>]) -> Result<Settings, String> {
+    let mut settings = Settings::default();
+    for flag in written {
+        let at = bun_core::strings::index_of_char_usize(flag, b'=').unwrap_or(flag.len());
+        let Some(&(name, severity)) = RULE_FLAGS.iter().chain(&RULE_KEYS).find(|known| known.0 == &flag[..at]) else { continue };
+        if let Err(unknown) = settings.add(severity, flag.get(at + 1..).unwrap_or_default()) {
+            let known: Vec<&[u8]> = RULES.iter().map(|rule| rule.name.as_bytes()).chain([EVERY_RULE.as_bytes()]).collect();
+            return Err(format!(
+                "{}{} does not take \"{}\".{} The rules are {}",
+                bstr::BStr::new(name),
+                if name.starts_with(b"--") { "" } else { " in bunfig.toml" },
+                bstr::BStr::new(&unknown.written),
+                did_you_mean("", &known, &unknown.written),
+                bstr::BStr::new(&known.join(&b", "[..])),
+            ));
+        }
+    }
+    Ok(settings)
+}
 
 pub(crate) fn did_you_mean(prefix: &str, known: &[&[u8]], written: &[u8]) -> String {
     let distance = |name: &[u8]| bun_core::strings::edit_distance(written.iter().copied(), name);
@@ -167,10 +216,10 @@ pub(crate) fn did_you_mean(prefix: &str, known: &[&[u8]], written: &[u8]) -> Str
 }
 
 pub(crate) fn reject_unknown_flags(is_build: bool, passed_through: usize) {
-    let (known, of_others, others) = if is_build {
-        (BUILD_FLAGS, RUN_FLAGS, "bun run and bun test")
+    let (known, of_others, others): (&[&[u8]], &[&[u8]], &str) = if is_build {
+        (&BUILD_FLAGS, &RUN_FLAGS, "bun run and bun test")
     } else {
-        (RUN_FLAGS, BUILD_FLAGS, "bun build")
+        (&RUN_FLAGS, &BUILD_FLAGS, "bun build")
     };
     let end_of_options = bun_core::argv().len().saturating_sub(passed_through);
     for (index, arg) in bun_core::argv().iter().enumerate().take(end_of_options).skip(1) {
@@ -198,7 +247,7 @@ pub(crate) fn reject_unknown_flags(is_build: bool, passed_through: usize) {
             pretty_errorln!(
                 "<r><red>error<r>: unknown flag <b>{}<r>.{} The --aot flags available here are {}",
                 bstr::BStr::new(name),
-                did_you_mean("", &known, name),
+                did_you_mean("", known, name),
                 bstr::BStr::new(&list),
             );
         }

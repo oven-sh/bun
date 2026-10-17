@@ -1,6 +1,6 @@
 ---
 title: "Debugging and profiling with --aot"
-description: "Stack traces, crashes, CPU and heap profiles, the inspector and instrumentation in an executable that was compiled ahead of time"
+description: "Stack traces, crashes, CPU and heap profiles, the inspector, instrumentation, and rules that fail the build when code loses its types"
 ---
 
 <Warning>Ahead-of-time compilation is experimental.</Warning>
@@ -217,6 +217,7 @@ Libraries that trace by replacing functions, such as OpenTelemetry's instrumenta
 | What Bun and Node.js provide: `fetch`, `setTimeout`, `console.*`, `process.*`, `Bun.serve`, `fs.readFileSync`, `http.request`, `EventEmitter.prototype.emit` | can be replaced |
 | Classes and exports of JavaScript packages: `pg.Client.prototype.query` | can be replaced |
 | Objects of the language: `Promise.prototype.then`, `JSON.parse`, `Date.now`, `Array.prototype.push` | throws a `TypeError` |
+| The prototypes of `Request`, `Response`, `Headers`, `Blob`, `URL` and `URLSearchParams`: `Response.prototype.json` | throws a `TypeError`. Replace the global with a subclass instead: `globalThis.Response = class extends Response { .. }` |
 | Classes written in TypeScript, in your program or in a [typed version of a package](/bundler/executables#typed-versions-of-packages) | throws a `TypeError`, unless TypeScript code of your program assigns to that method |
 
 To wrap a method of one of your own classes, use a subclass or a `Proxy`, or assign to the method in TypeScript: `Db.prototype.query = traced(Db.prototype.query)`.
@@ -224,6 +225,122 @@ To wrap a method of one of your own classes, use a subclass or a `Proxy`, or ass
 In an executable, as in any bundle, the modules of your program are resolved when you build. `Module._load`, `Module.prototype.require` and `module.register` are not asked for them. They are asked for built-in modules such as `node:os`. A CommonJS module that throws while it loads is not evaluated again: the next `require()` returns what it had exported by then, as in an executable built without `--aot`.
 
 [`bun run --aot` and `bun test --aot`](/bundler/executables#try-your-code-without-building-an-executable) load your modules from their source files, as `bun run` does, so all of these hooks are asked for your own modules too.
+
+## Code that loses its types
+
+`--aot` is fast where the compiler can use your types. Where it cannot, it does not stop. It compiles that part like plain JavaScript, which behaves the same and runs slower. A class can lose its layout because of one line, and nothing in the program's behavior tells you.
+
+The last line of a build, and of `bun check --aot`, says how much of the program is affected:
+
+```txt
+aot: 75.0% of reads typed, 2 of 3 types open, 0 classes without a layout, 0 packages and 0 files untyped (--aot-warn=all lists them)
+```
+
+A read is typed if the compiler knows the type of the value that a property or element access produces.
+
+### Rules
+
+A rule reports one kind of loss, where it happens and why. Each rule is off, a warning, or an error that fails the build:
+
+```bash terminal icon="terminal"
+bun check --aot ./app.ts --aot-warn=all
+bun build --compile --aot ./app.ts --outfile app --aot-deny=untyped-file,lost-layout
+```
+
+| Rule              | Reports                                                                                                                | Default |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------- | ------- |
+| `untyped-file`    | A TypeScript file or package has type errors that do not stop the build, so it is compiled without its types            | warning |
+| `untyped-package` | A dependency is JavaScript, so it is compiled without types. Says how much of the program it is                         | off     |
+| `lost-layout`     | A class has no fixed layout, or leaves declared fields out of it. Its instances or those fields are accessed by name    | off     |
+| `untyped-base`    | A class has no fixed layout because it extends a built-in class, such as `Error`, or a JavaScript class                 | off     |
+| `open-layout`     | A declared type can also hold objects that typed code did not create, so every property access through it checks first | off     |
+| `interpreted`     | `eval`, `new Function` or `node:vm` evaluates source text when the program runs. That code runs in the interpreter      | off     |
+
+`--aot-deny`, `--aot-warn` and `--aot-allow` take a list of rules, or `all`. If two flags name the same rule, the later one counts. An error from a rule is like a type error: nothing is written and the exit code is 1.
+
+Every finding has its reasons under it, each with a position:
+
+```ts app.ts icon="/icons/typescript.svg"
+interface Point {
+  x: number;
+  y: number;
+}
+function fromAnywhere(value: any): Point {
+  return value;
+}
+const made: Point = { x: 1, y: 2 };
+console.log(made.x + fromAnywhere({ x: 3, y: 4 }).y);
+```
+
+```txt
+app.ts(1,11): error TS100022: 'Point' can hold objects that typed code did not create, so every property access through it checks the object first. [open-layout]
+  app.ts(6,10): A value of type 'any' or 'unknown' is assigned to it here.
+```
+
+```ts fiber.ts icon="/icons/typescript.svg"
+class Fiber {
+  declare id: number;
+  declare steps: number;
+  [nameFromConfig()]() {}
+}
+```
+
+```txt
+fiber.ts(1,7): error TS100024: Class 'Fiber' leaves declared fields out of its layout, so every access to them is a lookup by name: id, steps. [lost-layout]
+  fiber.ts(4,4): The name of this member is computed and is not a constant, so it could be the name of any field.
+```
+
+A build reports only what is in the executable. Code that `--define` or a feature flag removes is not reported. `bun check --aot` has no bundler, so it does not load the JavaScript of a package that ships declaration files. `untyped-package`, and `interpreted` inside such a package, are reported by a build only.
+
+### Some files only
+
+Put a pattern after the rule. It has the syntax of `exclude` in `tsconfig.json` and is relative to the working directory:
+
+```bash terminal icon="terminal"
+bun build --compile --aot ./app.ts --outfile app --aot-deny=open-layout:src/server/** --aot-allow=all:node_modules
+```
+
+### In the source
+
+`// @aot-strict` makes every rule an error for the declaration that follows it. Before the first statement of a file, it does so for the whole file. Use it on the types and classes that must stay fast:
+
+```ts
+// @aot-strict
+export class Fiber {
+  // ...
+}
+```
+
+`// @aot-allow` turns rules off for one declaration:
+
+```ts
+// @aot-allow untyped-base
+export class TimeoutError extends Error {}
+```
+
+A comment in the source wins over flags and over `bunfig.toml`.
+
+### bunfig.toml
+
+```toml bunfig.toml icon="settings"
+[aot]
+deny = ["untyped-file", "lost-layout"]
+warn = ["open-layout"]
+
+[[aot.overrides]]
+files = ["src/server/**"]
+deny = ["open-layout", "interpreted"]
+```
+
+`bun build --compile --aot` and `bun check --aot` both read it. Overrides apply in order, after the lists above them. Flags on the command line apply last.
+
+### JSON
+
+`--aot-explain=rules-json` prints one object per finding on stdout:
+
+```json
+{"rule":"open-layout","severity":"deny","code":100022,"file":"app.ts","line":1,"column":11,"message":"'Point' can hold objects that typed code did not create, so every property access through it checks the object first.","because":[{"code":100040,"file":"app.ts","line":6,"column":10,"message":"A value of type 'any' or 'unknown' is assigned to it here."}]}
+```
 
 ## `Function.prototype.toString()`
 

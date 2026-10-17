@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "./supported";
 
@@ -133,22 +134,33 @@ test("under a tsconfig.json that only has references, the referenced project tha
   expect(passed(said)).toEqual(["the application's options"]);
 });
 
-test("global declarations, lib and types of every test file's tsconfig.json are in the program", async () => {
-  for (const first of ["a", "z"]) {
-    using dir = tempDir("tsconfig-governs-each-file", {
-      [`${first}/tsconfig.json`]: config({ lib: ["ES2022"] }),
-      [`${first}/plain.test.ts`]: `test("plain", () => { expect(1).toBe(1); });\n`,
-      "m/tsconfig.json": config({ lib: ["ES2022", "DOM"], types: ["widgets"] }, { include: ["*.ts", "declared/*.d.ts"] }),
-      "m/declared/globals.d.ts": `declare var declaredBeside: number | undefined;\n`,
-      "m/node_modules/@types/widgets/package.json": JSON.stringify({ name: "@types/widgets", version: "1.0.0", types: "index.d.ts" }),
-      "m/node_modules/@types/widgets/index.d.ts": `declare var fromTypes: number | undefined;\n`,
-      "m/uses.test.ts": `test("uses them", () => { expect([typeof declaredBeside, typeof fromTypes, typeof HTMLElement]).toEqual(["undefined", "undefined", "undefined"]); });\n`,
-    });
-    const { said, exitCode } = await run(String(dir), "test", "--aot");
-    expect(errors(said)).toEqual([]);
-    expect(passed(said)).toEqual(["plain", "uses them"]);
-    expect(exitCode).toBe(0);
-  }
+test("the lib of one test file's tsconfig.json does not reach the files of another", async () => {
+  using dir = tempDir("tsconfig-governs-each-file", {
+    "tsconfig.json": config({ lib: ["ES2020"], noImplicitOverride: true }),
+    "src/failure.ts": `export class Failure extends Error {\n  readonly cause: Error | undefined;\n  constructor(cause?: Error) {\n    super("failed");\n    this.cause = cause;\n  }\n}\n`,
+    "main.test.ts": `import { Failure } from "./src/failure";\ntest("main", () => { expect(new Failure().cause).toBeUndefined(); });\n`,
+    "sub/tsconfig.json": config({ lib: ["ES2022"] }),
+    "sub/sub.test.ts": `test("sub", () => { expect(1).toBe(1); });\n`,
+  });
+  const { said, exitCode } = await run(String(dir), "test", "--aot");
+  expect(codes(said)).toEqual([]);
+  expect(passed(said)).toEqual(["main", "sub"]);
+  expect(exitCode).toBe(0);
+});
+
+test("rootDir has no say about the test files of other tsconfig.json files", async () => {
+  using dir = tempDir("tsconfig-governs-each-file", {
+    "tsconfig.json": config({ rootDir: "./src", outDir: "./dist", noEmit: false }, { include: ["./src/**/*.ts"] }),
+    "src/one.ts": `export const one = 1;\n`,
+    "test/tsconfig.json": JSON.stringify({ extends: "../tsconfig.json", compilerOptions: { rootDir: "." }, include: ["."] }),
+    "test/one.test.ts": `// declare global\nimport { one } from "../src/one";\ntest("one", () => { expect(one).toBe(1); });\n`,
+    "fixtures/a/tsconfig.json": config(),
+    "fixtures/a/a.test.ts": `test("a fixture", () => { expect(1).toBe(1); });\n`,
+  });
+  const { said, exitCode } = await run(String(dir), "test", "--aot");
+  expect(codes(said)).toEqual([]);
+  expect(passed(said)).toEqual(["a fixture", "one"]);
+  expect(exitCode).toBe(0);
 });
 
 test("beside a project with strictNullChecks, a file of a project without it that needs the leniency runs untyped", async () => {
@@ -167,4 +179,26 @@ test("beside a project with strictNullChecks, a file of a project without it tha
   expect(errors(alone.said)).toEqual([]);
   expect(alone.said).not.toContain("TS100010");
   expect(passed(alone.said)).toEqual(["lax"]);
+});
+
+test("the sources of a referenced workspace package stand in for its build output", async () => {
+  const built = { composite: true, noEmit: false, outDir: "lib", rootDir: "src" };
+  using dir = tempDir("tsconfig-governs-each-file", {
+    "package.json": JSON.stringify({ name: "workspace", workspaces: ["packages/*"] }),
+    "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "packages/types" }, { path: "packages/app" }] }),
+    "packages/types/package.json": JSON.stringify({ name: "@workspace/types", version: "1.0.0", main: "lib/index.js", types: "lib/index.d.ts" }),
+    "packages/types/tsconfig.json": config(built, { include: ["src"] }),
+    "packages/types/src/index.ts": `export interface Rule {\n  level: number;\n}\n`,
+    "packages/app/package.json": JSON.stringify({ name: "@workspace/app", version: "1.0.0", dependencies: { "@workspace/types": "workspace:*" } }),
+    "packages/app/tsconfig.json": config(built, { include: ["src"], references: [{ path: "../types" }] }),
+    "packages/app/src/app.test.ts": `import type { Rule } from "@workspace/types";\nconst rule: Rule = { level: 1 };\ntest("a rule", () => { expect(rule.level).toBe(1); });\n`,
+  });
+  mkdirSync(join(String(dir), "node_modules", "@workspace"), { recursive: true });
+  symlinkSync(join(String(dir), "packages", "types"), join(String(dir), "node_modules", "@workspace", "types"), "dir");
+  for (const cwd of [String(dir), join(String(dir), "packages", "app")]) {
+    const { said, exitCode } = await run(cwd, "test", "--aot");
+    expect(codes(said)).toEqual([]);
+    expect(passed(said)).toEqual(["a rule"]);
+    expect(exitCode).toBe(0);
+  }
 });

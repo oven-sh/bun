@@ -1157,6 +1157,218 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
+  // An object type that does not fit breaks, and one that is broken in the source stays broken. Prettier 3.9.9 and oxfmt 0.72
+  // give the only parameter of a function a line of its own unless the return type is written to break, so they print
+  //
+  //   m(
+  //     a: string,
+  //   ): {
+  //
+  // the first time and `m(a: string): {` from then on, which is what is printed here.
+  describe("the only parameter of a function, before a return type with an object type in it", () => {
+    const members = ["aaaaaaaaaaaaaaa: number", "bbbbbbbbbbbbbbbb: number", "cccccccccccccccccc: number"];
+    // An object type that does not fit on a line, as it is written and as it is printed.
+    const flat = `{ ${members.join(", ")} }`;
+    const broken = (indent = "", end = ";") => `{\n${members.map(it => `${indent}  ${it}${end}\n`).join("")}${indent}}`;
+    const flavors = [
+      ["Prettier", {}],
+      ["oxfmt", { ".oxfmtrc.json": `{ "printWidth": 80 }` }],
+    ] as const;
+    type Row = [extension: string, text: string, printed: string, flavor?: "Prettier"];
+
+    /** Formats the texts, and what they are printed as once more. oxfmt does not read Flow. */
+    async function printedTwice(flavor: string, config: Record<string, string>, all: Row[]) {
+      const rows = all.filter(row => flavor === "Prettier" || (row[0] !== "js" && row[3] === undefined));
+      const names = rows.map(([extension], index) => `${index}.${extension}`);
+      const texts = Object.fromEntries(rows.map(([, text], index) => [names[index], text]));
+      const first = await format({ ...config, ...texts }, [], { reads: names });
+      const second = await format({ ...config, ...(first.files as Record<string, string>) }, [], { reads: names });
+      const expected = Object.fromEntries(rows.map(([, , printed], index) => [names[index], printed]));
+      return { first: first.files, second: second.files, expected };
+    }
+
+    // The second pass of both tools.
+    const sameLine: Row[] = [
+      [
+        "ts",
+        `class A {\n  m(\n    a: string,\n  ): ${flat} | null {}\n}\n`,
+        `class A {\n  m(a: string): ${broken("  ")} | null {}\n}\n`,
+      ],
+      ["ts", `class A {\n  m(a: string): B<${flat}> {}\n}\n`, `class A {\n  m(a: string): B<${broken("  ")}> {}\n}\n`],
+      [
+        "ts",
+        `abstract class A {\n  abstract m(a: string): B<${flat}>;\n}\n`,
+        `abstract class A {\n  abstract m(a: string): B<${broken("  ")}>;\n}\n`,
+      ],
+      ["ts", `function f(a: string): ${flat} | null {}\n`, `function f(a: string): ${broken()} | null {}\n`],
+      ["ts", `function f(a: string): B<${flat}> {}\n`, `function f(a: string): B<${broken()}> {}\n`],
+      ["ts", `function f<T>(a: string): B<${flat}> {}\n`, `function f<T>(a: string): B<${broken()}> {}\n`],
+      ["ts", `declare function f(a: string): B<${flat}>;\n`, `declare function f(a: string): B<${broken()}>;\n`],
+      [
+        "ts",
+        `const f = function (a: string): B<${flat}> {};\n`,
+        `const f = function (a: string): B<${broken()}> {};\n`,
+      ],
+      ["ts", `f(function (a: string): B<${flat}> {});\n`, `f(function (a: string): B<${broken()}> {});\n`],
+      [
+        "ts",
+        `const o = {\n  m(a: string): B<${flat}> {},\n};\n`,
+        `const o = {\n  m(a: string): B<${broken("  ")}> {},\n};\n`,
+      ],
+      [
+        "ts",
+        `interface I {\n  m(a: string): B<${flat}>;\n}\n`,
+        `interface I {\n  m(a: string): B<${broken("  ")}>;\n}\n`,
+      ],
+      [
+        "ts",
+        `interface I {\n  (a: string): B<${flat}>;\n}\n`,
+        `interface I {\n  (a: string): B<${broken("  ")}>;\n}\n`,
+      ],
+      [
+        "ts",
+        `interface I {\n  new (a: string): B<${flat}>;\n}\n`,
+        `interface I {\n  new (a: string): B<${broken("  ")}>;\n}\n`,
+      ],
+      ["ts", `type F = (a: string) => ${flat} | null;\n`, `type F = (a: string) => ${broken()} | null;\n`],
+      ["ts", `type F = (a: string) => B<${flat}>;\n`, `type F = (a: string) => B<${broken()}>;\n`],
+      ["ts", `type F = new (a: string) => B<${flat}>;\n`, `type F = new (a: string) => B<${broken()}>;\n`],
+      ["ts", `type F = { m(a: string): B<${flat}> };\n`, `type F = {\n  m(a: string): B<${broken("  ")}>;\n};\n`],
+      // Whatever the parameter is.
+      ["ts", `function f(this: A): B<${flat}> {}\n`, `function f(this: A): B<${broken()}> {}\n`],
+      ["ts", `function f(...a: string[]): B<${flat}> {}\n`, `function f(...a: string[]): B<${broken()}> {}\n`],
+      ["ts", `function f({ a, b }: A): B<${flat}> {}\n`, `function f({ a, b }: A): B<${broken()}> {}\n`],
+      ["ts", `function f(a: { b: 1 }): B<${flat}> {}\n`, `function f(a: { b: 1 }): B<${broken()}> {}\n`],
+      // Wherever the object type is.
+      ["ts", `function f(a: string): A & ${flat} {}\n`, `function f(a: string): A & ${broken()} {}\n`],
+      ["ts", `function f(a: string): ${flat}[] {}\n`, `function f(a: string): ${broken()}[] {}\n`],
+      ["ts", `function f(a: string): a is ${flat} {}\n`, `function f(a: string): a is ${broken()} {}\n`],
+      [
+        "ts",
+        `function f(a: string): (b: number) => ${flat} {}\n`,
+        `function f(a: string): (b: number) => ${broken()} {}\n`,
+      ],
+      ["ts", `function f(a: string): B<C, ${flat}> {}\n`, `function f(a: string): B<\n  C,\n  ${broken("  ")}\n> {}\n`],
+      ["ts", `function f(a: string): [C, ${flat}] {}\n`, `function f(a: string): [\n  C,\n  ${broken("  ")},\n] {}\n`],
+      [
+        "ts",
+        `function f(a: string): C | D | ${flat} {}\n`,
+        `function f(a: string):\n  | C\n  | D\n  | ${broken("    ")} {}\n`,
+      ],
+      // The object type that did not fit behind the `)` is broken, though it fits where it is now.
+      [
+        "ts",
+        `function fffffffffffffffffffff(a: string): (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number) => { ccccccccccccc: 1; ddddddddddddd: 2 } {}\n`,
+        `function fffffffffffffffffffff(a: string): (\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,\n) => {\n  ccccccccccccc: 1;\n  ddddddddddddd: 2;\n} {}\n`,
+      ],
+      // A mapped type and the options of an import type stay broken too.
+      [
+        "ts",
+        `function f(a: string): B<{ [Kkkkkkkkkkkkkkkkkkkkkkkkk in Tttttttttttttttttttttt]: Vvvvvvvvvvvvvvvvv }> {}\n`,
+        `function f(a: string): B<{\n  [Kkkkkkkkkkkkkkkkkkkkkkkkk in Tttttttttttttttttttttt]: Vvvvvvvvvvvvvvvvv;\n}> {}\n`,
+      ],
+      [
+        "ts",
+        `function f(a: string): B<typeof import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", { with: { type: "json" } })> {}\n`,
+        `function f(a: string): B<\n  typeof import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {\n    with: { type: "json" },\n  })\n> {}\n`,
+        "Prettier",
+      ],
+      [
+        "js",
+        `// @flow\nclass A {\n  m(a: string): ${flat} | null {}\n}\n`,
+        `// @flow\nclass A {\n  m(a: string): ${broken("  ", ",")} | null {}\n}\n`,
+      ],
+      [
+        "js",
+        `// @flow\nfunction f(a: string): B<${flat}> {}\n`,
+        `// @flow\nfunction f(a: string): B<${broken("", ",")}> {}\n`,
+      ],
+      [
+        "js",
+        `// @flow\nfunction f(a: string): ?${flat} {}\n`,
+        `// @flow\nfunction f(a: string): ?${broken("", ",")} {}\n`,
+      ],
+      [
+        "js",
+        `// @flow\nfunction f(a: string): B<{| ${members.join(", ")} |}> {}\n`,
+        `// @flow\nfunction f(a: string): B<{|${broken("", ",").slice(1, -1)}|}> {}\n`,
+      ],
+      [
+        "js",
+        `// @flow\ntype F = (a: string) => B<${flat}>;\n`,
+        `// @flow\ntype F = (a: string) => B<${broken("", ",")}>;\n`,
+      ],
+      [
+        "js",
+        `// @flow\ndeclare function f(a: string): B<${flat}>;\n`,
+        `// @flow\ndeclare function f(a: string): B<${broken("", ",")}>;\n`,
+      ],
+      [
+        "js",
+        `// @flow\ndeclare class A {\n  m(a: string): B<${flat}>;\n}\n`,
+        `// @flow\ndeclare class A {\n  m(a: string): B<${broken("  ", ",")}>;\n}\n`,
+      ],
+    ];
+    test.each(flavors)("is on the line of the function if the object type breaks: %s", async (flavor, config) => {
+      const { first, second, expected } = await printedTwice(flavor, config, sameLine);
+      expect(first).toEqual(expected);
+      expect(second).toEqual(expected);
+    });
+
+    // What both tools print, every time.
+    const asTheToolsPrint: Row[] = [
+      // The object type fits once the parameter has a line of its own.
+      [
+        "ts",
+        `function ffffffffffffffffffffffffffffff(aaaaaaaaaaaaaaaaaaaaaaaaaaaa: string): Promise<{ a: number; b: string }> {}\n`,
+        `function ffffffffffffffffffffffffffffff(\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,\n): Promise<{ a: number; b: string }> {}\n`,
+      ],
+      // The return type breaks, and no object type in it does.
+      [
+        "ts",
+        `function f(a: string): Bbbbbbbbbbbbbbbbbbbb<Array<{ id: string; name: string; other: string }>, C<{ message: string }>> {}\n`,
+        `function f(\n  a: string,\n): Bbbbbbbbbbbbbbbbbbbb<\n  Array<{ id: string; name: string; other: string }>,\n  C<{ message: string }>\n> {}\n`,
+      ],
+      // These parameters break with the return type, however that is written.
+      [
+        "ts",
+        `function f(a: string, b: number): B<${flat}> {}\n`,
+        `function f(\n  a: string,\n  b: number,\n): B<${broken()}> {}\n`,
+      ],
+      ["ts", `function f(): B<${flat}> {}\n`, `function f(): B<${broken()}> {}\n`],
+      [
+        "ts",
+        `function f<T extends A>(a: string): B<${flat}> {}\n`,
+        `function f<T extends A>(\n  a: string,\n): B<${broken()}> {}\n`,
+      ],
+      ["ts", `const f = (a: string): B<${flat}> => null;\n`, `const f = (\n  a: string,\n): B<${broken()}> => null;\n`],
+      [
+        "ts",
+        `const f = (a: string): ${flat} | null => null;\n`,
+        `const f = (\n  a: string,\n): ${broken()} | null => null;\n`,
+      ],
+      [
+        "js",
+        `// @flow\nconst f = (a: string): B<${flat}> => null;\n`,
+        `// @flow\nconst f = (\n  a: string,\n): B<${broken("", ",")}> => null;\n`,
+      ],
+    ];
+    test.each(flavors)("has a line of its own otherwise: %s", async (flavor, config) => {
+      const { first, second, expected } = await printedTwice(flavor, config, asTheToolsPrint);
+      expect(first).toEqual(expected);
+      expect(second).toEqual(expected);
+    });
+
+    test("function types in each other take time in proportion to their number", async () => {
+      const times = (text: string, count: number) => Buffer.alloc(text.length * Math.floor(count), text).toString();
+      const nested = `type F = ${times("(a: A) => ", isDebug || isASAN ? 1_000 : 4_000)}${flat};\n`;
+      const ordinary = "type F = (a: A) => B;\n";
+      const run = (text: string) => format({ "a.ts": text }, ["--check"]);
+      const [odd, plain] = [await run(nested), await run(times(ordinary, nested.length / ordinary.length))];
+      expect(slowdown(odd, plain)).toBeLessThan(8);
+    });
+  });
+
   test("a comment in what a `prettier-ignore` comment leads is copied with it, once", async () => {
     const text = "x = <a {\n  // prettier-ignore\n  ...b\n  // c1\n  .c} />;\n";
     const result = await format({ "a.jsx": text }, [], { reads: ["a.jsx"] });
@@ -3415,6 +3627,66 @@ declare module "m" {
 declare export function h(): void;
 `;
     const result = await format({ "a.js": code }, ["--check", "a.js"]);
+    expect(result.stderr).not.toContain("a.js");
+    expect(result.exitCode).toBe(0);
+  });
+
+  // Prettier 3.9.9 does this with `--parser flow`. Babel's tree does not say which of the two is written, so with `babel`, which
+  // reads a `.js` file, and with `babel-flow` it prints `T: A` for `T extends A`.
+  test.each([[[]], [["--parser", "babel"]], [["--parser", "babel-flow"]], [["--parser", "flow"]]])(
+    "Flow: the bound of a type parameter keeps its `extends` or its `:` with %j",
+    async flags => {
+      const code = `// @flow
+type Box<T extends string> = { value: T };
+function id<T extends number>(x: T): T {
+  return x;
+}
+type A<T: string, +U extends T = T, -V: T = T> = T;
+type B<in T extends string, out U: string> = T;
+type C<T extends (A extends B ? C : D)> = T;
+type D<T: A extends B ? C : D> = T;
+type E<Props extends { ... }> = { a: Props };
+function f<const T extends number>(x: T): T {
+  return x;
+}
+function g<const T: number>(x: T): T {
+  return x;
+}
+const h = <T extends number>(x: T): T => x;
+class I<+T extends string = "a", U: React.ComponentType<T> = J> extends K<T> {
+  m<V extends T>(v: V): V {
+    return v;
+  }
+}
+opaque type L<T extends string>: T = T;
+export opaque type M<T: string>: T = T;
+declare type N<T extends string> = T;
+declare opaque type O<T extends string>: T;
+declare function p<T extends string>(x: T): T;
+declare class Q<T extends string> {
+  m<U extends T>(u: U): U;
+}
+declare export function r<T extends string>(x: T): T;
+interface S<T extends string> {
+  m<U: T>(u: U): U;
+}
+type U = <T extends string>(x: T) => T;
+type V = { m<T extends string>(x: T): T, n<T: string>(x: T): T };
+`;
+      const files = { "a.js": code.replace("<T extends string>", "<T   extends\n string>").replace("<T: ", "<T  :") };
+      const result = await format(files, [...flags, "a.js"], { reads: ["a.js"] });
+      expect(result.files).toEqual({ "a.js": code });
+      expect(result.exitCode).toBe(0);
+    },
+  );
+
+  test("Flow: a type guard as the return type of an arrow function gets no parentheses", async () => {
+    // Prettier 3.9.9 prints `(x: mixed): (x is { a: () => void }) => true`, which its `flow` parser does not read.
+    const code = `// @flow
+const a = (x: mixed): x is { a: () => void } => true;
+const b = (x: mixed): implies x is { a: () => void } => true;
+`;
+    const result = await format({ "a.js": code }, ["--parser", "flow", "--check", "a.js"]);
     expect(result.stderr).not.toContain("a.js");
     expect(result.exitCode).toBe(0);
   });
@@ -5724,6 +5996,176 @@ describe.concurrent("what an ignore file has is not written, however it is come 
   });
 });
 
+// Prettier 3.9.9 does not read it. What is left out is what `git check-ignore` has.
+describe.concurrent("info/exclude of the repository that the working directory is in", () => {
+  const names = ["a.js", "gen/b.js", "kept.js", "sub/a.js", "sub/anchored.js", "sub/named.js"];
+  const tree = Object.fromEntries(names.map(name => [name, ugly]));
+  const excludes = "# a comment\n/a.js\nnamed.js\ngen/\n/sub/anchored.js\n";
+  const left = ["kept.js", "sub/a.js"];
+  /** `files`, in the directory `directory`. */
+  const inside = (directory: string, files: Record<string, string>) =>
+    Object.fromEntries(Object.entries(files).map(([name, text]) => [`${directory}/${name}`, text]));
+
+  test.each([
+    ["no configuration", {}],
+    [".prettierrc", { ".prettierrc": "{}\n" }],
+  ])("its patterns start at the root of the working tree, with %s", async (_, configuration) => {
+    const files = { ...tree, ...configuration, ".git/info/exclude": excludes };
+    expect(
+      await Promise.all([
+        different(files, []),
+        different(files, [], { cwd: "sub" }),
+        different(files, ["a.js", "sub/named.js", "gen", "gen/b.js", "sub/a.js"]),
+        different(files, ["**/*.js"]),
+        // Like .gitignore, it is not read if the files to read are named.
+        different({ ...files, "mine": "kept.js\n" }, ["--ignore-path", "mine"]),
+        different({ ...tree, ...configuration, ".git/HEAD": "ref: refs/heads/main\n" }, []),
+      ]),
+    ).toEqual([left, ["a.js"], ["sub/a.js"], left, names.filter(it => it !== "kept.js"), names]);
+  });
+
+  test("one that is there and can't be read is an error, like a .gitignore", async () => {
+    const results = await Promise.all(
+      [".git/info/exclude", ".gitignore"].map(name => format({ [`${name}/a`]: "", "a.js": ugly }, ["--check"])),
+    );
+    expect(results.map(it => [it.stderr.split(":")[1], it.exitCode])).toEqual([
+      [" Unable to read '.git/info/exclude'", 2],
+      [" Unable to read '.gitignore'", 2],
+    ]);
+  });
+
+  test("--check succeeds if every other file is formatted", async () => {
+    const files = { ".git/info/exclude": "/ugly.ts\n", "ugly.ts": "const   a=1\n", "ok.ts": "const a = 1;\n" };
+    const results = await Promise.all([
+      format(files, ["--check"]),
+      format(files, ["--check", "--ignore-path=.git/info/exclude"]),
+    ]);
+    expect(results.map(it => it.exitCode)).toEqual([0, 0]);
+  });
+
+  test("standard input with the name of a file that it has is printed as it is", async () => {
+    const files = { ".git/info/exclude": "/a.js\n" };
+    const results = await Promise.all(
+      ["a.js", "b.js"].map(name => format(files, ["--stdin-filepath", name], { stdin: ugly })),
+    );
+    expect(results.map(it => it.raw)).toEqual([ugly, formatted]);
+  });
+
+  test("what .gitignore says about a file comes first", async () => {
+    const files = { "a.js": ugly, "b.js": ugly, "c.js": ugly, "dir/d.js": ugly };
+    expect(
+      await Promise.all([
+        different({ ...files, ".git/info/exclude": "a.js\nb.js\n", ".gitignore": "!a.js\n" }, []),
+        different({ ...files, ".git/info/exclude": "!a.js\n", ".gitignore": "a.js\n" }, []),
+        different({ ...files, ".git/info/exclude": "*.js\n!a.js\n" }, []),
+        // Nothing takes a file out of a directory that is ignored.
+        different({ ...files, ".git/info/exclude": "dir/\n", ".gitignore": "!dir/d.js\n" }, []),
+        // It is not of Git.
+        different({ ...files, ".git/info/exclude": "!a.js\n", ".prettierignore": "a.js\n" }, []),
+      ]),
+    ).toEqual([
+      ["a.js", "c.js", "dir/d.js"],
+      ["b.js", "c.js", "dir/d.js"],
+      ["a.js"],
+      ["a.js", "b.js", "c.js"],
+      ["b.js", "c.js", "dir/d.js"],
+    ]);
+  });
+
+  // `git worktree add` writes these, the first with an absolute path unless it is run `--relative-paths`.
+  const worktree = {
+    ...inside("wt", tree),
+    "wt/.git": "gitdir: ../main/.git/worktrees/wt\n",
+    "main/.git/worktrees/wt/commondir": "../..\n",
+    "main/.git/info/exclude": excludes,
+  };
+
+  test("in a working tree of `git worktree add`, it is that of the repository", async () => {
+    const absolute = (dir: string) =>
+      writeFileSync(join(dir, "wt", ".git"), `gitdir: ${join(dir, "main", ".git", "worktrees", "wt")}\n`);
+    expect(
+      await Promise.all([
+        different(worktree, [], { cwd: "wt" }),
+        different(worktree, [], { cwd: "wt/sub" }),
+        different(worktree, [], { cwd: "wt", before: absolute }),
+      ]),
+    ).toEqual([left, ["a.js"], left]);
+  });
+
+  test("in a submodule, it is that of the submodule", async () => {
+    const files = {
+      ...inside("vendor/lib", tree),
+      ".git/info/exclude": "kept.js\n",
+      ".git/modules/vendor/lib/info/exclude": excludes,
+      "vendor/lib/.git": "gitdir: ../../.git/modules/vendor/lib\n",
+    };
+    expect(
+      await Promise.all([different(files, [], { cwd: "vendor/lib" }), different(files, [], { cwd: "vendor/lib/sub" })]),
+    ).toEqual([left, ["a.js"]]);
+  });
+
+  test("in a repository that is in another one, it is that of the inner one", async () => {
+    const files = {
+      ...inside("inner", tree),
+      ".git/info/exclude": "kept.js\n",
+      "inner/.git/info/exclude": excludes,
+    };
+    expect(await different(files, [], { cwd: "inner/sub" })).toEqual(["a.js"]);
+  });
+
+  test("it says nothing about a file that is not in the working tree", async () => {
+    const files = { "repo/.git/info/exclude": "*.js\n.*\n", "repo/a.js": ugly, "other/b.js": ugly };
+    expect(
+      await Promise.all([
+        different(files, [".", "../other"], { cwd: "repo" }),
+        different(files, [".", "../other/b.js"], { cwd: "repo" }),
+        different(files, ["--ignore-path", ".git/info/exclude", ".", "../other"], { cwd: "repo" }),
+      ]),
+    ).toEqual([["../other/b.js"], ["../other/b.js"], ["../other/b.js"]]);
+  });
+
+  describe("--ignore-path names it", () => {
+    test.each([
+      ["no configuration", {}],
+      [".prettierrc", { ".prettierrc": "{}\n" }],
+      [".oxfmtrc.json", { ".oxfmtrc.json": "{}\n" }],
+    ])("its patterns start at the root of the working tree, with %s", async (_, configuration) => {
+      const files = { ...tree, ...configuration, ".git/info/exclude": excludes };
+      expect(
+        await Promise.all([
+          different(files, ["--ignore-path", ".git/info/exclude"]),
+          different(files, ["--ignore-path", "../.git/info/exclude"], { cwd: "sub" }),
+          different(files, ["--ignore-path", ".git/info/exclude", "a.js", "sub/named.js", "sub/a.js"]),
+          // The patterns of any other file start where the file is.
+          different({ ...files, "sub/info/exclude": "/a.js\n", "sub/info/a.js": ugly }, [
+            "--ignore-path",
+            "sub/info/exclude",
+            ...names,
+            "sub/info/a.js",
+          ]),
+        ]),
+      ).toEqual([left, ["a.js"], ["sub/a.js"], names]);
+    });
+
+    test("from above the repository", async () => {
+      const files = { ...inside("repo", tree), "repo/.git/info/exclude": excludes, "a.js": ugly };
+      expect(await different(files, ["--ignore-path", "repo/.git/info/exclude"])).toEqual([
+        "a.js",
+        ...left.map(it => `repo/${it}`),
+      ]);
+    });
+
+    test("from another working tree of the repository", async () => {
+      expect(
+        await Promise.all([
+          different(worktree, ["--ignore-path", "../main/.git/info/exclude"], { cwd: "wt" }),
+          different(worktree, ["--ignore-path", "../../main/.git/info/exclude"], { cwd: "wt/sub" }),
+        ]),
+      ).toEqual([left, ["a.js"]]);
+    });
+  });
+});
+
 describe.concurrent("how a path is written", () => {
   test("an absolute pattern", async () => {
     using dir = tempDir("bun-format", {
@@ -7383,6 +7825,7 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
     ["timing = true", "--timing"],
     ["color = true", "--color"],
     [`cwd = "sub"`, "--cwd"],
+    ["script = false", "--no-script"],
   ])("%s is refused, and nothing is written", async (line, flag) => {
     const key = line.split(" ")[0];
     const result = await run({ "bunfig.toml": `[fmt]\n${line}\n`, "a.js": ugly }, ["a.js"]);

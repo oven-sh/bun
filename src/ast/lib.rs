@@ -356,11 +356,6 @@ impl Ref {
         // User-bit lane is not part of identity — see type-level doc.
         self.as_u64() == other.as_u64()
     }
-    /// deprecated alias
-    #[inline]
-    pub const fn is_null(self) -> bool {
-        self.is_empty()
-    }
     /// `Ref::NONE` → `None`, otherwise `Some(self)`. For sites that previously
     /// stored `Option<Ref>` and want option combinators on the sentinel form.
     #[inline]

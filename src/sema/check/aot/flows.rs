@@ -3937,6 +3937,7 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         let ty = self.reduced(ty);
+        let ty = self.erase_cloned_type_params(ty);
         if !(self.may_hold_objects(ty) || matches!(self.data(ty), TypeData::Fns { .. })) || !seen.insert(ty) {
             return;
         }

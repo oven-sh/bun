@@ -17,12 +17,13 @@ mod verify;
 mod webassembly;
 
 use build::Problem;
+pub use bun_sema::aot_rules as rules;
 use bun_sema::check::{Checker, Program as Checked};
 use bun_sema::hir::{FileKind, StmtKind};
 use bun_sema::program::FileId;
 use bun_sema::util::{InParallel, for_each_mut};
 use fragment::Fragments;
-pub use link::Explain;
+pub use link::{Explain, Typedness};
 use link::{OutsideProgramReason, Errors, Linked};
 use bun_threading::RwLock;
 
@@ -37,6 +38,7 @@ pub struct Translated {
     pub skipped_builtin_modules: Vec<(u32, String)>,
     pub skipped_builtin_functions: Vec<(u32, String)>,
     pub times: link::Times,
+    pub typedness: Typedness,
     pub tokens: Option<Box<[u8]>>,
 }
 
@@ -44,6 +46,7 @@ pub struct EngineProgram {
     pub written: Result<Box<[u8]>, Vec<String>>,
     pub kept_errors: Vec<bool>,
     pub explained: Vec<String>,
+    pub typedness: Typedness,
     pub tokens: Option<Box<[u8]>>,
 }
 
@@ -200,6 +203,7 @@ impl Constants {
 pub struct Translation<'a> {
     constants: &'a Constants,
     explain: Explain,
+    rules: rules::Settings,
     begun: RwLock<Option<StartedTranslation<'a>>>,
 }
 
@@ -212,19 +216,34 @@ struct StartedTranslation<'a> {
 
 impl<'a> Translation<'a> {
     pub fn new(constants: &'a Constants) -> Translation<'a> {
-        Translation { constants, explain: Explain::default(), begun: RwLock::new(None) }
+        Translation { constants, explain: Explain::default(), rules: rules::Settings::default(), begun: RwLock::new(None) }
     }
 
     pub fn explaining(self, explain: Explain) -> Translation<'a> {
         Translation { explain, ..self }
     }
 
+    pub fn enforcing(self, rules: rules::Settings) -> Translation<'a> {
+        Translation { rules, ..self }
+    }
+
     pub fn begin(&self, program: &Checked<'_>, entry_points: &[Vec<FileId>], in_parallel: InParallel<'_>) {
+        program.rule_scopes.get_or_init(|| rules::Scopes::new(&self.rules, program.files, &self.constants.root));
         let mut partially_parsed = program.partially_parsed_files();
         partially_parsed.retain(|&file| program.files.hir(file).kind != FileKind::Declaration);
         if let Some(resolved) = self.constants.resolved.as_ref().filter(|_| !partially_parsed.is_empty()) {
             let files_in_bundle: rustc_hash::FxHashSet<FileId> = resolved.targets().filter_map(|path| program.files.by_path.get(path)).chain(entry_points.iter().flatten().copied()).collect();
             partially_parsed.retain(|file| files_in_bundle.contains(file));
+        }
+        if self.constants.has_test_globals && !partially_parsed.is_empty() {
+            let mut is_reached = vec![false; program.files.modules.len()];
+            let mut left: Vec<FileId> = entry_points.iter().flatten().copied().collect();
+            while let Some(file) = left.pop() {
+                if !std::mem::replace(&mut is_reached[file.idx()], true) {
+                    left.extend_from_slice(program.files.module(file).edges);
+                }
+            }
+            partially_parsed.retain(|file| is_reached[file.idx()]);
         }
         let translating = partially_parsed.is_empty().then(|| (build::Shared::new(program, entry_points, self.constants, in_parallel), Fragments::new(program.files.modules.len())));
         let maximum = usize::from(u16::MAX);
@@ -380,13 +399,17 @@ impl<'a> Translation<'a> {
         let problems = linked.problems.iter().map(shown).collect();
         let skipped_builtin_modules = linked.skipped_builtin_modules.iter().map(|(id, problem)| (*id, shown(problem))).collect();
         let skipped_builtin_functions = linked.skipped_builtin_functions.iter().map(|(id, problem)| (*id, shown(problem))).collect();
-        let always_fails = linked.found.iter().any(|found| !matches!(found.code, 100019 | 100020));
+        let is_error = |found: &bun_sema::check::CompilerDiagnostic| match rules::Rule::of_code(found.code) {
+            Some(rule) => program.rule_scopes.get().is_some_and(|scopes| scopes.severity(rule, found.file, found.start) == rules::Severity::Deny),
+            None => !matches!(found.code, 100019 | 100020),
+        };
+        let always_fails = linked.found.iter().any(is_error);
         program.compiler_diagnostics.lock().extend(linked.found);
-        (Translated { program: linked.program, problems, members: linked.members, explained: linked.explained, kept_errors: linked.errors.iter().map(Option::is_none).collect(), always_fails, error_dismissal_reasons, skipped_builtin_modules, skipped_builtin_functions, times: linked.times, tokens: None }, name_table)
+        (Translated { program: linked.program, problems, members: linked.members, explained: linked.explained, kept_errors: linked.errors.iter().map(Option::is_none).collect(), always_fails, error_dismissal_reasons, skipped_builtin_modules, skipped_builtin_functions, times: linked.times, typedness: linked.typedness, tokens: None }, name_table)
     }
 
     pub fn finish_for_engine(&self, program: &Checked<'_>, in_parallel: InParallel<'_>, errors: &[(FileId, u32)], on_written: &dyn Fn(&[u8])) -> EngineProgram {
-        let (Translated { program: mut linked, problems, kept_errors, always_fails, explained, .. }, name_table) = self.finish_before_renaming(program, in_parallel, errors);
+        let (Translated { program: mut linked, problems, kept_errors, always_fails, explained, typedness, .. }, name_table) = self.finish_before_renaming(program, in_parallel, errors);
         let written = if kept_errors.contains(&true) || always_fails {
             Err(Vec::new())
         } else if !problems.is_empty() {
@@ -398,7 +421,7 @@ impl<'a> Translation<'a> {
         };
         let tokens = name_table.map(|name_table| names::as_json(&name_table).into_boxed_slice());
         release(linked, in_parallel);
-        EngineProgram { written, kept_errors, explained, tokens }
+        EngineProgram { written, kept_errors, explained, typedness, tokens }
     }
 }
 

@@ -243,22 +243,124 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     },
   );
 
-  test("without the package it is an error, and the files with classes are left as they are", async () => {
-    const files = { ".oxfmtrc.json": '{ "sortTailwindcss": true }', "a.jsx": `${input}a  ;\n`, "b.js": "b  ;\n" };
-    const result = await format(files, ["a.jsx", "b.js"]);
-    expect(result.stderr).toContain("error: sortTailwindcss: the tailwindcss package was not found from ");
-    expect(result.stderr).toContain("  Run bun add -d tailwindcss\n");
+  // oxfmt 0.72 sorts them in the order of the Tailwind CSS that it brings along.
+  test("without the package the classes stay as they are, the rest is formatted, and nothing is said", async () => {
+    using dir = tempDir("bun-format-tailwind", {
+      "package.json": "{}",
+      ".oxfmtrc.json": '{ "sortTailwindcss": {} }',
+      "card.tsx": 'export const Card = ( ) => <div className="p-4 flex">hi</div>\n',
+      "plain.tsx": 'export const Plain = ( ) => <div className="card">hi</div>\n',
+      "done.tsx": 'export const Done = () => <div className="p-4 flex">hi</div>;\n',
+    });
+    const names = ["card.tsx", "plain.tsx", "done.tsx"];
+    const list = ["--list-different", "--log-level=log", ...names];
+    expect(await formatIn(String(dir), [], list)).toEqual({
+      stdout: "card.tsx\nplain.tsx\n",
+      stderr: "",
+      exitCode: 1,
+      files: [],
+    });
+    expect(await formatIn(String(dir), names, names)).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      files: [
+        'export const Card = () => <div className="p-4 flex">hi</div>;\n',
+        'export const Plain = () => <div className="card">hi</div>;\n',
+        'export const Done = () => <div className="p-4 flex">hi</div>;\n',
+      ],
+    });
+    // What has been written is what --check wants.
+    expect(await formatIn(String(dir), [], list)).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      files: [],
+    });
+    const checked = await formatIn(String(dir), [], ["--check", "--log-level=log", ...names]);
+    expect(checked.stdout).toContain("All matched files use the correct format.\n");
+    expect(checked).toMatchObject({ stderr: "", exitCode: 0 });
+  });
+
+  test("without the package: files in many directories and languages, with any flag", async () => {
+    const files = {
+      ".oxfmtrc.json": '{ "sortTailwindcss": { "stylesheet": "./app.css", "functions": ["cn"] } }',
+      ...Object.fromEntries(["z", "c", "x", "b", "y"].map(name => [`${name}/a.jsx`, `${input}a  ;\n`])),
+      "a.html": '<a   class="p-4 flex m-2">x</a>\n',
+      "a.vue": '<template>\n  <a   class="p-4 flex m-2">x</a>\n</template>\n',
+      "a.css": "a{\n  @apply p-4 flex m-2;\n}\n",
+      "a.js": "cn('p-4 flex m-2')\n",
+    };
+    const names = ["z/a.jsx", "b/a.jsx", "a.html", "a.vue", "a.css", "a.js"];
+    const expected = {
+      stderr: "",
+      files: [
+        `${input}a;\n`,
+        `${input}a;\n`,
+        '<a class="p-4 flex m-2">x</a>\n',
+        '<template>\n  <a class="p-4 flex m-2">x</a>\n</template>\n',
+        "a {\n  @apply p-4 flex m-2;\n}\n",
+        'cn("p-4 flex m-2");\n',
+      ],
+      exitCode: 0,
+    };
+    expect(await format(files, names)).toMatchObject(expected);
+    expect(await format(files, names, ["--allow-unsupported"])).toMatchObject(expected);
+    expect(await format(files, names, ["--threads=1"])).toMatchObject(expected);
+    // As without the option.
+    expect(await format({ ...files, ".oxfmtrc.json": "{}" }, names)).toMatchObject(expected);
+  });
+
+  test("a workspace without the package beside one that has it", async () => {
+    const inWeb = Object.entries(version4).map(([name, text]) => [`web/${name}`, text]);
+    const files = {
+      ".oxfmtrc.json": '{ "sortTailwindcss": true }',
+      ...Object.fromEntries(inWeb),
+      "web/a.jsx": `${input}a  ;\n`,
+      "api/a.jsx": `${input}a  ;\n`,
+    };
+    expect(await format(files, ["web/a.jsx", "api/a.jsx"])).toMatchObject({
+      stderr: "",
+      files: [`${sorted}a;\n`, `${input}a;\n`],
+      exitCode: 0,
+    });
+  });
+
+  // oxfmt 0.72 exits with 0. For a package that cannot be loaded it asks the Tailwind CSS that it brings along. For a file that
+  // is not there it leaves the classes as they are, and says so only of `config`.
+  test.each<[string, Record<string, string>, RegExp]>([
+    [
+      "the package cannot be loaded",
+      { ...version4, "node_modules/tailwindcss/index.js": 'throw new Error("It is broken.");\n' },
+      /^error: sortTailwindcss: \S+node_modules\/tailwindcss: It is broken\.$/m,
+    ],
+    [
+      "`stylesheet` names no file",
+      { ...version4, ".oxfmtrc.json": '{ "sortTailwindcss": { "stylesheet": "./none.css" } }' },
+      /^error: sortTailwindcss: \S+\/none\.css: ENOENT/m,
+    ],
+    [
+      "`config` names no file",
+      { ...version3, ".oxfmtrc.json": '{ "sortTailwindcss": { "config": "./none.js" } }' },
+      /^error: sortTailwindcss: \S+\/none\.js: Cannot find module/m,
+    ],
+    [
+      "`config` is set and version 4 is installed",
+      { ...version4, ".oxfmtrc.json": '{ "sortTailwindcss": { "config": "./a.js" } }', "a.js": "" },
+      /^error: sortTailwindcss: \S+\/a\.js: `config` only works with Tailwind CSS 3, and \S+ is another version$/m,
+    ],
+  ])("with the package it is still an error if %s", async (_, files, said) => {
+    const all = { ".oxfmtrc.json": '{ "sortTailwindcss": true }', ...files, "a.jsx": `${input}a  ;\n` };
+    const result = await format(all, ["a.jsx"]);
+    expect(result.stderr).toMatch(said);
     expect(result.stderr).toContain(`error: a.jsx: ${unknown} It was not formatted.\n`);
-    expect(result.files).toEqual([`${input}a  ;\n`, "b;\n"]);
-    expect(result.exitCode).toBe(2);
-    // The first directory in the order of the names, not the one whose file has come first.
-    const many = Object.fromEntries(["z", "c", "x", "b", "y"].map(name => [`${name}/a.jsx`, input]));
-    const inMany = await format({ ".oxfmtrc.json": files[".oxfmtrc.json"], ...many }, []);
-    expect(inMany.stderr).toMatch(/was not found from \S*[\\/]b\n/);
-    const allowed = await format(files, ["a.jsx", "b.js"], ["--allow-unsupported"]);
-    expect(allowed.stderr).toContain("warn: sortTailwindcss: the tailwindcss package was not found from ");
-    expect(allowed.files).toEqual([`${input}a;\n`, "b;\n"]);
-    expect(allowed.exitCode).toBe(0);
+    expect(result).toMatchObject({ files: [`${input}a  ;\n`], exitCode: 2 });
+  });
+
+  test("classes that Tailwind does not know come first, in the order in which they are written", async () => {
+    const files = { ...version4, ".oxfmtrc.json": '{ "sortTailwindcss": true }' };
+    const result = await format({ ...files, "a.jsx": '<a className="p-4 card flex big" />;\n' }, ["a.jsx"]);
+    expect(result).toMatchObject({ stderr: "", files: ['<a className="card big flex p-4" />;\n'], exitCode: 0 });
   });
 
   // oxfmt 0.72 does not read such a file. The order is the one that it has for the same text in UTF-8.
@@ -365,15 +467,22 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
   });
 
   // What an editor runs.
-  test("without the package, a text from stdin: an error, and with --allow-unsupported a warning, as for a file", async () => {
+  test("without the package, a text from stdin is formatted but for its classes, as a file is", async () => {
     using dir = tempDir("bun-format-tailwind", { ".oxfmtrc.json": '{ "sortTailwindcss": true }' });
     const from = ["--stdin-filepath", "a.jsx"];
-    const refused = await formatIn(String(dir), [], from, `${input}a  ;\n`);
-    expect(refused.stderr).toContain("error: sortTailwindcss: the tailwindcss package was not found from ");
-    expect(refused).toMatchObject({ stdout: "", exitCode: 2 });
-    const allowed = await formatIn(String(dir), [], ["--allow-unsupported", ...from], `${input}a  ;\n`);
-    expect(allowed.stderr).toContain("warn: sortTailwindcss: the tailwindcss package was not found from ");
-    expect(allowed).toMatchObject({ stdout: `${input}a;\n`, exitCode: 0 });
+    expect(await formatIn(String(dir), [], from, `${input}a  ;\n`)).toMatchObject({
+      stdout: `${input}a;\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+    // oxfmt has no --check for it.
+    using plain = tempDir("bun-format-tailwind", {});
+    const check = ["--sort-tailwindcss", "--check", ...from];
+    expect(await formatIn(String(plain), [], check, `${input}a;\n`)).toMatchObject({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("every run that comes across classes asks Tailwind, once, and leaves nothing behind", async () => {
@@ -902,8 +1011,16 @@ export async function createSorter({ configPath, stylesheetPath }) {
         expect(result).toMatchObject({ stderr: "", files: [expected.replace('"', '"x x ')], exitCode: 0 });
       });
 
+      test.each([
+        [config({})],
+        [config({ tailwindStylesheet: "a.css" })],
+        [config({ tailwindPackageName: "@acme/tw" })],
+      ])("without it and without the package, classes stay as they are: %#", async files => {
+        const result = await format({ ...files, "a.jsx": `${input}a  ;\n` }, ["a.jsx"]);
+        expect(result).toMatchObject({ stderr: "", files: [`${input}a;\n`], exitCode: 0 });
+      });
+
       test.each<[Record<string, string>, string[]]>([
-        [config({}), ["the tailwindcss package was not found from ", "  Run bun add -d tailwindcss"]],
         [
           { ...version4, ...config({ tailwindConfig: "a.js" }), "a.js": flipped },
           [

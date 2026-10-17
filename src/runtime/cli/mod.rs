@@ -1416,9 +1416,9 @@ pub(crate) mod command {
     #[inline(never)]
     fn exec_check(log: &mut bun_ast::Log) -> CmdResult {
         // CheckCommand parses its own argv.
-        init(Tag::CheckCommand, log)?;
+        let ctx = init(Tag::CheckCommand, log)?;
         let argv = argv_zslice();
-        super::check_command::CheckCommand::exec(after_command(&argv, b"check"))
+        super::check_command::CheckCommand::exec(ctx, after_command(&argv, b"check"))
     }
 
     /// What follows `command`, which stands after the flags of `bun` and those of `BUN_OPTIONS`.
@@ -1911,7 +1911,7 @@ To create a project with the official Next.js scaffolding tool, run
         use crate::cli::script_or_command::{Runs, runs};
         if runs(command.as_bytes()) == Runs::Script {
             pretty!(
-                "\n<blue>note<r><d>:<r> package.json has a \"{}\" script, so <b>bun {}<r> runs that script\n  Change the script to <b>\"bun {}\"<r> to use the built-in command\n",
+                "\n<blue>note<r><d>:<r> package.json has a \"{}\" script, so <b>bun {}<r> runs that script\n  Change the script to <b>\"bun {}\"<r> to use the built-in command, or pass <b>--no-script<r>\n",
                 command,
                 command,
                 command,

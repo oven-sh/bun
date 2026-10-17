@@ -10,7 +10,10 @@ use crate::program::{FileId, Sym};
 use crate::types::{Origin, PropFlags, PropSource, TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet};
 use super::OnceLock;
+use super::flows::Place;
 use super::storage::Primitive;
+use crate::aot_rules::{Rule, Scopes, Severity};
+use crate::check::CompilerDiagnostic;
 
 #[derive(Default)]
 pub(super) struct Shared {
@@ -116,6 +119,13 @@ impl ReplacedMethods {
     pub fn structural_evidence(&self, file: FileId, class: ClassId, name: &[u8]) -> Option<&[((FileId, ClassId), TypeId)]> {
         self.structural_evidence.get(&((file, class), *self.names.get(name)?))?.as_deref()
     }
+}
+
+#[derive(Copy, Clone)]
+enum FieldConflict {
+    ComputedName(Place),
+    SameName(Place),
+    Method((FileId, ClassId)),
 }
 
 enum Superclass {
@@ -828,8 +838,8 @@ impl<'p, 's> Checker<'p, 's> {
             return Vec::new();
         }
         let class = (file, class);
-        let Some(computed_names) = self.constant_computed_method_names(class) else { return Vec::new() };
-        found.retain(|known| !computed_names.contains(&known.1));
+        let Ok(computed_names) = self.constant_computed_method_names(class) else { return Vec::new() };
+        found.retain(|known| !computed_names.iter().any(|computed| computed.0 == known.1));
         let declaring = self.method_declarations_by_name();
         found.retain(|known| {
             let declarations = declaring.get(&known.1).map_or(&[][..], |declarations| &declarations[..]);
@@ -838,7 +848,7 @@ impl<'p, 's> Checker<'p, 's> {
         found.into_iter().map(|(implemented, name, _)| (implemented, name)).collect()
     }
 
-    fn constant_computed_method_names(&mut self, class: (FileId, ClassId)) -> Option<Vec<Atom>> {
+    fn constant_computed_method_names(&mut self, class: (FileId, ClassId)) -> Result<Vec<(Atom, Place)>, Place> {
         let mut names = Vec::new();
         for &(of, key) in self.computed_methods() {
             if !self.is_untyped_file(of.0) && self.is_symbol_name(of.0, key) {
@@ -847,13 +857,18 @@ impl<'p, 's> Checker<'p, 's> {
             if of != class && !self.is_declared_to_extend(of, class) && !self.may_extend(class, of) {
                 continue;
             }
-            let Some(Primitive::String(name)) = self.constant_value_of(of.0, key) else { return None };
-            names.push(name);
+            let at = Place { file: of.0, pos: self.hir(of.0)[key].pos };
+            let Some(Primitive::String(name)) = self.constant_value_of(of.0, key) else { return Err(at) };
+            names.push((name, at));
         }
-        Some(names)
+        Ok(names)
     }
 
     pub fn declared_only_properties(&mut self, file: FileId, class: ClassId) -> Vec<Atom> {
+        self.declared_only_fields(file, class).into_iter().filter(|field| field.1.is_none()).map(|field| field.0).collect()
+    }
+
+    fn declared_only_fields(&mut self, file: FileId, class: ClassId) -> Vec<(Atom, Option<FieldConflict>)> {
         let instances = self.class_instance_type(file, class);
         let inherited = match self.resolve_superclass(file, class) {
             Superclass::None => None,
@@ -872,19 +887,27 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         if found.is_empty() {
-            return found;
+            return Vec::new();
         }
         let class = (file, class);
-        let Some(computed_names) = self.constant_computed_method_names(class) else { return Vec::new() };
-        found.retain(|name| !computed_names.contains(name));
+        let computed_names = self.constant_computed_method_names(class);
         let declaring = self.method_declarations_by_name();
-        found.retain(|name| {
-            let declarations = declaring.get(name).map_or(&[][..], |declarations| &declarations[..]);
-            !declarations.iter().any(|declaration| {
-                !declaration.is_static && (declaration.class == class || self.may_extend(declaration.class, class) || self.may_extend(class, declaration.class))
-            })
-        });
-        found
+        let conflict_with = |c: &mut Self, name: Atom| {
+            match &computed_names {
+                Err(at) => return Some(FieldConflict::ComputedName(*at)),
+                Ok(names) => {
+                    if let Some(computed) = names.iter().find(|computed| computed.0 == name) {
+                        return Some(FieldConflict::SameName(computed.1));
+                    }
+                }
+            }
+            let declarations = declaring.get(&name).map_or(&[][..], |declarations| &declarations[..]);
+            let method = declarations.iter().find(|declaration| {
+                !declaration.is_static && (declaration.class == class || c.may_extend(declaration.class, class) || c.may_extend(class, declaration.class))
+            })?;
+            Some(FieldConflict::Method(method.class))
+        };
+        found.into_iter().map(|name| (name, conflict_with(self, name))).collect()
     }
 
     pub fn assigns_fields(&self, file: FileId, class: ClassId) -> bool {
@@ -1077,12 +1100,16 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn is_evaluated_once(&self, file: FileId, node: Parent) -> bool {
+        self.first_repeating_ancestor(file, node).is_none()
+    }
+
+    fn first_repeating_ancestor(&self, file: FileId, node: Parent) -> Option<Parent> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut at = node;
         loop {
             at = match at {
-                Parent::File => return true,
-                Parent::None | Parent::FnBody(_) | Parent::ParamDefault(_) => return false,
+                Parent::File => return None,
+                Parent::None | Parent::FnBody(_) | Parent::ParamDefault(_) => return Some(at),
                 Parent::Expr(e) if e.is_some() => bound.expr_parent[e.idx()],
                 Parent::Stmt(s) if s.is_some() => {
                     let is_loop = matches!(
@@ -1090,14 +1117,14 @@ impl<'p, 's> Checker<'p, 's> {
                         StmtKind::For { .. } | StmtKind::ForIn { .. } | StmtKind::ForOf { .. } | StmtKind::While { .. } | StmtKind::DoWhile { .. }
                     );
                     if is_loop {
-                        return false;
+                        return Some(at);
                     }
                     bound.stmt_parent[s.idx()]
                 }
-                Parent::MemberInit(m) if !hir[m].flags.contains(Flags::STATIC) => return false,
+                Parent::MemberInit(m) if !hir[m].flags.contains(Flags::STATIC) => return Some(at),
                 Parent::MemberKey(m) | Parent::MemberInit(m) => match bound.member_owner[m.idx()] {
                     MemberOwner::Class(class) => bound.class_owner[class.idx()].to_parent(),
-                    _ => return false,
+                    _ => return Some(at),
                 },
                 Parent::Decorator(class, _) => bound.class_owner[class.idx()].to_parent(),
                 _ => self.parent_of_node(file, at),
@@ -1802,7 +1829,7 @@ impl<'p, 's> Checker<'p, 's> {
         for &(file, assignment) in self.computed_key_assignments() {
             let hir = self.hir(file);
             let ExprKind::Assign { target, .. } = hir[assignment].kind else { continue };
-            let ExprKind::Index { index, .. } = hir[target].kind else { continue };
+            let ExprKind::Index { obj, index, .. } = hir[target].kind else { continue };
             if let ExprKind::Ident(name) = hir[index].kind
                 && let Some(binding) = self.identifier_binding(file, index, name)
                 && self.type_of_symbol(binding) == TypeId::NUMBER
@@ -1811,7 +1838,20 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let key = self.type_of_expr(file, index);
             let parts = self.parts(key);
-            if parts.len() >= 2 && parts.iter().all(|&part| matches!(self.data(part), TypeData::StringLit { .. })) {
+            if parts.len() < 2 || !parts.iter().all(|&part| matches!(self.data(part), TypeData::StringLit { .. })) {
+                continue;
+            }
+            let receiver = self.type_of_expr(file, obj);
+            let receiver = self.non_nullable(receiver);
+            let stored = self.type_of_expr(file, assignment);
+            if self.is_uninformative(receiver) || self.is_uninformative(stored) {
+                continue;
+            }
+            let names: Vec<Atom> = self.parts(key).iter().filter_map(|&part| match *self.data(part) {
+                TypeData::StringLit { value, .. } => Some(value),
+                _ => None,
+            }).collect();
+            if names.into_iter().any(|name| self.type_of_property(receiver, name).is_some_and(|held| !self.is_provably_assignable(stored, held))) {
                 found.push((file, assignment));
             }
         }
@@ -2382,4 +2422,143 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
 
+}
+
+const MAX_BASE_CLASSES_EXPLAINED: usize = 4;
+const MAX_FIELD_NAMES_SHOWN: usize = 5;
+
+impl<'p, 's> Checker<'p, 's> {
+    fn class_site(&self, (file, class): (FileId, ClassId)) -> Place {
+        let c = &self.hir(file)[class];
+        Place { file, pos: if c.name.is_some() { c.name_pos } else { c.start } }
+    }
+
+    fn class_display_name(&self, (file, class): (FileId, ClassId)) -> Vec<u8> {
+        let c = &self.hir(file)[class];
+        if c.name.is_some() { self.atoms().bytes(c.name).to_vec() } else { b"(anonymous)".to_vec() }
+    }
+
+    pub fn find_lost_layouts(&mut self, classes: &[((FileId, ClassId), bool)], scopes: &Scopes) -> Vec<CompilerDiagnostic> {
+        let has_fixed_layout: FxHashMap<(FileId, ClassId), bool> = classes.iter().copied().collect();
+        let mut found = Vec::new();
+        for &(class, is_fixed) in classes {
+            let (at, name) = (self.class_site(class), self.class_display_name(class));
+            if self.is_untyped_file(class.0) {
+                continue;
+            }
+            if !is_fixed {
+                let related = self.missing_layout_reasons(class, &has_fixed_layout);
+                let (rule, code) = if related.iter().all(|reason| matches!(reason.code, 100055 | 100056)) { (Rule::UntypedBase, 100027) } else { (Rule::LostLayout, 100023) };
+                if scopes.severity(rule, at.file, at.pos) != Severity::Allow {
+                    found.push(CompilerDiagnostic { related, ..self.finding_at(at, code, vec![name]) });
+                }
+                continue;
+            }
+            if scopes.severity(Rule::LostLayout, at.file, at.pos) == Severity::Allow {
+                continue;
+            }
+            let dropped: Vec<(Atom, FieldConflict)> = self.declared_only_fields(class.0, class.1).into_iter().filter_map(|(name, conflict)| Some((name, conflict?))).collect();
+            if dropped.is_empty() {
+                continue;
+            }
+            let mut names = dropped.iter().take(MAX_FIELD_NAMES_SHOWN).map(|field| self.atoms().bytes(field.0)).collect::<Vec<&[u8]>>().join(&b", "[..]);
+            if dropped.len() > MAX_FIELD_NAMES_SHOWN {
+                names.extend_from_slice(format!(" and {} more", dropped.len() - MAX_FIELD_NAMES_SHOWN).as_bytes());
+            }
+            let mut related: Vec<CompilerDiagnostic> = Vec::new();
+            for &(field, conflict) in &dropped {
+                let field_name = || vec![self.atoms().bytes(field).to_vec()];
+                let reason = match conflict {
+                    FieldConflict::ComputedName(at) => self.finding_at(at, 100060, Vec::new()),
+                    FieldConflict::SameName(at) => self.finding_at(at, 100061, field_name()),
+                    FieldConflict::Method(declaring) => {
+                        let hir = self.hir(declaring.0);
+                        let method = hir[declaring.1].members.iter().find(|&member| hir[member].key == PropKey::Name(field) && hir[member].kind != MemberKind::Property);
+                        let at = method.map_or_else(|| self.class_site(declaring), |member| Place { file: declaring.0, pos: hir[member].name_pos });
+                        self.finding_at(at, 100061, field_name())
+                    }
+                };
+                if !related.iter().any(|known| (known.file, known.start, known.code) == (reason.file, reason.start, reason.code)) {
+                    related.push(reason);
+                }
+            }
+            related.truncate(MAX_FIELD_NAMES_SHOWN);
+            found.push(CompilerDiagnostic { related, ..self.finding_at(at, 100024, vec![name, names]) });
+        }
+        found
+    }
+
+    fn missing_layout_reasons(&mut self, class: (FileId, ClassId), has_fixed_layout: &FxHashMap<(FileId, ClassId), bool>) -> Vec<CompilerDiagnostic> {
+        let mut reasons = Vec::new();
+        let mut next = Some(class);
+        for _ in 0..MAX_BASE_CLASSES_EXPLAINED {
+            let Some((file, class)) = next.take() else { break };
+            let (hir, bound) = (self.hir(file), self.bound(file));
+            let c = &hir[class];
+            let known_before = reasons.len();
+            if let Some(repeating) = self.first_repeating_ancestor(file, bound.class_owner[class.idx()].to_parent()) {
+                let function_site = |func: FnId| if hir[func].name.is_some() { hir[func].name_pos } else { hir[func].start };
+                let (code, pos) = match repeating {
+                    Parent::FnBody(func) => (100050, function_site(func)),
+                    Parent::ParamDefault(parameter) => (100050, function_site(bound.param_fn[parameter.idx()])),
+                    Parent::Stmt(statement) => (100051, hir[statement].start),
+                    Parent::MemberInit(member) | Parent::MemberKey(member) => (100052, hir[member].name_pos),
+                    _ => (100050, c.start),
+                };
+                reasons.push(self.finding_at(Place { file, pos }, code, Vec::new()));
+            }
+            if self.is_class_named_by_computed_key(file, class) {
+                reasons.push(self.finding_at(self.class_site((file, class)), 100053, Vec::new()));
+            }
+            let decorator = hir.decorators.iter().find(|&&(owner, _)| match owner {
+                crate::hir::DecoratorOwner::Class(decorated) => decorated == class,
+                _ => self.files().decorated_member(file, owner).is_some_and(|member| bound.member_owner[member.idx()] == MemberOwner::Class(class)),
+            });
+            if let Some(&(_, decorator)) = decorator {
+                reasons.push(self.finding_at(Place { file, pos: hir[decorator].pos }, 100054, Vec::new()));
+            }
+            let mut constructing = vec![(file, class)];
+            if c.extends.is_some() {
+                let extends = Place { file, pos: hir[c.extends].pos };
+                match self.resolve_superclass(file, class) {
+                    Superclass::Known(base) if has_fixed_layout.get(&base) == Some(&false) => {
+                        reasons.push(self.finding_at(extends, 100055, vec![self.class_display_name(base)]));
+                        next = Some(base);
+                    }
+                    Superclass::Known(base) if has_fixed_layout.contains_key(&base) => {
+                        let constructor = self.class_constructor(file, class).filter(|func| self.file_class_facts(file).with_uninitialized_this.contains(func));
+                        if let Some(constructor) = constructor {
+                            reasons.push(self.finding_at(Place { file, pos: hir[constructor].start }, 100057, Vec::new()));
+                        }
+                        let mut base = Some(base);
+                        while let Some(extended) = base.take().filter(|_| constructing.len() < 256) {
+                            constructing.push(extended);
+                            if let Superclass::Known(above) = self.resolve_superclass(extended.0, extended.1) {
+                                base = Some(above);
+                            }
+                        }
+                    }
+                    _ => {
+                        let is_outside_typed_code = bound.class_symbol[class.idx()].is_some() && {
+                            let bases = self.base_types(self.class_sym(file, class)).into_vec();
+                            bases.into_iter().any(|base| self.type_declaration_site(base).is_some_and(|at| self.hir(at.file).kind == FileKind::Declaration || self.is_untyped_file(at.file)))
+                        };
+                        reasons.push(self.finding_at(extends, if is_outside_typed_code { 100056 } else { 100062 }, Vec::new()));
+                    }
+                }
+            }
+            let instances = self.class_instance_type(file, class);
+            if let Some((in_file, call)) = self.redefinition_site(instances) {
+                reasons.push(self.finding_at(Place { file: in_file, pos: self.hir(in_file)[call].pos }, 100058, Vec::new()));
+            }
+            if self.file_class_facts(file).tested_by_private_name.contains(&class) && !self.this_never_escapes_construction(&constructing) {
+                let test = bound.private_class.iter().filter(|&(_, &tested)| tested == class).map(|(&e, _)| hir[e].pos).min();
+                reasons.push(self.finding_at(Place { file, pos: test.unwrap_or(c.start) }, 100059, Vec::new()));
+            }
+            if reasons.len() == known_before && c.extends.is_some() {
+                reasons.push(self.finding_at(Place { file, pos: hir[c.extends].pos }, 100062, Vec::new()));
+            }
+        }
+        reasons
+    }
 }

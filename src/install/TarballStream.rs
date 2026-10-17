@@ -561,7 +561,7 @@ impl TarballStream {
                                 // A body that is not an archive also ends here, because the tar
                                 // reader skips every block that is not a valid header.
                                 if (*this).entry_count == 0 {
-                                    (*this).fail_detail = b"the archive holds no files".to_vec();
+                                    (*this).fail_detail = b"archive is empty".to_vec();
                                     return Err(crate::Error::Fail);
                                 }
                                 (*this).phase = Phase::Done;

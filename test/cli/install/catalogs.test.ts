@@ -1163,7 +1163,7 @@ describe.concurrent("pack", () => {
     });
     const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(normalizeBunSnapshot(err, dir)).toBe(
-      'error: Failed to resolve catalog version for "lib" in `dependencies` (the catalog entry refers to another catalog).',
+      'error: Failed to resolve catalog version for "lib" in `dependencies` (catalog entry refers to another catalog).',
     );
     expect(exitCode).toBe(1);
     expect(existsSync(join(appDir, "app-1.0.0.tgz"))).toBeFalse();
@@ -1208,7 +1208,7 @@ describe.concurrent("errors", () => {
     expect(err).toContain(
       'error: a-dep@catalog:aaaaaaaaaaaaaaaaa: there is no catalog named "aaaaaaaaaaaaaaaaa" in the root package.json\n',
     );
-    expect(err).toContain("error: no-deps@catalog: is not in the catalog\n  bun add --catalog no-deps\n");
+    expect(err).toContain("error: no-deps@catalog: not in catalog\n  bun add --catalog no-deps\n");
     expect(exitCode).not.toBe(0);
   });
 
@@ -1230,10 +1230,8 @@ describe.concurrent("errors", () => {
     });
 
     const { err, exitCode } = await failingInstall(packageDir);
-    expect(err).toContain(
-      'error: no-deps@catalog:tools is not in catalog "tools"\n  bun add --catalog=tools no-deps\n',
-    );
-    expect(err).toContain("error: left-pad@catalog:default is not in the catalog\n  bun add --catalog left-pad\n");
+    expect(err).toContain('error: no-deps@catalog:tools not in catalog "tools"\n  bun add --catalog=tools no-deps\n');
+    expect(err).toContain("error: left-pad@catalog:default not in catalog\n  bun add --catalog left-pad\n");
     expect(err).not.toContain("there is no catalog named");
     expect(exitCode).not.toBe(0);
   });
@@ -1257,7 +1255,7 @@ describe.concurrent("errors", () => {
 
     const { err, exitCode } = await failingInstall(packageDir);
     expect(err).toContain("error: Invalid dependency version\n");
-    expect(err).toContain("error: no-deps@catalog: is not in the catalog\n  bun add --catalog no-deps\n");
+    expect(err).toContain("error: no-deps@catalog: not in catalog\n  bun add --catalog no-deps\n");
     expect(exitCode).not.toBe(0);
   });
 
@@ -2295,8 +2293,8 @@ describe("peer dependencies", () => {
 // `bun install` advises `bun add --catalog <name>` only where that command accepts the name and the entry is missing.
 describe("bun add --catalog advice for a failed catalog: dependency", () => {
   const note =
-    'note: catalogs require a "workspaces" field in the root package.json, and bun used "<dir>/package.json" as the root, which has none';
-  const advice = "error: no-deps@catalog: is not in the catalog\n  bun add --catalog no-deps";
+    'note: catalogs require a "workspaces" field in the root package.json. "<dir>/package.json" was used as root and has none';
+  const advice = "error: no-deps@catalog: not in catalog\n  bun add --catalog no-deps";
 
   function project(files: Record<string, object>) {
     return writeRegistryProject(
@@ -2504,9 +2502,9 @@ describe("bun add --catalog advice for a failed catalog: dependency", () => {
 
       expect(await run(String(dir), ["install"])).toEqual({
         err: [
-          "error: lib@catalog: is not in the catalog",
-          'error: mono@catalog:tools is not in catalog "tools"',
-          'error: no-deps@catalog:tools is not in catalog "tools"',
+          "error: lib@catalog: not in catalog",
+          'error: mono@catalog:tools not in catalog "tools"',
+          'error: no-deps@catalog:tools not in catalog "tools"',
           "  bun add --catalog=tools no-deps",
         ].join("\n"),
         exitCode: 1,
@@ -2760,7 +2758,7 @@ describe.concurrent("a version published after the manifest was cached", () => {
     registry.requests.length = 0;
     // The registry may have the version by now, so it is asked before another version stands in.
     expect(await install(String(dir))).toEqual({
-      messages: ['warn: the "latest" tag of "fresh-pkg" names no published version, using 1.0.1'],
+      messages: [],
       exitCode: 0,
       locked: "fresh-pkg@1.0.1",
     });

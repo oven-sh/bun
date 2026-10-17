@@ -88,6 +88,29 @@ test("a file outside the bundle that adds to a module of the program is in the p
   expect({ stdout: result.stdout, exitCode: result.exitCode }).toEqual({ stdout: "1\n", exitCode: 0 });
 });
 
+test("a comment inside the words of a declaration does not hide it", async () => {
+  const result = await run({
+    "tsconfig.json": tsconfig(),
+    "src/rules.ts": `export interface Rules {\n  known?: number;\n}\n`,
+    "tests/more-rules.ts": `export {};\ndeclare /* spaced */ module "../src/rules" {\n  interface Rules {\n    custom?: number;\n  }\n}\n`,
+    "src/main.ts": `import type { Rules } from "./rules";\nconst rules: Rules = { custom: 1 };\nconsole.log(rules.custom);\n`,
+  });
+  expect(result.stderr).not.toContain("error");
+  expect({ stdout: result.stdout, exitCode: result.exitCode }).toEqual({ stdout: "1\n", exitCode: 0 });
+});
+
+test("the words of a declaration in a string or a comment bring nothing into the program", async () => {
+  const result = await run({
+    "tsconfig.json": tsconfig(),
+    "src/rules.ts": `export interface Rules {\n  known?: number;\n}\n`,
+    "tests/text.ts": `export const text = \`declare module "../src/rules" { interface Rules { custom?: number } }\`;\n// declare global { var fromAComment: number }\n`,
+    "src/main.ts": `import type { Rules } from "./rules";\nconst rules: Rules = { custom: 1 };\nconsole.log(rules.custom, typeof fromAComment);\n`,
+  });
+  expect(result.stderr).toContain("TS2353");
+  expect(result.stderr).toContain("Cannot find name 'fromAComment'");
+  expect(result.exitCode).not.toBe(0);
+});
+
 test("a file outside the bundle that declares a global itself is in the program", async () => {
   expectSeen(
     await run({

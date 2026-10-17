@@ -367,7 +367,7 @@ impl WorkspaceManifests {
             crash(
                 &mut log,
                 err,
-                format_args!("failed to read the workspace's package.json files"),
+                format_args!("failed to read workspace package.json files"),
             )
         })
     }
@@ -579,7 +579,7 @@ fn crash_for_filter(log: &mut bun_ast::Log, pattern: &[u8], err: crate::Error) -
         log,
         err,
         format_args!(
-            "failed to read the workspace dependencies for --filter \"{}\"",
+            "failed to read workspace dependencies for --filter \"{}\"",
             BStr::new(pattern)
         ),
     )

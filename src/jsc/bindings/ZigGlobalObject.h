@@ -70,7 +70,6 @@ struct node_module;
 #include "RejectedPromiseQueue.h"
 #include <js_native_api.h>
 #include <node_api.h>
-#include "BakeAdditionsToGlobalObject.h"
 #include "Bindgen/AdditionsToGlobalObject.h"
 #include "NativeModuleList.h"
 #include "streams/JSStreamsRuntime.h"
@@ -168,6 +167,8 @@ public:
     {
         ASSERT(!m_domStructures[static_cast<size_t>(slot)]);
         m_domStructures[static_cast<size_t>(slot)].set(vm(), this, structure);
+        if (slot == WebCore::DOMStructureSlot::JSDOMURL || slot == WebCore::DOMStructureSlot::JSURLSearchParams || slot == WebCore::DOMStructureSlot::JSFetchHeaders)
+            lockHostClassPrototype(structure->storedPrototypeObject());
         return structure;
     }
     const WebCore::DOMConstructors& constructors() const
@@ -320,8 +321,6 @@ public:
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
 
     v8::shim::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
-
-    Bun::BakeAdditionsToGlobalObject& bakeAdditions() { return m_bakeAdditions; }
 
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
@@ -500,7 +499,6 @@ public:
     //   a new overload of `visitGlobalObjectMember` so it understands your type.
 
 #define FOR_EACH_GLOBALOBJECT_GC_MEMBER(V)                                                                   \
-    V(public, Bun::BakeAdditionsToGlobalObject, m_bakeAdditions)                                             \
     V(public, Bun::Bindgen::AdditionsToGlobalObject, m_bindgenAdditions)                                     \
                                                                                                              \
     /* TODO: these should use LazyProperty */                                                                \

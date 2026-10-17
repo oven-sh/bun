@@ -2345,7 +2345,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return params.len() < required;
             }
         }
-        let params = self.sig_params(sig);
+        let params = self.sig_params_with_first(sig, 0);
         !self.has_effective_rest_parameter(&params) && self.parameter_count(&params) < required
     }
 

@@ -232,6 +232,7 @@ pub struct Program<'s> {
     /// keeps the first of each. It does not depend on which task comes first.
     emit_helper_errors_of_earlier_files: Guarded<Vec<errors_emit_helpers::EarlierEmitHelperError>>,
     pub compiler_diagnostics: Guarded<Vec<CompilerDiagnostic>>,
+    pub rule_scopes: std::sync::OnceLock<crate::aot_rules::Scopes>,
     /// `autoArrayType`
     auto_array_type: TypeId,
     /// See `Services::file_info`. Made when it is first asked for.
@@ -511,6 +512,7 @@ impl<'s> Program<'s> {
             properties_referenced_before: Default::default(),
             emit_helper_errors_of_earlier_files: Default::default(),
             compiler_diagnostics: Default::default(),
+            rule_scopes: Default::default(),
             auto_array_type,
             package_names_of_linked_files: Default::default(),
             types,
@@ -736,6 +738,7 @@ impl<'s> Program<'s> {
             context_checked_under: Vec::new(),
             initializers_resolved_by_nested_visit: Vec::new(),
             resolved_parameter_types: Default::default(),
+            partial_sig_params: Default::default(),
             quick_initializers: Vec::new(),
             contextual: Vec::new(),
             pulls_contextual_types_at: usize::MAX,
@@ -1793,6 +1796,9 @@ pub struct Checker<'p, 's> {
     /// `sig_params` computes the types of all parameters at once. See
     /// `note_parameter_types_resolved`.
     resolved_parameter_types: crate::util::FxHashSet<(SigId, u32)>,
+    /// The lists of `sig_params_with_first` that lack a type, each with the number of parameters
+    /// before the first that does.
+    partial_sig_params: FxHashMap<SigId, (usize, &'p [SigParam])>,
     /// Ranges of `stack`: the resolutions of declarations whose initializer
     /// `getQuickTypeOfExpression` is evaluating, and those of a `...rest`. See
     /// `is_flow_loop_visible`.

@@ -54,7 +54,7 @@ fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
 }
 
 /// `--config=<path>` among the flags of `bun`, which precede `command`. Without the `=` the path is taken for the command.
-fn bunfig_before(command: &[u8]) -> Option<&'static [u8]> {
+pub(crate) fn bunfig_before(command: &[u8]) -> Option<&'static [u8]> {
     let flags = (bun_core::argv().into_iter()).take_while(|arg| *arg != command);
     flags
         .filter_map(|arg| {

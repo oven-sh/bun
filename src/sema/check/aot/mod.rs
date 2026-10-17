@@ -9,6 +9,7 @@ mod commonjs;
 mod creation;
 mod escape;
 mod escape_closure;
+mod findings;
 mod first_stores;
 mod flows;
 pub mod nullish_flow;
@@ -596,6 +597,10 @@ impl<'p, 's> Checker<'p, 's> {
         let bound = bound.unwrap_or_else(|| self.base_constraint(ty));
         self.aot.flows.value_bounds.insert(ty, bound);
         bound
+    }
+
+    pub fn is_base_constraint_too_narrow(&mut self, ty: TypeId) -> bool {
+        self.has_type_variables(ty) && self.parts(ty).to_vec().into_iter().any(|part| self.has_type_variables(part) && self.value_bound(part) != self.base_constraint(part))
     }
 
     fn bound_through_conditional_types(&mut self, ty: TypeId, depth: u8, steps_left: &mut u32) -> Option<TypeId> {

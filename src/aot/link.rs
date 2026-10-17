@@ -4,6 +4,7 @@ use crate::format::line_table;
 use crate::fragment::{Definition, Fragment, FuncKey, Function, FunctionOutline, Ids, LayoutKey, LocalToProgram, ReferenceCollector, ReferencedIds, ModulePart, NO_FILE, Notes, Outline, OutlineBatch, ProgramIds, RuntimeModule, Shape, Summary, Used, for_each_func_id, for_each_global_id, for_each_layout_id, outline_flags};
 use crate::id::{FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
 use crate::ir::{self, Def, Func, FuncKind, Layout, LayoutKind, Literal, NO_VARIABLE, Op, Operation, Prediction, Program, Strs, Term, CoerceReason, class_flags, field_flags, func_flags, method_flags};
+use bun_sema::aot_rules::{Rule, Severity};
 use bun_sema::atom::Atom;
 use bun_sema::check::task::Finished;
 use bun_sema::check::{SubtypeAnswer, Checker, CompilerDiagnostic, FieldKey, Identity, Int32Verdict, KindsDeclared, MethodStore, FlowNotes, NumberFlow, Program as Checked, SubtypeQuery, ReplacedMethods, compute_ecma_line_starts, expected_int32};
@@ -24,11 +25,15 @@ use std::time::{Duration, Instant};
 
 mod exports;
 mod integer_ranges;
+mod interpreted;
 mod nullish;
 mod reads;
 mod reuse;
 mod literal_structures;
 mod throws;
+mod typedness;
+
+pub use typedness::Typedness;
 
 #[derive(Default)]
 pub struct Linked {
@@ -40,6 +45,7 @@ pub struct Linked {
     pub skipped_builtin_modules: Vec<(u32, Problem)>,
     pub skipped_builtin_functions: Vec<(u32, Problem)>,
     pub found: Vec<CompilerDiagnostic>,
+    pub typedness: Typedness,
     pub times: Times,
     pub(crate) failure_check: Option<FailureCheck>,
 }
@@ -57,7 +63,7 @@ impl Linked {
         let result = std::thread::scope(|scope| {
             let beside = spawn_outside_pool(scope, || beside(program));
             if let Some(FailureCheck { setup, modules }) = failure_check.take() {
-                *found = always_failing_sites(checked, program, setup, &modules, in_parallel);
+                found.extend(always_failing_sites(checked, program, setup, &modules, in_parallel));
             }
             beside.join().expect("the thread beside the failure check panicked")
         });
@@ -109,10 +115,11 @@ pub struct Explain {
     pub throws: bool,
     pub throws_json: bool,
     pub throws_all: bool,
+    pub rules_json: bool,
 }
 
 impl Explain {
-    pub const REPORTS: [&'static str; 4] = ["throws", "throws-all", "throws-json", "throws-all-json"];
+    pub const REPORTS: [&'static str; 5] = ["throws", "throws-all", "throws-json", "throws-all-json", "rules-json"];
     pub const WORDS: [&'static str; 13] = ["mutations", "deferred", "fields", "foreign", "given", "integers", "joins", "plugins", "rows", "throws", "throws-all", "throws-all-json", "throws-json"];
 
     pub fn set(&mut self, word: &[u8]) -> bool {
@@ -125,6 +132,7 @@ impl Explain {
             b"integers" => &mut self.integers,
             b"plugins" => &mut self.plugins,
             b"rows" => &mut self.rows,
+            b"rules-json" => &mut self.rules_json,
             b"joins" => &mut self.joins,
             b"throws" => &mut self.throws,
             b"throws-json" => &mut self.throws_json,
@@ -3859,6 +3867,19 @@ fn link_with_helper_threads<'scope>(
     times.add("type texts", &mut since);
     say("the texts of the types");
     let mut explained = Vec::new();
+    let mut found = Vec::new();
+    if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::OpenLayout)) {
+        let is_left_out: Vec<bool> = views.iter().map(|view| is_runtime_layout.get(view.0.idx()).copied().unwrap_or(false)).collect();
+        found.append(&mut c.find_open_layouts(&asked, &membership, &is_left_out, scopes));
+    }
+    if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::LostLayout) || scopes.is_enabled(Rule::UntypedBase)) {
+        let is_declared_by_program = |index: usize, layout: &Layout| layout.kind == LayoutKind::Instance && !is_runtime_layout.get(index).copied().unwrap_or(false);
+        let declared: Vec<((FileId, ClassId), bool)> = (program.layouts.iter().enumerate())
+            .filter(|&(index, layout)| is_declared_by_program(index, layout))
+            .filter_map(|(index, layout)| Some((classes[index]?, layout.class_flags & class_flags::HAS_FIXED_LAYOUT != 0)))
+            .collect();
+        found.append(&mut c.find_lost_layouts(&declared, scopes));
+    }
     if explain.foreign {
         let is_left_out: Vec<bool> = views.iter().map(|view| !explain.includes_builtin_modules && is_runtime_layout.get(view.0.idx()).copied().unwrap_or(false)).collect();
         explained.append(&mut c.explain_untyped(&asked, &membership, &is_left_out));
@@ -3999,8 +4020,24 @@ fn link_with_helper_threads<'scope>(
     let _ = std::thread::Builder::new().spawn(move || drop((func_ids, str_ids)));
     drop((membership, names));
     times.add("free", &mut since);
+    if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::Interpreted)) {
+        for site in interpreted::find_sites(&program, in_parallel) {
+            let file = modules[site.module as usize];
+            if scopes.severity(Rule::Interpreted, file, site.pos) != Severity::Allow {
+                let hir = checked.files.hir(file);
+                let end = bun_sema::check::spans::token_end(&hir.text, site.pos as usize, hir.kind == hir::FileKind::Tsx) as u32;
+                found.push(CompilerDiagnostic { file, start: site.pos, end, code: 100025, args: vec![site.evaluator], related: Vec::new() });
+            }
+        }
+    }
+    if let Some(scopes) = checked.rule_scopes.get().filter(|scopes| scopes.is_enabled(Rule::UntypedPackage)) {
+        found.append(&mut c.find_untyped_packages(&modules, scopes));
+    }
+    since = Instant::now();
+    let typedness = typedness::measure(&program, &is_runtime_layout, &modules, checked, in_parallel);
+    times.add("typedness", &mut since);
     let failure_check = Some(FailureCheck { setup: setup_of_what_always_fails, modules });
-    Linked { program, problems, members, explained, errors, skipped_builtin_modules, skipped_builtin_functions, found: Vec::new(), times, failure_check }
+    Linked { program, problems, members, explained, errors, skipped_builtin_modules, skipped_builtin_functions, found, typedness, times, failure_check }
 }
 
 #[cfg(test)]

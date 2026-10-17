@@ -1656,9 +1656,9 @@ function refused(cacheDir: string, what: string, bunx = "Cleared") {
   return {
     stdout: `${bunx} 0 cached 'bunx' packages\n`,
     stderr:
-      `error: refusing to clear "${cacheDir}": it is or contains ${what}\n` +
-      "note: the cache directory comes from $BUN_INSTALL_CACHE_DIR, --cache-dir or $BUN_INSTALL. " +
-      "Point it at a directory that holds nothing but the bun install cache.\n",
+      `error: refusing to clear "${cacheDir}": is or contains ${what}\n` +
+      "note: cache directory comes from $BUN_INSTALL_CACHE_DIR, --cache-dir or $BUN_INSTALL. " +
+      "point it at a directory used only for the bun install cache\n",
     exitCode: 1,
   };
 }
@@ -1992,9 +1992,7 @@ describe.concurrent("bun pm cache rm", () => {
     const envCache = join(String(side), "bun-install", "install", "cache");
 
     const { stderr, exitCode } = await pmCache([...args], join(String(root), "proj"), cacheEnv(String(side)));
-    expect(stderr).toBe(
-      `note: the global store ${verb} removed with it. Run 'bun install' again in each project that uses it.\n`,
-    );
+    expect(stderr).toBe(`note: global store ${verb} removed too, run 'bun install' in each project that uses it\n`);
     expect(exitCode).toBe(0);
     expect(await exists(join(envCache, "links"))).toBe(args.length === 2);
   });

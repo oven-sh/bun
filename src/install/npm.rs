@@ -481,7 +481,7 @@ pub mod registry {
                             .at_least(bun_ast::Level::Warn)
                         {
                             bun_core::warn!(
-                                "registry {} references <b>{}<r>, but that environment variable is not set; treating it as no credential",
+                                "registry {} references unset variable <b>{}<r>, ignoring credential",
                                 what,
                                 bun_fmt::escape_control_chars(&**field),
                             );
@@ -1799,7 +1799,7 @@ impl MinimumReleaseAgeExcludes {
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
-                            "Ignoring minimumReleaseAgeExcludes entry {}: expected a package name or exact versions, e.g. \"{name}@1.2.3\" or \"{name}@1.2.3 || 1.2.4\"",
+                            "ignoring minimumReleaseAgeExcludes entry {}: expected a package name or exact versions, e.g. \"{name}@1.2.3\" or \"{name}@1.2.3 || 1.2.4\"",
                             bun_fmt::EscapeControlChars(bun_fmt::quote(entry)),
                             name = bun_fmt::escape_control_chars(name),
                         ),
@@ -3038,7 +3038,7 @@ impl PackageManifest {
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 format_args!(
-                                    "Unsupported or malformed integrity hash in registry metadata for {}@{}; its tarball will not be verified",
+                                    "Unsupported or malformed integrity hash in registry metadata for {}@{}, tarball will not be verified",
                                     bstr::BStr::new(expected_name),
                                     bun_fmt::escape_control_chars(version_name),
                                 ),

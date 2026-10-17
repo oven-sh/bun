@@ -674,15 +674,13 @@ fn parse_selector<Impl: BunSelectorImpl>(
     }
 
     let mut flags = SelectorFlags::empty();
-    if state.contains(SelectorParsingState::AFTER_PSEUDO_ELEMENT)
-        || state.contains(SelectorParsingState::AFTER_UNKNOWN_PSEUDO_ELEMENT)
-    {
+    if state.contains(SelectorParsingState::HAS_PSEUDO_ELEMENT) {
         flags |= SelectorFlags::HAS_PSEUDO;
     }
     if state.contains(SelectorParsingState::AFTER_SLOTTED) {
         flags |= SelectorFlags::HAS_SLOTTED;
     }
-    if state.contains(SelectorParsingState::AFTER_PART) {
+    if state.contains(SelectorParsingState::AFTER_PART_LIKE) {
         flags |= SelectorFlags::HAS_PART;
     }
     let result = builder.build(flags);
@@ -774,7 +772,7 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
                 builder.push_simple_selector(s);
             }
             SimpleSelectorParseResult::PartPseudo(selector) => {
-                state.insert(SelectorParsingState::AFTER_PART);
+                state.insert(SelectorParsingState::AFTER_PART_LIKE);
                 builder.push_combinator(Combinator::Part);
                 builder.push_simple_selector(GenericComponent::Part(selector));
             }
@@ -784,11 +782,14 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
                 builder.push_simple_selector(GenericComponent::Slotted(selector));
             }
             SimpleSelectorParseResult::PseudoElement(p) => {
+                state.insert(SelectorParsingState::HAS_PSEUDO_ELEMENT);
                 if !p.is_unknown() {
-                    state.insert(SelectorParsingState::AFTER_PSEUDO_ELEMENT);
+                    state.insert(if p.parses_as_element_backed() {
+                        SelectorParsingState::AFTER_PART_LIKE
+                    } else {
+                        SelectorParsingState::AFTER_PSEUDO_ELEMENT
+                    });
                     builder.push_combinator(Combinator::PseudoElement);
-                } else {
-                    state.insert(SelectorParsingState::AFTER_UNKNOWN_PSEUDO_ELEMENT);
                 }
 
                 if !p.accepts_state_pseudo_classes() {
@@ -1343,6 +1344,7 @@ impl<'a> SelectorParser<'a> {
         &mut self,
         name: Str,
         parser: &mut CssParser,
+        after_part_like: bool,
     ) -> CResult<PseudoClass> {
         let pseudo_class = crate::match_ignore_ascii_case! { name, {
             b"lang" => {
@@ -1362,6 +1364,12 @@ impl<'a> SelectorParser<'a> {
             },
             b"dir" => PseudoClass::Dir {
                 direction: Direction::parse(parser)?,
+            },
+            // `.a::part(x):global(.g)` would print as `.a::part(x).g`, which is not a selector.
+            b"local" | b"global" if after_part_like && self.options.css_modules.is_some() => {
+                return Err(parser.new_custom_error(
+                    SelectorParseErrorKind::InvalidState.into_default_parser_error(),
+                ));
             },
             b"local" if self.options.css_modules.is_some() => PseudoClass::Local {
                 selector: Box::new(Selector::parse(self, parser)?),
@@ -2609,15 +2617,13 @@ bitflags::bitflags! {
         /// whatever comes after them if so.
         const AFTER_SLOTTED = 1 << 1;
 
-        /// Whether we've parsed a ::part() pseudo-element already.
+        /// Whether we've parsed a ::part(), or a pseudo-element that parses like one, already.
         ///
         /// If so, then we can only parse a subset of pseudo-elements, and
         /// whatever comes after them if so.
-        const AFTER_PART = 1 << 2;
+        const AFTER_PART_LIKE = 1 << 2;
 
-        /// Whether we've parsed a pseudo-element (as in, an
-        /// `Impl::PseudoElement` thus not accounting for `::slotted` or
-        /// `::part`) already.
+        /// Whether we've parsed a known pseudo-element that does not parse like ::part() already.
         ///
         /// If so, then other pseudo-elements and most other selectors are
         /// disallowed.
@@ -2640,14 +2646,16 @@ bitflags::bitflags! {
 
         const AFTER_WEBKIT_SCROLLBAR = 1 << 8;
         const AFTER_VIEW_TRANSITION = 1 << 9;
-        const AFTER_UNKNOWN_PSEUDO_ELEMENT = 1 << 10;
+
+        /// Set for every `Impl::PseudoElement`. Only `SelectorFlags::HAS_PSEUDO` reads it.
+        const HAS_PSEUDO_ELEMENT = 1 << 10;
     }
 }
 
 impl SelectorParsingState {
     /// Whether we are after any of the pseudo-like things.
     pub(crate) fn after_any_pseudo(self) -> bool {
-        self.intersects(Self::AFTER_PART | Self::AFTER_SLOTTED | Self::AFTER_PSEUDO_ELEMENT)
+        self.intersects(Self::AFTER_PART_LIKE | Self::AFTER_SLOTTED | Self::AFTER_PSEUDO_ELEMENT)
     }
 
     pub(crate) fn allows_pseudos(self) -> bool {
@@ -2676,7 +2684,7 @@ impl SelectorParsingState {
     }
 
     pub(crate) fn allows_custom_functional_pseudo_classes(self) -> bool {
-        !self.after_any_pseudo()
+        !self.intersects(Self::AFTER_SLOTTED | Self::AFTER_PSEUDO_ELEMENT)
     }
 }
 
@@ -3027,6 +3035,42 @@ impl PseudoElement {
             self,
             PseudoElement::Custom { .. } | PseudoElement::CustomFunction { .. }
         )
+    }
+
+    /// Whether any pseudo-class or pseudo-element can follow, as after `::part()`.
+    pub(crate) fn parses_as_element_backed(&self) -> bool {
+        use PseudoElement as PE;
+        // No `_` arm, so that a new variant has to be classified here.
+        match self {
+            // https://drafts.csswg.org/css-pseudo-4/#element-backed (strict in lightningcss)
+            PE::DetailsContent => true,
+            // Part-like: https://github.com/w3c/csswg-drafts/issues/10758 (strict in lightningcss)
+            PE::PickerFunction { .. } => true,
+            PE::After
+            | PE::Before
+            | PE::FirstLine
+            | PE::FirstLetter
+            | PE::Selection(_)
+            | PE::Placeholder(_)
+            | PE::Marker
+            | PE::Backdrop(_)
+            | PE::FileSelectorButton(_)
+            | PE::WebkitScrollbar(_)
+            | PE::Cue
+            | PE::CueRegion
+            | PE::CueFunction { .. }
+            | PE::CueRegionFunction { .. }
+            | PE::ViewTransition
+            | PE::ViewTransitionGroup { .. }
+            | PE::ViewTransitionImagePair { .. }
+            | PE::ViewTransitionOld { .. }
+            | PE::ViewTransitionNew { .. }
+            | PE::ViewTransitionGroupChildren { .. }
+            | PE::PickerIcon
+            | PE::Checkmark
+            | PE::Custom { .. }
+            | PE::CustomFunction { .. } => false,
+        }
     }
 
     pub(crate) fn accepts_state_pseudo_classes(&self) -> bool {
@@ -3631,7 +3675,8 @@ pub(crate) fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
             .new_custom_error(SelectorParseErrorKind::InvalidState.into_default_parser_error()));
     }
 
-    let result = parser.parse_non_ts_functional_pseudo_class(name, input)?;
+    let after_part_like = state.contains(SelectorParsingState::AFTER_PART_LIKE);
+    let result = parser.parse_non_ts_functional_pseudo_class(name, input, after_part_like)?;
 
     Ok(GenericComponent::NonTsPseudoClass(result))
 }

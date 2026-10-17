@@ -16,7 +16,7 @@ use bun_sema::node::Part;
 ///
 /// | handle | `ts.Node` |
 /// | --- | --- |
-/// | [`Expr`] | the expression, without parentheses |
+/// | [`Expr`] | the expression, without parentheses. [`Locate::locate_for_type`] is about `/** @type {T} */ (e)` |
 /// | [`Pat`] | the `Identifier` that is bound, the `ObjectBindingPattern`, the `ArrayBindingPattern` |
 /// | [`VarDecl`], [`Param`], [`PatProp`], [`PatElem`] | `VariableDeclaration`, `ParameterDeclaration`, `BindingElement` |
 /// | [`Func`] | the function-like: for a method the `MethodDeclaration`, which is also what the [`Member`] or the [`Prop`] is |
@@ -26,6 +26,14 @@ use bun_sema::node::Part;
 /// | [`NameOf`]`(owner)` | `owner.name` |
 pub trait Locate<'a>: Copy {
     fn locate(self, file: &'a File<'a>) -> TsNode<'a>;
+
+    /// The node to ask for the type of the handle. In JavaScript `/** @type {T} */ (e)` is `(e as T)` for TypeScript 7. The
+    /// handle of `e` stands for all of it, so this is the `e as T`, and [`locate`](Self::locate) is the `e`. With an ESLint
+    /// config both are the `e`, which is what typescript-eslint asks about.
+    #[inline]
+    fn locate_for_type(self, file: &'a File<'a>) -> TsNode<'a> {
+        self.locate(file)
+    }
 }
 
 impl<'a> Locate<'a> for TsNode<'a> {
@@ -74,6 +82,17 @@ pub struct NameOf<T>(pub T);
 trait ToRow<'a>: Copy {
     fn row(self) -> Row;
     fn file_of(self) -> &'a File<'a>;
+
+    /// [`Locate::locate_for_type`]
+    #[inline]
+    fn row_for_type(self) -> Row {
+        match self.row() {
+            Row::Expr(id) if self.file_of().types_follow_jsdoc_casts() => {
+                Row::Expr(self.file_of().with_jsdoc_casts(id))
+            }
+            row => row,
+        }
+    }
 }
 
 #[inline]
@@ -100,6 +119,10 @@ macro_rules! rows {
             #[inline]
             fn locate(self, file: &'a File<'a>) -> TsNode<'a> {
                 Location::from(self.row()).locate(file)
+            }
+            #[inline]
+            fn locate_for_type(self, file: &'a File<'a>) -> TsNode<'a> {
+                Location::from(self.row_for_type()).locate(file)
             }
         }
 
@@ -130,7 +153,7 @@ macro_rules! rows {
         impl<'a> $handle<'a> {
             /// `services.getTypeAtLocation(node)`
             pub fn type_at_location(self) -> Type<'a> {
-                self.locate(file_of(self)).get_type_at_location()
+                self.locate_for_type(file_of(self)).get_type_at_location()
             }
 
             /// `services.getSymbolAtLocation(node)`
@@ -210,6 +233,10 @@ impl<'a> Locate<'a> for Node<'a> {
     fn locate(self, file: &'a File<'a>) -> TsNode<'a> {
         Location::from(self.row()).locate(file)
     }
+    #[inline]
+    fn locate_for_type(self, file: &'a File<'a>) -> TsNode<'a> {
+        Location::from(self.row_for_type()).locate(file)
+    }
 }
 
 impl<'a> Locate<'a> for NameOf<Node<'a>> {
@@ -222,7 +249,7 @@ impl<'a> Locate<'a> for NameOf<Node<'a>> {
 impl<'a> Node<'a> {
     /// `services.getTypeAtLocation(node)`
     pub fn ty(self) -> Type<'a> {
-        self.locate(self.file()).get_type_at_location()
+        self.locate_for_type(self.file()).get_type_at_location()
     }
 
     /// `services.esTreeNodeToTSNodeMap.get(node)`
@@ -261,9 +288,11 @@ impl<'a> Expr<'a> {
             .get_context_free_type_of_call_resolved_afresh()
     }
 
-    /// `checker.getContextualType(node)`: the type that its position expects of the expression.
+    /// `checker.getContextualType(node)`: the type that its position expects of the expression. That of
+    /// [`Locate::locate_for_type`]: what is expected of `/** @type {T} */ (e)`. What is expected of the `e` is `T`, and a
+    /// rule that is about what is in a literal asks for that: `e.ts_node().get_contextual_type()`.
     pub fn contextual_type(self) -> Option<Type<'a>> {
-        self.ts_node().get_contextual_type()
+        self.locate_for_type(self.file()).get_contextual_type()
     }
 
     /// `checker.getResolvedSignature(node)`: the overload that a call, a `new`, a tagged template
@@ -272,9 +301,16 @@ impl<'a> Expr<'a> {
         self.ts_node().get_resolved_signature()
     }
 
-    /// The expression with its parentheses, as the `ParenthesizedExpression` that TypeScript has.
+    /// [`Locate::locate_for_type`]
+    pub fn ts_node_for_type(self) -> TsNode<'a> {
+        self.locate_for_type(self.file())
+    }
+
+    /// The expression with its parentheses, as the `ParenthesizedExpression` that TypeScript has. The type of
+    /// `/** @type {T} */ (e)` is `T`.
     pub fn ts_node_with_parentheses(self) -> TsNode<'a> {
-        Location::from(Row::Parenthesized(self.id())).locate(self.file())
+        let outermost = self.file().with_jsdoc_casts(self.id());
+        Location::from(Row::Parenthesized(outermost)).locate(self.file())
     }
 }
 

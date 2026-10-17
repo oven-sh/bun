@@ -201,6 +201,7 @@ pub struct Program<'s> {
     /// `Checker::referenced_properties` of all tasks. The task that checks the file of a
     /// declaration does not see what another one has marked, so `finish_file` takes back what it
     /// has reported. A union: it does not depend on which task comes first.
+    /// Tasks write to this set and the next one directly. Add any other such field to `has_notes_outside_finished`.
     properties_referenced_before: Guarded<crate::util::FxHashSet<Sym>>,
     /// What `check_external_emit_helpers_of_later_files` has reported, of all tasks. `finish_file`
     /// keeps the first of each. It does not depend on which task comes first.
@@ -697,6 +698,7 @@ impl<'s> Program<'s> {
             context_checked_under: Vec::new(),
             initializers_resolved_by_nested_visit: Vec::new(),
             resolved_parameter_types: Default::default(),
+            partial_sig_params: Default::default(),
             quick_initializers: Vec::new(),
             contextual: Vec::new(),
             pulls_contextual_types_at: usize::MAX,
@@ -1119,6 +1121,11 @@ struct QueryFrame {
 pub enum Requested {
     /// `GetSyntacticDiagnostics`: the diagnostics of the parser and the scanner.
     Syntactic,
+    /// The same, for a caller that then asks for the types it needs, as typescript-eslint and tsgolint do, and reads no
+    /// diagnostics. A file that `has_types_that_depend_on_order` is checked in full, as under `All`. If it is too large for
+    /// control flow analysis (TS2563), that check turns the analysis off one block at a time, and stores the types of
+    /// everything else before any rule asks.
+    Types,
     /// .. and `GetDeclarationDiagnostics`. The declaration transformer queries the checker only
     /// about what the file exports.
     Declaration,
@@ -1715,6 +1722,9 @@ pub struct Checker<'p, 's> {
     /// `sig_params` computes the types of all parameters at once. See
     /// `note_parameter_types_resolved`.
     resolved_parameter_types: crate::util::FxHashSet<(SigId, u32)>,
+    /// The lists of `sig_params_with_first` that lack a type, each with the number of parameters
+    /// before the first that does.
+    partial_sig_params: FxHashMap<SigId, (usize, &'p [SigParam])>,
     /// Ranges of `stack`: the resolutions of declarations whose initializer
     /// `getQuickTypeOfExpression` is evaluating, and those of a `...rest`. See
     /// `is_flow_loop_visible`.

@@ -764,6 +764,29 @@ impl Execution {
         }
     }
 
+    /// Judged here rather than in `step`: other callbacks may block before the queued completion is processed.
+    pub(crate) fn handle_callback_completed(&mut self, user_data: &RefDataValue) {
+        let _g = group_begin!();
+
+        let Some((sequence_ptr, _group_ptr)) =
+            self.get_current_and_valid_execution_sequence(user_data)
+        else {
+            return;
+        };
+        // SAFETY: sequence_ptr points into self.sequences; `self` is not accessed for the
+        // remainder of this function, so this is the unique live `&mut` to that element.
+        let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+        let Some(entry) = sequence.active_entry else {
+            return;
+        };
+        // SAFETY: arena-owned entry, alive for lifetime of BunTest
+        let _ = unsafe { entry.as_ref() }.evaluate_timeout(
+            sequence,
+            &Timespec::now_force_real_time(),
+            true,
+        );
+    }
+
     pub(crate) fn handle_uncaught_exception(
         &mut self,
         user_data: &RefDataValue,
@@ -978,7 +1001,7 @@ fn step_sequence_one(
         };
         // SAFETY: arena-owned entry
         let active_entry = unsafe { &mut *active_entry_ptr.as_ptr() };
-        if active_entry.evaluate_timeout(sequence, now) {
+        if active_entry.evaluate_timeout(sequence, now, false) {
             Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
             return Ok(None); // run again
         }
@@ -1042,7 +1065,7 @@ fn step_sequence_one(
             // SAFETY: re-deref after run_test_callback; sequence_ptr still valid (sequences is a
             // Box<[ExecutionSequence]>, never reallocated during execution).
             let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
-            let _ = next_item.evaluate_timeout(sequence, now);
+            let _ = next_item.evaluate_timeout(sequence, now, true);
 
             // the result is available immediately; advance the sequence and run again.
             Execution::advance_sequence(buntest_ptr, sequence_ptr, group);

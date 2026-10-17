@@ -148,7 +148,18 @@ pub(crate) struct TestRunner<'a> {
     /// Set once any `node:test` registration API is called; gates `process.on('exit')` dispatch at the end of the run.
     pub(crate) node_test_used: bool,
 
+    /// Set while `TestCommand::run_all_tests` is on the stack. A `process.exit()` takes it to report the run it ends.
+    pub(crate) serial_run: Option<SerialRun>,
+
     pub(crate) bun_test_root: bun_test::BunTestRoot,
+}
+
+/// A run that executes its test files in this process, as opposed to a `--parallel` worker or coordinator.
+#[derive(Copy, Clone)]
+pub(crate) struct SerialRun {
+    pub(crate) reporter: bun_ptr::BackRef<CommandLineReporter, bun_ptr::Mut>,
+    /// In run order. The first `summary.files` of them have started.
+    pub(crate) files: bun_ptr::BackRef<[bun_ptr::Interned]>,
 }
 
 impl<'a> TestRunner<'a> {

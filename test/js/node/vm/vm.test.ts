@@ -1327,6 +1327,83 @@ describe("Script compiles its source once and links that in every context it run
   });
 });
 
+describe("the compiled code of more than 2000 distinct sources stays cached", () => {
+  // JSC keeps the unlinked code of every program it compiled in a per-VM cache, so a source compiled again is not
+  // parsed again. Upstream bounds that cache at 2000 entries: a loader that cycles through more distinct sources than
+  // that misses on every one of them. Bun's engine bounds it by bytes instead, and the last rung of the idle GC ladder
+  // (BUN_IDLE_GC_SECONDS) drops the entries nothing has compiled again since the rung before it.
+  //
+  // The fixture compiles VM_FIXTURE_COUNT distinct sources, keeps none of them, and reports how many
+  // UnlinkedProgramCodeBlock cells (one per compiled program) survive a full collection: only the cache holds them.
+  // With VM_FIXTURE_IDLE it then waits for the idle rungs to run and reports the count after them.
+  const fixture = String.raw`
+    const { Script, compileFunction } = require("node:vm");
+    const { heapStats } = require("bun:jsc");
+    const programBlocks = () => heapStats().objectTypeCounts.UnlinkedProgramCodeBlock ?? 0;
+    const count = Number(process.env.VM_FIXTURE_COUNT);
+    const compile = process.env.VM_FIXTURE_KIND === "compileFunction"
+      ? i => compileFunction("return " + i, [], { filename: "fn-" + i + ".js" })()
+      : i => new Script(String(i), { filename: "script-" + i + ".js" }).runInThisContext();
+    Bun.gc(true);
+    const before = programBlocks();
+    for (let i = 0; i < count; i++) {
+      if (compile(i) !== i) throw new Error("source " + i + " computed something else");
+    }
+    Bun.gc(true);
+    const cached = programBlocks() - before;
+    if (!process.env.VM_FIXTURE_IDLE) {
+      console.log(JSON.stringify({ cached }));
+    } else {
+      // No collection from here on: the idle rungs run their own, and the count is read after the one that follows
+      // the drop. The deadline only bounds a build in which the rungs never drop anything.
+      const deadline = Date.now() + 30_000;
+      const timer = setInterval(() => {
+        const afterIdle = programBlocks() - before;
+        if (afterIdle * 2 < cached || Date.now() > deadline) {
+          clearInterval(timer);
+          console.log(JSON.stringify({ cached, afterIdle }));
+        }
+      }, 200);
+    }
+  `;
+
+  async function runFixture(extraEnv: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, VM_FIXTURE_COUNT: "2500", ...extraEnv },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  test.concurrent("Script", async () => {
+    const { cached } = await runFixture({ VM_FIXTURE_KIND: "script" });
+    expect(cached).toBeGreaterThanOrEqual(2500);
+  });
+
+  test.concurrent("compileFunction", async () => {
+    const { cached } = await runFixture({ VM_FIXTURE_KIND: "compileFunction" });
+    expect(cached).toBeGreaterThanOrEqual(2500);
+  });
+
+  test.concurrent(
+    "the idle GC ladder drops what nothing compiled again",
+    async () => {
+      const { cached, afterIdle } = await runFixture({
+        VM_FIXTURE_KIND: "script",
+        VM_FIXTURE_IDLE: "1",
+        BUN_IDLE_GC_SECONDS: "1,1,1",
+      });
+      expect(cached).toBeGreaterThanOrEqual(2500);
+      expect(afterIdle * 2).toBeLessThan(cached);
+    },
+    60_000,
+  );
+});
+
 describe("the file: URL origin made from a filename", () => {
   // The last filename made into a URL is kept per VM. The import() tests alternate two filenames, so every
   // compile finds the URL of the other filename in the cache.

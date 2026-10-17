@@ -654,7 +654,7 @@ Simple queries cannot use parameters (`${value}`). If you need parameters, split
 These rules apply to every string with several statements, also through `sql.file` and `sql.unsafe`:
 
 - On PostgreSQL and MySQL, the query resolves to an array with one result per statement.
-- On SQLite, every statement runs and the query resolves to one result. It holds the rows of the first statement if that statement returns rows. Otherwise its `count` is the number of rows that all the statements changed. Only the first statement can have parameters.
+- On SQLite, every statement runs and the query resolves to one result. It holds the rows of the first statement if that statement returns rows. Otherwise its `count` is the number of rows that all the statements changed. Only the first statement can have parameters. Bun refuses a later statement that has one when it reaches it, like any other statement that fails.
 - Only PostgreSQL runs the string as one implicit transaction. On MySQL and SQLite, the statements before a failing one stay applied. Wrap the call in [`sql.begin`](#transactions) if you need all or nothing.
 
 ### Queries in files
@@ -737,7 +737,24 @@ What `cancel()` does depends on how far the query got:
 
 ### Unhandled rejections
 
-`.then()` and `.catch()` return a promise like any other. When it rejects and nothing handles the rejection, Bun reports an unhandled rejection, which ends the process unless you listen for [`unhandledRejection`](https://nodejs.org/api/process.html#event-unhandledrejection). So does an error that your `.finally()` callback throws. A query that you only start, with `.execute()` or `.finally()`, is the exception: once it has a connection, its own failure is not reported, and the error is lost. On SQLite, `.execute()` outside a transaction does report it. Add a `.catch()` to a query that you start and do not await:
+`.then()` and `.catch()` return a promise like any other. When it rejects and nothing handles the rejection, Bun reports an unhandled rejection, which ends the process unless you listen for [`unhandledRejection`](https://nodejs.org/api/process.html#event-unhandledrejection). So does an error that your `.finally()` callback throws.
+
+A query that you only start, with `.execute()` or `.finally()`, is the exception. Its own failure is not reported, and the error is lost, when:
+
+- The query had a connection: the server refused it, or the connection was lost.
+- `close({ timeout: 0 })` closed the pool while the query waited for a connection.
+- You called `.cancel()` before you started it.
+- Its reservation was released, or its transaction or savepoint has ended.
+
+After `.execute()`, Bun does report the failure when:
+
+- It cannot connect: nothing listens, the login fails or the connection times out.
+- The pool was already closed.
+- You call `.cancel()` while the query waits for a connection.
+- It cannot build the query or read the file of `sql.file()`.
+- The adapter is SQLite and the query runs outside a transaction.
+
+Add a `.catch()` to a query that you start and do not await:
 
 ```ts
 sql`UPDATE stats SET hits = hits + 1`.catch(err => console.error(err));

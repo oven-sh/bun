@@ -607,6 +607,8 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> exte
 
   isConnected(): boolean;
   get closed(): boolean;
+  /** close() no longer waits: it rejects what is queued and closes the connections. */
+  readonly tornDown?: boolean;
 
   readonly supportsReservedConnections: boolean;
   /** `true`: `onConnected` was still queued and will never run. */

@@ -1290,7 +1290,7 @@ describe.each(adapters)("$adapter", entry => {
       }),
   );
 
-  test("a refused statement that nothing handles is an unhandled rejection, one that never ran is nothing", () =>
+  test("a refused statement that is only started is nothing, what then(f) returns and what a handler throws is reported", () =>
     scenario(async ({ log, options }) => {
       await using proc = Bun.spawn({
         cmd: [
@@ -1298,10 +1298,9 @@ describe.each(adapters)("$adapter", entry => {
           "-e",
           `
             const reported = [];
-            const first = Promise.withResolvers();
+            const both = Promise.withResolvers();
             process.on("unhandledRejection", err => {
-              reported.push(err.code);
-              first.resolve();
+              if (reported.push(err.code ?? err.message) === 2) both.resolve();
             });
             const sql = new Bun.SQL(${JSON.stringify(options)});
             let ended;
@@ -1312,8 +1311,13 @@ describe.each(adapters)("$adapter", entry => {
             ended\`SELECT 'never ran'\`;
             ended\`SELECT 'never ran'\`.values();
             ended.unsafe("SELECT 'late'").execute();
+            ended\`SELECT 'late'\`.execute();
+            ended.unsafe("SELECT 'late'").finally(() => {});
+            ended.unsafe("SELECT 'late'").then(() => {});
+            ended.unsafe("SELECT 'late'").catch(() => { throw new Error("handler"); });
             await sql.unsafe("SELECT 'pool'");
-            await first.promise;
+            await both.promise;
+            await new Promise(setImmediate);
             await sql.close();
             console.log(JSON.stringify(reported));
           `,
@@ -1324,7 +1328,7 @@ describe.each(adapters)("$adapter", entry => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual([endedCode]);
+      expect(JSON.parse(stdout).sort()).toEqual([endedCode, "handler"].sort());
       expect(exitCode).toBe(0);
       expect(log()).toEqual([BEGIN, "SELECT 'T1'", "COMMIT", "SELECT 'pool'"]);
     }));

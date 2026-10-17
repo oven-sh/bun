@@ -563,6 +563,10 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     return this.#closing !== null;
   }
 
+  get tornDown(): boolean {
+    return this.#tornDown;
+  }
+
   abstract array(values: any[], typeNameOrID?: number | ArrayType): SQLArrayParameter;
   abstract getDistributedTransactionCommands(name: string): TransactionCommands | null;
 

@@ -209,6 +209,10 @@ function onQueryConnected(
 ) {
   query[_waiter] = null;
   if (err) {
+    // close() gave up on it while it waited. As in onQuerySettled(): one that is only started ends no process.
+    if (this.tornDown) {
+      $pokePromiseAsHandled(query);
+    }
     return query.reject(err);
   }
   pooledConnection!.bindQuery?.(query);
@@ -217,6 +221,9 @@ function onQueryConnected(
 
 function dispatchToPool(this: Client, query: Query, handle: QueryHandle) {
   const pool = this.pool;
+  if (pool.closed) {
+    return query.reject(pool.connectionClosedError());
+  }
   pool.connect((query[_waiter] = onQueryConnected.bind(pool, query, handle)));
 }
 
@@ -262,6 +269,8 @@ function dispatch(this: Scope, query: Query, handle: QueryHandle) {
     // SQLite ends a transaction inside some failing statements. What follows would run in autocommit.
     (this.kind !== Kind.reservation && this.pool.isInTransaction?.(this.connection) === false)
   ) {
+    // as in onQuerySettled()
+    $pokePromiseAsHandled(query);
     return query.reject(refusal(this));
   }
   start(this, query, handle);

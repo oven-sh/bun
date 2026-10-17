@@ -15,7 +15,7 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 import path from "node:path";
-import { Duplex, duplexPair, finished, Readable } from "node:stream";
+import { Duplex, duplexPair, finished, pipeline, Readable, Writable } from "node:stream";
 import nodeTls from "node:tls";
 import { Worker } from "node:worker_threads";
 
@@ -1711,6 +1711,77 @@ describe("backpressure", () => {
           sock.write("GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
           expect({ statuses: await answered.promise, urls }).toEqual({
             statuses: ["401", "200"],
+            urls: ["/first", "/second"],
+          });
+        } finally {
+          sock.destroy();
+        }
+      });
+
+      // The stream destroyer keeps the connection of a request that it destroys. Such a request takes
+      // no more bytes and never reads again, so its body must not stop the socket, and a socket that
+      // it stopped before is restarted. (Node stops the socket and resets the connection.)
+      it.each([
+        [
+          "`for await` leaves its loop",
+          async (req: http.IncomingMessage) => {
+            for await (const _ of req) break;
+          },
+        ],
+        [
+          "the sink of a pipeline fails",
+          (req: http.IncomingMessage) => {
+            const { promise, resolve } = Promise.withResolvers<void>();
+            pipeline(req, new Writable({ write: (chunk, encoding, callback) => callback(new Error("sink")) }), () =>
+              resolve(),
+            );
+            return promise;
+          },
+        ],
+        [
+          "the sink of a pipeline fails when the request's buffer is full",
+          (req: http.IncomingMessage) => {
+            const { promise, resolve } = Promise.withResolvers<void>();
+            let fail: ((error: Error) => void) | undefined;
+            const failOnceFull = () => {
+              if (req.readableLength < req.readableHighWaterMark) return void setImmediate(failOnceFull);
+              fail!(new Error("sink"));
+            };
+            const sink = new Writable({
+              write(chunk, encoding, callback) {
+                fail = callback;
+                failOnceFull();
+              },
+            });
+            pipeline(req, sink, () => resolve());
+            return promise;
+          },
+        ],
+      ] as const)("serves the next request after %s", async (_, abandonBody) => {
+        const BODY = 1024 * 1024;
+        const urls: string[] = [];
+        await using server = transport.createServer(async (req, res) => {
+          urls.push(req.url!);
+          if (req.url === "/first") await abandonBody(req);
+          res.end(req.url);
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+
+        const sock = await transport.connect((server.address() as AddressInfo).port);
+        try {
+          const answered = Promise.withResolvers<string[]>();
+          let received = "";
+          sock.on("data", chunk => {
+            received += chunk.toString("latin1");
+            const statuses = [...received.matchAll(/HTTP\/1\.1 (\d+)/g)].map(match => match[1]);
+            if (statuses.length === 2 && received.endsWith("/second")) answered.resolve(statuses);
+          });
+          sock.on("close", () => answered.reject(new Error(`the connection closed after ${JSON.stringify(received)}`)));
+          sock.write(`POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${BODY}\r\n\r\n`);
+          for (let sent = 0; sent < BODY; sent += BLOCK.byteLength) sock.write(BLOCK);
+          sock.write("GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
+          expect({ statuses: await answered.promise, urls }).toEqual({
+            statuses: ["200", "200"],
             urls: ["/first", "/second"],
           });
         } finally {

@@ -5909,6 +5909,7 @@ declare module "bun" {
     | "blake2s256"
     | "md4"
     | "md5"
+    | "md5-sha1"
     | "ripemd160"
     | "sha1"
     | "sha224"

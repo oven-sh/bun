@@ -147,11 +147,14 @@ impl LineBreaks {
         starts
     }
 
+    pub fn line_starts(self, text: &[u8]) -> LineStarts {
+        LineStarts::at(self.starts(text, self.is_plain(text)))
+    }
+
     /// The line and the column of `offset` in `text`. It looks at all of the text: for what is said once about a file.
     pub fn position(self, text: &[u8], offset: usize) -> Position {
         let offset = offset.min(text.len());
-        let starts = LineStarts::at(self.starts(text, self.is_plain(text)));
-        let (line, start) = starts.line_at(offset as u32);
+        let (line, start) = self.line_starts(text).line_at(offset as u32);
         let before = &text[start as usize..offset];
         let column = bun_core::strings::utf8_decoded_len_utf16(before);
         Position { line, column }
@@ -166,12 +169,6 @@ pub struct LineStarts {
 }
 
 impl LineStarts {
-    /// Of `text`, in which a line ends where ECMAScript says so.
-    pub fn new(text: &[u8]) -> LineStarts {
-        let breaks = LineBreaks::EcmaScript;
-        LineStarts::at(breaks.starts(text, breaks.is_plain(text)))
-    }
-
     /// `starts`: ascending, from 0.
     pub fn at(starts: Vec<u32>) -> LineStarts {
         let last = Cell::new(0);

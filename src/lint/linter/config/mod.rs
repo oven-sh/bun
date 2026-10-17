@@ -1543,7 +1543,9 @@ impl Config {
             true => config.validate_language_options(&language_options),
             false => config.options_of_other_language = Some(language_options.clone()),
         }
-        let dialect = match self.language_of(registry, &config, &plugins) {
+        let language = self.language_of(registry, &config, &plugins);
+        let line_breaks = language.map_or_else(Default::default, |it| it.0.line_breaks());
+        let dialect = match language {
             Some((language, name)) => match language.configure(name, &language_options) {
                 Ok(configured) => Some(Dialect {
                     language,
@@ -1557,6 +1559,7 @@ impl Config {
             },
             None => None,
         };
+        config.line_breaks = line_breaks;
         let whose = match (self.is_legacy, self.prefers_typescript_rules) {
             (true, _) => Tables::Eslint8,
             (false, true) => Tables::Oxlint,

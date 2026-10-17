@@ -61,6 +61,16 @@ function summary(json: string) {
 // Each thread that needs JavaScript starts a VM, which takes seconds in a debug build.
 const timeout = isDebug || isASAN ? 120_000 : 10_000;
 
+// A debug build is 10 to 100 times slower, so what is large is smaller there.
+const many = (count: number) => (isDebug || isASAN ? count / 10 : count);
+
+// `fill.repeat(count)`, which is slow in a debug build.
+const repeated = (fill: string, count: number) => Buffer.alloc(count * Buffer.byteLength(fill), fill).toString();
+
+// What is only for the tests is compiled into debug and canary builds.
+const hasTestRunner =
+  isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
+
 // Takes the blocks between ``` out of a file, and puts what is reported about them where they are.
 const fenced = (supportsAutofix: boolean) => `
 const blocksOf = new Map();
@@ -875,22 +885,21 @@ const jsonConfig = (more = "") => `
 describe.concurrent("bun lint with the languages that are built in", () => {
   const json = { ...jsonPackage(), "eslint.config.mjs": jsonConfig() };
   const [mark, noBreakSpace] = [0xfeff, 0xa0].map(it => String.fromCodePoint(it));
+  const separators = String.fromCodePoint(0x2028, 0x2029);
 
-  test(
-    "JSON, JSONC and JSON5 are linted here, without the package eslint",
-    async () => {
-      const result = await lint(
-        {
-          ...json,
-          "a.json": '{\n  "a": 1,\n  "b": { "c": 1, "c": 2 },\n  "a": 2,\n  "\\u0061": 3\n}\n',
-          "b.jsonc": '// é😀\n{ "é😀": 1, /* c */ "é😀": 2 }\n',
-          "c.json5": "{ a: 1, 'a': 2, \"a\": 3, \\u0061: 4, }\n",
-          "crlf.json": `${mark}{\r\n  "a": 1,\r\n  "a": 2\r\n}\r\n`,
-          "fine.json": '{ "a": { "a": [{ "a": 1 }] }, "b": 1 }\n',
-        },
-        ["-f", "json", "--timing", "."],
-      );
-      expect(summary(result.raw)).toMatchInlineSnapshot(`
+  test("JSON, JSONC and JSON5 are linted here, without the package eslint", async () => {
+    const result = await lint(
+      {
+        ...json,
+        "a.json": '{\n  "a": 1,\n  "b": { "c": 1, "c": 2 },\n  "a": 2,\n  "\\u0061": 3\n}\n',
+        "b.jsonc": '// é😀\n{ "é😀": 1, /* c */ "é😀": 2 }\n',
+        "c.json5": "{ a: 1, 'a': 2, \"a\": 3, \\u0061: 4, }\n",
+        "crlf.json": `${mark}{\r\n  "a": 1,\r\n  "a": 2\r\n}\r\n`,
+        "fine.json": '{ "a": { "a": [{ "a": 1 }] }, "b": 1 }\n',
+      },
+      ["-f", "json", "--timing", "."],
+    );
+    expect(summary(result.raw)).toMatchInlineSnapshot(`
       "a.json: 3:18 json/no-duplicate-keys Duplicate key "c" found.
       a.json: 4:3 json/no-duplicate-keys Duplicate key "a" found.
       a.json: 5:3 json/no-duplicate-keys Duplicate key "\\u0061" found.
@@ -900,427 +909,408 @@ describe.concurrent("bun lint with the languages that are built in", () => {
       c.json5: 1:25 json/no-duplicate-keys Duplicate key "\\u0061" found.
       crlf.json: 3:3 json/no-duplicate-keys Duplicate key "a" found."
     `);
-      expect(JSON.parse(result.raw)[1].messages[0]).toEqual({
-        ruleId: "json/no-duplicate-keys",
-        severity: 2,
-        message: 'Duplicate key "é😀" found.',
-        line: 2,
-        column: 21,
-        messageId: "duplicateKey",
-        endLine: 2,
-        endColumn: 26,
-      });
-      expect(result.stderr).not.toContain("the eslint package linted");
-      expect(result.exitCode).toBe(1);
-    },
-    timeout,
-  );
+    expect(JSON.parse(result.raw)[1].messages[0]).toEqual({
+      ruleId: "json/no-duplicate-keys",
+      severity: 2,
+      message: 'Duplicate key "é😀" found.',
+      line: 2,
+      column: 21,
+      messageId: "duplicateKey",
+      endLine: 2,
+      endColumn: 26,
+    });
+    expect(result.stderr).not.toContain("the eslint package linted");
+    expect(result.exitCode).toBe(1);
+  });
 
-  test(
-    "an object with many keys",
-    async () => {
-      const keys = Array.from({ length: 50_000 }, (_, i) => `"k${i}": ${i}`);
-      const text = `{${keys.join(",")},"k7":0,"k49999":0,"new":0}`;
-      const result = await lint({ ...json, "a.json": text }, ["-f", "json", "."]);
-      expect(summary(result.raw).replaceAll(/\d+:\d+ /g, "")).toBe(
-        'a.json: json/no-duplicate-keys Duplicate key "k7" found.\na.json: json/no-duplicate-keys Duplicate key "k49999" found.',
-      );
-    },
-    timeout,
-  );
+  test("an object with many keys", async () => {
+    const count = many(50_000);
+    const keys = Array.from({ length: count }, (_, i) => `"k${i}": ${i}`);
+    const text = `{${keys.join(",")},"k7":0,"k${count - 1}":0,"new":0}`;
+    const result = await lint({ ...json, "a.json": text }, ["-f", "json", "."]);
+    expect(summary(result.raw).replaceAll(/\d+:\d+ /g, "")).toBe(
+      `a.json: json/no-duplicate-keys Duplicate key "k7" found.\na.json: json/no-duplicate-keys Duplicate key "k${count - 1}" found.`,
+    );
+  });
 
-  test(
-    "nesting is only limited by memory",
-    async () => {
-      const deep = `${'{"a":['.repeat(200_000)}{"b":1,"b":2}${"]}".repeat(200_000)}`;
-      const result = await lint({ ...json, "a.json": deep }, ["-f", "json", "."]);
-      expect(summary(result.raw)).toBe('a.json: 1:1200008 json/no-duplicate-keys Duplicate key "b" found.');
-    },
-    timeout,
-  );
+  test("nesting is only limited by memory", async () => {
+    const depth = many(200_000);
+    const deep = `${repeated('{"a":[', depth)}{"b":1,"b":2}${repeated("]}", depth)}`;
+    const result = await lint({ ...json, "a.json": deep }, ["-f", "json", "."]);
+    expect(summary(result.raw)).toBe(`a.json: 1:${depth * 6 + 8} json/no-duplicate-keys Duplicate key "b" found.`);
+  });
 
   // Which texts are refused is what has to be the same as with the plugin. The words and the place are those of Bun's parser.
-  test(
-    "a text that is refused is one fatal problem",
-    async () => {
-      const cases: [string, string, string][] = [
-        ["json", "", "1:1 Unexpected end of input"],
-        ["json", "{", "1:2 Unexpected end of input"],
-        ["json", '{"a":1', "1:7 Unterminated object"],
-        ["json", '{"a" 1}', "1:6 Expected ':' after object key"],
-        ["json", '{"a":1,}', "1:7 Trailing commas are not allowed in JSON"],
-        ["json", "[1,]", "1:3 Trailing commas are not allowed in JSON"],
-        ["json", "[1", "1:3 Unterminated array"],
-        ["json", "[1 2]", "1:4 Expected ','"],
-        ["json", "[1}", "1:3 Expected ']'"],
-        ["json", '{"a":1]', "1:7 Expected '}'"],
-        ["json", "{} {}", "1:4 Unexpected token after JSON value"],
-        ["json", "// c\n1", "1:1 Comments are not allowed in JSON"],
-        ["json", "{a:1}", "1:2 Keys must be strings in double quotes"],
-        ["json", "{true:1}", "1:2 Keys must be strings in double quotes"],
-        ["json", "'a'", "1:1 Strings must be in double quotes"],
-        ["json", "tru", "1:1 Unexpected token"],
-        ["json", "NaN", "1:1 Unexpected token"],
-        ["json", "01", "1:1 Leading zeros are not allowed in JSON"],
-        ["json", "+1", "1:1 Invalid number"],
-        ["json", ".5", "1:1 Invalid number"],
-        ["json", "5.", "1:1 Invalid number"],
-        ["json", "0x1", "1:1 Invalid number"],
-        ["json", "-Infinity", "1:1 Invalid number"],
-        ["json", '{\n  "a": "\\q"\n}', "2:9 Invalid escape sequence"],
-        ["json", '"\\x41"', "1:2 Invalid escape sequence"],
-        ["json", '"a\\\nb"', "1:3 Invalid escape sequence"],
-        ["json", '"abc', "1:5 Unterminated string"],
-        ["json", `${noBreakSpace}1`, "1:1 Unexpected character"],
-        ["json", `1${String.fromCodePoint(0)}`, "1:2 Unexpected character"],
-        ["jsonc", '{"a":1,} // c', "1:7 Trailing commas are not allowed in JSONC"],
-        ["jsonc", "/* c", "1:5 Unterminated multi-line comment"],
-        ["jsonc", "[1, // c\n", "2:1 Unexpected end of input"],
-        ["jsonc", "{a:1}", "1:2 Keys must be strings in double quotes"],
-        ["json5", "{1:1}", "1:2 Invalid identifier start character"],
-        ["json5", "0x", "1:3 Invalid hex number"],
-        ["json5", "01", "1:1 Leading zeros are not allowed in JSON5"],
-        ["json5", "[,]", "1:2 Unexpected token"],
-        ["json5", "{a-b:1}", "1:4 Unexpected character"],
-        ["json5", "1 2", "1:3 Unexpected token after JSON5 value"],
-      ];
-      const files = cases.map(([language, text], i) => [`${String(i).padStart(2, "0")}.${language}`, text]);
-      const result = await lint({ ...json, ...Object.fromEntries(files) }, ["-f", "json", "."]);
-      expect(summary(result.raw).split("\n")).toEqual(
-        cases.map(([, , expected], i) => {
-          const [place, ...message] = expected.split(" ");
-          return `${files[i][0]}: ${place} null Parsing error: ${message.join(" ")} [fatal]`;
-        }),
-      );
-      expect(result.exitCode).toBe(1);
-    },
-    timeout,
-  );
+  test("a text that is refused is one fatal problem", async () => {
+    const cases: [string, string, string][] = [
+      ["json", "", "1:1 Unexpected end of input"],
+      ["json", "{", "1:2 Unexpected end of input"],
+      ["json", '{"a":1', "1:7 Unterminated object"],
+      ["json", '{"a" 1}', "1:6 Expected ':' after object key"],
+      ["json", '{"a":1,}', "1:7 Trailing commas are not allowed in JSON"],
+      ["json", "[1,]", "1:3 Trailing commas are not allowed in JSON"],
+      ["json", "[1", "1:3 Unterminated array"],
+      ["json", "[1 2]", "1:4 Expected ','"],
+      ["json", "[1}", "1:3 Expected ']'"],
+      ["json", '{"a":1]', "1:7 Expected '}'"],
+      ["json", "{} {}", "1:4 Unexpected token after JSON value"],
+      ["json", "// c\n1", "1:1 Comments are not allowed in JSON"],
+      ["json", "{a:1}", "1:2 Keys must be strings in double quotes"],
+      ["json", "{true:1}", "1:2 Keys must be strings in double quotes"],
+      ["json", "'a'", "1:1 Strings must be in double quotes"],
+      ["json", "tru", "1:1 Unexpected token"],
+      ["json", "NaN", "1:1 Unexpected token"],
+      ["json", "01", "1:1 Leading zeros are not allowed in JSON"],
+      ["json", "+1", "1:1 Invalid number"],
+      ["json", ".5", "1:1 Invalid number"],
+      ["json", "5.", "1:1 Invalid number"],
+      ["json", "0x1", "1:1 Invalid number"],
+      ["json", "-Infinity", "1:1 Invalid number"],
+      ["json", '{\n  "a": "\\q"\n}', "2:9 Invalid escape sequence"],
+      ["json", '"\\x41"', "1:2 Invalid escape sequence"],
+      ["json", '"a\\\nb"', "1:3 Invalid escape sequence"],
+      ["json", '"abc', "1:5 Unterminated string"],
+      ["json", `${noBreakSpace}1`, "1:1 Unexpected character"],
+      ["json", `1${String.fromCodePoint(0)}`, "1:2 Unexpected character"],
+      ["jsonc", '{"a":1,} // c', "1:7 Trailing commas are not allowed in JSONC"],
+      ["jsonc", "/* c", "1:5 Unterminated multi-line comment"],
+      ["jsonc", "[1, // c\n", "2:1 Unexpected end of input"],
+      ["jsonc", "{a:1}", "1:2 Keys must be strings in double quotes"],
+      ["json5", "{1:1}", "1:2 Invalid identifier start character"],
+      ["json5", "0x", "1:3 Invalid hex number"],
+      ["json5", "01", "1:1 Leading zeros are not allowed in JSON5"],
+      ["json5", "[,]", "1:2 Unexpected token"],
+      ["json5", "{a-b:1}", "1:4 Unexpected character"],
+      ["json5", "1 2", "1:3 Unexpected token after JSON5 value"],
+    ];
+    const files = cases.map(([language, text], i) => [`${String(i).padStart(2, "0")}.${language}`, text]);
+    const result = await lint({ ...json, ...Object.fromEntries(files) }, ["-f", "json", "."]);
+    expect(summary(result.raw).split("\n")).toEqual(
+      cases.map(([, , expected], i) => {
+        const [place, ...message] = expected.split(" ");
+        return `${files[i][0]}: ${place} null Parsing error: ${message.join(" ")} [fatal]`;
+      }),
+    );
+    expect(result.exitCode).toBe(1);
+  });
 
   // `a` is accepted and `r` is refused: as JSON, as JSONC, as JSONC with `allowTrailingCommas`, as JSON5. Behind `//` is what ESLint
   // does where that is something else, which the next test is about.
-  test(
-    "which texts are accepted",
-    async () => {
-      const texts: [string, string][] = [
-        ["", "rrrr"],
-        [" ", "rrrr"],
-        ["\n", "rrrr"],
-        ["{", "rrrr"],
-        ["}", "rrrr"],
-        ["[", "rrrr"],
-        ["]", "rrrr"],
-        ["{}", "aaaa"],
-        ["[]", "aaaa"],
-        ["{} {}", "rrrr"],
-        ["[] 1", "rrrr"],
-        ["1 2", "rrrr"],
-        ['"a"', "aaaa"],
-        ['"a', "rrrr"],
-        ['"a\n', "rrrr"],
-        ['"a\nb"', "rrrr"], // aaaa
-        ["'a'", "rrra"],
-        ["nul", "rrrr"],
-        ["null", "aaaa"],
-        ["nulll", "rrrr"],
-        ["tru", "rrrr"],
-        ["true", "aaaa"],
-        ["false", "aaaa"],
-        ["fals", "rrrr"],
-        ["t", "rrrr"],
-        ["n", "rrrr"],
-        ["f", "rrrr"],
-        ["a", "rrrr"],
-        ["abc", "rrrr"],
-        ["undefined", "rrrr"],
-        ["NaN", "rrra"],
-        ["Infinity", "rrra"],
-        ["-Infinity", "rrra"],
-        ["+Infinity", "rrra"],
-        ["-NaN", "rrra"],
-        ["+NaN", "rrra"],
-        ["-Inf", "rrrr"],
-        ["+N", "rrrr"],
-        ["-", "rrrr"],
-        ["+", "rrrr"],
-        ["-a", "rrrr"],
-        ["+1", "rrra"],
-        ["-1", "aaaa"],
-        ["01", "rrrr"],
-        ["00", "rrrr"],
-        ["-01", "rrrr"],
-        ["0", "aaaa"],
-        ["-0", "aaaa"],
-        ["1.", "rrra"],
-        ["1.e5", "rrra"],
-        [".5", "rrra"],
-        ["-.5", "rrra"], // rrrr
-        ["+.5", "rrra"], // rrrr
-        [".", "rrrr"], // rrra
-        [".a", "rrrr"], // rrra
-        [".e1", "rrrr"], // rrra
-        ["5.", "rrra"],
-        ["1e", "rrrr"],
-        ["1e+", "rrrr"],
-        ["1e-", "rrrr"],
-        ["1ea", "rrrr"],
-        ["1e5", "aaaa"],
-        ["1E+5", "aaaa"],
-        ["1.5e-3", "aaaa"],
-        ["0x", "rrrr"],
-        ["0x1", "rrra"],
-        ["0X1f", "rrra"],
-        ["0xg", "rrrr"],
-        ["-0x1", "rrra"],
-        ["0x1.5", "rrrr"], // rrra
-        ["1a", "rrrr"],
-        ["1_000", "rrrr"],
-        ["1n", "rrrr"],
-        ["0b1", "rrrr"],
-        ["0o7", "rrrr"],
-        ['{"a"}', "rrrr"],
-        ['{"a":}', "rrrr"],
-        ['{"a":1', "rrrr"],
-        ['{"a":1,', "rrrr"],
-        ['{"a":1,}', "rraa"],
-        ['{"a":1,,}', "rrrr"],
-        ["{,}", "rrrr"],
-        ['{"a" 1}', "rrrr"],
-        ['{"a":1 "b":2}', "rrrr"],
-        ['{"a":1]', "rrrr"],
-        ["{a:1}", "rrra"],
-        ["{'a':1}", "rrra"],
-        ["{1:1}", "rrrr"],
-        ["{true:1}", "rrra"], // rrrr
-        ["{null:1}", "rrra"], // rrrr
-        ["{NaN:1}", "rrra"],
-        ["{Infinity:1}", "rrra"],
-        ["{-Infinity:1}", "rrrr"],
-        ["{+NaN:1}", "rrrr"],
-        ["{.5:1}", "rrrr"], // rrra
-        ['{"a":', "rrrr"],
-        ['{"a"', "rrrr"],
-        ['{"a":{', "rrrr"],
-        ['{"a":[', "rrrr"],
-        ["[1", "rrrr"],
-        ["[1,", "rrrr"],
-        ["[1,]", "rraa"],
-        ["[1,,2]", "rrrr"],
-        ["[,]", "rrrr"],
-        ["[,1]", "rrrr"],
-        ["[1 2]", "rrrr"],
-        ["[1}", "rrrr"],
-        ["[1,2", "rrrr"],
-        ["[[", "rrrr"],
-        ["[{", "rrrr"],
-        ["[1,\n", "rrrr"],
-        ["[1 // c\n", "rrrr"],
-        ["[1, // c\n", "rrrr"],
-        ["[1, /* c */", "rrrr"],
-        ["{ // c\n", "rrrr"],
-        ['{"a":1 /* c */', "rrrr"],
-        ['{"a":1, // c', "rrrr"],
-        ["// c", "rrrr"],
-        ["/* c */", "rrrr"],
-        ["/* c", "rrrr"],
-        ["/*", "rrrr"],
-        ["/", "rrrr"],
-        ["/a", "rrrr"],
-        ["/* c *", "rrrr"],
-        ["/**/", "rrrr"],
-        ["/***/1", "raaa"],
-        ["/*/", "rrrr"],
-        ["1 // c", "raaa"],
-        ["1 /* c */", "raaa"],
-        ["// c\n1", "raaa"],
-        ["/* c */ 1", "raaa"],
-        ["//\n1", "raaa"],
-        ["1 /", "rrrr"],
-        ["# c", "rrrr"],
-        ['"\\a"', "rrra"],
-        ['"\\u12"', "rrrr"],
-        ['"\\u12G4"', "rrrr"],
-        ['"\\u"', "rrrr"],
-        ['"\\x41"', "rrra"],
-        ['"\\x4"', "rrrr"],
-        ['"\\xg"', "rrrr"],
-        ['"\\0"', "rrra"],
-        ['"\\1"', "rrrr"], // rrra
-        ['"\\v"', "rrra"],
-        ['"\\\'"', "rrra"],
-        ['"\\\n"', "rrra"],
-        ['"\\\r\n"', "rrra"],
-        ['"\\"', "rrrr"],
-        ['"\\\\"', "aaaa"],
-        ['"\\""', "aaaa"],
-        ['"\\/"', "aaaa"],
-        ['"\\b\\f\\n\\r\\t"', "aaaa"],
-        ['"\\u0061"', "aaaa"],
-        ['"\\uD83D\\uDE00"', "aaaa"],
-        ['"\\uD83D"', "aaaa"],
-        ['"\t"', "rrra"], // aaaa
-        ['"\u0001"', "rrra"], // aaaa
-        ['"\u2028"', "aaaa"],
-        ["'\\''", "rrra"],
-        ["'\"'", "rrra"],
-        ['"\'"', "aaaa"],
-        ["'a\nb'", "rrrr"], // rrra
-        ["'a", "rrrr"],
-        ["\u00a0 1", "rrra"],
-        ["\u000b1", "rrra"],
-        ["\f1", "rrra"],
-        ["\ufeff1", "aaaa"],
-        ["1\ufeff", "rrra"],
-        ["\u20281", "rrra"],
-        ["\u16801", "rrra"], // rrrr
-        ["\u30001", "rrra"],
-        ["\u20001", "rrra"],
-        ["\u180e1", "rrrr"],
-        ["\u00001", "rrrr"],
-        ["1\u0000", "rrrr"],
-        ["\u00e9", "rrrr"],
-        ["{\u00e9:1}", "rrra"],
-        ["{\\u0061:1}", "rrra"],
-        ["{\\u0031:1}", "rrrr"],
-        ["{a\\u0031:1}", "rrra"],
-        ["{a\\u002d:1}", "rrrr"],
-        ["{\\x61:1}", "rrrr"],
-        ["{\\u00:1}", "rrrr"],
-        ["{\\", "rrrr"],
-        ["{a\\", "rrrr"],
-        ["{$a_1:1}", "rrra"],
-        ["{\u200c:1}", "rrrr"], // rrra
-        ["{a\u200d:1}", "rrra"],
-        ["{\ud835\udc00:1}", "rrra"], // rrrr
-        ["{a-b:1}", "rrrr"],
-        ["{a b:1}", "rrrr"],
-        ['{"a":a}', "rrrr"],
-        ['{"a":tru}', "rrrr"],
-        ["[tru]", "rrrr"],
-        ["[nulla]", "rrrr"],
-        ["[true1]", "rrrr"],
-        ["[tru\u0435]", "rrrr"],
-        ['{"a":1,"a":2}', "aaaa"],
-        ['{"a":1,"\\u0061":2}', "aaaa"],
-        ['{"a":1,"b":{"a":1,"a":2},"a":3}', "aaaa"],
-        ['[{"a":1,"a":2}]', "aaaa"],
-        ['{"":1,"":2}', "aaaa"],
-        ['{"__proto__":1,"__proto__":2}', "aaaa"],
-        ['{"\u00e9":1,"\\u00e9":2}', "aaaa"],
-        ['{"\ud83d\ude00":1,"\\uD83D\\uDE00":2, "x\ud83d\ude00": 1, "x\ud83d\ude00": 2}', "aaaa"],
-        ["{a:1,'a':2,\"a\":3,\\u0061:4}", "rrra"],
-        ['{NaN:1,"NaN":2}', "rrra"],
-        ['{Infinity:1,"Infinity":2}', "rrra"],
-        ['{"a\\/b":1,"a/b":2}', "aaaa"],
-        ['{"a\\\\":1,"a\\\\":2}', "aaaa"],
-        ['{"a\\nb":1,"a\\u000ab":2}', "aaaa"],
-        ["{'a\\\nb':1,ab:2}", "rrra"],
-        ['{"\\uD83D":1,"\\uD83D":2}', "aaaa"],
-        ['{\r\n  "a": 1,\r\n  "a": 2\r\n}\r\n', "aaaa"],
-        ['{\r  "a": 1,\r  "a": 2\r}\r', "aaaa"],
-        ['{\n"a":1,\n\n"a"\n:\n2}', "aaaa"],
-        ['\ufeff{"a":1,"a":2}', "aaaa"],
-        ['{"\u00e9\ud83d\ude00": 1, "a": 1, "a": 2}', "aaaa"],
-        ['{"a":1,\n"b":"\u2028","a":2}', "aaaa"],
-        ['{"a":1}\n\n\n', "aaaa"],
-        ['{"a":1\n\n', "rrrr"],
-        ["[1,2\n\n", "rrrr"],
-        ['"abc\n\n', "rrrr"],
-        ["/* abc\n\n", "rrrr"],
-        ['{"a":"b\n', "rrrr"],
-        ['{"a":1,\r\n', "rrrr"],
-        ["[\r\n1\r\n", "rrrr"],
-        ['"a\r\n', "rrrr"],
-        ["/*\r\n", "rrrr"],
-        ['{"a":"\\q"}', "rrra"],
-        ['{\n  "a": "\\q"\n}', "rrra"],
-        ['{\n  "a": 1e\n}', "rrrr"],
-        ['{\n  "a": -\n}', "rrrr"],
-        ['{\n "a": 01\n}', "rrrr"],
-        ['{\n "a": 1.\n}', "rrra"],
-        ['{\n "a": 1.}', "rrra"],
-        ["1.\n", "rrra"],
-        ["1e\n", "rrrr"],
-        ["-\n", "rrrr"],
-      ];
-      const names = (i: number) => [`plain/${i}.json`, `plain/${i}.jsonc`, `commas/${i}.jsonc`, `plain/${i}.json5`];
-      const files = Object.fromEntries(texts.flatMap(([text], i) => names(i).map(name => [name, text])));
-      const config = jsonConfig(`{ files: ["commas/*.jsonc"], languageOptions: { allowTrailingCommas: true } }`);
-      const result = await lint({ ...json, "eslint.config.mjs": config, ...files }, ["-f", "json", "."]);
-      const found = new Map<string, string>();
-      for (const { filePath, messages } of JSON.parse(result.raw)) {
-        // What is refused has one problem.
-        const isRefused = messages.some((it: any) => it.fatal);
-        found.set(
-          filePath.replaceAll("\\", "/").split("/").slice(-2).join("/"),
-          isRefused ? "r".repeat(messages.length) : "a",
-        );
-      }
-      expect(
-        texts.map(([text], i) => [
-          text,
-          names(i)
-            .map(name => found.get(name))
-            .join(""),
-        ]),
-      ).toEqual(texts);
-    },
-    timeout,
-  );
+  test("which texts are accepted", async () => {
+    const texts: [string, string][] = [
+      ["", "rrrr"],
+      [" ", "rrrr"],
+      ["\n", "rrrr"],
+      ["{", "rrrr"],
+      ["}", "rrrr"],
+      ["[", "rrrr"],
+      ["]", "rrrr"],
+      ["{}", "aaaa"],
+      ["[]", "aaaa"],
+      ["{} {}", "rrrr"],
+      ["[] 1", "rrrr"],
+      ["1 2", "rrrr"],
+      ['"a"', "aaaa"],
+      ['"a', "rrrr"],
+      ['"a\n', "rrrr"],
+      ['"a\nb"', "rrrr"], // aaaa
+      ["'a'", "rrra"],
+      ["nul", "rrrr"],
+      ["null", "aaaa"],
+      ["nulll", "rrrr"],
+      ["tru", "rrrr"],
+      ["true", "aaaa"],
+      ["false", "aaaa"],
+      ["fals", "rrrr"],
+      ["t", "rrrr"],
+      ["n", "rrrr"],
+      ["f", "rrrr"],
+      ["a", "rrrr"],
+      ["abc", "rrrr"],
+      ["undefined", "rrrr"],
+      ["NaN", "rrra"],
+      ["Infinity", "rrra"],
+      ["-Infinity", "rrra"],
+      ["+Infinity", "rrra"],
+      ["-NaN", "rrra"],
+      ["+NaN", "rrra"],
+      ["-Inf", "rrrr"],
+      ["+N", "rrrr"],
+      ["-", "rrrr"],
+      ["+", "rrrr"],
+      ["-a", "rrrr"],
+      ["+1", "rrra"],
+      ["-1", "aaaa"],
+      ["01", "rrrr"],
+      ["00", "rrrr"],
+      ["-01", "rrrr"],
+      ["0", "aaaa"],
+      ["-0", "aaaa"],
+      ["1.", "rrra"],
+      ["1.e5", "rrra"],
+      [".5", "rrra"],
+      ["-.5", "rrra"], // rrrr
+      ["+.5", "rrra"], // rrrr
+      [".", "rrrr"], // rrra
+      [".a", "rrrr"], // rrra
+      [".e1", "rrrr"], // rrra
+      ["5.", "rrra"],
+      ["1e", "rrrr"],
+      ["1e+", "rrrr"],
+      ["1e-", "rrrr"],
+      ["1ea", "rrrr"],
+      ["1e5", "aaaa"],
+      ["1E+5", "aaaa"],
+      ["1.5e-3", "aaaa"],
+      ["0x", "rrrr"],
+      ["0x1", "rrra"],
+      ["0X1f", "rrra"],
+      ["0xg", "rrrr"],
+      ["-0x1", "rrra"],
+      ["0x1.5", "rrrr"], // rrra
+      ["1a", "rrrr"],
+      ["1_000", "rrrr"],
+      ["1n", "rrrr"],
+      ["0b1", "rrrr"],
+      ["0o7", "rrrr"],
+      ['{"a"}', "rrrr"],
+      ['{"a":}', "rrrr"],
+      ['{"a":1', "rrrr"],
+      ['{"a":1,', "rrrr"],
+      ['{"a":1,}', "rraa"],
+      ['{"a":1,,}', "rrrr"],
+      ["{,}", "rrrr"],
+      ['{"a" 1}', "rrrr"],
+      ['{"a":1 "b":2}', "rrrr"],
+      ['{"a":1]', "rrrr"],
+      ["{a:1}", "rrra"],
+      ["{'a':1}", "rrra"],
+      ["{1:1}", "rrrr"],
+      ["{true:1}", "rrra"], // rrrr
+      ["{null:1}", "rrra"], // rrrr
+      ["{NaN:1}", "rrra"],
+      ["{Infinity:1}", "rrra"],
+      ["{-Infinity:1}", "rrrr"],
+      ["{+NaN:1}", "rrrr"],
+      ["{.5:1}", "rrrr"], // rrra
+      ['{"a":', "rrrr"],
+      ['{"a"', "rrrr"],
+      ['{"a":{', "rrrr"],
+      ['{"a":[', "rrrr"],
+      ["[1", "rrrr"],
+      ["[1,", "rrrr"],
+      ["[1,]", "rraa"],
+      ["[1,,2]", "rrrr"],
+      ["[,]", "rrrr"],
+      ["[,1]", "rrrr"],
+      ["[1 2]", "rrrr"],
+      ["[1}", "rrrr"],
+      ["[1,2", "rrrr"],
+      ["[[", "rrrr"],
+      ["[{", "rrrr"],
+      ["[1,\n", "rrrr"],
+      ["[1 // c\n", "rrrr"],
+      ["[1, // c\n", "rrrr"],
+      ["[1, /* c */", "rrrr"],
+      ["{ // c\n", "rrrr"],
+      ['{"a":1 /* c */', "rrrr"],
+      ['{"a":1, // c', "rrrr"],
+      ["// c", "rrrr"],
+      ["/* c */", "rrrr"],
+      ["/* c", "rrrr"],
+      ["/*", "rrrr"],
+      ["/", "rrrr"],
+      ["/a", "rrrr"],
+      ["/* c *", "rrrr"],
+      ["/**/", "rrrr"],
+      ["/***/1", "raaa"],
+      ["/*/", "rrrr"],
+      ["1 // c", "raaa"],
+      ["1 /* c */", "raaa"],
+      ["// c\n1", "raaa"],
+      ["/* c */ 1", "raaa"],
+      ["//\n1", "raaa"],
+      ["1 /", "rrrr"],
+      ["# c", "rrrr"],
+      ['"\\a"', "rrra"],
+      ['"\\u12"', "rrrr"],
+      ['"\\u12G4"', "rrrr"],
+      ['"\\u"', "rrrr"],
+      ['"\\x41"', "rrra"],
+      ['"\\x4"', "rrrr"],
+      ['"\\xg"', "rrrr"],
+      ['"\\0"', "rrra"],
+      ['"\\1"', "rrrr"], // rrra
+      ['"\\v"', "rrra"],
+      ['"\\\'"', "rrra"],
+      ['"\\\n"', "rrra"],
+      ['"\\\r\n"', "rrra"],
+      ['"\\"', "rrrr"],
+      ['"\\\\"', "aaaa"],
+      ['"\\""', "aaaa"],
+      ['"\\/"', "aaaa"],
+      ['"\\b\\f\\n\\r\\t"', "aaaa"],
+      ['"\\u0061"', "aaaa"],
+      ['"\\uD83D\\uDE00"', "aaaa"],
+      ['"\\uD83D"', "aaaa"],
+      ['"\t"', "rrra"], // aaaa
+      ['"\u0001"', "rrra"], // aaaa
+      ['"\u2028"', "aaaa"],
+      ["'\\''", "rrra"],
+      ["'\"'", "rrra"],
+      ['"\'"', "aaaa"],
+      ["'a\nb'", "rrrr"], // rrra
+      ["'a", "rrrr"],
+      ["\u00a0 1", "rrra"],
+      ["\u000b1", "rrra"],
+      ["\f1", "rrra"],
+      ["\ufeff1", "aaaa"],
+      ["1\ufeff", "rrra"],
+      ["\u20281", "rrra"],
+      ["\u16801", "rrra"], // rrrr
+      ["\u30001", "rrra"],
+      ["\u20001", "rrra"],
+      ["\u180e1", "rrrr"],
+      ["\u00001", "rrrr"],
+      ["1\u0000", "rrrr"],
+      ["\u00e9", "rrrr"],
+      ["{\u00e9:1}", "rrra"],
+      ["{\\u0061:1}", "rrra"],
+      ["{\\u0031:1}", "rrrr"],
+      ["{a\\u0031:1}", "rrra"],
+      ["{a\\u002d:1}", "rrrr"],
+      ["{\\x61:1}", "rrrr"],
+      ["{\\u00:1}", "rrrr"],
+      ["{\\", "rrrr"],
+      ["{a\\", "rrrr"],
+      ["{$a_1:1}", "rrra"],
+      ["{\u200c:1}", "rrrr"], // rrra
+      ["{a\u200d:1}", "rrra"],
+      ["{\ud835\udc00:1}", "rrra"], // rrrr
+      ["{a-b:1}", "rrrr"],
+      ["{a b:1}", "rrrr"],
+      ['{"a":a}', "rrrr"],
+      ['{"a":tru}', "rrrr"],
+      ["[tru]", "rrrr"],
+      ["[nulla]", "rrrr"],
+      ["[true1]", "rrrr"],
+      ["[tru\u0435]", "rrrr"],
+      ['{"a":1,"a":2}', "aaaa"],
+      ['{"a":1,"\\u0061":2}', "aaaa"],
+      ['{"a":1,"b":{"a":1,"a":2},"a":3}', "aaaa"],
+      ['[{"a":1,"a":2}]', "aaaa"],
+      ['{"":1,"":2}', "aaaa"],
+      ['{"__proto__":1,"__proto__":2}', "aaaa"],
+      ['{"\u00e9":1,"\\u00e9":2}', "aaaa"],
+      ['{"\ud83d\ude00":1,"\\uD83D\\uDE00":2, "x\ud83d\ude00": 1, "x\ud83d\ude00": 2}', "aaaa"],
+      ["{a:1,'a':2,\"a\":3,\\u0061:4}", "rrra"],
+      ['{NaN:1,"NaN":2}', "rrra"],
+      ['{Infinity:1,"Infinity":2}', "rrra"],
+      ['{"a\\/b":1,"a/b":2}', "aaaa"],
+      ['{"a\\\\":1,"a\\\\":2}', "aaaa"],
+      ['{"a\\nb":1,"a\\u000ab":2}', "aaaa"],
+      ["{'a\\\nb':1,ab:2}", "rrra"],
+      ['{"\\uD83D":1,"\\uD83D":2}', "aaaa"],
+      ['{\r\n  "a": 1,\r\n  "a": 2\r\n}\r\n', "aaaa"],
+      ['{\r  "a": 1,\r  "a": 2\r}\r', "aaaa"],
+      ['{\n"a":1,\n\n"a"\n:\n2}', "aaaa"],
+      ['\ufeff{"a":1,"a":2}', "aaaa"],
+      ['{"\u00e9\ud83d\ude00": 1, "a": 1, "a": 2}', "aaaa"],
+      ['{"a":1,\n"b":"\u2028","a":2}', "aaaa"],
+      ['{"a":1}\n\n\n', "aaaa"],
+      ['{"a":1\n\n', "rrrr"],
+      ["[1,2\n\n", "rrrr"],
+      ['"abc\n\n', "rrrr"],
+      ["/* abc\n\n", "rrrr"],
+      ['{"a":"b\n', "rrrr"],
+      ['{"a":1,\r\n', "rrrr"],
+      ["[\r\n1\r\n", "rrrr"],
+      ['"a\r\n', "rrrr"],
+      ["/*\r\n", "rrrr"],
+      ['{"a":"\\q"}', "rrra"],
+      ['{\n  "a": "\\q"\n}', "rrra"],
+      ['{\n  "a": 1e\n}', "rrrr"],
+      ['{\n  "a": -\n}', "rrrr"],
+      ['{\n "a": 01\n}', "rrrr"],
+      ['{\n "a": 1.\n}', "rrra"],
+      ['{\n "a": 1.}', "rrra"],
+      ["1.\n", "rrra"],
+      ["1e\n", "rrrr"],
+      ["-\n", "rrrr"],
+      ["// a\u2028b\n[]", "raar"], // raaa
+      ["// a\u2029\n[]", "raaa"],
+      ["[] // a\u2028b", "raar"], // raaa
+      ["// c\u2028[]", "rrra"], // rrrr
+    ];
+    const names = (i: number) => [`plain/${i}.json`, `plain/${i}.jsonc`, `commas/${i}.jsonc`, `plain/${i}.json5`];
+    const files = Object.fromEntries(texts.flatMap(([text], i) => names(i).map(name => [name, text])));
+    const config = jsonConfig(`{ files: ["commas/*.jsonc"], languageOptions: { allowTrailingCommas: true } }`);
+    const result = await lint({ ...json, "eslint.config.mjs": config, ...files }, ["-f", "json", "."]);
+    const found = new Map<string, string>();
+    for (const { filePath, messages } of JSON.parse(result.raw)) {
+      // What is refused has one problem.
+      const isRefused = messages.some((it: any) => it.fatal);
+      found.set(
+        filePath.replaceAll("\\", "/").split("/").slice(-2).join("/"),
+        isRefused ? "r".repeat(messages.length) : "a",
+      );
+    }
+    expect(
+      texts.map(([text], i) => [
+        text,
+        names(i)
+          .map(name => found.get(name))
+          .join(""),
+      ]),
+    ).toEqual(texts);
+  });
 
   // Momoa 3.3, which is the parser of the plugin, says the opposite of each.
-  test(
-    "where the parser of the plugin is wrong, the specification of the language counts",
-    async () => {
-      const character = (code: number) => String.fromCodePoint(code);
-      const cases: [string, string, "accepted" | "refused"][] = [
-        // RFC 8259: a control character in a string is written as an escape sequence.
-        ["json", '"a\nb"', "refused"],
-        ["json", '"a\tb"', "refused"],
-        ["jsonc", `"${character(1)}"`, "refused"],
-        // JSON5: a string goes on in the next line only after a backslash.
-        ["json5", '"a\nb"', "refused"],
-        // A sign can be before every number.
-        ["json5", "[-.5, +.5]", "accepted"],
-        ["json5", "[.a]", "refused"],
-        ["json5", "[.e1]", "refused"],
-        ["json5", "[0x1.5]", "refused"],
-        // A key is an IdentifierName of ECMAScript 5.1, which every word is, or a string.
-        ["json5", "{true:1, null:2, false: 3}", "accepted"],
-        ["json5", "{.5:1}", "refused"],
-        ["json5", `{${character(0x200c)}:1}`, "refused"],
-        ["json5", `{${character(0x1d400)}:1}`, "accepted"],
-        // After a backslash a digit is only `0`, and no digit follows.
-        ["json5", '["\\1"]', "refused"],
-        ["json5", '["\\01"]', "refused"],
-        ["json5", '["\\8"]', "refused"],
-        // White space is what is in the category Zs.
-        ["json5", `${character(0x1680)}[]`, "accepted"],
-        // A comment ends where a line of ECMAScript ends.
-        ["json5", `// c${character(0x2028)}[]`, "accepted"],
-      ];
-      const files = cases.map(([language, text], i) => [`${String(i).padStart(2, "0")}.${language}`, text]);
-      const result = await lint({ ...json, ...Object.fromEntries(files) }, ["-f", "json", "."]);
-      const found = JSON.parse(result.raw)
-        .filter((it: any) => /\d\d\.json[c5]?$/.test(it.filePath))
-        .map((it: any) => (it.messages.some((it: any) => it.fatal) ? "refused" : "accepted"));
-      expect(found.map((it: string, i: number) => `${JSON.stringify(cases[i][1])} in ${cases[i][0]}: ${it}`)).toEqual(
-        cases.map(([language, text, expected]) => `${JSON.stringify(text)} in ${language}: ${expected}`),
-      );
-    },
-    timeout,
-  );
+  test("where the parser of the plugin is wrong, the specification of the language counts", async () => {
+    const character = (code: number) => String.fromCodePoint(code);
+    const cases: [string, string, "accepted" | "refused"][] = [
+      // RFC 8259: a control character in a string is written as an escape sequence.
+      ["json", '"a\nb"', "refused"],
+      ["json", '"a\tb"', "refused"],
+      ["jsonc", `"${character(1)}"`, "refused"],
+      // JSON5: a string goes on in the next line only after a backslash.
+      ["json5", '"a\nb"', "refused"],
+      // A sign can be before every number.
+      ["json5", "[-.5, +.5]", "accepted"],
+      ["json5", "[.a]", "refused"],
+      ["json5", "[.e1]", "refused"],
+      ["json5", "[0x1.5]", "refused"],
+      // A key is an IdentifierName of ECMAScript 5.1, which every word is, or a string.
+      ["json5", "{true:1, null:2, false: 3}", "accepted"],
+      ["json5", "{.5:1}", "refused"],
+      ["json5", `{${character(0x200c)}:1}`, "refused"],
+      ["json5", `{${character(0x1d400)}:1}`, "accepted"],
+      // After a backslash a digit is only `0`, and no digit follows.
+      ["json5", '["\\1"]', "refused"],
+      ["json5", '["\\01"]', "refused"],
+      ["json5", '["\\8"]', "refused"],
+      // White space is what is in the category Zs.
+      ["json5", `${character(0x1680)}[]`, "accepted"],
+      // A comment ends where a line of ECMAScript ends.
+      ["json5", `// c${character(0x2028)}[]`, "accepted"],
+      ["json5", `// a${character(0x2029)}b\n[]`, "refused"],
+    ];
+    const files = cases.map(([language, text], i) => [`${String(i).padStart(2, "0")}.${language}`, text]);
+    const result = await lint({ ...json, ...Object.fromEntries(files) }, ["-f", "json", "."]);
+    const found = JSON.parse(result.raw)
+      .filter((it: any) => /\d\d\.json[c5]?$/.test(it.filePath))
+      .map((it: any) => (it.messages.some((it: any) => it.fatal) ? "refused" : "accepted"));
+    expect(found.map((it: string, i: number) => `${JSON.stringify(cases[i][1])} in ${cases[i][0]}: ${it}`)).toEqual(
+      cases.map(([language, text, expected]) => `${JSON.stringify(text)} in ${language}: ${expected}`),
+    );
+  });
 
-  test(
-    "what only JSON5 has is read in JSON5",
-    async () => {
-      const text = `// c\n{ a: +1, b: .5, c: 5., d: 0xF, e: -Infinity, f: NaN, g: 'a\\\nb', "h": "\\x41\\v\\0", $_: [1,], NaN: 1, ${noBreakSpace}}\n`;
-      const result = await lint({ ...json, "a.json5": text }, ["-f", "json", "."]);
-      expect(summary(result.raw)).toBe("");
-      expect(result.exitCode).toBe(0);
-    },
-    timeout,
-  );
+  test("what only JSON5 has is read in JSON5", async () => {
+    const text = `// c\n{ a: +1, b: .5, c: 5., d: 0xF, e: -Infinity, f: NaN, g: 'a\\\nb', "h": "\\x41\\v\\0", $_: [1,], NaN: 1, ${noBreakSpace}}\n`;
+    const result = await lint({ ...json, "a.json5": text }, ["-f", "json", "."]);
+    expect(summary(result.raw)).toBe("");
+    expect(result.exitCode).toBe(0);
+  });
 
   describe("all rules of the plugin", () => {
     const character = (code: number) => String.fromCodePoint(code);
@@ -1345,11 +1335,9 @@ describe.concurrent("bun lint with the languages that are built in", () => {
       "fix.jsonc": `{\n  "c": { "z": 1, "y": 2 }, "b": [1], // c\n  "a": 1, "0": 2\n}`,
     };
 
-    test(
-      "report what they report in ESLint",
-      async () => {
-        const result = await lint(all, ["-f", "json", "."]);
-        expect(summary(result.raw).replace(/f{300}/, "f..f")).toMatchInlineSnapshot(`
+    test("report what they report in ESLint", async () => {
+      const result = await lint(all, ["-f", "json", "."]);
+      expect(summary(result.raw).replace(/f{300}/, "f..f")).toMatchInlineSnapshot(`
           "a.json: 2:8 json/no-unsafe-values The number '1e400' will evaluate to Infinity.
           a.json: 3:3 json/sort-keys Expected object keys to be in alphanumeric case-sensitive ascending order. 'a' should be before 'b'. [fix 4,39 "\\"a\\": 9007199254740993,\\n  \\"b\\": 1e400"]
           a.json: 3:8 json/no-unsafe-values The integer '9007199254740993' is outside the safe integer range.
@@ -1391,17 +1379,13 @@ describe.concurrent("bun lint with the languages that are built in", () => {
           whole.json5: 1:1 json/top-level-interop Top level item should be array or object, got 'Number'.
           whole.json5: 1:1 json/no-unsafe-values The number '1e400' will evaluate to Infinity."
         `);
-        expect(result.exitCode).toBe(1);
-      },
-      timeout,
-    );
+      expect(result.exitCode).toBe(1);
+    });
 
-    test(
-      "--fix goes on until the keys are sorted",
-      async () => {
-        const names = ["a.json", "desc.json", "fix.jsonc", "nfkc.json5"];
-        const result = await lint(all, ["--fix", "."], names);
-        expect(result.files).toMatchInlineSnapshot(`
+    test("--fix goes on until the keys are sorted", async () => {
+      const names = ["a.json", "desc.json", "fix.jsonc", "nfkc.json5"];
+      const result = await lint(all, ["--fix", "."], names);
+      expect(result.files).toMatchInlineSnapshot(`
           {
             "a.json": 
           "{
@@ -1425,9 +1409,7 @@ describe.concurrent("bun lint with the languages that are built in", () => {
             "nfkc.json5": "{ '"': 1, "\\\\": 4, fi: 2, "\\ufb01": 3 }",
           }
         `);
-      },
-      timeout,
-    );
+    });
 
     test.each([
       [
@@ -1443,82 +1425,125 @@ describe.concurrent("bun lint with the languages that are built in", () => {
         '"json/no-empty-keys": ["error", 1]',
         'Key "json/no-empty-keys":\n\tValue [1] should NOT have more than 0 items.',
       ],
-    ])(
-      "options are validated: %s",
-      async (rule, expected) => {
-        const config = jsonConfig(`{ files: ["**/*.json"], rules: { ${rule} } }`);
-        const result = await lint({ ...json, "eslint.config.mjs": config, "a.json": "{}" }, ["a.json"]);
-        expect(result.stderr).toContain(`Key "rules": ${expected}`);
-        expect(result.exitCode).toBe(2);
-      },
-      timeout,
-    );
+    ])("options are validated: %s", async (rule, expected) => {
+      const config = jsonConfig(`{ files: ["**/*.json"], rules: { ${rule} } }`);
+      const result = await lint({ ...json, "eslint.config.mjs": config, "a.json": "{}" }, ["a.json"]);
+      expect(result.stderr).toContain(`Key "rules": ${expected}`);
+      expect(result.exitCode).toBe(2);
+    });
 
-    test(
-      "many keys out of order, with comments",
-      async () => {
-        const keys = Array.from({ length: 30_000 }, (_, i) => `"k${30_000 - i}": ${i}, // ${i}`);
-        const result = await lint({ ...all, "many.jsonc": `{\n${keys.join("\n")}\n"a": 1\n}` }, [
-          "-f",
-          "json",
-          "many.jsonc",
-        ]);
-        const { messages } = JSON.parse(result.raw)[0];
-        expect(messages.length).toBeGreaterThan(20_000);
-        expect(messages.filter((it: any) => it.fix)).toEqual([]);
-        // Nothing but comments between two keys, where an empty line would start a group.
-        const apart = `{\n"b": 1,\n${"// c\n/*\n\n*/\n".repeat(30_000)}"a": 2\n}`;
-        const groups = await lint({ ...all, "groups.jsonc": apart }, ["-f", "json", "groups.jsonc"]);
-        expect(JSON.parse(groups.raw)[0].messages.map((it: any) => it.line)).toEqual([120_003]);
-      },
-      timeout,
-    );
+    test("many keys out of order, with comments", async () => {
+      const count = many(30_000);
+      const keys = Array.from({ length: count }, (_, i) => `"k${count - i}": ${i}, // ${i}`);
+      const result = await lint({ ...all, "many.jsonc": `{\n${keys.join("\n")}\n"a": 1\n}` }, [
+        "-f",
+        "json",
+        "many.jsonc",
+      ]);
+      const { messages } = JSON.parse(result.raw)[0];
+      expect(messages.length).toBeGreaterThan(count / 2);
+      expect(messages.filter((it: any) => it.fix)).toEqual([]);
+      // Nothing but comments between two keys, where an empty line would start a group.
+      const apart = `{\n"b": 1,\n${repeated("// c\n/*\n\n*/\n", count)}"a": 2\n}`;
+      const groups = await lint({ ...all, "groups.jsonc": apart }, ["-f", "json", "groups.jsonc"]);
+      expect(JSON.parse(groups.raw)[0].messages.map((it: any) => it.line)).toEqual([count * 4 + 3]);
+    });
   });
 
   // ESLint reads a file as UTF-8.
-  test(
-    "what is not UTF-8 in a file counts as U+FFFD",
-    async () => {
-      const bytes = (text: string) => Buffer.from(text, "latin1");
-      const replaced = String.fromCodePoint(0xfffd);
-      const result = await lint(
-        {
-          ...json,
-          "a.json": bytes('{"\xED\xA0\xBD": "\xC3", "b\xFF": 1, "\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD": 1}'),
-          "b.json5": bytes("{c\xFF: 1}"),
-        },
-        ["-f", "json", "."],
-      );
-      expect(summary(result.raw)).toBe(
-        `a.json: 1:23 json/no-duplicate-keys Duplicate key "${replaced.repeat(3)}" found.\n` +
-          "b.json5: 1:3 null Parsing error: Unexpected character [fatal]",
-      );
-    },
-    timeout,
-  );
+  test("what is not UTF-8 in a file counts as U+FFFD", async () => {
+    const bytes = (text: string) => Buffer.from(text, "latin1");
+    const replaced = String.fromCodePoint(0xfffd);
+    const result = await lint(
+      {
+        ...json,
+        "a.json": bytes('{"\xED\xA0\xBD": "\xC3", "b\xFF": 1, "\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD": 1}'),
+        "b.json5": bytes("{c\xFF: 1}"),
+      },
+      ["-f", "json", "."],
+    );
+    expect(summary(result.raw)).toBe(
+      `a.json: 1:23 json/no-duplicate-keys Duplicate key "${replaced.repeat(3)}" found.\n` +
+        "b.json5: 1:3 null Parsing error: Unexpected character [fatal]",
+    );
+  });
 
-  test(
-    "comments disable and configure rules in JSONC and JSON5",
-    async () => {
-      const twice = '"a": 1, "a": 2';
-      const result = await lint(
-        {
-          ...json,
-          "next-line.jsonc": `{\n  // eslint-disable-next-line json/no-duplicate-keys -- why\n  ${twice}\n}`,
-          "line.json5": `{\n  ${twice} /* eslint-disable-line */\n}`,
-          "block.jsonc": `/* eslint-disable json/no-duplicate-keys */\n{\n  ${twice},\n/* eslint-enable json/no-duplicate-keys */\n"a": 3\n}`,
-          "to-the-end-of-the-line.jsonc": `// eslint-disable\n{\n  ${twice}\n}`,
-          "unused.jsonc": `{\n  // eslint-disable-next-line json/no-duplicate-keys\n  "a": 1\n}`,
-          "unknown.jsonc": `/* eslint-disable json/nope */\n{ ${twice} }`,
-          "off.jsonc": `/* eslint json/no-duplicate-keys: "off" */\n{ ${twice} }`,
-          "warn.jsonc": `// eslint json/no-duplicate-keys: "warn"\n{ ${twice} }`,
-          "options.jsonc": `/* eslint json/no-duplicate-keys: ["error", 1] */\n{ "a": 1 }`,
-          "other-labels.jsonc": `/* global a */ /* exported b */ /* eslint-env node */ /* oxlint-disable */\n{ ${twice} }`,
-          "several-lines.jsonc": `{\n  ${twice} /* eslint-disable-line\n */\n}`,
-        },
-        ["-f", "json", "."],
-      );
-      expect(summary(result.raw)).toMatchInlineSnapshot(`
+  // As in Microsoft's jsonc-parser, and in the plugin.
+  test("U+2028 and U+2029 do not end a comment in JSONC", async () => {
+    const twice = '{ "a": 1, "a": 2 }';
+    const result = await lint(
+      {
+        ...json,
+        "line.jsonc": `${twice} // eslint-disable-line -- a${separators}b`,
+        "next-line.jsonc": `// eslint-disable-next-line json/no-duplicate-keys -- ${separators} b\n${twice}`,
+        "reported.jsonc": `// ${separators}\n${twice}`,
+      },
+      ["-f", "json", "."],
+    );
+    expect(summary(result.raw)).toBe(
+      [
+        `line.jsonc: 1:11 json/no-duplicate-keys Duplicate key "a" found. [suppressed: a${separators}b]`,
+        'next-line.jsonc: 2:11 json/no-duplicate-keys Duplicate key "a" found. [suppressed: b]',
+        'reported.jsonc: 2:11 json/no-duplicate-keys Duplicate key "a" found.',
+      ].join("\n"),
+    );
+  });
+
+  // The line of a problem is counted as the language counts, so whoever looks for that line in the text has to count that way.
+  describe.each([
+    ["only line feeds", (text: string) => text],
+    ["a byte order mark", (text: string) => mark + text],
+    ["carriage returns", (text: string) => text.replaceAll("\n", "\r\n")],
+    ["both", (text: string) => mark + text.replaceAll("\n", "\r\n")],
+  ])("U+2028 and U+2029 do not end a line of JSON: a file with %s", (_, written) => {
+    // In a text that is not short, the lines are only counted while it is linted: nobody notes where they start.
+    const more = Array.from({ length: 50 }, (_, i) => `  "${i}": "${"-".repeat(40)}",\n`).join("");
+    const text = `{\n  "s": "${separators}",\n${more}  "a": 1,\n  "a": 2\n}\n`;
+    const files = { ...json, "a.json": written(text) };
+
+    test.each(["pretty", "agent"])("the excerpt of %s", async format => {
+      const result = await lint(files, ["-f", format, "a.json"]);
+      const shown = result.stdout.split("\n").filter(line => line.includes('"a"') && !line.includes("Duplicate"));
+      expect(shown.at(-1)).toEndWith('"a": 2');
+      expect(result.stdout).toContain(format === "pretty" ? "a.json:54:3" : 'line="54" column="3"');
+    });
+
+    test.each(["stylish", "json", "unix", "github", "checkstyle", "junit", "gitlab", "sarif"])("%s", async format => {
+      const result = await lint(files, ["-f", format, "a.json"]);
+      const places = {
+        stylish: "  54:3  error",
+        json: '"line":54,"column":3,"messageId":"duplicateKey","endLine":54,"endColumn":6',
+        unix: "a.json:54:3:",
+        github: "line=54,col=3,endLine=54,endColumn=6",
+        checkstyle: 'line="54" column="3"',
+        junit: "line 54, column 3",
+        gitlab: '"begin": 54',
+        sarif: '"startLine": 54',
+      };
+      expect(result.stdout).toContain(places[format as keyof typeof places]);
+    });
+  });
+
+  test("comments disable and configure rules in JSONC and JSON5", async () => {
+    const twice = '"a": 1, "a": 2';
+    const result = await lint(
+      {
+        ...json,
+        "next-line.jsonc": `{\n  // eslint-disable-next-line json/no-duplicate-keys -- why\n  ${twice}\n}`,
+        "line.json5": `{\n  ${twice} /* eslint-disable-line */\n}`,
+        "block.jsonc": `/* eslint-disable json/no-duplicate-keys */\n{\n  ${twice},\n/* eslint-enable json/no-duplicate-keys */\n"a": 3\n}`,
+        "to-the-end-of-the-line.jsonc": `// eslint-disable\n{\n  ${twice}\n}`,
+        "unused.jsonc": `{\n  // eslint-disable-next-line json/no-duplicate-keys\n  "a": 1\n}`,
+        "unknown.jsonc": `/* eslint-disable json/nope */\n{ ${twice} }`,
+        "off.jsonc": `/* eslint json/no-duplicate-keys: "off" */\n{ ${twice} }`,
+        "warn.jsonc": `// eslint json/no-duplicate-keys: "warn"\n{ ${twice} }`,
+        "options.jsonc": `/* eslint json/no-duplicate-keys: ["error", 1] */\n{ "a": 1 }`,
+        "other-labels.jsonc": `/* global a */ /* exported b */ /* eslint-env node */ /* oxlint-disable */\n{ ${twice} }`,
+        "several-lines.jsonc": `{\n  ${twice} /* eslint-disable-line\n */\n}`,
+      },
+      ["-f", "json", "."],
+    );
+    expect(summary(result.raw)).toMatchInlineSnapshot(`
       "block.jsonc: 5:1 json/no-duplicate-keys Duplicate key "a" found.
       block.jsonc: 3:11 json/no-duplicate-keys Duplicate key "a" found. [suppressed: ]
       line.json5: 2:11 json/no-duplicate-keys Duplicate key "a" found. [suppressed: ]
@@ -1535,170 +1560,138 @@ describe.concurrent("bun lint with the languages that are built in", () => {
       unused.jsonc: 2:3 null Unused eslint-disable directive (no problems were reported from 'json/no-duplicate-keys'). [fix 4,54 " "]
       warn.jsonc: 2:11 json/no-duplicate-keys Duplicate key "a" found."
     `);
-      const severities = JSON.parse(result.raw).flatMap((it: any) => it.messages.map((it: any) => it.severity));
-      expect(severities).toEqual([2, 2, 2, 2, 2, 2, 2, 1, 1]);
-    },
-    timeout,
-  );
+    const severities = JSON.parse(result.raw).flatMap((it: any) => it.messages.map((it: any) => it.severity));
+    expect(severities).toEqual([2, 2, 2, 2, 2, 2, 2, 1, 1]);
+  });
 
-  test(
-    "--fix removes a comment that disables nothing, after a byte order mark too",
-    async () => {
-      const files = { "a.jsonc": `${mark}{ "é": 1 /* eslint-disable-line */ }\n` };
-      const result = await lint({ ...json, ...files }, ["--fix", "."], ["a.jsonc"]);
-      expect(result.files).toEqual({ "a.jsonc": `${mark}{ "é": 1   }\n` });
-      expect(result.exitCode).toBe(0);
-    },
-    timeout,
-  );
+  test("--fix removes a comment that disables nothing, after a byte order mark too", async () => {
+    const files = { "a.jsonc": `${mark}{ "é": 1 /* eslint-disable-line */ }\n` };
+    const result = await lint({ ...json, ...files }, ["--fix", "."], ["a.jsonc"]);
+    expect(result.files).toEqual({ "a.jsonc": `${mark}{ "é": 1   }\n` });
+    expect(result.exitCode).toBe(0);
+  });
 
-  test(
-    "noInlineConfig, --no-inline-config and --report-unused-disable-directives-severity",
-    async () => {
-      const files = {
-        ...jsonPackage(),
-        "eslint.config.mjs": jsonConfig(`{ files: ["no/*"], linterOptions: { noInlineConfig: true } }`),
-        "no/a.jsonc": '{ "a": 1, "a": 2 } // eslint-disable-line',
-        "b.jsonc": '{ "a": 1 } // eslint-disable-line',
-      };
-      const [plain, ignoring, strict] = await Promise.all([
-        lint(files, ["-f", "json", "."]),
-        lint(files, ["-f", "json", "--no-inline-config", "."]),
-        lint(files, ["-f", "json", "--report-unused-disable-directives-severity", "error", "b.jsonc"]),
-      ]);
-      expect(summary(plain.raw)).toMatchInlineSnapshot(`
+  test("noInlineConfig, --no-inline-config and --report-unused-disable-directives-severity", async () => {
+    const files = {
+      ...jsonPackage(),
+      "eslint.config.mjs": jsonConfig(`{ files: ["no/*"], linterOptions: { noInlineConfig: true } }`),
+      "no/a.jsonc": '{ "a": 1, "a": 2 } // eslint-disable-line',
+      "b.jsonc": '{ "a": 1 } // eslint-disable-line',
+    };
+    const [plain, ignoring, strict] = await Promise.all([
+      lint(files, ["-f", "json", "."]),
+      lint(files, ["-f", "json", "--no-inline-config", "."]),
+      lint(files, ["-f", "json", "--report-unused-disable-directives-severity", "error", "b.jsonc"]),
+    ]);
+    expect(summary(plain.raw)).toMatchInlineSnapshot(`
       "b.jsonc: 1:12 null Unused eslint-disable directive (no problems were reported). [fix 11,33 " "]
       a.jsonc: 1:11 json/no-duplicate-keys Duplicate key "a" found.
       a.jsonc: 1:20 null '// eslint-disable-line' has no effect because you have 'noInlineConfig' setting in your config."
     `);
-      expect(summary(ignoring.raw)).toBe('a.jsonc: 1:11 json/no-duplicate-keys Duplicate key "a" found.');
-      expect(JSON.parse(strict.raw)[0].errorCount).toBe(1);
-    },
-    timeout,
-  );
+    expect(summary(ignoring.raw)).toBe('a.jsonc: 1:11 json/no-duplicate-keys Duplicate key "a" found.');
+    expect(JSON.parse(strict.raw)[0].errorCount).toBe(1);
+  });
 
-  test(
-    "languageOptions are those of the language",
-    async () => {
-      const files = (options: string) => ({
-        ...jsonPackage(),
-        "eslint.config.mjs": jsonConfig(`{ files: ["**/*.jsonc", "x.json"], languageOptions: ${options} }`),
-        "a.jsonc": '{ "a": [1,], }',
-        "x.json": "{}",
+  test("languageOptions are those of the language", async () => {
+    const files = (options: string) => ({
+      ...jsonPackage(),
+      "eslint.config.mjs": jsonConfig(`{ files: ["**/*.jsonc", "x.json"], languageOptions: ${options} }`),
+      "a.jsonc": '{ "a": [1,], }',
+      "x.json": "{}",
+    });
+    const [allowed, printed, refused, wrong, elsewhere] = await Promise.all([
+      lint(files("{ allowTrailingCommas: true, globals: { a: true } }"), ["-f", "json", "a.jsonc"]),
+      lint(files("{ allowTrailingCommas: true }"), ["--print-config", "a.jsonc"]),
+      lint(files("{ allowTrailingCommas: false }"), ["-f", "json", "a.jsonc"]),
+      lint(files("{ allowTrailingCommas: 1 }"), ["a.jsonc"]),
+      lint(files("{ allowTrailingCommas: true }"), ["x.json"]),
+    ]);
+    expect(summary(allowed.raw)).toBe("");
+    expect(allowed.exitCode).toBe(0);
+    expect(JSON.parse(printed.raw).language).toBe("json/jsonc");
+    expect(JSON.parse(printed.raw).languageOptions).toEqual({ allowTrailingCommas: true });
+    expect(summary(refused.raw)).toBe(
+      "a.jsonc: 1:10 null Parsing error: Trailing commas are not allowed in JSONC [fatal]",
+    );
+    expect(wrong.stderr).toContain('Key "languageOptions": allowTrailingCommas must be a boolean if provided.');
+    expect(wrong.exitCode).toBe(2);
+    expect(elsewhere.stderr).toContain('Key "languageOptions": allowTrailingCommas option is only available in JSONC.');
+    expect(elsewhere.exitCode).toBe(2);
+  });
+
+  test("--stdin, and a format that shows the code", async () => {
+    using dir = tempDir("bun-lint-js-parsers", json);
+    const run = async (format: string) => {
+      await using proc = spawn({
+        cmd: [bunExe(), "lint", "--stdin", "--stdin-filename", "x.jsonc", "-f", format],
+        env,
+        cwd: String(dir),
+        stdin: Buffer.from('{\n  "a": 1, // c\n  "a": 2\n}\n'),
+        stdout: "pipe",
+        stderr: "pipe",
       });
-      const [allowed, printed, refused, wrong, elsewhere] = await Promise.all([
-        lint(files("{ allowTrailingCommas: true, globals: { a: true } }"), ["-f", "json", "a.jsonc"]),
-        lint(files("{ allowTrailingCommas: true }"), ["--print-config", "a.jsonc"]),
-        lint(files("{ allowTrailingCommas: false }"), ["-f", "json", "a.jsonc"]),
-        lint(files("{ allowTrailingCommas: 1 }"), ["a.jsonc"]),
-        lint(files("{ allowTrailingCommas: true }"), ["x.json"]),
-      ]);
-      expect(summary(allowed.raw)).toBe("");
-      expect(allowed.exitCode).toBe(0);
-      expect(JSON.parse(printed.raw).language).toBe("json/jsonc");
-      expect(JSON.parse(printed.raw).languageOptions).toEqual({ allowTrailingCommas: true });
-      expect(summary(refused.raw)).toBe(
-        "a.jsonc: 1:10 null Parsing error: Trailing commas are not allowed in JSONC [fatal]",
-      );
-      expect(wrong.stderr).toContain('Key "languageOptions": allowTrailingCommas must be a boolean if provided.');
-      expect(wrong.exitCode).toBe(2);
-      expect(elsewhere.stderr).toContain(
-        'Key "languageOptions": allowTrailingCommas option is only available in JSONC.',
-      );
-      expect(elsewhere.exitCode).toBe(2);
-    },
-    timeout,
-  );
-
-  test(
-    "--stdin, and a format that shows the code",
-    async () => {
-      using dir = tempDir("bun-lint-js-parsers", json);
-      const run = async (format: string) => {
-        await using proc = spawn({
-          cmd: [bunExe(), "lint", "--stdin", "--stdin-filename", "x.jsonc", "-f", format],
-          env,
-          cwd: String(dir),
-          stdin: Buffer.from('{\n  "a": 1, // c\n  "a": 2\n}\n'),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-        expect(exitCode).toBe(1);
-        return normalizeBunSnapshot(stdout, String(dir));
-      };
-      const [unix, pretty] = await Promise.all([run("unix"), run("pretty")]);
-      expect(unix).toMatchInlineSnapshot(`
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(exitCode).toBe(1);
+      return normalizeBunSnapshot(stdout, String(dir));
+    };
+    const [unix, pretty] = await Promise.all([run("unix"), run("pretty")]);
+    expect(unix).toMatchInlineSnapshot(`
       "<dir>/x.jsonc:3:3: Duplicate key "a" found. [Error/json/no-duplicate-keys]
 
       1 problem"
     `);
-      expect(pretty).toContain('3 |   "a": 2');
-    },
-    timeout,
-  );
+    expect(pretty).toContain('3 |   "a": 2');
+  });
 
-  test(
-    "--doctor counts the files and the rules as native",
-    async () => {
-      const files = { ...json, "package.json": "{}", "a.jsonc": "{}", "b.js": "" };
-      const result = await lint(files, ["--doctor", "-f", "json"]);
-      const { rules, ...rest } = JSON.parse(result.raw);
-      expect(rest.files.linted).toBe(4);
-      expect(JSON.stringify(rest.files)).not.toContain("json");
-      expect(rules.native).toEqual(["json/no-duplicate-keys"]);
-      expect(rules.javascript).toEqual({});
-    },
-    timeout,
-  );
+  test("--doctor counts the files and the rules as native", async () => {
+    const files = { ...json, "package.json": "{}", "a.jsonc": "{}", "b.js": "" };
+    const result = await lint(files, ["--doctor", "-f", "json"]);
+    const { rules, ...rest } = JSON.parse(result.raw);
+    expect(rest.files.linted).toBe(4);
+    expect(JSON.stringify(rest.files)).not.toContain("json");
+    expect(rules.native).toEqual(["json/no-duplicate-keys"]);
+    expect(rules.javascript).toEqual({});
+  });
 
-  test(
-    "a block in JSON that a processor finds is linted here",
-    async () => {
-      const result = await lint(
-        {
-          ...jsonPackage(),
-          "fenced.mjs": fenced(true),
-          "eslint.config.mjs": `
+  test("a block in JSON that a processor finds is linted here", async () => {
+    const result = await lint(
+      {
+        ...jsonPackage(),
+        "fenced.mjs": fenced(true),
+        "eslint.config.mjs": `
             import json from "@eslint/json";
             import fenced from "./fenced.mjs";
             export default [
               { files: ["**/*.md"], plugins: { fenced }, processor: "fenced/fenced" },
               { files: ["**/*.md/*.json"], plugins: { json }, language: "json/json", rules: { "json/no-duplicate-keys": "error" } },
             ];`,
-          "a.md": '# a\n\n```json\n{\n  "a": 1,\n  "a": 2\n}\n```\n',
-        },
-        ["-f", "json", "a.md"],
-      );
-      expect(summary(result.raw)).toBe('a.md: 6:3 json/no-duplicate-keys Duplicate key "a" found.');
-    },
-    timeout,
-  );
+        "a.md": '# a\n\n```json\n{\n  "a": 1,\n  "a": 2\n}\n```\n',
+      },
+      ["-f", "json", "a.md"],
+    );
+    expect(summary(result.raw)).toBe('a.md: 6:3 json/no-duplicate-keys Duplicate key "a" found.');
+  });
 
-  test(
-    "a rule for JSON does not take a file in JavaScript",
-    async () => {
-      const files = {
-        ...jsonPackage(),
-        "eslint.config.mjs": `
+  test("a rule for JSON does not take a file in JavaScript", async () => {
+    const files = {
+      ...jsonPackage(),
+      "eslint.config.mjs": `
         import json from "@eslint/json";
         export default [{ plugins: { json } }, { files: ["on/*.js"], rules: { "json/no-duplicate-keys": "error" } }];`,
-        "on/a.js": "",
-        "b.js": '/* eslint json/no-duplicate-keys: "error" */',
-      };
-      const [result, inline] = await Promise.all([lint(files, ["on/a.js"]), lint(files, ["-f", "json", "b.js"])]);
-      expect(result.stderr).toContain(
-        'Key "rules": The following rules do not support the language "js/js":\n\t- "json/no-duplicate-keys"',
-      );
-      expect(result.exitCode).toBe(2);
-      expect(summary(inline.raw)).toMatchInlineSnapshot(`
+      "on/a.js": "",
+      "b.js": '/* eslint json/no-duplicate-keys: "error" */',
+    };
+    const [result, inline] = await Promise.all([lint(files, ["on/a.js"]), lint(files, ["-f", "json", "b.js"])]);
+    expect(result.stderr).toContain(
+      'Key "rules": The following rules do not support the language "js/js":\n\t- "json/no-duplicate-keys"',
+    );
+    expect(result.exitCode).toBe(2);
+    expect(summary(inline.raw)).toMatchInlineSnapshot(`
       "b.js: 1:1 json/no-duplicate-keys Inline configuration for rule "json/no-duplicate-keys" is invalid:
       	Rule does not support the language "js/js". Use a config block with "files" to apply the rule only to supported files, or disable it.
       "
     `);
-    },
-    timeout,
-  );
+  });
 
   // ESLint makes the same prefix of its name.
   test.each<[string, Record<string, string>, string[]]>([
@@ -1722,25 +1715,21 @@ describe.concurrent("bun lint with the languages that are built in", () => {
       { ".oxlintrc.json": `{ "jsPlugins": ["eslint-plugin-json"], "rules": { "json/no-duplicate-keys": "error" } }` },
       [],
     ],
-  ])(
-    "eslint-plugin-json is a package like any other, named by %s",
-    async (_, files, args) => {
-      const result = await lint(
-        {
-          "package.json": "{}",
-          "node_modules/eslint-plugin-json/package.json": `{ "name": "eslint-plugin-json", "main": "index.js" }`,
-          "node_modules/eslint-plugin-json/index.js": `
+  ])("eslint-plugin-json is a package like any other, named by %s", async (_, files, args) => {
+    const result = await lint(
+      {
+        "package.json": "{}",
+        "node_modules/eslint-plugin-json/package.json": `{ "name": "eslint-plugin-json", "main": "index.js" }`,
+        "node_modules/eslint-plugin-json/index.js": `
             const create = context => ({ Program: node => context.report({ node, message: "eslint-plugin-json" }) });
             module.exports = { meta: { name: "eslint-plugin-json" }, rules: { "no-duplicate-keys": { create } } };`,
-          "a.js": "a;\n",
-          ...files,
-        },
-        ["-f", "unix", ...args, "a.js"],
-      );
-      expect(result.stdout).toMatch(/a\.js:1:1: eslint-plugin-json \[Error\/json[/(]no-duplicate-keys\)?\]/);
-    },
-    timeout,
-  );
+        "a.js": "a;\n",
+        ...files,
+      },
+      ["-f", "unix", ...args, "a.js"],
+    );
+    expect(result.stdout).toMatch(/a\.js:1:1: eslint-plugin-json \[Error\/json[/(]no-duplicate-keys\)?\]/);
+  });
 
   // Nothing that works with the package stops working.
   describe("the whole file goes to the package eslint", () => {
@@ -1769,53 +1758,564 @@ describe.concurrent("bun lint with the languages that are built in", () => {
       ["--no-native-plugin-rules", {}, ["--no-native-plugin-rules"], "the package: no-duplicate-keys"],
       ["--native-plugin-rules names others", {}, ["--native-plugin-rules=import"], "the package: no-duplicate-keys"],
       ["another package has the prefix", jsonPackage("eslint-plugin-json"), [], "the package: no-duplicate-keys"],
-    ])(
-      "if %s",
-      async (_, files, args, expected) => {
-        const all = { ...eslintPackage, ...json, ...files, "a.json": text };
-        const result = await lint(all, ["-f", "json", "--timing", ...args, "a.json"]);
-        const messages = JSON.parse(result.raw)[0].messages.map((it: any) => it.message);
-        expect(messages.join(", ")).toBe(expected);
-        expect(result.stderr).toContain("the eslint package linted 1 files");
-      },
-      timeout,
-    );
+    ])("if %s", async (_, files, args, expected) => {
+      const all = { ...eslintPackage, ...json, ...files, "a.json": text };
+      const result = await lint(all, ["-f", "json", "--timing", ...args, "a.json"]);
+      const messages = JSON.parse(result.raw)[0].messages.map((it: any) => it.message);
+      expect(messages.join(", ")).toBe(expected);
+      expect(result.stderr).toContain("the eslint package linted 1 files");
+    });
 
-    test(
-      "if a comment in it turns on a rule that is not built in",
-      async () => {
-        const files = {
-          ...eslintPackage,
-          ...json,
-          "a.jsonc": `/* eslint json/only-in-the-package: "error" */ ${text}`,
-          "b.jsonc": text,
-        };
-        const result = await lint(files, ["-f", "json", "--timing", "."]);
-        expect(summary(result.raw)).toMatchInlineSnapshot(`
+    test("if a comment in it turns on a rule that is not built in", async () => {
+      const files = {
+        ...eslintPackage,
+        ...json,
+        "a.jsonc": `/* eslint json/only-in-the-package: "error" */ ${text}`,
+        "b.jsonc": text,
+      };
+      const result = await lint(files, ["-f", "json", "--timing", "."]);
+      expect(summary(result.raw)).toMatchInlineSnapshot(`
           "a.jsonc: 1:1 json/no-duplicate-keys the package: no-duplicate-keys
           b.jsonc: 1:11 json/no-duplicate-keys Duplicate key "a" found."
         `);
-        expect(result.stderr).toContain("the eslint package linted 1 files");
-      },
-      timeout,
-    );
+      expect(result.stderr).toContain("the eslint package linted 1 files");
+    });
 
-    test(
-      "which has to be installed",
-      async () => {
-        const config = jsonConfig(`{ files: ["a.json"], rules: { "json/only-in-the-package": "warn" } }`);
-        const files = { ...json, "eslint.config.mjs": config, "a.json": text, "b.json": text };
-        const result = await lint(files, ["-f", "unix", "."]);
-        expect(result.stdout).toContain('b.json:1:11: Duplicate key "a" found. [Error/json/no-duplicate-keys]');
-        expect(result.stderr).toContain(
-          "1 file was not linted because it needs eslint, which is not installed (1 *.json): a.json\n  Run bun add -d eslint",
-        );
-        expect(result.exitCode).toBe(2);
-      },
-      timeout,
-    );
+    test("which has to be installed", async () => {
+      const config = jsonConfig(`{ files: ["a.json"], rules: { "json/only-in-the-package": "warn" } }`);
+      const files = { ...json, "eslint.config.mjs": config, "a.json": text, "b.json": text };
+      const result = await lint(files, ["-f", "unix", "."]);
+      expect(result.stdout).toContain('b.json:1:11: Duplicate key "a" found. [Error/json/no-duplicate-keys]');
+      expect(result.stderr).toContain(
+        "1 file was not linted because it needs eslint, which is not installed (1 *.json): a.json\n  Run bun add -d eslint",
+      );
+      expect(result.exitCode).toBe(2);
+    });
   });
 });
+const markdownRules = [
+  "fenced-code-language",
+  "fenced-code-meta",
+  "heading-increment",
+  "no-bare-urls",
+  "no-duplicate-definitions",
+  "no-duplicate-headings",
+  "no-empty-definitions",
+  "no-empty-images",
+  "no-empty-links",
+  "no-html",
+  "no-invalid-label-refs",
+  "no-missing-atx-heading-space",
+  "no-missing-label-refs",
+  "no-missing-link-fragments",
+  "no-multiple-h1",
+  "no-reference-like-urls",
+  "no-reversed-media-syntax",
+  "no-space-in-emphasis",
+  "no-unused-definitions",
+  "require-alt-text",
+  "table-column-count",
+];
+
+const markdownPackage = (name = "@eslint/markdown") => ({
+  "node_modules/@eslint/markdown/package.json": JSON.stringify({ name, version: "8.0.3", main: "index.js" }),
+  "node_modules/@eslint/markdown/index.js": `
+    const language = { parse: ({ body }) => ({ ok: true, ast: { lines: body.split("\\n") } }) };
+    const rule = name => ({ create: context => ({ Line: () => context.report({ line: 1, message: "the package: " + name }) }) });
+    module.exports = {
+      meta: { name: ${JSON.stringify(name)}, version: "8.0.3" },
+      languages: { commonmark: language, gfm: language },
+      rules: Object.fromEntries(${JSON.stringify([...markdownRules, "only-in-the-package"])}.map(name => [name, rule(name)])),
+    };`,
+});
+
+// All rules are on, in CommonMark, and in GFM for `*.gfm.md`.
+const markdownConfig = (more = "", rules = JSON.stringify(markdownRules)) => `
+  import markdown from "@eslint/markdown";
+  const rules = Object.fromEntries(${rules}.map(name => ["markdown/" + name, "error"]));
+  export default [
+    { files: ["**/*.md"], plugins: { markdown }, language: "markdown/commonmark", rules },
+    { files: ["**/*.gfm.md"], language: "markdown/gfm" },
+    ${more}
+  ];`;
+
+// What is expected is what ESLint 10.13 with @eslint/markdown 8.0.3 reports, unless it says otherwise.
+describe.concurrent("bun lint with Markdown, which is built in", () => {
+  const project = { ...markdownPackage(), "eslint.config.mjs": markdownConfig() };
+  const few = { ...markdownPackage(), "eslint.config.mjs": markdownConfig("", `["no-html", "no-empty-links"]`) };
+  const mark = String.fromCodePoint(0xfeff);
+
+  test("CommonMark and GFM are linted here, without the package eslint", async () => {
+    const table = "| a | b |\n| - | - |\n| 1 | 2 | 3 |\n\nhttps://example.com";
+    const result = await lint(
+      {
+        ...project,
+        "a.md":
+          "# Ünï 😀\n\n### Skipped\n\n[é😀][missing], ![](x.png), [empty]() and (reversed)[x]\n\n```\ncode\n```\n\n#NoSpace\n\n<b>bold</b> ** not bold**\n\n# Ünï 😀\n",
+        "b.gfm.md": `${table} [^1]\n\n[^1]: one\n[^1]: two\n[^2]: unused\n`,
+        "b.md": `${table}\n`,
+        "crlf.md": `${mark}# a\r\n\r\n### é😀 b\r\n\r\n[x]: y\r\n[x]: z\r\n`,
+        "fine.md":
+          "# Title\n\n## Section\n\nSee [section](#section) and [the site][site].\n\n```js title\n1;\n```\n\n[site]: https://example.com\n",
+      },
+      ["-f", "json", "--timing", "."],
+    );
+    expect(summary(result.raw)).toMatchInlineSnapshot(`
+        "a.md: 3:1 markdown/heading-increment Heading level skipped from 1 to 3.
+        a.md: 5:7 markdown/no-missing-label-refs Label reference 'missing' not found.
+        a.md: 5:17 markdown/require-alt-text Alternative text for image is required.
+        a.md: 5:29 markdown/no-empty-links Unexpected empty link found.
+        a.md: 5:43 markdown/no-reversed-media-syntax Unexpected reversed syntax found. Use [label](URL) syntax instead. [fix 65,78 "[reversed](x)"]
+        a.md: 5:54 markdown/no-missing-label-refs Label reference 'x' not found.
+        a.md: 7:1 markdown/fenced-code-language Missing code block language.
+        a.md: 11:1 markdown/no-missing-atx-heading-space Missing space after hash(es) on ATX style heading. [fix 95,95 " "]
+        a.md: 13:1 markdown/no-html HTML element "b" is not allowed.
+        a.md: 13:13 markdown/no-space-in-emphasis Unexpected space around emphasis marker. [fix 118,119 ""]
+        a.md: 15:1 markdown/no-multiple-h1 Unexpected additional H1 heading found.
+        a.md: 15:1 markdown/no-duplicate-headings Duplicate heading "Ünï 😀" found.
+        b.gfm.md: 3:9 markdown/table-column-count Table column count mismatch (Expected: 2, Actual: 3), extra data starting here will be ignored.
+        b.gfm.md: 5:1 markdown/no-bare-urls Unexpected bare URL. Use autolink (<URL>) or link ([text](URL)) instead. [fix 35,54 "<https://example.com>"]
+        b.gfm.md: 8:1 markdown/no-duplicate-definitions Unexpected duplicate footnote definition \`1\` (label: \`1\`) found. First defined at line 7 (label: \`1\`).
+        b.gfm.md: 9:1 markdown/no-unused-definitions Unexpected unused footnote definition \`2\` (label: \`2\`) found.
+        crlf.md: 3:1 markdown/heading-increment Heading level skipped from 1 to 3.
+        crlf.md: 5:1 markdown/no-unused-definitions Unexpected unused definition \`x\` (label: \`x\`) found.
+        crlf.md: 6:1 markdown/no-duplicate-definitions Unexpected duplicate definition \`x\` (label: \`x\`) found. First defined at line 5 (label: \`x\`).
+        crlf.md: 6:1 markdown/no-unused-definitions Unexpected unused definition \`x\` (label: \`x\`) found."
+      `);
+    expect(JSON.parse(result.raw)[0].messages[1]).toEqual({
+      ruleId: "markdown/no-missing-label-refs",
+      severity: 2,
+      message: "Label reference 'missing' not found.",
+      line: 5,
+      column: 7,
+      messageId: "notFound",
+      endLine: 5,
+      endColumn: 14,
+    });
+    expect(result.stderr).not.toContain("the eslint package linted");
+    expect(result.exitCode).toBe(1);
+  });
+
+  test("comments in HTML disable and configure rules", async () => {
+    const result = await lint(
+      {
+        ...few,
+        "next-line.gfm.md": "<!-- eslint-disable-next-line markdown/no-html -- why -->\n<b>a</b>\n\n<b>b</b>\n",
+        "line.md": "<b>a</b> <!-- eslint-disable-line -->\n",
+        "block.md":
+          "<!-- eslint-disable markdown/no-html -->\n\n<b>a</b> [a]()\n\n<!-- eslint-enable markdown/no-html -->\n\n<b>b</b>\n",
+        "inline.md": "a <!-- eslint-disable --> <b>b</b> <!-- eslint-enable --> <b>c</b>\n",
+        "unused.md": "<!-- eslint-disable-next-line markdown/no-html -->\na\n",
+        "unknown.md": "<!-- eslint-disable markdown/nope -->\n\n<b>a</b>\n",
+        "off.md": '<!-- eslint markdown/no-html: "off" -->\n\n<b>a</b>\n',
+        "warn.md": '<!-- eslint markdown/no-html: ["warn", { allowed: ["i"] }] -->\n\n<b>a</b> <i>b</i>\n',
+        "options.md": '<!-- eslint markdown/no-html: ["error", 1] -->\n\na\n',
+        "several-lines.md": "<b>a</b> <!-- eslint-disable-line\n-->\n",
+        "in-code.md": "```html\n<!-- eslint-disable -->\n```\n\n`<!-- eslint-disable -->` <b>a</b>\n",
+        "in-a-list.md": "- a\n\n  <!-- eslint-disable-next-line markdown/no-html -->\n  <b>a</b>\n",
+        "two.md":
+          "<!-- eslint-disable markdown/no-html --> <!-- eslint-disable markdown/no-empty-links -->\n\n<b>a</b> [a]()\n",
+        "other.md": "<!-- global a --> <!-- oxlint-disable --> <!-- prettier-ignore -->\n\n<b>a</b>\n",
+      },
+      ["-f", "json", "."],
+    );
+    expect(summary(result.raw)).toMatchInlineSnapshot(`
+        "block.md: 3:10 markdown/no-empty-links Unexpected empty link found.
+        block.md: 7:1 markdown/no-html HTML element "b" is not allowed.
+        block.md: 3:1 markdown/no-html HTML element "b" is not allowed. [suppressed: ]
+        in-a-list.md: 4:3 markdown/no-html HTML element "b" is not allowed. [suppressed: ]
+        in-code.md: 5:27 markdown/no-html HTML element "b" is not allowed.
+        inline.md: 1:59 markdown/no-html HTML element "b" is not allowed.
+        inline.md: 1:27 markdown/no-html HTML element "b" is not allowed. [suppressed: ]
+        line.md: 1:1 markdown/no-html HTML element "b" is not allowed. [suppressed: ]
+        next-line.gfm.md: 4:1 markdown/no-html HTML element "b" is not allowed.
+        next-line.gfm.md: 2:1 markdown/no-html HTML element "b" is not allowed. [suppressed: why]
+        options.md: 1:1 markdown/no-html Inline configuration for rule "markdown/no-html" is invalid:
+        	Value 1 should be object.
+
+        other.md: 3:1 markdown/no-html HTML element "b" is not allowed.
+        several-lines.md: 1:1 markdown/no-html HTML element "b" is not allowed.
+        several-lines.md: 1:10 null eslint-disable-line comment should not span multiple lines.
+        two.md: 3:1 markdown/no-html HTML element "b" is not allowed. [suppressed: ]
+        two.md: 3:10 markdown/no-empty-links Unexpected empty link found. [suppressed: ]
+        unknown.md: 1:1 markdown/nope Definition for rule 'markdown/nope' was not found.
+        unknown.md: 3:1 markdown/no-html HTML element "b" is not allowed.
+        unused.md: 1:1 null Unused eslint-disable directive (no problems were reported from 'markdown/no-html'). [fix 0,50 " "]
+        warn.md: 3:1 markdown/no-html HTML element "b" is not allowed."
+      `);
+    const severities = JSON.parse(result.raw).flatMap((it: any) => it.messages.map((it: any) => it.severity));
+    expect(severities).toEqual([2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1]);
+  });
+
+  test("noInlineConfig, --no-inline-config and --report-unused-disable-directives-severity", async () => {
+    const files = {
+      ...markdownPackage(),
+      "eslint.config.mjs": markdownConfig(`{ files: ["no.md"], linterOptions: { noInlineConfig: true } }`),
+      "no.md": "<b>a</b> <!-- eslint-disable-line -->\n",
+      "b.md": "a <!-- eslint-disable-line -->\n",
+    };
+    const [plain, ignoring, strict] = await Promise.all([
+      lint(files, ["-f", "json", "."]),
+      lint(files, ["-f", "json", "--no-inline-config", "."]),
+      lint(files, ["-f", "json", "--report-unused-disable-directives-severity", "error", "b.md"]),
+    ]);
+    expect(summary(plain.raw)).toMatchInlineSnapshot(`
+        "b.md: 1:3 null Unused eslint-disable directive (no problems were reported). [fix 2,30 " "]
+        no.md: 1:1 markdown/no-html HTML element "b" is not allowed.
+        no.md: 1:10 null '<!-- eslint-disable-line -->' has no effect because you have 'noInlineConfig' setting in your config."
+      `);
+    expect(summary(ignoring.raw)).toBe('no.md: 1:1 markdown/no-html HTML element "b" is not allowed.');
+    expect(JSON.parse(strict.raw)[0].errorCount).toBe(1);
+  });
+
+  test("languageOptions say whether there is front matter, and math", async () => {
+    const [dashes, pluses, dollars] = [
+      "---\ntitle: a\n---\n\n# b\n",
+      "+++\ntitle = 'a'\n+++\n\n# b\n",
+      "$[a]$\n\n$$\n[b]\n$$\n",
+    ];
+    const result = await lint(
+      {
+        ...markdownPackage(),
+        "eslint.config.mjs": markdownConfig(`
+            { files: ["*.yaml.md"], languageOptions: { frontmatter: "yaml" } },
+            { files: ["*.toml.md"], languageOptions: { frontmatter: "toml" } },
+            { files: ["*.json.md"], languageOptions: { frontmatter: "json" } },
+            { files: ["*.math.md"], languageOptions: { math: true } },
+            { files: ["*.false.md"], languageOptions: { frontmatter: false, math: false, other: 1 } },`),
+        "dashes.md": dashes,
+        "dashes.false.md": dashes,
+        "dashes.yaml.md": dashes,
+        "dashes.toml.md": dashes,
+        "pluses.yaml.md": pluses,
+        "pluses.toml.md": pluses,
+        "dashes.json.md": '---\n{ "title": "a" }\n---\n\n# b\n',
+        "crlf.yaml.md": dashes.replaceAll("\n", "\r\n"),
+        "not-first.yaml.md": `\n${dashes}`,
+        "dollars.md": dollars,
+        "dollars.math.md": dollars,
+      },
+      ["-f", "json", "."],
+    );
+    expect(summary(result.raw)).toMatchInlineSnapshot(`
+        "crlf.yaml.md: 5:1 markdown/no-multiple-h1 Unexpected additional H1 heading found.
+        dashes.json.md: 5:1 markdown/no-multiple-h1 Unexpected additional H1 heading found.
+        dashes.yaml.md: 5:1 markdown/no-multiple-h1 Unexpected additional H1 heading found.
+        dollars.md: 1:3 markdown/no-missing-label-refs Label reference 'a' not found.
+        dollars.md: 4:2 markdown/no-missing-label-refs Label reference 'b' not found.
+        pluses.toml.md: 5:1 markdown/no-multiple-h1 Unexpected additional H1 heading found."
+      `);
+  });
+
+  test.each([
+    [`{ frontmatter: "xml" }`, '`xml` for frontmatter. Expected one of `false`, `"yaml"`, `"toml"`, or `"json"`.'],
+    [`{ frontmatter: true }`, '`true` for frontmatter. Expected one of `false`, `"yaml"`, `"toml"`, or `"json"`.'],
+    [`{ frontmatter: null }`, '`null` for frontmatter. Expected one of `false`, `"yaml"`, `"toml"`, or `"json"`.'],
+    [`{ frontmatter: ["yaml"] }`, '`yaml` for frontmatter. Expected one of `false`, `"yaml"`, `"toml"`, or `"json"`.'],
+    [`{ math: 1 }`, "`1` for math. Expected a boolean."],
+  ])("languageOptions: %s is refused", async (options, message) => {
+    const config = markdownConfig(`{ files: ["a.md"], languageOptions: ${options} }`);
+    const result = await lint({ ...markdownPackage(), "eslint.config.mjs": config, "a.md": "# a\n" }, ["a.md"]);
+    expect(result.stderr).toContain(`Key "languageOptions": Invalid language option value ${message}`);
+    expect(result.exitCode).toBe(2);
+  });
+
+  test.each([
+    [
+      `"markdown/no-html": ["error", { allowed: 1 }]`,
+      'Key "rules": Key "markdown/no-html":\n\tValue 1 should be array.',
+    ],
+    [
+      `"markdown/fenced-code-meta": ["error", "sometimes"]`,
+      'Value "sometimes" should be equal to one of the allowed values.',
+    ],
+    [
+      `"markdown/no-missing-link-fragments": ["error", { allowPattern: "(" }]`,
+      "Invalid regular expression: /(/u: Unterminated group",
+    ],
+    [
+      `"markdown/no-multiple-h1": ["error", { frontmatterTitle: "(" }]`,
+      "Invalid regular expression: /(/iu: Unterminated group",
+    ],
+  ])("options are validated: %s", async (rule, message) => {
+    const config = markdownConfig(`{ files: ["a.md"], rules: { ${rule} } }`);
+    const result = await lint({ ...markdownPackage(), "eslint.config.mjs": config, "a.md": "# a\n" }, ["a.md"]);
+    expect(result.stderr).toContain(message);
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("--fix, after a byte order mark and with CRLF", async () => {
+    const text = `${mark}#Ünï 😀\r\n\r\n** a** and (b)[c] and https://example.com and [d](e)\r\n\r\n[e]: f\r\n`;
+    const result = await lint({ ...project, "a.gfm.md": text }, ["--fix", "."], ["a.gfm.md"]);
+    expect(result.files).toEqual({
+      "a.gfm.md": `${mark}# Ünï 😀\r\n\r\n**a** and [b](c) and <https://example.com> and [d][e]\r\n\r\n[e]: f\r\n`,
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("--stdin, and the formats", async () => {
+    using dir = tempDir("bun-lint-js-parsers", project);
+    const run = async (format: string) => {
+      await using proc = spawn({
+        cmd: [bunExe(), "lint", "--stdin", "--stdin-filename", "x.gfm.md", "-f", format],
+        env,
+        cwd: String(dir),
+        stdin: Buffer.from("# a\n\n| a |\n| - |\n| 1 | é |\n"),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(exitCode).toBe(1);
+      return normalizeBunSnapshot(stdout, String(dir));
+    };
+    const [stylish, unix, pretty] = await Promise.all([run("stylish"), run("unix"), run("pretty")]);
+    expect(stylish).toMatchInlineSnapshot(`
+        "<dir>/x.gfm.md
+          5:5  error  Table column count mismatch (Expected: 1, Actual: 2), extra data starting here will be ignored  markdown/table-column-count
+
+        ✖ 1 problem (1 error, 0 warnings)"
+      `);
+    expect(unix).toContain(
+      "x.gfm.md:5:5: Table column count mismatch (Expected: 1, Actual: 2), extra data starting here will be ignored. [Error/markdown/table-column-count]",
+    );
+    expect(pretty).toContain("5 | | 1 | é |");
+  });
+
+  test("--doctor counts the files and the rules as native", async () => {
+    const files = { ...few, "package.json": "{}", "a.md": "# a\n", "b.js": "" };
+    const result = await lint(files, ["--doctor", "-f", "json"]);
+    const { rules, ...rest } = JSON.parse(result.raw);
+    expect(JSON.stringify(rest.files)).not.toContain(".md");
+    expect(rules.native).toEqual(["markdown/no-empty-links", "markdown/no-html"]);
+    expect(rules.javascript).toEqual({});
+  });
+
+  // The rules of the plugin name no languages, so ESLint has nothing against it.
+  test("a rule for Markdown can be on for a file in JavaScript, where it finds nothing", async () => {
+    const files = {
+      ...markdownPackage(),
+      "eslint.config.mjs": `
+          import markdown from "@eslint/markdown";
+          export default [{ plugins: { markdown }, rules: { "markdown/no-html": "error", "no-debugger": "error" } }];`,
+      "a.js": 'debugger; /* eslint markdown/no-empty-links: "error" */\n',
+    };
+    const result = await lint(files, ["-f", "json", "a.js"]);
+    expect(summary(result.raw)).toBe("a.js: 1:1 no-debugger Unexpected 'debugger' statement.");
+    expect(result.exitCode).toBe(1);
+  });
+
+  // As with `configs.recommended` and `configs.processor` of the plugin together.
+  test("a file that has the processor of the plugin too goes to the processor", async () => {
+    const files = {
+      ...markdownPackage(),
+      "fenced.mjs": fenced(true),
+      "eslint.config.mjs": `
+          import markdown from "@eslint/markdown";
+          import { processor } from "./fenced.mjs";
+          const plugin = { ...markdown, processors: { markdown: processor } };
+          export default [
+            { files: ["**/*.md"], plugins: { markdown: plugin }, language: "markdown/commonmark", rules: { "markdown/heading-increment": "error" } },
+            { files: ["**/*.md"], processor: "markdown/markdown" },
+            { files: ["**/*.md/*.js"], rules: { "no-debugger": "error" } },
+          ];`,
+      "a.md": "# a\n\n### b\n\n```js\ndebugger;\n```\n",
+    };
+    const result = await lint(files, ["-f", "json", "a.md"]);
+    expect(summary(result.raw)).toBe("a.md: 6:1 no-debugger Unexpected 'debugger' statement.");
+  });
+
+  // micromark 4.0.3, which is the parser of the plugin, reads each of these in another way.
+  test("where the parser of the plugin is wrong, CommonMark counts", async () => {
+    const result = await lint(
+      {
+        ...project,
+        // A value without quotes can have a `/`. The plugin: this is no tag, and nothing is reported.
+        "slash-in-value.md": "a <a href=b/c>d</a>\n",
+        // It cannot have a `=`. The plugin: `markdown/no-html` reports it.
+        "two-equals.md": "<a b=c=d>\n",
+        // A title in parentheses has no `(` that is not escaped, so this is no definition. The plugin: an unused definition.
+        "paren-in-title.md": "[a]: b (()\n",
+      },
+      ["-f", "json", "."],
+    );
+    expect(summary(result.raw)).toMatchInlineSnapshot(`
+        "paren-in-title.md: 1:2 markdown/no-missing-label-refs Label reference 'a' not found.
+        slash-in-value.md: 1:3 markdown/no-html HTML element "a" is not allowed."
+      `);
+  });
+
+  // The rules are only as good as the tree. `conformance/markdown-trees.mjs` has recorded that of the plugin.
+  test.skipIf(!hasTestRunner)(
+    "the tree of every example of the specifications is the one that the parser of the plugin makes",
+    async () => {
+      const recorded = Bun.zstdDecompressSync(readFileSync(join(import.meta.dir, "conformance", "markdown-trees.zst")));
+      using dir = tempDir("bun-lint-js-parsers", { "cases.jsonl": recorded });
+      await using proc = spawn({
+        cmd: [bunExe(), "lint", "--print-markdown-trees", "cases.jsonl"],
+        env,
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const trees = new Map(
+        stdout.split(/^### /m).map(it => [it.slice(0, it.indexOf("\n")), it.slice(it.indexOf("\n") + 1)]),
+      );
+      const cases: { id: string; tree: string }[] = recorded
+        .toString()
+        .trimEnd()
+        .split("\n")
+        .map(it => JSON.parse(it));
+      expect(cases.length).toBe(3308);
+      // Links that the plugin makes of text afterwards have no position, and its rules throw: see below.
+      const withPlaces = cases.filter(it => !/^ *\w+ \?/m.test(it.tree));
+      expect(cases.length - withPlaces.length).toBe(6);
+      const different = withPlaces.filter(it => trees.get(it.id) !== `${it.tree}\n`).map(it => it.id.split(" ")[0]);
+      // In each of these the file says what cmark and md4c make of it, which is what Bun does and micromark does not.
+      expect([...new Set(different)]).toEqual([
+        // A character beyond U+FFFF that is punctuation.
+        "coverage.txt#13",
+        // `a***b* c*`: whether two runs of delimiters match goes by their whole lengths.
+        "regressions.txt#7",
+        // An empty list item follows indented code.
+        "regressions.txt#23",
+        // A line that is a tag goes on with the paragraph before it.
+        "regressions.txt#39",
+        // A tab before the two spaces of a hard line break.
+        "regressions.txt#60",
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // In GFM the plugin makes links of such text without saying where they are, and five of its rules throw
+  // "Custom getLoc() method must be implemented in the subclass", which ends the run of ESLint.
+  test("a file that the plugin trips over is linted", async () => {
+    const files = { ...project, "a.gfm.md": "# a\n\n[www.example.com\n\n<www.example.com> <b>c</b>\n" };
+    const result = await lint(files, ["-f", "json", "."]);
+    expect(summary(result.raw)).toBe('a.gfm.md: 5:19 markdown/no-html HTML element "b" is not allowed.');
+  });
+
+  test("where a rule of the plugin throws, the run ends the same way", async () => {
+    const config = markdownConfig(
+      `{ rules: { "markdown/no-missing-atx-heading-space": ["error", { checkClosedHeadings: true }] } }`,
+    );
+    const result = await lint({ ...markdownPackage(), "eslint.config.mjs": config, "a.md": "#\n" }, ["a.md"]);
+    expect(result.stderr).toContain(
+      "RangeError: Index out of range (requested index -1, but source text has length 2).",
+    );
+    expect(result.stderr).toContain('Rule: "markdown/no-missing-atx-heading-space"');
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("what is not UTF-8 in a file counts as U+FFFD, and so does NUL", async () => {
+    const bytes = (text: string) => Buffer.from(text, "latin1");
+    const result = await lint(
+      {
+        ...project,
+        "a.md": bytes("# a\xFF\n\n# a\xEF\xBF\xBD\n\n[b\xFF]\n"),
+        "nul.md": bytes("# a\0\n\n[\0]\n\n<b\0>\n\n<i>\n"),
+      },
+      ["-f", "json", "."],
+    );
+    const replaced = String.fromCodePoint(0xfffd);
+    expect(summary(result.raw)).toBe(
+      [
+        "a.md: 3:1 markdown/no-multiple-h1 Unexpected additional H1 heading found.",
+        `a.md: 3:1 markdown/no-duplicate-headings Duplicate heading "a${replaced}" found.`,
+        `a.md: 5:2 markdown/no-missing-label-refs Label reference 'b${replaced}' not found.`,
+        "nul.md: 3:2 markdown/no-missing-label-refs Label reference '\0' not found.",
+        'nul.md: 7:1 markdown/no-html HTML element "i" is not allowed.',
+      ].join("\n"),
+    );
+  });
+
+  describe("the time is in proportion to the size of the text", () => {
+    const count = many(20_000);
+    test.each([
+      ["headings", "# a\n\n"],
+      ["headings in HTML", "<h1>a</h1>"],
+      ["opening tags of headings", "<h1>"],
+      ["tags with an id", "<div id=a>\n"],
+      ["references on one line, after a character that is not ASCII", "é [a] "],
+      ["definitions", "[a]: b\n"],
+      ["links to fragments", "[a](#b) "],
+      ["emphasis markers", "* a *"],
+      ["comments", "<!-- a -->"],
+      ["comments that are not closed", "<!-- "],
+      ["bare URLs", "https://a.b "],
+      ["rows", "| a | b |\n"],
+      ["block quotes", "> "],
+      ["list items", "- "],
+    ])("%s", async (_, unit) => {
+      const text = `| a |\n| - |\n${repeated(unit, count)}\n`;
+      const result = await lint({ ...project, "a.gfm.md": text }, ["-f", "json", "a.gfm.md"]);
+      expect(JSON.parse(result.raw)[0].messages.filter((it: any) => it.fatal)).toEqual([]);
+      expect(result.exitCode).toBeLessThan(2);
+    });
+  });
+
+  // Nothing that works with the package stops working.
+  describe("the whole file goes to the package eslint", () => {
+    const own = {
+      "own.mjs": `export default { rules: { seen: { create: context => ({ Line: () => context.report({ line: 1, message: "own" }) }) } } };`,
+    };
+    const one = (more = "") => markdownConfig(more, `["no-html"]`);
+    test.each<[string, Record<string, string>, string[], string]>([
+      [
+        "a rule of the plugin that is not built in is on",
+        { "eslint.config.mjs": one(`{ files: ["*.md"], rules: { "markdown/only-in-the-package": "warn" } }`) },
+        [],
+        "the package: no-html, the package: only-in-the-package",
+      ],
+      [
+        "a rule of another plugin is on",
+        {
+          ...own,
+          "eslint.config.mjs": one(`{ files: ["*.md"], plugins: { own }, rules: { "own/seen": "error" } }`).replace(
+            "export default",
+            `import own from "./own.mjs";\n  export default`,
+          ),
+        },
+        [],
+        "the package: no-html, own",
+      ],
+      ["--no-native-plugin-rules", {}, ["--no-native-plugin-rules"], "the package: no-html"],
+      ["--native-plugin-rules names others", {}, ["--native-plugin-rules=import"], "the package: no-html"],
+      ["another package has the prefix", markdownPackage("eslint-plugin-markdown"), [], "the package: no-html"],
+    ])("if %s", async (_, files, args, expected) => {
+      const all = {
+        ...eslintPackage,
+        ...markdownPackage(),
+        "eslint.config.mjs": one(),
+        ...files,
+        "a.md": "<b>a</b>\n",
+      };
+      const result = await lint(all, ["-f", "json", "--timing", ...args, "a.md"]);
+      const messages = JSON.parse(result.raw)[0].messages.map((it: any) => it.message);
+      expect(messages.join(", ")).toBe(expected);
+      expect(result.stderr).toContain("the eslint package linted 1 files");
+    });
+
+    test("if a comment in it turns on a rule that is not built in", async () => {
+      const files = {
+        ...eslintPackage,
+        ...markdownPackage(),
+        "eslint.config.mjs": one(),
+        "a.md": '<!-- eslint markdown/only-in-the-package: "error" -->\n\n<b>a</b>\n',
+        "b.md": "<b>a</b>\n",
+      };
+      const result = await lint(files, ["-f", "json", "--timing", "."]);
+      expect(summary(result.raw)).toMatchInlineSnapshot(`
+          "a.md: 1:1 markdown/no-html the package: no-html
+          b.md: 1:1 markdown/no-html HTML element "b" is not allowed."
+        `);
+      expect(result.stderr).toContain("the eslint package linted 1 files");
+    });
+  });
+});
+
 const oxlintrc = JSON.stringify({
   categories: { correctness: "off" },
   rules: {

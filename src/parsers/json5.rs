@@ -27,6 +27,8 @@ pub struct JSON5Parser<'a> {
     token: Token<'a>,
     /// For [`SourceTokens`]: a comment is a token, and a string without escapes is a slice of the source.
     as_written: bool,
+    /// [`SourceTokens::new`]
+    is_jsonc: bool,
     /// [`SourceTokens::not_in_json`]
     not_in_json: Option<usize>,
 }
@@ -110,8 +112,9 @@ pub struct SourceToken<'a> {
 pub struct SourceTokens<'a>(JSON5Parser<'a>);
 
 impl<'a> SourceTokens<'a> {
-    /// `None`: the text is too long.
-    pub fn new(text: &'a [u8], bump: &'a Bump) -> Option<SourceTokens<'a>> {
+    /// `is_jsonc`: a `//` comment ends at `\n` and `\r` alone, as in Microsoft's `jsonc-parser`. In JSON5 it ends at U+2028 and
+    /// U+2029 too. `None`: the text is too long.
+    pub fn new(text: &'a [u8], bump: &'a Bump, is_jsonc: bool) -> Option<SourceTokens<'a>> {
         i32::try_from(text.len()).ok()?;
         Some(SourceTokens(JSON5Parser {
             source: text,
@@ -123,6 +126,7 @@ impl<'a> SourceTokens<'a> {
                 data: TokenData::Eof,
             },
             as_written: true,
+            is_jsonc,
             not_in_json: None,
         }))
     }
@@ -361,6 +365,7 @@ impl<'a> JSON5Parser<'a> {
                 data: TokenData::Eof,
             },
             as_written: false,
+            is_jsonc: false,
             not_in_json: None,
         };
         match parser.parse_root() {
@@ -1109,6 +1114,7 @@ impl<'a> JSON5Parser<'a> {
             }
             // Check for U+2028/U+2029 line terminators
             if cc == 0xE2
+                && !self.is_jsonc
                 && self.pos + 2 < self.source.len()
                 && self.source[self.pos + 1] == 0x80
                 && (self.source[self.pos + 2] == 0xA8 || self.source[self.pos + 2] == 0xA9)

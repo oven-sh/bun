@@ -2,6 +2,7 @@
 
 use bun_lint::context::Severity;
 use bun_lint::linter::{LintMessage, ResolvedConfig};
+use bun_lint::source::LineStarts;
 use std::sync::Arc;
 
 /// ESLint's `calculateStatsPerFile`.
@@ -78,6 +79,16 @@ pub(crate) struct FileResult {
 }
 
 impl FileResult {
+    /// Where the lines of `text` start. A line ends where the language of the file says so.
+    pub(crate) fn lines(&self) -> LineStarts {
+        if let Some(starts) = &self.line_starts {
+            return LineStarts::at(starts.clone());
+        }
+        let config = self.linted.as_ref().map(|it| &it.config);
+        let breaks = config.map_or_else(Default::default, |it| it.line_breaks);
+        breaks.line_starts(self.text.as_deref().unwrap_or_default())
+    }
+
     /// ESLint's `createIgnoreResult`.
     pub(crate) fn ignored(path: Vec<u8>, message: &[u8]) -> FileResult {
         FileResult::about(path, Severity::Warn, message)

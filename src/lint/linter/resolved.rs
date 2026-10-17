@@ -5,7 +5,7 @@ use super::registry::{Deprecated, Registry, formatting_rule, parse_rule_id};
 use crate::context::Severity;
 use crate::js_plugin::{self, Route};
 use crate::language::{LanguageOptions, Parser};
-use crate::languages::Dialect;
+use crate::languages::{Dialect, LineBreaks};
 use crate::options::Json;
 use crate::oxlint_order::Ran as InOxlint;
 use crate::rule::{Meta, Plugin};
@@ -293,6 +293,8 @@ pub struct ResolvedConfig {
     pub options_of_other_language: Option<Json>,
     /// What it names, if that is not JavaScript and the file is linted here: [`Route::Language`].
     pub dialect: Option<Dialect>,
+    /// Where a line ends in the language, whoever lints the file. Those of ECMAScript for a language that is not known here.
+    pub line_breaks: LineBreaks,
     /// The name of the `processor`, if one is configured.
     pub processor: Option<Box<[u8]>>,
     /// Where it is, if the configuration is an `eslint.config.js`.

@@ -68,6 +68,13 @@ If `bun install` could not apply the resulting patch, or the install is refused 
 
 To run the same checks without writing anything, pass `--dry-run`. It prints the path of the patch file that the commit would write.
 
+<Note>
+With the isolated linker, the installed copy of a patched package records which patch it has. `bun install` reads the record to tell a patched copy from the original package.
+
+The record is the name of the package's directory in `node_modules/.bun`, which ends in `+` and 16 hex digits derived from the patch file. [Directory structure](/pm/isolated-installs#directory-structure) lists the directory names.
+
+</Note>
+
 #### Removing a patch
 
 Undo your changes and commit again:
@@ -81,6 +88,13 @@ bun patch --commit react
 When the package has no changes left, Bun removes it from `"patchedDependencies"` in `package.json` and the lockfile, deletes its patch file unless another entry uses it, and reinstalls the original package.
 
 You can also delete the entry from `"patchedDependencies"` and the patch file yourself, then run `bun install`.
+
+With the isolated linker, `bun install` also installs the original package again when `package.json` and `bun.lock` lose the patch in one step, for example after `git checkout` or `git stash`. `bun install --frozen-lockfile` and `bun ci` do the same.
+
+A directory that an older version of Bun made for a patched package does not record the patch:
+
+- If `"patchedDependencies"` still lists the patch, the next `bun install` adds the record. For a registry package, Bun renames the directory and downloads nothing.
+- If `package.json` and `bun.lock` no longer list the patch, Bun cannot tell the copy from the original package and keeps it. Run `bun install --force` once to replace the copy.
 
 #### A missing patch file
 

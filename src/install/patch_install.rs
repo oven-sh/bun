@@ -190,6 +190,112 @@ pub(crate) fn hash_patch(contents: &[u8]) -> u64 {
     u64::from_le_bytes(digest[0..8].try_into().unwrap())
 }
 
+/// For a command that names isolated store entries without an install: hashes each patch file as it is now, `None` for one that cannot be read.
+pub fn calc_patch_hashes(lockfile: &mut crate::Lockfile) {
+    let project_dir = FileSystem::instance().top_level_dir();
+    let string_bytes = lockfile.buffers.string_bytes.as_slice();
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let mut spill = Vec::new();
+    for patch in lockfile.patched_dependencies.values_mut() {
+        let path = resolve_patchfile_path(
+            &mut buf.0,
+            &mut spill,
+            project_dir,
+            patch.path.slice(string_bytes),
+        );
+        let contents = sys::File::read_from(Fd::cwd(), path.as_bytes()).ok();
+        let hash = contents
+            .filter(|contents| !contents.is_empty())
+            .map(|contents| hash_patch(&contents));
+        patch.set_patchfile_hash(hash);
+    }
+}
+
+/// Runs `f` while `manager.lockfile` holds the patches that the root package.json lists, hashed: an install applies those, whatever bun.lock records. Then puts the lockfile back as it was, because a caller may save it afterwards.
+pub fn with_wanted_patch_hashes<T>(
+    manager: &mut PackageManager,
+    f: impl FnOnce(&PackageManager) -> T,
+) -> crate::Result<T> {
+    let root = root_package_json(manager)?;
+    let recorded = RecordedPatches::swap_for(&mut manager.lockfile, root)?;
+    let result = f(manager);
+    recorded.restore(&mut manager.lockfile);
+    Ok(result)
+}
+
+fn root_package_json(manager: &mut PackageManager) -> crate::Result<crate::bun_json::Expr> {
+    let log = manager.log_mut();
+    // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
+    let path: &[u8] = unsafe { package_manager::ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+    let manifests = &mut manager.workspace_package_json_cache;
+    let entry = manifests
+        .get_with_path(log, path, Default::default())
+        .unwrap()?;
+    Ok(entry.root)
+}
+
+/// The patches that a lockfile records, set aside while it holds the ones that the root package.json lists.
+pub(crate) struct RecordedPatches {
+    patches: crate::lockfile_real::PatchedDependenciesMap,
+    pool: crate::lockfile_real::StringPool,
+    strings_len: usize,
+}
+
+impl RecordedPatches {
+    /// What `with_wanted_patch_hashes` does, for the lockfile that `bun patch --commit` loads before the manager has it. `restore` undoes it.
+    pub(crate) fn swap_for_wanted(
+        manager: &mut PackageManager,
+        lockfile: &mut crate::Lockfile,
+    ) -> crate::Result<Self> {
+        let root = root_package_json(manager)?;
+        Ok(Self::swap_for(lockfile, root)?)
+    }
+
+    fn swap_for(
+        lockfile: &mut crate::Lockfile,
+        root: crate::bun_json::Expr,
+    ) -> Result<Self, bun_alloc::AllocError> {
+        let recorded = Self {
+            patches: core::mem::take(&mut lockfile.patched_dependencies),
+            // bun.lockb saves the whole buffer: with the pool set aside, the paths of these patches are appended to it, and `restore` cuts them off again.
+            pool: core::mem::take(&mut lockfile.string_pool),
+            strings_len: lockfile.buffers.string_bytes.len(),
+        };
+        if let Err(err) = put_listed_patches(lockfile, root) {
+            recorded.restore(lockfile);
+            return Err(err);
+        }
+        calc_patch_hashes(lockfile);
+        Ok(recorded)
+    }
+
+    pub(crate) fn restore(self, lockfile: &mut crate::Lockfile) {
+        lockfile.patched_dependencies = self.patches;
+        lockfile.string_pool = self.pool;
+        lockfile.buffers.string_bytes.truncate(self.strings_len);
+    }
+}
+
+/// The rows of `patchedDependencies` as an install takes them from the root package.json: the last one of a repeated key wins.
+fn put_listed_patches(
+    lockfile: &mut crate::Lockfile,
+    root: crate::bun_json::Expr,
+) -> Result<(), bun_alloc::AllocError> {
+    let Some(listed) = root.get_object(b"patchedDependencies") else {
+        return Ok(());
+    };
+    let bump = bun_alloc::Arena::new();
+    listed.try_for_each_property(|key, _, path| -> Result<(), bun_alloc::AllocError> {
+        let Some(path) = path.as_string(&bump) else {
+            return Ok(());
+        };
+        let path = lockfile.string_buf().append(path)?;
+        let key = bun_semver::string::Builder::string_hash(key);
+        (lockfile.patched_dependencies).put(key, crate::PatchedDep::with_path(path))?;
+        Ok(())
+    })
+}
+
 /// Exits before any linker runs when a patch file is missing, because the patched package in
 /// node_modules may hold the only remaining copy of those changes.
 #[cold]

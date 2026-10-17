@@ -7,7 +7,7 @@ use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_semver::String as SemverString;
-use bun_wyhash::Wyhash;
+use bun_wyhash::{Wyhash, Wyhash11};
 
 use crate::lockfile::{Lockfile, package};
 use crate::{Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID, Resolution};
@@ -28,6 +28,10 @@ pub struct Store {
     pub(crate) nodes: node::List,
     /// `node_modules/.bun/node_modules` names other than that of the entry's `node_id`.
     pub(crate) hidden_hoist_keys: Vec<entry::DependenciesItem>,
+    /// Of each patched entry, in entry order: the `peer_hash` that names it in an install without the patch.
+    pub(crate) prefold_peer_hashes: Vec<(entry::Id, entry::PeerHash)>,
+    /// `--filter` or a list of packages left part of the tree out: a package that is not in the store can link to an entry of it.
+    pub(crate) is_partial: bool,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -284,7 +288,7 @@ pub mod entry {
         pub nested_folder: bool,
 
         /// For a `file:` or URL tarball, this also covers the pinned integrity. Without peers, it's
-        /// the integrity's first 8 bytes.
+        /// the integrity's first 8 bytes. For a patched package, it also covers the patch.
         pub peer_hash: PeerHash,
 
         /// Content hash of (package + sorted resolved dependency global-store keys),
@@ -331,6 +335,14 @@ pub mod entry {
 
         pub(crate) fn from(int: u64) -> Self {
             Self(int)
+        }
+
+        /// The suffix of a patched package's entry: this hash and the patch's, hashed. Never `NONE`, so the entry never has the name an install without the patch gives it.
+        pub(crate) fn with_patch(self, patch_hash: u64) -> Self {
+            let mut hasher = Wyhash11::init(0);
+            hasher.update(&self.0.to_le_bytes());
+            hasher.update(&patch_hash.to_le_bytes());
+            Self(hasher.final_().max(1))
         }
 
         fn cast(self) -> u64 {
@@ -443,11 +455,12 @@ pub mod entry {
         pub(crate) entry_id: Id,
         pub(crate) store: &'a Store,
         pub lockfile: &'a Lockfile,
+        peer_hash: PeerHash,
     }
 
     impl<'a> fmt::Display for StorePathFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            let peer_hash = self.store.entries.items_peer_hash()[self.entry_id.get() as usize];
+            let peer_hash = self.peer_hash;
             let pkg_id = self.store.ids(self.entry_id).pkg_id;
 
             let pkgs = self.lockfile.packages.slice();
@@ -478,7 +491,26 @@ pub mod entry {
             entry_id,
             store,
             lockfile,
+            peer_hash: store.entries.items_peer_hash()[entry_id.get() as usize],
         }
+    }
+
+    /// A patched entry's name in an install without the patch, where versions of Bun that did not name the patch linked the patched package. `None`: the entry is not patched.
+    pub(crate) fn fmt_prefold_store_path<'a>(
+        entry_id: Id,
+        store: &'a Store,
+        lockfile: &'a Lockfile,
+    ) -> Option<StorePathFormatter<'a>> {
+        let prefold = &store.prefold_peer_hashes;
+        let at = prefold
+            .binary_search_by_key(&entry_id.get(), |(id, _)| id.get())
+            .ok()?;
+        Some(StorePathFormatter {
+            entry_id,
+            store,
+            lockfile,
+            peer_hash: prefold[at].1,
+        })
     }
 
     pub(crate) struct GlobalStorePathFormatter<'a> {

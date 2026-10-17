@@ -27,6 +27,7 @@ use crate::package_manager_real::package_manager_directories::{
     compute_cache_dir_and_subpath, get_temporary_directory, is_package_in_cache_at,
 };
 use crate::package_manager_real::populate_package_cache::download_pinned_packages;
+use crate::patch_install::RecordedPatches;
 use crate::resolution::append_without_url_credentials;
 use crate::{DependencyID, PackageID, PatchTask, Resolution, ResolutionTag, initialize_store};
 
@@ -121,13 +122,20 @@ impl PatchCommitResult {
 pub(crate) struct PendingCommit {
     new_patch: Option<NewPatch>,
     /// A folder to delete so that the install creates the package there again.
-    stale_folder: Option<Vec<u8>>,
+    stale_folder: Option<StaleFolder>,
 }
 
 struct NewPatch {
     name_and_version_hash: u64,
     path: ZBox,
     contents: Vec<u8>,
+}
+
+struct StaleFolder {
+    /// The package, links resolved.
+    package: Vec<u8>,
+    /// The package's own entry of the isolated store around it, which is deleted with it.
+    entry: Option<Vec<u8>>,
 }
 
 impl PendingCommit {
@@ -183,10 +191,51 @@ pub(crate) fn write_pending_patch(
 
 /// Called right before the linker runs. The patch file has been written by then, so the edits in
 /// the folder are not lost.
+/// The package first leaves its path in one step: `delete_tree` can stop midway, and what then still has the file that an install looks for counts as installed.
 pub(crate) fn remove_stale_folder(manager: &mut PackageManager) {
-    if let Some(folder) = manager.pending_patch_commit.stale_folder.take() {
-        let _ = Fd::cwd().delete_tree(&folder);
+    let Some(stale) = manager.pending_patch_commit.stale_folder.take() else {
+        return;
+    };
+    let staged = temp_sibling(&stale.package);
+    let moved = sys::renameat(
+        Fd::cwd(),
+        &ZBox::from_bytes(&stale.package),
+        Fd::cwd(),
+        &ZBox::from_bytes(&staged),
+    );
+    let (package, unmarked) = match moved {
+        Ok(()) => (&staged, Ok(())),
+        Err(e) if e.get_errno() == sys::E::ENOENT => (&stale.package, Ok(())),
+        // Refused, so it is deleted in place: what an install looks for first, and nothing more once that stays.
+        Err(_) => (&stale.package, unlink_install_markers(&stale.package)),
+    };
+    let rest = stale.entry.as_ref().unwrap_or(package);
+    if let Err(e) = unmarked.and_then(|()| Fd::cwd().delete_tree(rest)) {
+        bun_core::warn!("failed to delete {}: {}", bstr::BStr::new(rest), e);
     }
+}
+
+/// Unlinks the files that make an install take the package in `folder` for installed: the marker of a patch first and `package.json` last, so that a file that stays leaves a copy that is whole or not installed.
+fn unlink_install_markers(folder: &[u8]) -> sys::Result<()> {
+    let dir = Dir::cwd().open_dir(folder, ITERATE)?;
+    let mut markers: Vec<ZBox> = Vec::new();
+    let mut iter = sys::iterate_dir(dir.fd);
+    while let Some(entry) = iter.next()? {
+        let name = entry.name.slice_u8();
+        if entry.kind != sys::EntryKind::Directory && strings::has_prefix(name, crate::bun_hash_tag)
+        {
+            markers.push(ZBox::from_bytes(name));
+        }
+    }
+    markers.push(ZBox::from_bytes(crate::package_install::BUN_TAG));
+    markers.push(ZBox::from_bytes(b"package.json"));
+    for marker in &markers {
+        match sys::unlinkat(dir.fd, marker) {
+            Err(e) if e.get_errno() != sys::E::ENOENT => return Err(e),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Returns true if `path`, which comes from the repository's lockfile, is a regular file in the
@@ -501,7 +550,10 @@ pub fn do_patch_commit(
         lockfile::LoadResult::Ok(_) => {}
     }
 
+    // An install applies the patches that package.json lists, whatever bun.lock records, and their hashes name the entries of the isolated store.
+    let recorded = RecordedPatches::swap_for_wanted(manager, &mut lockfile)?;
     let target = resolve_target(manager, &lockfile, "bun patch --commit");
+    recorded.restore(&mut lockfile);
     let pkg = target.pkg;
 
     // `compute_cache_dir_and_subpath` resolves `pkg.resolution`'s strings against `manager.lockfile`.
@@ -524,6 +576,17 @@ pub fn do_patch_commit(
     let old_folder =
         resolve_path::join::<platform::Posix>(&[&cache_path, &cache_dir_subpath]).to_vec();
     let new_folder = real_folder(&cache_path, &target.folder, false);
+    // Neither package.json nor the lockfile lists a patch for the package: what differs in this copy is another commit's patch, not an edit.
+    if !is_patch_listed(manager, &patch_key)
+        && is_stale_store_copy(manager, pkg.meta.id, &new_folder, &old_folder)
+    {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: refusing to patch <b>{}<r>: it holds a patch that \"patchedDependencies\" does not list",
+            bstr::BStr::new(&target.folder),
+        );
+        bun_core::note!("run <cyan>bun install<r> first");
+        Global::crash();
+    }
     make_bins_executable(
         &manager.lockfile,
         &pkg,
@@ -550,7 +613,8 @@ pub fn do_patch_commit(
                 Output::flush();
                 Global::exit(0);
             }
-            manager.pending_patch_commit.stale_folder = copy_at_link_position(linker, new_folder);
+            manager.pending_patch_commit.stale_folder =
+                copy_at_link_position(linker, &manager.lockfile, &pkg, new_folder);
             return Ok(Some(PatchCommitResult {
                 patch_key: patch_key.into_boxed_slice(),
                 patchfile_path,
@@ -581,7 +645,10 @@ pub fn do_patch_commit(
         // The copy has no edits to keep, and it lacks the files that the package's scripts create.
         // Delete it so that the install creates the package again and runs its scripts.
         if !manager.options.dry_run && has_trusted_scripts(manager, &pkg, &name, &new_folder) {
-            manager.pending_patch_commit.stale_folder = Some(new_folder);
+            manager.pending_patch_commit.stale_folder = Some(StaleFolder {
+                package: new_folder,
+                entry: None,
+            });
         }
         return Ok(None);
     }
@@ -685,7 +752,7 @@ pub fn do_patch_commit(
             path: path_in_patches_dir,
             contents: patchfile_contents,
         }),
-        stale_folder: copy_at_link_position(linker, new_folder),
+        stale_folder: copy_at_link_position(linker, &manager.lockfile, &pkg, new_folder),
     };
 
     Ok(Some(PatchCommitResult {
@@ -696,10 +763,103 @@ pub fn do_patch_commit(
     }))
 }
 
-/// Returns `folder` if it is a copy that `bun patch` made where the isolated linker puts a symlink.
+/// Returns the copy that `bun patch` made for the isolated linker: `folder` where a symlink goes, or `folder` with the store entry around it if that entry is the package's own, whose name comes from the patch before this commit.
 /// An install does not replace such a copy, so it has to be deleted first.
-fn copy_at_link_position(linker: NodeLinker, folder: Vec<u8>) -> Option<Vec<u8>> {
-    (linker == NodeLinker::Isolated && is_link_position(&folder)).then_some(folder)
+/// `None` for any other folder of the store, such as a dependency that another package bundles.
+fn copy_at_link_position(
+    linker: NodeLinker,
+    lockfile: &Lockfile,
+    pkg: &Package,
+    folder: Vec<u8>,
+) -> Option<StaleFolder> {
+    if linker != NodeLinker::Isolated {
+        return None;
+    }
+    let entry = match store_entry_of(&folder) {
+        None if is_link_position(&folder) => None,
+        None => return None,
+        Some(entry) if is_own_entry(lockfile, pkg, &entry, &folder) => Some(entry),
+        Some(entry) if is_store_link_position(&entry, &folder) => None,
+        Some(_) => return None,
+    };
+    Some(StaleFolder {
+        package: folder,
+        entry,
+    })
+}
+
+/// Whether `entry` of the isolated store has the name of `pkg` and `folder` is the package in it.
+fn is_own_entry(lockfile: &Lockfile, pkg: &Package, entry: &[u8], folder: &[u8]) -> bool {
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let key = store_entry::fmt_store_key(pkg.name, &pkg.resolution, string_buf).to_string();
+    let name = pkg.name.slice(string_buf);
+    is_entry_of(bun_paths::basename(entry), key.as_bytes())
+        && folder == resolve_path::join::<platform::Auto>(&[entry, b"node_modules", name])
+}
+
+/// Whether `patchedDependencies` has `patch_key`, in the lockfile or in the root package.json.
+fn is_patch_listed(manager: &mut PackageManager, patch_key: &[u8]) -> bool {
+    let recorded = &manager.lockfile.patched_dependencies;
+    recorded.contains(&string_hash(patch_key))
+        || crate::update_transitive::patched_dependency_keys(manager)
+            .iter()
+            .any(|key| **key == *patch_key)
+}
+
+/// `node_modules/.bun/<entry>`, links resolved, when `folder` is inside that entry.
+fn store_entry_of(folder: &[u8]) -> Option<Vec<u8>> {
+    use resolve_path::{ParentEqual, is_parent_or_equal};
+    let store = resolve_links(b"node_modules/.bun").ok()?;
+    if is_parent_or_equal(&store, folder) != ParentEqual::Parent {
+        return None;
+    }
+    let entry = strings::tokenize_any(&folder[store.len()..], b"/\\").next()?;
+    Some(resolve_path::join::<platform::Auto>(&[&store, entry]).to_vec())
+}
+
+/// Whether `folder`, links resolved, is a patched package in a store entry under a name that the lockfile does not give.
+fn is_stale_store_copy(
+    manager: &PackageManager,
+    pkg_id: PackageID,
+    folder: &[u8],
+    cache_entry: &[u8],
+) -> bool {
+    let Some(entry) = store_entry_of(folder) else {
+        return false;
+    };
+    if !has_patch_marker(folder, Some(cache_entry)) {
+        return false;
+    }
+    let lockfile: &Lockfile = &manager.lockfile;
+    let store = handle_oom(build_whole_store(manager, lockfile));
+    let node_pkg_ids = store.nodes.items_pkg_id();
+    let entry_pkgs =
+        (store.entries.items_node_id().iter()).map(|node| node_pkg_ids[node.get() as usize]);
+    !entry_pkgs.enumerate().any(|(id, pkg)| {
+        let name = store_entry::fmt_store_path(store_entry::Id::from(id as u32), &store, lockfile);
+        pkg == pkg_id && name.to_string().as_bytes() == bun_paths::basename(&entry)
+    })
+}
+
+/// Whether `folder` has the marker file of a patch. The package in `cache_entry` can ship one of its own.
+fn has_patch_marker(folder: &[u8], cache_entry: Option<&[u8]>) -> bool {
+    let Ok(dir) = Dir::cwd().open_dir(folder, ITERATE) else {
+        return false;
+    };
+    let mut iter = sys::iterate_dir(dir.fd);
+    while let Ok(Some(entry)) = iter.next() {
+        let name = entry.name.slice_u8();
+        let is_shipped = |cache_entry: &[u8]| {
+            sys::exists(resolve_path::join::<platform::Auto>(&[cache_entry, name]))
+        };
+        if entry.kind != sys::EntryKind::Directory
+            && strings::has_prefix(name, crate::bun_hash_tag)
+            && !cache_entry.is_some_and(is_shipped)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Applies the patch to a scratch copy of the package, the way an install would. On failure, prints
@@ -1318,6 +1478,19 @@ fn is_link_position(folder: &[u8]) -> bool {
         && is_parent_or_equal(&store, folder) == ParentEqual::Unrelated
 }
 
+/// Whether `folder` is where `entry`, a directory of `node_modules/.bun`, has the link to a package: in the `node_modules` of a package's entry, or in `node_modules/.bun/node_modules` itself.
+fn is_store_link_position(entry: &[u8], folder: &[u8]) -> bool {
+    use resolve_path::dirname;
+    let mut links = dirname::<platform::Auto>(folder);
+    if strings::starts_with_char(bun_paths::basename(links), b'@') {
+        links = dirname::<platform::Auto>(links);
+    }
+    if bun_paths::basename(entry) == b"node_modules" {
+        return links == entry;
+    }
+    bun_paths::basename(links) == b"node_modules" && dirname::<platform::Auto>(links) == entry
+}
+
 /// Uses the same naming as an install's staging folder, so that `bun prune` removes it if a crash
 /// leaves it behind.
 fn temp_sibling(folder: &[u8]) -> Vec<u8> {
@@ -1632,21 +1805,138 @@ pub(crate) fn isolated_store_folders(
         .map(|node_id| node_pkg_ids[node_id.get() as usize])
         .collect();
 
-    let project_folder = |entry: usize| -> Option<Vec<u8>> {
-        let mut folder = Vec::new();
+    // Under the name that the lockfile and the patch files give the entry now. The last install can have linked it under another.
+    let named_dir = |entry: usize| -> Vec<u8> {
+        let mut dir = Vec::new();
         write!(
-            folder,
+            dir,
             "node_modules/.bun/{}",
             store_entry::fmt_store_path(store_entry::Id::from(entry as u32), &store, lockfile),
         )
         .expect("formatting into a Vec is infallible");
-        // It's a link into the global store, so the project has no folder for the package.
-        if is_link(&folder) {
-            return None;
+        dir
+    };
+
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let names = lockfile.packages.items_name();
+    let is_importer = |entry: usize| {
+        matches!(
+            resolutions[entry_pkgs[entry] as usize].tag,
+            ResolutionTag::Root | ResolutionTag::Workspace
+        )
+    };
+    let alias_of = |dep_id: DependencyID| {
+        (dependencies.get(dep_id as usize))
+            .map(|dependency| dependency.name.slice(string_buf))
+            .filter(|alias| alias_is_safe_install_target(alias))
+    };
+    // Where the isolated linker puts the link to the dependency `alias` of the entry `dependent`, which is in `dir`.
+    let link_of = |dependent: usize, dir: &[u8], alias: &[u8]| -> Vec<u8> {
+        let dependent_pkg = entry_pkgs[dependent] as usize;
+        let resolution = &resolutions[dependent_pkg];
+        let (mut link, own_name) = match resolution.tag {
+            ResolutionTag::Root => (Vec::new(), None),
+            ResolutionTag::Workspace => (resolution.workspace().slice(string_buf).to_vec(), None),
+            ResolutionTag::Symlink => (dir.to_vec(), None),
+            _ => (dir.to_vec(), Some(names[dependent_pkg].slice(string_buf))),
+        };
+        if !link.is_empty() {
+            link.push(b'/');
         }
-        write!(folder, "/node_modules/{}", bstr::BStr::new(name))
+        write!(link, "node_modules/{}", bstr::BStr::new(alias))
             .expect("formatting into a Vec is infallible");
-        sys::exists(&folder).then_some(folder)
+        // A dependency with the name of the package's own folder is linked inside that folder.
+        if own_name == Some(alias) {
+            write!(link, "/node_modules/{}", bstr::BStr::new(alias))
+                .expect("formatting into a Vec is infallible");
+        }
+        link
+    };
+    // The `node_modules/.bun/<entry>` that the link at `link` leads into, if it holds the package of `entry` and is still there.
+    let dir_behind = |entry: usize, link: &[u8]| -> Option<Vec<u8>> {
+        let found = linked_store_entry(link)?;
+        let pkg = entry_pkgs[entry] as usize;
+        let key = store_entry::fmt_store_key(names[pkg], &resolutions[pkg], string_buf).to_string();
+        let dir = [&b"node_modules/.bun/"[..], &found[..]].concat();
+        (is_entry_of(&found, key.as_bytes()) && sys::exists(&dir)).then_some(dir)
+    };
+
+    // Breadth first from the importers, whose `node_modules` no patch renames: where the last install linked each entry, whichever patches it applied.
+    let mut linked_dirs: Vec<Option<Vec<u8>>> = vec![None; entry_pkgs.len()];
+    let mut pending = (0..entry_pkgs.len())
+        .filter(|&entry| entry_pkgs[entry] == pkg_id && !is_importer(entry))
+        .count();
+    let mut walk: Vec<usize> = (0..entry_pkgs.len())
+        .filter(|&entry| is_importer(entry))
+        .collect();
+    let mut walked = 0;
+    while pending > 0
+        && let Some(&dependent) = walk.get(walked)
+    {
+        walked += 1;
+        let dir = linked_dirs[dependent].clone().unwrap_or_default();
+        for item in entry_dependencies[dependent].slice() {
+            let Some(entry) = item.entry_id.try_get().map(|id| id as usize) else {
+                continue;
+            };
+            if pending == 0 || linked_dirs[entry].is_some() || is_importer(entry) {
+                continue;
+            }
+            let linked = alias_of(item.dep_id)
+                .and_then(|alias| dir_behind(entry, &link_of(dependent, &dir, alias)));
+            if let Some(linked) = linked {
+                pending -= usize::from(entry_pkgs[entry] == pkg_id);
+                linked_dirs[entry] = Some(linked);
+                walk.push(entry);
+            }
+        }
+    }
+
+    // `node_modules/.bun/node_modules/<alias>` is one more link to the entry, at a path that no entry name is part of.
+    let hoisted_dir = |entry: usize| -> Option<Vec<u8>> {
+        let id = store_entry::Id::from(entry as u32);
+        let own = store.entries.items_hoisted()[entry].then(|| store.ids(id).dep_id);
+        let more = (store.hidden_hoist_keys.iter())
+            .filter(|key| key.entry_id == id)
+            .map(|key| key.dep_id);
+        (own.into_iter().chain(more))
+            .filter_map(&alias_of)
+            .find_map(|alias| {
+                let link = [&b"node_modules/.bun/node_modules/"[..], alias].concat();
+                dir_behind(entry, &link)
+            })
+    };
+    // A dependent that no link leads to has its own links under the name computed for it.
+    let dependents_dir = |entry: usize| -> Option<Vec<u8>> {
+        (entry_dependencies.iter().enumerate())
+            .filter(|&(dependent, _)| linked_dirs[dependent].is_none() && !is_importer(dependent))
+            .find_map(|(dependent, items)| {
+                let mut aliases = (items.slice().iter())
+                    .filter(|item| item.entry_id.try_get() == Some(entry as u32))
+                    .filter_map(|item| alias_of(item.dep_id))
+                    .peekable();
+                aliases.peek()?;
+                let dir = named_dir(dependent);
+                aliases.find_map(|alias| dir_behind(entry, &link_of(dependent, &dir, alias)))
+            })
+    };
+
+    let pkg = *lockfile.packages.get(pkg_id as usize);
+    let patch = (lockfile.patched_dependencies).get(&string_hash(&patch_key_of(lockfile, &pkg)));
+    let is_name_a_guess = patch.is_some_and(|patch| patch.patchfile_hash().is_none());
+    // Without its patch file a patched package gets the name of the published one, so a folder that no link vouches for is the patched copy only with the marker of a patch.
+    let unlinked_folder = |dir: Vec<u8>| -> Option<Vec<u8>> {
+        package_folder_in(dir, name)
+            .filter(|folder| !is_name_a_guess || has_patch_marker(folder, None))
+    };
+    let project_folder = |entry: usize| -> Option<Vec<u8>> {
+        if let Some(dir) = linked_dirs[entry].clone().or_else(|| hoisted_dir(entry)) {
+            return package_folder_in(dir, name);
+        }
+        dependents_dir(entry)
+            .and_then(&unlinked_folder)
+            .or_else(|| unlinked_folder(named_dir(entry)))
     };
 
     // Walk breadth-first from the current package, then add the entries that it doesn't load.
@@ -1688,11 +1978,61 @@ pub(crate) fn isolated_store_folders(
     }
     queue.extend((0..entry_pkgs.len()).filter(|&entry| !seen[entry]));
 
-    queue
-        .into_iter()
+    let mut folders: Vec<Vec<u8>> = Vec::new();
+    for folder in (queue.into_iter())
         .filter(|&entry| entry_pkgs[entry] == pkg_id)
         .filter_map(project_folder)
-        .collect()
+    {
+        // Links that an install with other peers made can lead two entries to one folder.
+        if !folders.contains(&folder) {
+            folders.push(folder);
+        }
+    }
+    folders
+}
+
+/// `<entry_dir>/node_modules/<name>`, if the project has that folder.
+fn package_folder_in(mut entry_dir: Vec<u8>, name: &[u8]) -> Option<Vec<u8>> {
+    // A link into the global store: the project has no folder of the package.
+    if is_link(&entry_dir) {
+        return None;
+    }
+    write!(entry_dir, "/node_modules/{}", bstr::BStr::new(name))
+        .expect("formatting into a Vec is infallible");
+    sys::exists(&entry_dir).then_some(entry_dir)
+}
+
+/// The `<entry>` of the `node_modules/.bun/<entry>` that the link at `link` leads into.
+fn linked_store_entry(link: &[u8]) -> Option<Vec<u8>> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let len = sys::readlink(&ZBox::from_bytes(link), &mut buf[..]).ok()?;
+    let target = &buf[..len];
+    let mut spill = Vec::new();
+    let path = if Platform::AUTO.is_absolute(target) {
+        target
+    } else {
+        let folder = resolve_path::dirname::<platform::Auto>(link);
+        resolve_path::join_spill::<platform::Auto>(&mut spill, &[folder, target])
+    };
+    // The last `.bun` is the store: the path of the project can have a folder of that name too.
+    let mut entry = None;
+    let mut is_in_store = false;
+    for component in strings::tokenize_any(path, b"/\\") {
+        if is_in_store {
+            entry = Some(component);
+        }
+        is_in_store = component == b".bun";
+    }
+    entry.map(<[u8]>::to_vec)
+}
+
+/// Whether the store entry `entry` is `key` or `key+<16 hex digits>`, the names the linker gives.
+fn is_entry_of(entry: &[u8], key: &[u8]) -> bool {
+    match entry.strip_prefix(key) {
+        Some([]) => true,
+        Some([b'+', hash @ ..]) => hash.len() == 16 && hash.iter().all(u8::is_ascii_hexdigit),
+        _ => false,
+    }
 }
 
 type NodeModulesIterator<'a> = tree::Iterator<'a, { tree::IteratorPathStyle::NodeModules }>;

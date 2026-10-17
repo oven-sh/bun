@@ -420,6 +420,12 @@ Bun stores installed packages from npm in `~/.bun/install/cache/${name}@${versio
 
 When the `node_modules` folder exists, Bun decides whether to install a package from what is already there. The hoisted linker checks that the `"name"` and `"version"` in the `package.json` at the expected `node_modules` location match the expected name and version. The isolated linker checks only that the package's [store entry](/pm/isolated-installs#resolution-algorithm) exists.
 
+The isolated linker also checks which patch the installed copy has, if any. It makes the patch part of the [store entry's name](/pm/isolated-installs#directory-structure). The name of a [patched package](/pm/cli/patch)'s entry ends in `+` and 16 hex digits.
+
+With the isolated linker, Bun installs the package again when the copy has a patch other than the expected one, or has a patch when none is expected. `bun install` therefore restores the original package after `package.json` and `bun.lock` lose a patch in one step, for example in a `git checkout`.
+
+An entry that an older version of Bun made does not record its patch. [Removing a patch](/pm/cli/patch#removing-a-patch) describes what Bun does with such an entry.
+
 When a `bun.lock` doesn’t exist or `package.json` has changed dependencies, Bun downloads and extracts tarballs eagerly while resolving.
 
 When a `bun.lock` exists and `package.json` hasn’t changed, Bun downloads missing dependencies lazily. If the package with a matching `name` and `version` already exists in the expected location within `node_modules`, Bun doesn’t attempt to download the tarball.

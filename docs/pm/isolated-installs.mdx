@@ -88,7 +88,7 @@ node_modules/
 └── package-name -> .bun/package@1.0.0/node_modules/package  # Symlinks
 ```
 
-The part of a store directory name after `@` is the package's resolution. For a registry package, that is its version. For a folder, tarball, git, or GitHub dependency, Bun derives it from the path or URL (plus the commit), so it can be long. Bun writes at most 80 bytes of it: it cuts a longer resolution to at most 63 bytes and appends `+` and 16 hex digits derived from the full resolution. The path of a package inside the store is therefore at most `34 + 2 * <name length> + 80` characters longer than your project directory (17 more when the package has peer dependencies or is a tarball). This matters on Windows, where a path longer than 260 characters still works for Bun itself, but not as the working directory of the package's lifecycle scripts.
+The part of a store directory name after `@` is the package's resolution. For a registry package, that is its version. For a folder, tarball, git, or GitHub dependency, Bun derives it from the path or URL (plus the commit), so it can be long. Bun writes at most 80 bytes of it: it cuts a longer resolution to at most 63 bytes and appends `+` and 16 hex digits derived from the full resolution. The path of a package inside the store is therefore at most `34 + 2 * <name length> + 80` characters longer than your project directory (17 more when the package has peer dependencies, is a tarball, or is patched). This matters on Windows, where a path longer than 260 characters still works for Bun itself, but not as the working directory of the package's lifecycle scripts.
 
 In the name and the resolution, `/`, `\`, `:`, `#` and `?` become `+`:
 
@@ -101,9 +101,11 @@ In the name and the resolution, `/`, `\`, `:`, `#` and `?` become `+`:
 | Git                        | `pkg@git+https+++github.com+user+repo.git+<commit>`      |
 | GitHub                     | `pkg@github+user+repo+<commit>`                          |
 | with peer dependencies     | `react-dom@18.2.0+f8a822eca018d0a1`                      |
+| with a patch               | `is-number@7.0.0+e0e2b2f1f9aca29a`                       |
 
 - The directory inside is named after the package's own name, the symlinks to it after the name each dependent uses (the alias, for an `npm:` alias).
 - A tarball's directory ends in the first 16 hex digits of the hash that `bun.lock` records for it, so another build at the same path or URL gets another directory.
+- The directory of a [patched package](/pm/cli/patch) ends in 16 hex digits derived from its patch file, so the same version with another patch, or without a patch, gets another directory. If the package is also a tarball or has peer dependencies, Bun derives one ending from all of them.
 - Credentials and the query string of a URL are left out. 16 hex digits derived from the full URL take their place.
 - The root package, workspace packages and `link:` dependencies have no store directory. Dependents link to their folders.
 
@@ -115,7 +117,7 @@ This describes the current layout. It can change between Bun versions.
 2. **Symlinks** — Top-level `node_modules` contains symlinks pointing to the central store
 3. **Peer resolution** — Complex peer dependencies create specialized directory names
 4. **Deduplication** — Packages with identical package IDs and peer dependency sets are shared
-5. **Re-linking** — On later installs, Bun reuses existing store entries and re-points their symlinks if a dependency was re-resolved. The name and version are part of the entry's directory name, so Bun reuses an entry when it exists and does not read the `package.json` in it. Run `bun install --force` to rebuild every entry. Store entries that are no longer referenced stay until you run [`bun prune`](/pm/cli/prune)
+5. **Re-linking** — On later installs, Bun reuses existing store entries and re-points their symlinks if a dependency was re-resolved. The name, the version and the patch of a package are part of the entry's directory name, so Bun reuses an entry when it exists and does not read the `package.json` in it. Run `bun install --force` to rebuild every entry. Store entries that are no longer referenced stay until you run [`bun prune`](/pm/cli/prune)
 
 ### Workspace handling
 
@@ -148,7 +150,7 @@ Isolated installs encode peer dependencies in the store path:
 node_modules/.bun/package@1.0.0+f8a822eca018d0a1/
 ```
 
-The directory name ends in a hash of the packages its peer dependencies resolved to, so each unique combination gets its own installation.
+The directory name ends in a hash of the packages its peer dependencies resolved to, so each unique combination gets its own installation. For a [patched package](/pm/cli/patch), the hash also covers the patch file, whether or not the package has peer dependencies.
 
 ### Strict resolution with `install.hoist = false`
 

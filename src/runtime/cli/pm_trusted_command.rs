@@ -113,7 +113,7 @@ impl Blocked {
         let mut store = AutoAbsPath::init_top_level_dir();
         let _ = store.append(b"node_modules/.bun");
         if linker == NodeLinker::Isolated && bun_sys::exists(store.slice()) {
-            return Self::find_in_store(pm);
+            return bun_install::patch_install::with_wanted_patch_hashes(pm, Self::find_in_store)?;
         }
         // The tree saved in the lockfile also has the dependencies that packages bundle, and no
         // install runs the scripts of those. The install tree leaves them out.

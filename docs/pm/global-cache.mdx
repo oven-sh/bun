@@ -31,7 +31,7 @@ When installing a package, if the cache already contains a version in the range 
 <Accordion title="Installation details">
 If the semver version has a pre-release suffix (`1.0.0-beta.0`) or a build suffix (`1.0.0+20220101`), Bun replaces the suffix with a hash of that value instead, to reduce the chance of errors from long file paths.
 
-When the `node_modules` folder exists, before installing, Bun checks that `node_modules` contains all expected packages with appropriate versions. If so, `bun install` completes. The hoisted linker reads `"name"` and `"version"` from each installed `package.json`; the isolated linker checks only that the package's [store entry](/pm/isolated-installs#resolution-algorithm) exists.
+When the `node_modules` folder exists, before installing, Bun checks that `node_modules` contains all expected packages with appropriate versions. If so, `bun install` completes. The hoisted linker reads `"name"` and `"version"` from each installed `package.json`; the isolated linker checks only that the package's [store entry](/pm/isolated-installs#resolution-algorithm) exists. For a [patched package](/pm/cli/patch), the isolated linker has the patch in the name of the store entry.
 
 If a package is missing or has a version incompatible with the `package.json`, Bun checks for a compatible module in the cache. If the cache has one, Bun installs it into `node_modules`. Otherwise, Bun downloads the package from the registry, then installs it.
 

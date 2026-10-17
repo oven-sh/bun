@@ -7,8 +7,10 @@ use bun_collections::{DynamicBitSet, StringHashMap, index_sort};
 use bun_core::fmt::{PathSep, escape_control_chars, redacted};
 use bun_core::{FileKind, Global, Output, strings};
 use bun_install::isolated_install::store::entry::fmt_store_key;
+use bun_install::isolated_install::{StoreFolder, store_folders};
 use bun_install::lockfile::{Lockfile, package::PackageColumns as _, reachable, tree};
 use bun_install::package_manager::{LogLevel, workspace_selection};
+use bun_install::patch_install::with_wanted_patch_hashes;
 use bun_install::{PackageID, PackageManager, Resolution, ResolutionTag};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_parsers::json as JSON;
@@ -42,9 +44,12 @@ struct Entry {
     dev_only: bool,
 }
 
-/// Lazily-scanned, sorted entry names of `node_modules/.bun/`; `None` until first needed.
+/// The isolated store, `node_modules/.bun/`.
 pub(crate) struct BunStore {
+    /// Its entry names, sorted; `None` until first needed.
     entries: Option<Vec<Box<[u8]>>>,
+    /// The folder of each package as an install names it, sorted by package and then by name. Empty unless `with_install_names` filled it.
+    named: Vec<StoreFolder>,
 }
 
 struct DiskIndex {
@@ -101,7 +106,6 @@ impl PmLicensesCommand {
 
         let json_output = pm.options.json_output;
         let features = pm.options.local_package_features;
-        let lockfile: &Lockfile = &pm.lockfile;
 
         if flags.dev_only && !features.dev_dependencies {
             if not_silent {
@@ -121,6 +125,13 @@ impl PmLicensesCommand {
             Global::exit(1);
         }
         path.set_length(top_len);
+
+        let mut store = if isolated {
+            BunStore::with_install_names(pm)?
+        } else {
+            BunStore::init()
+        };
+        let lockfile: &Lockfile = &pm.lockfile;
 
         let filter_patterns = pm.options.filter_patterns;
         let (roots, follow_workspace_edges): (Vec<PackageID>, bool) = if filter_patterns.is_empty()
@@ -205,7 +216,6 @@ impl PmLicensesCommand {
         let buf = lockfile.buffers.string_bytes.as_slice();
 
         let mut log = Log::init();
-        let mut store = BunStore::init();
         let mut disk = DiskIndex { entries: None };
         let mut entries: Vec<Entry> = Vec::new();
         // Packages whose installed copy is not the version in bun.lock. They are listed under the
@@ -235,6 +245,7 @@ impl PmLicensesCommand {
                 store.read_info(
                     &mut path,
                     top_len,
+                    pkg_id,
                     pkg_names[pkg_id],
                     resolution,
                     buf,
@@ -262,6 +273,7 @@ impl PmLicensesCommand {
                 info = store.read_info(
                     &mut path,
                     top_len,
+                    pkg_id,
                     pkg_names[pkg_id],
                     resolution,
                     buf,
@@ -535,26 +547,57 @@ fn author_of(json: &Expr) -> Option<Box<[u8]>> {
 
 impl BunStore {
     pub(crate) fn init() -> Self {
-        Self { entries: None }
+        Self {
+            entries: None,
+            named: Vec::new(),
+        }
+    }
+
+    /// For an isolated install. The folder of a patched package is named after its patch file, so the patches of package.json are hashed as they are now.
+    fn with_install_names(pm: &mut PackageManager) -> crate::Result<Self> {
+        // A root package.json that cannot be read does not say which patches an install applies: `lookup` finds every package then.
+        let Ok(named) = with_wanted_patch_hashes(pm, |pm| store_folders(pm, &pm.lockfile)) else {
+            return Ok(Self::init());
+        };
+        let mut named = named?;
+        index_sort::sort_vec_unstable_by(&mut named, |a, b| {
+            a.pkg_id
+                .cmp(&b.pkg_id)
+                .then_with(|| a.entry_dir.cmp(&b.entry_dir))
+        });
+        Ok(Self {
+            entries: None,
+            named,
+        })
     }
 
     fn read_info(
         &mut self,
         path: &mut AutoAbsPath,
         top_len: usize,
+        pkg_id: usize,
         pkg_name: bun_semver::String,
         resolution: &Resolution,
         buf: &[u8],
         log: &mut Log,
     ) -> Option<PackageInfo> {
+        let name = pkg_name.slice(buf);
+        let first = (self.named).partition_point(|folder| (folder.pkg_id as usize) < pkg_id);
+        // The name and version alone also match an entry that an install left behind: the package without its patch, or with other contents of the patch file.
+        let named = self.named[first..]
+            .iter()
+            .take_while(|folder| folder.pkg_id as usize == pkg_id)
+            .find_map(|folder| {
+                let segments: [&[u8]; 3] = [folder.entry_dir.as_slice(), b"node_modules", name];
+                read_package_info_at(path, top_len, &segments, log)
+            });
+        if named.is_some() {
+            return named;
+        }
+
+        // Not there: a version of Bun that did not name the patch made the entry, or the patch file has changed since the install.
         let entry = self.lookup(path, top_len, pkg_name, resolution, buf)?;
-        let segments: [&[u8]; 5] = [
-            b"node_modules",
-            b".bun",
-            entry,
-            b"node_modules",
-            pkg_name.slice(buf),
-        ];
+        let segments: [&[u8]; 5] = [b"node_modules", b".bun", entry, b"node_modules", name];
         read_package_info_at(path, top_len, &segments, log)
     }
 
@@ -577,9 +620,10 @@ impl BunStore {
         let i = entries.partition_point(|e| e[..] < key[..]);
         let entry = entries.get(i)?;
         let exact = entry[..] == key[..];
-        let peer_suffixed =
+        // `+<hash>`: the entry's peers, a tarball's integrity or the package's patch.
+        let suffixed =
             entry.len() > key.len() && entry.starts_with(&key) && entry[key.len()] == b'+';
-        (exact || peer_suffixed).then_some(&entry[..])
+        (exact || suffixed).then_some(&entry[..])
     }
 
     fn scan(path: &mut AutoAbsPath, top_len: usize) -> Vec<Box<[u8]>> {

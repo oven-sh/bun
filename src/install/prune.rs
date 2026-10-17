@@ -19,7 +19,7 @@ use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry 
 use crate::isolated_install::{Store, build_whole_store};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
-use crate::lockfile::{LoadResult, Lockfile, print_log_errors, reachable, tree};
+use crate::lockfile::{LoadResult, Lockfile, PatchedDep, print_log_errors, reachable, tree};
 use crate::lockfile_real::LinkedMembers;
 use crate::lockfile_real::package::{Diff, DiffSummary, DroppedRow, Package};
 use crate::package_install::{StagingLock, StagingPath};
@@ -229,7 +229,7 @@ fn join_alias(scope: &[u8], name: &[u8]) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
-// Store folders are named `name@version[+peers]`, scoped as `@scope+name@version` (Store.rs fmt_store_key).
+// Store folders are named `name@version[+hash]`, scoped as `@scope+name@version` (Store.rs fmt_store_key).
 fn split_store_key(key: &[u8]) -> (Box<[u8]>, Option<Box<[u8]>>) {
     let Some(at) = strings::index_of_char_usize(&key[key.len().min(1)..], b'@').map(|i| i + 1)
     else {
@@ -302,7 +302,8 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     };
 
     manager.options.enable.set(Enable::FROZEN_LOCKFILE, true);
-    manager.summary = exit_unless_lockfile_matches_package_json(manager, "prune")?;
+    let (summary, package_json) = diff_with_package_json(manager, "prune")?;
+    manager.summary = summary;
 
     let node_modules = match Dir::open(ROOT_DIR) {
         Ok(node_modules) => node_modules,
@@ -330,6 +331,11 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     };
     let layout = detect_layout(manager, &node_modules, configured);
     drop(node_modules);
+    if layout == Layout::Isolated
+        && let Some(package_json) = &package_json
+    {
+        hash_wanted_patches(manager, package_json)?;
+    }
 
     let workspace_names = collect_workspace_names(manager);
     let selection = select_importers(manager, original_cwd);
@@ -595,8 +601,16 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
     manager: &mut PackageManager,
     nothing_to: &'static str,
 ) -> crate::Result<DiffSummary> {
+    diff_with_package_json(manager, nothing_to).map(|(summary, _)| summary)
+}
+
+/// Exits unless bun.lock matches package.json. Returns the diff and the lockfile that `Package::parse_with_json` fills from the root package.json, `None` when bun.lock has no root package.
+fn diff_with_package_json(
+    manager: &mut PackageManager,
+    nothing_to: &'static str,
+) -> crate::Result<(DiffSummary, Option<Lockfile>)> {
     let Some(root) = manager.lockfile.root_package() else {
-        return Ok(DiffSummary::default());
+        return Ok((DiffSummary::default(), None));
     };
     let quiet = manager.options.log_level == LogLevel::Silent;
 
@@ -681,7 +695,22 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
         }
         Global::exit(1);
     }
-    Ok(summary)
+    Ok((summary, Some(to_lockfile)))
+}
+
+/// An install applies the patches in package.json, whatever bun.lock records, and the name of a patched package's store entry holds the hash of its patch file. `package_json` is an install's parse of the root package.json, in which the last row of a repeated key wins.
+fn hash_wanted_patches(manager: &mut PackageManager, package_json: &Lockfile) -> crate::Result<()> {
+    let lockfile = &mut *manager.lockfile;
+    lockfile.patched_dependencies.clear_retaining_capacity();
+    let buf = package_json.buffers.string_bytes.as_slice();
+    for (key, patch) in package_json.patched_dependencies.iter() {
+        let path = lockfile.string_buf().append(patch.path.slice(buf))?;
+        lockfile
+            .patched_dependencies
+            .put(*key, PatchedDep::with_path(path))?;
+    }
+    crate::patch_install::calc_patch_hashes(lockfile);
+    Ok(())
 }
 
 struct Selection {
@@ -1912,7 +1941,7 @@ fn links_package(
             };
             let name = lockfile.packages.items_name()[pkg_id as usize];
             let key = store_entry::fmt_store_key(name, res, buf).to_string();
-            // An entry's name can end in `+<hash>`, for its peers or for a tarball's integrity.
+            // An entry's name can end in `+<hash>`, for its peers, for a tarball's integrity or for its patch.
             if &*found != key.as_bytes() && without_build(&found) != key.as_bytes() {
                 return false;
             }
@@ -2398,6 +2427,7 @@ fn push_store_entry_names(
     let entry_nested_folder = store.entries.items_nested_folder();
     names.reserve(store.entries.len());
     let mut name: Vec<u8> = Vec::new();
+    let mut patch_key: Vec<u8> = Vec::new();
     for (entry_idx, node_id) in store.entries.items_node_id().iter().enumerate() {
         let pkg_id = node_pkg_ids[node_id.get() as usize] as usize;
         if matches!(
@@ -2408,15 +2438,82 @@ fn push_store_entry_names(
         {
             continue;
         }
+        let entry_id = store_entry::Id::from(entry_idx as u32);
         name.clear();
         write!(
             name,
             "{}",
-            store_entry::fmt_store_path(store_entry::Id::from(entry_idx as u32), store, lockfile)
+            store_entry::fmt_store_path(entry_id, store, lockfile)
         )
         .expect("Vec<u8> write is infallible");
         names.push(name.as_slice().into());
+        if let Some(prefold) =
+            adoptable_entry_name(lockfile, store, entry_id, &name, &mut patch_key)
+        {
+            names.push(prefold);
+        }
     }
+}
+
+/// The `patchedDependencies` entry that an install applies to the package. `key` is scratch space.
+fn wanted_patch<'a>(
+    lockfile: &'a Lockfile,
+    pkg_id: usize,
+    key: &mut Vec<u8>,
+) -> Option<&'a PatchedDep> {
+    let res = &lockfile.packages.items_resolution()[pkg_id];
+    if lockfile.patched_dependencies.count() == 0 || !res.can_enqueue_install_task() {
+        return None;
+    }
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let name = lockfile.packages.items_name()[pkg_id].slice(buf);
+    key.clear();
+    write!(
+        key,
+        "{}@{}",
+        BStr::new(name),
+        res.fmt(buf, bun_core::fmt::PathSep::Posix)
+    )
+    .expect("Vec<u8> write is infallible");
+    let hash = bun_semver::semver_string::Builder::string_hash(key);
+    lockfile.patched_dependencies.get(&hash)
+}
+
+/// When the entry `name` does not exist: the name of the folder that the next install renames to it, where an older Bun linked the patched package.
+fn adoptable_entry_name(
+    lockfile: &Lockfile,
+    store: &Store,
+    entry_id: store_entry::Id,
+    name: &[u8],
+    patch_key: &mut Vec<u8>,
+) -> Option<Box<[u8]>> {
+    let pkg_id = store.ids(entry_id).pkg_id as usize;
+    let patch_hash = wanted_patch(lockfile, pkg_id, patch_key)?.patchfile_hash()?;
+    if sys::exists(&join(STORE_DIR, name)) {
+        return None;
+    }
+    let prefold =
+        Installer::patched_copy_under_prefold_name(store, lockfile, entry_id, patch_hash)?;
+    Some(prefold.basename().into())
+}
+
+/// Sorted: the store keys of the wanted packages whose patch file cannot be hashed. Which `+<hash>` their entries have is then unknown.
+fn unhashed_patch_keys(lockfile: &Lockfile, wanted: &DynamicBitSet) -> Vec<Box<[u8]>> {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let pkg_names = lockfile.packages.items_name();
+    let mut patch_key: Vec<u8> = Vec::new();
+    let mut keys: Vec<Box<[u8]>> = Vec::new();
+    for (pkg_id, res) in lockfile.packages.items_resolution().iter().enumerate() {
+        if wanted.is_set(pkg_id)
+            && wanted_patch(lockfile, pkg_id, &mut patch_key)
+                .is_some_and(|patch| patch.patchfile_hash().is_none())
+        {
+            let key = store_entry::fmt_store_key(pkg_names[pkg_id], res, buf).to_string();
+            keys.push(key.into_bytes().into());
+        }
+    }
+    sort_names(&mut keys);
+    keys
 }
 
 // Peer hashes differ between a full install and one narrowed by `--production`/`--omit`; entries laid out by either stay.
@@ -2518,6 +2615,7 @@ fn plan_isolated(
     let (names, store) = store_entry_names(manager, &wanted);
     plan.store = store;
     let manager: &PackageManager = manager;
+    let unhashed = unhashed_patch_keys(&manager.lockfile, &wanted);
 
     let mut removed_store: Vec<Box<[u8]>> = Vec::new();
     if let Some(store) = open_workspace_folder(STORE_DIR, &mut plan.linked_folders) {
@@ -2527,7 +2625,10 @@ fn plan_isolated(
                 continue;
             }
             plan.checked += 1;
-            if contains(&names, &name) {
+            // The package in such an entry can be the only copy of what a patch file that is gone changed.
+            let has_unhashed_patch =
+                contains(&unhashed, &name) || contains(&unhashed, without_build(&name));
+            if contains(&names, &name) || has_unhashed_patch {
                 plan_store_entry_leftovers(&store, &name, plan);
                 continue;
             }

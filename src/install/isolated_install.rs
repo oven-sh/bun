@@ -1273,6 +1273,9 @@ fn build_store(
     let mut hidden_hoisted: StringArrayHashMap<()> = StringArrayHashMap::default();
     let mut hidden_hoist_keys: Vec<store::entry::DependenciesItem> = Vec::new();
 
+    let has_patches = lockfile.patched_dependencies.count() > 0;
+    let mut prefold_peer_hashes: Vec<(store::entry::Id, store::entry::PeerHash)> = Vec::new();
+
     // Second pass: Deduplicate nodes when the pkg_id and peer set match an existing entry.
     'next_entry: while let Some(entry) = entry_queue.read_item() {
         let pkg_id = node_pkg_ids[entry.node_id.get() as usize];
@@ -1384,6 +1387,25 @@ fn build_store(
             }
             break 'peer_hash store::entry::PeerHash::from(hasher.final_());
         };
+        // The patch is part of a patched entry's name: an install without it, or with another one, never takes the entry for its own.
+        let new_entry_patch_hash: Option<u64> = 'patch_hash: {
+            let pkg_res = &pkg_resolutions[pkg_id as usize];
+            if !has_patches || !pkg_res.can_enqueue_install_task() {
+                break 'patch_hash None;
+            }
+            res_fmt_buf.clear();
+            write!(
+                &mut res_fmt_buf,
+                "{}@{}",
+                BStr::new(pkg_names[pkg_id as usize].slice(string_buf)),
+                pkg_res.fmt(string_buf, bun_fmt::PathSep::Posix)
+            )
+            .expect("Vec<u8> write is infallible");
+            lockfile
+                .patched_dependencies
+                .get(&semver::semver_string::Builder::string_hash(&res_fmt_buf))
+                .and_then(|patch| patch.patchfile_hash())
+        };
 
         let new_entry_dep_id = node_dep_ids[entry.node_id.get() as usize];
 
@@ -1419,13 +1441,19 @@ fn build_store(
             node_id: entry.node_id,
             dependencies: new_entry_dependencies,
             parents: vec![entry.entry_parent_id],
-            peer_hash: new_entry_peer_hash,
+            peer_hash: match new_entry_patch_hash {
+                Some(patch_hash) => new_entry_peer_hash.with_patch(patch_hash),
+                None => new_entry_peer_hash,
+            },
             hoisted,
             nested_folder: new_entry_nested_folder,
             step: core::sync::atomic::AtomicU32::new(0),
             entry_hash: 0,
             scripts: core::cell::Cell::new(None),
         })?;
+        if new_entry_patch_hash.is_some() {
+            prefold_peer_hashes.push((new_entry_id, new_entry_peer_hash));
+        }
 
         // skip implicit workspace dependencies on the root.
         if let Some(entry_parent_id) = entry.entry_parent_id.try_get()
@@ -1480,6 +1508,8 @@ fn build_store(
         entries: store_entries,
         nodes,
         hidden_hoist_keys,
+        prefold_peer_hashes,
+        is_partial: !workspace_filters.is_empty() || packages_to_install.is_some(),
     })
 }
 
@@ -2441,7 +2471,9 @@ pub(crate) fn install_isolated_packages(
                                 .append(installer::installed_marker(pkg_res.tag, &patch_info, &mut hash_buf))
                                 .assume_ok();
                             // `exists` follows the link of an entry that left the global store.
-                            if !sys::exists_z(store_path.slice_z()) {
+                            if !sys::exists_z(store_path.slice_z())
+                                && !installer.adopt_patched_copy(entry_id, &patch_info)
+                            {
                                 break 'needs_install true;
                             }
                             // Like the hoisted linker, replace a tarball copy that holds other bytes than bun.lock pins.

@@ -1135,6 +1135,8 @@ impl Task {
                     let changed = installer.symlink_dependencies(entry_id, strategy, made_entry)?;
 
                     if relinking {
+                        // An install with a partial store links the entry and leaves the patched copy under its pre-fold name.
+                        installer.delete_patched_prefold_entry(entry_id);
                         self.relink = changed;
                         if changed == Relink::Unchanged && !self.newly_trusted {
                             entry_step.store(Step::Done as u32, Ordering::Release);
@@ -1843,6 +1845,9 @@ impl<'a> Installer<'a> {
                 || link_in_place
                 || self.commit_local_store_package(entry_id, staging)
             {
+                if matches!(patch_info, PatchInfo::Patch(_)) {
+                    self.delete_patched_prefold_entry(entry_id);
+                }
                 return Ok(made_entry);
             }
             // The rename was refused: link again, in place.
@@ -2586,6 +2591,123 @@ impl<'a> Installer<'a> {
         }
         let _ = Fd::cwd().delete_tree(staging.slice());
         false
+    }
+
+    /// `node_modules/.bun/<entry>` under the entry's pre-fold name, if the package in it holds the marker of `patch_hash`: a released Bun linked the patched package there.
+    pub(crate) fn patched_copy_under_prefold_name(
+        store: &Store,
+        lockfile: &Lockfile,
+        entry_id: StoreEntryId,
+        patch_hash: u64,
+    ) -> Option<AutoPath> {
+        let prefold = store::entry::fmt_prefold_store_path(entry_id, store, lockfile)?;
+        let mut path = AutoPath::init();
+        let _ = path.append_fmt(format_args!("node_modules/.bun/{prefold}"));
+        let entry_len = path.len();
+        let pkg_id = store.ids(entry_id).pkg_id;
+        let mut hash_buf = install::BuntagHashBuf::default();
+        let _ = path.append(b"node_modules");
+        let _ = path.append(lockfile.str(&lockfile.packages.items_name()[pkg_id as usize]));
+        let _ = path.append(&*install::buntaghashbuf_make(&mut hash_buf, patch_hash));
+        if !sys::exists_z(path.slice_z()) {
+            return None;
+        }
+        path.set_length(entry_len);
+        Some(path)
+    }
+
+    /// Main thread, when the entry's marker is missing. True: that copy now has this entry's name. One probe and one rename, no cache lookup and no download.
+    pub(crate) fn adopt_patched_copy(
+        &self,
+        entry_id: StoreEntryId,
+        patch_info: &PatchInfo,
+    ) -> bool {
+        let PatchInfo::Patch(patch) = patch_info else {
+            return false;
+        };
+        // A partial store leaves the other importers their links to the pre-fold name: the copy stays until an install with the whole store.
+        if self.store.is_partial {
+            return false;
+        }
+        let (store, lockfile) = (self.store, self.lockfile());
+        let Some(mut prefold) =
+            Self::patched_copy_under_prefold_name(store, lockfile, entry_id, patch.contents_hash)
+        else {
+            return false;
+        };
+        let mut entry = AutoPath::init();
+        self.append_local_store_entry_path(&mut entry, entry_id);
+        // A link into the global store moves as a link: the checks that follow the marker probe then replace it.
+        sys::renameat(Fd::cwd(), prefold.slice_z(), Fd::cwd(), entry.slice_z()).is_ok()
+    }
+
+    /// Task thread, once the entry is linked, by this install or an earlier one. Deletes the patched package that an older Bun linked under the entry's pre-fold name, which an install without the patch takes for the published package.
+    fn delete_patched_prefold_entry(&self, entry_id: StoreEntryId) {
+        // A new `.bun` has nothing there, and a partial store leaves the other importers their links to it.
+        if self.is_new_bun_modules || self.store.is_partial {
+            return;
+        }
+        let Some(prefold) =
+            store::entry::fmt_prefold_store_path(entry_id, self.store, self.lockfile())
+        else {
+            return;
+        };
+        let mut path = AutoPath::init();
+        let _ = path.append_fmt(format_args!("node_modules/.bun/{prefold}"));
+        let entry_len = path.len();
+        // A link leads into the global store, which holds no patched package.
+        if is_link(path.slice_z()) != Some(false) {
+            return;
+        }
+        let _ = path.append(b"node_modules");
+        let _ = path.append(self.pkg_name(entry_id));
+        let package_len = path.len();
+        if crate::prune::remove_planted_links(path.slice(), entry_len).is_err() {
+            return;
+        }
+        let mut patch_markers: Vec<Box<[u8]>> = Vec::new();
+        if let Ok(package) = sys::Dir::open(path.slice()) {
+            let mut files = sys::iterate_dir(package.fd);
+            while let Ok(Some(file)) = files.next() {
+                let name = file.name.slice_u8();
+                if name.starts_with(install::bun_hash_tag) {
+                    patch_markers.push(name.into());
+                }
+            }
+        }
+        if patch_markers.is_empty() {
+            return;
+        }
+        // A delete can be cut short while a marker is still in the package, which then counts as installed. So the package leaves its path in one step.
+        let mode = self.staging_lock.get_or_init(StagingLock::acquire).mode;
+        let mut staging = AutoPath::init();
+        let _ = staging.append_fmt(format_args!(
+            "node_modules/.bun/{prefold}/node_modules/{}",
+            StagingPath(self.pkg_name(entry_id), mode),
+        ));
+        let mut moved = sys::renameat(Fd::cwd(), path.slice_z(), Fd::cwd(), staging.slice_z());
+        if moved.is_err() {
+            let _ = Fd::cwd().delete_tree(staging.slice());
+            moved = sys::renameat(Fd::cwd(), path.slice_z(), Fd::cwd(), staging.slice_z());
+        }
+        if moved.is_err() {
+            // Refused, so delete in place: the markers first, and nothing more once one of them stays.
+            let mut hash_buf = install::BuntagHashBuf::default();
+            let tag = self.resolution(entry_id).tag;
+            let unpatched = installed_marker(tag, &PatchInfo::None, &mut hash_buf);
+            for marker in
+                core::iter::once(unpatched).chain(patch_markers.iter().map(|name| &**name))
+            {
+                let _ = path.append(marker);
+                let removed = sys::unlink(path.slice_z());
+                path.set_length(package_len);
+                if removed.is_err_and(|err| err.get_errno() != sys::Errno::ENOENT) {
+                    return;
+                }
+            }
+        }
+        path.set_length(entry_len);
+        let _ = Fd::cwd().delete_tree(path.slice());
     }
 
     /// Project-local path `node_modules/.bun/<storepath>` (the symlink that

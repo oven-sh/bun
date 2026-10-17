@@ -367,6 +367,17 @@ function installedPath(dir: string, linker: Linker, name: string, version: strin
     : join(dir, "node_modules", ".bun", `${name}@${version}`, "node_modules", name, "package.json");
 }
 
+// The isolated linker names the store entry of a patched package after its patch too: `<name>@<version>+<16 hex digits>`.
+const patchedADep = /^a-dep@1\.0\.1\+[0-9a-f]{16}$/;
+
+// `installedPath` of a-dep with `aDepPatch` applied: its store entry is the one that `a-dep@1.0.1+*` matches.
+async function patchedADepPath(dir: string, linker: Linker) {
+  if (linker === "hoisted") return installedPath(dir, linker, "a-dep", "1.0.1");
+  const entries = (await installedPackages(dir, linker)).filter(entry => entry.startsWith("a-dep@1.0.1+"));
+  expect(entries).toEqual([expect.stringMatching(patchedADep)]);
+  return join(dir, "node_modules", ".bun", entries[0], "node_modules", "a-dep", "package.json");
+}
+
 // The packages an install put on disk: node_modules/<name> for the hoisted linker, the .bun store entries for isolated.
 async function installedPackages(dir: string, linker: Linker): Promise<string[]> {
   const root = linker === "hoisted" ? join(dir, "node_modules") : join(dir, "node_modules", ".bun");
@@ -605,8 +616,10 @@ describe.each(linkers)("linker: %s", linker => {
     await frozen(packageDir, linker, [prunedNote]);
 
     expect(await lockText(packageDir)).toBe(full);
-    expect(await installedPackages(packageDir, linker)).toEqual(survivorsInstalled(linker));
-    const aDep = installedPath(packageDir, linker, "a-dep", "1.0.1");
+    expect(await installedPackages(packageDir, linker)).toEqual(
+      byLinker(linker, survivorsInstalled(linker), [expect.stringMatching(patchedADep), "no-deps@1.0.0"]),
+    );
+    const aDep = await patchedADepPath(packageDir, linker);
     expect(await file(aDep).json()).toMatchObject({ name: "a-dep", version: "1.0.1" });
     expect(await file(join(dirname(aDep), "patched.txt")).text()).toBe("hello world\n");
 
@@ -620,7 +633,7 @@ describe.each(linkers)("linker: %s", linker => {
   test.concurrent("patchedDependencies removed after bun.lock was written still passes --frozen-lockfile", async () => {
     const { packageDir, fullDir, full } = await verbatimScenario(linker, patchedMonorepo, survivors, monorepo);
     expect(full).toContain(patchedLockLine);
-    expect(await exists(join(dirname(installedPath(fullDir, linker, "a-dep", "1.0.1")), "patched.txt"))).toBeTrue();
+    expect(await exists(join(dirname(await patchedADepPath(fullDir, linker)), "patched.txt"))).toBeTrue();
 
     await frozen(packageDir, linker, [prunedNote]);
 

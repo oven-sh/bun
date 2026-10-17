@@ -610,11 +610,6 @@ pub unsafe trait UvHandle: Sized {
         (self as *mut Self).cast()
     }
     #[inline]
-    fn data(&self) -> *mut c_void {
-        // SAFETY: handle prefix; `data` is at offset 0.
-        unsafe { (*self.as_handle()).data }
-    }
-    #[inline]
     fn get_data<T>(&self) -> *mut T {
         // SAFETY: handle prefix invariant.
         unsafe { uv_handle_get_data(self.as_handle()).cast() }

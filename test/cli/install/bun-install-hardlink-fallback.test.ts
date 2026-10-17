@@ -218,6 +218,26 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
     },
   );
 
+  // `linkat` succeeds once, then fails with EXDEV. The walk order of the folder does not matter.
+  const shimLinkOnceC = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+
+int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
+           int flags) {
+  static int linked = 0;
+  if (linked) {
+    errno = EXDEV;
+    return -1;
+  }
+  int (*real)(int, const char *, int, const char *, int) = dlsym(RTLD_NEXT, "linkat");
+  int rc = real(olddirfd, oldpath, newdirfd, newpath, flags);
+  if (rc == 0) linked = 1;
+  return rc;
+}
+`;
+
   // The isolated linker: the first file is hardlinked into the store, then `linkat` fails. The copy
   // that follows must replace that hardlink, not write the source into itself through it, and a
   // read-only source file must not stop it. https://github.com/oven-sh/bun/issues/45194
@@ -228,7 +248,7 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
       "other.js": "module.exports = 'other';",
     };
     using dir = tempDir("hardlink-partial-folder-isolated", {
-      "shim.c": shimC(`strstr(newpath, "other.js") != 0`),
+      "shim.c": shimLinkOnceC,
       "package.json": JSON.stringify({
         name: "hardlink-partial-folder-isolated-test",
         dependencies: { local: "file:./local" },

@@ -15,7 +15,6 @@ use bun_paths::{basename_posix, path_buffer_pool};
 use bun_sema::atom::Interner;
 use bun_sema::hir;
 use bun_sema::json::Json;
-use bun_sema::portable::SharedFile;
 use bun_sema::resolve::{
     Host, Kept, ModuleDetection, ParseOptions, Paths, Phase, ScriptKind, Spent, ancestors,
     hash_without_case, inside, is_declaration_file_name, is_same_path, join, root_length,
@@ -260,7 +259,6 @@ pub struct Disk {
     idle_readers: bun_threading::Guarded<Vec<Reader>>,
     /// See `Host::take_unreadable`.
     unreadable: bun_threading::Guarded<Vec<Vec<u8>>>,
-    shared: bun_threading::Guarded<Sharing>,
     /// See `AlreadyRead`. By `tspath.Path`: such a file is found however its name is spelled, like one on the disk.
     already_read: AlreadyRead,
     /// What `already_read` adds to the listing of a directory, by the `tspath.Path` of the directory.
@@ -281,29 +279,6 @@ pub struct Disk {
     /// `Host::shared_paths`
     paths: bun_threading::Guarded<FxHashSet<Arc<Paths>>>,
     pub(crate) scripts_of_page: Option<ScriptsOfPage>,
-}
-
-/// `Host::share_declaration_files`
-#[derive(Default)]
-struct Sharing {
-    files: Option<Arc<Shared>>,
-    variants: u32,
-    /// The programs that are yet to `stay_loaded`.
-    programs: usize,
-}
-
-/// The declaration files that the programs of one check have loaded.
-#[derive(Default)]
-struct Shared {
-    /// What `Host::read` has returned, by path, and returns again. As it was: no library that is
-    /// kept anyway is copied.
-    read: ShardedMap<Vec<u8>, Cow<'static, [u8]>>,
-    /// The first text of a file that is not what was `read`, by path: a project has emitted it.
-    /// A program that is not given the file by that project finds the one on the disk.
-    emitted: ShardedMap<Vec<u8>, Box<[u8]>>,
-    /// `Host::shared_file`, by path, and then the variant and whether the text is `emitted`. Two
-    /// threads that find a file empty both load it, and neither waits.
-    files: ShardedMap<Vec<u8>, Arc<OnceLock<SharedFile>>>,
 }
 
 /// The text of files that the caller of the check has read, by path in the checker's format, as UTF-8, without a byte order
@@ -524,7 +499,6 @@ impl Disk {
             keeps_byte_order_marks: false,
             extended_configs: Default::default(),
             paths: Default::default(),
-            shared: Default::default(),
             caches: Default::default(),
             is_of_a_thread_of_the_pool: !bun_threading::thread_pool::Thread::current().is_null(),
             case_sensitive,
@@ -1251,59 +1225,6 @@ fn parse_package_json(arena: &Arena, text: &[u8]) -> Option<Json> {
     unmarshal_fields(root.get(), log.warnings > 0)
 }
 
-impl Disk {
-    /// `Host::read`
-    fn read_for_one_program(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
-        if !self.already_read.is_empty()
-            && let Some(text) = (self.already_read).get(&*to_path(path, self.case_sensitive))
-        {
-            return Some(Cow::Owned(text.clone()));
-        }
-        let _reading = Spent::on(self, Phase::Read);
-        if is_bundled(path) {
-            let (libs, name) = self.bundled(path)?;
-            return (libs.read)(name);
-        }
-        if let Some(before_read) = &self.before_read {
-            before_read(path);
-        }
-        for_the_system(path)?;
-        let Split { parent, name } = split(path);
-        // Not of a configuration file or a `package.json`, which are read as JSON.
-        let keeps_mark = self.keeps_byte_order_marks && ScriptKind::from_file_name(path).is_some();
-        if name.is_empty() || Self::is_above_listings(parent) {
-            return read_at(path, keeps_mark);
-        }
-        let _turn = self.reading.as_ref().map(Turn::wait_for);
-        let mut reader = self.take_reader(parent);
-        // The second file read from a directory, and those after it, are opened relative to the directory. An absolute path makes
-        // the kernel look up every directory on the way again, and all threads contend on the ones near the root. For a single
-        // file, opening the directory costs that walk and more.
-        let read = if reader.directory != parent {
-            reader.handle = None;
-            reader.directory.clear();
-            reader.directory.extend_from_slice(parent);
-            None
-        } else {
-            if reader.handle.is_none() {
-                reader.handle = bun_sys::open_dir_absolute(to_native(parent))
-                    .ok()
-                    .map(bun_sys::Dir::from_fd);
-            }
-            let Reader { handle, buffer, .. } = &mut reader;
-            handle
-                .as_ref()
-                .map(|directory| read_file(directory.fd(), name, buffer))
-        };
-        let read = read.unwrap_or_else(|| {
-            let path = to_native(without_trailing_slash(path));
-            read_file(Fd::cwd(), path, &mut reader.buffer)
-        });
-        self.return_reader(reader);
-        read.map(|bytes| decoded(bytes, keeps_mark))
-    }
-}
-
 /// The disk, for a few questions in many directories: each is a call of the system, and no directory is listed for it
 /// or kept. A `Disk` lists the directory of whatever it is asked about, which pays where most of it is asked for.
 #[derive(Copy, Clone)]
@@ -1427,68 +1348,53 @@ impl Host for Disk {
             .map(|phase| Duration::from_nanos(self.times[phase as usize].load(Ordering::Relaxed)))
     }
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
-        let is_shared = is_declaration_file_name(path);
-        let shared = is_shared.then(|| self.shared.lock().files.clone());
-        let Some(shared) = shared.flatten() else {
-            return self.read_for_one_program(path);
-        };
-        if let Some(text) = shared.read.get_ref(path) {
-            return Some(text.clone());
+        if !self.already_read.is_empty()
+            && let Some(text) = (self.already_read).get(&*to_path(path, self.case_sensitive))
+        {
+            return Some(Cow::Owned(text.clone()));
         }
-        let text = self.read_for_one_program(path)?;
-        shared.read.insert_ref(path.to_vec(), text.clone());
-        Some(text)
-    }
-    fn share_declaration_files(&self, variants: u32, programs: usize) {
-        if variants != 0 {
-            let mut shared = self.shared.lock();
-            shared.files.get_or_insert_default();
-            shared.variants |= variants;
-            shared.programs = shared.programs.saturating_add(programs);
+        let _reading = Spent::on(self, Phase::Read);
+        if is_bundled(path) {
+            let (libs, name) = self.bundled(path)?;
+            return (libs.read)(name);
         }
-    }
-    fn stays_loaded(&self) {
-        let mut shared = self.shared.lock();
-        shared.programs = shared.programs.saturating_sub(1);
-        if shared.programs > 0 {
-            return;
+        if let Some(before_read) = &self.before_read {
+            before_read(path);
         }
-        let unused = std::mem::take(&mut *shared);
-        // Freed without the lock.
-        drop(shared);
-        drop(unused);
-    }
-    fn shared_file(
-        &self,
-        path: &[u8],
-        text: &[u8],
-        variant: u8,
-    ) -> Option<Arc<OnceLock<SharedFile>>> {
-        if !is_declaration_file_name(path) || self.script_kind(path).is_some() {
-            return None;
+        for_the_system(path)?;
+        let Split { parent, name } = split(path);
+        // Not of a configuration file or a `package.json`, which are read as JSON.
+        let keeps_mark = self.keeps_byte_order_marks && ScriptKind::from_file_name(path).is_some();
+        if name.is_empty() || Self::is_above_listings(parent) {
+            return read_at(path, keeps_mark);
         }
-        let shared = {
-            let shared = self.shared.lock();
-            let is_of_several = shared.variants & 1 << (variant >> 1) != 0;
-            shared.files.clone().filter(|_| is_of_several)?
-        };
-        // A program can find on the disk what another gets from a project that it references.
-        let read = shared.read.get_ref(path);
-        let is_emitted = read.is_none_or(|read| **read != *text);
-        if is_emitted {
-            let first = match shared.emitted.get_ref(path) {
-                Some(text) => text,
-                None => shared.emitted.insert_ref(path.to_vec(), text.into()),
-            };
-            if **first != *text {
-                return None;
+        let _turn = self.reading.as_ref().map(Turn::wait_for);
+        let mut reader = self.take_reader(parent);
+        // The second file read from a directory, and those after it, are opened relative to the directory. An absolute path makes
+        // the kernel look up every directory on the way again, and all threads contend on the ones near the root. For a single
+        // file, opening the directory costs that walk and more.
+        let read = if reader.directory != parent {
+            reader.handle = None;
+            reader.directory.clear();
+            reader.directory.extend_from_slice(parent);
+            None
+        } else {
+            if reader.handle.is_none() {
+                reader.handle = bun_sys::open_dir_absolute(to_native(parent))
+                    .ok()
+                    .map(bun_sys::Dir::from_fd);
             }
-        }
-        let key = [path, &[variant << 1 | u8::from(is_emitted)]].concat();
-        Some(Arc::clone(match shared.files.get_ref(&key[..]) {
-            Some(file) => file,
-            None => shared.files.insert_ref(key, Default::default()),
-        }))
+            let Reader { handle, buffer, .. } = &mut reader;
+            handle
+                .as_ref()
+                .map(|directory| read_file(directory.fd(), name, buffer))
+        };
+        let read = read.unwrap_or_else(|| {
+            let path = to_native(without_trailing_slash(path));
+            read_file(Fd::cwd(), path, &mut reader.buffer)
+        });
+        self.return_reader(reader);
+        read.map(|bytes| decoded(bytes, keeps_mark))
     }
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
         self.read(path).unwrap_or_else(|| {

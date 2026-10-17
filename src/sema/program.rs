@@ -11,7 +11,6 @@ use crate::check::spans::{Spans, skip_trivia, skip_trivia_back};
 use crate::components::Components;
 use crate::hir::{self, *};
 use crate::json::Json;
-use crate::portable::SharedFile;
 use crate::resolve::{
     DiagAndArgs, Host, INFERRED_TYPES_CONTAINING_FILE, JsxEmit, ModuleDetection, ModuleKind,
     Options, PackageId, ParseOptions, Phase, ResolvedModule, Resolver, ScriptKind, ScriptTarget,
@@ -190,7 +189,7 @@ pub struct Module<'s> {
     pub redirected_imports: ArenaFew<'s, (Atom, ResolutionMode, Atom)>,
     /// Those of `imports` that resolve to a declaration file of a referenced project, for which its source is loaded.
     pub project_reference_imports: ArenaFew<'s, (Atom, ResolutionMode)>,
-    /// The specifiers that resolve to one of `Options::referenced_sources` whose declaration file
+    /// The specifiers that resolve to a source of a referenced project whose declaration file
     /// is not in the program, with `OutputDts` and `ResolvedFileName`. They resolve to no file
     /// (6305).
     pub unbuilt_imports: ArenaFew<'s, (Atom, ResolutionMode, Atom, Atom)>,
@@ -803,6 +802,8 @@ struct ParseKey {
     script_kind: Option<ScriptKind>,
     is_lib: bool,
     specifies_esm: bool,
+    /// `Host::origin`
+    origin: usize,
 }
 
 /// What the programs of one request have in common: the names, and each file parsed and bound once. A file is the same
@@ -810,14 +811,18 @@ struct ParseKey {
 pub struct Run<'u> {
     session: &'u Session,
     atoms: Interner<'u>,
-    /// By path.
-    parsed: ShardedMap<Vec<u8>, Guarded<Vec<(ParseKey, &'u Parse<'u>)>>>,
+    /// By path. Last, whether it could not be read: see `Host::read_source`.
+    parsed: ShardedMap<Vec<u8>, Guarded<Vec<(ParseKey, &'u Parse<'u>, bool)>>>,
     /// The paths (`tspath.Path`) whose text is not what is on the disk. They are parsed for each program.
     provided: FxHashSet<Vec<u8>>,
     /// Programs run at the same time.
     overlaps: bool,
+    /// Every other file is parsed for each program, and freed with it.
+    only_declaration_files: bool,
     parses: AtomicUsize,
     bytes: AtomicUsize,
+    /// The first of `Host::origin` that no host has.
+    origins: AtomicUsize,
 }
 
 impl<'u> Run<'u> {
@@ -828,8 +833,10 @@ impl<'u> Run<'u> {
             parsed: ShardedMap::default(),
             provided,
             overlaps: false,
+            only_declaration_files: false,
             parses: AtomicUsize::new(0),
             bytes: AtomicUsize::new(0),
+            origins: AtomicUsize::new(1),
         }
     }
 
@@ -839,6 +846,19 @@ impl<'u> Run<'u> {
             overlaps: true,
             ..self
         }
+    }
+
+    /// Of the files, its programs have only the declaration files in common.
+    pub fn of_declaration_files(self) -> Run<'u> {
+        Run {
+            only_declaration_files: true,
+            ..self
+        }
+    }
+
+    /// The first of `count` numbers for `Host::origin` that no other host of the request has.
+    pub fn origins(&self, count: usize) -> usize {
+        self.origins.fetch_add(count, Ordering::Relaxed)
     }
 
     /// The bytes that what is parsed takes.
@@ -853,8 +873,11 @@ impl<'u> Run<'u> {
 
     /// Whether the file at `path` is the same for all programs.
     fn has_file(&self, host: &dyn Host, path: &[u8]) -> bool {
-        self.provided.is_empty()
-            || !(self.provided).contains(&*to_path(path, host.is_case_sensitive()))
+        let is_shared = !self.only_declaration_files
+            || crate::resolve::is_declaration_file_name(path) && host.script_kind(path).is_none();
+        is_shared
+            && (self.provided.is_empty()
+                || !(self.provided).contains(&*to_path(path, host.is_case_sensitive())))
     }
 
     /// Whether `parse` may answer for `path` without its text.
@@ -878,12 +901,18 @@ impl<'u> Run<'u> {
         // Until the file is parsed: a program that comes to it at the same time waits for that.
         let mut of_path = of_path.lock();
         if let Some(found) = of_path.iter().find(|it| it.0 == key) {
+            // Each program says so.
+            if found.2 && text.is_none() && self.only_declaration_files {
+                host.read_source(path);
+            }
             return found.1;
         }
         self.parses.fetch_add(1, Ordering::Relaxed);
         let arena = self.session.arena();
         // Only this thread allocates in it.
         let before = arena.allocated_bytes();
+        let text = text.unwrap_or_else(|| host.read_source(path));
+        let is_unreadable = text.is_empty() && host.read(path).is_none();
         let (mut hir, bound) = Files::parse_and_bind(
             arena,
             host,
@@ -892,7 +921,7 @@ impl<'u> Run<'u> {
             path,
             key.is_lib,
             key.specifies_esm,
-            text.unwrap_or_else(|| host.read_source(path)),
+            text,
         );
         rename_private_names(&mut hir, &bound, &self.atoms, path);
         // Nothing drops it.
@@ -905,7 +934,7 @@ impl<'u> Run<'u> {
             bound,
             is_renamed: true,
         });
-        of_path.push((key, parse));
+        of_path.push((key, parse, is_unreadable));
         let more = arena.allocated_bytes().saturating_sub(before);
         self.bytes.fetch_add(more, Ordering::Relaxed);
         parse
@@ -923,8 +952,8 @@ fn keep_list<'s, T: Clone + Send + Sync + 'static>(session: &'s Session, list: &
 
 /// `'r`: the paths belong to the `Resolver`.
 struct Loaded<'s, 'r> {
-    /// Without `hir` and `bound` if `parse` has them.
-    module: Module<'s>,
+    /// Without `hir` and `bound` if `parse` has them. It is large, and goes from list to list.
+    module: Box<Module<'s>>,
     /// The `Parse` that `load_ahead` returns for it and for the other copies of the file.
     parse: Option<u32>,
     imports: Vec<Resolution<'r>>,
@@ -4276,48 +4305,6 @@ fn output_path_errors(
     (errors, common)
 }
 
-/// What `Host::parse` and the binder read of the options for a declaration file, as a number below 32: two programs for
-/// which it is the same parse and bind one alike.
-pub fn variant_of_files(options: ParseOptions) -> u8 {
-    let variant = [
-        options.experimental_decorators,
-        options.module_detection == ModuleDetection::Force,
-        options.bind.emit_standard_class_fields,
-        options.bind.before_es2020,
-        options.bind.before_es2017,
-    ];
-    variant
-        .iter()
-        .fold(0, |bits, &bit| bits << 1 | u8::from(bit))
-}
-
-/// `None`: no atom is left out, for another interner `shared` is what the parser and the binder
-/// return. Or else the name of a field that differs. `hir`: the file that `shared` was made from.
-#[cfg(any(debug_assertions, feature = "baselines"))]
-pub fn difference_for_another_program(
-    shared: &SharedFile,
-    host: &dyn Host,
-    options: ParseOptions,
-    path: &[u8],
-    hir: &hir::File,
-) -> Option<&'static str> {
-    let session = Session::new();
-    let atoms = Interner::new_in(&session);
-    // No name has the number that it has in the program.
-    for junk in 0..1000 {
-        atoms.intern(format!("\u{1}{junk}").as_bytes());
-    }
-    let arena = session.arena();
-    let (mut copied, copied_bound) = shared.for_program(arena, &atoms);
-    let text = host.read_source(path);
-    let mut parsed = host.parse(arena, path, &text, &atoms, options);
-    // The binder consults it.
-    parsed.text = Cow::Owned(hir.text.to_vec());
-    copied.text = Cow::Owned(hir.text.to_vec());
-    let bound = bind::bind(&parsed, options.bind, &atoms, arena);
-    crate::portable::first_difference((&parsed, &bound), (&copied, &copied_bound))
-}
-
 /// `GetSymbolNameForPrivateIdentifier`: `#x` is scoped to the class that declares it. From here on
 /// it is spelled `\xFE#x@<hash of the path>.<class>` (`PRIVATE_NAME_PREFIX`), at its declaration
 /// and at every reference. An `#x` that no enclosing class declares stays `#x`, which resolves to
@@ -4426,14 +4413,14 @@ impl<'s> Files<'s> {
         // `parseTaskData.tasks`: the tasks by file name, where a file can have several.
         let mut by_name: FxHashMap<&'s [u8], FileId> = FxHashMap::default();
         let mut all_found = Found::default();
-        let mut modules: Vec<Option<Module>> = Vec::new();
+        let mut modules: Vec<Option<Box<Module>>> = Vec::new();
         // `parseTaskData.lowestDepth`, indexed by `FoundFile::first`: the lowest number of steps
         // into packages (`increaseDepth`) that a task for the file has run at.
         let mut depths: Vec<u32> = Vec::new();
         // `taskDataByPath.LoadOrStore`
         let mut add = |path: &[u8],
                        is_lib: bool,
-                       modules: &mut Vec<Option<Module>>,
+                       modules: &mut Vec<Option<Box<Module>>>,
                        depths: &mut Vec<u32>,
                        found: &mut Found<'s>|
          -> FileId {
@@ -4636,8 +4623,6 @@ impl<'s> Files<'s> {
                 false => Self::load_ahead(session, run, host, &resolver, options, &atoms, seeds),
             };
         files_are_found(resolving.allocated_bytes());
-        // A `Module` is large, and growing copies them all.
-        modules.reserve(ahead.len());
         // `Module::edges` of one file. Reused for the next.
         let mut edges: Vec<FileId> = Vec::new();
         // `Loaded::traces`, indexed by `FileId`.
@@ -5105,7 +5090,7 @@ impl<'s> Files<'s> {
                 respelled.push(target);
             }
         };
-        let has_redirects = !options.referenced_sources.is_empty() && !options.no_resolve;
+        let has_redirects = !options.referenced_projects.is_empty() && !options.no_resolve;
         for module in modules.iter().flatten().filter(|_| has_redirects) {
             let from = module.file_name();
             for &(kind, value, ..) in &module.hir.references {
@@ -5219,7 +5204,7 @@ impl<'s> Files<'s> {
         drop(resolver);
         drop(resolving);
         let mut modules: ArenaVec<'s, ModuleCell<'s>> = vec_from_iter_in(
-            (modules.into_iter()).map(|module| ModuleCell(module.unwrap().into())),
+            (modules.into_iter()).map(|module| ModuleCell((*module.unwrap()).into())),
             arena,
         );
         keep_lists(session, &mut modules, |hir| &mut hir.text);
@@ -5373,7 +5358,7 @@ impl<'s> Files<'s> {
         let memo = Memo::new_in(&Bases::new_in(modules.iter().map(|_| 0), &session), session);
         // Every atom in the files is in it: no file gets into a program from here on.
         let atoms = match run {
-            Some(run) if run.overlaps => atoms.copy_in(session),
+            Some(run) if run.overlaps => Interner::over(session, atoms),
             _ => atoms,
         };
         let mut files = Files {
@@ -5619,8 +5604,7 @@ impl<'s> Files<'s> {
                             path,
                             is_lib,
                             specifies_esm,
-                            &parse.hir,
-                            &parse.bound,
+                            Err(parse),
                         );
                         loaded.parse = package;
                         loaded
@@ -5646,6 +5630,7 @@ impl<'s> Files<'s> {
                                         script_kind: host.script_kind(path),
                                         is_lib,
                                         specifies_esm,
+                                        origin: host.origin(path),
                                     };
                                     let parse = run.parse(host, path, key, Some(text));
                                     Parse {
@@ -5790,20 +5775,8 @@ impl<'s> Files<'s> {
         specifies_esm: bool,
         text: Cow<'static, [u8]>,
     ) -> (hir::File<'s>, Bound<'s>) {
-        let keeps_text = !is_lib || options.keeps_the_text_of_libraries;
-        // The binder consults the text.
-        let variant = variant_of_files(options) << 1 | u8::from(keeps_text);
-        let shared = host.shared_file(path, &text, variant);
-        if let Some(file) = shared.as_ref().and_then(|it| it.get()) {
-            let _parsing = Spent::on(host, Phase::Parse);
-            let (mut hir, bound) = file.for_program(arena, atoms);
-            if keeps_text {
-                hir.text = text;
-            }
-            return (hir, bound);
-        }
         let mut hir = host.parse(arena, path, &text, atoms, options);
-        if keeps_text {
+        if !is_lib || options.keeps_the_text_of_libraries {
             hir.text = text;
         }
         // `getExternalModuleIndicator`: the other conditions that make a file without imports or
@@ -5847,19 +5820,6 @@ impl<'s> Files<'s> {
                 ..host.parse(arena, path, b"", atoms, options)
             };
             bound = bind::bind(&hir, options.bind, atoms, arena);
-        } else if let Some(shared) = shared
-            && hir.kind == FileKind::Declaration
-            && !hir.ran_out_of_stack
-        {
-            let file = SharedFile::new(&hir, &bound, atoms);
-            #[cfg(debug_assertions)]
-            assert_eq!(
-                difference_for_another_program(&file, host, options, path, &hir),
-                None,
-                "{}",
-                bstr::BStr::new(path)
-            );
-            let _ = shared.set(file);
         }
         (hir, bound)
     }
@@ -5901,6 +5861,7 @@ impl<'s> Files<'s> {
                     script_kind: host.script_kind(path),
                     is_lib,
                     specifies_esm,
+                    origin: host.origin(path),
                 };
                 let parse = run.parse(host, path, key, text);
                 (parse.hir.share(arena, session), parse.bound.share(arena))
@@ -5920,7 +5881,7 @@ impl<'s> Files<'s> {
                 (hir, bound)
             }
         };
-        let mut loaded = Self::load_parsed(
+        Self::load_parsed(
             arena,
             host,
             resolver,
@@ -5929,11 +5890,8 @@ impl<'s> Files<'s> {
             path,
             is_lib,
             specifies_esm,
-            &hir,
-            &bound,
-        );
-        (loaded.module.hir, loaded.module.bound) = (hir, bound);
-        loaded
+            Ok((hir, bound)),
+        )
     }
 
     /// `parseTask.load`: a library is given `SourceFileMetaData{ImpliedNodeFormat: CommonJS}`,
@@ -5947,7 +5905,7 @@ impl<'s> Files<'s> {
             && resolver.is_ecmascript_module(path)
     }
 
-    /// Everything that depends on where the file is. The module is without `hir` and `bound`.
+    /// Everything that depends on where the file is. `Err`: the module is without `hir` and `bound`.
     fn load_parsed<'r>(
         arena: &'s Arena,
         host: &dyn Host,
@@ -5957,9 +5915,12 @@ impl<'s> Files<'s> {
         path: &[u8],
         is_lib: bool,
         specifies_esm: bool,
-        hir: &hir::File<'s>,
-        bound: &Bound<'s>,
+        parsed: Result<(hir::File<'s>, Bound<'s>), &Parse<'s>>,
     ) -> Loaded<'s, 'r> {
+        let (hir, bound) = match &parsed {
+            Ok((hir, bound)) => (hir, bound),
+            Err(parse) => (&parse.hir, &parse.bound),
+        };
         let is_esm = options.resolves_like_node && specifies_esm;
         let package_json_without_type =
             if !is_lib && matches!(options.module, ModuleKind::Node16 | ModuleKind::Node18) {
@@ -6270,9 +6231,31 @@ impl<'s> Files<'s> {
         }
         references.extend(types);
         references.extend(libs);
-        let module = Module {
-            hir: hir::File::empty_in(arena, hir.lazy.session),
-            bound: Bound::empty_in(arena),
+        let has_conditional_or_mapped_type = hir.types.iter().any(|node| {
+            matches!(
+                node.kind,
+                TypeNodeKind::Cond { .. } | TypeNodeKind::Mapped(_)
+            )
+        });
+        let adds_nothing = !is_lib
+            && matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
+            && !hir.is_js
+            && hir.has_module_syntax
+            && bound.global_augmentations.is_empty()
+            && bound.ambient_modules.is_empty()
+            && bound.pattern_ambient_modules.is_empty()
+            && bound.umd_globals.is_empty()
+            // `make_module_clones`: it adds a symbol to the file of what it imports.
+            && !(hir.imports.iter()).any(|import| import.namespace.is_some());
+        let (type_resolutions_trace, resolutions_trace) =
+            (types_tracer.into_traces(), tracer.into_traces());
+        let (hir, bound) = parsed.unwrap_or_else(|parse| {
+            let session = parse.hir.lazy.session;
+            (hir::File::empty_in(arena, session), Bound::empty_in(arena))
+        });
+        let module = Box::new(Module {
+            hir,
+            bound,
             is_lib,
             // `load` fills `path`, `imports` and `edges`.
             path: Path::init(b""),
@@ -6304,35 +6287,18 @@ impl<'s> Files<'s> {
             redirect_for_resolution,
             is_from_external_library: false,
             is_leaf: false,
-            adds_nothing: false,
-            has_conditional_or_mapped_type: false,
+            adds_nothing,
+            has_conditional_or_mapped_type,
             transient_symbols: ArenaVec::new_in(arena),
-        };
-        let mut module = module;
-        module.has_conditional_or_mapped_type = hir.types.iter().any(|node| {
-            matches!(
-                node.kind,
-                TypeNodeKind::Cond { .. } | TypeNodeKind::Mapped(_)
-            )
         });
-        module.adds_nothing = !is_lib
-            && matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
-            && !hir.is_js
-            && hir.has_module_syntax
-            && bound.global_augmentations.is_empty()
-            && bound.ambient_modules.is_empty()
-            && bound.pattern_ambient_modules.is_empty()
-            && bound.umd_globals.is_empty()
-            // `make_module_clones`: it adds a symbol to the file of what it imports.
-            && !(hir.imports.iter()).any(|import| import.namespace.is_some());
         Loaded {
             module,
             parse: None,
             imports,
             references,
             unsupported_libs,
-            type_resolutions_trace: types_tracer.into_traces(),
-            resolutions_trace: tracer.into_traces(),
+            type_resolutions_trace,
+            resolutions_trace,
         }
     }
 

@@ -2110,6 +2110,34 @@ later/src/index.ts(3,14): error TS2322: Type '"stale"' is not assignable to type
       }
     });
 
+    test("of two projects that emit the same file, a later one sees that of the last before it", async () => {
+      const compilerOptions = { ...options, outDir: "../dist", rootDir: "src" };
+      const config = (name: string) =>
+        JSON.stringify({
+          compilerOptions: { ...compilerOptions, tsBuildInfoFile: `../dist/${name}.tsbuildinfo` },
+          files: ["src/index.ts"],
+        });
+      const reader = `import { which } from "../../dist/index";\nexport const wrong: never = which;\n`;
+      const names = ["first", "between", "second", "after"];
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ files: [], references: names.map(name => ({ path: `./${name}` })) }),
+        "first/tsconfig.json": config("first"),
+        "first/src/index.ts": `export const which = "first" as const;\n`,
+        "between/tsconfig.json": JSON.stringify({ compilerOptions: options, files: ["src/reader.ts"] }),
+        "between/src/reader.ts": reader,
+        "second/tsconfig.json": config("second"),
+        "second/src/index.ts": `export const which = "second" as const;\n`,
+        "after/tsconfig.json": JSON.stringify({ compilerOptions: options, files: ["src/reader.ts"] }),
+        "after/src/reader.ts": reader,
+      });
+      const expected = `between/src/reader.ts(2,14): error TS2322: Type '"first"' is not assignable to type 'never'.
+after/src/reader.ts(2,14): error TS2322: Type '"second"' is not assignable to type 'never'.`;
+      for (const threads of ["1", "2", "8"]) {
+        const { stdout, exitCode } = await check(dir, ["--threads", threads]);
+        expect({ stdout, exitCode }).toEqual({ stdout: expected, exitCode: 1 });
+      }
+    });
+
     test("checks every referenced project without a build", async () => {
       using dir = monorepo();
       const { stdout, stderr, exitCode } = await check(dir);
@@ -15506,6 +15534,31 @@ export const loaded = loader.load(key, options, key);
       expect(places).toEqual(
         runs.map(() => ["a/a.ts", "b/secret.ts", "b/b.ts", "c/c.ts", "d/d.ts", "e/secret.ts", "e/e.ts", "f/f.ts"]),
       );
+    });
+
+    // They have the declaration files in common.
+    test.skipIf(canReadEverything)("a declaration file that cannot be read is reported by each project", async () => {
+      const names = ["a", "b", "c"];
+      const config = JSON.stringify({
+        compilerOptions: { composite: true, emitDeclarationOnly: true, outDir: "out", lib: ["es5"], types: [] },
+        include: ["*.ts"],
+      });
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ files: [], references: names.map(name => ({ path: `./${name}` })) }),
+        ...Object.fromEntries(
+          names.flatMap(name => [
+            [`${name}/tsconfig.json`, config],
+            [`${name}/${name}.ts`, `import "../secret";\nexport const wrong: number = "";\n`],
+          ]),
+        ),
+        "secret.d.ts": `export {};\n`,
+      });
+      chmodSync(join(String(dir), "secret.d.ts"), 0o000);
+      for (const threads of ["1", "8"]) {
+        const { stdout } = await check(dir, ["--threads", threads]);
+        const places = stdout.split("\n").map(line => /[a-c]\/\w+\.ts|secret\.d\.ts/.exec(line)?.[0]);
+        expect(places).toEqual(["secret.d.ts", "a/a.ts", "secret.d.ts", "b/b.ts", "secret.d.ts", "c/c.ts"]);
+      }
     });
 
     // As in tsc: without its options nothing can be checked. To a build the file is not there.

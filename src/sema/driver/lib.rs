@@ -31,15 +31,15 @@ use bun_sema::program::{
 };
 pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
-    Host, ModuleDetection, Options, Phase, ancestors, contains_path, displayed_path,
-    get_relative_path_from_directory, inside, is_declaration_file_name, is_javascript,
-    is_javascript_file, is_relative, is_same_path, join, output_declaration_file_name, to_path,
-    to_path_in, typescript_path,
+    Host, ModuleDetection, Options, Phase, ProjectFile, ProjectFiles, ancestors, contains_path,
+    displayed_path, get_relative_path_from_directory, inside, is_declaration_file_name,
+    is_javascript, is_javascript_file, is_relative, is_same_path, join,
+    output_declaration_file_name, to_path, to_path_in, typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::types::LinkCounts;
 use bun_sema::util::SharedSort;
-use bun_sema::util::{FxHashMap, FxHashSet};
+use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
 use bun_sema::verify::verify_project_references;
 use bun_threading::Guarded;
 use std::borrow::Cow;
@@ -363,10 +363,9 @@ pub struct PlanOptions {
     /// `target` name. Else they are `Request::libs`. What the project's own compiler reads about `Element` is what is read here.
     /// And its configuration file means what it means to that compiler: `resolve::INSTALLED_MAJOR`.
     pub prefers_the_library_of_the_project: bool,
-    /// THE SEAM BETWEEN TWO WAYS TO LOAD A FILE ONCE FOR SEVERAL PROGRAMS. Off, `bun check`: a declaration file is kept in a form
-    /// that every program copies (`portable::SharedFile`): each has its own names, and what is kept is freed when the last is
-    /// loaded. On, `bun lint`: every file, sources too, by reference (`program::Run`): a run with types over a monorepo loads
-    /// the same sources for a hundred programs. It keeps all of them to the end, and programs that overlap copy the names.
+    /// What the programs of a request have in common, parsed once and kept to the end (`program::Run`). Off, `bun check`: the
+    /// declaration files. On, `bun lint`: every file, sources too: a run with types over a monorepo loads the same sources
+    /// for a hundred programs.
     pub shares_every_file: bool,
     /// Nothing is checked: `Report::globals` is what is asked for. Of the root files of a project only those are loaded that can
     /// declare a global, judged by name and text (`may_declare_a_global`), with the libraries and the `types` as always; of
@@ -2084,21 +2083,13 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         _ if !RUNS_PROGRAMS_AT_ONCE => 1,
         _ => disk.threads().min(by_project.len()),
     };
-    let shares_every_file = request.plan_options.shares_every_file;
-    if !is_one && !shares_every_file {
-        let mut options = Vec::new();
-        for (config, ..) in &by_project {
-            let project = (config.as_ref()).and_then(|it| projects.load(disk, request, it));
-            options.extend(project.map(|it| it.options.clone()));
-        }
-        // Each of them may load more, for its references.
-        disk.share_declaration_files(variants_of_several(options.iter()), usize::MAX / 2);
-    }
-    let run = (!is_one && shares_every_file).then(|| {
+    let run = (!is_one).then(|| {
         let run = Run::new(&of_run, disk.provided_paths().cloned().collect());
-        match at_once > 1 {
-            true => run.overlapping(),
-            false => run,
+        match request.plan_options.shares_every_file {
+            true if at_once > 1 => run.overlapping(),
+            true => run,
+            // One of them can be a build, whose programs run at the same time.
+            false => run.overlapping().of_declaration_files(),
         }
     });
     let projects = Guarded::new(projects);
@@ -2155,22 +2146,13 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         report.merge(checked);
     }
     report.load_time = started.elapsed().saturating_sub(report.check_time);
-    report.files_parsed_for_all += run.as_ref().map_or(0, Run::parses);
+    if request.plan_options.shares_every_file {
+        report.files_parsed_for_all += run.as_ref().map_or(0, Run::parses);
+    }
     if !is_one {
         sort_as_one_project(&mut report);
     }
     report
-}
-
-/// `Host::share_declaration_files`
-fn variants_of_several<'a>(options: impl Iterator<Item = &'a Options>) -> u32 {
-    let (mut of_one, mut of_several) = (0u32, 0u32);
-    for it in options {
-        let variant = 1 << bun_sema::program::variant_of_files(it.for_parsing());
-        of_several |= of_one & variant;
-        of_one |= variant;
-    }
-    of_several
 }
 
 /// Where the files are that a check is limited to.
@@ -2444,6 +2426,7 @@ fn check_project_of(
             *extent == Extent::Graph && project.files.iter().all(is_named)
         };
         let named = named.filter(|it| !is_whole(it)).map(|it| it.1);
+        let is_elsewhere = (of.elsewhere).map(|elsewhere| |path: &[u8]| elsewhere.contains(path));
         check_named_files(
             disk,
             project,
@@ -2451,7 +2434,7 @@ fn check_project_of(
             report,
             started,
             named,
-            of.elsewhere,
+            (is_elsewhere.as_ref()).map(|it| it as &dyn Fn(&[u8]) -> bool),
             None,
             of.run,
             of.place,
@@ -2473,8 +2456,6 @@ struct ReferencedProject {
 /// `Orchestrator`, limited to `GenerateGraph`.
 struct Graph<'h> {
     host: &'h dyn Host,
-    /// For `config::load_overriding`.
-    session: &'h Session,
     request: &'h Request<'h>,
     overrides: Vec<(Vec<u8>, Json)>,
     /// `tasks`, until `setup_build_task` takes them: `config` and `resolved`, by the `tspath.Path`
@@ -2505,6 +2486,43 @@ impl Graph<'_> {
             };
             references.map(name).collect()
         };
+        let load = |config: &[u8]| -> Option<config::Project> {
+            let over = |_: bool| {
+                let mut options = self.overrides.clone();
+                let defaults =
+                    defaults_of_the_installed_typescript(self.host, self.request, config);
+                options.extend(defaults);
+                options
+            };
+            if !self.host.is_file(config) {
+                return None;
+            }
+            // What is parsed is freed at once: there can be tens of thousands.
+            config::load_overriding(self.host, &Session::new(), config, &over).ok()
+        };
+        // On all threads, by name: what the root references, then what that references, and so on.
+        let mut ahead: FxHashMap<Vec<u8>, Option<config::Project>> = FxHashMap::default();
+        let mut names = referenced(&root);
+        loop {
+            names.shared_sort_unstable();
+            names.dedup();
+            names.retain(|name| !ahead.contains_key(name));
+            let loaded: Vec<Guarded<Option<config::Project>>> =
+                names.iter().map(|_| Guarded::new(None)).collect();
+            match &names[..] {
+                [] => break,
+                [name] => *loaded[0].lock() = load(name),
+                names => (self.host).parallel(names.len(), &|at| {
+                    *loaded[at].lock() = load(&names[at]);
+                }),
+            }
+            let loaded = loaded.into_iter().map(|mut it| it.get_mut().take());
+            let before = std::mem::take(&mut names);
+            for (name, project) in before.into_iter().zip(loaded) {
+                names.extend(project.iter().flat_map(&referenced));
+                ahead.insert(name, project);
+            }
+        }
         let mut queued = referenced(&root);
         let config = root.config_path.clone();
         self.tasks.insert(key(&config), (config, Some(root)));
@@ -2513,20 +2531,7 @@ impl Graph<'_> {
             if self.tasks.contains_key(&path) {
                 continue;
             }
-            let over = |_: bool| {
-                let mut options = self.overrides.clone();
-                let defaults =
-                    defaults_of_the_installed_typescript(self.host, self.request, &config);
-                options.extend(defaults);
-                options
-            };
-            let resolved = match self.host.is_file(&config) {
-                true => {
-                    let (host, session) = (self.host, self.session);
-                    config::load_overriding(host, session, &config, &over).ok()
-                }
-                false => None,
-            };
+            let resolved = ahead.remove(&config).flatten();
             if let Some(project) = &resolved {
                 queued.extend(referenced(project));
             }
@@ -2646,20 +2651,64 @@ impl Expected {
     }
 }
 
+/// What the projects of a `tsc -b` run have emitted so far, and which of them are built. Nothing is written to disk.
+struct Emitted {
+    /// By `tspath.Path`, like `directories`: the file system finds a file however its name is spelled, if it ignores case.
+    /// The projects that have emitted the file, each with the text. A JavaScript file is empty: nothing prints its text.
+    files: ShardedMap<Vec<u8>, Guarded<Vec<(usize, Arc<Vec<u8>>)>>>,
+    /// The directories that contain the files, and all their ancestors: of which projects.
+    directories: ShardedMap<Vec<u8>, Guarded<Vec<usize>>>,
+    has_files: AtomicBool,
+    /// By project: how many were built before it. `usize::MAX`: it is not built.
+    built_after: Vec<AtomicUsize>,
+}
+
+impl Emitted {
+    fn new(projects: usize) -> Emitted {
+        Emitted {
+            files: ShardedMap::default(),
+            directories: ShardedMap::default(),
+            has_files: AtomicBool::new(false),
+            built_after: (0..projects)
+                .map(|_| AtomicUsize::new(usize::MAX))
+                .collect(),
+        }
+    }
+
+    /// Once for a project, before it counts as built.
+    fn add(&self, project: usize, files: Vec<(Vec<u8>, Arc<Vec<u8>>)>) {
+        if !files.is_empty() {
+            self.has_files.store(true, Ordering::Relaxed);
+        }
+        let mut directories: FxHashSet<Vec<u8>> = FxHashSet::default();
+        for (path, text) in files {
+            let mut directory = dirname::<Posix>(&path);
+            while directory.len() > 1 && directories.insert(directory.to_vec()) {
+                directory = dirname::<Posix>(directory);
+            }
+            let of_all = self.files.insert_ref(path, Guarded::default());
+            of_all.lock().push((project, text));
+        }
+        for directory in directories {
+            let of_all = self.directories.insert_ref(directory, Guarded::default());
+            of_all.lock().push(project);
+        }
+    }
+}
+
 /// The file system as a `tsc -b` run leaves it for one project: it also contains what the projects
 /// before it in the build order have emitted, whether it references them or not.
-/// Nothing is written to disk.
 struct WithOutputs<'h> {
     disk: &'h dyn Host,
-    /// By `tspath.Path`, like `directories`: the file system finds a file however its name is
-    /// spelled, if it ignores case. A JavaScript file is empty: nothing prints its text.
-    files: FxHashMap<Vec<u8>, Arc<Vec<u8>>>,
-    /// The directories that contain the files, and all their ancestors.
-    directories: FxHashSet<Vec<u8>>,
+    emitted: &'h Emitted,
     expected: &'h Expected,
-    /// By project: it comes before this one and is not built yet, so `files` lacks what it emits.
-    is_pending: Vec<bool>,
-    /// Those of them whose output this project has asked for. What it was answered is wrong.
+    /// Of this project, in the build order.
+    index: usize,
+    /// How many projects were built when this one began. What the others emit meanwhile is not there for it.
+    built_before: usize,
+    /// `Host::origin` of what the first project emits.
+    first_origin: usize,
+    /// The projects before it that it does not see, and whose output it has asked for. What it was answered is wrong.
     awaited: Guarded<Vec<usize>>,
     /// `Host::take_unreadable`, for this project: others are read through `disk` at the same time.
     unreadable: Guarded<Vec<Vec<u8>>>,
@@ -2676,20 +2725,18 @@ impl WithOutputs<'_> {
         self.disk.threads().max(1).div_ceil(projects) - 1
     }
 
-    fn add(&mut self, path: Vec<u8>, text: Arc<Vec<u8>>) {
-        let mut directory = dirname::<Posix>(&path);
-        while directory.len() > 1 && self.directories.insert(directory.to_vec()) {
-            directory = dirname::<Posix>(directory);
-        }
-        self.files.insert(path, text);
+    /// What `project` has emitted is there.
+    fn sees(&self, project: usize) -> bool {
+        let built_after = &self.emitted.built_after[project];
+        project < self.index && built_after.load(Ordering::Relaxed) < self.built_before
     }
 
     /// `path` with symlinks resolved in the longest prefix that exists on disk: a workspace package
     /// is reached through a symlink in a `node_modules`, and its emitted files are keyed by its
     /// real path.
     fn through_links(&self, path: &[u8]) -> Option<Vec<u8>> {
-        if self.files.is_empty() && !self.is_pending.contains(&true)
-            || !strings::contains(path, b"/node_modules/")
+        if !strings::contains(path, b"/node_modules/")
+            || self.expected.files.is_empty() && !self.emitted.has_files.load(Ordering::Relaxed)
         {
             return None;
         }
@@ -2701,28 +2748,33 @@ impl WithOutputs<'_> {
 
     /// `projects` emit what was asked for.
     fn wait_for(&self, projects: Option<&Vec<usize>>) {
-        let pending = projects.into_iter().flatten();
-        let mut pending = pending.filter(|&&it| self.is_pending[it]).peekable();
+        let before = projects.into_iter().flatten();
+        let before = before.take_while(|&&it| it < self.index);
+        let mut pending = before.filter(|&&it| !self.sees(it)).peekable();
         if pending.peek().is_some() {
             self.awaited.lock().extend(pending);
         }
     }
 
-    fn file(&self, name: &[u8]) -> Option<&Vec<u8>> {
+    /// With the project that has emitted it: of several, the last in the build order has written last.
+    fn file(&self, name: &[u8]) -> Option<(usize, Arc<Vec<u8>>)> {
         let mut buffer = path_buffer_pool::get();
         let path = to_path_in(name, self.disk.is_case_sensitive(), &mut buffer[..]);
         self.wait_for(self.expected.files.get(&*path));
-        self.files.get(&*path).map(|text| &**text)
+        let of_all = self.emitted.files.get_ref(&*path)?.lock();
+        let seen = of_all.iter().filter(|it| self.sees(it.0));
+        seen.max_by_key(|it| it.0).cloned()
     }
 
     fn has_directory(&self, name: &[u8]) -> bool {
         let mut buffer = path_buffer_pool::get();
         let path = to_path_in(name, self.disk.is_case_sensitive(), &mut buffer[..]);
         self.wait_for(self.expected.directories.get(&*path));
-        self.directories.contains(&*path)
+        let of_all = self.emitted.directories.get_ref(&*path);
+        of_all.is_some_and(|of_all| of_all.lock().iter().any(|&it| self.sees(it)))
     }
 
-    fn written(&self, path: &[u8]) -> Option<&Vec<u8>> {
+    fn written(&self, path: &[u8]) -> Option<(usize, Arc<Vec<u8>>)> {
         let written = self.file(path);
         written.or_else(|| self.file(&self.through_links(path)?))
     }
@@ -2737,35 +2789,24 @@ impl Host for WithOutputs<'_> {
     }
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         match self.written(path) {
-            Some(written) => Some(Cow::Owned(written.clone())),
+            Some((_, written)) => Some(Cow::Owned((*written).clone())),
             None => self.disk.read(path),
         }
     }
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
         match self.written(path) {
-            Some(written) => Cow::Owned(written.clone()),
+            Some((_, written)) => Cow::Owned((*written).clone()),
             None => self.disk.read(path).unwrap_or_else(|| {
                 self.unreadable.lock().push(path.to_vec());
                 Cow::default()
             }),
         }
     }
+    fn origin(&self, path: &[u8]) -> usize {
+        (self.written(path)).map_or(0, |(project, _)| self.first_origin + project)
+    }
     fn take_unreadable(&self) -> Vec<Vec<u8>> {
         std::mem::take(&mut *self.unreadable.lock())
-    }
-    fn share_declaration_files(&self, variants: u32, programs: usize) {
-        self.disk.share_declaration_files(variants, programs);
-    }
-    fn stays_loaded(&self) {
-        self.disk.stays_loaded();
-    }
-    fn shared_file(
-        &self,
-        path: &[u8],
-        text: &[u8],
-        variant: u8,
-    ) -> Option<Arc<std::sync::OnceLock<bun_sema::portable::SharedFile>>> {
-        self.disk.shared_file(path, text, variant)
     }
     fn is_file(&self, path: &[u8]) -> bool {
         self.disk.is_file(path) || self.written(path).is_some()
@@ -2825,7 +2866,10 @@ impl Host for WithOutputs<'_> {
         self.disk.with_helpers(helpers, count, work);
     }
     fn loaded(&self) {
-        self.disk.loaded();
+        // The threads go on to parse the files of the next project.
+        if (self.built_now).is_none_or(|it| it.load(Ordering::Relaxed) < 2) {
+            self.disk.loaded();
+        }
     }
     fn threads(&self) -> usize {
         self.disk.threads()
@@ -2847,7 +2891,7 @@ impl Host for WithOutputs<'_> {
 /// `named`: see `check_named_files` and `Extent`.
 /// `elsewhere`: see `OfProject`.
 fn check_with_references(
-    host: &dyn Host,
+    host: &host::Disk,
     root: config::Project,
     request: &Request,
     mut report: Report,
@@ -2857,6 +2901,8 @@ fn check_with_references(
     run: Option<&Run<'_>>,
     place: Option<&Place<'_>>,
 ) -> Report {
+    // Declared before the session of any program, so it is dropped after them.
+    let of_build = Session::new();
     let is_case_sensitive = host.is_case_sensitive();
     let root_config_path = root.config_path.clone();
     let follows_references = !request.build && root.files.is_empty();
@@ -2865,7 +2911,6 @@ fn check_with_references(
     let configuration = Session::new();
     let mut graph = Graph {
         host,
-        session: &configuration,
         request,
         // The command line is for the projects that are reported: that of a plain `tsc`, for the
         // one that it is given.
@@ -2959,7 +3004,10 @@ fn check_with_references(
         .collect();
     let options_of_projects: Vec<Options> =
         projects.iter().map(|p| p.project.options.clone()).collect();
-    let is_read_later = |index: usize| references.iter().any(|of| of.contains(&index));
+    let mut is_read_later = vec![false; projects.len()];
+    for &index in references.iter().flatten() {
+        is_read_later[index] = true;
+    }
     let count = projects.len();
     // See `Extent::Graph`.
     let has_named: Vec<bool> = (projects.iter())
@@ -2988,10 +3036,18 @@ fn check_with_references(
     let is_solution =
         |index: usize| roots[index].is_empty() && projects[index].project.has_references;
     let loaded = || (0..count).filter(|&index| !is_left_out[index] && !is_solution(index));
-    if !request.plan_options.shares_every_file {
-        let variants = variants_of_several(loaded().map(|index| &projects[index].project.options));
-        host.share_declaration_files(variants, loaded().count());
-    }
+    // The programs read the same declaration files: the libraries, what is in `node_modules`, and what one emits for the
+    // others. Each is parsed once, and freed in the end.
+    let of_this_build = (run.is_none() && !reads_sources && loaded().count() > 1).then(|| {
+        Run::new(&of_build, host.provided_paths().cloned().collect())
+            .overlapping()
+            .of_declaration_files()
+    });
+    let of_request = run.filter(|_| !reads_sources);
+    let first_origin = match &of_this_build {
+        Some(run) => run.origins(count),
+        None => of_request.map_or(1, |run| run.origins(count)),
+    };
     let is_read_by_a_program = |index: usize| {
         (0..count)
             .any(|by| !is_left_out[by] && !roots[by].is_empty() && references[by].contains(&index))
@@ -2999,7 +3055,7 @@ fn check_with_references(
     // Under `noEmit` nothing is emitted, and a `.d.ts` next to a `.js` source would be resolved
     // in its place.
     let writes_declaration_files = |index: usize| {
-        is_read_later(index) && !options_of_projects[index].no_emit && !reads_sources
+        is_read_later[index] && !options_of_projects[index].no_emit && !reads_sources
     };
     let output_of = |index: usize| {
         let output = outputs[index].as_ref();
@@ -3039,24 +3095,54 @@ fn check_with_references(
             }
         }
     }
+    // `ParseInputOutputNames`, `getOutputDeclarationAndSourceFileNames`, for what a program references, directly or not.
+    let mut is_reached = vec![false; count];
+    let mut pending: Vec<usize> = loaded()
+        .flat_map(|index| &references[index])
+        .copied()
+        .collect();
+    while let Some(index) = pending.pop() {
+        if !std::mem::replace(&mut is_reached[index], true) {
+            pending.extend(&references[index]);
+        }
+    }
+    let mut project_files = ProjectFiles::default();
+    for index in (0..count).filter(|&index| is_reached[index]) {
+        for (source, path) in roots[index].iter().zip(&root_paths[index]) {
+            let output_dts = match reads_sources {
+                true => None,
+                false => output_declaration_file_name(source, output_of(index)),
+            };
+            if let Some(output_dts) = &output_dts {
+                let output_path = to_path(output_dts, is_case_sensitive).into_owned();
+                let sources = project_files.outputs.entry(output_path).or_default();
+                sources.push(path.clone());
+            }
+            let of_all = project_files.sources.entry(path.clone()).or_default();
+            of_all.push(ProjectFile {
+                project: index as u32,
+                source: source.clone(),
+                output_dts: output_dts.unwrap_or_default(),
+            });
+        }
+    }
+    let project_files = Arc::new(project_files);
     let inputs: Vec<(config::Project, Vec<ConfigError>)> = (projects.into_iter())
         .zip(about_references)
         .map(|(referenced, about)| (referenced.project, about))
         .collect();
-    // What each project has emitted, once it is built: see `WithOutputs::files`.
-    type Emitted = Vec<(Vec<u8>, Arc<Vec<u8>>)>;
-    let emitted: Vec<Guarded<Emitted>> = (0..count).map(|_| Guarded::new(Vec::new())).collect();
-    // Each program occupies memory: it has its own copy of the declaration files it reaches, however few files the project
-    // lists. One that reads the sources of what it references has all of those files too.
+    let emitted = Emitted::new(count);
+    // Each program occupies memory, for every declaration file that it reaches, however few files the project lists. One
+    // that reads the sources of what it references has all of those files too.
     let at_once = match reads_sources {
         true => request.plan_options.projects_at_once,
         false => request.plan_options.projects_at_once * 4,
     };
     let at_once = at_once.clamp(1, host.threads().max(1)).min(count.max(1));
     let built_now = (!reads_sources).then(|| AtomicUsize::new(0));
-    // `is_built`: by project, now. `Err`: the projects that have to be built first, besides those
-    // that it references.
-    let build = |index: usize, is_built: &[bool]| -> Result<Option<Report>, Vec<usize>> {
+    // `built_before`: how many are built now. `Err`: the projects that have to be built first, besides
+    // those that it references.
+    let build = |index: usize, built_before: usize| -> Result<Option<Report>, Vec<usize>> {
         let (mut project, mut about_references) = inputs[index].clone();
         if project.files.is_empty() && project.has_references {
             // `upToDateStatusTypeSolution`: there is no program. `buildProject` reports each of
@@ -3077,80 +3163,48 @@ fn check_with_references(
         project.errors.append(&mut about_references);
         // `initMapperWorker`: the references in order, each project before its own references. A
         // cycle leads back to the project itself, whose files are not those of a reference.
-        let mut is_referenced = vec![false; roots.len()];
+        let mut is_referenced: FxHashSet<usize> = FxHashSet::default();
         let mut referenced: Vec<usize> = Vec::new();
         let mut pending: Vec<usize> = references[index].iter().rev().copied().collect();
         while let Some(i) = pending.pop() {
-            if !std::mem::replace(&mut is_referenced[i], true) {
+            if is_referenced.insert(i) {
                 if i != index {
                     referenced.push(i);
                 }
                 pending.extend(references[i].iter().rev());
             }
         }
-        let mut host = WithOutputs {
+        let host = WithOutputs {
             disk: host,
-            files: FxHashMap::default(),
-            directories: FxHashSet::default(),
+            emitted: &emitted,
             expected: &expected,
-            is_pending: (0..count)
-                .map(|i| i < index && !is_built[i] && !reads_sources)
-                .collect(),
+            index,
+            built_before,
+            first_origin,
             awaited: Guarded::new(Vec::new()),
             unreadable: Guarded::new(Vec::new()),
             built_now: built_now.as_ref(),
         };
-        for i in (0..index).filter(|&i| is_built[i]) {
-            for (path, text) in emitted[i].lock().iter() {
-                host.add(path.clone(), Arc::clone(text));
-            }
-        }
         project.options.referenced_options = referenced
             .iter()
             .map(|&i| options_of_projects[i].clone())
             .collect();
-        // `ParseInputOutputNames`, `getOutputDeclarationAndSourceFileNames`
-        let mut sources: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, u32)> = (referenced.iter().enumerate())
-            .flat_map(|(at, &i)| {
-                let output = output_of(i);
-                roots[i].iter().map(move |source| {
-                    let output_dts = match reads_sources {
-                        true => None,
-                        false => output_declaration_file_name(source, output),
-                    };
-                    let path = to_path(source, is_case_sensitive).into_owned();
-                    (
-                        path,
-                        source.clone(),
-                        output_dts.unwrap_or_default(),
-                        at as u32,
-                    )
-                })
-            })
-            .collect();
-        // `maps.Copy`: of the projects that have a file, the last one has the entry.
-        sources.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.3.cmp(&a.3)));
-        sources.dedup_by(|a, b| a.0 == b.0);
-        let mut output_dts: Vec<(Vec<u8>, u32)> = (sources.iter().enumerate())
-            .filter(|(_, it)| !it.2.is_empty())
-            .map(|(index, it)| (to_path(&it.2, is_case_sensitive).into_owned(), index as u32))
-            .collect();
-        let walked = |it: &(Vec<u8>, u32)| sources[it.1 as usize].3;
-        output_dts.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0).then(walked(b).cmp(&walked(a))));
-        output_dts.dedup_by(|a, b| a.0 == b.0);
-        project.options.referenced_sources = sources;
-        project.options.referenced_output_dts = output_dts;
+        if !referenced.is_empty() {
+            project.options.project_files = Some(Arc::clone(&project_files));
+            let numbered = (0..).zip(&referenced).map(|(at, &i)| (i as u32, at));
+            project.options.referenced_projects = numbered.collect();
+        }
         if reads_sources {
             let outputs = referenced.iter().filter_map(|&i| outputs[i].clone());
             project.options.referenced_outputs = outputs.collect();
         }
         let own: FxHashSet<&[u8]> = root_paths[index].iter().map(Vec::as_slice).collect();
-        let owned_elsewhere: FxHashSet<&[u8]> = (0..roots.len())
-            .filter(|&i| is_referenced[i])
-            .flat_map(|i| root_paths[i].iter().map(Vec::as_slice))
-            .chain(elsewhere.into_iter().flatten().copied())
-            .filter(|path| !own.contains(path))
-            .collect();
+        let is_owned_elsewhere = |path: &[u8]| {
+            let mut of_all = project_files.sources.get(path).into_iter().flatten();
+            !own.contains(path)
+                && (of_all.any(|it| is_referenced.contains(&(it.project as usize)))
+                    || elsewhere.is_some_and(|elsewhere| elsewhere.contains(path)))
+        };
         let is_root = is_same_path(&project.config_path, &root_config_path, is_case_sensitive);
         project.options.is_build = reports_references || !is_root;
         project.options.build_info_file_name = project.get_build_info_file_name();
@@ -3173,15 +3227,16 @@ fn check_with_references(
                 Report::default(),
                 Instant::now(),
                 named,
-                Some(&owned_elsewhere),
+                Some(&is_owned_elsewhere),
                 Some(&|| !host.awaited.lock().is_empty()),
                 run,
                 place,
             )
         };
-        let mut checked = match is_one_program {
-            true => check(run, place),
-            false => check(None, None),
+        let mut checked = match &of_this_build {
+            _ if is_one_program => check(run, place),
+            Some(run) => check(Some(run), None),
+            None => check(of_request, None),
         };
         let mut awaited = std::mem::take(&mut *host.awaited.lock());
         if !awaited.is_empty() {
@@ -3191,13 +3246,13 @@ fn check_with_references(
         }
         // `HandleNoEmitOnError`
         if !(no_emit_on_error && !checked.diagnostics.is_empty()) && !reads_sources {
-            let mut emitted = emitted[index].lock();
+            let mut files = Vec::new();
             for (source, written) in std::mem::take(&mut checked.declaration_files) {
                 let path = declaration_file_path(index, &source);
                 if let Some(declaration_file_emitted) = request.declaration_file_emitted {
                     declaration_file_emitted(&path, &written);
                 }
-                emitted.push((path_of(path), Arc::new(written)));
+                files.push((path_of(path), Arc::new(written)));
             }
             let no_text = Arc::new(Vec::new());
             for source in &roots[index] {
@@ -3206,9 +3261,10 @@ fn check_with_references(
                         true => Arc::new(host.disk.read(source).unwrap_or_default().into_owned()),
                         false => Arc::clone(&no_text),
                     };
-                    emitted.push((path_of(output), text));
+                    files.push((path_of(output), text));
                 }
             }
+            emitted.add(index, files);
         }
         Ok(Some(checked))
     };
@@ -3221,7 +3277,8 @@ fn check_with_references(
         waits_for: Vec<usize>,
         /// By project: those that wait for it.
         waiting: Vec<Vec<usize>>,
-        is_built: Vec<bool>,
+        /// How many are built.
+        built: usize,
         /// How many are being built.
         running: usize,
         /// How many are neither built nor being built.
@@ -3237,7 +3294,7 @@ fn check_with_references(
         ready: (0..count).filter(|&it| up_stream[it].is_empty()).collect(),
         waits_for: up_stream.iter().map(Vec::len).collect(),
         waiting,
-        is_built: vec![false; count],
+        built: 0,
         running: 0,
         left: count,
     });
@@ -3264,16 +3321,17 @@ fn check_with_references(
             };
             state.left -= 1;
             state.running += 1;
-            let is_built = state.is_built.clone();
+            let built_before = state.built;
             drop(state);
-            let built = build(index, &is_built);
+            let built = build(index, built_before);
             state = builds.lock();
             let now = &mut *state;
             now.running -= 1;
             match built {
                 Ok(report) => {
                     *reports[index].lock() = report;
-                    now.is_built[index] = true;
+                    emitted.built_after[index].store(now.built, Ordering::Relaxed);
+                    now.built += 1;
                     for it in std::mem::take(&mut now.waiting[index]) {
                         now.waits_for[it] -= 1;
                         if now.waits_for[it] == 0 {
@@ -3283,7 +3341,9 @@ fn check_with_references(
                 }
                 Err(awaited) => {
                     now.left += 1;
-                    for it in awaited.into_iter().filter(|&it| !now.is_built[it]) {
+                    let is_built =
+                        |it: usize| emitted.built_after[it].load(Ordering::Relaxed) != usize::MAX;
+                    for it in awaited.into_iter().filter(|&it| !is_built(it)) {
                         now.waiting[it].push(index);
                         now.waits_for[index] += 1;
                     }
@@ -3557,7 +3617,7 @@ fn may_declare_a_global(
 
 /// `check_project`. `named`: of all loaded files, only these files (sorted) and the files they
 /// refer to are checked.
-/// `owned_elsewhere`: files of referenced projects, which are loaded but not checked.
+/// `is_owned_elsewhere`: of a file of a referenced project, which is loaded but not checked.
 /// Both have a `tspath.Path` for each file.
 fn check_named_files(
     host: &dyn Host,
@@ -3566,7 +3626,7 @@ fn check_named_files(
     mut report: Report,
     started: Instant,
     named: Option<&[Vec<u8>]>,
-    owned_elsewhere: Option<&FxHashSet<&[u8]>>,
+    is_owned_elsewhere: Option<&dyn Fn(&[u8]) -> bool>,
     // Asked when the program is loaded: whether it is not to be checked.
     is_outdated: Option<&dyn Fn() -> bool>,
     run: Option<&Run<'_>>,
@@ -3709,7 +3769,6 @@ fn check_named_files(
     if is_outdated.is_some_and(|is_outdated| is_outdated()) {
         return report;
     }
-    host.stays_loaded();
     if request.plan_options.only_the_globals {
         let files_of = |names| GlobalsOf {
             files: named.unwrap_or_default().to_vec(),
@@ -3837,9 +3896,9 @@ fn check_named_files(
     if let Some(is_reached) = &is_reached {
         to_check.retain(|file| is_reached[file.idx()]);
     }
-    if let Some(owned_elsewhere) = owned_elsewhere {
+    if let Some(is_owned_elsewhere) = is_owned_elsewhere {
         let path = |f: FileId| program.files.modules[f.idx()].path.text;
-        to_check.retain(|&f| !owned_elsewhere.contains(path(f)));
+        to_check.retain(|&f| !is_owned_elsewhere(path(f)));
     }
     if let Some(only) = request.only {
         to_check.retain(|&f| strings::contains(program.files.modules[f.idx()].file_name(), only));

@@ -31,6 +31,7 @@
 #include "NativePromiseContext.h"
 #include "ModuleGraph.h"
 #include "StrongRootBlock.h"
+#include "IsolatedModuleCache.h"
 
 namespace WebCore {
 using namespace JSC;

@@ -6,6 +6,7 @@ use super::DiffFormatter;
 use super::Expect;
 use super::throw;
 
+#[optimize(size)]
 pub(crate) fn to_have_last_returned_with(
     this: &Expect,
     global_this: &JSGlobalObject,

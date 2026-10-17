@@ -511,8 +511,6 @@ impl TypeKind {
 
 struct Env {
     joins: Joins,
-    /// `EnvironmentConfig::captured_refs_are_known_in_functions`
-    looks_into_functions: bool,
     /// Whether the type of any identifier is that of a ref or of the value of one.
     has_ref_types: bool,
     /// By identifier. Empty if none is a ref's or a ref value's.
@@ -549,7 +547,6 @@ impl Env {
                 values: Joined::default(),
                 returned: Joined::default(),
             },
-            looks_into_functions: env.config.captured_refs_are_known_in_functions,
             has_ref_types,
             type_kinds: match has_ref_types {
                 true => env.identifiers.iter().map(type_kind_of).collect(),
@@ -893,7 +890,7 @@ fn guard_check(errors: &mut Vec<CompilerDiagnostic>, operand: &Place, env: &Env)
 
 pub(crate) fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Environment) {
     let mut ref_env = Env::new(env);
-    collect_temporaries_sidemap(func, &mut ref_env, &env.functions);
+    collect_temporaries_sidemap(func, &mut ref_env);
     let mut errors: Vec<CompilerDiagnostic> = Vec::new();
     validate_no_ref_access_in_render_impl(
         func,
@@ -912,21 +909,11 @@ pub(crate) fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Env
     }
 }
 
-fn collect_temporaries_sidemap(func: &HirFunction, env: &mut Env, functions: &[HirFunction]) {
-    if !env.joins.has_stack() {
-        return;
-    }
+fn collect_temporaries_sidemap(func: &HirFunction, env: &mut Env) {
     for (_, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
             match &instr.value {
-                InstructionValue::ObjectMethod { lowered_func, .. }
-                | InstructionValue::FunctionExpression { lowered_func, .. }
-                    if env.looks_into_functions =>
-                {
-                    let inner = &functions[lowered_func.func.0 as usize];
-                    collect_temporaries_sidemap(inner, env, functions);
-                }
                 InstructionValue::LoadLocal { place, .. } => {
                     let temp = env.temporary(place.identifier);
                     env.define(instr.lvalue.identifier, temp);
@@ -972,15 +959,6 @@ fn validate_no_ref_access_in_render_impl(
     for param in &func.params {
         let place = param.place();
         ref_env.set(place.identifier, ref_env.ref_type_of_type(place.identifier));
-    }
-    // Seed captured context places so refs captured from an enclosing scope are
-    // recognized as Ref/RefValue inside the lambda body. Callbacks passed to
-    // useState/useReducer (and IIFEs) execute during render, so a captured ref
-    // read must be detected here for `read_ref_effect` to propagate.
-    if ref_env.looks_into_functions {
-        for place in &func.context {
-            ref_env.set(place.identifier, ref_env.ref_type_of_type(place.identifier));
-        }
     }
 
     let mut interpolated_as_jsx: Option<IdBitSet<IdentifierId>> = None;

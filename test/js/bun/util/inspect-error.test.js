@@ -237,6 +237,38 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
   }).toThrow();
 });
 
+// Once script has read error.stack, the frames are read back from that text.
+test("a folder named in parentheses, in the stack of an error whose stack was read", async () => {
+  using dir = tempDir("inspect-error-parentheses", {
+    "(group)/throws.js": `throw new Error("at the top level");`,
+    "(group)/fails.js": `export function fails() { throw new Error("in a function"); }`,
+    "index.js": `
+      for (const run of [() => import("./(group)/throws.js"), async () => (await import("./(group)/fails.js")).fails()]) {
+        try {
+          await run();
+        } catch (error) {
+          void error.stack;
+          console.log(Bun.inspect(error).split("\\n").find(line => /^\\s+at /.test(line)).trim());
+        }
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.replaceAll("\\", "/").replaceAll(String(dir).replaceAll("\\", "/"), "[dir]").split("\n")).toEqual([
+    "at [dir]/(group)/throws.js:1:11",
+    "at fails ([dir]/(group)/fails.js:1:37)",
+    "",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 describe("source map remapping of the printed stack", () => {
   // The "at ..." lines that mention one of `files`, with the temp dir removed
   // from the paths.

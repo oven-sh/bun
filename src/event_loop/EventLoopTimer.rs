@@ -57,6 +57,9 @@ pub struct EventLoopTimer {
     /// Internal heap fields.
     pub heap: IntrusiveField<EventLoopTimer>,
     pub in_heap: InHeap,
+    /// A `setTimeout()` without a delay in `bun test`. Its deadline is 1 ms away, as in Node, so its place among the
+    /// timers is Node's. An event loop that would sleep until then runs it at once.
+    pub is_due_when_idle: bool,
 }
 
 // Duck-typed `.heap` field access for `bun_io::heap::Intrusive`. Implemented
@@ -85,6 +88,7 @@ impl EventLoopTimer {
             tag,
             heap: IntrusiveField::default(),
             in_heap: InHeap::None,
+            is_due_when_idle: false,
         }
     }
 
@@ -108,6 +112,10 @@ impl EventLoopTimer {
 
         let order = a_ns.cmp(&b_ns);
         if order == core::cmp::Ordering::Equal {
+            // Only a fake `setImmediate` is ever in a heap. It runs before timeouts due at the same instant.
+            if (a.tag == Tag::ImmediateObject) != (b.tag == Tag::ImmediateObject) {
+                return a.tag == Tag::ImmediateObject;
+            }
             if let Some(a_epoch) = maybe_a_epoch {
                 if let Some(b_epoch) = maybe_b_epoch {
                     // We expect that the epoch will overflow sometimes.
@@ -118,15 +126,15 @@ impl EventLoopTimer {
                     // Wrapping subtraction gives us a distance that is consistent even if one
                     // epoch has overflowed and the other hasn't. If the distance from a to b is
                     // small, it's likely that b is really newer than a, so we consider a less than
-                    // b. If the distance from a to b is large (greater than half the u25 range),
+                    // b. If the distance from a to b is large (greater than half the u24 range),
                     // it's more likely that b is older than a so the true distance is from b to a.
                     //
-                    // The epoch is logically a u25, stored in a wider int,
-                    // so we mask the wrapping_sub result to 25 bits to wrap mod 2^25.
-                    // (`TimerFlags::epoch`/`set_epoch` below mask to 25 bits on both read
-                    // and write, so both operands here are already < 2^25.)
-                    const U25_MAX: u32 = (1 << 25) - 1;
-                    return (b_epoch.wrapping_sub(a_epoch) & U25_MAX) < U25_MAX / 2;
+                    // The epoch is logically a u24, stored in a wider int,
+                    // so we mask the wrapping_sub result to 24 bits to wrap mod 2^24.
+                    // (`TimerFlags::epoch`/`set_epoch` below mask to 24 bits on both read
+                    // and write, so both operands here are already < 2^24.)
+                    const U24_MAX: u32 = TimerFlags::EPOCH_MASK;
+                    return (b_epoch.wrapping_sub(a_epoch) & U24_MAX) < U24_MAX / 2;
                 }
             }
         }
@@ -209,20 +217,53 @@ pub enum Tag {
     CronJob,
     GcRepeating,
     QuicEndpoint,
+    FakeTimersTick,
+    ViWait,
 }
 
 impl Tag {
-    /// Whether `jest.useFakeTimers()` captures this timer. Only timers a
+    /// Whether `jest.useFakeTimers()` can capture this timer. Only timers a
     /// program schedules itself are faked; runtime-internal timeouts stay on
-    /// the real clock, as in Jest. A fakeable owner arms with
-    /// `AllowMockedTime` and has a release arm in `FakeTimers::clear`; every
-    /// other owner arms with `ForceRealTime`, the clock the real heap is
-    /// drained against.
+    /// the real clock, as in Jest. A fakeable owner has a release arm in
+    /// `FakeTimers::clear`; every other owner arms with `ForceRealTime`, the
+    /// clock the real heap is drained against.
     pub fn allow_fake_timers(self) -> bool {
         matches!(
             self,
-            Tag::TimeoutObject | Tag::AbortSignalTimeout | Tag::CronJob
+            Tag::TimeoutObject | Tag::ImmediateObject | Tag::AbortSignalTimeout | Tag::CronJob
         )
+    }
+
+    /// Runtime-internal timers that never settle anything the program waits on.
+    pub fn is_housekeeping(self) -> bool {
+        match self {
+            Tag::WTFTimer
+            | Tag::DevServerSweepSourceMaps
+            | Tag::DevServerMemoryVisualizerTick
+            | Tag::DateHeaderTimer
+            | Tag::BunTest
+            | Tag::EventLoopDelayMonitor
+            | Tag::GcRepeating => true,
+            Tag::TimeoutObject
+            | Tag::ImmediateObject
+            | Tag::StatWatcherScheduler
+            | Tag::UpgradedDuplex
+            | Tag::DNSResolver
+            | Tag::DnsSdConnection
+            | Tag::WindowsNamedPipe
+            | Tag::PostgresSQLConnectionTimeout
+            | Tag::PostgresSQLConnectionMaxLifetime
+            | Tag::MySQLConnectionTimeout
+            | Tag::MySQLConnectionMaxLifetime
+            | Tag::ValkeyConnectionTimeout
+            | Tag::ValkeyConnectionReconnect
+            | Tag::SubprocessTimeout
+            | Tag::AbortSignalTimeout
+            | Tag::CronJob
+            | Tag::QuicEndpoint
+            | Tag::FakeTimersTick
+            | Tag::ViWait => false,
+        }
     }
 }
 
@@ -331,7 +372,7 @@ impl From<Kind> for KindBig {
 }
 
 /// Packed per-JS-timer state in a `u32`. Layout (LSB→MSB):
-///   epoch:u25, kind:u2, has_cleared_timer:1, is_keeping_event_loop_alive:1,
+///   epoch:u24, fake:1, kind:u2, has_cleared_timer:1, is_keeping_event_loop_alive:1,
 ///   has_accessed_primitive:1, has_js_ref:1, in_callback:1
 ///
 /// Used by `TimeoutObject` / `ImmediateObject` / `AbortSignal::Timeout`.
@@ -347,7 +388,8 @@ impl Default for TimerFlags {
 }
 
 impl TimerFlags {
-    const EPOCH_MASK: u32 = (1 << 25) - 1;
+    pub const EPOCH_MASK: u32 = (1 << 24) - 1;
+    const FAKE: u32 = 1 << 24;
     const KIND_SHIFT: u32 = 25;
     const KIND_MASK: u32 = 0b11 << Self::KIND_SHIFT;
     const HAS_CLEARED_TIMER: u32 = 1 << 27;
@@ -367,6 +409,19 @@ impl TimerFlags {
     #[inline]
     pub fn set_epoch(&mut self, v: u32) {
         self.0 = (self.0 & !Self::EPOCH_MASK) | (v & Self::EPOCH_MASK);
+    }
+    /// Created by a function `jest.useFakeTimers()` installed, so it always arms on the fake clock and heap.
+    #[inline]
+    pub fn fake(self) -> bool {
+        self.0 & Self::FAKE != 0
+    }
+    #[inline]
+    pub fn set_fake(&mut self, v: bool) {
+        if v {
+            self.0 |= Self::FAKE
+        } else {
+            self.0 &= !Self::FAKE
+        }
     }
     /// Kind does not include AbortSignal's timeout since it has no
     /// corresponding ID callback.

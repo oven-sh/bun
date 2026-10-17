@@ -6,14 +6,18 @@
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::{
-    AstAlloc, BuiltinTag, Effect, HirVec, InstructionValue, JsxAttribute, JsxTag, Place,
-    PrimitiveValue, PropertyLiteral, SourceLocation, StoreStr, VariableBinding,
+    AstAlloc, BuiltinTag, Effect, HirVec, InstructionValue, JsxAttribute, JsxTag, ObjectProperty,
+    ObjectPropertyOrSpread, ObjectPropertyType, Place, PrimitiveValue, PropertyLiteral,
+    SourceLocation, StoreStr, VariableBinding,
 };
 use bun_ast::expr::Data as ExprData;
 use bun_ast::{E, Expr, G, Loc, Ref};
 
 use super::expr::lower_expression;
-use super::helpers::{lower_expression_to_temporary, lower_identifier, lower_value_to_temporary};
+use super::helpers::{
+    lower_expression_to_temporary, lower_identifier, lower_object_property_key,
+    lower_value_to_temporary,
+};
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 use crate::program::JsxImportKind;
 
@@ -280,13 +284,7 @@ pub(super) fn lower_jsx_call(
                 continue;
             };
             let ExprData::EString(key_str) = &key_expr.data else {
-                builder.record_error(CompilerErrorDetail {
-                    category: ErrorCategory::Todo,
-                    reason: "(BuildHIR::lowerJsxCall) non-string JSX attribute key".to_string(),
-                    description: None,
-                    loc: convert_loc(key_expr.loc),
-                    suggestions: None,
-                })?;
+                props.extend(lower_prop_as_spread(builder, prop, key_expr)?);
                 continue;
             };
             let _key_loc = convert_loc(key_expr.loc);
@@ -344,14 +342,7 @@ pub(super) fn lower_jsx_call(
                         continue;
                     };
                     let ExprData::EString(key_str) = &key_expr.data else {
-                        builder.record_error(CompilerErrorDetail {
-                            category: ErrorCategory::Todo,
-                            reason: "(BuildHIR::lowerJsxCall) non-string JSX attribute key"
-                                .to_string(),
-                            description: None,
-                            loc: convert_loc(key_expr.loc),
-                            suggestions: None,
-                        })?;
+                        props.extend(lower_prop_as_spread(builder, prop, key_expr)?);
                         continue;
                     };
                     let _key_loc = convert_loc(key_expr.loc);
@@ -463,6 +454,47 @@ fn record_accessor_prop(
         suggestions: None,
     })?;
     Ok(true)
+}
+
+/// The visit pass inlines `<a {...{ [k]: v }} />` into the props object too. A `JsxAttribute` has a name, not a computed
+/// key, so the property is wrapped in an object of its own and spread.
+fn lower_prop_as_spread(
+    builder: &mut HirBuilder,
+    prop: &G::Property,
+    key_expr: &Expr,
+) -> Result<Option<JsxAttribute>, CompilerError> {
+    use bun_ast::flags::Property as Flag;
+    let loc = convert_loc(key_expr.loc);
+    if prop.flags.contains(Flag::IsMethod) {
+        builder.record_error(CompilerErrorDetail {
+            category: ErrorCategory::Todo,
+            reason: "(BuildHIR::lowerJsxCall) Handle methods with a computed key in JSX props"
+                .to_string(),
+            description: None,
+            loc,
+            suggestions: None,
+        })?;
+        return Ok(None);
+    }
+    let is_computed = prop.flags.contains(Flag::IsComputed);
+    let Some(key) = lower_object_property_key(builder, key_expr, is_computed)? else {
+        return Ok(None);
+    };
+    let Some(value) = prop.value.as_ref() else {
+        return Ok(None);
+    };
+    let place = lower_expression_to_temporary(builder, value)?;
+    let mut properties: HirVec<ObjectPropertyOrSpread> = AstAlloc::vec();
+    properties.push(ObjectPropertyOrSpread::Property(ObjectProperty {
+        key,
+        property_type: ObjectPropertyType::Property,
+        place,
+    }));
+    let argument = lower_value_to_temporary(
+        builder,
+        InstructionValue::ObjectExpression { properties, loc },
+    )?;
+    Ok(Some(JsxAttribute::SpreadAttribute { argument }))
 }
 
 fn todo_err(reason: &str, loc: Option<SourceLocation>) -> CompilerError {

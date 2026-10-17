@@ -45,7 +45,7 @@ function lazyInspectModule() {
 
 var debugs = {};
 var debugEnvRegex = /^$/;
-const NODE_DEBUG = process.env.NODE_DEBUG;
+const NODE_DEBUG = Bun.env.NODE_DEBUG;
 if (NODE_DEBUG) {
   debugEnv = NODE_DEBUG;
   debugEnv = debugEnv
@@ -574,6 +574,10 @@ function validateSourceMapOption(options) {
   }
 }
 
+function diff(actual, expected) {
+  return require("internal/util/diff").diff(actual, expected);
+}
+
 function getCallSites(frameCount = 10, options) {
   // If options is not provided check if frameCount is an object
   if (options === undefined) {
@@ -763,6 +767,7 @@ cjs_exports = {
   TextEncoder,
   MIMEType,
   MIMEParams,
+  diff,
 
   // Deprecated in Node.js 22, removed in 23
   isArray: $isArray,

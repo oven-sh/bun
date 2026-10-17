@@ -10,9 +10,11 @@ use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{EncodedSlice, strings};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
+use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
+use bun_options_types::context::{JunitSuites, ReactCompilerScope, TestGlobals};
 use bun_paths as bun_path;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
@@ -59,6 +61,7 @@ use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 // `crate::test_runner::*`; the façade below adapts the body's nested-path
 // usage (`bun_test::Execution::Result`, `bun_test::BasicResult`, …) without a
 // 2k-line body rewrite.
+use crate::test_runner::environment::Environment;
 use crate::test_runner::jest::{self, FileColumns as _, Summary, TestRunner};
 use crate::test_runner::snapshot::Snapshots;
 use bun_collections::index_sort;
@@ -183,6 +186,8 @@ pub(crate) struct TestCaseReport<'a> {
     pub elapsed_ns: u64,
     pub line_number: u32,
     pub failure: Option<TestFailure>,
+    /// Failures from earlier attempts of a retried test, oldest first.
+    pub earlier_failures: Vec<TestFailure>,
 }
 
 /// Append `input` to `out`, dropping CSI sequences (`ESC '[' ... final`), so a
@@ -219,6 +224,7 @@ pub(crate) struct JunitReporter {
 
     pub(crate) suite_stack: Vec<SuiteInfo>,
     pub(crate) current_depth: u32,
+    pub(crate) suites: JunitSuites,
 
     pub(crate) hostname_value: Option<Box<[u8]>>,
 }
@@ -288,12 +294,23 @@ impl JunitReporter {
         None
     }
 
-    pub(crate) fn init() -> Box<JunitReporter> {
-        Box::new(JunitReporter::default())
+    pub(crate) fn init(suites: JunitSuites) -> Box<JunitReporter> {
+        Box::new(JunitReporter {
+            suites,
+            ..Default::default()
+        })
     }
 }
 
 impl TestFailure {
+    pub(crate) fn timed_out() -> TestFailure {
+        TestFailure {
+            name: b"TimeoutError".to_vec(),
+            message: b"test timed out".to_vec(),
+            body: Vec::new(),
+        }
+    }
+
     /// Fold in a `ZigException` that `print_error_instance_body` has already
     /// populated. A test can throw more than once (body, then `afterEach`);
     /// the first name/message win and every stack is appended.
@@ -373,6 +390,7 @@ impl TestFailure {
     }
 
     /// VirtualMachine::on_print_error_zig_exception thunk.
+    #[optimize(size)]
     pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
         // SAFETY: `ctx` was set to `&mut CommandLineReporter.test_failure` by
         // `on_uncaught_exception` for the duration of a single
@@ -497,6 +515,7 @@ impl JunitReporter {
         self.begin_test_suite_with_line(name, 0, true)
     }
 
+    #[optimize(size)]
     pub(crate) fn begin_test_suite_with_line(
         &mut self,
         name: &[u8],
@@ -570,6 +589,7 @@ impl JunitReporter {
         Ok(())
     }
 
+    #[optimize(size)]
     fn end_test_suite(&mut self, file_elapsed_ns: Option<u64>) -> crate::Result<()> {
         if self.suite_stack.is_empty() {
             return Ok(());
@@ -630,6 +650,7 @@ impl JunitReporter {
 
     /// Open/close `<testsuite>` elements so the stack matches `t.file` and
     /// `t.scopes`, then write the `<testcase>`.
+    #[optimize(size)]
     pub(crate) fn record_test_case(&mut self, t: &TestCaseReport<'_>) -> crate::Result<()> {
         if !strings::eql(&self.current_file, t.file) {
             while let Some(top) = self.suite_stack.last()
@@ -641,6 +662,16 @@ impl JunitReporter {
                 self.end_test_suite(None)?;
             }
             self.begin_test_suite(t.file)?;
+        }
+
+        if self.suites == JunitSuites::Flat {
+            let mut name: Vec<u8> = Vec::new();
+            for &(scope, _) in &t.scopes {
+                name.extend_from_slice(scope);
+                name.extend_from_slice(b" > ");
+            }
+            name.extend_from_slice(t.name);
+            return self.write_test_case(t, &name, t.file);
         }
 
         // Keep the longest prefix of open describe suites that matches
@@ -667,13 +698,55 @@ impl JunitReporter {
             class_name.extend_from_slice(name);
         }
 
-        self.write_test_case(t, &class_name)
+        self.write_test_case(t, t.name, &class_name)
     }
 
-    fn write_test_case(&mut self, t: &TestCaseReport<'_>, class_name: &[u8]) -> crate::Result<()> {
+    /// Writes `<failure>`, or Surefire's `<flakyFailure>` / `<rerunFailure>` for a retried test.
+    fn write_failure(
+        &mut self,
+        indent: &[u8],
+        element: &[u8],
+        failure: Option<&TestFailure>,
+    ) -> crate::Result<()> {
+        let type_name: &[u8] = failure
+            .map(|f| f.name.as_slice())
+            .filter(|n| !n.is_empty())
+            .unwrap_or(b"Error");
+        self.contents.extend_from_slice(indent);
+        self.contents.extend_from_slice(b"  <");
+        self.contents.extend_from_slice(element);
+        self.contents.extend_from_slice(b" type=\"");
+        escape_xml(type_name, &mut self.contents)?;
+        self.contents.extend_from_slice(b"\"");
+        if let Some(f) = failure.filter(|f| !f.message.is_empty()) {
+            self.contents.extend_from_slice(b" message=\"");
+            escape_xml(&f.message, &mut self.contents)?;
+            self.contents.extend_from_slice(b"\"");
+        }
+        match failure.filter(|f| !f.body.is_empty()) {
+            Some(f) => {
+                self.contents.extend_from_slice(b">");
+                escape_xml(&f.body, &mut self.contents)?;
+                self.contents.extend_from_slice(b"</");
+                self.contents.extend_from_slice(element);
+                self.contents.extend_from_slice(b">\n");
+            }
+            None => {
+                self.contents.extend_from_slice(b" />\n");
+            }
+        }
+        Ok(())
+    }
+
+    #[optimize(size)]
+    fn write_test_case(
+        &mut self,
+        t: &TestCaseReport<'_>,
+        name: &[u8],
+        class_name: &[u8],
+    ) -> crate::Result<()> {
         let TestCaseReport {
             file,
-            name,
             status,
             assertions,
             elapsed_ns,
@@ -724,8 +797,16 @@ impl JunitReporter {
 
         use bun_test::Execution::Result as R;
         match status {
-            R::Pass => {
+            R::Pass if t.earlier_failures.is_empty() => {
                 self.contents.extend_from_slice(b" />\n");
+            }
+            R::Pass => {
+                self.contents.extend_from_slice(b">\n");
+                for earlier in &t.earlier_failures {
+                    self.write_failure(indent, b"flakyFailure", Some(earlier))?;
+                }
+                self.contents.extend_from_slice(indent);
+                self.contents.extend_from_slice(b"</testcase>\n");
             }
             R::Fail => {
                 if !self.suite_stack.is_empty() {
@@ -733,36 +814,14 @@ impl JunitReporter {
                     self.suite_stack[last].metrics.failures += 1;
                 }
                 self.contents.extend_from_slice(b">\n");
-                self.contents.extend_from_slice(indent);
-                let type_name: &[u8] = failure
-                    .as_ref()
-                    .map(|f| f.name.as_slice())
-                    .filter(|n| !n.is_empty())
-                    .unwrap_or(b"Error");
-                self.contents.extend_from_slice(b"  <failure type=\"");
-                escape_xml(type_name, &mut self.contents)?;
-                self.contents.extend_from_slice(b"\"");
-                if let Some(f) = failure.as_ref() {
-                    if !f.message.is_empty() {
-                        self.contents.extend_from_slice(b" message=\"");
-                        escape_xml(&f.message, &mut self.contents)?;
-                        self.contents.extend_from_slice(b"\"");
-                    }
-                }
-                match failure.as_ref().filter(|f| !f.body.is_empty()) {
-                    Some(f) => {
-                        self.contents.extend_from_slice(b">");
-                        escape_xml(&f.body, &mut self.contents)?;
-                        self.contents.extend_from_slice(b"</failure>\n");
-                    }
-                    None => {
-                        self.contents.extend_from_slice(b" />\n");
-                    }
+                self.write_failure(indent, b"failure", failure)?;
+                for earlier in &t.earlier_failures {
+                    self.write_failure(indent, b"rerunFailure", Some(earlier))?;
                 }
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
-            R::FailBecauseFailingTestPassed => {
+            R::FailBecauseFailingTestPassed | R::FailBecauseFailsTestPassed => {
                 if !self.suite_stack.is_empty() {
                     let last = self.suite_stack.len() - 1;
                     self.suite_stack[last].metrics.failures += 1;
@@ -771,7 +830,12 @@ impl JunitReporter {
                 self.contents.extend_from_slice(indent);
                 let _ = writeln!(
                     &mut self.contents,
-                    "  <failure message=\"test marked with .failing() did not throw\" type=\"AssertionError\"/>"
+                    "  <failure message=\"test marked with {}\" type=\"AssertionError\"/>",
+                    if status == R::FailBecauseFailsTestPassed {
+                        ".fails() did not fail"
+                    } else {
+                        ".failing() did not throw"
+                    }
                 );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
@@ -851,10 +915,10 @@ impl JunitReporter {
                     self.suite_stack[last].metrics.failures += 1;
                 }
                 self.contents.extend_from_slice(b">\n");
-                self.contents.extend_from_slice(indent);
-                self.contents.extend_from_slice(
-                    b"  <failure type=\"TimeoutError\" message=\"test timed out\" />\n",
-                );
+                self.write_failure(indent, b"failure", Some(&TestFailure::timed_out()))?;
+                for earlier in &t.earlier_failures {
+                    self.write_failure(indent, b"rerunFailure", Some(earlier))?;
+                }
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
@@ -933,6 +997,70 @@ impl JunitReporter {
 /// would before exiting; the vendored-node-test runner opts in via
 /// `BUN_TEST_DRAIN_EVENT_LOOP=1` so mustCall()-style exit checks see
 /// completed async work. Off by default: bun suites keep exit-after-tests.
+/// An entry of `include` or `exclude`.
+struct ReactCompilerEntry {
+    /// As written. A pattern like "**/*.stories.tsx" is matched against the file's path relative to the run directory.
+    written: Box<[u8]>,
+    /// Resolved against the run directory, so that ".", "../../apps/web" and "../.." mean the folders they point to.
+    absolute: Box<[u8]>,
+}
+
+fn with_forward_slashes(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    use std::borrow::Cow;
+    if cfg!(windows) {
+        let replaced = path.iter().map(|&b| if b == b'\\' { b'/' } else { b });
+        Cow::Owned(replaced.collect())
+    } else {
+        Cow::Borrowed(path)
+    }
+}
+
+/// Leaked on purpose: every thread's transpiler calls it until the process exits.
+fn react_compiler_filter(
+    scope: &ReactCompilerScope,
+    root: &'static [u8],
+) -> &'static (dyn Fn(&[u8]) -> bool + Sync) {
+    let entries = |written: &[Box<[u8]>]| -> Vec<ReactCompilerEntry> {
+        written
+            .iter()
+            .map(|written| {
+                let written: &[u8] = written;
+                let absolute =
+                    resolve_path::join_abs_string::<bun_path::platform::Auto>(root, &[written]);
+                let absolute = with_forward_slashes(absolute);
+                let written = written.strip_prefix(b"./").unwrap_or(written);
+                ReactCompilerEntry {
+                    written: Box::from(written),
+                    absolute: Box::from(absolute.strip_suffix(b"/").unwrap_or(&absolute)),
+                }
+            })
+            .collect()
+    };
+    let (include, exclude) = (entries(&scope.include), entries(&scope.exclude));
+    Box::leak(Box::new(move |path: &[u8]| {
+        // The original of a mocked module is loaded as "file.ts?actual".
+        let path = &path[..strings::index_of_char(path, b'?').map_or(path.len(), |at| at as usize)];
+        let name = bun_paths::basename(path);
+        let stem = &name[..name.len() - bun_paths::extension(name).len()];
+        if scanner::TEST_NAME_SUFFIXES
+            .iter()
+            .any(|suffix| stem.ends_with(suffix))
+        {
+            return false;
+        }
+        let relative = with_forward_slashes(resolve_path::relative(root, path));
+        let path = with_forward_slashes(path);
+        let matches = |entry: &ReactCompilerEntry| {
+            // A folder matches everything inside it.
+            path.strip_prefix(&*entry.absolute)
+                .is_some_and(|rest| rest.is_empty() || rest[0] == b'/')
+                || bun_glob::r#match(&entry.written, &relative).matches()
+                || bun_glob::r#match(&entry.absolute, &path).matches()
+        };
+        (include.is_empty() || include.iter().any(matches)) && !exclude.iter().any(matches)
+    }))
+}
+
 fn should_drain_event_loop() -> bool {
     env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
@@ -966,6 +1094,8 @@ pub(crate) struct CommandLineReporter {
     /// that attaches them to the test case (JUnit) is on. Taken by
     /// `handle_test_completed`.
     pub(crate) test_failure: Option<TestFailure>,
+    /// Failures from earlier attempts of the test that's being retried.
+    pub(crate) earlier_test_failures: Vec<TestFailure>,
 
     pub(crate) failures_to_repeat_buf: Vec<u8>,
     pub(crate) skips_to_repeat_buf: Vec<u8>,
@@ -1156,11 +1286,12 @@ impl CommandLineReporter {
             match status {
                 R::Pending | R::Pass | R::Skip | R::SkippedBecauseLabel | R::Todo | R::Fail => {}
 
-                R::FailBecauseFailingTestPassed => {
+                R::FailBecauseFailingTestPassed | R::FailBecauseFailsTestPassed => {
                     let _ = bun_core::write_pretty!(
                         writer,
                         colors,
-                        "  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n"
+                        "  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.{s}` if tested behavior now works<r>\n",
+                        test_entry.base.mode.tag_name()
                     );
                 }
                 R::FailBecauseTodoPassed => {
@@ -1216,6 +1347,7 @@ impl CommandLineReporter {
         test_entry: &'a bun_test::ExecutionEntry,
         elapsed_ns: u64,
         failure: Option<TestFailure>,
+        earlier_failures: Vec<TestFailure>,
     ) -> TestCaseReport<'a> {
         let file: &[u8] = if let Some(runner) = jest::Jest::runner() {
             runner.files.items_source()[buntest.file_id as usize]
@@ -1253,6 +1385,30 @@ impl CommandLineReporter {
             elapsed_ns,
             line_number: test_entry.base.line_no,
             failure,
+            earlier_failures,
+        }
+    }
+
+    /// An error outside of any test fails the run, so structured reporters get it as a failed test case of its file.
+    pub(crate) fn record_unhandled_error(&mut self, file_id: jest::FileId, failure: TestFailure) {
+        let Some(runner) = jest::Jest::runner() else {
+            return;
+        };
+        let report = TestCaseReport {
+            file: junit_file_name(runner.files.items_source()[file_id as usize].path.text),
+            scopes: Vec::new(),
+            name: b"(unhandled error)",
+            status: bun_test::Execution::Result::Fail,
+            assertions: 0,
+            elapsed_ns: 0,
+            line_number: 0,
+            failure: Some(failure),
+            earlier_failures: Vec::new(),
+        };
+        if let Some(idx) = self.worker_ipc_file_idx {
+            ParallelRunner::worker_emit_test_done(idx, b"", Some(&report));
+        } else if let Some(junit) = self.reporters.junit.as_mut() {
+            junit.record_test_case(&report).expect("oom");
         }
     }
 
@@ -1358,8 +1514,12 @@ impl CommandLineReporter {
         // the coordinator replays into its own `JunitReporter`.
         let report = this.jest.test_options.reporters.junit.then(|| {
             let failure = this.test_failure.take();
-            Self::test_case_report(result, buntest, sequence, test_entry, elapsed_ns, failure)
+            let earlier = core::mem::take(&mut this.earlier_test_failures);
+            Self::test_case_report(
+                result, buntest, sequence, test_entry, elapsed_ns, failure, earlier,
+            )
         });
+        this.earlier_test_failures.clear();
         if let Some(idx) = this.worker_ipc_file_idx {
             ParallelRunner::worker_emit_test_done(idx, formatted_line, report.as_ref());
         } else {
@@ -1394,6 +1554,7 @@ impl CommandLineReporter {
 
             R::Fail
             | R::FailBecauseFailingTestPassed
+            | R::FailBecauseFailsTestPassed
             | R::FailBecauseTodoPassed
             | R::FailBecauseExpectedHasAssertions
             | R::FailBecauseExpectedAssertionCount
@@ -1440,6 +1601,7 @@ impl CommandLineReporter {
     }
 
     /// Like the JUnit report, called before every exit path (including bail) so measured durations aren't lost.
+    #[optimize(size)]
     pub(crate) fn write_timings_if_needed(&mut self) {
         if self.jest.test_options.update_timings
             && self.worker_ipc_file_idx.is_none()
@@ -1452,6 +1614,7 @@ impl CommandLineReporter {
     /// Writes the JUnit reporter output file if a JUnit reporter is active and
     /// an outfile path was configured. This must be called before any early exit
     /// (e.g. bail) so that the report is not lost.
+    #[optimize(size)]
     pub(crate) fn write_junit_report_if_needed(&mut self) {
         if let Some(junit) = self.reporters.junit.as_mut() {
             if let Some(outfile) = self.jest.test_options.reporter_outfile.as_deref() {
@@ -1521,6 +1684,7 @@ impl CommandLineReporter {
 /// `reports` (sorted by path), and set `opts.fractions.failing`. The serial
 /// runner passes this process's reports; the `--parallel` coordinator passes
 /// reports merged from every worker. Errors only from writing `lcov.info`.
+#[optimize(size)]
 pub(crate) fn print_coverage_reports(
     opts: &mut CodeCoverageOptions,
     reports: &[CodeCoverageReport<'_>],
@@ -1635,6 +1799,7 @@ fn print_coverage_table<const COLORS: bool>(
 
 /// Render to `<reports_directory>/.lcov.info.<hex>.tmp` and rename it over
 /// `lcov.info`, so an interrupted run never leaves a truncated report.
+#[optimize(size)]
 fn write_lcov_report(
     opts: &CodeCoverageOptions,
     relative_dir: &[u8],
@@ -1707,14 +1872,24 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
         return false;
     }
 
-    let ext = bun_path::extension(slice);
     // SAFETY: `VirtualMachine::get()` returns the process-lifetime VM pointer; only
     // called from the JS thread once a VM exists.
-    let loader_by_ext = VirtualMachine::get()
-        .as_mut()
-        .transpiler
-        .options
-        .loader(ext);
+    let options = &VirtualMachine::get().as_mut().transpiler.options;
+
+    // Skip the wrapper modules Bun generates for these suffixes. Other queries (a plugin's `./a.vue?x`) are user code.
+    if let Some(query) = strings::index_of_char_usize(slice, b'?') {
+        use bun_bundler::options::ImportSuffix;
+        let by_extension = options.loader(bun_path::extension(&slice[..query]));
+        if matches!(
+            ImportSuffix::find(&slice[query..], Some(by_extension)),
+            Some(ImportSuffix::Inline | ImportSuffix::Init | ImportSuffix::Worker(_))
+        ) {
+            return false;
+        }
+    }
+
+    let ext = bun_path::extension(slice);
+    let loader_by_ext = options.loader(ext);
 
     // allow file loader just incase they use a custom loader with a non-standard extension
     if !(loader_by_ext.is_javascript_like() || loader_by_ext == bun_ast::Loader::File) {
@@ -1741,6 +1916,7 @@ impl TestCommand {
     // pub use bun_options_types::code_coverage_options::{CodeCoverageOptions, Reporter, Reporters};
     // Re-exports moved to top-level `use` per crate map.
 
+    #[optimize(size)]
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
         Output::IS_GITHUB_ACTION.store(
             Output::is_github_action(),
@@ -1783,25 +1959,22 @@ impl TestCommand {
         // outlives all observers.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
         jsc::initialize(jsc::InitializeOptions {
-            short_lived_globals: ctx.test_options.isolate,
+            short_lived_globals: ctx.test_options.isolate && !ctx.test_options.isolate_modules,
             ..Default::default()
         });
         bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
-        let seed: u32 = if enable_random {
-            ctx.test_options
-                .seed
-                .unwrap_or_else(|| bun::fast_random() as u32) // @truncate
-        } else {
-            0
-        }; // seed is limited to u32 so storing it in js doesn't lose precision
+        // `describe.shuffle` needs a seed even without --randomize.
+        let seed: u32 = ctx
+            .test_options
+            .seed
+            .unwrap_or_else(|| bun::fast_random() as u32); // @truncate
+        // seed is limited to u32 so storing it in js doesn't lose precision
         // Persist the chosen seed so --parallel forwards it to every worker;
         // otherwise each worker would draw its own and the printed --seed=N
         // would not reproduce the run.
-        if enable_random {
-            ctx.test_options.seed = Some(seed);
-        }
+        ctx.test_options.seed = Some(seed);
         // `DefaultPrng` is `Copy`, so pass the prng by value to TestRunner
         // and keep a local copy for shuffling.
         let random_instance: Option<bun::rand::DefaultPrng> = if enable_random {
@@ -1843,7 +2016,6 @@ impl TestCommand {
             jest: TestRunner {
                 default_timeout_ms: ctx.test_options.default_timeout_ms,
                 concurrent: ctx.test_options.concurrent,
-                randomize_seed: if enable_random { Some(seed) } else { None },
                 // SAFETY: lifetime-erase to `'static`; backing storage lives in `ctx`
                 // (process-lifetime singleton) and `concurrent_test_glob_view` is held
                 // in this never-returning frame.
@@ -1871,17 +2043,21 @@ impl TestCommand {
                 files: jest::FileList::default(),
                 index: jest::FileMap::default(),
                 default_timeout_override: u32::MAX,
+                vi_config: Default::default(),
+                vi_config_of_preload: Default::default(),
                 // SAFETY: lifetime-erase to `'static`; `ctx` is the
                 // process-lifetime CLI context and `exec()` never returns.
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
                 node_test_used: false,
+                environment_is_left: false,
             },
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
             worker_ipc_file_idx: None,
             test_failure: None,
+            earlier_test_failures: Vec::new(),
             failures_to_repeat_buf: Vec::new(),
             skips_to_repeat_buf: Vec::new(),
             todos_to_repeat_buf: Vec::new(),
@@ -1904,7 +2080,9 @@ impl TestCommand {
         // literal above (lifetime-erased); the post-init assignment is dropped.
 
         if ctx.test_options.reporters.junit && !ctx.test_options.test_worker {
-            reporter.reporters.junit = Some(JunitReporter::init());
+            reporter.reporters.junit = Some(JunitReporter::init(
+                ctx.test_options.reporters.junit_suites.unwrap_or_default(),
+            ));
         }
         if ctx.test_options.reporters.dots {
             reporter.reporters.dots = true;
@@ -1941,8 +2119,17 @@ impl TestCommand {
         };
         vm.argv = core::mem::take(&mut ctx.passthrough);
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
-        vm.preload = ctx.preloads.clone();
+        vm.preload.clone_from(&ctx.preloads);
         vm.transpiler.options.rewrite_jest_for_tests = true;
+        vm.transpiler.options.vitest_globals =
+            ctx.test_options.globals == Some(TestGlobals::Vitest);
+        if let Some(scope) = &ctx.test_options.react_compiler {
+            vm.transpiler.options.react_compiler = bun_ast::runtime::ReactCompilerMode::Client;
+            vm.transpiler.options.react_compiler_filter = Some(react_compiler_filter(
+                scope,
+                FileSystem::instance().top_level_dir,
+            ));
+        }
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,
             core::sync::atomic::Ordering::Relaxed,
@@ -1972,6 +2159,8 @@ impl TestCommand {
             vm.test_isolation_enabled = true;
             vm.auto_killer.enabled = true;
         }
+        vm.test_isolation_state.shares_global = ctx.test_options.isolate_modules;
+        crate::jsc_hooks::timer_all_mut().zero_delay_is_due_when_idle = true;
 
         if ctx.test_options.coverage.enabled {
             vm.transpiler.options.code_coverage = true;
@@ -2012,6 +2201,7 @@ impl TestCommand {
             // results go out over fd 3. Never returns.
             // SAFETY: `vm` is the live per-thread VM; `reporter`/`ctx` outlive
             // this never-returning call.
+            crate::run_command::start_profilers(vm, ctx);
             ParallelRunner::run_as_worker(&mut reporter, vm, ctx);
         }
 
@@ -2372,6 +2562,9 @@ impl TestCommand {
                     &mut coverage_options,
                 )?;
             } else {
+                // SAFETY: `vm.transpiler.env` is the process-lifetime DotEnv loader pointer.
+                ParallelRunner::set_ids_without_workers(unsafe { &mut *vm.transpiler.env });
+                crate::run_command::start_profilers(vm, ctx);
                 Self::run_all_tests(&mut reporter, vm, test_files);
             }
         }
@@ -2558,7 +2751,7 @@ impl TestCommand {
                 }
 
                 // Display the random seed if tests were randomized
-                if random_instance.is_some() {
+                if random_instance.is_some() || summary.shuffled > 0 {
                     pretty_error!("{}<r>--seed={}<r>\n", &indenter, seed);
                 }
 
@@ -2720,6 +2913,7 @@ impl TestCommand {
             jest::Jest::RUNNER.write(None);
         }
         drop(reporter);
+        drop(all_test_files);
         {
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
@@ -2828,41 +3022,89 @@ impl TestCommand {
         unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
     }
 
+    fn never_settled(
+        global: &jsc::JSGlobalObject,
+        what: &str,
+        file_path: &[u8],
+    ) -> *mut jsc::JSInternalPromise {
+        let rejected = jsc::JSPromise::rejected_promise(
+            global,
+            global.create_error_instance(format_args!(
+                "{what} never settled in {}\nnote: {}",
+                bun_fmt::quote(file_path),
+                TopLevelWaitError::NothingLeft,
+            )),
+        );
+        rejected.set_handled();
+        std::ptr::from_mut(rejected)
+    }
+
+    fn undo_module_mocks(
+        vm: &VirtualMachine,
+        global: &jsc::JSGlobalObject,
+        file_path: &[u8],
+        next_load_shares_global: bool,
+    ) {
+        unsafe extern "C" {
+            safe fn JSMock__replaceModuleOfTestFile(
+                global: &jsc::JSGlobalObject,
+                path: &bun::String,
+            );
+        }
+        bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
+        bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(global, next_load_shares_global);
+        if !next_load_shares_global {
+            return;
+        }
+        // Wait for in-flight modules to load and be evicted, or the next file would get them with this file's mocks.
+        let loaded = vm
+            .event_loop_ref()
+            .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasModulesToEvict(global));
+        if loaded == Err(TopLevelWaitError::NothingLeft) {
+            // They can never finish loading. The next file would hang on them and take the blame.
+            drop(bun_jsc::cpp::Bun__evictUnfinishedModules(global));
+        }
+        // Also evict the test file: it holds its own copies of the mock's importers.
+        JSMock__replaceModuleOfTestFile(global, &bun::String::from_bytes(file_path));
+    }
+
+    /// Returns a description for the error, and the step's identity so the caller can tell if the runner moved on.
+    fn what_runner_waits_for(
+        buntest: &bun_test::BunTest,
+    ) -> (&'static str, Option<(*const (), i64)>) {
+        match buntest.get_current_state_data() {
+            bun_test::RefDataValue::Collection { active_scope } => (
+                "A describe() callback",
+                Some((active_scope.as_ptr().cast_const().cast(), 0)),
+            ),
+            bun_test::RefDataValue::Execution {
+                entry_data: Some(entry),
+                ..
+            } => (
+                "A test or hook with no timeout",
+                Some((entry.entry, i64::from(entry.attempt))),
+            ),
+            bun_test::RefDataValue::Done => ("An un-awaited matcher's promise", None),
+            _ => ("A test or hook with no timeout", None),
+        }
+    }
+
+    #[optimize(size)]
     pub(crate) fn run(
         reporter: &mut CommandLineReporter,
         vm: &mut VirtualMachine,
         file_name: &[u8],
         first_last: bun_test::FirstLast,
     ) -> crate::Result<()> {
-        // Capture the raw log pointer (Copy) so the guard does not borrow `vm`.
-        let vm_log = vm.log;
-        scopeguard::defer! {
-            bun_ast::Expr::data_store_reset();
-            bun_ast::Stmt::data_store_reset();
-
-            if let Some(log_ptr) = vm_log {
-                // SAFETY: vm.log points at the VM-owned Log for the lifetime of the run.
-                let log = unsafe { &mut *log_ptr.as_ptr() };
-                if log.errors > 0 {
-                    let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
-                    log.msgs.clear();
-                    log.errors = 0;
-                }
-            }
-
-            Output::flush();
-        }
-
-        // Restore test.only state after each module.
-        let prev_only = reporter.jest.only;
-        let reporter_ptr: *mut CommandLineReporter = reporter;
-        // SAFETY: `reporter` is caller-owned and outlives this guard; raw-ptr
-        // escape so the closure does not hold a borrowck
-        // lock on `reporter` for the entire function body.
-        scopeguard::defer! { unsafe { (*reporter_ptr).jest.only = prev_only; } }
+        let _print_log = PrintLogAfterFile(vm.log);
+        let _restore_only = RestoreOnlyAfterFile {
+            only: reporter.jest.only,
+            reporter,
+        };
 
         let resolution = vm.transpiler.resolve_entry_point(file_name)?;
         vm.clear_entry_point()?;
+        vm.enter_module_graph_for_test_isolation()?;
 
         // `append_slice` interns into the process-static `FilenameStore` and
         // returns `&'static [u8]`.
@@ -2889,6 +3131,9 @@ impl TestCommand {
         let mut repeat_index: u32 = 0;
         vm.on_unhandled_rejection_ctx = None;
         vm.on_unhandled_rejection = jest::on_unhandled_rejection::on_unhandled_rejection;
+        vm.is_running_vitest_entry = false;
+        let mut environment =
+            Environment::of_file(file_path, reporter.jest.test_options.environment);
 
         while repeat_index < repeat_count {
             // Clear the module cache before re-running (except for the first run)
@@ -2907,19 +3152,19 @@ impl TestCommand {
             bun_test_root.enter_file(file_id, reporter, should_run_concurrent, first_last);
             let bun_test_root_ptr: *mut bun_test::BunTestRoot = bun_test_root;
             let global = vm.global();
-            scopeguard::defer! {
-                // SAFETY: `bun_test_root` is `&'static mut` from `Jest::runner()`;
-                // raw-ptr escape so the closure does not hold a borrowck lock on
-                // it for the loop body.
-                unsafe { (*bun_test_root_ptr).exit_file(); }
-                // A mock.module() patch still pending must not hold up the next file.
-                bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
-            }
+            // `--isolate` swaps the global after the last repeat.
+            let next_load_shares_global = !vm.test_isolation_enabled
+                || vm.test_isolation_state.shares_global
+                || repeat_index + 1 < repeat_count;
+            let _entered_file = EnteredFile {
+                bun_test_root: bun_test_root_ptr,
+                global,
+                next_load_shares_global,
+            };
 
             // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
             // and writes only `current_file` — disjoint fields. Fresh raw-ptr
-            // split (not the defer-captured `reporter_ptr`) keeps the borrows
-            // disjoint without tripping borrowck.
+            // split keeps the borrows disjoint without tripping borrowck.
             unsafe {
                 let rp: *mut CommandLineReporter = reporter;
                 (*rp).jest.current_file.set(
@@ -2943,64 +3188,40 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            let promise = vm.load_entry_point_for_test_runner(file_path)?;
+            let mut promise = environment.load_entry_point(vm, file_path)?;
             // Only count the file once, not once per repeat
             if repeat_index == 0 {
                 reporter.summary().files += 1;
             }
 
-            // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-            match jsc::JSInternalPromise::opaque_mut(promise).status() {
-                jsc::js_promise::Status::Rejected => {
-                    // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
-                    // `unhandled_rejection(&mut self, ...)` can reborrow.
-                    let global = vm.global();
-                    let p = jsc::JSInternalPromise::opaque_mut(promise);
-                    let (result, promise_js) = (p.result(global.vm()), p.to_js());
-                    vm.unhandled_rejection(global, result, promise_js);
-                    reporter.summary().fail += 1;
+            if jsc::JSInternalPromise::opaque_mut(promise).status()
+                != jsc::js_promise::Status::Rejected
+            {
+                vm.event_loop_ref().tick();
 
-                    if reporter.jest.bail == reporter.summary().fail {
-                        reporter.print_summary();
-                        pretty_error!(
-                            "\nBailed out after {} failure{}<r>\n",
-                            reporter.jest.bail,
-                            if reporter.jest.bail == 1 { "" } else { "s" }
-                        );
-                        reporter.write_junit_report_if_needed();
-                        reporter.write_timings_if_needed();
-
-                        vm.exit_handler.exit_code = 1;
-                        vm.is_shutting_down = true;
-                        // `global_exit()` diverges, so the `exit_file()` defer
-                        // above never fires. Release the active file's
-                        // `Strong`s and the preload-hook scope here so
-                        // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim them,
-                        // then clear `RUNNER` so finalizers can't observe a
-                        // partially-torn-down `TestRunner`.
-                        // SAFETY: single-threaded; raw-ptr reborrow mirrors the
-                        // defer's escape.
-                        unsafe {
-                            (*bun_test_root_ptr).deinit_for_exit();
-                            jest::Jest::RUNNER.write(None);
-                        }
-                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
-                        // SAFETY: global_exit diverges; `vm_ptr` is a fresh
-                        // raw-ptr reborrow of the exclusive `vm` borrow.
-                        unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
+                // Tests start after top-level mock.module() calls with a pending factory have patched their module.
+                let patched = vm
+                    .event_loop_ref()
+                    .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasPendingModulePatches(global));
+                if patched == Err(TopLevelWaitError::NothingLeft) {
+                    // As in Vitest, a vi.mock() or vi.doMock() factory may wait for something a test does.
+                    bun_jsc::cpp::JSMock__forgetPendingModulePatchesOfVitest(global);
+                    if bun_jsc::cpp::JSMock__hasPendingModulePatches(global) {
+                        promise = Self::never_settled(global, "A mock.module() factory", file_path);
                     }
-
-                    return Ok(());
                 }
-                _ => {}
             }
 
-            vm.event_loop_ref().tick();
-
-            // Tests start after top-level mock.module() calls with a pending factory have patched their module.
-            while bun_jsc::cpp::JSMock__hasPendingModulePatches(global) {
-                vm.event_loop_ref().auto_tick();
-                vm.event_loop_ref().tick();
+            // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
+            let failed_to_load = jsc::JSInternalPromise::opaque_mut(promise).status()
+                == jsc::js_promise::Status::Rejected;
+            if failed_to_load {
+                // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
+                // `unhandled_rejection(&mut self, ...)` can reborrow.
+                let global = vm.global();
+                let p = jsc::JSInternalPromise::opaque_mut(promise);
+                let (result, promise_js) = (p.result(global.vm()), p.to_js());
+                vm.unhandled_rejection(global, result, promise_js);
             }
 
             'blk: {
@@ -3010,6 +3231,9 @@ impl TestCommand {
                     break 'blk;
                 };
                 let buntest = buntest_strong.get();
+                buntest.is_loading = false;
+                // Skips this file's tests, but preload hooks due with this file still run.
+                buntest.collection.root_scope.failed |= failed_to_load;
 
                 // Automatically execute bun_test tests
                 if buntest.result_queue.readable_length() == 0 {
@@ -3025,11 +3249,36 @@ impl TestCommand {
 
                 let mut prev_unhandled_count = vm.unhandled_error_counter;
                 while buntest.phase != bun_test::Phase::Done {
+                    // `RunTestsTask` leaves results queued when it fires in an event loop nested under JS.
+                    if buntest.result_queue.readable_length() > 0 {
+                        bun_test::BunTest::run_next_tick(
+                            &std::rc::Rc::downgrade(&buntest_strong),
+                            global,
+                            bun_test::ResultMsg::Start,
+                        );
+                    }
                     if buntest.wants_wakeup {
                         buntest.wants_wakeup = false;
                         vm.wakeup();
                     }
-                    vm.event_loop_ref().auto_tick();
+                    if buntest.timer.state != crate::timer::EventLoopTimerState::ACTIVE
+                        && !vm.has_work_left()
+                    {
+                        let (what, waits_for) = Self::what_runner_waits_for(buntest);
+                        let p = jsc::JSPromise::opaque_mut(Self::never_settled(
+                            global, what, file_path,
+                        ));
+                        vm.unhandled_rejection(global, p.result(global.vm()), p.to_js());
+                        vm.event_loop_ref().tick();
+                        // The error ends a describe() or a test. Anything else stays stuck, so abandon the file.
+                        if waits_for.is_none()
+                            || waits_for == Self::what_runner_waits_for(buntest).1
+                        {
+                            break;
+                        }
+                        continue;
+                    }
+                    vm.event_loop_ref().auto_tick_asleep();
                     if buntest.phase == bun_test::Phase::Done {
                         break;
                     }
@@ -3052,9 +3301,50 @@ impl TestCommand {
                 if should_drain_event_loop() {
                     vm.on_before_exit();
                 }
+                reporter.jest.snapshots.remove_obsolete(buntest);
                 drop(buntest_strong);
             }
 
+            if failed_to_load {
+                reporter.summary().fail += 1;
+
+                if reporter.jest.bail == reporter.summary().fail {
+                    reporter.print_summary();
+                    pretty_error!(
+                        "\nBailed out after {} failure{}<r>\n",
+                        reporter.jest.bail,
+                        if reporter.jest.bail == 1 { "" } else { "s" }
+                    );
+                    reporter.write_junit_report_if_needed();
+                    reporter.write_timings_if_needed();
+
+                    vm.exit_handler.exit_code = 1;
+                    vm.is_shutting_down = true;
+                    // `global_exit()` diverges, so `EnteredFile`'s `Drop`
+                    // never runs. Release the active file's
+                    // `Strong`s and the preload-hook scope here so
+                    // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim them,
+                    // then clear `RUNNER` so finalizers can't observe a
+                    // partially-torn-down `TestRunner`.
+                    // SAFETY: single-threaded; raw-ptr reborrow mirrors
+                    // `EnteredFile::drop`.
+                    unsafe {
+                        (*bun_test_root_ptr).deinit_for_exit();
+                        jest::Jest::RUNNER.write(None);
+                    }
+                    let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
+                    // SAFETY: global_exit diverges; `vm_ptr` is a fresh
+                    // raw-ptr reborrow of the exclusive `vm` borrow.
+                    unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
+                }
+            }
+
+            crate::test_runner::vi_utils::on_test_file_end(vm.global(), next_load_shares_global);
+            if next_load_shares_global {
+                crate::test_runner::timers::fake_timers::on_test_file_end(vm.global());
+            }
+            Self::undo_module_mocks(vm, global, file_path, next_load_shares_global);
+            // Must run after the cleanup above, so rejections from JS it runs are reported in this file.
             let _ = vm.global().handle_rejected_promises();
 
             if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
@@ -3070,12 +3360,71 @@ impl TestCommand {
                 vm.auto_killer.disable();
             }
 
-            repeat_index += 1;
+            repeat_index = if failed_to_load {
+                repeat_count
+            } else {
+                repeat_index + 1
+            };
+            // Tear down before `EnteredFile` drops, so an error it throws is reported in this file.
+            if repeat_index == repeat_count {
+                environment.teardown(vm);
+            }
         }
         if let Some(junit) = reporter.reporters.junit.as_mut() {
             let _ = junit.end_file(None);
         }
         Ok(())
+    }
+}
+
+struct PrintLogAfterFile(Option<core::ptr::NonNull<bun_ast::Log>>);
+
+impl Drop for PrintLogAfterFile {
+    fn drop(&mut self) {
+        bun_ast::Expr::data_store_reset();
+        bun_ast::Stmt::data_store_reset();
+
+        if let Some(log) = self.0 {
+            // SAFETY: the VM owns the Log and outlives `TestCommand::run`.
+            let log = unsafe { &mut *log.as_ptr() };
+            if log.errors > 0 {
+                let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                    Output::error_writer(),
+                ));
+                log.msgs.clear();
+                log.errors = 0;
+            }
+        }
+
+        Output::flush();
+    }
+}
+
+struct RestoreOnlyAfterFile {
+    reporter: *mut CommandLineReporter,
+    only: bool,
+}
+
+impl Drop for RestoreOnlyAfterFile {
+    fn drop(&mut self) {
+        // SAFETY: the caller of `TestCommand::run` owns the reporter, which outlives the call.
+        unsafe { (*self.reporter).jest.only = self.only };
+    }
+}
+
+struct EnteredFile<'a> {
+    bun_test_root: *mut bun_test::BunTestRoot,
+    global: &'a jsc::JSGlobalObject,
+    next_load_shares_global: bool,
+}
+
+impl Drop for EnteredFile<'_> {
+    fn drop(&mut self) {
+        // SAFETY: `bun_test_root` belongs to `Jest::runner()`, which lives as long as the process.
+        unsafe { (*self.bun_test_root).exit_file() };
+        // A mock.module() patch still pending must not hold up the next file.
+        bun_jsc::cpp::JSMock__forgetPendingModulePatches(self.global);
+        bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(self.global, self.next_load_shares_global);
     }
 }
 

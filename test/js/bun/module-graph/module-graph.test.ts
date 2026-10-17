@@ -2,7 +2,7 @@
 // global, sharing every ES module's executable/CodeBlock (and so JIT code) with the first
 // load while giving each graph its own module environments and its own values
 // for the names the host passes as `globals`.
-import { heapStats } from "bun:jsc";
+import { heapStats, numberOfDFGCompiles } from "bun:jsc";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
@@ -2027,6 +2027,124 @@ describe("Bun.ModuleGraph — shared code under tier-up, one access path per tes
     for (let i = 0; i < N; i++) fa();
     expect(fa()[0]).toBe("A");
     expect(fb()).toEqual(["B", 1, 1]);
+  });
+});
+
+describe("Bun.ModuleGraph — graphs share the compiled code of a CommonJS module", () => {
+  test("the DFG compiles a function of the module once, not once for each graph", async () => {
+    const dir = fixture({
+      "hot.cjs": `
+        let calls = 0;
+        function hot(n) { calls++; let sum = 0; for (let i = 0; i < 50; i++) sum += (n ^ i) & 7; return sum; }
+        module.exports = { hot, calls: () => calls };
+      `,
+      "main.mjs": `
+        const graphs = [], calls = [];
+        for (let i = 0; i < 8; i++) {
+          const graph = new Bun.ModuleGraph();
+          graphs.push(graph);
+          const { hot, calls: count } = (await graph.import(import.meta.dir + "/hot.cjs")).default;
+          for (let n = 0; n < 20000; n++) hot(n);
+          calls.push(count());
+        }
+        console.log(JSON.stringify(calls));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runBun([join(dir, "main.mjs")], {
+      env: { BUN_JSC_reportDFGCompileTimes: "1", BUN_JSC_useConcurrentJIT: "0" },
+    });
+    expect(stdout).toBe(JSON.stringify(Array(8).fill(20000)));
+    // Once more when the second graph makes the function's closure variables no longer constants.
+    expect(stderr.match(/^Optimized hot#/gm)?.length).toBeWithin(1, 3);
+    expect(exitCode).toBe(0);
+  });
+
+  test("hot code reads the globals, the variables and the modules of the graph it runs in", async () => {
+    const dir = fixture({
+      "dep.cjs": `exports.tag = "dep of " + TAG;`,
+      "reads.cjs": `
+        const dep = require("./dep.cjs");
+        const top = "top of " + TAG;
+        let count = 0;
+        class Thing { tag() { return "thing of " + TAG; } }
+        function read(n) { let last; for (let i = 0; i < n; i++) { count++; last = [TAG, top, dep.tag, new Thing().tag()].join(); } return last + "," + count; }
+        module.exports = { read };
+      `,
+    });
+    const reads: ((n: number) => string)[] = [];
+    const counts: number[] = [];
+    const graphs: ModuleGraphInstance[] = [];
+    for (let i = 0; i < 4; i++) {
+      graphs.push(new ModuleGraphClass({ globals: { TAG: "g" + i } }));
+      reads.push((await graphs[i].import(join(dir, "reads.cjs"))).default.read);
+      counts.push(0);
+      // In the DFG before the next graph exists.
+      do reads[i](500);
+      while ((counts[i] += 500) < 100_000 && !numberOfDFGCompiles(reads[i]));
+    }
+    expect(numberOfDFGCompiles(reads[0])).toBeGreaterThan(0);
+    // The others run what was compiled for the first.
+    expect(counts.slice(1)).toEqual([500, 500, 500]);
+    const expected = (more: number) =>
+      reads.map((_, i) => `g${i},top of g${i},dep of g${i},thing of g${i},${(counts[i] += more)}`);
+    expect(reads.map(read => read(500))).toEqual(expected(500));
+    expect(reads.toReversed().map(read => read(1))).toEqual(expected(1).toReversed());
+  });
+
+  test("each graph gets a module, exports, require and classes of its own", async () => {
+    const dir = fixture({
+      "state.cjs": `
+        let n = 0;
+        class Thing {}
+        module.exports = { inc: () => ++n, Thing, module, require, self: this, exportsAtLoad: exports, filename: __filename, dirname: __dirname };
+      `,
+    });
+    const path = join(dir, "state.cjs");
+    const graphs = [new ModuleGraphClass(), new ModuleGraphClass(), new ModuleGraphClass()];
+    const [a, b, c] = await Promise.all(graphs.map(async graph => (await graph.import(path)).default));
+    a.inc();
+    a.inc();
+    b.inc();
+    expect([a.inc(), b.inc(), c.inc()]).toEqual([3, 2, 1]);
+    for (const key of ["Thing", "module", "require", "self", "inc"]) {
+      expect(new Set([a[key], b[key], c[key]]).size).toBe(3);
+    }
+    for (const instance of [a, b, c]) {
+      expect(instance.self).toBe(instance.exportsAtLoad);
+      expect(instance.module.exports).toBe(instance);
+      expect(instance.require(path)).toBe(instance);
+      expect([instance.filename, instance.dirname]).toEqual([path, dir]);
+    }
+  });
+
+  test("a graph made after the file changed runs the new text", async () => {
+    const dir = fixture({ "text.cjs": `module.exports = () => "one";` });
+    const path = join(dir, "text.cjs");
+    const load = async (graph: ModuleGraphInstance) => (await graph.import(path)).default;
+    const graphs = [new ModuleGraphClass(), new ModuleGraphClass(), new ModuleGraphClass(), new ModuleGraphClass()];
+    const first = await load(graphs[0]);
+    writeFileSync(path, `module.exports = () => "two";`);
+    const second = await load(graphs[1]);
+    const third = await load(graphs[2]);
+    writeFileSync(path, `module.exports = () => "one";`);
+    const fourth = await load(graphs[3]);
+    expect([first(), second(), third(), fourth()]).toEqual(["one", "two", "two", "one"]);
+  });
+
+  test("a module that threw while it loaded loads in the next graph", async () => {
+    const dir = fixture({
+      "throws.cjs": `exports.before = TAG; if (FAIL.now) throw new Error("from " + TAG); exports.after = TAG;`,
+    });
+    const path = join(dir, "throws.cjs");
+    const FAIL = { now: true };
+    const graphs = ["a", "b", "c"].map(TAG => new ModuleGraphClass({ globals: { TAG, FAIL } }));
+    expect(graphs[0].import(path)).rejects.toThrow("from a");
+    await Promise.allSettled([graphs[0].import(path)]);
+    FAIL.now = false;
+    expect((await graphs[1].import(path)).default).toEqual({ before: "b", after: "b" });
+    FAIL.now = true;
+    expect(graphs[2].import(path)).rejects.toThrow("from c");
+    await Promise.allSettled([graphs[2].import(path)]);
   });
 });
 

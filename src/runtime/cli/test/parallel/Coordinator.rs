@@ -36,8 +36,7 @@ pub(crate) struct Coordinator<'a> {
     // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
     // backing storage has a null at [len] for execve-style consumers.
     pub(crate) argv: Box<[bun_spawn::CStrPtr]>,
-    /// One envp per worker slot — same base, with that slot's JEST_WORKER_ID
-    /// and BUN_TEST_WORKER_ID appended.
+    /// One envp per worker slot — same base, with that slot's `WORKER_ID_VARIABLES`.
     pub(crate) envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
 
     pub(crate) workers: &'a mut [Worker],
@@ -404,6 +403,26 @@ impl<'a> Coordinator<'a> {
         }
     }
 
+    /// A worker prints over two pipes and sends frames over a third channel, so what it printed before a frame may not have
+    /// been read when the frame is. Once per read of the channel is enough: the frames of one read are all of one file.
+    #[cfg(unix)]
+    pub(crate) fn read_output(w: &mut Worker) {
+        let w: *mut Worker = w;
+        // SAFETY: `w` is live. The reader's callbacks reach `captured` and `done` through the pipes' own backref, so no
+        // borrow of `*w` is held across `read`.
+        unsafe {
+            for pipe in [&raw mut (*w).out, &raw mut (*w).err] {
+                let fd = (*pipe).reader.get_fd();
+                if (*pipe).done || fd == bun_sys::Fd::INVALID {
+                    continue;
+                }
+                if !matches!(bun_core::is_readable(fd), bun_core::Pollable::NotReady) {
+                    bun_io::BufferedReader::read(&raw mut (*pipe).reader);
+                }
+            }
+        }
+    }
+
     fn flush_captured(&mut self, w: &mut Worker) {
         if w.captured.is_empty() {
             return;
@@ -454,7 +473,7 @@ impl<'a> Coordinator<'a> {
                 Output::flush();
             }
             frame::Kind::FileDone => {
-                let mut nums = [0u32; 9];
+                let mut nums = [0u32; 10];
                 for n in nums.iter_mut() {
                     *n = rd.u32();
                 }
@@ -467,6 +486,7 @@ impl<'a> Coordinator<'a> {
                     expectations,
                     skipped_label,
                     files,
+                    shuffled,
                     unhandled,
                 ] = nums;
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
@@ -499,6 +519,7 @@ impl<'a> Coordinator<'a> {
                     summary.expectations += expectations;
                     summary.skipped_because_label += skipped_label;
                     summary.files += files;
+                    summary.shuffled += shuffled;
                 }
                 self.reporter.jest.unhandled_errors_between_tests += unhandled;
                 self.record_timing(idx, w.dispatched_at);
@@ -559,6 +580,7 @@ impl<'a> Coordinator<'a> {
         w.reap_pending = true;
     }
 
+    #[optimize(size)]
     fn run_pending_reaps(&mut self) {
         let n = self.spawned_count as usize;
         for i in 0..n {
@@ -581,12 +603,15 @@ impl<'a> Coordinator<'a> {
         }
     }
 
+    #[optimize(size)]
     fn reap_worker(&mut self, slot: usize, status: &SpawnStatus) {
         // SAFETY: `slot < spawned_count <= workers.len()`; fresh root derivation, like each reborrow below.
         let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
         // Decrement here (not in onProcessExit) so drive() keeps pumping until
         // the IPC pipe has been drained and this reap actually runs.
         self.live_workers -= 1;
+        #[cfg(unix)]
+        Self::read_output(w);
         self.flush_captured(w);
         // Exited before the IPC handshake. `inflight` is None for these, so
         // the mid-file handling below never fires; the per-slot cap is what
@@ -651,6 +676,8 @@ impl<'a> Coordinator<'a> {
             if is_panic_status(status) {
                 self.abort_on_worker_startup_panic(status);
             }
+        } else if is_panic_status(status) && self.stop_reason != Some(StopReason::WorkerPanicked) {
+            self.abort_on_idle_worker_panic(status);
         }
 
         // SAFETY: fresh derivation — `abort_on_worker_panic` above retags the slots.
@@ -746,6 +773,7 @@ impl<'a> Coordinator<'a> {
         }
     }
 
+    #[optimize(size)]
     fn account_crash(
         &mut self,
         file_idx: u32,
@@ -802,6 +830,23 @@ impl<'a> Coordinator<'a> {
         );
         Output::flush();
         self.terminate_workers_after_panic(b"aborted: worker panicked during startup");
+    }
+
+    /// Like `abort_on_worker_panic`, for a worker that was idle or exiting after `.shutdown`.
+    /// Every file may already have passed, so the crash is counted as its own error.
+    fn abort_on_idle_worker_panic(&mut self, status: &SpawnStatus) {
+        self.break_dots();
+        let mut buf = [0u8; 32];
+        bun_core::pretty_error!(
+            concat!(
+                "\n<red>error<r>: a test worker process crashed with <b>{}<r> while it was not running a test file.\n",
+                "This indicates a bug in Bun or in a native addon, not in the test itself. Aborting.\n",
+            ),
+            bstr::BStr::new(describe_status(&mut buf, status)),
+        );
+        Output::flush();
+        self.reporter.jest.unhandled_errors_between_tests += 1;
+        self.terminate_workers_after_panic(b"aborted: worker panicked between files");
     }
 
     fn terminate_workers_after_panic(&mut self, sweep_reason: &'static [u8]) {

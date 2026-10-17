@@ -40,6 +40,8 @@ pub trait SystemErrorJsc {
 
 impl SystemErrorJsc for bun_sys::SystemError {
     /// `SystemError.toErrorInstance(global)`.
+    #[cold]
+    #[inline(never)]
     fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
         bun_jsc::SystemError::from(self).to_error_instance(global)
     }
@@ -47,6 +49,8 @@ impl SystemErrorJsc for bun_sys::SystemError {
     /// `toErrorInstance` then attach the promise's await
     /// chain as async stack frames so threadpool-rejected promises get a
     /// useful trace.
+    #[cold]
+    #[inline(never)]
     fn to_error_instance_with_async_stack(
         self,
         global: &JSGlobalObject,

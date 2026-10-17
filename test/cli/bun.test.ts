@@ -548,5 +548,40 @@ describe("bun", () => {
         fs.unlinkSync(path);
       }
     });
+
+    const files = {
+      "other.toml": `preload = ["./preload.js"]`,
+      "preload.js": `console.log("preload");`,
+      "index.js": `console.log("index");`,
+    };
+
+    test.concurrent.each(["--config=", "-c="])("%sother.toml is read", async flag => {
+      using dir = tempDir("config-flag", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), flag + "other.toml", "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "preload\nindex\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent.each(["--config", "-c"])("%s other.toml does not run other.toml as a script", async flag => {
+      using dir = tempDir("config-flag", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), flag, "other.toml", "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({
+        stdout: "",
+        stderr: 'error: --config takes its path after "=": --config=other.toml\n',
+      });
+      expect(exitCode).toBe(1);
+    });
   });
 });

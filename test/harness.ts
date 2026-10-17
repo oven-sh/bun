@@ -7,7 +7,7 @@
 
 import * as numeric from "_util/numeric.ts";
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which } from "bun";
-import { heapStats } from "bun:jsc";
+import { generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
 import { execSync } from "child_process";
 import { readdir, writeFile } from "fs/promises";
@@ -376,6 +376,83 @@ export async function expectMaxObjectTypeCount(
   }
   expect(heapStats().objectTypeCounts[type] ?? 0).toBeLessThanOrEqual(count);
 }
+
+/** Reachability from GC roots, read from the debugging heap snapshot, which has no entry for conservative stack roots.
+ *  So unlike "was it finalized?", it only reports cells that something in the heap really holds.
+ *  Fixtures embed it as `${Heap}` with `generateHeapSnapshotForDebugging` from "bun:jsc" in scope. */
+export class Heap {
+  readonly #className = new Map<number, string>();
+  readonly #label = new Map<number, string>();
+  readonly #idOfAddress = new Map<bigint, number>();
+  /** Reachable cell -> [parent cell, edge] on a shortest path from a root. Roots map to undefined. */
+  readonly #reachedFrom = new Map<number, [number, string] | undefined>();
+  readonly #rootReason = new Map<number, string>();
+
+  /** `followers: false` skips "roots" that are only marked because another cell is (a WeakMap value for a marked key,
+   *  a cell its WeakHandleOwner keeps). The snapshot has no edge from that other cell, which only the stack may hold,
+   *  so also query the cells they depend on. */
+  constructor({ followers = true } = {}) {
+    const { nodes, edges, roots, nodeClassNames, edgeTypes, edgeNames, labels } =
+      generateHeapSnapshotForDebugging() as any;
+    for (let i = 0; i < nodes.length; i += 7) {
+      this.#className.set(nodes[i], nodeClassNames[nodes[i + 2]]);
+      if (labels[nodes[i + 4]]) this.#label.set(nodes[i], labels[nodes[i + 4]]);
+      this.#idOfAddress.set(BigInt(nodes[i + 5]), nodes[i]);
+    }
+    const outgoing = new Map<number, [number, string][]>();
+    for (let i = 0; i < edges.length; i += 4) {
+      const type = edgeTypes[edges[i + 2]];
+      const name = type === "Property" || type === "Variable" ? edgeNames[edges[i + 3]] : edges[i + 3];
+      let list = outgoing.get(edges[i]);
+      if (!list) outgoing.set(edges[i], (list = []));
+      list.push([edges[i + 1], type + ":" + name]);
+    }
+    const queue: number[] = [];
+    for (let i = 0; i < roots.length; i += 3) {
+      const reason = String(labels[roots[i + 1]] ?? roots[i + 1]);
+      // DOMGCOutput roots (e.g. a marked EventTarget's listeners) duplicate edges their owner already has.
+      if (this.#reachedFrom.has(roots[i]) || reason.includes("DOMGCOutput")) continue;
+      const isOnItsOwn = reason === "WeakSets" && String(labels[roots[i + 2]]).includes("pending activity");
+      if (!followers && (reason === "Output" || reason === "WeakSets") && !isOnItsOwn) continue;
+      this.#rootReason.set(roots[i], reason);
+      this.#reachedFrom.set(roots[i], undefined);
+      queue.push(roots[i]);
+    }
+    for (let i = 0; i < queue.length; i++)
+      for (const [child, edge] of outgoing.get(queue[i]) ?? [])
+        if (!this.#reachedFrom.has(child)) (this.#reachedFrom.set(child, [queue[i], edge]), queue.push(child));
+  }
+
+  /** Shortest path from a root to the cell at `address`, or undefined if no root reaches it. */
+  pathTo(address: bigint): string | undefined {
+    const id = this.#idOfAddress.get(address);
+    if (id === undefined || !this.#reachedFrom.has(id)) return undefined;
+    const describe = (cell: number) =>
+      this.#className.get(cell) + (this.#label.has(cell) ? "(" + this.#label.get(cell) + ")" : "");
+    const path: string[] = [];
+    let at = id;
+    for (let step = this.#reachedFrom.get(at); step; at = step[0], step = this.#reachedFrom.get(at))
+      path.unshift(`-${step[1]}-> ${describe(at)}`);
+    return [`root(${this.#rootReason.get(at)}) ${describe(at)}`, ...path].join(" ");
+  }
+
+  pathsTo(type: string): string[] {
+    const paths: string[] = [];
+    for (const [address, id] of this.#idOfAddress)
+      if (this.#className.get(id) === type && this.#reachedFrom.has(id)) paths.push(this.pathTo(address)!);
+    return paths;
+  }
+
+  counts(types: string[]): Record<string, number> {
+    const counts = Object.fromEntries(types.map(type => [type, 0]));
+    for (const id of this.#reachedFrom.keys()) {
+      const name = this.#className.get(id)!;
+      if (name in counts) counts[name]++;
+    }
+    return counts;
+  }
+}
+
 
 // ASAN's quarantine pins freed blocks and keeps RSS at peak.
 export function withoutAsanQuarantine(env: NodeJS.Dict<string>): NodeJS.Dict<string> {

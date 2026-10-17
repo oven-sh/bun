@@ -3,6 +3,7 @@ use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
+    #[optimize(size)]
     pub(crate) fn to_contain_values(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         self.contain_matcher(global, frame, "toContainValues", ExpectedArray::BeforeValue, ContainMsgs::CONTAIN,
             |g, value, expected| {

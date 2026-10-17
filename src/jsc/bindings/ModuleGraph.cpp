@@ -12,7 +12,9 @@
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 
+#include <JavaScriptCore/CodeCache.h>
 #include <JavaScriptCore/BuiltinNames.h>
+#include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/IdentifierInlines.h>
@@ -21,6 +23,9 @@
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
+#include <JavaScriptCore/JSModuleRecord.h>
+#include <JavaScriptCore/ModuleProgramExecutable.h>
+#include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/SymbolTable.h>
@@ -51,6 +56,19 @@ static JSModuleGraph* moduleGraphOfOverlay(VM& vm, JSScope* scope)
         return nullptr;
     auto entry = environment->symbolTable()->get(moduleGraphSlotName(vm).impl());
     return entry.isNull() ? nullptr : dynamicDowncast<JSModuleGraph>(environment->variableAt(entry.scopeOffset()).get());
+}
+
+JSModuleGraph* moduleGraphForFunction(JSObject* function)
+{
+    auto* jsFunction = dynamicDowncast<JSFunction>(function);
+    if (!jsFunction || jsFunction->isHostFunction())
+        return nullptr;
+    VM& vm = jsFunction->vm();
+    for (JSScope* scope = jsFunction->scope(); scope; scope = scope->next()) {
+        if (auto* graph = moduleGraphOfOverlay(vm, scope))
+            return graph;
+    }
+    return nullptr;
 }
 
 static ModuleGraphState& moduleGraphState(Zig::GlobalObject* globalObject)
@@ -106,7 +124,7 @@ static void setOverlaySlot(VM& vm, JSLexicalEnvironment* overlay, const Identifi
 }
 
 // The new graph's loader, over a new overlay holding `globals`.
-static JSModuleLoader* createModuleGraphLoader(Zig::GlobalObject* globalObject, JSObject* globals, unsigned& overlayShape)
+__attribute__((minsize)) static JSModuleLoader* createModuleGraphLoader(Zig::GlobalObject* globalObject, JSObject* globals, unsigned& overlayShape)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -616,12 +634,36 @@ void JSModuleGraph::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_onError);
     visitor.append(thisObject->m_maker);
     visitor.append(thisObject->m_mainPath);
+    Locker locker { thisObject->cellLock() };
+    for (auto* wrapper : thisObject->m_commonJSWrappers)
+        visitor.appendUnbarriered(wrapper);
+    for (auto& [executable, key] : thisObject->m_moduleExecutables)
+        visitor.appendUnbarriered(executable);
 }
 DEFINE_VISIT_CHILDREN(JSModuleGraph);
 
+void JSModuleGraph::keepCommonJSWrapper(VM& vm, CodeBlock* wrapper)
+{
+    {
+        Locker locker { cellLock() };
+        if (!m_commonJSWrappers.add(wrapper).isNewEntry)
+            return;
+    }
+    vm.writeBarrier(this, wrapper);
+}
+
+void JSModuleGraph::keepModuleExecutable(VM& vm, ModuleProgramExecutable* executable, UniquedStringImpl* key)
+{
+    {
+        Locker locker { cellLock() };
+        m_moduleExecutables.append({ executable, key });
+    }
+    vm.writeBarrier(this, executable);
+}
+
 // Like dynamic import(), every failure past the receiver check is a rejection of the
 // returned promise (the caller turns a throw into one), never a synchronous throw.
-JSPromise* JSModuleGraph::import(Zig::GlobalObject* globalObject, JSValue specifierValue)
+JSPromise* JSModuleGraph::import(Zig::GlobalObject* globalObject, JSValue specifierValue, bool mayBecomeMain)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -645,7 +687,7 @@ JSPromise* JSModuleGraph::import(Zig::GlobalObject* globalObject, JSValue specif
     RETURN_IF_EXCEPTION(scope, nullptr);
     // The first import makes its module main, whether or not it then loads. (Not a builtin: it
     // is no graph's module.)
-    bool becomesMain = !m_mainPath && !Bun::isBuiltinModule(key.string());
+    bool becomesMain = mayBecomeMain && !m_mainPath && !Bun::isBuiltinModule(key.string());
     if (becomesMain)
         m_mainPath.set(vm, this, jsString(vm, key.string()));
     // JSModuleLoader::requestImportModule() after its resolve, which would ask about the key.
@@ -689,6 +731,86 @@ void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext& context)
     graph->dispose(globalObject);
     // (Emptying its require map can run a getter; the graph being disposed has nobody to tell.)
     (void)scope.tryClearException();
+}
+
+// ─── bun test --isolate=modules ───────────────────────────────────────────────
+
+JSModuleGraph* testFileModuleGraph(Zig::GlobalObject* globalObject)
+{
+    return globalObject->hasModuleGraphs() ? globalObject->m_moduleGraphs->testFile.get() : nullptr;
+}
+
+JSModuleLoader* testFileModuleLoader(Zig::GlobalObject* globalObject)
+{
+    auto* graph = testFileModuleGraph(globalObject);
+    return graph ? graph->loader() : globalObject->moduleLoader();
+}
+
+JSMap* testFileRequireMap(Zig::GlobalObject* globalObject)
+{
+    return requireMapOf(globalObject, testFileModuleGraph(globalObject));
+}
+
+// Returns the ID of the context to run the file's callbacks in.
+extern "C" uint32_t Bun__TestFile__enterModuleGraph(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    unsigned overlayShape = 0;
+    JSModuleLoader* loader = createModuleGraphLoader(globalObject, nullptr, overlayShape);
+    scope.assertNoException();
+    auto* graph = JSModuleGraph::create(vm, globalObject, globalObject->JSModuleGraphStructure(), loader, overlayShape, nullptr, nullptr);
+    moduleGraphState(globalObject).testFile.set(vm, graph);
+    // argv[1] is the test file's path.
+    globalObject->processObject()->clearCachedArgv();
+    return graph->context().identifier();
+}
+
+extern "C" void Bun__TestFile__leaveModuleGraph(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto& state = moduleGraphState(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSModuleGraph* finished = state.testFile.get();
+    if (!finished)
+        return;
+
+    {
+        DeferGC deferGC(vm);
+        // Same key as JSModuleRecord::getOrMakeExecutable().
+        SymbolTable* moduleScope = finished->overlay()->symbolTable();
+        for (auto& entry : finished->loader()->moduleMap().values()) {
+            UniquedStringImpl* key = entry->key().impl();
+            ModuleProgramExecutable* executable = globalObject->moduleProgramExecutables().get({ key, moduleScope });
+            if (!executable)
+                continue;
+            finished->keepModuleExecutable(vm, executable, key);
+            // Later files compare their imports against these before reusing the executable. JSC normally asks the
+            // record that linked it, but that record will be gone by then.
+            if (JSModuleRecord* linker = executable->linkerImportedBindings() ? nullptr : executable->linker()) {
+                executable->setLinkerImportedBindings(linker->importedBindings(globalObject));
+                (void)scope.tryClearException();
+            }
+        }
+    }
+    constexpr size_t maxFinishedTestFiles = 8;
+    if (state.finishedTestFiles.size() == maxFinishedTestFiles)
+        state.finishedTestFiles.removeFirst();
+    state.finishedTestFiles.append(Strong<JSModuleGraph>(vm, finished));
+
+    // Same as Zig__GlobalObject__createForTestIsolation().
+    size_t loadedModules = finished->loader()->moduleMap().size() + finished->requireMap()->size();
+    if (size_t entries = std::min<size_t>(2 * loadedModules, 16384); entries > vm.codeCache()->workingSetMaxEntries())
+        vm.codeCache()->setWorkingSetMaxEntries(entries);
+
+    state.testFile.clear();
+    finished->dispose(globalObject);
+    (void)scope.tryClearException();
+    // Preloads run again for the next file and re-register their plugins and mocks.
+    globalObject->onLoadPlugins.clear();
+    globalObject->onResolvePlugins.clear();
+    // The runner restores the working directory.
+    globalObject->processObject()->clearCachedCwd();
 }
 
 // ─── Bun.ModuleGraph ──────────────────────────────────────────────────────────

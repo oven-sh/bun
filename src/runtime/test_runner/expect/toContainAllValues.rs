@@ -3,6 +3,7 @@ use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
+    #[optimize(size)]
     pub(crate) fn to_contain_all_values(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         self.contain_matcher(global, frame, "toContainAllValues", ExpectedArray::BeforeValue,
             ContainMsgs { verb: "contain all values", not_verb: "contain all values" },

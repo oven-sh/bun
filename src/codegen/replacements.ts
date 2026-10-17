@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import NodeErrors from "../jsc/bindings/ErrorCode.ts";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
@@ -59,8 +61,16 @@ export const globalsToPrefix = [
   "AbortSignal",
   "Array",
   "ArrayBuffer",
+  "BigInt64Array",
+  "BigUint64Array",
   "Buffer",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
   "Infinity",
+  "Int16Array",
+  "Int32Array",
+  "Int8Array",
   "Promise",
   "ReadableByteStreamController",
   "ReadableStream",
@@ -70,7 +80,10 @@ export const globalsToPrefix = [
   "ReadableStreamDefaultReader",
   "TransformStream",
   "TransformStreamDefaultController",
+  "Uint16Array",
+  "Uint32Array",
   "Uint8Array",
+  "Uint8ClampedArray",
   "String",
   "RegExp",
   "WritableStream",
@@ -84,6 +97,40 @@ replacements.push({
   from: new RegExp(`\\bextends\\s+(${globalsToPrefix.join("|")})`, "g"),
   to: "extends __no_intrinsic__%1",
 });
+
+// Classes and objects in ZigGlobalObject.lut.txt. `Blob` becomes `@natives.Blob` (NativeGlobals, ZigGlobalObject.cpp).
+// Its functions are left out, except nativeFunctions: the one in `@natives` is not the one on globalThis.
+export const nativeGlobals = Array.from(
+  readFileSync(join(import.meta.dir, "../jsc/bindings/ZigGlobalObject.lut.txt"), "utf8").matchAll(
+    /^ +(\w+) +(\S+) +(\S+)$/gm,
+  ),
+)
+  .filter(
+    ({ 2: value, 3: kind }) => /\b(CellProperty|ClassStructure)\b/.test(kind) || /ConstructorCallback$/.test(value),
+  )
+  .map(({ 1: name }) => name)
+  .filter(name => !globalsToPrefix.includes(name) && name !== "Bun" && name !== "process");
+
+// What fake timers replace. As in Node, they don't stop the timers of builtin modules.
+// Only the bare name is `@natives.setTimeout`. `globalThis.setTimeout` is what script sees, for node:timers.
+export const nativeFunctions = [
+  "setTimeout",
+  "setInterval",
+  "setImmediate",
+  "clearTimeout",
+  "clearInterval",
+  "clearImmediate",
+  "queueMicrotask",
+];
+
+/** The defines for globalsToPrefix and nativeGlobals don't apply to `const { Blob } = globalThis`. */
+export function assertNoDestructuredGlobalThis(source: string, file: string) {
+  if (/}\s*=\s*globalThis\b/.test(source)) {
+    throw new Error(
+      `${file}: do not destructure globalThis, script may have replaced its properties. Write the bare name (\`Blob\`): the bundler turns it into a read that script cannot reach, see nativeGlobals in src/codegen/replacements.ts`,
+    );
+  }
+}
 
 // These enums map to $<enum>IdToLabel and $<enum>LabelToId (ids start at 1)
 // Make sure to define in ./builtins.d.ts
@@ -148,6 +195,14 @@ for (const [name, keys] of Object.entries(enums)) {
 
 for (const name of globalsToPrefix) {
   define[name] = "__intrinsic__" + name;
+}
+
+for (const name of nativeGlobals) {
+  define[name] = define["globalThis." + name] = "__intrinsic__natives." + name;
+}
+
+for (const name of nativeFunctions) {
+  define[name] = "__intrinsic__natives." + name;
 }
 
 for (const key in define) {

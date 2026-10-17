@@ -939,6 +939,13 @@ export const internalModulesLoadedFromBytecode: () => number = $newCppFunction(
   0,
 );
 
+// How many times this process parsed the source of an internal module (node:fs etc.).
+export const internalModulesCompiledFromSource: () => number = $newCppFunction(
+  "InternalModuleRegistry.cpp",
+  "jsInternalModulesCompiledFromSource",
+  0,
+);
+
 // Whether the source of `fn` knows where its lines start. Before anything asked for a position in it, that means they
 // came with its code: from the parse, or out of the bytecode.
 export const sourceHasLineStarts: (fn: Function) => boolean = $newCppFunction(

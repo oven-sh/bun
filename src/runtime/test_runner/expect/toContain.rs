@@ -45,8 +45,9 @@ impl Expect {
                     break;
                 }
             }
-        } else if value.is_string_literal() && expected.is_string_literal() {
+        } else if value.is_string_literal() && (expected.is_string_literal() || this.is_vitest()) {
             let value_string = value.to_utf8(global)?;
+            // Vitest searches with `indexOf()`, which converts `expected` to a string. Jest refuses a non-string.
             let expected_string = expected.to_utf8(global)?;
 
             if expected_string.slice().is_empty() {

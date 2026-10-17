@@ -425,9 +425,7 @@ impl Conn {
         // SAFETY: as above.
         unsafe { lsquic_conn_make_uni_stream(self.0) }
     }
-    /// Forgets up to `n` `make_stream` requests that lsquic counts as delayed
-    /// (neither created nor refused yet). Returns how many remain, so `0`
-    /// reads the count.
+    /// Forgets up to `n` delayed `make_stream` requests. Returns how many remain (`0` reads it).
     pub fn cancel_pending_streams(&self, n: c_uint) -> c_uint {
         unsafe extern "C" {
             fn lsquic_conn_cancel_pending_streams(c: *mut lsquic_conn, n: c_uint) -> c_uint;

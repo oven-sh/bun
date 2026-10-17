@@ -33,8 +33,7 @@ JS_EXPORT_PRIVATE JSWrappingFunction* JSWrappingFunction::create(
     // TypeError instead of jumping to a null native constructor.
     NativeExecutable* executable = vm.getHostFunction(functionPointer, ImplementationVisibility::Public, callHostFunctionAsConstructor, 0, nameStr);
 
-    // Structure* structure = globalObject->FFIFunctionStructure();
-    Structure* structure = JSWrappingFunction::createStructure(vm, globalObject, globalObject->objectPrototype());
+    Structure* structure = globalObject->JSWrappingFunctionStructure();
     JSWrappingFunction* function = new (NotNull, allocateCell<JSWrappingFunction>(vm)) JSWrappingFunction(vm, executable, globalObject, structure, wrappedFn);
     ASSERT(function->structure()->globalObject());
     function->finishCreation(vm);

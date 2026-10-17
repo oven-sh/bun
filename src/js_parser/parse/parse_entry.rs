@@ -18,6 +18,7 @@ use crate::parser::{
     Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
     WrapMode,
 };
+use crate::repl_transforms::starts_like_object_literal;
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
 use bun_ast::{B, E, Expr, G, S, Stmt};
@@ -148,11 +149,12 @@ pub struct Options<'a> {
     pub framework: Option<&'a options::Framework>, // TYPE_ONLY: was bun_runtime::bake::Framework
 
     /// REPL mode: transforms code for interactive evaluation
-    /// - Wraps lone object literals `{...}` in parentheses
+    /// - Reads an input that starts with `{` as an object literal, if it is one expression
     /// - Hoists variable declarations for REPL persistence
     /// - Wraps last expression in { value: expr } for result capture
     /// - Wraps code with await in async IIFE
     pub repl_mode: bool,
+    pub repl_leading_brace: ReplLeadingBrace,
 
     /// Lower `toml_datetime`-tagged strings in a lazy-export AST to `Temporal.*.from` calls.
     pub lower_toml_datetimes: bool,
@@ -160,6 +162,18 @@ pub struct Options<'a> {
     /// A bundle entry point: its own output is needed, so a `module.exports = require(...)`-only file stays a real
     /// module rather than becoming a redirect to what it re-exports.
     pub is_entry_point: bool,
+}
+
+/// How `Options::repl_mode` reads an input that starts with `{` and does not end with `;`.
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+pub enum ReplLeadingBrace {
+    /// As one expression (`{a: 1}` is an object literal), or as statements if it is not one.
+    #[default]
+    ExpressionOrStatements,
+    /// As one expression. `Err(Error::Backtrack)`: the input is not one expression.
+    Expression,
+    /// As statements.
+    Statements,
 }
 
 impl<'a> Default for Options<'a> {
@@ -193,6 +207,7 @@ impl<'a> Default for Options<'a> {
             lower_import_meta_main_for_node_js: false,
             framework: None,
             repl_mode: false,
+            repl_leading_brace: ReplLeadingBrace::default(),
             lower_toml_datetimes: false,
             is_entry_point: false,
         }
@@ -281,6 +296,7 @@ impl<'a> Options<'a> {
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
             framework: self.framework,
             repl_mode: self.repl_mode,
+            repl_leading_brace: self.repl_leading_brace,
             lower_toml_datetimes: self.lower_toml_datetimes,
             is_entry_point: self.is_entry_point,
         }
@@ -356,6 +372,7 @@ impl<'a> Options<'a> {
             lower_import_meta_main_for_node_js: false,
             framework: None,
             repl_mode: false,
+            repl_leading_brace: ReplLeadingBrace::default(),
             lower_toml_datetimes: loader == options::Loader::Toml,
             is_entry_point: false,
         };
@@ -475,11 +492,55 @@ impl<'a> Parser<'a> {
     /// `.text` between the lexer and the live `_parse` bodies.
     #[cold]
     pub fn scan_imports(&mut self, scan_pass: &'a mut ScanPassResult) -> Result<(), Error> {
+        if self.options.repl_mode
+            && self.options.repl_leading_brace == ReplLeadingBrace::ExpressionOrStatements
+            && starts_like_object_literal(&self.lexer, self.source)
+        {
+            return self.scan_imports_of_repl_expression_or_statements(scan_pass);
+        }
+        self.scan_imports_by_loader(scan_pass)
+    }
+
+    fn scan_imports_by_loader(&mut self, scan_pass: &'a mut ScanPassResult) -> Result<(), Error> {
         if self.options.ts {
             self._scan_imports::<true>(scan_pass)
         } else {
             self._scan_imports::<false>(scan_pass)
         }
+    }
+
+    /// `parse_repl_expression_or_statements` for the scan pass, which has no visit pass.
+    fn scan_imports_of_repl_expression_or_statements(
+        &mut self,
+        scan_pass: &'a mut ScanPassResult,
+    ) -> Result<(), Error> {
+        let source = self.source;
+        let mut of_expression = log_of_one_reading(self.lexer.log());
+        let mut options = self.options.clone_for_lazy_export();
+        options.repl_leading_brace = ReplLeadingBrace::Expression;
+        let expression = Parser::init(options, &mut of_expression, source, self.define, self.bump)
+            .and_then(|mut parser| parser.scan_imports_by_loader(&mut *scan_pass));
+        if expression.is_ok() && !of_expression.has_errors() {
+            of_expression.append_to_maybe_recycled(self.lexer.log(), source);
+            return Ok(());
+        }
+        // The expression reading left its import records and symbol uses here.
+        scan_pass.reset();
+
+        let mut of_statements = log_of_one_reading(self.lexer.log());
+        let mut options = core::mem::take(&mut self.options);
+        options.repl_leading_brace = ReplLeadingBrace::Statements;
+        let statements = Parser::init(options, &mut of_statements, source, self.define, self.bump)
+            .and_then(|mut parser| parser.scan_imports_by_loader(scan_pass));
+        let reported = if (statements.is_err() || of_statements.has_errors())
+            && ends_inside_expression_only(&of_expression, &of_statements, source)
+        {
+            &mut of_expression
+        } else {
+            &mut of_statements
+        };
+        reported.append_to_maybe_recycled(self.lexer.log(), source);
+        statements
     }
 
     #[cold]
@@ -540,20 +601,26 @@ impl<'a> Parser<'a> {
         // Which makes sense.
         // June 4: "Parsing took: 18028000"
         // June 4: "Rest of this took: 8003000"
-        match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
-            Ok(_) => {}
-            Err(e) => {
-                if e == crate::Error::StackOverflow {
-                    // The lexer location won't be totally accurate, but it's kind of helpful.
-                    p.log().add_error(
-                        Some(p.source),
-                        p.lexer.loc(),
-                        b"Maximum call stack size exceeded",
-                    );
-                    return Ok(());
-                }
-                return Err(e);
+        let parsed = if p.options.repl_mode
+            && p.options.repl_leading_brace == ReplLeadingBrace::Expression
+            && starts_like_object_literal(&p.lexer, p.source)
+        {
+            p.read_repl_expression().map(drop)
+        } else {
+            p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)
+                .map(drop)
+        };
+        if let Err(e) = parsed {
+            if e == crate::Error::StackOverflow {
+                // The lexer location won't be totally accurate, but it's kind of helpful.
+                p.log().add_error(
+                    Some(p.source),
+                    p.lexer.loc(),
+                    b"Maximum call stack size exceeded",
+                );
+                return Ok(());
             }
+            return Err(e);
         }
 
         //
@@ -827,7 +894,99 @@ fn lower_one_date_time_literal<'a>(
     Ok(())
 }
 
+/// What `Parser::read_repl_leading_brace` did with the input.
+enum ReplLeadingBraceReading<'a> {
+    /// Nothing. The input is statements.
+    Statements,
+    /// `P::read_repl_expression` read it.
+    Expression(Result<&'a mut [Stmt], Error>),
+    /// Other parsers read it, to the end.
+    Parsed(Result<crate::Result<'a>, Error>),
+}
+
+/// A log for one reading of an input, to report in `log` or to drop.
+fn log_of_one_reading(log: &bun_ast::Log) -> bun_ast::Log {
+    let mut of_reading = bun_ast::Log::init();
+    of_reading.level = log.level;
+    of_reading
+}
+
+/// `{ a: 1, b: 2,`: the first error of the expression is at the end of the input, and the one of the statements is not.
+fn ends_inside_expression_only(
+    of_expression: &bun_ast::Log,
+    of_statements: &bun_ast::Log,
+    source: &bun_ast::Source,
+) -> bool {
+    let ends_before_first_error = |log: &bun_ast::Log| {
+        log.msgs
+            .iter()
+            .find(|msg| msg.kind == bun_ast::Kind::Err)
+            .and_then(|msg| msg.data.location.as_ref())
+            .is_some_and(|location| location.offset >= source.contents().len())
+    };
+    ends_before_first_error(of_expression) && !ends_before_first_error(of_statements)
+}
+
 impl<'a> Parser<'a> {
+    /// `repl_mode`, at the first token of the input.
+    #[cold]
+    #[inline(never)]
+    fn read_repl_leading_brace<const TS: bool>(
+        p: &mut P<'a, TS, false>,
+    ) -> ReplLeadingBraceReading<'a> {
+        if !starts_like_object_literal(&p.lexer, p.source) {
+            return ReplLeadingBraceReading::Statements;
+        }
+        match p.options.repl_leading_brace {
+            ReplLeadingBrace::Statements => ReplLeadingBraceReading::Statements,
+            ReplLeadingBrace::Expression => {
+                ReplLeadingBraceReading::Expression(p.read_repl_expression())
+            }
+            ReplLeadingBrace::ExpressionOrStatements => {
+                ReplLeadingBraceReading::Parsed(Self::parse_repl_expression_or_statements(p))
+            }
+        }
+    }
+
+    /// One parser reads the input as one expression and another reads it as statements, as node's REPL does with `(input)` and `input`: https://github.com/nodejs/node/blob/v26.3.0/lib/repl.js#L458-L462
+    fn parse_repl_expression_or_statements<const TS: bool>(
+        p: &mut P<'a, TS, false>,
+    ) -> Result<crate::Result<'a>, Error> {
+        let (source, define, arena) = (p.source, p.define, p.arena);
+
+        let mut of_expression = log_of_one_reading(p.log());
+        // `clone_for_lazy_export` leaves out what only an import or export statement reads.
+        let mut options = p.options.clone_for_lazy_export();
+        options.repl_leading_brace = ReplLeadingBrace::Expression;
+        let expression = Parser::init(options, &mut of_expression, source, define, arena)
+            .and_then(Parser::_parse::<TS>);
+        // Any error but `Backtrack`: the input is one expression, and the visit pass rejected it.
+        let is_rejected_expression = match expression {
+            Ok(result) => {
+                of_expression.append_to_maybe_recycled(p.log(), source);
+                return Ok(result);
+            }
+            Err(Error::Backtrack) => false,
+            Err(_) => true,
+        };
+
+        let mut of_statements = log_of_one_reading(p.log());
+        let mut options = core::mem::take(&mut p.options);
+        options.repl_leading_brace = ReplLeadingBrace::Statements;
+        let statements = Parser::init(options, &mut of_statements, source, define, arena)
+            .and_then(Parser::_parse::<TS>);
+        let reported = if statements.is_err()
+            && (is_rejected_expression
+                || ends_inside_expression_only(&of_expression, &of_statements, source))
+        {
+            &mut of_expression
+        } else {
+            &mut of_statements
+        };
+        reported.append_to_maybe_recycled(p.log(), source);
+        statements
+    }
+
     fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
         // `Source.path` is `Path<'static>`, so
         // `path.text` satisfies `Action::Parse(&'static [u8])` directly.
@@ -927,8 +1086,22 @@ impl<'a> Parser<'a> {
         // Which makes sense.
         // June 4: "Parsing took: 18028000"
         // June 4: "Rest of this took: 8003000"
-        let stmts: &'a mut [Stmt] = match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
-            Ok(s) => s.into_bump_slice_mut(),
+        let parsed = 'parsed: {
+            if p.options.repl_mode {
+                match Self::read_repl_leading_brace(p) {
+                    ReplLeadingBraceReading::Statements => {}
+                    ReplLeadingBraceReading::Expression(stmts) => break 'parsed stmts,
+                    ReplLeadingBraceReading::Parsed(result) => {
+                        parse_tracer.end();
+                        return result;
+                    }
+                }
+            }
+            p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)
+                .map(BumpVec::into_bump_slice_mut)
+        };
+        let stmts: &'a mut [Stmt] = match parsed {
+            Ok(s) => s,
             Err(e) => {
                 parse_tracer.end();
                 if e == crate::Error::StackOverflow {

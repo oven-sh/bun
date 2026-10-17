@@ -3056,7 +3056,7 @@ declare module "bun" {
 
     /**
      * Enable REPL mode transforms:
-     * - Wraps top-level inputs that appear to be object literals (inputs starting with '{' without trailing ';') in parentheses
+     * - Parses an input that starts with '{' and has no trailing ';' as an object literal if the whole input is one expression, and as statements if it is not: '{ a: 1 }' is an object, '{ foo() }' is a block
      * - Hoists all declarations as var for REPL persistence across vm.runInContext calls
      * - Wraps last expression in { __proto__: null, value: expr } for result capture
      * - Wraps code in sync/async IIFE to avoid parentheses around object literals

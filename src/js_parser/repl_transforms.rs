@@ -1,6 +1,7 @@
 //! REPL Transform module - transforms code for interactive REPL evaluation
 //!
 //! This module provides transformations for REPL mode:
+//! - Reads an input that starts with `{` as an object literal, if it is one expression
 //! - Wraps the last expression in { value: expr } for result capture
 //! - Wraps code with await in async IIFE with variable hoisting
 //! - Hoists declarations for variable persistence across REPL lines
@@ -8,15 +9,63 @@
 use bun_alloc::Arena as Bump;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_collections::VecExt;
+use bun_core::strings;
 
 use bun_ast as js_ast;
 use bun_ast::flags;
+use bun_ast::op::Level;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
 
+use crate::Error;
+use crate::lexer::T;
 use crate::p::P;
 
+/// `isObjectLiteral` of node's REPL, at the first token: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/repl/utils.js#L786-L789
+pub(crate) fn starts_like_object_literal(
+    lexer: &crate::lexer::Lexer,
+    source: &bun_ast::Source,
+) -> bool {
+    if lexer.token != T::TOpenBrace {
+        return false;
+    }
+    let code = strings::trim(source.contents(), b" \t\n\r");
+    code.first() == Some(&b'{') && code.last() != Some(&b';')
+}
+
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
+    /// `ReplLeadingBrace::Expression`: the statement list of an input that is one expression.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn read_repl_expression(&mut self) -> Result<&'a mut [Stmt], Error> {
+        let errors = self.log().errors;
+        let loc = self.lexer.loc();
+        // An input that is not one expression is read again as statements: stop at its first error.
+        self.lexer.expected_is_fatal = true;
+        let value = self.parse_expr(Level::Lowest);
+        self.lexer.expected_is_fatal = false;
+        let value = match value {
+            Ok(value) if self.lexer.token == T::TEndOfFile && self.log().errors == errors => value,
+            // The statements run out of stack or memory at the same place.
+            Err(err @ (Error::StackOverflow | Error::Alloc(_))) => return Err(err),
+            Ok(_) | Err(_) => return Err(Error::Backtrack),
+        };
+        let mut stmts =
+            BumpVec::with_capacity_in(1 + self.lexer.comments_to_preserve_before.len(), self.arena);
+        stmts.push(self.s(
+            S::SExpr {
+                value,
+                ..Default::default()
+            },
+            loc,
+        ));
+        let end = self.lexer.loc();
+        for comment in core::mem::take(&mut self.lexer.comments_to_preserve_before) {
+            stmts.push(self.s(S::Comment { text: comment.text }, end));
+        }
+        Ok(stmts.into_bump_slice_mut())
+    }
+
     /// Apply REPL-mode transforms to the AST.
     /// This transforms code for interactive evaluation:
     /// - Wraps the last expression in { value: expr } for result capture

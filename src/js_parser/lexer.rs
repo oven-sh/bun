@@ -243,6 +243,8 @@ pub struct Lexer<'a> {
     pub(crate) track_react_suppressions: bool,
     /// `@name`, an intrinsic in the source of one of JavaScriptCore's builtins, is a name like any other.
     pub(crate) jsc_builtin_syntax: bool,
+    /// `expected` fails after it logs the error. For a reading that is dropped if it has an error.
+    pub(crate) expected_is_fatal: bool,
     pub(crate) all_comments: Vec<Range>,
 }
 
@@ -1830,10 +1832,14 @@ impl<'a> Lexer<'a> {
         if self.is_log_disabled {
             return Err(Error::Backtrack);
         } else if !tokenToString_get(token).is_empty() {
-            self.expected_string(tokenToString_get(token))
+            self.expected_string(tokenToString_get(token))?;
         } else {
-            self.unexpected()
+            self.unexpected()?;
         }
+        if self.expected_is_fatal {
+            return Err(Error::Backtrack);
+        }
+        Ok(())
     }
 
     #[cold]
@@ -2287,6 +2293,7 @@ impl<'a> Lexer<'a> {
             track_comments: false,
             track_react_suppressions: false,
             jsc_builtin_syntax: false,
+            expected_is_fatal: false,
             all_comments: Vec::new(),
         }
     }

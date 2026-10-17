@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -341,18 +341,21 @@ test("a Response or Blob returned from a macro is classified by its MIME essence
 // A macro's `await` is serviced by the VM's macro event loop, so completions have to be routed by which
 // loop was current when their work started: what the macro started goes to the macro loop (or the wait
 // hangs), what the program started stays on the regular loop (or program callbacks run mid-transpile),
-// and whatever a macro started but did not await is adopted by the regular loop once the macro returns
+// and whatever a macro started but did not await is the regular loop's to run once the macro returns
 // (or it is stranded and its keep-alive holds the process open). These run the macro in the main VM:
 // the entry file's macros, or a module require()d so it transpiles on the main thread.
 describe("event loop routing around macros", () => {
+  // A poll that misses a wake-up must fail its row. With no idle GC timer nothing ends that poll a second
+  // late, and the bound ends the child with a signal before the test times out.
   async function run(files: Record<string, string>, env: Record<string, string> = {}) {
     using dir = tempDir("macro-loops", files);
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", "index.ts"],
-      env: { ...bunEnv, ...env },
+      env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1", ...env },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
+      timeout: isASAN || isDebug ? 60_000 : 10_000,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // Debug builds also print "[macro] call <name>" to stdout.
@@ -467,7 +470,7 @@ describe("event loop routing around macros", () => {
     "%s that it does not await still lets the process exit",
     async (_name, macroSource) => {
       await using server = Bun.serve({ port: 0, fetch: () => new Response("settled") });
-      const { lines, stderr, exitCode } = await run(
+      const { lines, stderr, exitCode, signalCode } = await run(
         {
           "m.ts": macroSource,
           "index.ts": entry,
@@ -477,13 +480,14 @@ describe("event loop routing around macros", () => {
       // The continuation runs on the macro loop if the work finishes while the macro is still being waited
       // on and on the regular loop otherwise, so its position relative to the entry module's output varies.
       expect({ lines: lines.sort(), stderr }).toEqual({ lines: ["settled", "value 1"], stderr: "" });
-      expect(exitCode).toBe(0);
+      expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
     },
   );
 
   // An immediate queued while a macro ran sits on the macro loop. The regular loop runs it from that
-  // loop's own queue, after its own immediates of that turn. Until it has run, a later macro that awaits
-  // it still reaches it. What its callback queues belongs to the regular loop.
+  // loop's own queue, after its own immediates of that turn. Until a batch of the regular loop takes it,
+  // a later macro that awaits it still reaches it. What its callback queues or starts belongs to the
+  // regular loop.
   const laterMacro = {
     "m.ts": [
       `let started: Promise<string>;`,
@@ -498,6 +502,34 @@ describe("event loop routing around macros", () => {
     "a.ts": `import { first } from "./m.ts" with { type: "macro" };\nexport const a = first();\n`,
     "b.ts": `import { second } from "./m.ts" with { type: "macro" };\nexport const b = second();\n`,
   };
+  // `first()` leaves an immediate whose callback starts more work. `second()` awaits the end of that work.
+  const leftoverThatStarts = (started: string) => ({
+    "m.ts": [
+      `import fs from "node:fs";`,
+      `let done: Promise<string>;`,
+      `export function first() {`,
+      `  done = new Promise(resolve => setImmediate(() => ${started}));`,
+      `  return 1;`,
+      `}`,
+      `export async function second() {`,
+      `  return await done;`,
+      `}`,
+    ].join("\n"),
+    "a.ts": laterMacro["a.ts"],
+    "b.ts": laterMacro["b.ts"],
+  });
+  const statThenResolve = `fs.promises.stat(import.meta.dir).then(() => resolve("ready"))`;
+  // A macro that awaits two immediates of its own and reports what the program logged by then. Its last
+  // await is a timer: a wait that an immediate settles stays in the poll until the next wake-up (#45020).
+  const probe = [
+    `export async function probe() {`,
+    `  await new Promise(resolve => setImmediate(resolve));`,
+    `  await new Promise(resolve => setImmediate(resolve));`,
+    `  await new Promise(resolve => setTimeout(resolve, 1));`,
+    `  return JSON.stringify(globalThis.log);`,
+    `}`,
+  ].join("\n");
+  const withProbe = `import { probe } from "./m.ts" with { type: "macro" };\nexport const seen = probe();\n`;
   const leftovers: [name: string, files: Record<string, string>, lines: string[]][] = [
     [
       "in a require()d module runs",
@@ -513,6 +545,23 @@ describe("event loop routing around macros", () => {
       {
         "m.ts": leftover,
         "worker.ts": entry,
+        "index.ts": `new Worker(new URL("./worker.ts", import.meta.url).href);\n`,
+      },
+      ["value 1", "settled"],
+    ],
+    [
+      // From a timer, no frame of the module loader is on the stack when the macro's entry point is
+      // allocated. LeakSanitizer then reports that allocation when the Worker's teardown does not free it.
+      "under Bun.Transpiler#transformSync in a Worker's timer runs and the Worker exits",
+      {
+        "m.ts": leftover,
+        "worker.ts": [
+          `setTimeout(() => {`,
+          `  const source = 'import { m } from "./m.ts" with { type: "macro" };\\nexport const value = m();\\n';`,
+          `  const output = new Bun.Transpiler({ loader: "ts" }).transformSync(source);`,
+          `  console.log("value", /value = (\\d+)/.exec(output)?.[1]);`,
+          `}, 0);`,
+        ].join("\n"),
         "index.ts": `new Worker(new URL("./worker.ts", import.meta.url).href);\n`,
       },
       ["value 1", "settled"],
@@ -698,6 +747,46 @@ describe("event loop routing around macros", () => {
       },
       ["1 ready"],
     ],
+    [
+      // The program's immediate runs first, so the macro it starts still finds the leftover queued. The
+      // macro's wait runs it, and the stat it starts is the macro loop's.
+      "and the fs call its callback starts are still a later macro's when a program immediate starts that macro",
+      {
+        ...leftoverThatStarts(statThenResolve),
+        "index.ts": `const { a } = require("./a.ts");\nsetImmediate(() => console.log(a, require("./b.ts").b));\n`,
+      },
+      ["1 ready"],
+    ],
+    [
+      // The program resumes in the microtask checkpoint of the leftover's callback. The immediate it
+      // queues there is its own: the macro that the due timer starts does not run it.
+      "that a program awaits leaves the program's next immediate out of a later macro's wait",
+      {
+        "m.ts": [
+          `export function first() {`,
+          `  globalThis.leftover = new Promise(resolve => setImmediate(resolve, "ready"));`,
+          `  return 1;`,
+          `}`,
+          probe,
+        ].join("\n"),
+        "a.ts": laterMacro["a.ts"],
+        "with-macro.ts": withProbe,
+        "index.ts": [
+          `globalThis.log = [];`,
+          `require("./a.ts");`,
+          `await globalThis.leftover;`,
+          `setImmediate(() => globalThis.log.push("program"));`,
+          `setTimeout(() => {`,
+          `  const { seen } = require("./with-macro.ts");`,
+          `  globalThis.log.push("required");`,
+          `  setImmediate(() => console.log(seen, JSON.stringify(globalThis.log)));`,
+          `}, 0);`,
+          `const until = performance.now() + 5;`,
+          `while (performance.now() < until);`,
+        ].join("\n"),
+      },
+      [`[] ["required","program"]`],
+    ],
   ];
 
   test.concurrent.each(leftovers)("an immediate left on the macro loop %s", async (_name, files, expected) => {
@@ -831,37 +920,72 @@ describe("event loop routing around macros", () => {
 
   // A completion can reach the macro loop's queue, wake the platform loop and have that wake-up used
   // by the macro's own poll, all before the macro settles. The regular loop has to see it without
-  // another wake-up: the listening socket keeps the loop alive with no timer armed, and the spin gives
-  // the thread pool the time to post. Not concurrent: next to twenty other children the thread pool
-  // posts after the spin, and the row then passes whether or not the loop looks.
+  // another wake-up. The macro's immediate spins until the thread pool has posted the completion, and
+  // 20 ms more for the wake-up. A poll that blocks ends at the timer that prints "parked".
   test("a completion left on the macro loop is adopted with no further wake-up", async () => {
-    const { lines, stderr, exitCode, signalCode } = await run(
-      {
-        "m.ts": [
-          `import fs from "node:fs";`,
-          `export async function m() {`,
-          `  const timer = new Promise(resolve => setTimeout(resolve, 50, 1));`,
-          `  setImmediate(() => {`,
-          `    fs.promises.stat(import.meta.dir).then(() => globalThis.settled());`,
-          `    const until = performance.now() + 200;`,
-          `    while (performance.now() < until);`,
-          `  });`,
-          `  return await timer;`,
-          `}`,
-        ].join("\n"),
-        "with-macro.ts": withMacro,
-        "index.ts": [
-          `const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });`,
-          `globalThis.settled = () => {`,
-          `  console.log("settled");`,
-          `  server.stop(true);`,
-          `};`,
-          `setImmediate(() => console.log("value", require("./with-macro.ts").value));`,
-        ].join("\n"),
-      },
-      { BUN_GC_TIMER_DISABLE: "1" },
-    );
-    expect({ lines, stderr }).toEqual({ lines: ["value 1", "settled"], stderr: "" });
+    const { lines, stderr, exitCode, signalCode } = await run({
+      "m.ts": [
+        `import { getEventLoopStats } from "bun:internal-for-testing";`,
+        `import fs from "node:fs";`,
+        `export async function m() {`,
+        `  const timer = new Promise(resolve => setTimeout(resolve, 1, 1));`,
+        `  setImmediate(() => {`,
+        `    fs.promises.stat(import.meta.dir).then(() => globalThis.settled());`,
+        `    while (getEventLoopStats().concurrentTasksEmpty);`,
+        `    const until = performance.now() + 20;`,
+        `    while (performance.now() < until);`,
+        `  });`,
+        `  const value = await timer;`,
+        `  globalThis.queued = !getEventLoopStats().concurrentTasksEmpty;`,
+        `  return value;`,
+        `}`,
+      ].join("\n"),
+      "with-macro.ts": withMacro,
+      "index.ts": [
+        `globalThis.settled = () => {`,
+        `  clearTimeout(globalThis.parked);`,
+        `  console.log("settled");`,
+        `};`,
+        `setImmediate(() => {`,
+        `  const { value } = require("./with-macro.ts");`,
+        `  globalThis.parked = setTimeout(() => console.log("parked"), 5000);`,
+        `  console.log("value", value, "queued", globalThis.queued);`,
+        `});`,
+      ].join("\n"),
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["value 1 queued true", "settled"], stderr: "" });
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+
+  // The leftover's callback queues nothing on the regular loop, and the macro it starts leaves an
+  // immediate on the macro loop. Only "a batch ran" keeps the poll after that batch from blocking. The
+  // spin outlasts the 100 ms timer of JSC's sweeper, which the collection after the entry module arms
+  // and which would end the poll. A poll that blocks ends at the timer that prints "parked".
+  test("an immediate left on the macro loop by a macro that a leftover's callback started runs with no further wake-up", async () => {
+    const { lines, stderr, exitCode, signalCode } = await run({
+      "m.ts": [
+        `export function first() {`,
+        `  setImmediate(() => {`,
+        `    globalThis.loadSecond();`,
+        `    const until = performance.now() + 200;`,
+        `    while (performance.now() < until);`,
+        `    globalThis.parked = setTimeout(() => console.log("parked"), 5000);`,
+        `  });`,
+        `  return 1;`,
+        `}`,
+        `export function second() {`,
+        `  setImmediate(() => {`,
+        `    clearTimeout(globalThis.parked);`,
+        `    console.log("settled");`,
+        `  });`,
+        `  return 2;`,
+        `}`,
+      ].join("\n"),
+      "a.ts": laterMacro["a.ts"],
+      "b.ts": laterMacro["b.ts"],
+      "index.ts": `globalThis.loadSecond = () => require("./b.ts").b;\nconsole.log("first", require("./a.ts").a);\n`,
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["first 1", "settled"], stderr: "" });
     expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
 
@@ -902,33 +1026,54 @@ describe("event loop routing around macros", () => {
     expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
 
-  // Observed with this shape: the child prints nothing and stays in the poll. The regular loop runs
-  // the first hop before the timer fires, so the second hop is the regular loop's, and the wait of the
-  // macro the timer starts ticks only the macro loop. The same holds for any loop-routed work a
-  // leftover's callback starts (a fetch, an fs call), and since #39905 for cross-thread completions.
-  test.todo("a later macro that awaits work a leftover's callback started on the regular loop", async () => {
-    const { lines, stderr, exitCode, signalCode } = await run({
-      "m.ts": [
-        `let done: Promise<string>;`,
-        `export function first() {`,
-        `  done = new Promise(resolve => setImmediate(() => setImmediate(resolve, "ready")));`,
-        `  return 1;`,
-        `}`,
-        `export async function second() {`,
-        `  return await done;`,
-        `}`,
-      ].join("\n"),
-      "a.ts": laterMacro["a.ts"],
-      "b.ts": laterMacro["b.ts"],
-      "index.ts": [
-        `const { a } = require("./a.ts");`,
-        `setTimeout(() => console.log(a, require("./b.ts").b), 0);`,
-        `const until = performance.now() + 5;`,
-        `while (performance.now() < until);`,
-      ].join("\n"),
-    });
-    expect({ lines, stderr }).toEqual({ lines: ["1 ready"], stderr: "" });
-    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  // Observed: the child stays in the poll. A macro's wait ticks only the macro loop. Once the regular
+  // loop ran a leftover's callback, what that callback queued or started is the regular loop's, and
+  // during a batch the other leftovers of that batch are on neither queue. The due timer of the first
+  // two rows starts the later macro after the regular loop ran the leftover. main runs a leftover only
+  // inside a later macro's wait, or never, and exits 0 for all three. It has the limit of the second row
+  // since #39905 for what the callback of an adopted completion starts.
+  const laterMacroFromADueTimer = [
+    `const { a } = require("./a.ts");`,
+    `setTimeout(() => console.log(a, require("./b.ts").b), 0);`,
+    `const until = performance.now() + 5;`,
+    `while (performance.now() < until);`,
+  ].join("\n");
+  const notReachedByALaterMacro: [name: string, files: Record<string, string>][] = [
+    [
+      "an immediate that a leftover's callback queued",
+      { ...leftoverThatStarts(`setImmediate(resolve, "ready")`), "index.ts": laterMacroFromADueTimer },
+    ],
+    [
+      "an fs call that a leftover's callback started",
+      { ...leftoverThatStarts(statThenResolve), "index.ts": laterMacroFromADueTimer },
+    ],
+    [
+      "a leftover of the same batch as the leftover that starts that macro",
+      {
+        "m.ts": [
+          `let ready: Promise<string>;`,
+          `export function first() {`,
+          `  setImmediate(() => console.log(globalThis.loadSecond())).unref();`,
+          `  ready = new Promise(resolve => setImmediate(resolve, "ready").unref());`,
+          `  return 1;`,
+          `}`,
+          `export async function second() {`,
+          `  return await ready;`,
+          `}`,
+        ].join("\n"),
+        "a.ts": laterMacro["a.ts"],
+        "b.ts": laterMacro["b.ts"],
+        "index.ts": [
+          `globalThis.loadSecond = () => require("./b.ts").b;`,
+          `console.log("first", require("./a.ts").a);`,
+          `setTimeout(() => {}, 20);`,
+        ].join("\n"),
+      },
+    ],
+  ];
+  test.todo.each(notReachedByALaterMacro)("a later macro that awaits %s", async (_name, files) => {
+    const { stderr, exitCode, signalCode } = await run(files);
+    expect({ stderr, exitCode, signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
   });
 
   // destroy() emits 'close' from a setImmediate(). Not concurrent: the child loads node:net, which takes
@@ -983,17 +1128,11 @@ describe("event loop routing around macros", () => {
   });
 
   // The same for an immediate the program queued before the wait: it stays on the regular loop, which
-  // is why the macro loop has a queue of its own. The macro awaits two immediates of its own.
+  // is why the macro loop has a queue of its own.
   test.concurrent("a program immediate queued before a macro's wait does not run inside it", async () => {
-    const { lines, stderr, exitCode } = await run({
-      "m.ts": [
-        `export async function probe() {`,
-        `  await new Promise(resolve => setImmediate(resolve));`,
-        `  await new Promise(resolve => setImmediate(resolve));`,
-        `  return JSON.stringify(globalThis.log);`,
-        `}`,
-      ].join("\n"),
-      "with-macro.ts": `import { probe } from "./m.ts" with { type: "macro" };\nexport const seen = probe();\n`,
+    const { lines, stderr, exitCode, signalCode } = await run({
+      "m.ts": probe,
+      "with-macro.ts": withProbe,
       "index.ts": [
         `globalThis.log = [];`,
         `setImmediate(() => globalThis.log.push("program"));`,
@@ -1003,7 +1142,7 @@ describe("event loop routing around macros", () => {
       ].join("\n"),
     });
     expect({ lines, stderr }).toEqual({ lines: [`[] ["required","program"]`], stderr: "" });
-    expect(exitCode).toBe(0);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
 
   // If a program callback did run mid-macro, work it started there would be routed to the macro loop and,

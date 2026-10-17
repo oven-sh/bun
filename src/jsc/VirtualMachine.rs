@@ -2610,9 +2610,11 @@ impl VirtualMachine {
     /// Release — never run — everything queued on both event loops (tasks,
     /// concurrent tasks, pending immediates) while the JSC heap and this
     /// thread's loop are alive: their JS handles and keep-alives drop now. The
-    /// macro loop is only ever ticked explicitly, so whatever a macro queued on
-    /// it is still there. Teardown phase B; also the one thing an owner that
-    /// calls `destroy()` without a teardown (bake's build VM) must do first.
+    /// macro loop too: between macros the regular loop runs its immediates and
+    /// adopts its concurrent tasks, a turn at a time, and nothing else
+    /// (`tasks`, `yield_tasks`), so work can still be queued on it. Teardown
+    /// phase B; also the one thing an owner that calls `destroy()` without a
+    /// teardown (bake's build VM) must do first.
     pub fn release_queued_work(&mut self) {
         self.regular_event_loop.release_queued_tasks();
         self.macro_event_loop.release_queued_tasks();

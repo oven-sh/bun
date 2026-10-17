@@ -684,8 +684,9 @@ impl EventLoop {
     ///
     /// A `setImmediate` under a macro queues on that loop too. This loop runs
     /// those from that loop's own queue (`run_macro_loop_leftovers`) instead
-    /// of moving them: until one has run, a later macro's wait, which ticks
-    /// only the macro loop, can still reach it. That loop's `tasks`,
+    /// of moving them: until a batch here takes them, a later macro's wait,
+    /// which ticks only the macro loop, can still reach them. What their
+    /// callbacks queue belongs to this loop. That loop's `tasks`,
     /// `yield_tasks` and `deferred_tasks` have no such hand-over.
     fn macro_loop_if_not_running(&self) -> Option<&EventLoop> {
         // SAFETY: a sibling field of the live owning VM. Shared access: this
@@ -707,8 +708,10 @@ impl EventLoop {
         }
     }
 
-    /// `auto_tick`, after this loop's own immediates and before the poll: runs
-    /// the immediates queued on the macro loop, once no macro is running.
+    /// `auto_tick`, `auto_tick_active` and the `bun test` file-end drain, after
+    /// this loop's own immediates and before the poll: runs the immediates
+    /// queued on the macro loop, once no macro is running. After its own, so
+    /// that a macro one of those starts in the same turn still finds them.
     /// Returns whether the poll must return at once for that loop: a batch
     /// ran, or its concurrent queue holds what the next `tick()` adopts.
     ///
@@ -745,16 +748,21 @@ impl EventLoop {
         // SAFETY: per fn contract. A callback that starts a macro re-enters
         // the macro loop; `tick_immediate_tasks` launders `self` for that.
         unsafe {
-            if (*macro_loop).immediate_tasks.is_empty() {
-                return !(*macro_loop).concurrent_tasks.is_empty();
+            let ran = !(*macro_loop).immediate_tasks.is_empty();
+            if ran {
+                (*macro_loop).tick_immediate_tasks(vm);
+                debug_assert!(!(*vm).macro_mode);
             }
-            (*macro_loop).tick_immediate_tasks(vm);
-            debug_assert!(!(*vm).macro_mode);
+            // After a batch too: a macro that one of its callbacks started
+            // can have queued on that loop, where `auto_tick` does not look.
+            let pending = ran || !(*macro_loop).concurrent_tasks.is_empty();
             // `get_timeout` zeroes the poll timeout for this only on POSIX.
             #[cfg(windows)]
-            (*(*vm).event_loop).wakeup();
+            if pending {
+                (*(*vm).event_loop).wakeup();
+            }
+            pending
         }
-        true
     }
 
     /// Fold refs/unrefs queued through `ref_keep_alive`/`unref_keep_alive`

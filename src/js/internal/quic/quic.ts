@@ -1027,10 +1027,7 @@ setCallbacks({
     session[kNewStream](stream, direction);
   },
 
-  /**
-   * Called when a stream that was opened without stream credit has been
-   * bound to a transport stream and assigned its ID.
-   */
+  /** Called when a pending stream has been bound and assigned its ID. */
   onStreamAvailable() {
     debug("stream available callback", this[kOwner]);
     this[kOwner][kAvailable]();
@@ -1073,10 +1070,7 @@ setCallbacks({
     this[kOwner][kReset](error);
   },
 
-  /**
-   * Called when the peer sent STOP_SENDING for this stream.
-   * @param {any} error The application error carried by the frame.
-   */
+  /** @param {any} error The application error carried by the peer's STOP_SENDING. */
   onStreamStopSending(error) {
     if (error !== undefined) {
       error = convertQuicError(error);
@@ -1794,10 +1788,8 @@ class QuicStream {
   }
 
   /**
-   * A promise that is fulfilled once the stream is open and has an ID. It
-   * is already fulfilled for a stream that fit within the peer's stream
-   * limit when it was created. It rejects if a pending stream is closed
-   * with an error before it opens.
+   * Fulfilled once the stream has an ID. Rejects if a pending stream is
+   * closed with an error before it opens.
    * @type {Promise<void>}
    */
   get opened() {
@@ -1806,8 +1798,6 @@ class QuicStream {
     let pendingOpen = inner.pendingOpen;
     if (pendingOpen === undefined) {
       pendingOpen = inner.pendingOpen = PromiseWithResolvers();
-      // Already open, or closed after it opened. A stream closed while
-      // still pending was pointed at `pendingClose` in kFinishClose.
       if (!inner.state.pending) {
         pendingOpen.resolve!();
         pendingOpen.resolve = undefined;
@@ -2271,8 +2261,7 @@ class QuicStream {
       if (!closed && !errored) {
         errored = true;
         error = reason;
-        // `fail()` no longer runs for this writer, so take over its job
-        // of keeping `closed` from surfacing the same error twice.
+        // `fail()` is a no-op for an errored writer, so mark `closed` here.
         markPromiseAsHandled(stream.closed);
         if (drainWakeup != null) {
           markPromiseAsHandled(drainWakeup.promise);
@@ -2571,7 +2560,6 @@ class QuicStream {
     const { pendingOpen } = inner;
     if (pendingOpen !== undefined) {
       if (error !== undefined) {
-        // The same error reaches `closed`; do not report it twice.
         markPromiseAsHandled(pendingOpen.promise);
         pendingOpen.reject?.(error);
       } else {
@@ -2580,8 +2568,7 @@ class QuicStream {
       pendingOpen.resolve = undefined;
       pendingOpen.reject = undefined;
     } else if (inner.state.pending) {
-      // Closed before it opened and nobody read `opened` yet: a later read
-      // must settle the way `closed` did.
+      // Closed while pending: a later `opened` read settles like `closed`.
       inner.pendingOpen = inner.pendingClose;
     }
     debug("stream closed");

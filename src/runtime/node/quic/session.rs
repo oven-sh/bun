@@ -1041,9 +1041,7 @@ impl QuicSession {
                         );
                     }
                 } else {
-                    // A local stream reaches here only when it was opened
-                    // without stream credit and lsquic has now bound it
-                    // (`on_new_stream`). Settles `stream.opened`.
+                    // Only a formerly pending local stream gets here.
                     let handle = stream.handle();
                     if let Some(cb) = callbacks::get(global, "onStreamAvailable") {
                         let vm = global.bun_vm().as_mut();

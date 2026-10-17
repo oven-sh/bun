@@ -2,8 +2,8 @@ import { afterAll, expect, test } from "bun:test";
 import { bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { endChildren, longLimit, spawn } from "../children";
-import { env, inTurns, linesOf, modulesInRings, tsc } from "./differential";
+import { endChildren } from "../children";
+import { inTurns, linesOf, modulesInRings, outputOf, tsc } from "./differential";
 
 afterAll(endChildren);
 
@@ -46,8 +46,7 @@ test.concurrent.skipIf(!tsc)("one thread enters every cycle where `tsc --singleT
 
 /** The error lines of `cmd`, which are in the format of `tsc --pretty false`, by line of `a.ts`. */
 async function errorsOf(cmd: string[], cwd: string) {
-  await using proc = spawn({ timeout: longLimit, cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
-  const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const { stdout } = await outputOf(cmd, cwd);
   const byLine = new Map<number, string[]>();
   for (const text of stdout.split("\n")) {
     const line = /^a\.ts\((\d+),\d+\): error TS\d+: /.exec(text)?.[1];
@@ -195,9 +194,11 @@ differential.each(loopShapes)("a variable in a loop that is assigned back: %s", 
     const body = shape.replace("I", () => initializer).replace("A", () => withReference(assigned, `(${read})`));
     return `() { let s: S | null = mk(); ${body} }`;
   });
-  const { onlyTypeScriptReports, onlyBunReports } = await checkBoth(loopDeclarations, functions);
+  const { theirs, ours, onlyTypeScriptReports, onlyBunReports } = await checkBoth(loopDeclarations, functions);
   expect(onlyTypeScriptReports).toEqual([]);
   expect(onlyBunReports).toEqual([]);
+  // And about a line that both report, they say the same.
+  expect([...ours]).toEqual([...theirs]);
 });
 
 // A walk that gets 2,000 levels deep fails with TS2563. A statement in a loop can be on the stack one more time for
@@ -556,8 +557,7 @@ differential("callbacks: the callee, the form of the callback, and the context o
 // suppresses the other errors of its project, so a case that can have one is a project of its own.
 /** What `cmd` prints about each line of `a.ts`. A line that continues a message belongs to the error above it. */
 async function messagesOf(cmd: string[], cwd: string) {
-  await using proc = spawn({ timeout: longLimit, cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
-  const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const { stdout } = await outputOf(cmd, cwd);
   const byLine = new Map<number, string[]>();
   let line = 0;
   for (const text of stdout.split(/\r?\n/)) {
@@ -1430,6 +1430,8 @@ differential("values of compiler options", async () => {
     results.push({ options, bun, tsc: typescript });
   });
   expect(results.filter(it => !Bun.deepEquals(it.bun, it.tsc))).toEqual([]);
+  // The oracle has something to say: about the values that are not valid.
+  expect(results.filter(it => it.tsc.length > 0).length).toBeGreaterThan(cases.length / 4);
 });
 
 // Every kind of value that is not JSON, and lists with `null` in them, in every kind of place.
@@ -1539,6 +1541,8 @@ differential("what is not JSON in a configuration file", async () => {
     results.push({ text, bun, tsc: typescript });
   });
   expect(results.filter(it => !Bun.deepEquals(it.bun, it.tsc))).toEqual([]);
+  // The oracle has something to say about most of them.
+  expect(results.filter(it => it.tsc.length > 0).length).toBeGreaterThan(cases.length / 2);
 });
 
 // `tsc -b` reports project by project, in build order. A file that two projects include is a file of each.
@@ -2040,6 +2044,8 @@ differential("paths in a configuration file that is extended", async () => {
     results.push({ base, bun, tsc: typescript });
   });
   expect(results.filter(it => !Bun.deepEquals(it.bun, it.tsc))).toEqual([]);
+  // The oracle has something to say about most of them.
+  expect(results.filter(it => it.tsc.length > 0).length).toBeGreaterThan(cases.length / 2);
 });
 
 const casingOptions = { ...JSON.parse(tsconfig).compilerOptions };
@@ -2369,8 +2375,7 @@ differential("the files that are checked, by layout of the project and by comman
     for (const side of ["theirs", "ours"]) for (const path in it[3]) files[`${index}/${side}/${path}`] = it[3][path];
   using dir = tempDir("bun-check-contract", files);
   const outcomeOf = async (cmd: string[], cwd: string, root: string) => {
-    await using proc = spawn({ timeout: longLimit, cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const { stdout, exitCode } = await outputOf(cmd, cwd);
     const lines = stdout.replaceAll("\\", "/").replaceAll(root.replaceAll("\\", "/"), "").split(/\r?\n/);
     // tsc exits with 2 if it has written files in spite of errors.
     return { lines: lines.filter(line => line.trim()), fails: exitCode !== 0 };

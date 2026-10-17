@@ -16,6 +16,8 @@ use crate::webcore::{self, AutoFlusher, PathOrFileDescriptor, streams};
 use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 use bun_sys::windows::libuv::UvHandle as _;
+#[cfg(windows)]
+use bun_sys::windows::libuv::UvStream as _;
 
 bun_core::declare_scope!(FileSink, visible);
 
@@ -277,7 +279,91 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     }
 }
 
+/// `child.stdin.destroy()` in `node:child_process`. Node closes the pipe at once and libuv fails
+/// the write still queued on it with ECANCELED. Returns the promise of the parked write. With no
+/// write parked it returns the error for bytes that `write()` acknowledged and the pipe did not
+/// take, or `undefined`.
+pub(crate) fn js_abort(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    use bun_sys_jsc::ErrorJsc;
+
+    let Some(wrapper) = JSSink::from_js(frame.argument(0)) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    let this = wrapper.cast::<FileSink>();
+    // SAFETY: `from_js` returned the live wrapper's sink, and `JSSink<FileSink>` is
+    // `repr(transparent)` over the `FileSink` allocation that `to_js` handed to it. The guard
+    // keeps it live across `on_close`.
+    unsafe {
+        let _guard = RefPtr::init_ref(this);
+        let mut lost = None;
+        if !(*this).is_held_back() {
+            // The writer acknowledges a small write from its buffer: those bytes get one send.
+            // `end` returns the error only when no parked write takes it.
+            if let sys::Result::Err(err) = (*this).end(None) {
+                lost = Some(err);
+            }
+        }
+        if (*this).is_held_back() {
+            (*this).writer.with_mut(|w| w.outgoing.reset());
+            FileSink::abort(this, sys::Errno::ECANCELED);
+            if (*this).pending.get().state == streams::PendingState::Pending {
+                // JS is on the stack: the promise settles from a task, as in `end_from_js`.
+                (*this).run_pending_later();
+            } else {
+                lost = Some(sys::Error::from_code(
+                    sys::Errno::ECANCELED,
+                    sys::Tag::write,
+                ));
+            }
+            FileSink::clear_keep_alive_ref(this);
+        }
+        if (*this).pending.get().state == streams::PendingState::Pending {
+            if let streams::WritableFuture::Promise { strong, .. } = &(*this).pending.get().future {
+                return Ok(strong.value());
+            }
+        }
+        match lost {
+            Some(err) => err.to_js(global),
+            None => Ok(JSValue::UNDEFINED),
+        }
+    }
+}
+
 impl FileSink {
+    /// The pipe did not take bytes the writer holds. They stay there until the reader makes room.
+    fn is_held_back(&self) -> bool {
+        let writer = self.writer.get();
+        #[cfg(not(windows))]
+        {
+            writer.is_backed_up() && writer.has_pending_data()
+        }
+        // One uv_write is in flight at a time. libuv counts it in the stream's write queue only
+        // when the kernel did not take it whole, and later writes wait behind it.
+        #[cfg(windows)]
+        {
+            writer.is_backed_up()
+                || matches!(&writer.source, Some(bun_io::Source::Pipe(pipe)) if pipe.get_write_queue_size() > 0)
+        }
+    }
+
+    /// Closes the writer undrained. The caller settles the pending write, which fails with `errno`.
+    ///
+    /// # Safety
+    /// `this` must be the canonical live `*mut FileSink` (see
+    /// [`on_attached_process_exit`](Self::on_attached_process_exit)) and the caller holds a ref
+    /// across the call: `close` re-enters `on_close`, which releases the keep-alive ref.
+    unsafe fn abort(this: *mut FileSink, errno: sys::Errno) {
+        // SAFETY: caller contract. `IOWriter::close` does not call into JS directly; the `on_close`
+        // re-entry goes through the writer's `*mut FileSink` backref, not this `JsCell` borrow.
+        unsafe {
+            (*this).done.set(true);
+            (*this).writer.with_mut(|w| w.close());
+            (*this).pending.with_mut(|p| {
+                p.result = streams::Writable::Err(sys::Error::from_code(errno, sys::Tag::write));
+            });
+        }
+    }
+
     /// `bun.spawn`'s subprocess exited while this `FileSink` was its stdin.
     ///
     /// Takes the canonical `*mut FileSink` (not `&mut self`): `writer.close()`
@@ -318,17 +404,7 @@ impl FileSink {
                 }
             }
 
-            // SAFETY(JsCell): `IOWriter::close` does not call into JS directly; the
-            // `on_close` re-entry it triggers goes via the stored `*mut FileSink`
-            // backref, not through this `JsCell` borrow.
-            (*this).writer.with_mut(|w| w.close());
-
-            (*this).pending.with_mut(|p| {
-                p.result = streams::Writable::Err(sys::Error::from_code(
-                    sys::Errno::EPIPE,
-                    sys::Tag::write,
-                ));
-            });
+            FileSink::abort(this, sys::Errno::EPIPE);
             FileSink::run_pending(this);
 
             // `writer.close()` → `onClose` already released this above; kept for

@@ -1151,7 +1151,6 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_core",
- "bun_glob",
  "bun_lint",
  "bun_lint_oxlint",
  "bun_lint_react_compiler",

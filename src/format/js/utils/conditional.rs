@@ -19,15 +19,6 @@ pub(super) enum Operand<'a> {
     Type(TypeNode<'a>),
 }
 
-impl Spanned for Operand<'_> {
-    fn span(&self) -> Span {
-        match self {
-            Operand::Expr(e) => e.span(),
-            Operand::Type(ty) => ty.span(),
-        }
-    }
-}
-
 impl<'a> Format<'a> for Operand<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         match self {

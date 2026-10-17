@@ -9106,7 +9106,6 @@ resolutions! {
     ) -> Result<Option<Sym>, (u32, MemberId)>;
     pub fn module_value(module: Sym) -> Sym;
     pub fn module_exports_export(symbol: Sym) -> Option<Sym>;
-    pub fn default_of_module(file: FileId, module: Sym) -> Option<Sym>;
     pub fn module_export(module: Sym, name: Atom) -> Option<Sym>;
     pub fn resolve_symbol(symbol: Sym) -> Option<Sym>;
     pub fn type_only_export_star(module: Sym, name: Atom) -> Option<(FileId, StmtId)>;

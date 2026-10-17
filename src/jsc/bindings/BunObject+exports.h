@@ -4,22 +4,12 @@
 // --- Getters ---
 #define FOR_EACH_GETTER(macro) \
     macro(Archive) \
-    macro(CryptoHasher) \
     macro(FFI) \
     macro(FetchSession) \
     macro(FileSystemRouter) \
-    macro(Glob) \
     macro(Image) \
-    macro(MD4) \
     macro(markdown) \
-    macro(MD5) \
     macro(S3Client) \
-    macro(SHA1) \
-    macro(SHA224) \
-    macro(SHA256) \
-    macro(SHA384) \
-    macro(SHA512) \
-    macro(SHA512_256) \
     macro(Terminal) \
     macro(Transpiler) \
     macro(ValkeyClient) \
@@ -48,7 +38,6 @@
     macro(resolve) \
     macro(resolveSync) \
     macro(serve) \
-    macro(sha) \
     macro(spawn) \
     macro(spawnSync) \
     macro(udpSocket) \

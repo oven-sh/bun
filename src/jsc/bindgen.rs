@@ -54,9 +54,8 @@ impl<'a> JsHeap<'a> {
         self.global_object()
     }
 
-    #[doc(hidden)]
     #[inline(always)]
-    pub fn global_ptr(&self) -> *mut JSGlobalObject {
+    fn global_ptr(&self) -> *mut JSGlobalObject {
         self.global_object().as_mut_ptr()
     }
 
@@ -78,6 +77,18 @@ impl<'a> JsHeap<'a> {
             self.global_object(),
             length,
         ))
+    }
+
+    /// A `Uint8Array` with a copy of `bytes`.
+    #[inline]
+    pub fn create_uint8_array(&self, bytes: &[u8]) -> Result<'a, JsLocal<'a, BufferSource>> {
+        JsLocal::from_js_result(ArrayBuffer::create_uint8_array(self.global_object(), bytes))
+    }
+
+    /// A `Buffer` with a copy of `bytes`.
+    #[inline]
+    pub fn create_buffer(&self, bytes: &[u8]) -> Result<'a, JsLocal<'a, BufferSource>> {
+        JsLocal::from_js_result(ArrayBuffer::create_buffer(self.global_object(), bytes))
     }
 
     /// A `Uint8Array` that takes over the allocation of `bytes`.
@@ -361,6 +372,20 @@ impl<'a> JsLocal<'a, BufferSource> {
     pub fn with_bytes<R>(self, heap: &JsHeap<'a>, f: impl FnOnce(&[u8]) -> R) -> R {
         let array_buffer = self.0.as_array_buffer(heap.global_object());
         let result = f(array_buffer.as_ref().map_or(&[], ArrayBuffer::byte_slice));
+        self.0.ensure_still_alive();
+        result
+    }
+
+    /// As [`with_bytes`](Self::with_bytes), to write them.
+    ///
+    /// # Safety
+    /// Once `f` runs, no other borrow of these bytes is read. Those of another argument can be the same memory.
+    #[inline]
+    pub unsafe fn with_bytes_mut<R>(self, heap: &JsHeap<'a>, f: impl FnOnce(&mut [u8]) -> R) -> R {
+        let mut array_buffer = self.0.as_array_buffer(heap.global_object());
+        let result = f(array_buffer
+            .as_mut()
+            .map_or(&mut [], ArrayBuffer::byte_slice_mut));
         self.0.ensure_still_alive();
         result
     }

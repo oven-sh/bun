@@ -85,6 +85,18 @@ export const sumBeforeAndAfterCallback = b.fn({
   throws: true,
 });
 
+export const fillBuffer = b.fn({
+  args: { buffer: b.bufferSource.allowShared, value: b.u8 },
+  returns: b.usize,
+  capability: "heap",
+});
+/** -1 without any. */
+export const sumBytesIfAny = b.fn({
+  args: { bytes: b.bytes({ from: ["string", "buffer"] }).nullable, text: b.string.loose.utf8.default("") },
+  returns: b.i32,
+});
+export const stringOrObjectEcho = b.fn({ args: { text: b.string.allowStringObject }, returns: b.string });
+
 type BytesOptions = Parameters<typeof b.bytes>[0];
 const bytesOfWith = (options: BytesOptions) =>
   b.fn({ args: { data: b.bytes(options) }, returns: b.array(b.u8), rustPath: "crate::bindgen_test::bytes_of" });
@@ -161,6 +173,11 @@ export const TestCounter = b.class({
     label: { getter: b.string.utf8, setter: true },
     tag: { getter: b.any, capability: "heap", cache: true, throws: true },
     increment: { args: { by: b.i32.default(1) }, returns: b.i32, mutates: true },
+    /** By a number, or by the length of a string, as many times. */
+    add: [
+      { rustName: "add_length", args: { text: b.string.utf8, times: b.i32.default(1) }, returns: b.i32, mutates: true },
+      { rustName: "add_number", args: { by: b.i32 }, returns: b.i32, mutates: true },
+    ],
     listen: { args: { listener: b.any }, capability: "heap", passThis: true },
     /** Calls the listener, which may call back into this object, then returns the count. */
     notify: { returns: b.i32, capability: "js", throws: true },
@@ -170,6 +187,9 @@ export const TestCounter = b.class({
   static: {
     starting: { args: { at: b.i32 }, returns: b.self, capability: "heap" },
     alive: { returns: b.usize },
+    /** How many are alive. The prototype has a `count` too. */
+    count: { getter: b.usize, rustName: "static_count" },
+    limit: { getter: b.any, capability: "heap", throws: true },
   },
 });
 

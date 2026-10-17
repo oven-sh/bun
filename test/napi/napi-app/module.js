@@ -1950,6 +1950,30 @@ nativeTests.test_ungated_calls_worker_terminate = async () => {
   }
 };
 
+// A worker.terminate() that lands while the addon is inside a call Node gates
+// behind can_call_into_js(): its module Init, or a method entered from JS.
+// terminate_probe_addon.cpp records what the refused call, the exception
+// readers and napi_throw say, then makes one node-addon-api call refused (that
+// escalates to napi_fatal_error unless those agree the env is stopping). The
+// parent arms terminate() once the addon has created the signal file.
+nativeTests.test_terminate_during_gated_calls = async (_gc, version, frame) => {
+  const { Worker } = require("node:worker_threads");
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "terminate-probe-"));
+  const signal = path.join(dir, "signal");
+  const probe = path.join(dir, "probe");
+  const worker = new Worker(path.join(__dirname, "terminate-probe-worker.js"), {
+    workerData: { version, frame, signal, probe },
+  });
+  const failed = new Promise((_, reject) => worker.once("error", reject));
+  while (!fs.existsSync(signal)) await new Promise(resolve => setImmediate(resolve));
+  console.log("terminate() resolved with", await Promise.race([worker.terminate(), failed]));
+  console.log(fs.readFileSync(probe, "utf8"));
+  fs.rmSync(dir, { recursive: true });
+};
+
 // See ungated_calls_through_timeout in standalone_tests.cpp: 600ms of ungated
 // calls under a 150ms timeout. The timeout is wall-clock from the start of the
 // run, so it must comfortably cover reaching the addon on the slowest lane.

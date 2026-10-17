@@ -518,6 +518,24 @@ public:
         return m_napiModule.nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception;
     }
 
+    // Node's NAPI_PREAMBLE entry check, in its order: napi_pending_exception for an exception the addon can
+    // read (on the env or on the VM), then the can_call_into_js() gate. The VM's slot is read raw, not through
+    // a JSC exception check: that would service the traps and deliver a worker.terminate() with only addon
+    // frames on the stack, where V8 never does. A termination already pending answers as the closed gate does.
+    inline napi_status entryStatus(JSC::TopExceptionScope& scope) const
+    {
+        if (m_pendingException) [[unlikely]] {
+            return napi_pending_exception;
+        }
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            return m_vm.isTerminationException(exception) ? cannotCallIntoJSStatus() : napi_pending_exception;
+        }
+        if (!canCallIntoJS()) [[unlikely]] {
+            return cannotCallIntoJSStatus();
+        }
+        return napi_ok;
+    }
+
     // Almost all NAPI functions should set error_code to the status they're returning right before
     // they return it
     napi_extended_error_info m_lastNapiErrorInfo = {

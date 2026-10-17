@@ -105,11 +105,10 @@ bun_opaque::opaque_ffi! {
 unsafe extern "C" {
     fn NapiEnv__globalObject(env: *mut NapiEnv) -> *mut JSGlobalObject;
     fn NapiEnv__getAndClearPendingException(env: *mut NapiEnv, out: *mut JSValue) -> bool;
-    fn NapiEnv__hasPendingException(env: *mut NapiEnv) -> bool;
     /// Returns the previous value.
     fn NapiEnv__setCompletingForStoppedContext(env: *mut NapiEnv, value: bool) -> bool;
-    /// `NapiStatus::ok`, or the status Node's `NAPI_PREAMBLE` returns when `can_call_into_js()` is false.
-    fn NapiEnv__checkCanCallIntoJS(env: *mut NapiEnv) -> napi_status;
+    /// `NapiStatus::ok`, or the status Node's `NAPI_PREAMBLE` returns at entry (`NapiEnv::entryStatus`).
+    fn NapiEnv__entryStatus(env: *mut NapiEnv) -> napi_status;
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
     /// The reference to its VM's handle the env holds (`BunVmHandleRef`).
@@ -187,17 +186,11 @@ impl NapiEnv {
         unsafe { NapiEnv__setCompletingForStoppedContext(self.as_mut_ptr(), previous) };
     }
 
-    /// Checks both `env->m_pendingException` (set by `napi_throw*`) and the JSC
-    /// VM exception slot. This is the gate Node.js's `NAPI_PREAMBLE` enforces.
-    pub(crate) fn has_pending_exception(&self) -> bool {
+    /// Node's `NAPI_PREAMBLE` entry check (napi.h `NapiEnv::entryStatus`). `Err` is the status Node
+    /// returns, set as the last error.
+    pub(crate) fn entry_status(&self) -> Result<(), napi_status> {
         // SAFETY: env is non-null; C++ side is read-only here.
-        unsafe { NapiEnv__hasPendingException(self.as_mut_ptr()) }
-    }
-
-    /// Node's `can_call_into_js()` gate. `Err` is the status Node returns, set as the last error.
-    pub(crate) fn check_can_call_into_js(&self) -> Result<(), napi_status> {
-        // SAFETY: env is non-null; C++ side is read-only here.
-        let status = unsafe { NapiEnv__checkCanCallIntoJS(self.as_mut_ptr()) };
+        let status = unsafe { NapiEnv__entryStatus(self.as_mut_ptr()) };
         if status == NapiStatus::ok as napi_status {
             return Ok(());
         }
@@ -535,15 +528,11 @@ macro_rules! get_env {
     };
 }
 
-/// Node's `NAPI_PREAMBLE`: `get_env!`, then `napi_pending_exception` if a JS
-/// exception is pending, then the `can_call_into_js()` gate.
+/// Node's `NAPI_PREAMBLE`: `get_env!`, then [`NapiEnv::entry_status`].
 macro_rules! preamble {
     ($env:expr) => {{
         let env = get_env!($env);
-        if env.has_pending_exception() {
-            return env.pending_exception();
-        }
-        if let Err(status) = env.check_can_call_into_js() {
+        if let Err(status) = env.entry_status() {
             return status;
         }
         env
@@ -1705,9 +1694,6 @@ fn conclude_deferred(
     deferred: napi_deferred,
     settle: impl FnOnce(&mut jsc::JSPromise, &JSGlobalObject) -> JsResult<()>,
 ) -> napi_status {
-    if env.has_pending_exception() {
-        return env.pending_exception();
-    }
     // SAFETY: deferred was created by heap::alloc in napi_create_promise.
     let context = unsafe { (*deferred).context };
     if !env.to_js().bun_vm().is_context_live(context) {
@@ -1718,7 +1704,7 @@ fn conclude_deferred(
     }
     let mut status = env.ok();
     env.complete_in_context(context, || {
-        if let Err(refused) = env.check_can_call_into_js() {
+        if let Err(refused) = env.entry_status() {
             status = refused;
             return;
         }

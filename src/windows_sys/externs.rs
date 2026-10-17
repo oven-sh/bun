@@ -1236,6 +1236,7 @@ impl Win32Error {
     pub const NO_UNICODE_TRANSLATION: Win32Error = Win32Error(1113);
     pub const IO_DEVICE: Win32Error = Win32Error(1117);
     pub const EOM_OVERFLOW: Win32Error = Win32Error(1129);
+    pub const TOO_MANY_LINKS: Win32Error = Win32Error(1142);
     pub const DEVICE_REQUIRES_CLEANING: Win32Error = Win32Error(1165);
     pub const DEVICE_DOOR_OPEN: Win32Error = Win32Error(1166);
     pub const CONNECTION_REFUSED: Win32Error = Win32Error(1225);

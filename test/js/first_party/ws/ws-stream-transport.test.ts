@@ -1330,7 +1330,8 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
     );
   });
 
-  // Only a bounds checked memory releases the block it grew out of. npm ws keeps views of the chunk, which grow() detaches.
+  // Only a bounds checked memory releases the block it grew out of.
+  // npm ws keeps views of the chunk, which grow() detaches, so it throws a TypeError.
   test.skipIf(!builtin).concurrent(
     "a 'message' listener grows the WebAssembly.Memory that holds the chunk",
     async () => {

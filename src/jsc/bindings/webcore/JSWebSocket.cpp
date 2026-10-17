@@ -1101,21 +1101,20 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketFeedForWs, (JSGlobalObject * lexicalGlobalOb
     RefPtr buffer = view->unsharedBuffer();
     if (!buffer) [[unlikely]]
         return JSValue::encode(jsUndefined());
+    std::span<const uint8_t> bytes = view->span();
 
     // A pin stops transfer(), not a WebAssembly.Memory grow().
+    WTF::Vector<uint8_t> owned;
     if (buffer->isWasmMemory()) [[unlikely]] {
-        WTF::Vector<uint8_t> owned;
-        if (!owned.tryAppend(view->span())) [[unlikely]] {
+        if (!owned.tryAppend(bytes)) [[unlikely]] {
             throwOutOfMemoryError(lexicalGlobalObject, throwScope);
             return {};
         }
-        socket->wrapped().feed(owned.span());
-        RETURN_IF_EXCEPTION(throwScope, {});
-        return JSValue::encode(jsUndefined());
+        bytes = owned.span();
     }
 
     buffer->pin();
-    socket->wrapped().feed(view->span());
+    socket->wrapped().feed(bytes);
     buffer->unpin();
     RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsUndefined());

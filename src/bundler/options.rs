@@ -1848,6 +1848,7 @@ impl<'a> BundleOptions<'a> {
         }
 
         opts.env.disable_default_env_files = transform.disable_default_env_files;
+        opts.env.loaded_by_parent = transform.env_files_loaded_by_parent;
 
         if let Some(origin) = &transform.origin {
             // ownership — `URL<'_>` borrows its input; `OwnedURL` owns the href and
@@ -2106,6 +2107,9 @@ pub struct Env {
 
     /// If true, disable loading of default .env files (from --no-env-file flag or bunfig)
     pub disable_default_env_files: bool,
+
+    /// A `bun test --parallel` worker: the coordinator read the env files. Not a switch, a later build reads them as usual.
+    pub loaded_by_parent: bool,
 }
 
 impl Default for Env {
@@ -2115,6 +2119,7 @@ impl Default for Env {
             prefix: Box::default(),
             files: Box::default(),
             disable_default_env_files: false,
+            loaded_by_parent: false,
         }
     }
 }

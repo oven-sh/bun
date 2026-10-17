@@ -1918,7 +1918,7 @@ impl TestCommand {
         // The worker's environment already holds the coordinator's env file values, and `BUN_OPTIONS` in it can carry `--env-file`.
         if ctx.test_options.test_worker {
             ctx.args.env_files.clear();
-            ctx.args.disable_default_env_files = true;
+            ctx.args.env_files_loaded_by_parent = true;
         }
 
         bun_ast::initialize_store();

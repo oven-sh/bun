@@ -343,12 +343,21 @@ describe("the switch covers a build, a macro, an HTML route and a Worker of the 
     own: values,
   });
 
+  // The variables of the fixtures come from a `.env` file only, whatever the environment of this test run has.
+  const cleanEnv = {
+    ...bunEnv,
+    NODE_ENV: undefined,
+    BUN_OPTIONS: undefined,
+    API_KEY: undefined,
+    ONLY_IN_DOT_ENV: undefined,
+  };
+
   type Options = { env?: Record<string, string | undefined>; argv0?: string };
   async function run(cwd: string, args: string[], { env, argv0 }: Options = {}) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
       argv0,
-      env: { ...bunEnv, NODE_ENV: undefined, BUN_OPTIONS: undefined, ...env },
+      env: { ...cleanEnv, ...env },
       cwd,
       stdout: "pipe",
       stderr: "pipe",
@@ -390,6 +399,48 @@ describe("the switch covers a build, a macro, an HTML route and a Worker of the 
     });
   });
 
+  // A `bun test --parallel` worker reads no env file when it starts: it has the environment of the coordinator. That
+  // is not a switch. What a test builds there reads a default `.env` as under `bun test`, unless the command has one.
+  const testFile = String.raw`
+    import { test } from "bun:test";
+    import { seen } from "./seen.ts";
+
+    test("a build in another directory", async () => {
+      process.chdir(import.meta.dir + "/pkg");
+      const result = await Bun.build({ entrypoints: ["./client.ts"], env: "inline" });
+      console.log("REPORT " + JSON.stringify(seen(await result.outputs[0].text())));
+    });
+  `;
+  const testRuns: [string, string[], string[]][] = [
+    ["bun test", ["test"], ["key-from-dot-env", "only-from-dot-env"]],
+    ["bun test --parallel", ["test", "--parallel=2"], ["key-from-dot-env", "only-from-dot-env"]],
+    ["bun test --parallel --no-env-file", ["test", "--parallel=2", "--no-env-file"], []],
+    ["bun test --parallel --env-file", ["test", "--parallel=2", "--env-file=custom.env"], ["key-from-custom-env"]],
+  ];
+  test.concurrent.each(testRuns)("%s: a build in a directory with a .env of its own", async (_, args, values) => {
+    using dir = tempDir("env-opt-out", {
+      "custom.env": files["custom.env"],
+      "seen.ts": seen,
+      "pkg/.env": files[".env"],
+      "pkg/client.ts": files["client.ts"],
+      "a.test.ts": testFile,
+      "b.test.ts": testFile,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: { ...cleanEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const reports = [...(stdout + stderr).matchAll(/^REPORT (.*)$/gm)].map(match => JSON.parse(match[1]));
+    expect({ reports: reports.length === 2 ? reports : { stdout, stderr }, exitCode }).toEqual({
+      reports: [values, values],
+      exitCode: 0,
+    });
+  });
+
   // `bun build` boots no VM. The VM of its macro gets the options of the command. What that macro starts does not:
   // here a transform with a macro of its own, which runs in one more VM.
   const buildFiles = {
@@ -423,7 +474,7 @@ describe("the switch covers a build, a macro, an HTML route and a Worker of the 
     using dir = tempDir("env-opt-out", bunfig ? { ...buildFiles, "bunfig.toml": bunfig } : buildFiles);
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", ...flags, "./entry.ts"],
-      env: { ...bunEnv, NODE_ENV: undefined, BUN_OPTIONS: undefined },
+      env: cleanEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",

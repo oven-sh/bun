@@ -78,7 +78,9 @@ pub(crate) fn run_as_coordinator(
         let _ = env.map.put(b"BUN_TEST_WORKER_ID", &id);
         envps.push(env.map.create_null_delimited_env_map()?);
     }
-    let argv = build_worker_argv(ctx)?;
+    // SAFETY: see vm_ptr note above.
+    let loads_default_env_files = unsafe { (*vm_ptr).transpiler.options.env.loads_default_files() };
+    let argv = build_worker_argv(ctx, loads_default_env_files)?;
 
     // Sort lexicographically so adjacent indices share parent directories.
     // Each worker owns a contiguous chunk; co-located files share imports, so
@@ -238,7 +240,10 @@ pub(crate) fn run_as_coordinator(
 /// (`--path-ignore-patterns`, `--changed`), `--reporter-outfile`,
 /// `--pass-with-no-tests`, `--parallel` itself — are intentionally not
 /// forwarded.
-fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn::CStrPtr]>> {
+fn build_worker_argv(
+    ctx: &Command::ContextData,
+    loads_default_env_files: bool,
+) -> crate::Result<Box<[bun_spawn::CStrPtr]>> {
     // Null-sentinel slice of C-string pointers. String storage routes through
     // the process-lifetime CLI arena (bulk-freed on exit).
     let mut argv: Vec<bun_spawn::CStrPtr> = Vec::new();
@@ -379,6 +384,10 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     }
     if ctx.args.allow_ffi_cc == Some(false) {
         argv.push(lit(b"--no-ffi-cc\0"));
+    }
+    // The `.env` switch of the command, for what a worker builds. The worker itself reads no env file.
+    if !loads_default_env_files {
+        argv.push(lit(b"--no-env-file\0"));
     }
     match bun_core::code_generation_from_strings() {
         bun_core::CodeGenerationFromStrings::Allowed => {}

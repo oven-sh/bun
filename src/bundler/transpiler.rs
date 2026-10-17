@@ -500,7 +500,9 @@ impl<'a> Transpiler<'a> {
             self.options.env.prefix = Box::from(b"BUN_".as_slice());
         }
 
-        self.run_env_loader(self.options.env.disable_default_env_files)?;
+        self.run_env_loader(
+            self.options.env.disable_default_env_files || self.options.env.loaded_by_parent,
+        )?;
 
         let env_loader = self.env_mut();
         let mut is_production = env_loader.is_production();

@@ -782,47 +782,43 @@ export default function IndexPage() {
   });
 
   // The transpilers of the app, and the VMs of their macros, get an env loader of their own. The `.env` switches of
-  // the command apply to it. The timeout is explicit: one React build takes more than the 5s default on a debug build.
+  // the command apply to it.
   test.each([
     ["no switch", [], "seen:key-from-dot-env,only-from-dot-env"],
     ["--no-env-file", ["--no-env-file"], "seen:undefined,undefined"],
     ["--env-file", ["--env-file=custom.env"], "seen:key-from-custom-env,undefined"],
-  ])(
-    "%s: what a macro of a page has of .env",
-    async (_, flags, seen) => {
-      const dir = await tempDirWithBakeDeps("bake-production-env", {
-        ".env": "API_KEY=key-from-dot-env\nONLY_IN_DOT_ENV=only-from-dot-env\n",
-        "custom.env": "API_KEY=key-from-custom-env\n",
-        "values.ts":
-          "export const values = () => [process.env.API_KEY, process.env.ONLY_IN_DOT_ENV].map(String).join();\n",
-        "src/index.tsx": `export default { app: { framework: "react" } };`,
-        "pages/index.tsx": `import { values } from "../values.ts" with { type: "macro" };
+  ])("%s: what a macro of a page has of .env", async (_, flags, seen) => {
+    const dir = await tempDirWithBakeDeps("bake-production-env", {
+      ".env": "API_KEY=key-from-dot-env\nONLY_IN_DOT_ENV=only-from-dot-env\n",
+      "custom.env": "API_KEY=key-from-custom-env\n",
+      "values.ts":
+        "export const values = () => [process.env.API_KEY, process.env.ONLY_IN_DOT_ENV].map(String).join();\n",
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `import { values } from "../values.ts" with { type: "macro" };
 
 export default function IndexPage() {
   return <div>{"seen:" + values()}</div>;
 }`,
-        "package.json": JSON.stringify({
-          "name": "test-app",
-          "version": "1.0.0",
-          "devDependencies": {
-            "react": "^18.0.0",
-            "react-dom": "^18.0.0",
-          },
-        }),
-      });
-      const env = { ...bunEnv };
-      delete env.API_KEY;
-      delete env.ONLY_IN_DOT_ENV;
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+    const env = { ...bunEnv };
+    delete env.API_KEY;
+    delete env.ONLY_IN_DOT_ENV;
 
-      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ${flags} ./src/index.tsx`
-        .cwd(dir)
-        .env(env)
-        .throws(false);
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ${flags} ./src/index.tsx`
+      .cwd(dir)
+      .env(env)
+      .throws(false);
 
-      const page = path.join(dir, "dist", "index.html");
-      const html = existsSync(page) ? await Bun.file(page).text() : stderr.toString();
-      expect({ seen: /seen:[\w,-]+/.exec(html)?.[0] ?? html, exitCode }).toEqual({ seen, exitCode: 0 });
-    },
-    120_000,
-  );
+    const page = path.join(dir, "dist", "index.html");
+    const html = existsSync(page) ? await Bun.file(page).text() : stderr.toString();
+    expect({ seen: /seen:[\w,-]+/.exec(html)?.[0] ?? html, exitCode }).toEqual({ seen, exitCode: 0 });
+  });
 });

@@ -95,6 +95,8 @@ pub mod api {
         pub env_files: Vec<Box<[u8]>>,
         /// disable_default_env_files
         pub disable_default_env_files: bool,
+        /// The parent process read the env files into this environment: a VM reads none when it starts.
+        pub env_files_loaded_by_parent: bool,
         /// extension_order
         pub extension_order: Vec<Box<[u8]>>,
         /// no_summary

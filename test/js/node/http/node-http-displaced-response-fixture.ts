@@ -337,12 +337,14 @@ async function adopted(use: string) {
 }
 
 // A keep-alive connection whose first response sent a trailer. Its second request is an Upgrade
-// request that the 'request' listener hands to ws, so the socket is a WebSocket when the response
-// of that request ends. Its trailer is its own: nothing of the socket may take it.
+// request that ws adopts, so the socket is a WebSocket when the response of that request ends.
+// Its trailer is its own: nothing of the socket may take it.
 //
-// "after the WebSocket closed" is the order a timing wrapper makes: the listener awaits the
-// WebSocket and adds a Server-Timing trailer in its finally. The response then ends after the
-// WebSocket carried frames, so its trailer would land in a block that the WebSocket now uses.
+// The orders are those of a wrapper that adds a Server-Timing trailer and ends the response in its
+// finally. "addTrailers+end" is a handler that returns right after handleUpgrade(). "after a frame"
+// is a handler that waits for the first message: the WebSocket is open and has written a frame, so
+// the trailer would land in a block that the WebSocket uses. "after the WebSocket closed" is a
+// handler that waits for the 'close' of the WebSocket.
 //
 // A use that starts with "'upgrade' listener: " takes the other dispatcher branch: the server has an
 // 'upgrade' listener, which builds the response itself. @fastify/websocket and ws with { server } do
@@ -352,30 +354,34 @@ async function adopted(use: string) {
 // WebSocket stream. end() here returns too, and writes nothing: the socket belongs to the WebSocket.
 async function upgraded(use: string) {
   const wss = new WebSocketServer({ noServer: true });
-  const opened = Promise.withResolvers<{ ws: import("ws").WebSocket; result: string }>();
+  const ended = Promise.withResolvers<{ ws: import("ws").WebSocket; result: string }>();
   const viaUpgradeListener = use.startsWith("'upgrade' listener: ");
   const order = viaUpgradeListener ? use.slice("'upgrade' listener: ".length) : use;
+  const afterFrame = order === "after a frame";
   const afterClose = order === "after the WebSocket closed";
   const adopt = (req: http.IncomingMessage, socket: net.Socket, head: Buffer, res: http.ServerResponse) => {
     wss.handleUpgrade(req, socket, head, ws => {
       ws.on("error", () => {});
-      if (afterClose) {
-        ws.on("message", () => ws.send("hello"));
-        ws.on("close", () => {
-          const result = attempt(() => {
-            res.addTrailers({ "x-second": Buffer.alloc(100, "b").toString() });
-            res.end();
-          });
-          opened.resolve({ ws, result });
+      const endWithTrailers = () =>
+        attempt(() => {
+          if (order === "flushHeaders+addTrailers+end") res.flushHeaders();
+          if (order !== "end") res.addTrailers({ "x-second": Buffer.alloc(100, "b").toString() });
+          res.end("late");
         });
-        return;
+      if (afterFrame) {
+        // A frame on each side of the end(): a byte of the response would sit between them.
+        ws.on("message", () => {
+          ws.send("hello");
+          const result = endWithTrailers();
+          ws.send("done");
+          ended.resolve({ ws, result });
+        });
+      } else if (afterClose) {
+        ws.on("message", () => ws.send("hello"));
+        ws.on("close", () => ended.resolve({ ws, result: endWithTrailers() }));
+      } else {
+        ended.resolve({ ws, result: endWithTrailers() });
       }
-      const result = attempt(() => {
-        if (order === "flushHeaders+addTrailers+end") res.flushHeaders();
-        if (order !== "end") res.addTrailers({ "x-second": Buffer.alloc(100, "b").toString() });
-        res.end("late");
-      });
-      opened.resolve({ ws, result });
     });
   };
   const server = createServer((req, res) => {
@@ -398,13 +404,15 @@ async function upgraded(use: string) {
   }
   await once(server.listen(0, "127.0.0.1"), "listening");
   const client = await connect(server);
+  // The server closes the connection after a closing handshake, so this can come before the 'close' of the WebSocket.
+  const closed = once(client, "close");
   let received = "";
   // The trailer section ends the first response.
   const firstTrailer = `0\r\nx-first: ${Buffer.alloc(200, "a")}\r\n\r\n`;
   let sentUpgrade = false;
   const switched = Promise.withResolvers<void>();
   const greeted = Promise.withResolvers<void>();
-  const farewell = Promise.withResolvers<void>();
+  const finished = Promise.withResolvers<void>();
   client.on("data", chunk => {
     received += chunk.toString("latin1");
     if (!sentUpgrade && received.endsWith(firstTrailer)) {
@@ -414,39 +422,35 @@ async function upgraded(use: string) {
           "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
       );
     }
-    if (received.includes("HTTP/1.1 101 ")) {
-      switched.resolve();
-      // The Close frame of the server: opcode 0x88. No byte of the 101 or of the echo frame is 0x88.
-      if (received.slice(received.indexOf("HTTP/1.1 101 ")).includes("\x88")) farewell.resolve();
-    }
+    if (received.includes("HTTP/1.1 101 ")) switched.resolve();
     if (received.endsWith("hello")) greeted.resolve();
+    if (received.endsWith("done")) finished.resolve();
   });
   client.write(request("/first"));
-  if (afterClose) {
-    await switched.promise;
-    // One masked text frame ("ping"), then a Close frame: the order a browser sends. The server
-    // answers with "hello", and its 'close' listener ends the response of the Upgrade request.
-    client.write(Buffer.from([0x81, 0x84, 0, 0, 0, 0, 0x70, 0x69, 0x6e, 0x67]));
-    await greeted.promise;
-    client.write(Buffer.from([0x88, 0x80, 0, 0, 0, 0]));
-  }
-  const { ws, result } = await opened.promise;
   await switched.promise;
-  if (afterClose) {
-    await farewell.promise;
-  } else {
+  // One masked text frame ("ping"), as a browser sends it.
+  if (afterFrame || afterClose) client.write(Buffer.from([0x81, 0x84, 0, 0, 0, 0, 0x70, 0x69, 0x6e, 0x67]));
+  if (afterFrame) {
+    await finished.promise;
+  } else if (afterClose) {
+    await greeted.promise;
+    // A masked Close frame. The server answers with its own Close frame and closes the connection.
+    client.write(Buffer.from([0x88, 0x80, 0, 0, 0, 0]));
+    await closed;
+  }
+  const { ws, result } = await ended.promise;
+  if (!afterFrame && !afterClose) {
     ws.send("hello");
     await greeted.promise;
   }
 
-  const closed = once(client, "close");
   client.destroy();
   await closed;
   ws.terminate();
   wss.close();
   server.close();
   server.closeAllConnections();
-  // The WebSocket frame is all that follows the 101: nothing of the response that ended.
+  // The frames of the WebSocket are all that follows the 101: nothing of the response that ended.
   const afterSwitch = received.slice(received.indexOf("HTTP/1.1 101 ")).split("\r\n\r\n")[1];
   return { use, result, afterSwitch: Buffer.from(afterSwitch, "latin1").toString("hex") };
 }
@@ -599,9 +603,10 @@ if (suite === "displaced") {
     "end",
     "addTrailers+end",
     "flushHeaders+addTrailers+end",
+    "after a frame",
     "after the WebSocket closed",
     "'upgrade' listener: addTrailers+end",
-    "'upgrade' listener: after the WebSocket closed",
+    "'upgrade' listener: after a frame",
   ]) {
     results.push(await upgraded(use));
   }

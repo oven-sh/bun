@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { resolve } from "path";
 
 declare global {
@@ -1653,5 +1653,57 @@ describe.concurrent("onResolve", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+});
+
+// `args.path` is a string of its own. It used to point into the bytes of the module key, which are freed with the
+// module: after a load that failed, or after `delete require.cache[key]`.
+it.concurrent("the path that onLoad is given stays what it was when the module is gone", async () => {
+  const source = `
+    const kept = { failed: [], failedInNamespace: [], deleted: [] };
+    Bun.plugin({
+      name: "keeps args.path",
+      setup(build) {
+        build.onResolve({ filter: /\\.(failed|deleted)$/ }, ({ path }) => ({ path }));
+        build.onLoad({ filter: /\\.failed$/ }, ({ path }) => { kept.failed.push(path); throw new Error("not loaded"); });
+        build.onLoad({ filter: /\\.deleted$/ }, ({ path }) => { kept.deleted.push(path); return { exports: {}, loader: "object" }; });
+        build.onResolve({ filter: /\\.failed-in-namespace$/ }, ({ path }) => ({ path, namespace: "kept" }));
+        build.onLoad({ filter: /.*/, namespace: "kept" }, ({ path }) => { kept.failedInNamespace.push(path); throw new Error("not loaded"); });
+      },
+    });
+    const key = (i, extension) => "/absent/a-path-that-is-long-enough-to-have-a-buffer-of-its-own/" + i + extension;
+    for (let i = 0; i < 50; i++) {
+      try { require(key(i, ".failed")); } catch {}
+      try { require(key(i, ".failed-in-namespace")); } catch {}
+      require(key(i, ".deleted"));
+      delete require.cache[key(i, ".deleted")];
+    }
+    Bun.gc(true);
+    const others = [];
+    for (let i = 0; i < 2000; i++) others.push("another string that is given the memory that was freed " + i);
+    Bun.gc(true);
+    const changed = (paths, extension) => paths.length + " kept, " + paths.filter((path, i) => path !== key(i, extension)).length + " changed";
+    console.log("failed: " + changed(kept.failed, ".failed"));
+    console.log("failed in a namespace: " + changed(kept.failedInNamespace, ".failed-in-namespace"));
+    console.log("deleted: " + changed(kept.deleted, ".deleted"));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", source],
+    env: {
+      ...bunEnv,
+      // With the system allocator, ASAN reports a read of the freed bytes.
+      ...(isWindows ? {} : { Malloc: "1" }),
+      // symbolize=0: symbolizing a failure report outlasts the test timeout.
+      // detect_leaks=0: Malloc=1 exposes JSC's never-freed startup allocations to LSAN.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "failed: 50 kept, 0 changed\nfailed in a namespace: 50 kept, 0 changed\ndeleted: 50 kept, 0 changed\n",
+    stderr: "",
+    exitCode: 0,
   });
 });

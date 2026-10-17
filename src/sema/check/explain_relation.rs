@@ -684,7 +684,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getPropertiesOfType`: for a union, the properties that all its members have.
     pub(super) fn properties_of_type(&mut self, ty: TypeId) -> &'p [Prop<'p>] {
         let ty = self.reduced_apparent_type_as_object(ty);
-        match self.members(ty) {
+        match self.listed_members(ty) {
             Some(members) => &members.shape().props,
             None => &[],
         }

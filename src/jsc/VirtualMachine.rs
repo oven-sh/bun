@@ -94,6 +94,8 @@ pub struct InitOptions {
     /// reuses the caller's env loader.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
+    /// `--install=...`; the resolver needs it before `configure_linker()` caches package.json.
+    pub global_cache: bun_options_types::global_cache::GlobalCache,
     pub smol: bool,
     pub eval_mode: bool,
     pub is_main_thread: bool,
@@ -118,6 +120,7 @@ impl Default for InitOptions {
             log: None,
             env_loader: None,
             graph: None,
+            global_cache: bun_options_types::global_cache::GlobalCache::disable,
             smol: false,
             eval_mode: false,
             is_main_thread: false,
@@ -2265,6 +2268,11 @@ impl VirtualMachine {
             self.is_inside_deferred_task_queue.set(false);
         }
 
+        // The loop won't tick again, so flush now. Don't use `uws_loop()`: inside spawnSync it
+        // returns a loop that has no uWS LoopData.
+        // SAFETY: `uws::Loop::get()` returns the live per-thread uws loop.
+        unsafe { (*uws::Loop::get()).flush_pending_writes() };
+
         self.is_shutting_down = true;
 
         // Node's FreeEnvironment sets `is_stopping` before `RunCleanup`: the
@@ -2333,6 +2341,40 @@ impl VirtualMachine {
             self.close_sqlite_databases_for_exit();
         }
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
+    }
+
+    /// Ends this thread's VM, which is not the main thread's: its exit handlers,
+    /// [`teardown`](Self::teardown), and the storage `init` put on the global heap.
+    /// Returns its exit code.
+    ///
+    /// # Safety
+    /// `this` is this thread's VM, made without a caller's `log`; this thread holds
+    /// its API lock and abandons it; nothing else can reach the VM.
+    pub unsafe fn exit_and_free(this: *mut Self) -> u8 {
+        // SAFETY: fn contract (statement-scoped exclusive access: the handlers run script).
+        let exit_code = unsafe {
+            (*this).is_shutting_down = true;
+            (*this).on_exit();
+            (*this).exit_handler.exit_code
+        };
+        // SAFETY: fn contract.
+        unsafe { Self::teardown(this, Teardown::Worker) };
+        // SAFETY: sole owner; nothing past this point dereferences the VM.
+        unsafe {
+            let console = core::mem::replace(&mut (*this).console, core::ptr::null_mut());
+            if !console.is_null() {
+                bun_core::heap::destroy(console);
+            }
+            if let Some(log) = (*this).log.take() {
+                bun_core::heap::destroy(log.as_ptr());
+            }
+            VMHolder::set_vm(None);
+            // The VM was `alloc_zeroed(Layout::<VirtualMachine>())` in
+            // `init`, NOT `Box::new` — dealloc the raw storage directly so
+            // field `Drop`s do not re-run on already-`deinit`'d state.
+            std::alloc::dealloc(this.cast::<u8>(), core::alloc::Layout::new::<Self>());
+        }
+        exit_code
     }
 
     /// Checkpoint + close the sqlite connections *this* VM opened, while it is
@@ -4079,15 +4121,6 @@ fn normalize_source(source: &[u8]) -> &[u8] {
     source
 }
 
-// Additional FFI used by the formerly-gated impl.
-// C++ side defines `extern "C" SYSV_ABI` (BakeAdditionsToGlobalObject.cpp).
-//
-// safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; `&` is
-// ABI-identical to a non-null `JSGlobalObject*` and C++ mutating VM state
-// through it is interior to the cell.
-crate::jsc_abi_extern! {
-    safe fn Bake__getAsyncLocalStorage(global: &JSGlobalObject) -> JSValue;
-}
 // `JSGlobalObject` / `VM` are opaque `UnsafeCell`-backed ZST handles, so
 // `&T` is ABI-identical to a non-null `T*`. `BakeCreateProdGlobal`'s
 // `console_ptr` is an opaque round-trip pointer C++ stores into the new global
@@ -4114,17 +4147,6 @@ extern "C" fn free_ref_string(str_: *mut crate::ref_string::RefString, _: *mut c
 }
 
 impl VirtualMachine {
-    /// Returns the dev server's `AsyncLocalStorage` instance, or `None` when unset.
-    pub fn get_dev_server_async_local_storage(&mut self) -> JsResult<Option<JSValue>> {
-        let global_ref = self.global();
-        let jsvalue =
-            jsc::from_js_host_call(global_ref, || Bake__getAsyncLocalStorage(global_ref))?;
-        if jsvalue.is_empty_or_undefined_or_null() {
-            return Ok(None);
-        }
-        Ok(Some(jsvalue))
-    }
-
     /// Whether native addons (`process.dlopen`) are allowed (`--no-addons` disables them).
     #[unsafe(export_name = "Bun__VM__allowAddons")]
     pub(crate) extern "C" fn allow_addons(this: &VirtualMachine) -> bool {
@@ -4189,6 +4211,13 @@ impl VirtualMachine {
             return v;
         }
         self.transpiler.env_mut().get_tls_reject_unauthorized()
+    }
+
+    /// The TLS 1.2 list assigned through `tls.DEFAULT_CIPHERS`, `None` when never assigned.
+    pub fn tls_default_ciphers(&self) -> Option<&[u8]> {
+        self.rare_data
+            .as_deref()
+            .and_then(RareData::tls_default_ciphers)
     }
 
     /// Registers a spawned subprocess with the auto-killer.
@@ -4867,6 +4896,12 @@ impl VirtualMachine {
         VirtualMachine::get().as_mut().ref_strings.remove(&hash);
     }
 
+    /// Whether what is made of a file on disk is static code (`ResolvedSource::is_static`). A standalone executable is
+    /// stored in itself, so to it a file on disk is not part of the program.
+    pub fn is_file_on_disk_static(in_standalone_executable: bool, path: &[u8]) -> bool {
+        !in_standalone_executable && !path.starts_with(b"data:")
+    }
+
     /// Builds a `ResolvedSource` backed by a ref-counted copy of `code` interned in the VM's ref-string map.
     pub fn ref_counted_resolved_source(
         &mut self,
@@ -5496,21 +5531,16 @@ impl VirtualMachine {
             IS_A_FILE_PATH,
             global_cache,
         );
-        if let Err(err_) = resolve_result {
-            let err = err_;
+        if let Err(err) = resolve_result {
             let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
-            let msg = log
+            let resolve_msg_index = log
                 .msgs
                 .iter()
-                .find_map(|m| {
-                    if let bun_ast::Metadata::Resolve(_) = &m.metadata {
-                        Some(m.clone())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| {
+                .position(|m| matches!(m.metadata, bun_ast::Metadata::Resolve(_)));
+            let mut msg = match resolve_msg_index {
+                Some(i) => log.msgs[i].clone(),
+                None => {
                     let printed = crate::ResolveMessage::fmt(
                         specifier_utf8.slice(),
                         source_utf8.slice(),
@@ -5526,7 +5556,20 @@ impl VirtualMachine {
                         }),
                         ..Default::default()
                     }
-                });
+                }
+            };
+            // `log` dies with this frame. Deduplicated: `_resolve`'s retry can log a failure twice.
+            let mut notes = core::mem::take(&mut msg.notes).into_vec();
+            for (i, logged) in log.msgs.iter().enumerate() {
+                if Some(i) == resolve_msg_index
+                    || !matches!(logged.kind, bun_ast::Kind::Err | bun_ast::Kind::Warn)
+                    || notes.iter().any(|note| note.text == logged.data.text)
+                {
+                    continue;
+                }
+                notes.push(logged.data.clone());
+            }
+            msg.notes = notes.into_boxed_slice();
             return Ok(Err(crate::ResolveMessage::create(
                 global,
                 &msg,

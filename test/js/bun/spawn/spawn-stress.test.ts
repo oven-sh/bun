@@ -22,8 +22,8 @@ test("spawn stress", async () => {
       await Bun.sleep(1);
     } catch (e) {
       console.log("Failed in Iteration " + i + "\n");
-      console.log(out);
-      console.log(err);
+      console.log(out!);
+      console.log(err!);
       throw e;
     }
   }

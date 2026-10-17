@@ -207,6 +207,8 @@ pub fn make_path_with<'a, T: PathChar, E>(
     let Some(mut comp) = it.last() else {
         return Ok(());
     };
+    // `NotFound` again once its parent exists (a dangling symlink) can never succeed.
+    let mut last_not_found: Option<usize> = None;
     loop {
         match mkdir(comp.path)? {
             MakePathStep::Created | MakePathStep::Exists => {
@@ -216,6 +218,9 @@ pub fn make_path_with<'a, T: PathChar, E>(
                 };
             }
             MakePathStep::NotFound(e) => {
+                if last_not_found.replace(comp.path.len()) == Some(comp.path.len()) {
+                    return Err(e);
+                }
                 comp = match it.previous() {
                     Some(c) => c,
                     None => return Err(e),
@@ -362,6 +367,38 @@ mod tests {
         assert!(ComponentIterator::<u8>::init(b"\\\\?\\C:\\", PathFormat::Windows).is_err());
         assert!(ComponentIterator::<u8>::init(b"\\??\\C:\\", PathFormat::Windows).is_err());
         assert!(ComponentIterator::<u8>::init(b"\\\\\\x", PathFormat::Windows).is_err());
+    }
+
+    #[test]
+    fn make_path_terminates_on_uncreatable_component() {
+        let it = ComponentIterator::init(&b"/t/dangling/x"[..], PathFormat::Posix).unwrap();
+        let mut calls = 0usize;
+        let result = make_path_with(it, |p| {
+            calls += 1;
+            assert!(calls < 100, "make_path_with did not terminate");
+            match p {
+                b"/t" | b"/t/dangling" => Ok(MakePathStep::Exists),
+                b"/t/dangling/x" => Ok(MakePathStep::NotFound("enoent")),
+                _ => panic!("unexpected prefix"),
+            }
+        });
+        assert_eq!(result, Err("enoent"));
+
+        // A NotFound that resolves after the parent is created still succeeds.
+        let it = ComponentIterator::init(&b"/t/a/b"[..], PathFormat::Posix).unwrap();
+        let mut created = std::collections::HashSet::new();
+        let result: Result<(), &str> = make_path_with(it, |p| {
+            Ok(if p == b"/t" || created.contains(p) {
+                MakePathStep::Exists
+            } else if p == b"/t/a" || created.contains(b"/t/a".as_slice()) {
+                created.insert(p);
+                MakePathStep::Created
+            } else {
+                MakePathStep::NotFound("enoent")
+            })
+        });
+        assert_eq!(result, Ok(()));
+        assert!(created.contains(b"/t/a/b".as_slice()));
     }
 
     #[test]

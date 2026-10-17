@@ -620,7 +620,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray | JSC::MayHaveIndexedAccessors);
     }
 
     static JSSharedEnvMap* create(JSC::VM& vm, JSC::Structure* structure)
@@ -742,6 +742,10 @@ bool JSSharedEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
 {
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // As in JSEnvironmentVariableMap::put, a write to an object that inherits from process.env is that object's.
+    if (slot.thisValue() != cell) [[unlikely]]
+        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
 
     auto* uid = propertyName.uid();
     if (propertyName.isSymbol() || !uid) {

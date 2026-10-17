@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isRoot, isWindows } from "harness";
 import { totalmem } from "os";
 import { join } from "path";
 describe("spawnSync", () => {
@@ -15,7 +15,7 @@ describe("spawnSync", () => {
     );
   });
 
-  for (const ioOption of ["ignore", "pipe", "inherit"]) {
+  for (const ioOption of ["ignore", "pipe", "inherit"] as const) {
     it(`should not set a timeout if timeout is 0 and ${ioOption} is used for stdout`, () => {
       const start = performance.now();
       const result = Bun.spawnSync({
@@ -174,8 +174,6 @@ describe.skipIf(!isPosix || totalmem() < 16 * 1024 ** 3)("spawnSync output at th
 });
 
 describe("uid/gid", () => {
-  const isRoot = process.getuid?.() === 0;
-
   it("rejects a non-integer uid", () => {
     expect(() => Bun.spawnSync({ cmd: [bunExe()], env: bunEnv, uid: 1.5 })).toThrow();
     expect(() => Bun.spawnSync({ cmd: [bunExe()], env: bunEnv, gid: 1.5 })).toThrow();

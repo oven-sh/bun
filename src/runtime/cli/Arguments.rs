@@ -545,7 +545,6 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake."
         ),
-        parse_param!("--server-components              (EXPERIMENTAL) Enable server components"),
         parse_param!(
             "--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'."
         ),
@@ -937,6 +936,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.parallel = args.flag(b"--parallel");
         ctx.sequential = args.flag(b"--sequential");
         ctx.no_exit_on_error = args.flag(b"--no-exit-on-error");
+        // Set before bunfig.toml is loaded so that `--silent` hides the warning about an unreadable
+        // bunfig.toml. It is set again below so that the flag overrides `run.silent`.
+        ctx.debug.silent = args.flag(b"--silent");
 
         if let Some(elide_lines) = args.option(b"--elide-lines") {
             if !elide_lines.is_empty() {
@@ -1214,18 +1216,26 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
 
         if let Some(user_agent) = args.option(b"--user-agent") {
+            if bun_http::async_http::breaks_header_line(user_agent) {
+                Output::err_generic(
+                    "Invalid value for --user-agent: must not contain a newline or NUL byte",
+                    (),
+                );
+                Global::exit(1);
+            }
             // argv slices returned by `clap::Args::option` borrow
             // process-lifetime `argv` storage.
             let _ = bun_http::OVERRIDDEN_DEFAULT_USER_AGENT.set(user_agent);
         }
 
-        ctx.debug.offline_mode_setting = Some(if args.flag(b"--prefer-offline") {
-            bun_options_types::offline_mode::OfflineMode::Offline
+        // Without a flag, `install.prefer` of bunfig.toml stays.
+        if args.flag(b"--prefer-offline") {
+            ctx.debug.offline_mode_setting =
+                Some(bun_options_types::offline_mode::OfflineMode::Offline);
         } else if args.flag(b"--prefer-latest") {
-            bun_options_types::offline_mode::OfflineMode::Latest
-        } else {
-            bun_options_types::offline_mode::OfflineMode::Online
-        });
+            ctx.debug.offline_mode_setting =
+                Some(bun_options_types::offline_mode::OfflineMode::Latest);
+        }
 
         if args.flag(b"--no-install") {
             ctx.debug.global_cache = options::GlobalCache::disable;
@@ -2694,26 +2704,6 @@ fn parse_build_command_options(
                 Global::exit(1);
             }
             *slot = strings::concat(&[b"./", strings::remove_leading_dot_slash(value)]);
-        }
-    }
-
-    if args.flag(b"--server-components") {
-        ctx.bundler_options.server_components = true;
-        if let Some(target) = opts.target {
-            if !<bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))
-                .is_server_side()
-            {
-                Output::err_generic(
-                    "Cannot use client-side --target={} with --server-components",
-                    format_args!(
-                        "{:?}",
-                        <bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))
-                    ),
-                );
-                Global::crash();
-            } else {
-                opts.target = Some(api::Target::Bun);
-            }
         }
     }
 

@@ -693,9 +693,7 @@ fn spawn(
             },
             extra_fds: endpoints.child_fds(), // dup2'd to child fd 3 and 4, in order
             argv0: Some(chrome.as_ptr()),
-            // Own session (and so own process group, for `kill_group`), off the
-            // terminal's job control: a background-group Chrome writing an
-            // inherited stderr to a `stty tostop` terminal would stop on SIGTTOU.
+            // setsid, not setpgid: a background group on a `tostop` terminal stops on its first inherited-stderr write.
             #[cfg(unix)]
             detached: true,
             #[cfg(windows)]

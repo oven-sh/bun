@@ -1,0 +1,118 @@
+--- a/src/uv-common.h
++++ b/src/uv-common.h
+@@ -136,6 +136,7 @@
+ 
+   /* Only used by uv_poll_t handles. */
+   UV_HANDLE_POLL_SLOW                   = 0x01000000,
++  UV_HANDLE_POLL_NOT_EXCLUSIVE          = 0x02000000,
+ 
+   /* Only used by uv_process_t handles. */
+   UV_HANDLE_REAP                        = 0x10000000
+--- a/src/win/poll.c
++++ b/src/win/poll.c
+@@ -76,18 +76,21 @@
+ 
+ static void uv__fast_poll_submit_poll_req(uv_loop_t* loop, uv_poll_t* handle) {
+   uv_req_t* req;
++  uv_req_t* other_req;
+   AFD_POLL_INFO* afd_poll_info;
+   int result;
+ 
+   /* Find a yet unsubmitted req to submit. */
+   if (handle->submitted_events_1 == 0) {
+     req = &handle->poll_req_1;
++    other_req = handle->submitted_events_2 != 0 ? &handle->poll_req_2 : NULL;
+     afd_poll_info = &handle->afd_poll_info_1;
+     handle->submitted_events_1 = handle->events;
+     handle->mask_events_1 = 0;
+     handle->mask_events_2 = handle->events;
+   } else if (handle->submitted_events_2 == 0) {
+     req = &handle->poll_req_2;
++    other_req = &handle->poll_req_1;
+     afd_poll_info = &handle->afd_poll_info_2;
+     handle->submitted_events_2 = handle->events;
+     handle->mask_events_1 = handle->events;
+@@ -101,9 +104,21 @@
+     return;
+   }
+ 
+-  /* Setting Exclusive to TRUE makes the other poll request return if there is
+-   * any. */
+-  afd_poll_info->Exclusive = TRUE;
++  if (handle->flags & UV_HANDLE_POLL_NOT_EXCLUSIVE) {
++    /* This req does not complete the other req, so cancel the other req, and
++     * do it before this req is submitted. AFD can miss an event for a poll
++     * that arrives while another poll of the same handle is still pending on
++     * the socket. The cancelled req completes with STATUS_CANCELLED, which is
++     * reported as WSAEINTR and is ignored. */
++    afd_poll_info->Exclusive = FALSE;
++    if (other_req != NULL) {
++      CancelIoEx((HANDLE) handle->peer_socket, &other_req->u.io.overlapped);
++    }
++  } else {
++    /* Setting Exclusive to TRUE makes the other poll request return if there
++     * is any. */
++    afd_poll_info->Exclusive = TRUE;
++  }
+   afd_poll_info->NumberOfHandles = 1;
+   afd_poll_info->Timeout.QuadPart = INT64_MAX;
+   afd_poll_info->Handles[0].Handle = (HANDLE) handle->socket;
+@@ -462,6 +477,7 @@
+   SOCKET peer_socket, base_socket;
+   DWORD bytes;
+   DWORD yes = 1;
++  BOOL listening;
+ 
+   uv__winsock_ensure();
+ 
+@@ -511,6 +527,24 @@
+   if (peer_socket != INVALID_SOCKET) {
+     /* Initialize fast poll specific fields. */
+     handle->peer_socket = peer_socket;
++
++    /* Processes share listening sockets: a server handle that is sent to a
++     * child process, or the socket of a cluster worker. An exclusive poll
++     * completes the exclusive polls of every process on the socket. Two
++     * processes that poll one socket that way complete each other's polls,
++     * and each one submits again at once, so both spin while idle. A socket
++     * that listens when the handle is initialized is polled with requests
++     * that are not exclusive. Other sockets keep exclusive requests, see
++     * uv__poll_close. */
++    listening = FALSE;
++    len = sizeof listening;
++    if (getsockopt(socket,
++                   SOL_SOCKET,
++                   SO_ACCEPTCONN,
++                   (char*) &listening,
++                   &len) == 0 && listening) {
++      handle->flags |= UV_HANDLE_POLL_NOT_EXCLUSIVE;
++    }
+   } else {
+     /* Initialize slow poll specific fields. */
+     handle->flags |= UV_HANDLE_POLL_SLOW;
+@@ -596,6 +630,25 @@
+   if (handle->flags & UV_HANDLE_POLL_SLOW)
+     return 0;
+ 
++  if (handle->flags & UV_HANDLE_POLL_NOT_EXCLUSIVE) {
++    /* The exclusive poll below does not complete requests that are not
++     * exclusive, so cancel each one by its overlapped. A cancelled request
++     * completes with STATUS_CANCELLED, and the last one queues the endgame.
++     * CancelIoEx searches all the pending requests of the peer socket, and
++     * every handle of the loop submits on that socket. So the cost grows with
++     * the number of polled sockets, and the other handles keep the
++     * exclusive poll. */
++    if (handle->submitted_events_1 != 0) {
++      CancelIoEx((HANDLE) handle->peer_socket,
++                 &handle->poll_req_1.u.io.overlapped);
++    }
++    if (handle->submitted_events_2 != 0) {
++      CancelIoEx((HANDLE) handle->peer_socket,
++                 &handle->poll_req_2.u.io.overlapped);
++    }
++    return 0;
++  }
++
+   /* Cancel outstanding poll requests by executing another, unique poll
+    * request that forces the outstanding ones to return. */
+   afd_poll_info.Exclusive = TRUE;

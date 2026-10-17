@@ -2516,9 +2516,57 @@ impl H2FrameParser {
         CORK_OFFSET.with(|c| c.set(0));
     }
 
+    /// Takes the pending bytes out for the write: JS re-entering under it would send them again.
+    fn write_pending_through_js<S: NativeSocketWrite>(
+        &self,
+        mut socket: S,
+        bytes: &[u8],
+    ) -> (usize, usize) {
+        let offset = self.write_buffer_offset.replace(0);
+        let mut pending = self.write_buffer.take();
+        let _ = pending.write(bytes);
+        let result: i32 = socket.write_maybe_corked(&pending[offset..]);
+        self.restore_unwritten_pending(pending, offset, bytes.len(), result)
+    }
+
+    fn restore_unwritten_pending(
+        &self,
+        pending: Vec<u8>,
+        offset: usize,
+        appended: usize,
+        result: i32,
+    ) -> (usize, usize) {
+        let total = pending.len() - offset;
+        let written: usize = if result < 0 {
+            if Self::is_transport_fatal_write_result(result) {
+                self.note_transport_write_fatal();
+            }
+            0
+        } else {
+            usize::try_from(result).expect("int cast")
+        };
+        if written < total {
+            // The rest goes back in front of whatever a re-entrant write buffered meanwhile.
+            let reentrant_offset = self.write_buffer_offset.replace(offset + written);
+            let reentrant = self.write_buffer.replace(pending);
+            let _ = self
+                .write_buffer
+                .with_mut(|wb| wb.write(&reentrant[reentrant_offset..]));
+            self.global()
+                .vm()
+                .deprecated_report_extra_memory(appended.min(total - written));
+        }
+        (written, total)
+    }
+
     pub(crate) fn generic_flush<S: NativeSocketWrite>(&self, mut socket: S) -> usize {
         let buffer_len = self.write_buffer.get().slice()[self.write_buffer_offset.get()..].len();
         if buffer_len > 0 {
+            if self.transport_write_runs_js() {
+                let (written, _) = self.write_pending_through_js(socket, b"");
+                bun_output::scoped_log!(H2FrameParser, "_genericFlush {}", written);
+                return written;
+            }
             let result: i32 = socket.write_maybe_corked(
                 &self.write_buffer.get().slice()[self.write_buffer_offset.get()..],
             );
@@ -2560,6 +2608,10 @@ impl H2FrameParser {
         let global = self.global();
         let buffered_len = self.write_buffer.get().slice()[self.write_buffer_offset.get()..].len();
         if buffered_len > 0 {
+            if self.transport_write_runs_js() {
+                let (written, total) = self.write_pending_through_js(socket, bytes);
+                return written == total;
+            }
             {
                 let result: i32 = socket.write_maybe_corked(
                     &self.write_buffer.get().slice()[self.write_buffer_offset.get()..],
@@ -3167,7 +3219,7 @@ impl H2FrameParser {
 
     /// Flush the cork buffer's current contents without releasing cork state, so a
     /// fill-to-boundary write can keep accumulating the remainder. The corked bytes are
-    /// moved out before _write — it can re-enter JS (JS-stream-backed sockets) and no
+    /// moved out before _write — a socket that closes inside the write runs JS, and no
     /// thread-local borrow may be held across it.
     fn flush_cork_buffer(&self) -> bool {
         let mut data = BATCH_BUFFER.with_borrow_mut(core::mem::take);
@@ -3197,7 +3249,7 @@ impl H2FrameParser {
             return self._write(bytes);
         }
         self.cork();
-        if matches!(self.native_socket.get(), BunSocket::None) {
+        if self.transport_write_runs_js() {
             return self.write_to_js_transport(bytes);
         }
         let mut ok = true;
@@ -3226,14 +3278,14 @@ impl H2FrameParser {
             });
             CORK_OFFSET.with(|c| c.set(H2_CORK_BUFFER_SIZE as u16));
             ok = self.flush_cork_buffer() && ok;
-            // The flush's _write can re-enter JS and re-cork a different parser;
+            // A close inside the flush's _write runs JS, which can re-cork a different parser;
             // re-assert ownership before touching the shared cork state again.
             self.cork();
             bytes = &bytes[avail..];
         }
     }
 
-    /// `write()` for a session with no native socket, whose bytes reach the wire through the
+    /// `write()` when `transport_write_runs_js`, e.g. when the bytes reach the wire through the
     /// `onWrite` handler (`socket.write()` on a JS stream). That call runs the transport's
     /// `_write` synchronously, and user code there can serialize another frame (ping(),
     /// settings(), goaway(), request()) or flush before it returns. Bytes are therefore only
@@ -3299,7 +3351,8 @@ impl NativeSocketWrite for &TLSSocket {
     fn write_maybe_corked(&mut self, buf: &[u8]) -> i32 {
         // Forward to the inherent NewSocket<true>::write_maybe_corked (R-2: now
         // takes `&self`). UFCS to avoid resolving back to this trait impl.
-        TLSSocket::write_maybe_corked(*self, buf)
+        // No fatal latch: its close would drop what the peer sent before; the TLS layer closes after reading it.
+        TLSSocket::write_maybe_corked(*self, buf).max(-1)
     }
 }
 impl NativeSocketWrite for &TCPSocket {

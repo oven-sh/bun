@@ -1,0 +1,23 @@
+------------------
+{ printWidth: 80 }
+------------------
+let { a = b /* prettier-ignore */ } = y;
+
+let { c = d   +   e /* prettier-ignore */ } = y;
+
+let {
+  f: g = h   +   i, // prettier-ignore
+} = y;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+let { a = b /* prettier-ignore */ } = y;
+
+let { c = d   +   e /* prettier-ignore */ } = y;
+
+let {
+  f: g = h   +   i, // prettier-ignore
+} = y;
+
+===================== End =====================

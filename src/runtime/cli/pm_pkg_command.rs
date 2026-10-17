@@ -229,15 +229,24 @@ impl PmPkgCommand {
             [value] => *value,
             values => {
                 let mut object = E::Object::default();
+                // Only a label that was repaired can equal another label.
+                let mut repaired: Vec<&[u8]> = Vec::new();
                 for (key, value) in found.keys().iter().zip(values) {
-                    // `put` borrows the label. print_json writes ill-formed UTF-8 as `\x00`.
+                    // The object borrows the label. print_json writes ill-formed UTF-8 as `\u0000`.
                     let label: &[u8] = match bstr::ByteSlice::to_str_lossy(&key[..]) {
                         std::borrow::Cow::Borrowed(valid) => valid.as_bytes(),
                         std::borrow::Cow::Owned(replaced) => {
-                            cli_arena().alloc_slice_copy(replaced.as_bytes())
+                            let label: &[u8] = cli_arena().alloc_slice_copy(replaced.as_bytes());
+                            repaired.push(label);
+                            label
                         }
                     };
-                    object.put(cli_arena(), label, *value)?;
+                    if repaired.iter().any(|other| *other == label) {
+                        object.put(cli_arena(), label, *value)?;
+                    } else {
+                        let label = Expr::init(E::String::init(label), value.loc);
+                        object.append_property(label, *value);
+                    }
                 }
                 Expr::init(object, Loc::EMPTY)
             }

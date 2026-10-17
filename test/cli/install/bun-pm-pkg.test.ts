@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 async function runPmPkg(args: string[], cwd: string, expectSuccess = true) {
@@ -287,6 +287,54 @@ describe.concurrent("bun pm pkg", () => {
         stdout: pretty({ "e\uFFFDz": 1, s: "x}" }),
         stderr: "",
         exitCode: 0,
+      });
+    });
+
+    // The keys 0xFE, 0xFF and U+FFFD all print as U+FFFD. Keys that print as one label are one member
+    // with the value of the later key.
+    it.skipIf(isWindows)("should print one member for keys that share a label", async () => {
+      using dir = tempDir("pm-pkg-get-bytes", {
+        "package.json": Buffer.from('{"\xfe":1,"\xff":2,"\xef\xbf\xbd":3}', "latin1"),
+      });
+      const get = async (...keys: string[]) => {
+        await using proc = spawn({
+          cmd: ["sh", "-c", `exec "$0" pm pkg get ${keys.map(key => `"$(printf '${key}')"`).join(" ")}`, bunExe()],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      const one = (value: number) => ({ stdout: pretty({ "\uFFFD": value }), stderr: "", exitCode: 0 });
+      expect(
+        await Promise.all([
+          // Two keys that are not UTF-8.
+          get("\\376", "\\377"),
+          // A key that is not UTF-8, then U+FFFD as typed, and the reverse.
+          get("\\376", "\\357\\277\\275"),
+          get("\\357\\277\\275", "\\376"),
+        ]),
+      ).toEqual([one(2), one(3), one(1)]);
+    });
+
+    // The time was quadratic: 157 s for these 250,000 values in a release build, where it now takes 0.3 s.
+    it("should get a name from every element of a large array", async () => {
+      const n = isDebug || isASAN ? 16_000 : 250_000;
+      using dir = tempDir("pm-pkg-get-wide", {
+        "package.json": `{"name":"n","arr":[${Array(n).fill('{"q":1}').join(",")}]}`,
+      });
+      // `join` writes the indexes: a callback for each element is slow in a debug build.
+      const indexes = Array.from(Array(n).keys());
+      const expected = `{\n  "arr[${indexes.join('].q": 1,\n  "arr[')}].q": 1\n}\n`;
+      const { output, error, code } = await runPmPkg(["get", "arr.q"], String(dir));
+      // `toBe` on the output would print megabytes when it fails.
+      expect({ same: output === expected, length: output.length, error, code }).toEqual({
+        same: true,
+        length: expected.length,
+        error: "",
+        code: 0,
       });
     });
 

@@ -6665,8 +6665,7 @@ impl VirtualMachine {
                 original_source.source_code.into_utf8()
             };
 
-            // The executed text is not the original file's: a preview of it under the
-            // original file's name and position would mislead, so there is none.
+            // No bundle lines under an original file's name and position.
             if enable_source_code_preview.get() && code.slice().is_empty() && !names_original_file {
                 exception.collect_source_lines(error_instance, global);
             }

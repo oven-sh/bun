@@ -1287,23 +1287,6 @@ impl BunTest {
             return; // the exception should not be visible (eg m_terminationException)
         };
 
-        let failure_ctx: *mut core::ffi::c_void = 'ctx: {
-            if handle_status != HandleUncaughtExceptionResult::ShowHandledError {
-                break 'ctx core::ptr::null_mut();
-            }
-            let Some(reporter) = self.reporter else {
-                break 'ctx core::ptr::null_mut();
-            };
-            // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
-            // `&mut`; single-threaded test runner, no other borrow live here.
-            let reporter = unsafe { &mut *reporter.as_ptr() };
-            if reporter.jest.test_options.reporters.junit {
-                core::ptr::from_mut(&mut reporter.test_failure).cast()
-            } else {
-                core::ptr::null_mut()
-            }
-        };
-
         self.bun_test_root.on_before_print();
         if matches!(
             handle_status,
@@ -1322,6 +1305,42 @@ impl BunTest {
             Output::flush();
         }
 
+        self.print_error(
+            global_this,
+            exception,
+            handle_status == HandleUncaughtExceptionResult::ShowHandledError,
+        );
+
+        if matches!(
+            handle_status,
+            HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
+                | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
+        ) {
+            bun_core::pretty_error!("<r><d>-------------------------------<r>\n\n");
+        }
+
+        Output::flush();
+    }
+
+    /// Prints `exception`. With `of_test`, the JUnit reporter also records it as the failure of the test that completes next.
+    pub(crate) fn print_error(&mut self, global_this: &JSGlobalObject, exception: JSValue, of_test: bool) {
+        let failure_ctx: *mut core::ffi::c_void = 'ctx: {
+            if !of_test {
+                break 'ctx core::ptr::null_mut();
+            }
+            let Some(reporter) = self.reporter else {
+                break 'ctx core::ptr::null_mut();
+            };
+            // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
+            // `&mut`; single-threaded test runner, no other borrow live here.
+            let reporter = unsafe { &mut *reporter.as_ptr() };
+            if reporter.jest.test_options.reporters.junit {
+                core::ptr::from_mut(&mut reporter.test_failure).cast()
+            } else {
+                core::ptr::null_mut()
+            }
+        };
+
         let vm = global_this.bun_vm().as_mut();
         if !failure_ctx.is_null() {
             vm.on_print_error_zig_exception =
@@ -1333,16 +1352,6 @@ impl BunTest {
             vm.on_print_error_zig_exception = None;
             vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
         }
-
-        if matches!(
-            handle_status,
-            HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
-                | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
-        ) {
-            bun_core::pretty_error!("<r><d>-------------------------------<r>\n\n");
-        }
-
-        Output::flush();
     }
 }
 
@@ -1890,7 +1899,7 @@ pub(crate) struct ExecutionEntry {
 }
 
 impl ExecutionEntry {
-    fn create(
+    pub(crate) fn create(
         name_not_owned: Option<&[u8]>,
         cb: Option<JSValue>,
         cfg: ExecutionEntryCfg,

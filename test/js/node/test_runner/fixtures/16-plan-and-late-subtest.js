@@ -20,9 +20,10 @@ test.describe("plan capture at first t.assert access", () => {
   });
 });
 
-// t.test() after the parent finished: Node fails the late subtest with
-// parentAlreadyFinished but resolves the returned promise (undefined); it must
-// not reject or fall through to bun:test's internal-phase throw.
+// t.test() after the parent finished: the late subtest fails with
+// parentAlreadyFinished, and the returned promise resolves with undefined.
+// bun only: on Node this test never finishes, because the late subtest waits
+// for the test that awaits it.
 test("late subtest after parent finished", async t => {
   let saved;
   await t.test("parent", pt => {

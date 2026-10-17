@@ -588,6 +588,52 @@ pub(crate) fn js_node_test_mark_result(
     Ok(JSValue::UNDEFINED)
 }
 
+/// `node:test` only: reports a result that has no bun:test sequence through the reporter's completion path.
+pub(crate) fn js_node_test_report_detached(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    use super::execution::{ExecutionSequence, Result as ExecResult};
+    const NO_ACTIVE_FILE: i32 = 0;
+    const RUNNING: i32 = 1;
+    const DONE: i32 = 2;
+    let [name, status, error] = callframe.arguments_as_array::<3>();
+    let Some(buntest_strong) = bun_test::clone_active_strong() else {
+        return Ok(JSValue::from(NO_ACTIVE_FILE));
+    };
+    let state = if buntest_strong.phase == bun_test::Phase::Done { DONE } else { RUNNING };
+    // Without a name the caller only asks for the state.
+    if name.is_undefined() {
+        return Ok(JSValue::from(state));
+    }
+    let name = name.to_utf8(global)?;
+    if !error.is_undefined_or_null() {
+        let buntest = buntest_strong.get();
+        buntest.bun_test_root.on_before_print();
+        buntest.print_error(global, error, true);
+    }
+    let mut entry = bun_test::ExecutionEntry::create(
+        Some(&name),
+        None,
+        bun_test::ExecutionEntryCfg::default(),
+        None,
+        BaseScopeCfg::default(),
+        bun_test::AddedInPhase::Execution,
+    );
+    let mut sequence = ExecutionSequence::init(None, None, 0, 0);
+    // The kDetached* values of node:test.
+    sequence.result = match status.to_int32() {
+        1 => ExecResult::Pass,
+        2 => ExecResult::Skip,
+        3 => ExecResult::Todo,
+        _ => ExecResult::Fail,
+    };
+    // `get()` again instead of the borrow above: printing the error can run user getters.
+    CommandLineReporter::handle_test_completed(buntest_strong.get(), &mut sequence, &mut entry, 0);
+    Output::flush();
+    Ok(JSValue::from(state))
+}
+
 pub(crate) mod on_unhandled_rejection {
     use super::*;
 

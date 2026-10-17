@@ -1397,6 +1397,12 @@ function makeTestFailure(message: string, failureType?: string) {
   return error;
 }
 
+function makeSubtestsFailure(failed: number, cause: unknown) {
+  const error = makeTestFailure(`${failed} subtest${failed > 1 ? "s" : ""} failed`, "subtestsFailed");
+  if (cause !== undefined) (error as { cause?: unknown }).cause = cause;
+  return error;
+}
+
 class TestPlan {
   expected: number;
   actual = 0;
@@ -1638,6 +1644,18 @@ const fileGeneration = $newRustFunction("jest.rs", "jsFileGeneration", 0);
 // `done` binds the intended sequence so a late call after the bun:test watchdog
 // moved on cannot write onto the currently-running test.
 const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 2);
+// Reports a test that has no bun:test sequence of its own, and returns the state of the runner.
+let reportDetachedNative: ((name?: string, status?: number, error?: unknown) => number) | undefined;
+function reportDetachedResult(name?: string, status?: number, error?: unknown): number {
+  reportDetachedNative ??= $newRustFunction("jest.rs", "jsNodeTestReportDetached", 3);
+  return reportDetachedNative!(name, status, error);
+}
+const kDetachedFail = 0;
+const kDetachedPass = 1;
+const kDetachedSkip = 2;
+const kDetachedTodo = 3;
+// Every test of the file ran, so the root has no other test to run.
+const kRunnerDone = 2;
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -1763,7 +1781,7 @@ class TestContext {
     const hook = createHook(arg0, arg1);
     const node = this.#node;
     node.hooks.before.push(hook);
-    if (node.started && !node.finished) {
+    if (node.started) {
       // Node runs before hooks created on an already-started test immediately.
       scheduleImmediateBeforeHook(node, hook, this);
     }
@@ -2263,7 +2281,7 @@ async function runOwnBeforeHooks(node: TestNode) {
   }
 }
 
-async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
+async function executeTestNode(node: TestNode, fn: TestFn, preset?: unknown): Promise<unknown> {
   // Runs a single test (top-level or subtest): inherited beforeEach hooks, the
   // body, pending subtests, the plan check, inherited afterEach hooks, and the
   // test's own after hooks. Returns the failure (if any) instead of throwing.
@@ -2272,6 +2290,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   const ctx = node.getCtx();
   const ancestors = ancestorChain(node);
   let failure: unknown;
+  let subtestsFailure: unknown;
 
   // Node applies the plan option before the beforeEach hooks run, and only for a
   // truthy count, so `{ plan: 0 }` installs no plan at all (test.js:1313-1315).
@@ -2341,16 +2360,11 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
     const { failedSubtests, firstSubtestError } = node;
     if (failure === undefined && failedSubtests > 0) {
-      const error = makeTestFailure(
-        `${failedSubtests} subtest${failedSubtests > 1 ? "s" : ""} failed`,
-        "subtestsFailed",
-      );
-      if (firstSubtestError !== undefined) {
-        (error as { cause?: unknown }).cause = firstSubtestError;
-      }
-      failure = error;
+      failure = subtestsFailure = makeSubtestsFailure(failedSubtests, firstSubtestError);
     }
   }
+  // A late subtest failed when it was created, and the first failure of a test wins.
+  if (preset !== undefined) failure = preset;
 
   const bodyFailure = failure;
   failure = applyExpectFailure(node, failure);
@@ -2361,9 +2375,8 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   // pass()/fail() precede afterEach).
   node.passed = failure === undefined;
   node.error = failure ?? (acceptedXfail ? bodyFailure : null);
-  // Mark finished before hooks so a late t.test() from an after/afterEach
-  // hook hits addTest()'s parentAlreadyFinished path (Node cancels these).
-  node.finished = true;
+  const chainBeforeHooks = node.subtestChain;
+  const failedBeforeHooks = node.failedSubtests;
 
   for (let i = ancestors.length - 1; i >= 0; i--) {
     const ancestor = ancestors[i];
@@ -2384,6 +2397,19 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     }
   }
 
+  // Node finishes a test after its hooks, so a subtest that a hook creates is a subtest of this test (test.js postRun).
+  if (node.subtestChain !== chainBeforeHooks) {
+    await drainSubtestChain(node);
+    if (!acceptedXfail) {
+      failure ??= node.hookFailure;
+      const { failedSubtests } = node;
+      if (failedSubtests > failedBeforeHooks && (failure === undefined || failure === subtestsFailure)) {
+        failure = makeSubtestsFailure(failedSubtests, node.firstSubtestError);
+      }
+    }
+  }
+  node.finished = true;
+
   try {
     node.mockTracker?.reset();
   } catch (err) {
@@ -2392,7 +2418,8 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
   node.passed = failure === undefined;
   node.error = failure ?? (acceptedXfail ? bodyFailure : null);
-  reportNodeToRunParent(node, started);
+  // A late subtest was reported when it was created.
+  if (preset === undefined) reportNodeToRunParent(node, started);
   return failure;
 }
 
@@ -2462,6 +2489,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
     }
     // Wait for children created during the callback and any they schedule.
     await drainSubtestChain(suite);
+    const chainBeforeHooks = suite.subtestChain;
     for (const hook of suite.hooks.after) {
       try {
         await runHook(hook, suite, suite.getSuiteCtx());
@@ -2469,6 +2497,8 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
         recordSuiteFailure(suite, err);
       }
     }
+    // A test that an after hook created ran on this chain.
+    if (suite.subtestChain !== chainBeforeHooks) await drainSubtestChain(suite);
     suite.finished = true;
     suite.passed = suite.failedSubtests === 0;
     if (runChildReporterEnabled) {
@@ -2481,14 +2511,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
         type: "suite",
         tags: suite.tags,
         todo: suite.todoFlag ? (suite.message ?? true) : undefined,
-        error: suite.passed
-          ? undefined
-          : serializeRunError(
-              makeTestFailure(
-                `${suite.failedSubtests} subtest${suite.failedSubtests > 1 ? "s" : ""} failed`,
-                "subtestsFailed",
-              ),
-            ),
+        error: suite.passed ? undefined : serializeRunError(makeSubtestsFailure(suite.failedSubtests, undefined)),
       });
     }
     // A todo suite's failures do not fail the owning test (Node).
@@ -2499,6 +2522,109 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
   };
   const result = (parent.subtestChain = parent.subtestChain.then(run));
   return result.then(() => undefined);
+}
+
+// A test that is created after its parent finished is late. It is the only execution-phase node that hangs on the root.
+function isLate(node: TestNode) {
+  const { parent } = node;
+  return node.isExecutionPhase && parent !== undefined && parent.parent === undefined;
+}
+
+function reportLate(node: TestNode, status: number, error: unknown, printed: unknown) {
+  const state = reportDetachedResult(node.name, status, printed);
+  if (runChildReporterEnabled) {
+    const { skipped, todoFlag, expectFailure } = node;
+    emitRunChildEvent(status === kDetachedPass ? "test:pass" : "test:fail", {
+      __proto__: null,
+      name: node.name,
+      nesting: nestingOf(node),
+      testNumber: 0,
+      duration_ms: 0,
+      skip: skipped ? (node.message ?? true) : undefined,
+      todo: !skipped && todoFlag ? (node.message ?? true) : undefined,
+      expectFailure: !skipped && expectFailure ? (expectFailure.label ?? true) : undefined,
+      type: node.isSuite ? "suite" : undefined,
+      tags: node.tags,
+      error: status === kDetachedPass ? undefined : serializeRunError(error),
+    });
+  }
+  return state;
+}
+
+// Node's root runs one late test at a time.
+let lateBodies: Promise<unknown> | undefined;
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1029-L1052
+function addLateSubtest(
+  parent: TestNode,
+  name: string,
+  options: TestOptions,
+  fn: TestFn,
+  mode: "skip" | "todo" | undefined,
+  isSuite: boolean,
+  ownTags: string[] | undefined,
+): Promise<undefined> {
+  if (parent.isSuite && isLate(parent)) {
+    // Node creates the children of a late suite and cancels them. Only run() reports a cancelled test.
+    if (runChildReporterEnabled) {
+      const child = new TestNode(name, parent, options, isSuite, true);
+      child.ownTags = ownTags;
+      emitRunChildEvent("test:fail", {
+        __proto__: null,
+        name,
+        nesting: nestingOf(child),
+        testNumber: 0,
+        duration_ms: 0,
+        type: isSuite ? "suite" : undefined,
+        tags: child.tags,
+        error: serializeRunError(
+          makeTestFailure("test did not finish before its parent and was cancelled", "cancelledByParent"),
+        ),
+      });
+    }
+    return Promise.resolve(undefined);
+  }
+
+  let root = parent;
+  while (root.parent !== undefined) root = root.parent;
+  const node = new TestNode(name, root, options, isSuite, true);
+  node.ownTags = ownTags;
+  if (mode === "skip") node.skipped = true;
+  else if (mode === "todo") node.todoFlag = true;
+
+  const error = makeTestFailure("test could not be started because its parent finished", "parentAlreadyFinished");
+  const failure = applyExpectFailure(node, error);
+  const status = node.skipped
+    ? kDetachedSkip
+    : node.todoFlag
+      ? kDetachedTodo
+      : failure === undefined
+        ? kDetachedPass
+        : kDetachedFail;
+  const printed = status === kDetachedFail ? failure : undefined;
+
+  if (isSuite) {
+    node.finished = true;
+    node.error = error;
+    // Node runs the callback of a late suite at once. Each test that the callback creates is cancelled.
+    if (!node.skipped) {
+      try {
+        const build = runWithNode(node, () => fn(node.getSuiteCtx()));
+        if ($isPromise(build)) (build as Promise<unknown>).then(undefined, () => {});
+      } catch {}
+    }
+    reportLate(node, status, failure ?? error, printed);
+    return Promise.resolve(undefined);
+  }
+
+  // Node runs the body of a late test when the root has no other test to run.
+  if (reportLate(node, status, failure ?? error, printed) === kRunnerDone && !node.skipped) {
+    lateBodies = (lateBodies ?? Promise.resolve()).then(() => executeTestNode(node, fn, error));
+  } else {
+    node.finished = true;
+    node.error = error;
+  }
+  return Promise.resolve(undefined);
 }
 
 // -----------------------------------------------------------------------------
@@ -2536,9 +2662,17 @@ function currentCollectionParent(): TestNode {
 }
 
 function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = false) {
+  const { todoFlag } = node;
   // bun:test invokes this with a `done` callback because the function declares
   // one parameter.
   return (done: (error?: unknown) => void) => {
+    if (node.started) {
+      // `--retry` calls this again. Each attempt is a new test: the subtests and hooks of the last one are not its own.
+      const attempt = new TestNode(node.name, node.parent, node.options, false, false);
+      attempt.ownTags = node.ownTags;
+      attempt.todoFlag = todoFlag;
+      node = attempt;
+    }
     // Under plain bun:test a describe.todo scope already handles its children's
     // todo verdict (FailBecauseTodoPassed under --todo), so don't override when
     // the flag was only inherited; under a run() child the suite registers as a
@@ -2577,9 +2711,7 @@ function addTest(
   const runningNode = executionParent ?? currentNode();
   if (runningNode !== undefined) {
     if (runningNode.finished) {
-      // t.test() escaped its parent: Node fails the late subtest but resolves
-      // the promise; don't fall through to bun:test's internal-phase throw.
-      return Promise.resolve(undefined);
+      return addLateSubtest(runningNode, name, options, fn, mode, false, ownTags);
     }
     if (runningNode.isRunning()) {
       // Subtest of a running test (or of an inline suite created inside one).
@@ -2676,7 +2808,7 @@ function addSuite(
 
   const runningNode = executionParent ?? currentNode();
   if (runningNode !== undefined && runningNode.finished) {
-    return Promise.resolve(undefined);
+    return addLateSubtest(runningNode, name, options, fn, mode, true, ownTags);
   }
   if (runningNode !== undefined && runningNode.isRunning()) {
     const suite = new TestNode(name, runningNode, options, true, true);
@@ -2806,9 +2938,9 @@ function hookArgFor(node: TestNode) {
 function before(arg0: unknown, arg1: unknown) {
   const hook = createHook(arg0, arg1);
   const owner = hookOwner();
-  if (owner.isRunning()) {
+  if (owner.isRunning() || owner.finished) {
     owner.hooks.before.push(hook);
-    if (owner.started && !owner.finished) {
+    if (owner.started) {
       scheduleImmediateBeforeHook(owner, hook, hookArgFor(owner));
     }
     return;
@@ -2825,7 +2957,7 @@ function before(arg0: unknown, arg1: unknown) {
 function after(arg0: unknown, arg1: unknown) {
   const hook = createHook(arg0, arg1);
   const owner = hookOwner();
-  if (owner.isRunning()) {
+  if (owner.isRunning() || owner.finished) {
     owner.hooks.after.push(hook);
     return;
   }

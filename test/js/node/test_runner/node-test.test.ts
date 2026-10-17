@@ -1,7 +1,21 @@
-import { spawn } from "bun";
+import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
 import { join } from "node:path";
+
+// A fixture that states what Node does is run on Node too. The reference is
+// the Node version that bun reports: not any other `node` on PATH, and not
+// the `node` shim that `bun run` puts there, which is bun.
+const referenceNode = (() => {
+  const node = nodeExe();
+  if (!node) return null;
+  const { stdout, exitCode } = spawnSync({
+    cmd: [node, "-p", "process.versions.bun ? '' : process.versions.node"],
+    env: bunEnv,
+    stderr: "ignore",
+  });
+  return exitCode === 0 && stdout.toString().trim() === process.versions.node ? node : null;
+})();
 
 describe("node:test", () => {
   // These three drive the largest fixtures (01-harness has 32 node:test cases);
@@ -178,13 +192,15 @@ describe("node:test", () => {
     });
   });
 
-  test("should capture plan at first t.assert access and resolve subtests started after their parent finished", async () => {
+  test("should capture plan at first t.assert access and fail a subtest started after its parent finished", async () => {
     const { exitCode, stderr } = await runTests(["16-plan-and-late-subtest.js"]);
     expect(stderr).toContain("2 pass");
     expect(stderr).toContain("1 todo");
+    // The late subtest is the one failure. The test that created it passes: its promise resolved.
+    expect(stderr).toContain("(fail) late");
     expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 0,
-      stderr: expect.stringContaining("0 fail"),
+      exitCode: 1,
+      stderr: expect.stringContaining("1 fail"),
     });
   });
 
@@ -343,6 +359,194 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
   ]);
   return { exitCode, stdout, stderr };
 }
+
+async function runTestsOnNode(filenames: string[]) {
+  const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));
+  await using proc = spawn({
+    cmd: [referenceNode!, "--test", ...testPaths],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
+  return { exitCode, stdout, stderr };
+}
+
+// The message of the failure that Node gives a subtest created after its parent finished.
+const kLateSubtestMessage = "test could not be started because its parent finished";
+
+// A fixture prints what it observed as one `EVENTS [...]` line when the process exits.
+function eventsOf(stdout: string): string[] {
+  const line = stdout.split("\n").find(line => line.startsWith("EVENTS "));
+  return line === undefined ? [] : JSON.parse(line.slice("EVENTS ".length));
+}
+
+// The totals of `node --test`, its exit code, and the events of the fixture.
+async function onNode(filename: string) {
+  const { stdout, exitCode } = await runTestsOnNode([filename]);
+  const counts: Record<string, number> = {};
+  for (const [, key, value] of stdout.matchAll(/ (pass|fail|cancelled|skipped|todo) (\d+)$/gm)) {
+    counts[key] = Number(value);
+  }
+  return { counts, exitCode, events: eventsOf(stdout) };
+}
+
+// The totals that `bun test` prints, as one string.
+function totalsOf(stderr: string) {
+  return [...stderr.matchAll(/^ ?(\d+ (?:pass|skip|todo|fail))$/gm)].map(match => match[1]).join(", ");
+}
+
+describe.concurrent("a subtest created after its parent finished", () => {
+  test("is reported as its own failed test", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["30-late-subtest.js"]);
+    expect(stderr).toContain(kLateSubtestMessage);
+    expect(stderr).toContain("(fail) late\n");
+    expect(stderr).toContain("(skip) late skip\n");
+    expect(stderr).toContain("(todo) late todo\n");
+    expect(stderr).toContain("(fail) late, created last\n");
+    expect(totalsOf(stderr)).toBe("3 pass, 1 skip, 1 todo, 2 fail");
+    // Each promise resolves at once. bun does not run the body of a late
+    // subtest while another test runs. Node runs it after that test.
+    expect(eventsOf(stdout)).toEqual([
+      "resolved undefined",
+      "resolved undefined",
+      "resolved undefined",
+      "resolved undefined",
+      "a later test",
+    ]);
+    expect(exitCode).toBe(1);
+  }, 30_000);
+
+  test.skipIf(!referenceNode)("is a failed test on node", async () => {
+    const { counts, exitCode, events } = await onNode("30-late-subtest.js");
+    expect(counts).toEqual({ pass: 3, fail: 2, cancelled: 0, skipped: 1, todo: 1 });
+    expect(events.filter(event => event.startsWith("resolved"))).toHaveLength(4);
+    expect(events.filter(event => event.startsWith("rejected"))).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("every way to create it reports it", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["30b-late-subtest-spellings.js"]);
+    expect(stderr).toContain("(fail) late through test()\n");
+    // bun:test has no result for a suite, so a late suite is a failed test.
+    expect(stderr).toContain("(fail) late suite\n");
+    expect(stderr).toContain("(fail) late in a finished suite\n");
+    expect(stderr).toContain("(fail) late on a finished subtest\n");
+    // Node cancels the child of the late suite. Only the events of run() have a cancelled test.
+    expect(stderr).not.toContain("child of late suite");
+    expect(totalsOf(stderr)).toBe("4 pass, 4 fail");
+    expect(eventsOf(stdout)).toEqual(["callback of late suite"]);
+    expect(exitCode).toBe(1);
+  }, 30_000);
+
+  test.skipIf(!referenceNode)("every way to create it fails on node", async () => {
+    const { counts, exitCode, events } = await onNode("30b-late-subtest-spellings.js");
+    // The late suite is a failed suite: it is not in these totals of tests.
+    expect(counts).toEqual({ pass: 6, fail: 3, cancelled: 1, skipped: 0, todo: 0 });
+    expect(events).toEqual(["callback of late suite"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("the example of Node's documentation fails", async () => {
+    const { exitCode, stderr } = await runTests(["30c-late-subtest-docs-example.js"]);
+    expect(stderr).toContain(kLateSubtestMessage);
+    expect(stderr).toContain("(fail) subtest that is created too late\n");
+    expect(totalsOf(stderr)).toBe("1 pass, 1 fail");
+    expect(exitCode).toBe(1);
+  }, 30_000);
+
+  test.skipIf(!referenceNode)("the example of Node's documentation fails on node", async () => {
+    const { counts, exitCode } = await onNode("30c-late-subtest-docs-example.js");
+    expect(counts).toEqual({ pass: 1, fail: 1, cancelled: 0, skipped: 0, todo: 0 });
+    expect(exitCode).toBe(1);
+  });
+
+  test("is a failed test case of the JUnit reporter", async () => {
+    using dir = tempDir("node-test-late-subtest-junit", {});
+    const outfile = join(String(dir), "junit.xml");
+    const { exitCode } = await runTests(["30c-late-subtest-docs-example.js"], {}, [
+      "--reporter=junit",
+      `--reporter-outfile=${outfile}`,
+    ]);
+    const xml = await Bun.file(outfile).text();
+    expect(xml).toMatch(/<testcase name="subtest that is created too late"[^>]*>\s*<failure/);
+    expect(xml).toContain(kLateSubtestMessage);
+    expect(exitCode).toBe(1);
+  }, 30_000);
+
+  test("is a test:fail event of run()", async () => {
+    using dir = tempDir("node-test-late-subtest-run", {
+      "run.js": `
+          const { run } = require("node:test");
+          (async () => {
+            const failed = [];
+            let topLevel = 0;
+            for await (const { type, data } of run({ files: [process.argv[2]] })) {
+              if (type === "test:pass" && data.name === "parent") topLevel = data.nesting;
+              if (type !== "test:fail") continue;
+              failed.push([data.name, data.nesting - topLevel, data.details.type, data.details.error.failureType]);
+            }
+            console.log("FAILED " + JSON.stringify(failed));
+          })();
+        `,
+    });
+    const script = join(String(dir), "run.js");
+    const fixture = join(import.meta.dirname, "fixtures", "30b-late-subtest-spellings.js");
+    async function failedOn(exe: string) {
+      await using proc = spawn({ cmd: [exe, script, fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const line = stdout.split("\n").find(line => line.startsWith("FAILED "));
+      return { failed: line === undefined ? undefined : JSON.parse(line.slice("FAILED ".length)), exitCode };
+    }
+    const onBun = await failedOn(bunExe());
+    expect(onBun).toEqual({
+      failed: [
+        ["late on a finished subtest", 0, "test", "parentAlreadyFinished"],
+        ["late through test()", 0, "test", "parentAlreadyFinished"],
+        ["child of late suite", 1, "test", "cancelledByParent"],
+        ["late suite", 0, "suite", "parentAlreadyFinished"],
+        ["late in a finished suite", 0, "test", "parentAlreadyFinished"],
+      ],
+      exitCode: 0,
+    });
+    if (referenceNode) expect(await failedOn(referenceNode)).toEqual(onBun);
+  }, 30_000);
+});
+
+describe.concurrent("a subtest created by an afterEach or after hook", () => {
+  test("runs as a subtest of the test that the hook belongs to", async () => {
+    const { exitCode, stderr } = await runTests(["32-hook-window-subtests.js"]);
+    expect(totalsOf(stderr)).toBe("3 pass, 0 fail");
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
+  test.skipIf(!referenceNode)("runs as a subtest on node", async () => {
+    const { counts, exitCode } = await onNode("32-hook-window-subtests.js");
+    expect(counts).toEqual({ pass: 6, fail: 0, cancelled: 0, skipped: 0, todo: 0 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("fails that test when it fails", async () => {
+    const { exitCode, stderr } = await runTests(["32b-hook-window-subtest-fails.js"]);
+    expect(stderr).toContain("error: 1 subtest failed");
+    expect(stderr).toContain("(fail) a failing subtest from an after hook");
+    expect(totalsOf(stderr)).toBe("1 pass, 1 fail");
+    expect(exitCode).toBe(1);
+  }, 30_000);
+
+  test.skipIf(!referenceNode)("fails that test on node", async () => {
+    const { counts, exitCode } = await onNode("32b-hook-window-subtest-fails.js");
+    expect(counts).toEqual({ pass: 1, fail: 2, cancelled: 0, skipped: 0, todo: 0 });
+    expect(exitCode).toBe(1);
+  });
+
+  test("--retry gives each attempt its own subtests", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["33-retry-subtests.js"], {}, ["--retry", "1"]);
+    expect(eventsOf(stdout)).toEqual(["attempt 1", "sub 1", "attempt 2", "sub 2"]);
+    expect(totalsOf(stderr)).toBe("1 pass, 0 fail");
+    expect(exitCode).toBe(0);
+  }, 30_000);
+});
 
 describe("node:test mock", () => {
   const { mock } = require("node:test");

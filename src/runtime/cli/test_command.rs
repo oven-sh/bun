@@ -1261,6 +1261,7 @@ impl CommandLineReporter {
         &mut self.jest.summary
     }
 
+    #[inline(never)]
     pub(crate) fn handle_test_completed(
         buntest: &mut bun_test::BunTest,
         sequence: &mut bun_test::Execution::ExecutionSequence,

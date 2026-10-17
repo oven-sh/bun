@@ -518,6 +518,11 @@ impl<'a> ImportAttributes<'a> {
         Some(Span::new(argument.map_or(ty.pos, |it| it.end), ty.end))
     }
 
+    /// The `{ type: "json" }`.
+    pub fn object(self) -> Expr<'a> {
+        self.object
+    }
+
     /// `with`, or the deprecated `assert`.
     pub fn keyword_span(self) -> Span {
         let rest = self

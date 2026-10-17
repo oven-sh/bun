@@ -27,8 +27,8 @@
 //! | `label(l, x)` | [`labelled`] |
 
 use super::element::{
-    self, Condition, DedentMode, FormatElement, GroupId, GroupMode, LabelId, LineMode, PrintMode,
-    Tag, TextWidth,
+    self, Condition, DedentMode, Fallback, FormatElement, GroupId, GroupMode, LabelId, LineMode,
+    PrintMode, Tag, TextWidth,
 };
 use super::formatter::{Format, Formatter};
 use bun_lint::span::Span;
@@ -426,6 +426,7 @@ pub(crate) fn group<Content: ?Sized>(content: &Content) -> Group<'_, Content> {
         content,
         group_id: None,
         should_expand: false,
+        stays_expanded: false,
     }
 }
 
@@ -433,6 +434,7 @@ pub(crate) struct Group<'fmt, Content: ?Sized> {
     content: &'fmt Content,
     group_id: Option<GroupId>,
     should_expand: bool,
+    stays_expanded: bool,
 }
 
 impl<Content: ?Sized> Copy for Group<'_, Content> {}
@@ -455,6 +457,13 @@ impl<Content: ?Sized> Group<'_, Content> {
         self.should_expand = should_expand;
         self
     }
+
+    /// Whether [`Group::should_expand`] is told how the source is laid out. See [`GroupMode::StaysExpanded`].
+    #[must_use]
+    pub(crate) fn stays_expanded(mut self, stays_expanded: bool) -> Self {
+        self.stays_expanded = stays_expanded;
+        self
+    }
 }
 
 impl<'a, Content: Format<'a> + ?Sized> Format<'a> for Group<'_, Content> {
@@ -467,9 +476,10 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for Group<'_, Content> {
         ) {
             return f.write_element(FormatElement::IndentedLineGroup(id));
         }
-        let mode = match self.should_expand {
-            true => GroupMode::Expand,
-            false => GroupMode::Flat,
+        let mode = match (self.should_expand, self.stays_expanded) {
+            (true, _) => GroupMode::Expand,
+            (false, true) => GroupMode::StaysExpanded,
+            (false, false) => GroupMode::Flat,
         };
         let group = element::Group::new().with_id(self.group_id).with_mode(mode);
         f.write_element(FormatElement::Tag(Tag::StartGroup(group)));
@@ -533,7 +543,8 @@ impl<Content: ?Sized> IfGroupBreaks<'_, Content> {
 }
 
 impl<'a, Content: Format<'a> + ?Sized> Format<'a> for IfGroupBreaks<'_, Content> {
-    #[inline]
+    /// A trailing comma is written for every call, array and object. Inlined, this is one write of a constant element.
+    #[inline(always)]
     fn fmt(&self, f: &mut Formatter<'a>) {
         if let (Some(text), None, PrintMode::Expanded) =
             (self.content.as_token(), self.group_id, self.mode)
@@ -541,6 +552,16 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for IfGroupBreaks<'_, Content>
         {
             return f.write_element(FormatElement::TokenIfBreaks(token));
         }
+        self.write_conditional_content(f);
+    }
+}
+
+impl<Content: ?Sized> IfGroupBreaks<'_, Content> {
+    #[inline(never)]
+    fn write_conditional_content<'a>(&self, f: &mut Formatter<'a>)
+    where
+        Content: Format<'a>,
+    {
         let condition = Condition::new(self.mode).with_group_id(self.group_id);
         f.write_element(FormatElement::Tag(Tag::StartConditionalContent(condition)));
         self.content.fmt(f);
@@ -578,13 +599,23 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for IndentIfGroupBreaks<'_, Co
 /// What `best_fitting!` makes.
 pub(crate) struct BestFitting<'fmt, 'a> {
     variants: &'fmt [&'fmt dyn Format<'a>],
+    fallback: Fallback,
 }
 
 impl<'fmt, 'a> BestFitting<'fmt, 'a> {
     /// From the flattest to the most expanded. At least two.
     pub(crate) fn new(variants: &'fmt [&'fmt dyn Format<'a>]) -> Self {
         debug_assert!(variants.len() >= 2);
-        BestFitting { variants }
+        BestFitting {
+            variants,
+            fallback: Fallback::MostExpanded,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn with_fallback(mut self, fallback: Fallback) -> Self {
+        self.fallback = fallback;
+        self
     }
 }
 
@@ -598,7 +629,7 @@ impl<'a> Format<'a> for BestFitting<'_, 'a> {
                 f.write_element(FormatElement::Tag(Tag::EndEntry));
             })));
         }
-        let element = f.best_fitting_of(&formatted);
+        let element = f.best_fitting_with(&formatted, self.fallback);
         f.write_element(element);
     }
 }

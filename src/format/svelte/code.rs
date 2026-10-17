@@ -74,9 +74,9 @@ fn starts_like_a_tag<'a>(mut e: Expr<'a>, brace: Brace, f: &Formatter<'a>) -> bo
 /// waits for the end of a line: `a[0\n/* b */\n]` is `a[0]\n/* b */`. Any other stays before what follows it, unless that goes,
 /// like parentheses and the `;` of a statement, or is written before it: `a as B[/* c */]` is `a as B[] /* c */`. So it can if
 /// nothing follows it that does not close something.
-fn can_end_with_comment(text: &[u8], comments: &[Comment]) -> bool {
+fn can_end_with_comment(text: &[u8], comments: CommentList<'_>) -> bool {
     // They are in the order in which they are printed.
-    let Some(end) = comments.iter().map(|it| it.span.end).max() else {
+    let Some(end) = comments.iter().map(|it| it.span().end).max() else {
         return false;
     };
     let mut behind = text.get(end as usize..).unwrap_or_default();
@@ -89,7 +89,7 @@ fn can_end_with_comment(text: &[u8], comments: &[Comment]) -> bool {
     }
     behind.is_empty()
         || (comments.iter())
-            .any(|it| it.is_line() || it.preceded_by_newline() || it.followed_by_newline())
+            .any(|it| it.is_line() || it.has_newline_before() || it.has_newline_after())
 }
 
 /// Whether `e` can end with `as B` once it is printed: the parentheses go in `() => (a as B)`.
@@ -153,7 +153,7 @@ fn write_js_expression(
             let Some(e) = js::expression_of(file) else {
                 return false;
             };
-            let comments = f.comments().unprinted_comments();
+            let comments = f.comments().all();
             // As it is written, there is none: `{#each a[0 // b\n]}`. Nor is there an `as` that Svelte takes for that of the
             // block, as there is in `{#each () => (a as B)}` without the parentheses.
             if js.is_without_comment_behind
@@ -163,27 +163,25 @@ fn write_js_expression(
             }
             // One on a line of its own is printed at the end of a line too, and so is all that follows one that is.
             ends_with_line_comment = (comments.iter())
-                .filter(|it| it.span.start >= e.span().end)
-                .any(|it| it.is_line() || it.preceded_by_newline());
+                .filter(|it| it.span().start >= e.span().end)
+                .any(|it| it.is_line() || it.has_newline_before());
             let is_in_parentheses =
                 (js.follows).is_some_and(|brace| starts_like_a_tag(e, brace, f));
             let content = format_with(|f| {
                 if is_in_parentheses {
-                    write!(f, ["(", e, ")"]);
-                    let rest = f.comments().unprinted_comments();
-                    return write!(f, FormatTrailingComments::Comments(rest));
+                    return write!(f, ["(", e, ")"]);
                 }
                 match js.is_without_parentheses {
                     // `removeParentheses` takes a block comment at the start for one that never ends, and leaves the
                     // parentheses, which Svelte refuses around the two functions of a `bind:`.
                     true => {
-                        write!(f, FormatLeadingComments::Node(e.span()));
+                        let node = e.as_chain_element();
+                        write!(f, leading_comments(node));
                         write_expression(e, ExprOptions::None, f);
+                        write!(f, trailing_comments(node));
                     }
                     false => write!(f, e),
                 }
-                let rest = f.comments().unprinted_comments();
-                write!(f, FormatTrailingComments::Comments(rest));
             });
             // Without its line breaks, the plugin has what follows a `//` before it: `{#if a && b} // c`.
             match js.is_on_one_line && !comments.iter().any(|it| it.is_line()) {
@@ -219,19 +217,19 @@ fn write_js_function(
             };
             // Such a comment is printed behind the name, where Svelte wants the `(`: `{#snippet a /* b */(c)}`.
             let first = function.params_with_this().next();
-            let is_behind_name = |it: &Comment| {
+            let is_behind_name = |it: Comment<'_>| {
                 function
                     .open_paren()
-                    .is_some_and(|open| it.span.start < open)
+                    .is_some_and(|open| it.span().start < open)
                     || (!it.is_line()
                         // One on a line of its own is printed before the parameter.
-                        && !it.preceded_by_newline()
-                        && (it.followed_by_newline() || {
-                            let behind = file.text().get(it.span.end as usize..);
+                        && !it.has_newline_before()
+                        && (it.has_newline_after() || {
+                            let behind = file.text().get(it.span().end as usize..);
                             strings::trim_js_whitespace_start(behind.unwrap_or_default())
                                 .starts_with(b"//")
                         })
-                        && first.is_some_and(|first| it.span.start < first.span().start))
+                        && first.is_some_and(|first| it.span().start < first.span().start))
             };
             // Where the only parameter is hugged no line ends before the `)`, and a comment that waits for the end of one is
             // printed behind that, where Svelte wants the `}`: `{#snippet a({ b } = {}) // c\n}`. Between the brackets of the
@@ -249,16 +247,16 @@ fn write_js_function(
                     spans
                 })
             };
-            let is_behind_hugged = |it: &Comment| {
-                let is_in = |part: Span| part.start <= it.span.start && it.span.end <= part.end;
-                (it.is_line() || it.preceded_by_newline())
+            let is_behind_hugged = |it: Comment<'_>| {
+                let is_in = |part: Span| part.start <= it.span().start && it.span().end <= part.end;
+                (it.is_line() || it.has_newline_before())
                     && hugged.is_some_and(|hugged| {
                         !is_in(hugged.pat().span())
                             && !hugged.default().is_some_and(|it| is_in(it.span()))
                             && !{
                                 let types = types_with_braces();
                                 let behind =
-                                    types.partition_point(|part| part.start <= it.span.start);
+                                    types.partition_point(|part| part.start <= it.span().start);
                                 behind.checked_sub(1).is_some_and(|at| is_in(types[at]))
                             }
                     })
@@ -276,16 +274,19 @@ fn write_js_function(
                     starts
                 })
             };
-            let is_before_parenthesis = |it: &Comment| {
-                let behind = file.text().get(it.span.end as usize..).unwrap_or_default();
+            let is_before_parenthesis = |it: Comment<'_>| {
+                let behind = file
+                    .text()
+                    .get(it.span().end as usize..)
+                    .unwrap_or_default();
                 let code = strings::trim_js_whitespace_start(behind);
-                let at = it.span.end + (behind.len() - code.len()) as u32;
+                let at = it.span().end + (behind.len() - code.len()) as u32;
                 it.is_line()
-                    && !it.preceded_by_newline()
+                    && !it.has_newline_before()
                     && code.starts_with(b"(")
                     && starts().binary_search(&at).is_ok()
             };
-            let comments = f.comments().unprinted_comments();
+            let comments = f.comments().all();
             if (comments.iter())
                 .any(|it| is_behind_name(it) || is_behind_hugged(it) || is_before_parenthesis(it))
             {
@@ -318,7 +319,7 @@ fn write_js_statement(
                 return false;
             };
             // As it is written, there is none: `{const a = (b /* c */)}`.
-            let comments = f.comments().unprinted_comments();
+            let comments = f.comments().all();
             if js.is_without_comment_behind && can_end_with_comment(&js.text, comments) {
                 return false;
             }

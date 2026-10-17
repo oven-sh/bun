@@ -1,8 +1,9 @@
 //! Rule settings for projects with no ESLint or oxlint config ("native mode"). They come from `[lint]` in bunfig.toml and
-//! from `--rule`. Every built-in rule is available under any of its names, and an unknown name is an error.
+//! from `--rule`. Every built-in rule is available under any of its names, and an unknown name is an error. `react/*` is a
+//! wildcard that turns off every rule of a plugin: see [`expand_wildcards`].
 
 use crate::bunfig::RuleOfBunfig;
-use crate::cli::Options;
+use crate::cli::{Options, Wildcard};
 use crate::configs::{CATEGORIES, is_category, plugin_longhand, severity_name};
 use crate::print_config::object;
 use crate::{Linter, fs, paths};
@@ -14,7 +15,7 @@ use bun_lint::linter::{
     parse_rule_id, severity_of, write_json,
 };
 use bun_lint::options::Json;
-use bun_lint::rule::{Meta, Plugin};
+use bun_lint::rule::{Frameworks, Meta, Plugin};
 
 /// An invalid rule setting, or a plugin that can't be used.
 pub(crate) struct Mistake {
@@ -198,8 +199,40 @@ pub(crate) fn check_rules(
         .collect();
     check(&filters, &[])?;
     check(&options.rule, &options.rules_of_bunfig)?;
-    let mut overrides = options.overrides.iter();
-    overrides.try_for_each(|it| check(&it.rules, &it.places))
+    for it in &options.overrides {
+        check(&it.rules, &it.places)?;
+    }
+    if only_of_plugins.is_some() {
+        return Ok(());
+    }
+    let of_overrides = options.overrides.iter().flat_map(|it| &it.wildcards);
+    let mut wildcards = options.wildcards.iter().chain(of_overrides);
+    wildcards.try_for_each(|it| check_wildcard(linter.registry(), plugins, it))
+}
+
+/// Returns a mistake if `wildcard` names a plugin that doesn't exist. Turning off a plugin that Bun left out on purpose is
+/// fine, like turning off one of its rules.
+fn check_wildcard(
+    registry: &Registry,
+    js_plugins: &[NamedPlugin],
+    wildcard: &Wildcard,
+) -> Result<(), Mistake> {
+    let (id, plugin) = (&wildcard.id[..], wildcard.plugin());
+    let is_left_out = !matches!(registry.why_missing(id), Missing::Unknown(_));
+    if is_left_out || !rules_of_plugin(registry, js_plugins, plugin).is_empty() {
+        return Ok(());
+    }
+    let message = match similar_plugin(registry, js_plugins, plugin) {
+        Some(similar) => {
+            let hint = [b"Did you mean \"", similar, b"/*\"?"].concat();
+            [b"Unknown plugin \"", plugin, b"\"\n  ", &hint].concat()
+        }
+        None => {
+            let named_by = wildcard.key_at.map_or(NamedBy::Flag, |_| NamedBy::Bunfig);
+            unknown_rule(registry, id, named_by)
+        }
+    };
+    Err(Mistake::new(message, wildcard.key_at))
 }
 
 /// `places` has the bunfig.toml locations of the first `places.len()` rules. The rest came from `--rule`.
@@ -220,6 +253,13 @@ fn check(
             setting => std::slice::from_ref(setting),
         };
         let severity = parts.first().and_then(severity_of);
+        let invalid_severity = || {
+            let place = written.map(|it| it.place.items.first().unwrap_or(&it.place));
+            Mistake {
+                message: invalid_severity(id, parts.first().unwrap_or(&Json::Null)),
+                at: place.map(|it| it.at),
+            }
+        };
         let (prefix, name) = parse_rule_id(id);
         if let Some((plugin, _)) = plugins.iter().find(|it| *it.0.name == *prefix) {
             let Some(rule) = plugin.rule(name) else {
@@ -233,13 +273,7 @@ fn check(
             };
             let given = parts.get(1..).unwrap_or_default();
             match severity {
-                None => {
-                    let place = written.map(|it| it.place.items.first().unwrap_or(&it.place));
-                    return Err(Mistake {
-                        message: invalid_severity(id, parts.first().unwrap_or(&Json::Null)),
-                        at: place.map(|it| it.at),
-                    });
-                }
+                None => return Err(invalid_severity()),
                 Some(Severity::Off) => continue,
                 Some(_) => match rule.validate(given) {
                     Ok(()) => continue,
@@ -282,11 +316,7 @@ fn check(
             });
         }
         let Some(severity) = severity else {
-            let place = written.map(|it| it.place.items.first().unwrap_or(&it.place));
-            return Err(Mistake {
-                message: invalid_severity(id, parts.first().unwrap_or(&Json::Null)),
-                at: place.map(|it| it.at),
-            });
+            return Err(invalid_severity());
         };
         let given = parts.get(1..).unwrap_or_default();
         let entry = found.filter(|_| severity != Severity::Off);
@@ -439,7 +469,7 @@ pub(crate) fn split_pairs(registry: &Registry, objects: Vec<Json>, types: Types)
             None => vec![typescript()],
         };
         let mut second = vec![(&b"files"[..], Json::Array(files))];
-        for key in [&b"ignores"[..], b"basePath", b"$globsOfBun"] {
+        for key in [&b"ignores"[..], b"basePath", b"$globsOfBun", b"$framework"] {
             second.extend(object.get(key).map(|it| (key, it.clone())));
         }
         second.push((b"rules", Json::Object(in_typescript)));
@@ -454,33 +484,137 @@ pub(crate) fn split_pairs(registry: &Registry, objects: Vec<Json>, types: Types)
     split
 }
 
+/// Every built-in rule available in native mode, with the ID it's reported under.
+fn native_rules(registry: &Registry) -> impl Iterator<Item = (&'static Meta, Vec<u8>)> {
+    let all = registry.all().iter().map(|it| it.meta);
+    let with_id = all.map(|meta| (meta, RuleId::Known(meta).to_vec()));
+    // Some rules exist twice. Native mode uses the ESLint plugin's version and hides the other one.
+    with_id.filter(|(meta, id)| registry.names_of(meta).id == *id)
+}
+
 /// Converts `[lint.categories]` to config objects. They go after the defaults and before `[lint.rules]`.
-/// typescript-eslint rules only apply to TypeScript files. Pass the result through [`split_pairs`].
+/// typescript-eslint rules only apply to TypeScript files. Rules of a framework plugin ([`Plugin::framework`]) only apply in
+/// projects that use the framework. Pass the result through [`split_pairs`].
 pub(crate) fn categories(registry: &Registry, options: &Options) -> Vec<Json> {
     if !options.filters.iter().any(|it| is_category(&it.1)) {
         return Vec::new();
     }
-    let id = |meta: &'static Meta| RuleId::Known(meta).to_vec();
     let (mut everywhere, mut in_typescript) = (Vec::new(), Vec::new());
-    for meta in registry.all().iter().map(|it| it.meta) {
-        // Native mode uses the ESLint plugin's version of this rule instead.
-        let is_hidden = registry.names_of(meta).id != id(meta);
-        let category = oxlint_category(meta.plugin, meta.name).filter(|_| !is_hidden);
+    let mut by_framework = Frameworks::PACKAGES.map(|(package, flag)| (package, flag, Vec::new()));
+    for (meta, id) in native_rules(registry) {
+        let category = oxlint_category(meta.plugin, meta.name);
         let Some(severity) = category.and_then(|it| severity_in(options, it.as_bytes())) else {
             continue;
         };
-        if meta.plugin == Plugin::TypeScript {
-            in_typescript.push((id(meta), severity_name(severity)));
-            continue;
-        }
-        everywhere.push((id(meta), severity_name(severity)));
+        let framework = meta.plugin.framework();
+        let rules = match by_framework.iter_mut().find(|it| it.1 == framework) {
+            Some((_, _, rules)) => rules,
+            None if meta.plugin == Plugin::TypeScript => &mut in_typescript,
+            None => &mut everywhere,
+        };
+        rules.push((id, severity_name(severity)));
     }
     let typescript = Json::Array(vec![Json::String(TYPESCRIPT.to_vec())]);
-    vec![
+    let mut objects = vec![
         object(vec![(b"rules", Json::Object(everywhere))]),
         object(vec![
             (b"files", typescript),
             (b"rules", Json::Object(in_typescript)),
         ]),
-    ]
+    ];
+    for (package, _, rules) in by_framework {
+        objects.push(object(vec![
+            (b"$framework", Json::String(package.into())),
+            (b"rules", Json::Object(rules)),
+        ]));
+    }
+    objects
+}
+
+/// IDs of all rules in the plugin named `prefix`: a loaded JavaScript plugin, or a built-in one under any of its spellings.
+/// Empty if there's no such plugin.
+fn rules_of_plugin(registry: &Registry, js_plugins: &[NamedPlugin], prefix: &[u8]) -> Vec<Vec<u8>> {
+    if let Some((plugin, _)) = js_plugins.iter().find(|it| *it.0.name == *prefix) {
+        return plugin.rules.iter().map(|it| it.id.to_vec()).collect();
+    }
+    // `react/rules-of-hooks` is accepted as a name for the react-hooks rule, but `react/*` is eslint-plugin-react alone.
+    let own = Plugin::spelled(prefix).find(|it| it.prefix().as_bytes() == prefix);
+    let is_in_plugin = |meta: &Meta| match own {
+        Some(own) => meta.plugin == own,
+        None => Plugin::spelled(prefix).any(|it| it == meta.plugin),
+    };
+    // `react/jsx-uses-react` reports nothing. It keeps `no-unused-vars` quiet about `React`, so turning it off adds reports.
+    let rules = native_rules(registry).filter(|it| it.1 != b"react/jsx-uses-react");
+    rules
+        .filter(|it| is_in_plugin(it.0))
+        .map(|it| it.1)
+        .collect()
+}
+
+/// The plugin name closest to `prefix`, for a "Did you mean" hint. `None` if nothing is close.
+fn similar_plugin<'a>(
+    registry: &Registry,
+    js_plugins: &'a [NamedPlugin],
+    prefix: &[u8],
+) -> Option<&'a [u8]> {
+    let built_in = native_rules(registry).flat_map(|(meta, _)| meta.plugin.spellings());
+    let names = (built_in.map(|it| it.as_bytes())).chain(js_plugins.iter().map(|it| &*it.0.name));
+    // ESLint's own rules have no prefix.
+    let names = names.filter(|it| !it.is_empty());
+    let distance = |name: &[u8]| strings::edit_distance(prefix.iter().copied(), name);
+    let closest = names.map(|it| (distance(it), it)).min_by_key(|it| it.0);
+    (closest.filter(|it| it.0 <= prefix.len().max(3) / 3)).map(|it| it.1)
+}
+
+/// The first wildcard in `[lint.rules]`, `[[lint.overrides]]`, `--rule` or `-A`.
+pub(crate) fn first_wildcard(options: &Options) -> Option<&Wildcard> {
+    let of_overrides = options.overrides.iter().flat_map(|it| &it.wildcards);
+    options.wildcards.iter().chain(of_overrides).next()
+}
+
+/// Config object key for the IDs of its [`Wildcard`]s. [`expand_wildcards`] replaces it.
+pub(crate) const WILDCARDS: &[u8] = b"$wildcards";
+
+/// Moves the [`WILDCARDS`] of each config object into a new object that turns off every rule of those plugins. The new
+/// object matches the same files and goes first, so the single rules of the original object override it.
+///
+/// Call after [`split_pairs`]. A wildcard is about one plugin, so `"@typescript-eslint/*"` must not turn `no-unused-vars` off
+/// in JavaScript files, which naming `@typescript-eslint/no-unused-vars` does.
+pub(crate) fn expand_wildcards(
+    registry: &Registry,
+    js_plugins: &[NamedPlugin],
+    objects: Vec<Json>,
+) -> Vec<Json> {
+    let selects_files = |key: &[u8]| {
+        let keys: [&[u8]; 5] = [
+            b"files",
+            b"ignores",
+            b"basePath",
+            b"$globsOfBun",
+            b"$framework",
+        ];
+        keys.contains(&key)
+    };
+    let mut expanded = Vec::with_capacity(objects.len());
+    for mut object in objects {
+        let entries = match &mut object {
+            Json::Object(entries) => entries,
+            _ => &mut Vec::new(),
+        };
+        let Some(at) = entries.iter().position(|it| it.0 == WILDCARDS) else {
+            expanded.push(object);
+            continue;
+        };
+        let wildcards = entries.remove(at).1;
+        let ids = wildcards.as_array().unwrap_or_default().iter();
+        let plugins = ids.filter_map(|it| Wildcard::plugin_of(it.as_str()?));
+        let rules = plugins.flat_map(|it| rules_of_plugin(registry, js_plugins, it));
+        let rules = rules.map(|id| (id, severity_name(Severity::Off)));
+        let mut turned_off: Vec<_> =
+            (entries.iter().filter(|it| selects_files(&it.0)).cloned()).collect();
+        turned_off.push((b"rules".to_vec(), Json::Object(rules.collect())));
+        expanded.push(Json::Object(turned_off));
+        expanded.push(object);
+    }
+    expanded
 }

@@ -134,7 +134,7 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
         Level::DisallowedLikeNode => {
             argv.push(Box::from(&b"--disallow-code-generation-from-strings"[..]));
         }
-        Level::Disallowed => {
+        Level::Strict => {
             argv.push(Box::from(
                 &b"--disallow-code-generation-from-strings=strict"[..],
             ));
@@ -327,6 +327,16 @@ impl LintCommand {
                     environment,
                 )),
                 ..Outcome::default()
+            })
+        }
+        if HAS_TEST_RUNNER && let [b"--print-markdown-trees", rest @ ..] = &args[..] {
+            run_and_exit(b"lint", None, |_| {
+                let trees = bun_lint_driver::for_tests::print_markdown_trees(rest);
+                Outcome {
+                    exit_code: u8::from(trees.is_none()),
+                    stdout: trees.unwrap_or_default(),
+                    ..Outcome::default()
+                }
             })
         }
         if HAS_TEST_RUNNER && let [b"--run-path-tests", rest @ ..] = &args[..] {

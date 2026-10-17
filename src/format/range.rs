@@ -10,10 +10,8 @@ use crate::ir::prelude::{Format, Formatter, hard_line_break};
 use crate::js::ast_nodes::{
     AstNodes, ExpressionStatement, Program, node_as_ast_nodes, type_parameters_of,
 };
-use crate::js::comments::{self, Comment, Comments};
 use crate::js::print::program::ends_before_semicolon;
-use crate::js::source_text::SourceText;
-use crate::options::{Flavor, LineEnding};
+use crate::options::LineEnding;
 use crate::text::BOM;
 use crate::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::{File, FnBody, FnKind, Node, Stmt, StmtKind};
@@ -59,7 +57,7 @@ pub fn format_with_cursor<'a>(
         return Err(FormatError::SyntaxError);
     }
 
-    let range = calculate_range(file, options.flavor, start as u32, end as u32)
+    let range = calculate_range(file, start as u32, end as u32)
         .unwrap_or_else(|| Span::empty(first as u32));
     let (start, end) = (range.start as usize, range.end as usize);
     let (Some(before), Some(slice), Some(after)) =
@@ -211,16 +209,6 @@ pub(crate) fn write_with_line_ending(mut text: &[u8], line_ending: &[u8], out: &
     out.extend_from_slice(text);
 }
 
-fn comments_of<'a>(file: &'a File<'a>, flavor: Flavor) -> &'a [Comment] {
-    let comments = file.extension(|| {
-        let mut comments = Vec::new();
-        let parsed_by = comments::ParsedBy::WhatItsNameSays;
-        comments::collect(file, flavor, parsed_by, &mut comments);
-        comments
-    });
-    comments.map_or(&[][..], |comments: &Vec<Comment>| comments)
-}
-
 /// Writes the document of `file` so that every line is indented by `alignment` columns more.
 /// Prettier's `addAlignmentToDoc`.
 fn write_aligned<'a>(file: &'a File<'a>, alignment: usize, f: &mut Formatter<'a>) {
@@ -296,7 +284,7 @@ fn full_span(node: AstNodes<'_>) -> Span {
 }
 
 /// Prettier's `locEnd`: a statement ends before its `;`.
-fn loc_end<'a>(node: AstNodes<'a>, comments: &Comments<'a>) -> u32 {
+fn loc_end<'a>(node: AstNodes<'a>) -> u32 {
     use AstNodes as N;
     let span = node.span();
     let ends_before_semicolon = match node {
@@ -323,7 +311,7 @@ fn loc_end<'a>(node: AstNodes<'a>, comments: &Comments<'a>) -> u32 {
         _ => false,
     };
     match ends_before_semicolon {
-        true => comments.without_semicolon(span).end,
+        true => node.raw().file().without_semicolon(span).end,
         false => span.end,
     }
 }
@@ -459,7 +447,6 @@ fn find_sibling_ancestors<'a>(
     file: AstNodes<'a>,
     start_path: &[AstNodes<'a>],
     end_path: &[AstNodes<'a>],
-    comments: &Comments<'a>,
 ) -> Option<(AstNodes<'a>, AstNodes<'a>)> {
     let (&(mut start_node), start_ancestors) = start_path.split_first()?;
     let (&(mut end_node), end_ancestors) = end_path.split_first()?;
@@ -487,11 +474,8 @@ fn find_sibling_ancestors<'a>(
     {
         end_node = ancestor;
     }
-    let end = loc_end(end_node, comments);
-    for &ancestor in start_ancestors
-        .iter()
-        .take_while(|&&it| loc_end(it, comments) <= end)
-    {
+    let end = loc_end(end_node);
+    for &ancestor in start_ancestors.iter().take_while(|&&it| loc_end(it) <= end) {
         start_node = ancestor;
         if start_node == end_node {
             break;
@@ -501,12 +485,7 @@ fn find_sibling_ancestors<'a>(
 }
 
 /// Prettier's `calculateRange`: what to format so that everything from `start` to `end` is.
-fn calculate_range<'a>(
-    file: &'a File<'a>,
-    flavor: Flavor,
-    mut start: u32,
-    mut end: u32,
-) -> Option<Span> {
+fn calculate_range<'a>(file: &'a File<'a>, mut start: u32, mut end: u32) -> Option<Span> {
     let text = file.text();
     // The range is narrowed so that it starts and ends with something.
     let selected = text.get(start as usize..end as usize)?;
@@ -522,9 +501,8 @@ fn calculate_range<'a>(
         true => start_path.clone(),
         false => find_node_at_offset(file, end, Edge::End)?,
     };
-    let comments = Comments::new(SourceText::new(text), comments_of(file, flavor));
     let root = AstNodes::Program(Program(file));
-    let (start_node, end_node) = find_sibling_ancestors(root, &start_path, &end_path, &comments)?;
+    let (start_node, end_node) = find_sibling_ancestors(root, &start_path, &end_path)?;
     Some(Span::new(
         loc_start(start_node).min(loc_start(end_node)),
         start_node.span().end.max(end_node.span().end),

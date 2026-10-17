@@ -1,9 +1,8 @@
 //! A bridge to the project's own Prettier, for files in a language that only a Prettier plugin can format.
 //!
-//! `bun fmt` doesn't support Astro or PHP, and of Svelte it prints what one version of the plugin prints. If the Prettier
-//! config lists the plugin for such a language, and both Prettier and the plugin are installed, the whole file goes to
-//! `prettier.format`. That runs in the same VMs that run `bun lint`'s plugins. The result is checked or written like the
-//! built-in formatter's output. It's exact, but slow.
+//! `bun fmt` doesn't support Astro or PHP. If the Prettier config lists the plugin for such a language, and both Prettier and
+//! the plugin are installed, the whole file goes to `prettier.format`. That runs in the same VMs that run `bun lint`'s
+//! plugins. The result is checked or written like the built-in formatter's output. It's exact, but slow.
 
 use super::cli::{Options, Precedence};
 use super::config::is_option_of_prettier;

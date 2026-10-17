@@ -177,6 +177,19 @@ declare module "bun" {
       arrayBuffer(): Promise<ArrayBuffer>;
 
       /**
+       * Read from stdout as a Uint8Array
+       *
+       * Automatically calls {@link quiet}
+       * @returns A promise that resolves with stdout as a Uint8Array
+       * @example
+       * ```ts
+       * const output = await $`echo hello`.bytes();
+       * console.log(output); // Uint8Array(6) [ 104, 101, 108, 108, 111, 10 ]
+       * ```
+       */
+      bytes(): Promise<Uint8Array<ArrayBuffer>>;
+
+      /**
        * Read from stdout as a Blob
        *
        * Automatically calls {@link quiet}

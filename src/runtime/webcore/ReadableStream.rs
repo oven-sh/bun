@@ -544,7 +544,9 @@ impl ReadableStream {
                         event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                             cx.vm().as_mut().event_loop().cast(),
                         )),
-                        start_offset: Some(blob.offset.get() as usize),
+                        // pread only for a slice. An unsliced Blob reads from the fd's current offset.
+                        start_offset: (blob.offset.get() != 0)
+                            .then_some(blob.offset.get() as usize),
                         max_size: if blob.size.get() != webcore::blob::MAX_SIZE {
                             Some(blob.size.get() as usize)
                         } else {

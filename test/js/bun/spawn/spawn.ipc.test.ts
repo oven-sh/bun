@@ -1,6 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gcTick, isWindows } from "harness";
+import { totalmem } from "node:os";
 import path from "path";
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -383,4 +384,55 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
   const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
   expect(JSON.parse(stdout.trim())).toEqual([1, 2, 0, 0, 0]);
   expect(exitCode).toBe(0);
+});
+
+// Messages queued behind an in-flight message coalesce into one queue item, so that
+// item passes 2 GiB when the peer reads slowly. The write completion cast its length
+// to i32 and panicked with "int cast: TryFromIntError(PosOverflow)". The child peaks
+// at 4 to 6 GB of RSS. Inside a container os.totalmem() reports the host's RAM;
+// process.constrainedMemory() reports the cgroup limit there.
+// Not on Windows: the parent has to drain a whole 2 GiB write request before the next
+// one starts, and the sender copies each request, so the child peaks above 10 GB.
+const memory = Math.min(totalmem(), process.constrainedMemory() || Infinity);
+describe.skipIf(isWindows || memory < 16 * 1024 ** 3)("send queue past 2 GiB", () => {
+  // The item has to pass 2^31 bytes, and the child copies each message three times to
+  // queue it: about 7 s on a debug ASAN build, more when the machine is loaded.
+  const timeout = 60_000;
+  it(
+    "keeps sending a queue item larger than 2 GiB",
+    async () => {
+      const chunkLength = 100 * 1024 * 1024;
+      // All 22 sends run in one synchronous tick. The first message is in flight, and
+      // the other 21 (2100 MiB) coalesce into one item behind it.
+      const childSource = `
+        const chunk = Buffer.alloc(${chunkLength}, "x").toString();
+        for (let i = 0; i < 22; i++) process.send(chunk);
+        process.on("message", () => process.exit(0));
+      `;
+      const { promise, resolve, reject } = Promise.withResolvers<number[]>();
+      const lengths: number[] = [];
+      await using child = spawn([bunExe(), "-e", childSource], {
+        env: bunEnv,
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: "advanced",
+        ipc(message, subprocess) {
+          if (lengths.length === 2) return;
+          lengths.push(message.length);
+          // The second message is the first one inside the coalesced item. Its arrival
+          // proves the child wrote that item across many partial writes. Stop the
+          // child there instead of draining the whole queue.
+          if (lengths.length === 2) {
+            resolve(lengths);
+            subprocess.send("stop");
+          }
+        },
+        onExit(_subprocess, exitCode, signalCode) {
+          reject(new Error(`child exited (${exitCode}, ${signalCode}) before the second message`));
+        },
+      });
+      expect(await promise).toEqual([chunkLength, chunkLength]);
+      expect(await child.exited).toBe(0);
+    },
+    timeout,
+  );
 });

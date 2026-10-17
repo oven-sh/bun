@@ -1186,6 +1186,8 @@ await sql.begin(async tx => {
 });
 ```
 
+`sql.begin` resolves once the database has answered `COMMIT`. If the connection is lost while `COMMIT` is unanswered, `sql.begin` rejects and nobody can know whether the transaction was committed, so check before you run it again.
+
 To pipeline the queries in a transaction, return an array of queries from the callback:
 
 ```ts

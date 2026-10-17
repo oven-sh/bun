@@ -59,7 +59,8 @@ private:
     JSC::GCOwnedDataScope<WTF::StringView> m_view;
     // Not a Vector with inline capacity, which holds less than the UTF-8 of a string can be.
     std::array<char8_t, 128> m_inlineBuffer;
-    WTF::MallocSpan<char8_t> m_heapBuffer;
+    // Optional: ~MallocSpan calls free, of null too.
+    std::optional<WTF::MallocSpan<char8_t>> m_heapBuffer;
     std::span<const char8_t> m_converted;
     bool m_isConverted { false };
     bool m_isNull { true };

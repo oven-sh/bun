@@ -14,8 +14,8 @@ pub(crate) struct EVP {
 // The `Algorithm` enum + `md()` live in
 // `bun_sha_hmac::evp` so lower-tier crates (`bun_csrf`, `bun_sha_hmac::hmac`)
 // can name it without depending upward on bun_runtime. Re-export the canonical
-// enum here; the higher-tier extras (`names`, `lookup`, `tag_cstr`) that need
-// bun_str live below as an extension trait / free fns on the re-exported type.
+// enum here; the higher-tier extras (`lookup`, `tag_cstr`) live below as an
+// extension trait / free fns on the re-exported type.
 // ──────────────────────────────────────────────────────────────────────────
 pub(crate) use bun_sha_hmac::evp::Algorithm;
 

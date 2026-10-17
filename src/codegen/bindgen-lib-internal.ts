@@ -559,6 +559,7 @@ export class StringType extends Type {
   }
   /** `ToString`: any value is accepted. */
   get loose(): StringType {
+    assert(!this.valueKinds.includes("stringObject"), ".loose already takes a String object");
     return new StringType("WebCore::IDLDOMString", "any");
   }
   /** Also takes a `String` object, as `.utf8` does. */
@@ -1693,7 +1694,7 @@ export interface BuiltinField {
   length: number;
 }
 
-/** Several functions are the overloads of one, each with a `rustName`. */
+/** Several functions are the overloads of one. `rustName` tells their Rust functions apart. */
 export type Field = FunctionField | readonly FunctionField[] | GetterField | BuiltinField;
 export type StaticField =
   Omit<FunctionField, "mutates" | "passThis" | "privateSymbol"> | Omit<GetterField, "setter" | "cache">;
@@ -1709,8 +1710,13 @@ export interface ClassOptions {
   static?: Record<string, StaticField>;
   /** JS values the object holds. The GC visits them; the wrapper gets `x_field` / `set_x_field` for each. */
   internalFields?: readonly string[];
-  /** `false`: prototype properties are non-configurable. */
+  /** `false`: native properties are non-configurable. */
   configurable?: boolean;
+}
+
+function memberRustName(name: string): string {
+  assert(/^[a-z_][a-z0-9_]*$/.test(name), `${name}: rustName is written in snake_case`);
+  return rustIdent(name);
 }
 
 export class Method extends Signature {
@@ -1722,7 +1728,7 @@ export class Method extends Signature {
   constructor(name: string, options: FunctionField, isStatic = false) {
     super(options);
     this.name = name;
-    this.rustName = rustIdent(options.rustName ?? snakeCase(name.replace(/^_+/, "")));
+    this.rustName = memberRustName(options.rustName ?? snakeCase(name.replace(/^_+/, "")));
     assert(
       !(options.mutates && this.capability === "js"),
       `${name}: a method that can run JavaScript gets the wrapper, not &mut self`,
@@ -1747,12 +1753,13 @@ export class Getter {
   constructor(name: string, options: GetterField, isStatic = false) {
     this.name = name;
     this.isStatic = isStatic;
-    this.rustName = rustIdent(options.rustName ?? snakeCase(name));
+    this.rustName = memberRustName(options.rustName ?? snakeCase(name));
     this.type = options.getter;
     this.capability = options.capability ?? "none";
     this.throws = options.throws ?? false;
     this.hasSetter = options.setter ?? false;
     assert(!(options.cache && options.setter), `${name}: a cached getter has no setter`);
+    assert(!(isStatic && (options.cache || options.setter)), `${name}: a static getter has no cache and no setter`);
     assert(
       !this.type.holdsJSValue || this.capability !== "none",
       `${name}: returning a JS value takes capability: "heap" or "js"`,
@@ -1760,6 +1767,15 @@ export class Getter {
     this.cached = !!options.cache;
   }
 }
+
+export class Builtin {
+  constructor(
+    readonly name: string,
+    readonly length: number,
+  ) {}
+}
+
+export type ClassMember = FunctionDefinition | Getter | Builtin;
 
 /** Stands for the class being declared, in its own signatures. */
 class SelfType extends Type {
@@ -1791,10 +1807,10 @@ export class ClassType extends NamedType {
   readonly getters: readonly Getter[];
   readonly staticFunctions: readonly FunctionDefinition[];
   readonly staticGetters: readonly Getter[];
-  readonly builtins: readonly { name: string; length: number }[];
-  /** As written. */
-  readonly protoNames: readonly string[];
-  readonly staticNames: readonly string[];
+  readonly builtins: readonly Builtin[];
+  /** The properties of the prototype and of the constructor, as written. */
+  readonly protoMembers: readonly ClassMember[];
+  readonly staticMembers: readonly ClassMember[];
   readonly internalFields: readonly string[];
   /** Each has an internal field of its own, after `internalFields`. */
   readonly cachedGetters: readonly Getter[];
@@ -1811,42 +1827,41 @@ export class ClassType extends NamedType {
       ...(signature.returns ? { returns: own(signature.returns) } : {}),
     });
     this.construct = options.construct ? new Signature(resolve(options.construct)) : null;
-    const builtins: { name: string; length: number }[] = [];
-    const members = (fields: Record<string, Field>, isStatic: boolean) => {
-      const functions: FunctionDefinition[] = [];
-      const getters: Getter[] = [];
-      for (const [name, field] of Object.entries(fields)) {
-        if ("builtin" in field) builtins.push({ name, length: field.length });
-        else if ("getter" in field) {
-          assert(!("args" in field || "returns" in field), `${name}: a getter has no args or returns`);
-          getters.push(new Getter(name, { ...field, getter: own(field.getter) }, isStatic));
-        } else {
-          const overloads: readonly FunctionField[] = Array.isArray(field) ? field : [field];
-          const fn = new FunctionDefinition(overloads.map(overload => new Method(name, resolve(overload), isStatic)));
-          fn.name = name;
-          functions.push(fn);
+    const members = (fields: Record<string, Field>, isStatic: boolean) =>
+      Object.entries(fields).map(([name, field]): ClassMember => {
+        if ("builtin" in field) {
+          assert(!isStatic, `${name}: a builtin is a property of the prototype`);
+          return new Builtin(name, field.length);
         }
-      }
-      return { functions, getters };
-    };
-    ({ functions: this.functions, getters: this.getters } = members(options.proto ?? {}, false));
-    ({ functions: this.staticFunctions, getters: this.staticGetters } = members(options.static ?? {}, true));
+        if ("getter" in field) {
+          assert(!("args" in field || "returns" in field), `${name}: a getter has no args or returns`);
+          return new Getter(name, { ...field, getter: own(field.getter) }, isStatic);
+        }
+        const overloads: readonly FunctionField[] = Array.isArray(field) ? field : [field];
+        assert(
+          overloads.every(overload => overload.privateSymbol === overloads[0]?.privateSymbol),
+          `${name}: its overloads have one privateSymbol`,
+        );
+        const fn = new FunctionDefinition(overloads.map(overload => new Method(name, resolve(overload), isStatic)));
+        fn.name = name;
+        return fn;
+      });
+    this.protoMembers = members(options.proto ?? {}, false);
+    this.staticMembers = members(options.static ?? {}, true);
+    this.functions = this.protoMembers.filter(member => member instanceof FunctionDefinition);
+    this.getters = this.protoMembers.filter(member => member instanceof Getter);
+    this.builtins = this.protoMembers.filter(member => member instanceof Builtin);
+    this.staticFunctions = this.staticMembers.filter(member => member instanceof FunctionDefinition);
+    this.staticGetters = this.staticMembers.filter(member => member instanceof Getter);
     const { getters } = this;
-    this.builtins = builtins;
-    this.protoNames = Object.keys(options.proto ?? {});
-    this.staticNames = Object.keys(options.static ?? {});
-    assert(
-      this.construct || this.staticFunctions.length + this.staticGetters.length === 0,
-      "static members need a constructor object",
-    );
+    assert(this.construct || this.staticMembers.length === 0, "static members need a constructor object");
     this.internalFields = options.internalFields ?? [];
     for (const field of this.internalFields)
       assert(/^[a-z][A-Za-z0-9]*$/.test(field), `${field}: an internal field is named in camelCase`);
     assertDistinct(
       [
         "constructor",
-        "get_constructor",
-        ...[...this.methods, ...this.staticMethods].map(method => method.rustName),
+        ...this.methods.map(method => method.rustName),
         ...[...getters, ...this.staticGetters].flatMap(getter => [
           getter.rustName,
           ...(getter.hasSetter ? [`set_${snakeCase(getter.name)}`] : []),
@@ -1865,11 +1880,9 @@ export class ClassType extends NamedType {
       );
     }
   }
+  /** Every signature of the prototype's and the constructor's functions. */
   get methods(): readonly Method[] {
-    return this.functions.flatMap(fn => fn.signatures as readonly Method[]);
-  }
-  get staticMethods(): readonly Method[] {
-    return this.staticFunctions.flatMap(fn => fn.signatures as readonly Method[]);
+    return [...this.functions, ...this.staticFunctions].flatMap(fn => fn.signatures as readonly Method[]);
   }
   get numberOfInternalFields(): number {
     return this.internalFields.length + this.cachedGetters.length;
@@ -1893,10 +1906,7 @@ export class ClassType extends NamedType {
   get signatureTypes(): Type[] {
     return [
       ...(this.construct ? this.construct.args.map(arg => arg.type) : []),
-      ...[...this.methods, ...this.staticMethods].flatMap(method => [
-        ...method.args.map(arg => arg.type),
-        method.returns,
-      ]),
+      ...this.methods.flatMap(method => [...method.args.map(arg => arg.type), method.returns]),
       ...[...this.getters, ...this.staticGetters].map(getter => getter.type),
     ];
   }

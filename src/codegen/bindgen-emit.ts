@@ -3,13 +3,15 @@
 import assert from "node:assert";
 import {
   asciiLiteral,
+  type Builtin,
+  type ClassMember,
   ClassType,
   cppEmplace,
   DefaultType,
   DictionaryType,
   EnumerationType,
-  type FunctionDefinition,
-  type Getter,
+  FunctionDefinition,
+  Getter,
   indent,
   type JSClass,
   type Method,
@@ -76,11 +78,11 @@ export function analyze(files: readonly SchemaFile[]): Tables {
       if (!(type instanceof ClassType)) continue;
       type.classIndex = tables.classes.push(type) - 1;
       for (const arg of type.construct?.args ?? []) markAccepted(arg.type);
-      for (const method of [...type.methods, ...type.staticMethods]) {
+      for (const method of type.methods) {
         for (const arg of method.args) markAccepted(arg.type);
         markReturned(method.returns);
       }
-      for (const getter of type.getters) {
+      for (const getter of [...type.getters, ...type.staticGetters]) {
         markReturned(getter.type);
         if (getter.hasSetter) markAccepted(getter.type);
       }
@@ -600,7 +602,7 @@ const setterSymbolName = (type: ClassType, getter: Getter) =>
   `Bun__Bindgen__${type.name}PrototypeSetter__${getter.name}`;
 
 const classSymbols = (type: ClassType) => [
-  ...[...type.methods, ...type.staticMethods].map(method => methodSymbolName(type, method)),
+  ...type.methods.map(method => methodSymbolName(type, method)),
   ...type.getters.flatMap(getter => [getterSymbolName(type, getter), setterSymbolName(type, getter)]),
   ...type.staticGetters.map(getter => getterSymbolName(type, getter)),
   classSymbolName(type, "construct"),
@@ -724,11 +726,8 @@ ${cppPrologue}
 function cppSourceForClass(type: ClassType): string {
   const { name } = type;
   const dontDelete = type.configurable ? "" : " | JSC::PropertyAttribute::DontDelete";
-  const row = (key: string, attributes: string, value: string) => ({
-    key,
-    text: `    { ${asciiLiteral(key)}, static_cast<unsigned>(${attributes}), JSC::NoIntrinsic, { ${value} } },`,
-  });
-  type Row = ReturnType<typeof row>;
+  const row = (key: string, attributes: string, value: string) =>
+    `    { ${asciiLiteral(key)}, static_cast<unsigned>(${attributes}), JSC::NoIntrinsic, { ${value} } },`;
   const privateSymbol = (fn: FunctionDefinition) => (fn.signatures[0] as Method).privateSymbol;
   const methodRow = (fn: FunctionDefinition) =>
     row(
@@ -743,27 +742,28 @@ function cppSourceForClass(type: ClassType): string {
       `${getter.hasSetter ? "" : "JSC::PropertyAttribute::ReadOnly | "}JSC::PropertyAttribute::CustomAccessor${getter.isStatic ? "" : " | JSC::PropertyAttribute::DOMAttribute"}${dontDelete}`,
       `JSC::HashTableValue::GetterSetterType, ${getterHostFunctionName(type, getter)}, ${getter.hasSetter ? setterHostFunctionName(type, getter) : "0"}`,
     );
-  const prototypeRows = [
-    ...type.functions.filter(fn => !privateSymbol(fn)).map(methodRow),
-    ...type.getters.map(getterRow),
-    ...type.builtins.map(builtin =>
-      row(
-        builtin.name,
-        "JSC::PropertyAttribute::Builtin",
-        `JSC::HashTableValue::BuiltinGeneratorType, WebCore::${low(name)}${cap(builtin.name)}CodeGenerator, ${builtin.length}`,
-      ),
-    ),
-  ];
-  const constructorRows = [...type.staticFunctions.map(methodRow), ...type.staticGetters.map(getterRow)];
+  const builtinRow = (builtin: Builtin) =>
+    row(
+      builtin.name,
+      "JSC::PropertyAttribute::Builtin",
+      `JSC::HashTableValue::BuiltinGeneratorType, WebCore::${low(name)}${cap(builtin.name)}CodeGenerator, ${builtin.length}`,
+    );
   /** In the order the schema has them, which `for-in` shows. */
-  const table = (id: string, rows: Row[], names: readonly string[]) =>
-    rows.length > 0
-      ? `static const JSC::HashTableValue ${id}[] = {\n${rows
-          .toSorted((a, b) => names.indexOf(a.key) - names.indexOf(b.key))
-          .map(row => row.text)
-          .join("\n")}\n};\n`
-      : "";
-  const span = (id: string, rows: Row[]) => (rows.length > 0 ? id : "{}");
+  const rowsOf = (members: readonly ClassMember[]) =>
+    members
+      .filter(member => !(member instanceof FunctionDefinition && privateSymbol(member)))
+      .map(member =>
+        member instanceof FunctionDefinition
+          ? methodRow(member)
+          : member instanceof Getter
+            ? getterRow(member)
+            : builtinRow(member),
+      );
+  const prototypeRows = rowsOf(type.protoMembers);
+  const constructorRows = rowsOf(type.staticMembers);
+  const table = (id: string, rows: string[]) =>
+    rows.length > 0 ? `static const JSC::HashTableValue ${id}[] = {\n${rows.join("\n")}\n};\n` : "";
+  const span = (id: string, rows: string[]) => (rows.length > 0 ? id : "{}");
   const privateFunctions = type.functions.filter(privateSymbol);
   const construct = type.construct;
   return `
@@ -782,7 +782,7 @@ ${cppCallBody(construct, classSymbolName(type, "construct"), ["structure"])}
 `
     : ""
 }
-${table(`JS${name}PrototypeTableValues`, prototypeRows, type.protoNames)}${table(`JS${name}ConstructorTableValues`, constructorRows, type.staticNames)}${
+${table(`JS${name}PrototypeTableValues`, prototypeRows)}${table(`JS${name}ConstructorTableValues`, constructorRows)}${
     privateFunctions.length > 0
       ? `static void finish${name}PrototypeCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
 {
@@ -1202,7 +1202,7 @@ function rustForClass(type: ClassType, scope: RustScope): string {
   const result = (value: string, throws: boolean) => (throws ? `Result<${value}, Self::Error<'a>>` : value);
   const anyThrows =
     !!type.construct?.throws ||
-    [...type.methods, ...type.staticMethods].some(method => method.throws) ||
+    type.methods.some(method => method.throws) ||
     [...type.getters, ...type.staticGetters].some(getter => getter.throws);
   const receiverParameter = {
     ref: ["&self"],
@@ -1241,7 +1241,7 @@ bindgen::host_fn_return(cx, result, |heap, value| bindgen::to_js::any(heap, bind
     );
   }
 
-  for (const method of [...type.methods, ...type.staticMethods]) {
+  for (const method of type.methods) {
     const isStatic = method.receiver === "static";
     declarations.push(
       declare(

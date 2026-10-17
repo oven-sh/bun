@@ -39,7 +39,7 @@ fn boring_engine(global: &JSGlobalObject) -> *mut boring_ssl::ENGINE {
 
 #[inline]
 fn engine_of(heap: &JsHeap<'_>) -> *mut boring_ssl::ENGINE {
-    // SAFETY: reads a field of the VM.
+    // SAFETY: the VM's engine is made without running JavaScript.
     boring_engine(unsafe { heap.global() })
 }
 
@@ -52,70 +52,91 @@ fn crypto_error<'a>(heap: &JsHeap<'a>, code: u32) -> bindgen::Error<'a> {
     bindgen::Error::from_value(JsLocal::new(heap, error))
 }
 
-/// `write` runs once `output` is valid, gets all of it when it is a buffer, and returns the length of the digest.
+type MakeBuffer<'a> = fn(&JsHeap<'a>, &[u8]) -> bindgen::Result<'a, JsLocal<'a, BufferSource>>;
+
+/// `write` gets all of `buffer`. It reads a hasher or a local array, never the bytes of an argument.
+fn write_into<'a>(
+    heap: &JsHeap<'a>,
+    buffer: JsLocal<'a, BufferSource>,
+    at_least: usize,
+    write: impl FnOnce(&mut [u8]) -> bindgen::Result<'a, usize>,
+) -> bindgen::Result<'a, JsLocal<'a>> {
+    // SAFETY: `write` is the last to run, and reads none of these bytes.
+    unsafe {
+        buffer.with_bytes_mut(heap, |bytes| {
+            if bytes.len() < at_least {
+                return Err(heap.invalid_arguments(format_args!(
+                    "TypedArray must be at least {at_least} bytes"
+                )));
+            }
+            write(bytes)
+        })
+    }?;
+    Ok(buffer.as_value())
+}
+
+fn encoding_named<'a>(heap: &JsHeap<'a>, name: &[u8]) -> bindgen::Result<'a, Encoding> {
+    Encoding::from(name).ok_or_else(|| {
+        heap.error_with_code(
+            ErrorCode::INVALID_ARG_VALUE,
+            format_args!("Unknown encoding: {}", bstr::BStr::new(name)),
+        )
+    })
+}
+
+fn encoded<'a>(
+    heap: &JsHeap<'a>,
+    encoding: Encoding,
+    digest: &[u8],
+) -> bindgen::Result<'a, JsLocal<'a>> {
+    // SAFETY: makes a string or a `Buffer`.
+    let global = unsafe { heap.global() };
+    let value = encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, digest)?;
+    Ok(JsLocal::new(heap, value))
+}
+
+/// `write` runs once `output` is valid, and returns the length of the digest.
 fn finish<'a>(
     heap: &JsHeap<'a>,
     output: Option<DigestOutput<'a>>,
     at_least: usize,
-    without_output: fn(&JsHeap<'a>, &[u8]) -> bindgen::Result<'a, JsLocal<'a, BufferSource>>,
+    without_output: MakeBuffer<'a>,
     write: impl FnOnce(&mut [u8]) -> bindgen::Result<'a, usize>,
 ) -> bindgen::Result<'a, JsLocal<'a>> {
     let encoding = match output {
-        Some(DigestOutput::Into(buffer)) => {
-            // SAFETY: every `write` reads a hasher or a local array.
-            unsafe {
-                buffer.with_bytes_mut(heap, |bytes| {
-                    if bytes.len() < at_least {
-                        return Err(heap.invalid_arguments(format_args!(
-                            "TypedArray must be at least {at_least} bytes"
-                        )));
-                    }
-                    write(bytes)
-                })
-            }?;
-            return Ok(buffer.as_value());
-        }
-        Some(DigestOutput::Encoding(name)) => Some(Encoding::from(name).ok_or_else(|| {
-            heap.error_with_code(
-                ErrorCode::INVALID_ARG_VALUE,
-                format_args!("Unknown encoding: {}", bstr::BStr::new(name)),
-            )
-        })?),
+        Some(DigestOutput::Into(buffer)) => return write_into(heap, buffer, at_least, write),
+        Some(DigestOutput::Encoding(name)) => Some(encoding_named(heap, name)?),
         None => None,
     };
     let mut digest: evp::Digest = [0; EVP_MAX_MD_SIZE_USIZE];
     let length = write(&mut digest)?;
-    let digest = &digest[..length];
     match encoding {
-        // SAFETY: makes a string or a `Buffer`.
-        Some(encoding) => Ok(JsLocal::new(
-            heap,
-            encoding.encode_with_max_size(
-                unsafe { heap.global() },
-                EVP_MAX_MD_SIZE_USIZE,
-                digest,
-            )?,
-        )),
-        None => Ok(without_output(heap, digest)?.as_value()),
+        Some(encoding) => encoded(heap, encoding, &digest[..length]),
+        None => Ok(without_output(heap, &digest[..length])?.as_value()),
     }
 }
 
-/// [`finish`] for a digest that is already computed.
+/// [`finish`] for a digest that is already computed, in a local array.
 fn finish_with<'a>(
     heap: &JsHeap<'a>,
     output: Option<DigestOutput<'a>>,
-    without_output: fn(&JsHeap<'a>, &[u8]) -> bindgen::Result<'a, JsLocal<'a, BufferSource>>,
+    without_output: MakeBuffer<'a>,
     digest: &[u8],
 ) -> bindgen::Result<'a, JsLocal<'a>> {
-    finish(heap, output, digest.len(), without_output, |out| {
-        out[..digest.len()].copy_from_slice(digest);
-        Ok(digest.len())
-    })
+    match output {
+        Some(DigestOutput::Into(buffer)) => write_into(heap, buffer, digest.len(), |out| {
+            out[..digest.len()].copy_from_slice(digest);
+            Ok(digest.len())
+        }),
+        Some(DigestOutput::Encoding(name)) => encoded(heap, encoding_named(heap, name)?, digest),
+        None => Ok(without_output(heap, digest)?.as_value()),
+    }
 }
 
 pub(crate) enum CryptoHasher {
     /// `None` once digested. HMAC_CTX contains 3 EVP_CTX, so let's store it as a pointer.
     Hmac(Option<Box<HMAC>>),
+    /// `EVP_MD_CTX` holds its state inline. Boxed, so that the cell stays small.
     Evp(Box<EVP>),
     Zig(CryptoHasherZig),
 }
@@ -346,9 +367,7 @@ impl CryptoHasherClass for CryptoHasher {
 
     fn copy<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
         let copied = match self {
-            CryptoHasher::Evp(evp) => {
-                CryptoHasher::Evp(Box::new(evp.copy(engine_of(heap)).expect("OOM")))
-            }
+            CryptoHasher::Evp(evp) => CryptoHasher::Evp(Box::new(evp.copy(engine_of(heap))?)),
             CryptoHasher::Hmac(hmac) => {
                 let hmac = hmac.as_ref().ok_or_else(|| Self::hmac_consumed(heap))?;
                 CryptoHasher::Hmac(Some(
@@ -586,7 +605,7 @@ impl CryptoHasherZig {
         macro_rules! arm {
             ($ty:ty, $self:expr, $bytes:expr) => {
                 if $self.algorithm == <$ty as ZigHashAlgo>::ALGORITHM {
-                    // SAFETY: tag matches type stored in `state` (set in init/constructor).
+                    // SAFETY: tag matches type stored in `state` (set in init).
                     let state = $self.state.downcast_mut::<$ty>().expect("unreachable");
                     return <$ty as ZigHashAlgo>::update(state, $bytes);
                 }
@@ -642,24 +661,19 @@ impl CryptoHasherZig {
 // MD4, MD5, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256
 // ───────────────────────────────────────────────────────────────────────────
 
+#[cold]
+fn already_digested<'a>(heap: &JsHeap<'a>, name: &str, to: &str) -> bindgen::Error<'a> {
+    heap.error_with_code(
+        ErrorCode::INVALID_STATE,
+        format_args!("{name} hasher already digested, create a new instance to {to}"),
+    )
+}
+
 macro_rules! static_hasher {
-    ($name:ident, $class:ident, $length:literal) => {
+    ($name:ident, $class:ident) => {
         pub(crate) struct $name {
             hashing: hashers::$name,
             digested: bool,
-        }
-
-        impl $name {
-            #[cold]
-            fn already_digested<'a>(heap: &JsHeap<'a>, to: &str) -> bindgen::Error<'a> {
-                heap.error_with_code(
-                    ErrorCode::INVALID_STATE,
-                    format_args!(
-                        "{} hasher already digested, create a new instance to {to}",
-                        stringify!($name)
-                    ),
-                )
-            }
         }
 
         impl $class for $name {
@@ -673,11 +687,11 @@ macro_rules! static_hasher {
             }
 
             fn byte_length(&self) -> u32 {
-                $length
+                hashers::$name::DIGEST as u32
             }
 
             fn static_byte_length() -> u32 {
-                $length
+                hashers::$name::DIGEST as u32
             }
 
             fn update<'a>(
@@ -687,7 +701,7 @@ macro_rules! static_hasher {
                 input: &'a [u8],
             ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
                 if self.digested {
-                    return Err(Self::already_digested(heap, "update"));
+                    return Err(already_digested(heap, stringify!($name), "update"));
                 }
                 self.hashing.update(input);
                 Ok(this)
@@ -699,13 +713,14 @@ macro_rules! static_hasher {
                 output: Option<DigestOutput<'a>>,
             ) -> bindgen::Result<'a, JsLocal<'a>> {
                 if self.digested {
-                    return Err(Self::already_digested(heap, "digest again"));
+                    return Err(already_digested(heap, stringify!($name), "digest again"));
                 }
-                finish(heap, output, $length, JsHeap::create_uint8_array, |out| {
+                const LENGTH: usize = hashers::$name::DIGEST;
+                finish(heap, output, LENGTH, JsHeap::create_uint8_array, |out| {
                     self.hashing
                         .r#final(out.first_chunk_mut().expect("at least that long"));
                     self.digested = true;
-                    Ok($length)
+                    Ok(LENGTH)
                 })
             }
 
@@ -714,7 +729,7 @@ macro_rules! static_hasher {
                 input: &'a [u8],
                 output: Option<DigestOutput<'a>>,
             ) -> bindgen::Result<'a, JsLocal<'a>> {
-                let mut digest = [0; $length];
+                let mut digest = [0; hashers::$name::DIGEST];
                 // SAFETY: the engine is the VM's.
                 unsafe { hashers::$name::hash(input, &mut digest, engine_of(heap)) };
                 finish_with(heap, output, JsHeap::create_uint8_array, &digest)
@@ -723,14 +738,14 @@ macro_rules! static_hasher {
     };
 }
 
-static_hasher!(MD4, MD4Class, 16);
-static_hasher!(MD5, MD5Class, 16);
-static_hasher!(SHA1, SHA1Class, 20);
-static_hasher!(SHA224, SHA224Class, 28);
-static_hasher!(SHA256, SHA256Class, 32);
-static_hasher!(SHA384, SHA384Class, 48);
-static_hasher!(SHA512, SHA512Class, 64);
-static_hasher!(SHA512_256, SHA512_256Class, 32);
+static_hasher!(MD4, MD4Class);
+static_hasher!(MD5, MD5Class);
+static_hasher!(SHA1, SHA1Class);
+static_hasher!(SHA224, SHA224Class);
+static_hasher!(SHA256, SHA256Class);
+static_hasher!(SHA384, SHA384Class);
+static_hasher!(SHA512, SHA512Class);
+static_hasher!(SHA512_256, SHA512_256Class);
 
 pub(crate) fn sha<'a>(
     heap: &JsHeap<'a>,

@@ -183,6 +183,37 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   b.class({ rustPath: "T", proto: { label: { getter: b.string }, setLabel: {}, getLabel: {} } });
   expect(() => b.class({ rustPath: "T", proto: { value: { getter: b.any } } })).toThrow('takes capability: "heap"');
   expect(() => b.class({ rustPath: "T", internalFields: ["a", "a"] })).toThrow("two internal fields are both a");
+  const constructible = { rustPath: "T", construct: {} };
+  for (const extra of [{ cache: true }, { setter: true }]) {
+    // @ts-expect-error
+    expect(() => b.class({ ...constructible, static: { x: { getter: b.u32, ...extra } } })).toThrow(
+      "x: a static getter has no cache and no setter",
+    );
+  }
+  // @ts-expect-error
+  expect(() => b.class({ ...constructible, static: { x: { builtin: true, length: 0 } } })).toThrow(
+    "x: a builtin is a property of the prototype",
+  );
+  expect(() =>
+    b.class({
+      rustPath: "T",
+      proto: {
+        x: [
+          { rustName: "x_bool", args: { value: b.bool } },
+          { rustName: "x_number", args: { value: b.f64 }, privateSymbol: "x" },
+        ],
+      },
+    }),
+  ).toThrow("x: its overloads have one privateSymbol");
+  expect(() => b.class({ rustPath: "T", proto: { x: { rustName: "camelCase" } } })).toThrow(
+    "camelCase: rustName is written in snake_case",
+  );
+  expect(() => b.string.allowStringObject.loose).toThrow(".loose already takes a String object");
+  expect(() => b.string.loose.allowStringObject).toThrow(".loose already takes a String object");
+  // No overload can have the argument left out, so `undefined` goes to the one that reports its own error.
+  const textOrBytes = b.overloads({ args: { text: b.string } }, { args: { bytes: stringOrBuffer } });
+  const { dispatch } = textOrBytes;
+  expect("byKind" in dispatch && dispatch.byKind.get("undefined")).toBe(textOrBytes.signatures[1]);
   // What takes undefined can come before what does not.
   b.fn({ args: { encoding: b.string.nullable, callback: b.any, length: b.f64 } });
 });

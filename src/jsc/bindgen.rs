@@ -54,9 +54,8 @@ impl<'a> JsHeap<'a> {
         self.global_object()
     }
 
-    #[doc(hidden)]
     #[inline(always)]
-    pub fn global_ptr(&self) -> *mut JSGlobalObject {
+    fn global_ptr(&self) -> *mut JSGlobalObject {
         self.global_object().as_mut_ptr()
     }
 
@@ -380,12 +379,13 @@ impl<'a> JsLocal<'a, BufferSource> {
     /// As [`with_bytes`](Self::with_bytes), to write them.
     ///
     /// # Safety
-    /// `f` uses no other borrow of these bytes, which those of another argument can be.
+    /// Once `f` runs, no other borrow of these bytes is read. Those of another argument can be the same memory.
     #[inline]
-    pub unsafe fn with_bytes_mut<R>(self, _: &JsHeap<'a>, f: impl FnOnce(&mut [u8]) -> R) -> R {
-        // SAFETY: only JavaScript moves the bytes, which takes the `&mut JsScope` that the heap is borrowed from.
-        let result =
-            f(unsafe { extern_types::Bun__Bindgen__bytesOfBlobOrBuffer(self.0).get_mut() });
+    pub unsafe fn with_bytes_mut<R>(self, heap: &JsHeap<'a>, f: impl FnOnce(&mut [u8]) -> R) -> R {
+        let mut array_buffer = self.0.as_array_buffer(heap.global_object());
+        let result = f(array_buffer
+            .as_mut()
+            .map_or(&mut [], ArrayBuffer::byte_slice_mut));
         self.0.ensure_still_alive();
         result
     }

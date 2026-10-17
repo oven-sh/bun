@@ -218,8 +218,10 @@ As results, `b.string.utf8` is anything that is `AsRef<[u8]>` and `b.array(T)` a
 is `IntoIterator`. The body of a `b.fn` or of a namespace's function whose bytes do not outlive
 it returns the string itself, from `heap.create_utf8_string(bytes)`. `b.u64.asBigInt` is a
 result only: a `u64` that is always returned as a BigInt. `b.bufferSource` as a result is what
-`heap.create_uninitialized_uint8_array(length)`, `heap.create_uint8_array_from_box(bytes)` or
-`heap.create_buffer_from_box(bytes)` made. The last two take over the allocation.
+`heap.create_uninitialized_uint8_array(length)`, `heap.create_uint8_array(bytes)`,
+`heap.create_buffer(bytes)`, `heap.create_uint8_array_from_box(bytes)` or
+`heap.create_buffer_from_box(bytes)` made. The last two take over the allocation, and the two
+before them copy.
 
 ### Numbers
 
@@ -336,8 +338,8 @@ let after = buffer.with_bytes(&cx.heap, sum);
 
 Calling `callback.call(cx, ..)` inside the closure does not compile. A detached or
 out-of-bounds view is empty. A shared buffer is refused, unless the type is
-`b.bufferSource.allowShared`, which is WebIDL's `[AllowShared]`. To only read one,
-[`b.bytes`](#bytes) is simpler.
+`b.bufferSource.allowShared`, as with WebIDL's `[AllowShared]`. A resizable one is taken either
+way. To only read one, there is [`b.bytes`](#bytes).
 
 `buffer.with_bytes_mut(heap, |bytes| ..)` is for a buffer the function writes. It is `unsafe`:
 another argument can be the same memory, as in `hash(data, data)`, so the closure must not use
@@ -501,16 +503,16 @@ A property of `proto` is one of:
 | `[{ rustName, args, .. }, ..]`              | a native function with [overloads](#overloads)                               |
 
 The properties are in the order of the schema, which `for-in` and `Object.keys` show. The Rust
-function is named after the property. `rustName` names it otherwise, which each overload needs,
-and one of two members of `proto` and `static` that share a name. An accessor of `static`
+function is named after the property. `rustName` names it otherwise, which tells apart the
+overloads of a function, and two members of `proto` and `static` that share a name. An accessor of `static`
 ignores its receiver, so a subclass inherits it.
 
 If any member has `throws: true`, the trait has a
 `type Error<'a>: bindgen::IntoError<'a>` that they all fail with. `b.self` is the
 class itself as an argument, a result or a getter of its own members.
 
-`Bun::Bindgen::Generated::Glob::getGlobConstructor`, in the namespace of the file, is a
-`PropertyCallback` for the static property table of the object that has the class:
+The constructor has a `PropertyCallback`, in the namespace of the file, for the static property
+table of the object that has the class:
 
 ```
     Glob    Bun::Bindgen::Generated::Glob::getGlobConstructor    DontDelete|PropertyCallback

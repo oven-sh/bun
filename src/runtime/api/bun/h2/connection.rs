@@ -254,6 +254,8 @@ pub(crate) trait Sink {
     /// counter moves, while the connection is mutably borrowed — the embedder must only
     /// store the values.
     fn on_frame_counters(&self, _received: u64, _sent: u64) {}
+    /// The connection-level receive window moved. Same contract as `on_frame_counters`.
+    fn on_recv_window(&self, _size: i64, _consumed: i64) {}
     /// Transition shim while the outbound path still flows through the embedder's legacy encoder:
     /// returns true if `stream_id` was initiated locally (HEADERS already sent by the embedder), so
     /// inbound frames for it are not treated as frames on an idle stream.
@@ -470,6 +472,16 @@ impl Connection {
         );
     }
 
+    fn note_recv_window(&self, sink: &impl Sink) {
+        sink.on_recv_window(self.recv_window.size, self.recv_window.consumed);
+    }
+
+    /// The embedder sent a stream 0 WINDOW_UPDATE of `delta` itself.
+    pub(crate) fn grow_recv_window(&mut self, sink: &impl Sink, delta: i64) {
+        self.recv_window.grow(delta);
+        self.note_recv_window(sink);
+    }
+
     fn send_rst_stream(&mut self, sink: &impl Sink, stream_id: u32, code: ErrorCode) {
         self.write_frame(
             sink,
@@ -637,6 +649,8 @@ impl Connection {
         if self.recv_window.needs_update() {
             let inc = self.recv_window.take_update();
             if inc > 0 {
+                // Before the write: a JS transport can run user code inside it.
+                self.note_recv_window(sink);
                 self.send_window_update(sink, 0, inc);
             }
         }
@@ -1473,6 +1487,7 @@ impl Connection {
 
         // §6.9: the whole declared frame counts against the connection recv window on receipt.
         self.recv_window.on_data(hdr.length as i64);
+        self.note_recv_window(sink);
         if self.recv_window.is_overflowed() {
             self.send_go_away(
                 sink,
@@ -1591,6 +1606,7 @@ impl Connection {
 
         // §6.9: the whole frame counts against the connection recv window.
         self.recv_window.on_data(consumed);
+        self.note_recv_window(sink);
         if self.recv_window.is_overflowed() {
             self.send_go_away(
                 sink,

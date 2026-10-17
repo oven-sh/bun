@@ -232,6 +232,19 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
     UNREACHABLE();
 }
 
+JSC::Identifier toIdentifier(JSC::VM& vm, const BunString& bunString)
+{
+    ASSERT(!bunString.isDead());
+    if (bunString.isEmpty()) {
+        return vm.propertyNames->emptyIdentifier;
+    }
+    if (bunString.tag == BunStringTag::StaticEncodedSlice) {
+        // Interned: no allocation when the atom is already in the table.
+        return JSC::Identifier::fromString(vm, Zig::toStringStatic(bunString.impl.encoded));
+    }
+    return JSC::Identifier::fromString(vm, bunString.toWTFString());
+}
+
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__threadIsolatedCopy(const BunString* str)
 {
     if (str->tag == BunStringTag::WTFStringImpl)
@@ -879,8 +892,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__upsertBunStringArray(
     }
     JSC::JSValue newValue = JSC::JSValue::decode(encodedValue);
     auto& vm = global->vm();
-    WTF::String str = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
-    Identifier id = Identifier::fromString(vm, str);
+    Identifier id = Bun::toIdentifier(vm, *key);
     auto existingValue = target->getIfPropertyExists(global, id);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -916,8 +928,7 @@ extern "C" void JSC__JSValue__putBunString(
     JSC::JSObject* target = JSC::JSValue::decode(encodedTarget).getObject();
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     auto& vm = global->vm();
-    WTF::String str = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
-    Identifier id = Identifier::fromString(vm, str);
+    Identifier id = Bun::toIdentifier(vm, *key);
     target->putDirect(vm, id, value, 0);
 }
 

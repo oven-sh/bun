@@ -497,7 +497,7 @@ pub(crate) fn render_to_html(
     // Skip UTF-8 BOM
     let input = helpers::skip_utf8_bom(text);
 
-    let mut html_renderer = HtmlRenderer::init(input, render_opts);
+    let mut html_renderer = HtmlRenderer::init(render_opts);
 
     let mut parser = Parser::init(input, flags, html_renderer.renderer())?;
 

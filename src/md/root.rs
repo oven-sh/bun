@@ -2,8 +2,8 @@ use crate::parser;
 use crate::types::Flags;
 
 // Re-export types needed by external renderers (e.g. JS callback renderer).
-pub use crate::types::BLOCK_FENCED_CODE;
 pub use crate::types::BlockType;
+pub use crate::types::FencedCode;
 pub use crate::types::Renderer;
 pub use crate::types::SpanDetail;
 pub use crate::types::SpanType;

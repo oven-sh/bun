@@ -30,6 +30,7 @@ Updated packages appear in the install summary as `↑ name old → new`, with `
 
 - `^1.1.0` → `^1.2.0`, `~1.1.0` → `~1.1.5`. Bun preserves the operator. With [`install.exact`](/runtime/bunfig#install-exact) or `--exact`, Bun writes an exact version instead.
 - Exact pins, dist-tags (`"latest"`, `"next"`), and other range forms (`*`, `1.x`, `>=1.0.0`) are left as written; only `bun.lock` moves. `--latest` rewrites them.
+- A `peerDependencies` range is never replaced by an exact version, nor is a catalog entry that a `catalog:` peer uses. `bun update --latest` without names leaves a range written in `peerDependencies` that already allows the latest version. It still rewrites a catalog entry.
 - Bun never rewrites `catalog:` references; it updates the catalog entry in the root `package.json` instead. An entry that no `catalog:` dependency uses stays as written.
 - `--no-save` updates `node_modules` only, leaving `package.json` and `bun.lock` untouched.
 

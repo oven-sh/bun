@@ -2266,6 +2266,11 @@ impl VirtualMachine {
             self.is_inside_deferred_task_queue.set(false);
         }
 
+        // The loop won't tick again, so flush now. Don't use `uws_loop()`: inside spawnSync it
+        // returns a loop that has no uWS LoopData.
+        // SAFETY: `uws::Loop::get()` returns the live per-thread uws loop.
+        unsafe { (*uws::Loop::get()).flush_pending_writes() };
+
         self.is_shutting_down = true;
 
         // Node's FreeEnvironment sets `is_stopping` before `RunCleanup`: the
@@ -4114,15 +4119,6 @@ fn normalize_source(source: &[u8]) -> &[u8] {
     source
 }
 
-// Additional FFI used by the formerly-gated impl.
-// C++ side defines `extern "C" SYSV_ABI` (BakeAdditionsToGlobalObject.cpp).
-//
-// safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; `&` is
-// ABI-identical to a non-null `JSGlobalObject*` and C++ mutating VM state
-// through it is interior to the cell.
-crate::jsc_abi_extern! {
-    safe fn Bake__getAsyncLocalStorage(global: &JSGlobalObject) -> JSValue;
-}
 // `JSGlobalObject` / `VM` are opaque `UnsafeCell`-backed ZST handles, so
 // `&T` is ABI-identical to a non-null `T*`. `BakeCreateProdGlobal`'s
 // `console_ptr` is an opaque round-trip pointer C++ stores into the new global
@@ -4149,17 +4145,6 @@ extern "C" fn free_ref_string(str_: *mut crate::ref_string::RefString, _: *mut c
 }
 
 impl VirtualMachine {
-    /// Returns the dev server's `AsyncLocalStorage` instance, or `None` when unset.
-    pub fn get_dev_server_async_local_storage(&mut self) -> JsResult<Option<JSValue>> {
-        let global_ref = self.global();
-        let jsvalue =
-            jsc::from_js_host_call(global_ref, || Bake__getAsyncLocalStorage(global_ref))?;
-        if jsvalue.is_empty_or_undefined_or_null() {
-            return Ok(None);
-        }
-        Ok(Some(jsvalue))
-    }
-
     /// Whether native addons (`process.dlopen`) are allowed (`--no-addons` disables them).
     #[unsafe(export_name = "Bun__VM__allowAddons")]
     pub(crate) extern "C" fn allow_addons(this: &VirtualMachine) -> bool {

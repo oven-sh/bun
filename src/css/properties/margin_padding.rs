@@ -2,9 +2,10 @@
 use crate::compat::Feature;
 use crate::css_values::length::LengthPercentageOrAuto;
 use crate::logical::PropertyCategory;
+use crate::properties::text::Direction;
 use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::{DeclarationList, PropertyHandlerContext};
-use bun_alloc::ArenaVecExt as _;
+use bun_alloc::{Arena, ArenaVecExt as _};
 
 // The rect-shorthand structs
 // below are stamped out by `define_rect_shorthand!` (struct
@@ -295,6 +296,22 @@ enum LogicalSlot {
     InlineEnd,
 }
 
+/// Physical inline sides declared after the buffered inline values.
+#[derive(Copy, Clone, Default)]
+struct DeclaredSides {
+    left: bool,
+    right: bool,
+}
+
+impl DeclaredSides {
+    fn or(self, other: Self) -> Self {
+        Self {
+            left: self.left || other.left,
+            right: self.right || other.right,
+        }
+    }
+}
+
 /// Configuration for one `SizeHandler` instantiation. The handler body is
 /// compiled once and reads everything property-specific from `SPEC`.
 pub trait SizeHandlerSpec {
@@ -406,6 +423,8 @@ struct SizeHandlerImpl {
     block_end: Option<Property>,
     inline_start: Option<Property>,
     inline_end: Option<Property>,
+    /// Sides written out by `flush_before_unparsed` while the inline values stayed buffered.
+    declared_after_inline: DeclaredSides,
     has_any: bool,
     category: PropertyCategory,
 }
@@ -428,6 +447,26 @@ impl SizeHandlerImpl {
             PhysicalSlot::Bottom => self.bottom.is_some(),
             PhysicalSlot::Left => self.left.is_some(),
             PhysicalSlot::Right => self.right.is_some(),
+        }
+    }
+    /// Whether a buffered logical value compiles into this rule on this physical side.
+    fn compiled_slot_is_some(&self, spec: &'static SizeSpec, slot: PhysicalSlot) -> bool {
+        match slot {
+            PhysicalSlot::Top => self.block_start.is_some(),
+            PhysicalSlot::Bottom => self.block_end.is_some(),
+            PhysicalSlot::Left | PhysicalSlot::Right => {
+                let start = self
+                    .inline_start
+                    .as_ref()
+                    .filter(|p| p.variant_tag() == spec.inline_start)
+                    .map(spec.extract_inline_start);
+                let end = self
+                    .inline_end
+                    .as_ref()
+                    .filter(|p| p.variant_tag() == spec.inline_end)
+                    .map(spec.extract_inline_end);
+                start.is_some() && start == end
+            }
         }
     }
     fn logical_slot(&mut self, slot: LogicalSlot) -> &mut Option<Property> {
@@ -508,7 +547,11 @@ impl SizeHandlerImpl {
                         context,
                     );
                 } else {
-                    self.flush(spec, dest, context);
+                    let declared = DeclaredSides {
+                        left: id == spec.left || id == spec.shorthand,
+                        right: id == spec.right || id == spec.shorthand,
+                    };
+                    self.flush_before_unparsed(spec, declared, dest, context);
                     dest.push(Property::Unparsed(unparsed.deep_clone(bump)));
                 }
             } else {
@@ -725,6 +768,7 @@ impl SizeHandlerImpl {
             self.block_end = None;
             self.inline_start = None;
             self.inline_end = None;
+            self.category = spec.shorthand_category;
             self.has_any = true;
         } else {
             return false;
@@ -747,16 +791,29 @@ impl SizeHandlerImpl {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        // If the category changes betweet logical and physical,
-        // or if the value contains syntax that isn't supported across all targets,
+        // If the value contains syntax that isn't supported across all targets,
         // preserve the previous value as a fallback.
-        if category != self.category
-            || (self.physical_slot_is_some(field)
-                && context.targets.browsers.is_some()
-                && !val.is_compatible(&context.targets.browsers.unwrap()))
-        {
+        let needs_fallback = (self.physical_slot_is_some(field)
+            || (Self::compiles_logical(spec, context) && self.compiled_slot_is_some(spec, field)))
+            && context
+                .targets
+                .browsers
+                .as_ref()
+                .is_some_and(|browsers| !val.is_compatible(browsers));
+
+        // Kept for `flush_compiled_inline`, which leaves out the directions this value overrides.
+        let keep_logical_buffered = category == PropertyCategory::Physical
+            && self.category == PropertyCategory::Logical
+            && Self::compiles_logical(spec, context);
+
+        if needs_fallback || (category != self.category && !keep_logical_buffered) {
             self.flush(spec, dest, context);
         }
+    }
+
+    fn compiles_logical(spec: &'static SizeSpec, context: &PropertyHandlerContext) -> bool {
+        spec.feature
+            .is_some_and(|feature| context.should_compile_logical(feature))
     }
 
     /// Flush helper for the four logical slots (`block_start`/.../`inline_end`).
@@ -817,12 +874,43 @@ impl SizeHandlerImpl {
         self.has_any = true;
     }
 
+    /// For an unparsed declaration setting `declared`, which then overrides like a buffered value.
+    fn flush_before_unparsed(
+        &mut self,
+        spec: &'static SizeSpec,
+        declared: DeclaredSides,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
+        let keep_inline = (declared.left || declared.right)
+            && (self.inline_start.is_some() || self.inline_end.is_some())
+            && Self::compiles_logical(spec, context);
+        if !keep_inline {
+            self.flush(spec, dest, context);
+            return;
+        }
+
+        let declared_after_inline = self.declared_after_inline.or(declared).or(DeclaredSides {
+            left: self.left.is_some(),
+            right: self.right.is_some(),
+        });
+        let inline_start = self.inline_start.take();
+        let inline_end = self.inline_end.take();
+        self.flush(spec, dest, context);
+        self.inline_start = inline_start;
+        self.inline_end = inline_end;
+        self.declared_after_inline = declared_after_inline;
+        self.has_any = true;
+        self.category = PropertyCategory::Physical;
+    }
+
     fn flush(
         &mut self,
         spec: &'static SizeSpec,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
+        let declared_after_inline = core::mem::take(&mut self.declared_after_inline);
         if !self.has_any {
             return;
         }
@@ -833,10 +921,42 @@ impl SizeHandlerImpl {
         let bottom = self.bottom.take();
         let left = self.left.take();
         let right = self.right.take();
-        let logical_supported = match spec.feature {
-            Some(feature) => !context.should_compile_logical(feature),
-            None => true,
-        };
+        let mut block_start = self.block_start.take();
+        let mut block_end = self.block_end.take();
+        let mut inline_start = self.inline_start.take();
+        let mut inline_end = self.inline_end.take();
+        let logical_supported = !Self::compiles_logical(spec, context);
+
+        if !logical_supported {
+            // Logical values first: any physical value buffered with them was declared later.
+            Self::prop(
+                block_start.as_ref(),
+                spec.block_start,
+                spec.extract_block_start,
+                spec.make_top,
+                spec.top_id,
+                dest,
+            );
+            Self::prop(
+                block_end.as_ref(),
+                spec.block_end,
+                spec.extract_block_end,
+                spec.make_bottom,
+                spec.bottom_id,
+                dest,
+            );
+            Self::flush_compiled_inline(
+                spec,
+                inline_start.as_ref(),
+                inline_end.as_ref(),
+                declared_after_inline.or(DeclaredSides {
+                    left: left.is_some(),
+                    right: right.is_some(),
+                }),
+                dest,
+                context,
+            );
+        }
 
         match (top, bottom, left, right) {
             (Some(top), Some(bottom), Some(left), Some(right))
@@ -860,11 +980,6 @@ impl SizeHandlerImpl {
             }
         }
 
-        let mut block_start = self.block_start.take();
-        let mut block_end = self.block_end.take();
-        let mut inline_start = self.inline_start.take();
-        let mut inline_end = self.inline_end.take();
-
         if logical_supported {
             Self::logical_side_helper(
                 spec,
@@ -875,28 +990,6 @@ impl SizeHandlerImpl {
                 dest,
                 context,
             );
-        } else {
-            Self::prop(
-                &mut block_start,
-                spec.block_start,
-                spec.extract_block_start,
-                spec.make_top,
-                spec.top_id,
-                dest,
-                context,
-            );
-            Self::prop(
-                &mut block_end,
-                spec.block_end,
-                spec.extract_block_end,
-                spec.make_bottom,
-                spec.bottom_id,
-                dest,
-                context,
-            );
-        }
-
-        if logical_supported {
             Self::logical_side_helper(
                 spec,
                 &mut inline_start,
@@ -906,95 +999,102 @@ impl SizeHandlerImpl {
                 dest,
                 context,
             );
-        } else if inline_start.is_some() || inline_end.is_some() {
-            // Raw union-tag equality, which is `false` for `Unparsed`.
-            let start_matches = inline_start
-                .as_ref()
-                .map(|p| p.variant_tag() == spec.inline_start)
-                .unwrap_or(false);
-            let end_matches = inline_end
-                .as_ref()
-                .map(|p| p.variant_tag() == spec.inline_end)
-                .unwrap_or(false);
-            let values_equal = if start_matches && end_matches {
-                (spec.extract_inline_start)(inline_start.as_ref().unwrap())
-                    == (spec.extract_inline_end)(inline_end.as_ref().unwrap())
-            } else {
-                false
-            };
+        }
+    }
 
-            if start_matches && end_matches && values_equal {
-                Self::prop(
-                    &mut inline_start,
+    /// The ltr/rtl rules override this rule, so the direction of a `declared` side is left out.
+    fn flush_compiled_inline(
+        spec: &'static SizeSpec,
+        inline_start: Option<&Property>,
+        inline_end: Option<&Property>,
+        declared: DeclaredSides,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
+        let start_value = inline_start
+            .filter(|p| p.variant_tag() == spec.inline_start)
+            .map(spec.extract_inline_start);
+        let end_value = inline_end
+            .filter(|p| p.variant_tag() == spec.inline_end)
+            .map(spec.extract_inline_end);
+        if let Some(value) = start_value
+            && end_value == Some(value)
+        {
+            // Direction independent, so it stays in this rule.
+            if !declared.left {
+                dest.push((spec.make_left)(value.clone()));
+            }
+            if !declared.right {
+                dest.push((spec.make_right)(value.clone()));
+            }
+            return;
+        }
+
+        let bump = dest.bump();
+        if let Some(start) = inline_start {
+            // inline-start is the left side in ltr text and the right side in rtl text.
+            let compile = |make_physical, physical| {
+                Self::to_physical(
+                    start,
                     spec.inline_start,
                     spec.extract_inline_start,
-                    spec.make_left,
-                    spec.left_id,
-                    dest,
-                    context,
-                );
-                Self::prop(
-                    &mut inline_end,
+                    make_physical,
+                    physical,
+                    bump,
+                )
+            };
+            if !declared.left
+                && let Some(property) = compile(spec.make_left, spec.left_id)
+            {
+                context.add_directional_rule(Direction::Ltr, property);
+            }
+            if !declared.right
+                && let Some(property) = compile(spec.make_right, spec.right_id)
+            {
+                context.add_directional_rule(Direction::Rtl, property);
+            }
+        }
+        if let Some(end) = inline_end {
+            // inline-end is the right side in ltr text and the left side in rtl text.
+            let compile = |make_physical, physical| {
+                Self::to_physical(
+                    end,
                     spec.inline_end,
                     spec.extract_inline_end,
-                    spec.make_right,
-                    spec.right_id,
-                    dest,
-                    context,
-                );
-            } else {
-                Self::logical_prop_helper(
-                    &mut inline_start,
-                    spec.inline_start,
-                    spec.extract_inline_start,
-                    spec.make_left,
-                    spec.left_id,
-                    spec.make_right,
-                    spec.right_id,
-                    dest,
-                    context,
-                );
-                Self::logical_prop_helper(
-                    &mut inline_end,
-                    spec.inline_end,
-                    spec.extract_inline_end,
-                    spec.make_right,
-                    spec.right_id,
-                    spec.make_left,
-                    spec.left_id,
-                    dest,
-                    context,
-                );
+                    make_physical,
+                    physical,
+                    bump,
+                )
+            };
+            if !declared.right
+                && let Some(property) = compile(spec.make_right, spec.right_id)
+            {
+                context.add_directional_rule(Direction::Ltr, property);
+            }
+            if !declared.left
+                && let Some(property) = compile(spec.make_left, spec.left_id)
+            {
+                context.add_directional_rule(Direction::Rtl, property);
             }
         }
     }
 
-    #[inline]
-    #[allow(clippy::too_many_arguments)]
-    fn logical_prop_helper(
-        val: &mut Option<Property>,
+    fn to_physical(
+        value: &Property,
         logical: PropertyIdTag,
         extract_logical: fn(&Property) -> &LengthPercentageOrAuto,
-        make_ltr: fn(LengthPercentageOrAuto) -> Property,
-        ltr: PropertyId,
-        make_rtl: fn(LengthPercentageOrAuto) -> Property,
-        rtl: PropertyId,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
-    ) {
-        // _ = this; // autofix
-        let bump = dest.bump();
-        if let Some(v_) = val.as_ref() {
-            // Raw discriminant comparison.
-            if v_.variant_tag() == logical {
-                let v = extract_logical(v_);
-                context.add_logical_rule(make_ltr(v.clone()), make_rtl(v.clone()));
-            } else if let Property::Unparsed(v) = v_ {
-                context.add_logical_rule(
-                    Property::Unparsed(v.with_property_id(bump, ltr)),
-                    Property::Unparsed(v.with_property_id(bump, rtl)),
-                );
-            }
+        make_physical: fn(LengthPercentageOrAuto) -> Property,
+        physical: PropertyId,
+        bump: &Arena,
+    ) -> Option<Property> {
+        if value.variant_tag() == logical {
+            Some(make_physical(extract_logical(value).clone()))
+        } else if let Property::Unparsed(unparsed) = value {
+            Some(Property::Unparsed(
+                unparsed.with_property_id(bump, physical),
+            ))
+        } else {
+            None
         }
     }
 
@@ -1061,28 +1161,25 @@ impl SizeHandlerImpl {
         }
     }
 
-    #[inline]
     fn prop(
-        val: &mut Option<Property>,
+        value: Option<&Property>,
         logical: PropertyIdTag,
         extract_logical: fn(&Property) -> &LengthPercentageOrAuto,
         make_physical: fn(LengthPercentageOrAuto) -> Property,
         physical: PropertyId,
         dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
     ) {
-        // _ = this; // autofix
-        let _ = context;
-        let bump = dest.bump();
-        if let Some(v) = val.as_ref() {
-            // Raw discriminant comparison.
-            if v.variant_tag() == logical {
-                // Clone instead of moving out of `&Property`;
-                // `LengthPercentageOrAuto` is small.
-                dest.push(make_physical(extract_logical(v).clone()));
-            } else if let Property::Unparsed(u) = v {
-                dest.push(Property::Unparsed(u.with_property_id(bump, physical)));
-            }
+        if let Some(value) = value
+            && let Some(property) = Self::to_physical(
+                value,
+                logical,
+                extract_logical,
+                make_physical,
+                physical,
+                dest.bump(),
+            )
+        {
+            dest.push(property);
         }
     }
 }

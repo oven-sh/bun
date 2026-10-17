@@ -5,6 +5,7 @@ use crate::Printer;
 use crate::PropertyCategory;
 use crate::PropertyHandlerContext;
 use crate::VendorPrefix;
+use crate::css_properties::text::Direction;
 use crate::css_properties::{Property, PropertyId, PropertyIdTag};
 use crate::css_values::length::LengthPercentage;
 use crate::css_values::rect::Rect;
@@ -148,10 +149,32 @@ pub struct BorderRadiusHandler {
     pub(crate) start_end: Option<Property>,
     pub(crate) end_end: Option<Property>,
     pub(crate) end_start: Option<Property>,
+    /// Corners written out by `flush_before_unparsed` while the logical corners stayed buffered.
+    declared_after_logical: DeclaredCorners,
     // derive(Default) is sound here because
     // PropertyCategory::default() == Physical (see src/css/logical.rs).
     pub(crate) category: PropertyCategory,
     pub(crate) has_any: bool,
+}
+
+/// Physical corners declared after the buffered logical corners.
+#[derive(Copy, Clone, Default)]
+struct DeclaredCorners {
+    top_left: bool,
+    top_right: bool,
+    bottom_right: bool,
+    bottom_left: bool,
+}
+
+impl DeclaredCorners {
+    fn or(self, other: Self) -> Self {
+        Self {
+            top_left: self.top_left || other.top_left,
+            top_right: self.top_right || other.top_right,
+            bottom_right: self.bottom_right || other.bottom_right,
+            bottom_left: self.bottom_left || other.bottom_left,
+        }
+    }
 }
 
 // There is no field-by-name reflection, so these helpers are
@@ -190,7 +213,9 @@ macro_rules! maybe_flush {
 
 macro_rules! property_helper {
     ($self:expr, $d:expr, $ctx:expr, $bump:expr, $prop:ident, $val:expr, $vp:expr) => {{
-        if $self.category != PropertyCategory::Physical {
+        if $self.category != PropertyCategory::Physical
+            && !BorderRadiusHandler::keeps_logical_buffered($ctx)
+        {
             $self.flush($d, $ctx);
         }
 
@@ -235,8 +260,12 @@ macro_rules! single_property {
     }};
 }
 
+// The ltr/rtl rules override this rule: a direction whose corner was declared later gets nothing.
 macro_rules! logical_property {
-    ($d:expr, $ctx:expr, $bump:expr, $val:expr, $ltr:ident, $rtl:ident, $logical_supported:expr) => {{
+    (
+        $d:expr, $ctx:expr, $bump:expr, $val:expr, $ltr:ident, $rtl:ident, $logical_supported:expr,
+        $ltr_declared:expr, $rtl_declared:expr
+    ) => {{
         if let Some(v) = $val {
             if $logical_supported {
                 $d.push(v);
@@ -249,20 +278,36 @@ macro_rules! logical_property {
                     | Property::BorderStartEndRadius(radius)
                     | Property::BorderEndEndRadius(radius)
                     | Property::BorderEndStartRadius(radius) => {
-                        $ctx.add_logical_rule(
-                            Property::$ltr((radius.deep_clone($bump), prefix)),
-                            Property::$rtl((radius, prefix)),
-                        );
+                        if !$ltr_declared {
+                            $ctx.add_directional_rule(
+                                Direction::Ltr,
+                                Property::$ltr((radius.deep_clone($bump), prefix)),
+                            );
+                        }
+                        if !$rtl_declared {
+                            $ctx.add_directional_rule(
+                                Direction::Rtl,
+                                Property::$rtl((radius, prefix)),
+                            );
+                        }
                     }
                     Property::Unparsed(unparsed) => {
-                        $ctx.add_logical_rule(
-                            Property::Unparsed(
-                                unparsed.with_property_id($bump, PropertyId::$ltr(prefix)),
-                            ),
-                            Property::Unparsed(
-                                unparsed.with_property_id($bump, PropertyId::$rtl(prefix)),
-                            ),
-                        );
+                        if !$ltr_declared {
+                            $ctx.add_directional_rule(
+                                Direction::Ltr,
+                                Property::Unparsed(
+                                    unparsed.with_property_id($bump, PropertyId::$ltr(prefix)),
+                                ),
+                            );
+                        }
+                        if !$rtl_declared {
+                            $ctx.add_directional_rule(
+                                Direction::Rtl,
+                                Property::Unparsed(
+                                    unparsed.with_property_id($bump, PropertyId::$rtl(prefix)),
+                                ),
+                            );
+                        }
                     }
                     _ => {}
                 }
@@ -403,8 +448,17 @@ impl BorderRadiusHandler {
                                 Property::Unparsed(unparsed.deep_clone(bump))
                             )
                         }
-                        _ => {
-                            self.flush(dest, context);
+                        physical => {
+                            let all = physical == PropertyIdTag::BorderRadius;
+                            let declared = DeclaredCorners {
+                                top_left: all || physical == PropertyIdTag::BorderTopLeftRadius,
+                                top_right: all || physical == PropertyIdTag::BorderTopRightRadius,
+                                bottom_right: all
+                                    || physical == PropertyIdTag::BorderBottomRightRadius,
+                                bottom_left: all
+                                    || physical == PropertyIdTag::BorderBottomLeftRadius,
+                            };
+                            self.flush_before_unparsed(declared, dest, context);
                             dest.push(Property::Unparsed(unparsed.get_prefixed(
                                 bump,
                                 &context.targets,
@@ -430,7 +484,53 @@ impl BorderRadiusHandler {
         self.flush(dest, context);
     }
 
+    /// Keeps compiled logical corners buffered under the physical one for `logical_property!`.
+    fn keeps_logical_buffered(context: &PropertyHandlerContext) -> bool {
+        context.should_compile_logical(css::compat::Feature::LogicalBorderRadius)
+    }
+
+    /// For an unparsed declaration setting `declared`, which then overrides like a buffered value.
+    fn flush_before_unparsed(
+        &mut self,
+        declared: DeclaredCorners,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
+        let keep_logical = (self.start_start.is_some()
+            || self.start_end.is_some()
+            || self.end_end.is_some()
+            || self.end_start.is_some())
+            && context.should_compile_logical(css::compat::Feature::LogicalBorderRadius);
+        if !keep_logical {
+            self.flush(dest, context);
+            return;
+        }
+
+        let declared_after_logical = self
+            .declared_after_logical
+            .or(declared)
+            .or(DeclaredCorners {
+                top_left: self.top_left.is_some(),
+                top_right: self.top_right.is_some(),
+                bottom_right: self.bottom_right.is_some(),
+                bottom_left: self.bottom_left.is_some(),
+            });
+        let start_start = self.start_start.take();
+        let start_end = self.start_end.take();
+        let end_end = self.end_end.take();
+        let end_start = self.end_start.take();
+        self.flush(dest, context);
+        self.start_start = start_start;
+        self.start_end = start_end;
+        self.end_end = end_end;
+        self.end_start = end_start;
+        self.declared_after_logical = declared_after_logical;
+        self.has_any = true;
+        self.category = PropertyCategory::Physical;
+    }
+
     fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+        let declared_after_logical = core::mem::take(&mut self.declared_after_logical);
         if !self.has_any {
             return;
         }
@@ -445,6 +545,14 @@ impl BorderRadiusHandler {
         let start_end = self.start_end.take();
         let end_end = self.end_end.take();
         let end_start = self.end_start.take();
+
+        // Any physical corner buffered alongside logical ones was declared after them.
+        let declared = declared_after_logical.or(DeclaredCorners {
+            top_left: top_left.is_some(),
+            top_right: top_right.is_some(),
+            bottom_right: bottom_right.is_some(),
+            bottom_left: bottom_left.is_some(),
+        });
 
         if let (Some(tl), Some(tr), Some(br), Some(bl)) = (
             &mut top_left,
@@ -483,6 +591,7 @@ impl BorderRadiusHandler {
         single_property!(dest, context, BorderBottomRightRadius, bottom_right);
         single_property!(dest, context, BorderBottomLeftRadius, bottom_left);
 
+        // *-start corners are on the left in ltr text and on the right in rtl text.
         logical_property!(
             dest,
             context,
@@ -490,7 +599,9 @@ impl BorderRadiusHandler {
             start_start,
             BorderTopLeftRadius,
             BorderTopRightRadius,
-            logical_supported
+            logical_supported,
+            declared.top_left,
+            declared.top_right
         );
         logical_property!(
             dest,
@@ -499,7 +610,9 @@ impl BorderRadiusHandler {
             start_end,
             BorderTopRightRadius,
             BorderTopLeftRadius,
-            logical_supported
+            logical_supported,
+            declared.top_right,
+            declared.top_left
         );
         logical_property!(
             dest,
@@ -508,7 +621,9 @@ impl BorderRadiusHandler {
             end_end,
             BorderBottomRightRadius,
             BorderBottomLeftRadius,
-            logical_supported
+            logical_supported,
+            declared.bottom_right,
+            declared.bottom_left
         );
         logical_property!(
             dest,
@@ -517,7 +632,9 @@ impl BorderRadiusHandler {
             end_start,
             BorderBottomLeftRadius,
             BorderBottomRightRadius,
-            logical_supported
+            logical_supported,
+            declared.bottom_left,
+            declared.bottom_right
         );
     }
 }

@@ -228,7 +228,7 @@ describe.concurrent("node-module-module", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toContain(" 2 pass");
       expect(stderr).toContain(" 0 fail");
       expect(exitCode).toBe(0);
@@ -268,17 +268,149 @@ describe.concurrent("node-module-module", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      expect(await build.stderr.text()).toBe("");
-      expect(await build.exited).toBe(0);
+      const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(buildStderr).toBe("");
+      expect(buildExit).toBe(0);
       const bundled = await Bun.file(`${dir}/out/bundled.cjs`).text();
       expect(bundled.startsWith("#!/usr/bin/env bun\n// @bun @bun-cjs\n(function(")).toBe(true);
       expect(await run(dir, ["main.js"])).toEqual({ compiled: ["bundled.cjs"], result: 101 });
     });
 
+    test("bun test --isolate runs a require.extensions hook with an own _compile for every file", async () => {
+      using dir = tempDir("module-prototype-compile-isolate-own", {
+        ...files,
+        "pirates.js": `
+          const Module = require("node:module");
+          const ext = Module._extensions[".js"];
+          Module._extensions[".js"] = function (module, filename) {
+            const compile = module._compile;
+            module._compile = (content, filename) => compile.call(module, content.replace("= 1;", "= 100;"), filename);
+            return ext.call(this, module, filename);
+          };
+        `,
+        "a.test.js": `require("./pirates.js"); test("a", () => expect(require("./target.js")()).toBe(101));`,
+        "b.test.js": `require("./pirates.js"); test("b", () => expect(require("./target.js")()).toBe(101));`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--isolate", "a.test.js", "b.test.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(" 2 pass");
+      expect(stderr).toContain(" 0 fail");
+      expect(exitCode).toBe(0);
+    });
+
+    test("an overridden Module.wrapper runs once around the body the hook hands back", async () => {
+      using dir = tempDir("module-prototype-compile-wrapper", {
+        ...files,
+        "main.js": `
+          const Module = require("node:module");
+          const { compiled } = require("./hook.js");
+          const [start, end] = Module.wrapper;
+          Module.wrapper = [start + "globalThis.prefixRuns = (globalThis.prefixRuns ?? 0) + 1;", end];
+          const result = require("./target.js")();
+          console.log(JSON.stringify({ compiled: compiled.map(c => c.file), result, prefixRuns: globalThis.prefixRuns }));
+        `,
+      });
+      expect(await run(dir, ["main.js"])).toEqual({ compiled: ["target.js", "nested.js"], result: 101, prefixRuns: 2 });
+    });
+
+    test("a require() cycle through a self-evaluating hook sees the partial exports", async () => {
+      using dir = tempDir("module-prototype-compile-cycle", {
+        "self.cjs": "exports.a = 1; require('./esm.mjs'); exports.b = 2;",
+        "esm.mjs": "import s from './self.cjs'; globalThis.partial = JSON.stringify(s);",
+        "main.js": `
+          const Module = require("node:module");
+          const vm = require("node:vm");
+          Module.prototype._compile = function (content, filename) {
+            const fn = vm.runInThisContext(Module.wrap(content), { filename });
+            fn.call(this.exports, this.exports, this.require.bind(this), this, filename, require("path").dirname(filename));
+          };
+          const final = require("./self.cjs");
+          console.log(JSON.stringify({ partial: JSON.parse(globalThis.partial), final }));
+        `,
+      });
+      expect(await run(dir, ["main.js"])).toEqual({ partial: { a: 1 }, final: { a: 1, b: 2 } });
+    });
+
+    test("Object.defineProperty and delete on Module.prototype._compile are honored", async () => {
+      using dir = tempDir("module-prototype-compile-define", {
+        ...files,
+        "main.js": `
+          const Module = require("node:module");
+          const orig = Module.prototype._compile;
+          let defined = 0;
+          Object.defineProperty(Module.prototype, "_compile", {
+            value(content, filename) { defined++; return orig.call(this, content, filename); },
+            writable: true,
+            configurable: true,
+          });
+          const first = require("./nested.js");
+          delete Module.prototype._compile;
+          delete require.cache[require.resolve("./nested.js")];
+          let deletedError;
+          try { require("./nested.js"); } catch (e) { deletedError = e.message; }
+          Module.prototype._compile = orig;
+          delete require.cache[require.resolve("./nested.js")];
+          const restored = require("./nested.js");
+          console.log(JSON.stringify({ defined, first, deletedError, restored }));
+        `,
+      });
+      expect(await run(dir, ["main.js"])).toEqual({
+        defined: 1,
+        first: 1,
+        deletedError: "module._compile is not a function",
+        restored: 1,
+      });
+    });
+
+    test("module.require assigned on one module does not replace require() elsewhere", async () => {
+      using dir = tempDir("module-prototype-compile-require", {
+        ...files,
+        "main.js": `
+          const Module = require("node:module");
+          const protoRequire = Module.prototype.require;
+          const m = new Module("x");
+          m.require = () => "own";
+          console.log(JSON.stringify({
+            own: m.require("anything"),
+            ownProperty: Object.hasOwn(m, "require"),
+            protoUnchanged: Module.prototype.require === protoRequire,
+            nested: require("./nested.js"),
+          }));
+        `,
+      });
+      expect(await run(dir, ["main.js"])).toEqual({ own: "own", ownProperty: true, protoUnchanged: true, nested: 1 });
+    });
+
+    test("installing a hook is refused when code generation from strings is disallowed", async () => {
+      using dir = tempDir("module-prototype-compile-nocodegen", {
+        ...files,
+        "main.js": `
+          const Module = require("node:module");
+          const orig = Module.prototype._compile;
+          let message;
+          try { Module.prototype._compile = function (c, f) { return orig.call(this, c, f); }; } catch (e) { message = e.message; }
+          Module.prototype._compile = orig;
+          console.log(JSON.stringify({ message, nested: require("./nested.js") }));
+        `,
+      });
+      expect(await run(dir, ["--disallow-code-generation-from-strings=strict", "main.js"])).toEqual({
+        message: "Code generation from strings disallowed for this context",
+        nested: 1,
+      });
+    });
+
     test("Module.prototype is the prototype of module objects", () => {
-      const entry =
-        require.cache[require.resolve("./extensions-fixture/d.js")] ??
-        (require("./extensions-fixture/d.js"), require.cache[require.resolve("./extensions-fixture/d.js")]);
+      const id = require.resolve("./extensions-fixture/d.js");
+      const wasCached = id in require.cache;
+      require(id);
+      const entry = require.cache[id];
+      if (!wasCached) delete require.cache[id];
       expect(Object.getPrototypeOf(entry)).toBe(Module.prototype);
       expect(entry instanceof Module).toBe(true);
       expect(new Module("x") instanceof Module).toBe(true);

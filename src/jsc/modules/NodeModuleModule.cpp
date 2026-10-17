@@ -608,11 +608,17 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
         JSC::EncodedJSValue value,
         JSC::PropertyName propertyName))
 {
-    globalObject->putDirect(globalObject->vm(),
-        WebCore::clientData(globalObject->vm())
-            ->builtinNames()
-            .overridableRequirePrivateName(),
-        JSValue::decode(value), 0);
+    auto& vm = JSC::getVM(globalObject);
+    JSValue receiver = JSValue::decode(thisValue);
+    // `Module.prototype.require = fn` reroutes every require(); `module.require = fn` is that module's own.
+    if (receiver == defaultGlobalObject(globalObject)->commonJSModulePrototype()) {
+        globalObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().overridableRequirePrivateName(), JSValue::decode(value), 0);
+        return true;
+    }
+    JSObject* object = receiver.getObject();
+    if (!object)
+        return false;
+    object->putDirect(vm, propertyName, JSValue::decode(value));
     return true;
 }
 

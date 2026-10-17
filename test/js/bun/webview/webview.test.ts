@@ -274,6 +274,15 @@ it("Symbol.dispose / Symbol.asyncDispose call close()", async () => {
   view.close();
 });
 
+it("page dialogs are answered without blocking", async () => {
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  // No UI delegate method for JS dialogs: WebKit answers them itself.
+  await view.navigate(html("<script>alert('on load')</script><body>loaded</body>"));
+  expect(
+    await view.evaluate("[document.body.textContent, confirm('sure?'), prompt('name?', 'x'), (alert('hi'), 'after')]"),
+  ).toEqual(["loaded", false, null, "after"]);
+});
+
 it("concurrent evaluate() across two views works", async () => {
   // Completion blocks carry Ref<WebViewHost> per-call (heap-allocated
   // _NSConcreteMallocBlock, same layout as WTF::BlockPtr). No process-global

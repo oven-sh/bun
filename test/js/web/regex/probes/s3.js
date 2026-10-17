@@ -1,0 +1,15 @@
+const out = typeof print === "function" ? print : console.log; const s = v => JSON.stringify(v);
+const S = ".\n";
+const sp = (label, src, fl) => { try { out(label.padEnd(46) + s(S.split(new RegExp(src, fl)))); } catch (e) { out(label.padEnd(46) + "ERR " + e.message.slice(0,25)); } };
+const it = (label, src, fl) => { try { const re = new RegExp(src, fl); const r = []; let m, n = 0;
+  while ((m = re.exec(S)) !== null && n++ < 8) { r.push([m.index, m[0], m[1] === undefined ? "u" : m[1]]); if (m[0] === "") re.lastIndex++; } out(label.padEnd(46) + s(r)); } catch (e) { out(label.padEnd(46) + "ERR"); } };
+sp("full", "(?<!\\p{ASCII_Hex_Digit}*(?=\\b)(?:\\w?.{1,3}(x\\da)??))\\s{0,2}(?:\\1)", "v");
+it("full-g", "(?<!\\p{ASCII_Hex_Digit}*(?=\\b)(?:\\w?.{1,3}(x\\da)??))\\s{0,2}(?:\\1)", "gv");
+it("A (?<!(?:\\w?.{1,3}(xa)??))\\s{0,2}(?:\\1)", "(?<!(?:\\w?.{1,3}(xa)??))\\s{0,2}(?:\\1)", "gv");
+it("B (?<!.{1,3}(xa)??)(?:\\1)", "(?<!.{1,3}(xa)??)(?:\\1)", "gv");
+it("C (?<!(xa)??)(?:\\1)", "(?<!(xa)??)(?:\\1)", "gv");
+it("D (?<!(xa)?)(?:\\1)", "(?<!(xa)?)(?:\\1)", "gv");
+it("E \\s{0,2}", "\\s{0,2}", "gv");
+it("F (?<!(?=\\b))\\s{0,2}", "(?<!(?=\\b))\\s{0,2}", "gv");
+it("G (?<!.{1,3})\\s{0,2}", "(?<!.{1,3})\\s{0,2}", "gv");
+it("H (?<!\\w?.{1,3})", "(?<!\\w?.{1,3})", "gv");

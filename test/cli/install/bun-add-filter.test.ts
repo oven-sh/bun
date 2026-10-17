@@ -2034,7 +2034,7 @@ test.concurrent("add --dev --production of an entry it would move fails and writ
 
   expect(stderr).toBe(
     "error: lockfile had changes, but lockfile is frozen\n" +
-      "note: dependencies in package.json changed since bun.lock was saved: what-bin moved to another dependency group\n" +
+      "note: dependencies in package.json changed since bun.lock was saved: what-bin is listed in other dependency groups\n" +
       "note: try re-running without --frozen-lockfile and commit the updated lockfile\n",
   );
   expect([await allPackageJsonTexts(dir), await file(join(dir, "bun.lock")).text()]).toStrictEqual(before);

@@ -812,6 +812,9 @@ pub fn install_with_manager(
                 }
             }
 
+            if changed_section.is_none() && manager.summary.first_change.is_some() {
+                changed_section = Some("dependencies");
+            }
             if log_level != Options::LogLevel::Silent {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"

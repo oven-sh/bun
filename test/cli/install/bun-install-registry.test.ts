@@ -1637,6 +1637,7 @@ describe.concurrent("frozen lockfile", () => {
       "Resolving dependencies
       Resolved, downloaded and extracted [4]
       error: lockfile had changes, but lockfile is frozen
+      note: dependencies in package.json changed since bun.lock was saved: basic-1 was added
       note: try re-running without --frozen-lockfile and commit the updated lockfile"
     `);
     expect(exitCode).toBe(1);

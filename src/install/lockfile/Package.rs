@@ -827,8 +827,10 @@ pub(crate) struct ChangedDependency {
 enum DependencyChange {
     Added,
     Removed,
-    /// From `dependencies` to `devDependencies`, for example.
-    Moved,
+    /// From `dependencies` to `devDependencies`, for example, or out of one of two groups.
+    Regrouped,
+    /// A peer dependency became optional, or is no longer optional.
+    PeerMeta,
     Range {
         now: Box<[u8]>,
         before: Box<[u8]>,
@@ -845,7 +847,8 @@ impl core::fmt::Display for ChangedDependency {
         match &self.change {
             DependencyChange::Added => f.write_str(" was added"),
             DependencyChange::Removed => f.write_str(" was removed"),
-            DependencyChange::Moved => f.write_str(" moved to another dependency group"),
+            DependencyChange::Regrouped => f.write_str(" is listed in other dependency groups"),
+            DependencyChange::PeerMeta => f.write_str(" changed in peerDependenciesMeta"),
             DependencyChange::Range { now, before } => {
                 write!(f, " is {}, was {}", text(now), text(before))
             }
@@ -1147,10 +1150,15 @@ impl Diff {
                 let is_still_listed = to_deps!().iter().any(|to_dep| {
                     to_dep.name_hash == from_dep.name_hash && !to_dep.behavior.is_workspace()
                 });
-                if frozen {
-                    let change = match is_still_listed {
-                        true => DependencyChange::Moved,
-                        false => DependencyChange::Removed,
+                if frozen && !from_dep.behavior.is_workspace() {
+                    let is_still_peer = from_dep.behavior.is_peer()
+                        && to_deps!().iter().any(|to_dep| {
+                            to_dep.name_hash == from_dep.name_hash && to_dep.behavior.is_peer()
+                        });
+                    let change = match (is_still_listed, is_still_peer) {
+                        (_, true) => DependencyChange::PeerMeta,
+                        (true, false) => DependencyChange::Regrouped,
+                        (false, false) => DependencyChange::Removed,
                     };
                     let name = from_dep.name.slice(from_buf!());
                     summary.note_change(from, from_buf!(), name, change);
@@ -1441,7 +1449,7 @@ impl Diff {
             .map(|(_, to_dep)| to_dep)
             .collect();
         summary.add = added.len() as u32;
-        if frozen && let Some(added) = added.first() {
+        if frozen && let Some(added) = added.iter().find(|dep| !dep.behavior.is_workspace()) {
             let name = added.name.slice(to_buf!());
             summary.note_change(from, from_buf!(), name, DependencyChange::Added);
         }

@@ -171,7 +171,12 @@ const dependencyRows: Record<string, Edit> = {
       dependencies: without(json.dependencies, "no-deps"),
       devDependencies: { "no-deps": "^1.0.0" },
     }),
-    names: "no-deps moved to another dependency group",
+    names: "no-deps is listed in other dependency groups",
+  },
+  "a peer dependency becomes optional": {
+    from: { ...transitive, peerDependencies: { "no-deps": "1.0.1" } },
+    root: json => ({ ...json, peerDependenciesMeta: { "no-deps": { optional: true } } }),
+    names: "no-deps changed in peerDependenciesMeta",
   },
   "a workspace drops a dependency that the root still needs": {
     member: json => ({ ...json, dependencies: without(json.dependencies, "a-dep") }),

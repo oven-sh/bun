@@ -101,6 +101,8 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 
+Child IPC dispatch calls the JavaScript `process.emit` property for `message`, `internalMessage`, and `disconnect`, so wrappers and accessors observe these events.
+
 🟡 IPC can send `net.Socket`, `net.Server` and `dgram.Socket` handles (including to and from Node.js processes), but not `http` server sockets. `serialization: "advanced"` only works between Bun processes, so use JSON serialization for Node.js ↔ Bun IPC. Missing `subprocess.channel.ref()`/`unref()`. You cannot pass a child's `stdout`/`stderr` as another child's `stdio`, and `spawnSync` does not return extra `stdio` pipes in `output`.
 
 ### [`node:cluster`](https://nodejs.org/api/cluster.html)

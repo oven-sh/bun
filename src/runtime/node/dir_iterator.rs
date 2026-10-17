@@ -813,6 +813,96 @@ pub(crate) type WrappedIterator = NewWrappedIterator<false>;
 #[cfg(windows)]
 pub(crate) type WrappedIteratorW = NewWrappedIterator<true>;
 
+struct SortedEntry {
+    /// Offset into `SortedEntries::names`. A NUL follows each name.
+    off: usize,
+    len: u16,
+    kind: EntryKind,
+}
+
+/// A directory read up front and sorted by the raw name bytes, the order
+/// libuv's `uv_fs_scandir` gives node. A read error is yielded after the
+/// entries read before it.
+pub(crate) struct SortedEntries {
+    names: Vec<u8>,
+    index: Vec<SortedEntry>,
+    pos: usize,
+    deferred_err: Option<sys::Error>,
+}
+
+impl SortedEntries {
+    pub(crate) fn read(dir: Fd) -> Self {
+        let mut iter = WrappedIterator::init(dir);
+        let mut names: Vec<u8> = Vec::new();
+        let mut index: Vec<SortedEntry> = Vec::new();
+        let deferred_err = loop {
+            match iter.next() {
+                Ok(Some(ent)) => {
+                    let name = ent.name.slice();
+                    index.push(SortedEntry {
+                        off: names.len(),
+                        len: u16::try_from(name.len()).expect("dirent name fits NAME_MAX"),
+                        kind: ent.kind,
+                    });
+                    names.extend_from_slice(name);
+                    names.push(0);
+                }
+                Ok(None) => break None,
+                Err(err) => break Some(err),
+            }
+        };
+        index.sort_unstable_by(|a, b| {
+            names[a.off..a.off + a.len as usize].cmp(&names[b.off..b.off + b.len as usize])
+        });
+        Self {
+            names,
+            index,
+            pos: 0,
+            deferred_err,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn next(&mut self) -> Result {
+        let Some(ent) = self.index.get(self.pos) else {
+            return match self.deferred_err.take() {
+                Some(err) => Err(err),
+                None => Ok(None),
+            };
+        };
+        self.pos += 1;
+        Ok(Some(IteratorResult {
+            name: RawSlice::new(&self.names[ent.off..ent.off + ent.len as usize]),
+            kind: ent.kind,
+        }))
+    }
+}
+
+/// `Sorted` for `fs.readdir` on Unix. `Streaming` (kernel order) for
+/// `fs.opendir` and for Windows, where libuv does not sort either.
+pub(crate) enum ReaddirIterator {
+    Streaming(WrappedIterator),
+    Sorted(SortedEntries),
+}
+
+impl ReaddirIterator {
+    pub(crate) fn init(dir: Fd, sorted: bool) -> Self {
+        if sorted && !cfg!(windows) {
+            Self::Sorted(SortedEntries::read(dir))
+        } else {
+            Self::Streaming(WrappedIterator::init(dir))
+        }
+    }
+
+    #[inline]
+    pub(crate) fn next(&mut self) -> Result {
+        match self {
+            Self::Streaming(iter) => iter.next(),
+            Self::Sorted(entries) => entries.next(),
+        }
+    }
+}
+
 pub(crate) fn iterate<const IS_U16: bool>(self_: Fd) -> NewWrappedIterator<IS_U16>
 where
     (): WrappedSelect<IS_U16>,

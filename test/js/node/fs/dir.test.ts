@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { bunEnv, isLinux, tempDir } from "harness";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -241,5 +242,60 @@ describe("Dir explicit resource management", () => {
     dir.closeSync();
     expect(() => dir[Symbol.dispose]()).not.toThrow();
     await expect(dir[Symbol.asyncDispose]()).resolves.toBeUndefined();
+  });
+});
+
+// fs.readdir sorts its entries like node (libuv's scandir). A Dir does not:
+// node reads it with uv_fs_readdir, which is the kernel order. `ls -U` (GNU)
+// and `find` (GNU and busybox) read the directory with readdir(3) and print
+// that order too.
+describe.skipIf(!isLinux)("fs.Dir keeps the kernel order", () => {
+  const names = [
+    "readme",
+    "a.b",
+    "Z",
+    "10",
+    "file-1",
+    "b",
+    "A",
+    "a b",
+    "~",
+    "9",
+    "ab",
+    "file-001",
+    "_",
+    "a",
+    "README",
+    "1",
+  ];
+
+  it("opendirSync and fs.promises.opendir list in the same order as ls -U", async () => {
+    using dir = tempDir("dir-kernel-order", {});
+    const root = String(dir);
+    for (const name of names) fs.writeFileSync(path.join(root, name), "");
+    let ls = Bun.spawnSync({ cmd: ["ls", "-U", root], env: bunEnv });
+    if (ls.exitCode !== 0) {
+      ls = Bun.spawnSync({ cmd: ["find", root, "-mindepth", "1", "-maxdepth", "1"], env: bunEnv });
+    }
+    expect(ls.exitCode).toBe(0);
+    const raw = ls.stdout
+      .toString()
+      .split("\n")
+      .filter(Boolean)
+      .map(line => path.basename(line));
+    expect(raw.toSorted()).toEqual(names.toSorted());
+
+    const sync: string[] = [];
+    {
+      using d = fs.opendirSync(root);
+      for (let e = d.readSync(); e; e = d.readSync()) sync.push(e.name);
+    }
+    expect(sync).toEqual(raw);
+
+    const async: string[] = [];
+    for await (const e of await fs.promises.opendir(root)) async.push(e.name);
+    expect(async).toEqual(raw);
+
+    expect(fs.readdirSync(root)).toEqual(names.toSorted());
   });
 });

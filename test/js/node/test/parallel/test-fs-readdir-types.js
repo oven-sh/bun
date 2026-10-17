@@ -32,18 +32,12 @@ files.forEach(function(currentFile) {
   fs.writeFileSync(`${readdirDir}/${currentFile}`, '', 'utf8');
 });
 
-const sortedFiles = files.slice().sort();
 
 function assertDirents(dirents) {
-  // Bun: sort the dirents. node.js doesn't do this, which is interesting because
-  // they are able to return the dirents in the order that its written, but bun
-  // returns ["empty", "just", "testing", "for", "files"]
-  dirents = dirents.slice().sort((a, b) => a.name.localeCompare(b.name));
-
   assert.strictEqual(files.length, dirents.length);
   for (const [i, dirent] of dirents.entries()) {
     assert(dirent instanceof fs.Dirent);
-    assert.strictEqual(dirent.name, sortedFiles[i]);
+    assert.strictEqual(dirent.name, files[i]);
     assert.strictEqual(dirent.isFile(), true);
     assert.strictEqual(dirent.isDirectory(), false);
     assert.strictEqual(dirent.isSocket(), false);

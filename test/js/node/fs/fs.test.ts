@@ -1770,6 +1770,155 @@ it("readdir with { encoding: 'buffer' } returns Buffer entries", async () => {
   ).toEqual(expected);
 });
 
+// Node's readdir family returns each directory's entries in strcmp order on
+// Unix (libuv's uv_fs_scandir sorts them). The key is the raw name bytes, so
+// uppercase sorts before lowercase, multibyte names sort after ASCII, and
+// U+FF21 (EF BC A1) sorts before U+1F600 (F0 9F 98 80) even though a JS
+// string compare puts the surrogate pair first. Windows is not sorted there.
+describe.skipIf(isWindows)("readdir returns entries in strcmp order like node", () => {
+  const sorted = [
+    "1",
+    "10",
+    "9",
+    "A",
+    "README",
+    "Zed",
+    "_",
+    "a b",
+    "a-b",
+    "a.b",
+    "ab",
+    "b",
+    "file-001",
+    "file-01",
+    "file-1",
+    "readme-2",
+    "z",
+    "~",
+    "\u00e4",
+    "\u00e9",
+    "\u65e5\u672c",
+    "\uff21",
+    "\u{1f600}",
+  ];
+  // Created in an order that is neither sorted nor reverse sorted, so a
+  // filesystem that lists in creation order (or reverse) is not sorted either.
+  // No two names differ only by case: APFS is case-insensitive.
+  const created = [
+    "readme-2",
+    "\u{1f600}",
+    "a.b",
+    "Zed",
+    "10",
+    "file-1",
+    "b",
+    "\u00e9",
+    "A",
+    "a b",
+    "~",
+    "9",
+    "ab",
+    "\u65e5\u672c",
+    "file-001",
+    "_",
+    "z",
+    "README",
+    "\uff21",
+    "1",
+    "a-b",
+    "\u00e4",
+    "file-01",
+  ];
+  expect(created.toSorted()).toEqual(sorted.toSorted());
+
+  function makeFlat() {
+    const dir = tempDir("readdir-order", {});
+    for (const name of created) writeFileSync(join(String(dir), name), "");
+    return dir;
+  }
+
+  it("readdirSync: strings, withFileTypes, buffer, and an encoding", () => {
+    using dir = makeFlat();
+    const root = String(dir);
+    expect(readdirSync(root)).toEqual(sorted);
+    expect(readdirSync(root, { withFileTypes: true }).map(d => d.name)).toEqual(sorted);
+    expect(readdirSync(root, { encoding: "buffer" }).map(b => b.toString())).toEqual(sorted);
+    // Sorted before the encoding is applied, as node does.
+    expect(readdirSync(root, "base64")).toEqual(sorted.map(n => Buffer.from(n).toString("base64")));
+    // The third binding argument is not reachable through the public API.
+    expect((readdirSync as any)(root, {}, true)).toEqual(sorted);
+  });
+
+  it("readdir callback, fs.promises.readdir, and promisify(readdir)", async () => {
+    using dir = makeFlat();
+    const root = String(dir);
+    expect(await promises.readdir(root)).toEqual(sorted);
+    expect((await promises.readdir(root, { withFileTypes: true })).map(d => d.name)).toEqual(sorted);
+    expect((await promises.readdir(root, { encoding: "buffer" })).map(b => b.toString())).toEqual(sorted);
+    expect(await promisify(fs.readdir)(root)).toEqual(sorted);
+    expect(await (promises.readdir as any)(root, {}, true)).toEqual(sorted);
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    fs.readdir(root, (err, names) => (err ? reject(err) : resolve(names)));
+    expect(await promise).toEqual(sorted);
+  });
+
+  // The recursive forms sort within each directory. The sync walk visits the
+  // subdirectories first in, first out, like node's readdirSync.
+  const tree = {
+    "c/2": "",
+    "a/sub/y": "",
+    "b/1": "",
+    "a/2": "",
+    "c/1": "",
+    "a/sub/x": "",
+    "b/2": "",
+    "a/1": "",
+    "a/sub/z/q": "",
+  };
+  const treeSync = [
+    "a",
+    "b",
+    "c",
+    "a/1",
+    "a/2",
+    "a/sub",
+    "b/1",
+    "b/2",
+    "c/1",
+    "c/2",
+    "a/sub/x",
+    "a/sub/y",
+    "a/sub/z",
+    "a/sub/z/q",
+  ];
+  const perDir = (names: string[], parent: string) =>
+    names.filter(n => n.startsWith(parent) && !n.slice(parent.length).includes("/"));
+
+  it("readdirSync({ recursive: true })", () => {
+    using dir = tempDir("readdir-order-recursive", tree);
+    const root = String(dir);
+    expect(readdirSync(root, { recursive: true })).toEqual(treeSync);
+    expect(readdirSync(root, { recursive: true, encoding: "buffer" }).map(b => b.toString())).toEqual(treeSync);
+    expect(
+      readdirSync(root, { recursive: true, withFileTypes: true }).map(d => relative(root, join(d.parentPath, d.name))),
+    ).toEqual(treeSync);
+  });
+
+  it("fs.promises.readdir({ recursive: true }) sorts within each directory", async () => {
+    using dir = tempDir("readdir-order-recursive-async", tree);
+    const root = String(dir);
+    const names = await promises.readdir(root, { recursive: true });
+    expect(names.toSorted()).toEqual(treeSync.toSorted());
+    expect(names.slice(0, 3)).toEqual(["a", "b", "c"]);
+    expect(perDir(names, "a/")).toEqual(["a/1", "a/2", "a/sub"]);
+    expect(perDir(names, "a/sub/")).toEqual(["a/sub/x", "a/sub/y", "a/sub/z"]);
+    const dirents = await promises.readdir(root, { recursive: true, withFileTypes: true });
+    const paths = dirents.map(d => relative(root, join(d.parentPath, d.name)));
+    expect(paths.slice(0, 3)).toEqual(["a", "b", "c"]);
+    expect(perDir(paths, "b/")).toEqual(["b/1", "b/2"]);
+  });
+});
+
 // The error cleanup path previously called MarkedArrayBuffer.destroy() on
 // structs stored by-value inside the entries ArrayList, which passed interior
 // ArrayList pointers to the allocator (freeing entries.items.ptr for index 0 and

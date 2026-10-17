@@ -13,20 +13,52 @@ use super::validators;
 
 bun_output::declare_scope!(parseArgs, hidden);
 
-/// Represents a slice of a JSValue array
-#[derive(Copy, Clone)]
-struct ArgsSlice {
-    array: JSValue,
-    start: u32,
-    end: u32,
-}
+mod args_slice {
+    use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
-impl ArgsSlice {
-    #[inline]
-    fn get(&self, global: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
-        self.array.get_index(global, self.start + i)
+    /// Represents a slice of a JSValue array. The fields are private to this
+    /// module so that every value has `start <= end`.
+    #[derive(Copy, Clone)]
+    pub(super) struct ArgsSlice {
+        array: JSValue,
+        start: u32,
+        end: u32,
+    }
+
+    impl ArgsSlice {
+        pub(super) const EMPTY: ArgsSlice = ArgsSlice {
+            array: JSValue::UNDEFINED,
+            start: 0,
+            end: 0,
+        };
+
+        /// `array[start..]`, which is empty when the array is shorter than
+        /// `start`, like `ArrayPrototypeSlice(array, start)`.
+        pub(super) fn new(
+            global: &JSGlobalObject,
+            array: JSValue,
+            start: u32,
+        ) -> JsResult<ArgsSlice> {
+            let end = u32::try_from(array.get_length(global)?).expect("int cast");
+            Ok(ArgsSlice {
+                array,
+                start: start.min(end),
+                end,
+            })
+        }
+
+        #[inline]
+        pub(super) fn len(&self) -> u32 {
+            self.end - self.start
+        }
+
+        #[inline]
+        pub(super) fn get(&self, global: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
+            self.array.get_index(global, self.start + i)
+        }
     }
 }
+use args_slice::ArgsSlice;
 
 /// Helper ref to either a JSValue or a String,
 /// used in order to avoid creating unneeded JSValue as much as possible
@@ -184,40 +216,17 @@ fn find_option_by_long_name(long_name: &String, options: &[OptionDefinition]) ->
 
 /// Gets the default args from the process argv
 fn get_default_args(global: &JSGlobalObject) -> JsResult<ArgsSlice> {
-    // Work out where to slice process.argv for user supplied arguments
-
-    let exec_argv = super::process::get_exec_argv(global)?;
     let argv = super::process::get_argv(global)?;
-    if argv.is_array() && exec_argv.is_array() {
-        let mut iter = exec_argv.array_iterator(global)?;
-        while let Some(item) = iter.next()? {
-            if item.is_string() {
-                let str = item.to_bun_string(global)?;
-                if str.eq_ascii(b"-e")
-                    || str.eq_ascii(b"--eval")
-                    || str.eq_ascii(b"-p")
-                    || str.eq_ascii(b"--print")
-                {
-                    return Ok(ArgsSlice {
-                        array: argv,
-                        start: 1,
-                        end: u32::try_from(argv.get_length(global)?).expect("int cast"),
-                    });
-                }
-            }
-        }
-        return Ok(ArgsSlice {
-            array: argv,
-            start: 2,
-            end: u32::try_from(argv.get_length(global)?).expect("int cast"),
-        });
+    if !argv.is_array() {
+        return Ok(ArgsSlice::EMPTY);
     }
-
-    Ok(ArgsSlice {
-        array: JSValue::UNDEFINED,
-        start: 0,
-        end: 0,
-    })
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/parse_args/parse_args.js#L58-L67
+    let start = if global.bun_vm().has_eval_string {
+        1
+    } else {
+        2
+    };
+    ArgsSlice::new(global, argv, start)
 }
 
 /// In strict mode, throw for possible usage errors like "--foo --bar" where foo was defined as a string-valued arg
@@ -524,7 +533,7 @@ fn tokenize_args(
     args: ArgsSlice,
     options: &[OptionDefinition],
 ) -> JsResult<()> {
-    let num_args: u32 = args.end - args.start;
+    let num_args = args.len();
     let mut index: u32 = 0;
     while index < num_args {
         let arg_ref = ValueRef::Jsvalue(args.get(global, index)?);
@@ -905,11 +914,7 @@ fn parse_args_impl(
     };
     let args: ArgsSlice = if !config_args.is_undefined_or_null() {
         validators::validate_array(global, config_args, "args", None)?;
-        ArgsSlice {
-            array: config_args,
-            start: 0,
-            end: u32::try_from(config_args.get_length(global)?).expect("int cast"),
-        }
+        ArgsSlice::new(global, config_args, 0)?
     } else {
         get_default_args(global)?
     };
@@ -983,7 +988,7 @@ fn parse_args_impl(
     bun_output::scoped_log!(
         parseArgs,
         "Phase 1+2: tokenize args (args.len={})",
-        args.end - args.start
+        args.len()
     );
 
     // note that "values" needs to have a null prototype instead of Object, to avoid issues such as "values.toString"` being defined

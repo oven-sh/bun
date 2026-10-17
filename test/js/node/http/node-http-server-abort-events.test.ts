@@ -1327,6 +1327,7 @@ describe("headersSent after the client went away", () => {
     });
   });
 
+  // Guards the writeHead() clause of the closed branch: writeHead() alone already reports headersSent true.
   test("res.end(chunk) of a destroyed response after writeHead() keeps the headers sent", async () => {
     expect(await endFromSocketClose("late", true)).toEqual({
       headersSent: true,
@@ -1343,6 +1344,16 @@ describe("headersSent after the client went away", () => {
       finished: true,
       setHeader: "ERR_HTTP_HEADERS_SENT",
     });
+  });
+
+  // No native handle: OutgoingMessage.end() must see the chunk so that its write_() drops it before the head renders.
+  test("res.end(chunk) of a destroyed standalone response leaves the headers unsent", async () => {
+    const res = new ServerResponse(new IncomingMessage(null as any));
+    const closed = once(res, "close");
+    res.destroy();
+    await closed;
+    res.end("late");
+    expect(headerSample(res)).toEqual({ headersSent: false, header: null, finished: true, setHeader: "ok" });
   });
 
   // The socket is destroyed but res 'close' has not run yet: res.destroyed is false.

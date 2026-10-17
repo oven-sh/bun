@@ -3489,6 +3489,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   // Node's write_() drops the chunk of a destroyed response before _implicitHeader(), and end() goes on
   // with the head unsent: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L951-L964
   const droppedChunk = !!chunk && this.destroyed && !this.finished;
+  const rawChunk = chunk;
   if (droppedChunk) chunk = undefined;
 
   if (hasServerResponseFinished(this, chunk, callback, true)) {
@@ -3505,7 +3506,8 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
 
   if (!handle) {
-    return OutgoingMessagePrototype.end.$call(this, chunk, encoding, callback);
+    // OutgoingMessage.end() drops the chunk of a destroyed response itself, inside write_(), before it renders the head.
+    return OutgoingMessagePrototype.end.$call(this, rawChunk, encoding, callback);
   }
 
   if (this[headerStateSymbol] === NodeHTTPHeaderState.none) {

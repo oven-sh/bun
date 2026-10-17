@@ -1864,6 +1864,144 @@ describe.skipIf(isWindows).concurrent("REPL history file permissions", () => {
   });
 });
 
+describe.concurrent("REPL history file", () => {
+  // $HOME/.bun_repl_history holds one entry per line; the newlines inside a
+  // multi-line entry are written as '\r' so the entry survives a restart.
+  const ARROW_UP = "\x1b[A";
+
+  async function runReplWithHome(home: string, input: string[]) {
+    const { stdout, stderr, exitCode } = await runRepl(input, { env: { HOME: home, USERPROFILE: home } });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const out = stripAnsi(stdout);
+    // Everything after the banner. With piped stdin the input is not echoed;
+    // the output is a "> " prompt each time the REPL is back at top level
+    // plus whatever each input printed.
+    return out.slice(out.indexOf("> "));
+  }
+
+  // The physical lines of the history file (the last one is the "" after the
+  // final newline).
+  async function savedLines(home: string) {
+    const content = await Bun.file(path.join(home, ".bun_repl_history")).text();
+    return content.split("\n");
+  }
+
+  test("multi-line entry is saved on one line and reloads as one entry", async () => {
+    using dir = tempDir("repl-history-multiline", {});
+    const home = String(dir);
+
+    await runReplWithHome(home, ["function f() {", "  return 1", "}", ".exit"]);
+
+    expect(await savedLines(home)).toEqual(["function f() {\r  return 1\r}", ""]);
+
+    // Next session: recall the entry with the up arrow and run it, then list
+    // the history. The recalled entry defines f, and re-running it does not
+    // add a duplicate entry.
+    const session = await runReplWithHome(home, [ARROW_UP, "f()", ".history", ".exit"]);
+    expect(session).toMatchInlineSnapshot(`
+      "> 
+      undefined
+      > 
+      1
+      > 
+
+      Command History:
+           1  function f() {
+        return 1
+      }
+           2  f()
+
+      > 
+      "
+    `);
+  });
+
+  test("entries with blank lines round-trip in order", async () => {
+    using dir = tempDir("repl-history-mixed", {});
+    const home = String(dir);
+
+    await runReplWithHome(home, ["const a = 1", "function g() {", "", "  return 2", "}", "const b = 3", ".exit"]);
+
+    expect(await savedLines(home)).toEqual(["const a = 1", "function g() {\r\r  return 2\r}", "const b = 3", ""]);
+
+    const session = await runReplWithHome(home, [".history", ".exit"]);
+    expect(session).toMatchInlineSnapshot(`
+      "> 
+
+      Command History:
+           1  const a = 1
+           2  function g() {
+
+        return 2
+      }
+           3  const b = 3
+
+      > 
+      "
+    `);
+  });
+
+  test("loads a CRLF history file without keeping the line endings", async () => {
+    // A history file re-saved by a CRLF editor: the '\r' before each '\n' is
+    // part of the line ending, while the ones inside the second entry are its
+    // stored newlines.
+    using dir = tempDir("repl-history-crlf", {
+      ".bun_repl_history": "1 + 1\r\nfunction h() {\r  return 3\r}\r\n",
+    });
+    const home = String(dir);
+
+    const session = await runReplWithHome(home, [".history", "2 + 2", ".exit"]);
+    // Snapshot matching tolerates CRLF, so check for a leaked '\r' explicitly.
+    expect(session).not.toContain("\r");
+    expect(session).toMatchInlineSnapshot(`
+      "> 
+
+      Command History:
+           1  1 + 1
+           2  function h() {
+        return 3
+      }
+
+      > 
+      4
+      > 
+      "
+    `);
+
+    // Re-saved with plain '\n' line endings; the stored newlines inside the
+    // multi-line entry are kept.
+    expect(await savedLines(home)).toEqual(["1 + 1", "function h() {\r  return 3\r}", "2 + 2", ""]);
+  });
+
+  test("a CRLF file of single-line entries loads and is re-saved without the CRs", async () => {
+    // A history file written on Windows, or edited in a CRLF editor: every '\r'
+    // is part of a line ending, so none of them may end up in an entry, where
+    // it would show in recall and .history and be written back on every save.
+    using dir = tempDir("repl-history-crlf-single-line", {
+      ".bun_repl_history": "old_one\r\nold_two\r\n",
+    });
+    const home = String(dir);
+
+    const session = await runReplWithHome(home, [".history", "2 + 2", ".exit"]);
+    expect(session).not.toContain("\r");
+    expect(session).toMatchInlineSnapshot(`
+      "> 
+
+      Command History:
+           1  old_one
+           2  old_two
+
+      > 
+      4
+      > 
+      "
+    `);
+
+    expect(await savedLines(home)).toEqual(["old_one", "old_two", "2 + 2", ""]);
+  });
+});
+
 // `bun --interactive` boots the full node:repl + readline + acorn stack; on a
 // debug+asan build that is ~4–5s per spawn, so the 5s default is too tight.
 const interactiveTimeout = 20_000;

@@ -68,6 +68,8 @@ unsafe extern "C" {
 
 const MAX_HISTORY_SIZE: usize = 1000;
 const HISTORY_FILENAME: &[u8] = b".bun_repl_history";
+/// Replaces an entry's inner newlines in the one-entry-per-line file (entries never contain CR).
+const HISTORY_STORED_NEWLINE: &[u8] = b"\r";
 
 // ANSI escape codes
 const CSI: &str = concat!("\x1b", "[");
@@ -211,9 +213,13 @@ impl History {
         };
 
         for line in strings::split(&content, b"\n") {
-            if !line.is_empty() {
-                self.entries.push(Box::<[u8]>::from(line));
+            // A CRLF line ending; never entry content, since add() gets newline-trimmed input.
+            let line = strings::trim_suffix(line, b"\r");
+            if line.is_empty() {
+                continue;
             }
+            let entry = strings::replace_owned(line, HISTORY_STORED_NEWLINE, b"\n");
+            self.entries.push(entry.into_boxed_slice());
         }
 
         // Trim to max size
@@ -242,7 +248,8 @@ impl History {
 
         let mut content: Vec<u8> = Vec::new();
         for entry in &self.entries[start..] {
-            content.extend_from_slice(entry);
+            let stored = strings::replace_owned(entry, b"\n", HISTORY_STORED_NEWLINE);
+            content.extend_from_slice(&stored);
             content.push(b'\n');
         }
 

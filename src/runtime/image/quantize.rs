@@ -299,14 +299,14 @@ struct Sums {
 
 /// The cut of `pixels` along `ch` with the least squared error, as the value that starts part two.
 fn cut(pixels: &[[u8; 4]], ch: usize, total: &Moments, at_value: &mut [Sums]) -> Option<u8> {
-    let (mut least, mut most) = (usize::from(u8::MAX), 0usize);
+    // One bit per value of `ch` that the box has: a box of a few pixels has few of the 256.
+    let mut has = [0u64; 4];
     // One step per run of equal pixels: a flat area would write the same sums once per pixel.
     for run in pixels.chunk_by(|a, b| a == b) {
         let pixel = run[0];
         let count = run.len() as u64;
         let value = usize::from(pixel[ch]);
-        least = least.min(value);
-        most = most.max(value);
+        has[value >> 6] |= 1 << (value & 63);
         let sums = &mut at_value[value];
         sums.n += count;
         for c in 0..4usize {
@@ -316,30 +316,33 @@ fn cut(pixels: &[[u8; 4]], ch: usize, total: &Moments, at_value: &mut [Sums]) ->
     // The sum of squares is fixed: least error is the largest L²/nL + R²/nR over the parts' sums.
     let mut left = Sums::default();
     let mut best: Option<(u128, u8)> = None;
-    // Nothing is past `most`, so no cut is there.
-    for (value, slot) in at_value.iter_mut().enumerate().take(most).skip(least) {
-        let sums = core::mem::take(slot);
-        if sums.n == 0 {
-            continue;
-        }
-        left.n += sums.n;
-        let mut left_sq: u128 = 0;
-        let mut right_sq: u128 = 0;
-        for c in 0..4usize {
-            left.sum[c] += sums.sum[c];
-            let l = u128::from(left.sum[c]);
-            let r = u128::from(total.sum[c] - left.sum[c]);
-            left_sq += l * l;
-            right_sq += r * r;
-        }
-        // 32 fraction bits (< 2^115 in all): whole units tie in a box of a few pixels.
-        let score =
-            (left_sq << 32) / u128::from(left.n) + (right_sq << 32) / u128::from(total.n - left.n);
-        if best.is_none_or(|(s, _)| score > s) {
-            best = Some((score, u8::try_from(value + 1).expect("int cast")));
+    for (word, mut bits) in has.into_iter().enumerate() {
+        while bits != 0 {
+            let value = word * 64 + bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            let sums = core::mem::take(&mut at_value[value]);
+            left.n += sums.n;
+            // Nothing is past the last value, so no cut is there.
+            if left.n == total.n {
+                break;
+            }
+            let mut left_sq: u128 = 0;
+            let mut right_sq: u128 = 0;
+            for c in 0..4usize {
+                left.sum[c] += sums.sum[c];
+                let l = u128::from(left.sum[c]);
+                let r = u128::from(total.sum[c] - left.sum[c]);
+                left_sq += l * l;
+                right_sq += r * r;
+            }
+            // 32 fraction bits (< 2^115 in all): whole units tie in a box of a few pixels.
+            let score = (left_sq << 32) / u128::from(left.n)
+                + (right_sq << 32) / u128::from(total.n - left.n);
+            if best.is_none_or(|(s, _)| score > s) {
+                best = Some((score, u8::try_from(value + 1).expect("int cast")));
+            }
         }
     }
-    at_value[most] = Sums::default();
     best.map(|(_, value)| value)
 }
 

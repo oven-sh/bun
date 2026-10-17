@@ -345,21 +345,15 @@ describe("bun", () => {
     });
 
     test.concurrent("for an unknown $SHELL, the note names a command that writes a completion script", async () => {
-      // `bin/bun` puts the executable on PATH under the name the note uses. An empty home keeps the
-      // bunx symlink fallbacks out of the real home directory.
-      using dir = tempDir("completions-unknown-shell", { bin: {}, home: {} });
-      fs.symlinkSync(bunExe(), join(String(dir), "bin", "bun"));
+      // PATH has the executable as `bun`, the name the note uses, and as bunx. With bunx on PATH,
+      // `bun completions` installs no bunx symlink, so nothing is written outside the temporary directory.
+      using dir = tempDir("completions-unknown-shell", { bin: {} });
+      for (const name of ["bun", bunxName]) fs.symlinkSync(bunExe(), join(String(dir), "bin", name));
 
       async function run(cmd: string[]) {
         await using proc = Bun.spawn({
           cmd,
-          env: {
-            ...bunEnv,
-            PATH: join(String(dir), "bin"),
-            HOME: join(String(dir), "home"),
-            BUN_INSTALL: undefined,
-            SHELL: "/bin/dash",
-          },
+          env: { ...bunEnv, PATH: join(String(dir), "bin"), SHELL: "/bin/dash" },
           cwd: String(dir),
           stdout: "pipe",
           stderr: "pipe",

@@ -222,7 +222,7 @@ impl InstallCompletionsCommand {
             let filename: &[u8] = match shell {
                 Shell::Unknown => {
                     Output::err_generic(
-                        "Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash.",
+                        "Unknown or unsupported shell. Set $SHELL to one of zsh, fish, or bash.",
                         format_args!(""),
                     );
                     note!(

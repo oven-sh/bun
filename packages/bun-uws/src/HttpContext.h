@@ -425,8 +425,8 @@ private:
 
         /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
 
-        /* node:http compat: the trailer capture lives in the IsNodeHttp=true ext
-         * block; the Bun.serve instantiation passes nullptr (and its parser
+        /* node:http compat: the accepted trailer fields live in the IsNodeHttp=true
+         * ext block; the Bun.serve instantiation passes nullptr (and its parser
          * instantiation contains no use of it). */
         std::string *nodeHttpRequestTrailers = nullptr;
         if constexpr (IsNodeHttp) {

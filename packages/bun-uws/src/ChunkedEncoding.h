@@ -191,8 +191,9 @@ namespace uWS {
      * line is incomplete, i.e. before STATE_HAS_SIZE is set. _DONE means the
      * section (and thus the message) completed and the fin chunk was emitted; the
      * next call resets the state without touching the remaining bytes. The
-     * sub-state must not be derived from the captured section's contents: the fin
-     * delivery can synchronously run JS that consumes (and clears) the capture. */
+     * sub-state must not be derived from the captured section's contents: the
+     * caller empties the capture when it takes its verdict on the section, before
+     * it delivers the fin (HttpParser::acceptNodeTrailerSection). */
     constexpr uint64_t STATE_IS_TRAILERS = STATE_HAS_SIZE | STATE_IS_CHUNKED | STATE_WAITING_FOR_LF;
     constexpr uint64_t STATE_IS_TRAILERS_DONE = STATE_HAS_SIZE | STATE_WAITING_FOR_LF;
 
@@ -228,7 +229,9 @@ namespace uWS {
              * 0-size chunk, capturing its raw bytes so the server can populate
              * req.trailers. The terminating empty chunk (fin) is only emitted once
              * the whole section (including its final CRLF) has been consumed, so
-             * trailers are always available by the time the message completes. */
+             * trailers are always available by the time the message completes.
+             * trailerSection is the caller's buffer (HttpParser::fallback): empty
+             * when the 0-size chunk is read, and emptied by the caller at the fin. */
             if (trailerSection && state == STATE_IS_TRAILERS) [[unlikely]] {
                 while (data.length()) {
                     char c = data[0];

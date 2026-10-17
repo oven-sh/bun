@@ -136,16 +136,13 @@ function emitEOFIncomingMessageOuter(self) {
   self.complete = true;
   // node:http server: trailer fields received after a chunked request body
   // populate req.trailers/rawTrailers before 'end' is emitted, like Node's
-  // parserOnMessageComplete. Native moved the section onto THIS request's
-  // handle at its body fin, so pipelined requests can neither inherit nor
-  // overwrite another request's trailers.
+  // parserOnMessageComplete. Native moved the fields that the parser accepted
+  // onto THIS request's handle at its body fin, so pipelined requests can
+  // neither inherit nor overwrite another request's trailers.
   // Trailers can only follow a chunked request body: a no-body request has
-  // none, so skip the native call (and the socket/server option walk) for the
-  // common GET/HEAD case.
+  // none, so skip the native call for the common GET/HEAD case.
   if (self[kHandle] !== undefined && !self[noBodySymbol]) {
-    // The lenient (insecureHTTPParser) value bytes must match what the parser
-    // accepted on the wire, or a CTL byte in a trailer value would vanish here.
-    const rawTrailers = self[kHandle].takeRequestTrailers(self.socket?.server?.insecureHTTPParser === true);
+    const rawTrailers = self[kHandle].takeRequestTrailers();
     if (rawTrailers !== undefined) {
       self._addHeaderLines(rawTrailers, rawTrailers.length);
     }

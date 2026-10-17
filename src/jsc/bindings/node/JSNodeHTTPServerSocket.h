@@ -159,10 +159,6 @@ public:
     /* The WebSocket that adopted the connection reads from here on. */
     void releaseTunnelReadsForUpgrade();
 
-    /* Trailer fields received after the current request's chunked body, as a
-     * flat [name, value, ...] JS array preserving wire casing; jsUndefined()
-     * when there are none. Clears the captured section. */
-
     /* Set the trailer fields (pre-rendered "name: value\r\n" lines) to write
      * between the terminating 0 chunk and the final CRLF of the current
      * response's chunked body. */

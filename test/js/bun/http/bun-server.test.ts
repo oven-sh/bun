@@ -352,6 +352,56 @@ describe.concurrent("Server", () => {
     }
   });
 
+  test("server.fetch copies the init headers and adds the body's Content-Type", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        req.headers.set("x-mutated", "1");
+        return Response.json({
+          xA: req.headers.get("x-a"),
+          contentType: req.headers.get("content-type"),
+          body: await req.text(),
+        });
+      },
+    });
+    const headers = new Headers({ "x-a": "1" });
+    const response = await server.fetch(`http://${server.hostname}:${server.port}/`, {
+      method: "POST",
+      headers,
+      body: new Blob(["q"], { type: "text/x-q" }),
+    });
+    expect(await response.json()).toEqual({ xA: "1", contentType: "text/x-q", body: "q" });
+    // The handler's Request owns a copy, so the caller's Headers do not change.
+    expect(headers.get("x-mutated")).toBeNull();
+  });
+
+  test("server.fetch with a Headers instance survives GC", async () => {
+    // The Request used to take the Headers wrapper's ref without a bump, so the
+    // wrapper's finalizer and the Request's finalizer both released it.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+        const url = server.url.href;
+        for (let i = 0; i < 2000; i++) await server.fetch(url, { headers: new Headers({ a: "1" }) });
+        Bun.gc(true);
+        for (let i = 0; i < 2000; i++) await server.fetch(url, { headers: new Headers({ a: "1" }) });
+        Bun.gc(true);
+        console.log("done");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("done\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("server should return a body for a OPTIONS Request", async () => {
     using server = Bun.serve({
       port: 0,

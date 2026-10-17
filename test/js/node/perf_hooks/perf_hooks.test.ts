@@ -272,7 +272,7 @@ test("PerformanceObserver delivers entries to a callback created in a node:vm co
              perfHooksClass: await fromTheHost(perfHooks.PerformanceObserver, { entryTypes: ["mark"] }, () =>
                performance.mark("perf_hooks"),
              ),
-             // observe({ buffered: true }) delivers before it returns, not from a task.
+             // observe({ buffered: true }) queues the entries there are. The callback gets them later.
              buffered: await fromTheHost(PerformanceObserver, { type: "measure", buffered: true }),
            }),
          );

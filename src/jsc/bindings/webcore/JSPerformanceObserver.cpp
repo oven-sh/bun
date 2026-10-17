@@ -61,15 +61,15 @@ template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    bool isNullOrUndefined = value.isUndefinedOrNull();
-    auto* object = isNullOrUndefined ? nullptr : value.getObject();
-    if (!isNullOrUndefined && !object) [[unlikely]] {
+    bool isUndefined = value.isUndefined();
+    auto* object = isUndefined ? nullptr : value.getObject();
+    if (!isUndefined && !object) [[unlikely]] {
         Bun::ERR::INVALID_ARG_TYPE(throwScope, &lexicalGlobalObject, "options"_s, "object"_s, value);
         return {};
     }
     PerformanceObserver::Init result;
     JSValue bufferedValue;
-    if (isNullOrUndefined)
+    if (isUndefined)
         bufferedValue = jsUndefined();
     else {
         bufferedValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "buffered"_s));
@@ -81,7 +81,7 @@ template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init
     } else
         result.buffered = false;
     JSValue entryTypesValue;
-    if (isNullOrUndefined)
+    if (isUndefined)
         entryTypesValue = jsUndefined();
     else {
         entryTypesValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "entryTypes"_s));
@@ -105,7 +105,7 @@ template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     JSValue typeValue;
-    if (isNullOrUndefined)
+    if (isUndefined)
         typeValue = jsUndefined();
     else {
         typeValue = object->get(&lexicalGlobalObject, vm.propertyNames->type);
@@ -185,8 +185,8 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceObserverDOMConst
         *lexicalGlobalObject,
         argument0.value(),
         *castedThis->globalObject(),
-        [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) {
-            throwArgumentMustBeFunctionError(lexicalGlobalObject, scope, 0, "callback"_s, "PerformanceObserver"_s, nullptr);
+        [&](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) {
+            Bun::ERR::INVALID_ARG_TYPE(scope, &lexicalGlobalObject, "callback"_s, "function"_s, argument0.value());
         });
     RETURN_IF_EXCEPTION(throwScope, {});
     auto* structure = structureForNewTarget<PerformanceObserver>(lexicalGlobalObject, callFrame);
@@ -288,11 +288,14 @@ static inline JSValue jsPerformanceObserverConstructor_supportedEntryTypesGetter
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& globalObject = *defaultGlobalObject(&lexicalGlobalObject);
-    if (auto* entryTypes = globalObject.m_performanceObserverSupportedEntryTypes.get())
-        return entryTypes;
+    // One frozen array for the realm, as in node: the constructor keeps it under a private name.
+    auto* constructor = asObject(JSPerformanceObserver::getConstructor(vm, &globalObject));
+    auto& cacheName = builtinNames(vm).dataPrivateName();
+    if (JSValue cached = constructor->getDirect(vm, cacheName))
+        return cached;
     JSValue entryTypes = toJS<IDLFrozenArray<IDLDOMString>>(globalObject, globalObject, throwScope, PerformanceObserver::supportedEntryTypes());
     RETURN_IF_EXCEPTION(throwScope, {});
-    globalObject.m_performanceObserverSupportedEntryTypes.set(vm, &globalObject, asArray(entryTypes));
+    constructor->putDirect(vm, cacheName, entryTypes, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     return entryTypes;
 }
 

@@ -923,6 +923,27 @@ describe("the delivery of Node's entry types", () => {
 });
 
 describe("the PerformanceObserver class", () => {
+  test("takes observe(null) and a callback that is no function as invalid arguments", () => {
+    const observer = new PerformanceObserver(() => {});
+    assert.throws(() => observer.observe(null as never), {
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "options" argument must be of type object. Received null',
+    });
+    const received = [
+      [undefined, "undefined"],
+      [null, "null"],
+      [1, "type number (1)"],
+    ] as const;
+    for (const [callback, description] of received) {
+      assert.throws(() => new PerformanceObserver(callback as never), {
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "callback" argument must be of type function. Received ' + description,
+      });
+    }
+  });
+
   test("is the global one, with node's surface", () => {
     assert.strictEqual(PerformanceObserver, globalThis.PerformanceObserver);
     assert.strictEqual(perf.PerformanceObserverEntryList, globalThis.PerformanceObserverEntryList);
@@ -940,6 +961,12 @@ describe("the PerformanceObserver class", () => {
       { ...descriptor, get: typeof descriptor.get },
       { get: "function", set: undefined, enumerable: false, configurable: true },
     );
+    assert.deepStrictEqual(Reflect.ownKeys(PerformanceObserver).map(String).sort(), [
+      "length",
+      "name",
+      "prototype",
+      "supportedEntryTypes",
+    ]);
     assert.deepStrictEqual(Object.getOwnPropertyNames(PerformanceObserver.prototype), [
       "constructor",
       "observe",

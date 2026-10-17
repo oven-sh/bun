@@ -249,8 +249,7 @@ pub fn copy_file(in_: InputType<'_>, out: InputType<'_>) -> CopyFileReturnType {
     copy_file_with_state(in_, out, &mut state)
 }
 
-/// Copy `in_` to a new file at `out`, replacing whatever is at that name: the path form of
-/// [`Dir::create_fresh_file_z`](crate::Dir::create_fresh_file_z).
+/// Path form of `Dir::create_fresh_file_z`: copy `in_` to a new file at `out`, replacing the old one.
 #[cfg(windows)]
 pub fn copy_file_replacing(in_: &bun_core::WStr, out: &bun_core::WStr) -> CopyFileReturnType {
     use crate::windows::{

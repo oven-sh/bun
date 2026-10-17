@@ -387,8 +387,7 @@ impl Dir {
         Ok(File::from_fd(fd))
     }
 
-    /// Create `sub_path` as a new file, replacing whatever is at that name (mode 0o666). Never
-    /// truncates in place: the old file can be a hardlink of the one about to be copied into it.
+    /// Create a new file at `sub_path`, replacing the old one: it can be a hardlink of the source.
     pub fn create_fresh_file_z(&self, sub_path: &ZStr) -> Maybe<File> {
         let open = || {
             openat(

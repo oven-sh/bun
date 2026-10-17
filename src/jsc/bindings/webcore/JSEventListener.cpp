@@ -183,12 +183,14 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
     auto reportThrown = [&] {
         auto* exception = scope.exception();
-        if (!Bun::clearExceptionOrTakeTermination(vm, scope)) {
-            event.stopImmediatePropagation();
-            return;
+        if (Bun::clearExceptionOrTakeTermination(vm, scope)) {
+            event.target()->uncaughtExceptionInEventHandler();
+            reportException(lexicalGlobalObject, exception);
+            if (!scope.exception()) [[likely]]
+                return;
         }
-        event.target()->uncaughtExceptionInEventHandler();
-        reportException(lexicalGlobalObject, exception);
+        // The VM's stop, in the listener or in the handlers of its error: the dispatch enters no more listeners.
+        event.stopImmediatePropagation();
     };
 
     JSValue handleEventFunction = jsFunction;

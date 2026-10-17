@@ -2370,6 +2370,30 @@ describe("a vm timeout in a listener that native code called ends the script", (
       `threw ERR_SCRIPT_EXECUTION_TIMEOUT [] then ["once listener","plain listener"]`,
     ],
     [
+      // Bun reports a listener's throw from inside dispatchEvent() too.
+      "dispatchEvent(), in the 'uncaughtException' listener that a listener's throw is reported to",
+      `let spinning = true;
+       process.on("uncaughtException", () => { if (spinning) spin(); });
+       const target = new EventTarget();
+       target.addEventListener("throw", () => { if (spinning) throw new Error("listener threw"); });
+       target.addEventListener("throw", () => ran.push("once listener"), { once: true });
+       target.addEventListener("throw", () => ran.push("plain listener"));
+       const call = () => target.dispatchEvent(new Event("throw"));
+       const afterwards = () => { spinning = false; call(); };`,
+      `threw ERR_SCRIPT_EXECUTION_TIMEOUT [] then ["once listener","plain listener"]`,
+    ],
+    [
+      // events.once() listens for 'abort' with a once listener that stopImmediatePropagation() does not stop.
+      "abort(), the once listener of events.once() behind it stays registered",
+      `const { once, EventEmitter, getEventListeners } = require("node:events");
+       const controller = new AbortController();
+       controller.signal.addEventListener("abort", spin);
+       once(new EventEmitter(), "never", { signal: controller.signal }).catch(() => ran.push("events.once() rejected"));
+       const call = () => controller.abort();
+       const afterwards = () => ran.push(getEventListeners(controller.signal, "abort").length + " listeners");`,
+      `threw ERR_SCRIPT_EXECUTION_TIMEOUT [] then ["2 listeners"]`,
+    ],
+    [
       // The context's own microtask checkpoint runs inside the run, under its timeout.
       "dispatchEvent() from a microtask of an afterEvaluate context",
       `const target = new EventTarget();

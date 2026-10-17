@@ -204,12 +204,9 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     init.error = error;
     init.cancelable = false;
     init.bubbles = false;
+    auto forParent = proxy->serializeErrorForWorkerObject(*globalObject, error);
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
-    // A worker that its own 'error' listeners stopped reports nothing more: its exit code stands.
-    auto& vm = JSC::getVM(globalObject);
-    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
-        return;
-    proxy->postErrorToWorkerObject(*globalObject, messageStr, error);
+    proxy->postErrorToWorkerObject(messageStr, WTF::move(forParent));
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetParentPort);

@@ -14,6 +14,7 @@
   "src/jsc/bindings/webcore/JSCallbackData.cpp": 1,
   "src/jsc/bindings/webcore/JSCallbackData.h": 2,
   "src/jsc/bindings/webcore/JSPerformanceObserverCallback.cpp": 1,
+  "src/jsc/bindings/webcore/WebSocket.cpp": 1,
   "src/jsc/modules/NodeModuleModule.cpp": 1,
   "src/runtime/bake/BakeProduction.cpp": 1
 }

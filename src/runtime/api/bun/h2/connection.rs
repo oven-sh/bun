@@ -136,7 +136,7 @@ enum NoEntry {
     Live,
     /// It was opened before and its entry is gone: a frame on it is dropped.
     Closed,
-    /// It was never opened: a frame on it is a connection error.
+    /// Nothing opened it yet: the id is above every id that its initiator has used.
     Idle,
 }
 

@@ -657,7 +657,8 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
 
   /// For the callers that wait. If no connection is ready, the pool is started: it dials until `max` is reached.
   /// Otherwise it grows by one dial for each waiting caller that no dial in flight covers: back to what it has had
-  /// since a dial last failed, and by one more after a pause that doubles with each failure, up to 1 s.
+  /// since a dial last failed, and by one more after a pause that doubles with each failure, up to 1 s. A login ends
+  /// the pause.
   #dialForQueued() {
     if (this.queue.length !== 0) {
       this.#dial(this.readyConnections.size === 0);
@@ -824,6 +825,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     this.saslprep = connection.saslprep;
     this.#most = Math.max(this.#most, this.connections.length - this.#connecting());
     this.#refusals = 0;
+    this.#refusedAt = -Infinity;
     this.readyConnections.add(connection);
     if (this.#dialsHeld) {
       this.#dialsHeld = false;
@@ -831,6 +833,8 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     }
     this.runUserCallback(this.connectionInfo.onconnect, null);
     this.#serve();
+    // The server has room: the callers that still wait do not have to wait for the next one to arrive.
+    this.#dialForQueued();
   }
 
   connectionClosed(connection: PooledConnection, err: Error, established: boolean) {

@@ -1204,7 +1204,8 @@ describe.each(scripted)("$adapter, scripted server", script => {
     await using sql = new SQL({ url: url(server.port), max: 3, onclose: closed.hit });
     const queries = [1, 2, 3].map(() => outcome(sql.unsafe("select 1").simple()));
     expect(await Promise.all(queries)).toEqual(Array(3).fill("resolved"));
-    expect(server.sockets.length).toBe(3);
+    // And one more if the pause is over when the login comes.
+    expect(server.sockets.length).toBeLessThanOrEqual(4);
   });
 
   test.concurrent("a pool that lost connections grows by one dial for each caller that waits", async () => {
@@ -1392,6 +1393,26 @@ describe.each(scripted)("$adapter, scripted server", script => {
         await nextTurn();
       }
       expect(await server.dials()).toBe(7);
+    });
+
+    test.concurrent("a login shows that there is room: the callers that already wait are dialed for", async () => {
+      let answerWith = (socket: net.Socket, nth: number) => (nth <= 2 ? ready(socket) : refuseLogin(socket));
+      await using server = await serverOf((socket, nth) => answerWith(socket, nth));
+      const connected = new Calls();
+      const closed = new Calls();
+      const sql = new SQL({ url: url(server.port), max: 5, onconnect: connected.hit, onclose: closed.hit });
+      await using _ = unanswered(sql);
+      await sql.connect();
+      await Promise.all([connected.reached(2), closed.reached(3)]);
+      answerWith = ready;
+      waits(sql);
+      waits(sql);
+      // Nobody releases, and nobody else arrives.
+      const waiting = [1, 2, 3, 4].map(() => sql.reserve());
+      server.sockets[1].destroy();
+      const held = await Promise.all(waiting);
+      expect(await server.dials()).toBe(9);
+      for (const reserved of held) reserved.release();
     });
 
     test.concurrent("a connection that it loses is replaced at once, whatever the server said before", async () => {

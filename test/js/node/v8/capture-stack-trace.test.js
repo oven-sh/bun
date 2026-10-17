@@ -2143,3 +2143,31 @@ test.concurrent("a stack taken while a CommonJS module loads names the frame of 
   });
   expect(exitCode).toBe(0);
 });
+
+test("a SyntaxError gets an `at <parse>` line only if it has a source", () => {
+  const thrownBy = fn => {
+    try {
+      fn();
+    } catch (e) {
+      return e;
+    }
+  };
+  class Sub extends SyntaxError {}
+  const withoutSource = {
+    "new SyntaxError()": new SyntaxError("m"),
+    "SyntaxError()": SyntaxError("m"),
+    "a subclass": new Sub("m"),
+    "JSON.parse": thrownBy(() => JSON.parse("{")),
+    "eval": thrownBy(() => (0, eval)("{")),
+    "new Function": thrownBy(() => new Function("{")),
+    "new RegExp": thrownBy(() => new RegExp("[")),
+    "BigInt": thrownBy(() => BigInt("x")),
+    "structuredClone": structuredClone(new SyntaxError("m")),
+  };
+  for (const error of Object.values(withoutSource)) expect(error).toBeInstanceOf(SyntaxError);
+  expect(Object.keys(withoutSource).filter(name => withoutSource[name].stack.includes("<parse>"))).toEqual([]);
+
+  using dir = tempDir("syntax-error-parse-line", { "bad-regex.cjs": `/* line 1 */\n"".test(/[a-0]/);\n` });
+  const file = join(String(dir), "bad-regex.cjs");
+  expect(thrownBy(() => require(file)).stack.split("\n")[1]).toBe(`    at <parse> (${file}:2)`);
+});

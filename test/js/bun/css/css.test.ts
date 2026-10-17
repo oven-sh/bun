@@ -7960,8 +7960,12 @@ describe("css tests", () => {
   describe("@property", () => {
     const minify = (source: string) => cssInternals.minifyTest(source, "");
     // One rule, as a minified build prints it.
-    const property = (syntax: string, value: string) =>
-      minify(`@property --p { syntax: '${syntax}'; inherits: false; initial-value: ${value}; }`);
+    const property = (syntax: string, value: string, targets?: { chrome?: number; safari?: number }) =>
+      cssInternals.minifyTest(
+        `@property --p { syntax: '${syntax}'; inherits: false; initial-value: ${value}; }`,
+        "",
+        targets,
+      );
     const rule = (syntax: string, value: string) =>
       `@property --p{syntax:"${syntax}";inherits:false;initial-value:${value}}`;
     // One rule whose descriptors are written in the given order.
@@ -8009,8 +8013,11 @@ describe("css tests", () => {
         `@property --p {\n  syntax: "<length> | none";\n  inherits: false;\n  initial-value: none;\n}\n`,
       ]);
 
-      expect(() => property("<color>", "25px")).toThrow("Unexpected token: 25px");
-      expect(() => property("<length>", "var(--some-value)")).toThrow("Unexpected token: var(");
+      // lightningcss rejects these two values. They are printed as written here.
+      expect([property("<color>", "25px"), property("<length>", "var(--some-value)")]).toEqual([
+        rule("<color>", "25px"),
+        rule("<length>", "var(--some-value)"),
+      ]);
       expect(() => body(`syntax: '<color>'; inherits: false;`)).toThrow("Invalid at-rule body");
       expect(() => body(`syntax: '*';`)).toThrow("Invalid at-rule body");
       expect(() => body(`inherits: false;`)).toThrow("Invalid at-rule body");
@@ -8018,6 +8025,80 @@ describe("css tests", () => {
         "Unexpected token: property-name",
       );
       expect(() => property("<color>", "")).toThrow("Unexpected end of input");
+    });
+
+    // Chrome 153 registers each of these properties. The typed parsers do not resolve the
+    // value, and that was a build error.
+    test("a typed initial-value that the parser does not resolve is printed as written", () => {
+      expect({
+        "currentColor origin": property("<color>", "rgb(from currentColor r g b)"),
+        "currentColor in color-mix()": property("<color>", "color-mix(in srgb,currentColor 15%,transparent)"),
+        "contrast-color()": property("<color>", "contrast-color(red)"),
+        "one of a list": property("<color>#", "red,rgb(from currentColor r g b)"),
+        "a later component": property("<length> | <color>", "rgb(from currentColor r g b)"),
+        "<integer> calc()": property("<integer>", "calc(1 + 2)"),
+        "<image> paint()": property("<image>", "paint(foo)"),
+        "a color that the parser resolves": property("<color>", "rgb(255 0 0)"),
+        "a calc() that the parser resolves": property("<length>", "calc(1px + 2px)"),
+      }).toEqual({
+        "currentColor origin": rule("<color>", "rgb(from currentColor r g b)"),
+        "currentColor in color-mix()": rule("<color>", "color-mix(in srgb,currentColor 15%,transparent)"),
+        "contrast-color()": rule("<color>", "contrast-color(red)"),
+        "one of a list": rule("<color>#", "red,rgb(from currentColor r g b)"),
+        "a later component": rule("<length>|<color>", "rgb(from currentColor r g b)"),
+        "<integer> calc()": rule("<integer>", "calc(1 + 2)"),
+        "<image> paint()": rule("<image>", "paint(foo)"),
+        "a color that the parser resolves": rule("<color>", "red"),
+        "a calc() that the parser resolves": rule("<length>", "3px"),
+      });
+
+      expect(
+        cssInternals._test(
+          `@property --p { syntax: "<color>"; inherits: false; initial-value: rgb(from currentColor r g b) }`,
+          "",
+        ),
+      ).toBe(
+        `@property --p {\n  syntax: "<color>";\n  inherits: false;\n  initial-value: rgb(from currentColor r g b);\n}\n`,
+      );
+    });
+
+    // A browser drops such a rule, as it drops the rule of the source file.
+    test("a typed initial-value that is not valid is printed as written", () => {
+      expect([
+        property("<color>", "foo"),
+        property("<color>", "10px"),
+        property("<color>", "var(--x)"),
+        property("<length>", "red"),
+        property("<length>#", "1px,red"),
+        property("<custom-ident>", "initial"),
+      ]).toEqual([
+        rule("<color>", "foo"),
+        rule("<color>", "10px"),
+        rule("<color>", "var(--x)"),
+        rule("<length>", "red"),
+        rule("<length>#", "1px,red"),
+        rule("<custom-ident>", "initial"),
+      ]);
+    });
+
+    // `var()` is not valid in an initial value: Chrome 153 drops the rule that was printed.
+    test("an initial-value is not lowered for the browser targets", () => {
+      const chrome = { chrome: 90 << 16 };
+      const safari = { safari: 16 << 16 };
+      expect([
+        property("<color>", "light-dark(red, blue)", chrome),
+        property("*", "light-dark(red, blue)", chrome),
+        cssInternals.minifyTest(".a { color: light-dark(red, blue) }", "", chrome),
+        // Each Safari that reads `@property` reads the `x` unit.
+        property("<resolution>", "2dppx", safari),
+        cssInternals.minifyTest(".a { --r: 2dppx }", "", safari),
+      ]).toEqual([
+        rule("<color>", "light-dark(red,#00f)"),
+        rule("*", "light-dark(red,#00f)"),
+        ".a{color:var(--buncss-light,red)var(--buncss-dark,#00f)}",
+        rule("<resolution>", "2x"),
+        ".a{--r:2dppx}",
+      ]);
     });
 
     // Each `url()` was a build error: the value was parsed with no import record list.
@@ -8051,7 +8132,7 @@ describe("css tests", () => {
         rule("<custom-ident>|<string>", "system-ui"),
         rule("<custom-ident>|<string>", `" "`),
       ]);
-      expect(() => property("<string>", "hi")).toThrow("Unexpected token: hi");
+      expect(property("<string>#", "Charter,serif")).toBe(rule("<string>#", "Charter,serif"));
     });
 
     // The value of the first component that matched the start of the initial-value was
@@ -8074,20 +8155,30 @@ describe("css tests", () => {
       });
 
       // No component matches all of these. Chrome 153 drops each rule.
-      expect(() => property("<color>", "red blue")).toThrow("Unexpected token: red");
-      expect(() => property("<length>", "10px 20px")).toThrow("Unexpected token: 10px");
-      expect(() => property("<transform-list>", "rotate(1turn) foo(1)")).toThrow("Unexpected token: rotate(");
+      expect([
+        property("<color>", "red blue"),
+        property("<length>", "10px 20px"),
+        property("<transform-list>", "rotate(1turn)foo(1)"),
+      ]).toEqual([
+        rule("<color>", "red blue"),
+        rule("<length>", "10px 20px"),
+        rule("<transform-list>", "rotate(1turn)foo(1)"),
+      ]);
     });
 
     test("the descriptors can come in any order", () => {
       expect({
         "value first": body(`initial-value: rgb(255 0 0); syntax: "<color>"; inherits: false`),
+        "value first, not resolved": body(
+          `initial-value: rgb(from currentColor r g b); syntax: "<color>"; inherits: false;`,
+        ),
         "value first, url()": body(`initial-value: url(a.png); inherits: false; syntax: "<url>"`),
         "value first, a list": body(`initial-value: 10px 20px; inherits: true; syntax: "<length>+";`),
         "value first, a semicolon in a block": body(`initial-value: foo(a;b)"c;d"[e;f]; syntax: "*"; inherits: false`),
         "value last, no semicolon": body(`syntax: "<color>"; inherits: false; initial-value: rgb(255 0 0)`),
       }).toEqual({
         "value first": rule("<color>", "red"),
+        "value first, not resolved": rule("<color>", "rgb(from currentColor r g b)"),
         "value first, url()": rule("<url>", "url(a.png)"),
         "value first, a list": `@property --p{syntax:"<length>+";inherits:true;initial-value:10px 20px}`,
         "value first, a semicolon in a block": rule("*", `foo(a;b)"c;d"[e;f]`),
@@ -8107,6 +8198,7 @@ describe("css tests", () => {
           `initial-value: foo; initial-value: rgb(255 0 0); syntax: "<color>"; inherits: false`,
         ),
         "not valid, then valid": body(`syntax: "<color>"; inherits: false; initial-value: foo; initial-value: red`),
+        "valid, then not valid": body(`syntax: "<color>"; inherits: false; initial-value: red; initial-value: foo`),
         "empty, then valid": body(`syntax: "<color>"; inherits: false; initial-value: ; initial-value: red`),
         "a stray bracket, then valid": body(
           `syntax: "<color>"; inherits: false; initial-value: ] foo; initial-value: red`,
@@ -8116,14 +8208,12 @@ describe("css tests", () => {
         "syntax again after the value": rule("<length>", "3px"),
         "two values, then syntax": rule("<color>", "red"),
         "not valid, then valid": rule("<color>", "red"),
+        "valid, then not valid": rule("<color>", "foo"),
         "empty, then valid": rule("<color>", "red"),
         "a stray bracket, then valid": rule("<color>", "red"),
         "two url()": rule("<url>", "url(b.png)"),
       });
 
-      expect(() => body(`syntax: "<color>"; inherits: false; initial-value: red; initial-value: foo`)).toThrow(
-        "Unexpected token: foo",
-      );
       expect(() => body(`syntax: "<color>"; inherits: false; initial-value: red; initial-value: ;`)).toThrow(
         "Unexpected end of input",
       );
@@ -8132,6 +8222,7 @@ describe("css tests", () => {
     test("bun build reads url() in an initial-value and reports an error at its place in the file", async () => {
       using dir = tempDir("css-property-initial-value", {
         "valid.css": `@property --icon {\n  syntax: "<image> | none";\n  initial-value: url("data:,");\n  inherits: true;\n}\n`,
+        "as-written.css": `@property --c { syntax: '<color>'; inherits: false; initial-value: rgb(from currentColor r g b); }\n.a { color: var(--c); }\n`,
         "missing.css": `.a { color: red }\n\n@property --u {\n  initial-value: url(./missing.png);\n  syntax: "<url>";\n  inherits: false;\n}\n`,
         "empty.css": `.a { color: red }\n@property --c {\n  syntax: "<color>";\n  inherits: false;\n  initial-value: ;\n}\n`,
         "empty-first.css": `.a { color: red }\n@property --c {\n  initial-value: ;\n  syntax: "<color>";\n  inherits: false;\n}\n`,
@@ -8147,8 +8238,8 @@ describe("css tests", () => {
         const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         return { stderr, exitCode };
       };
-      const [valid, missing, empty, emptyFirst] = await Promise.all(
-        ["valid.css", "missing.css", "empty.css", "empty-first.css"].map(build),
+      const [valid, asWritten, missing, empty, emptyFirst] = await Promise.all(
+        ["valid.css", "as-written.css", "missing.css", "empty.css", "empty-first.css"].map(build),
       );
 
       expect(valid.stderr).not.toContain("error:");
@@ -8156,6 +8247,12 @@ describe("css tests", () => {
         `@property --icon {\n  syntax: "<image> | none";\n  inherits: true;\n  initial-value: url("data:,");\n}\n`,
       );
       expect(valid.exitCode).toBe(0);
+
+      expect(asWritten.stderr).not.toContain("error:");
+      expect(await Bun.file(join(String(dir), "as-written.css.out", "as-written.css")).text()).toContain(
+        `@property --c {\n  syntax: "<color>";\n  inherits: false;\n  initial-value: rgb(from currentColor r g b);\n}\n`,
+      );
+      expect(asWritten.exitCode).toBe(0);
 
       expect(missing.stderr).toContain(`Could not resolve: "./missing.png"`);
       expect(missing.stderr).toContain("missing.css:4:18");

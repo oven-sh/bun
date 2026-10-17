@@ -8,7 +8,6 @@
 #define BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro) \
     macro("bun:test"_s, BunTest) \
     macro("bun:jsc"_s, BunJSC) \
-    macro("bun:app"_s, BunApp) \
     macro("node:buffer"_s, NodeBuffer) \
     macro("node:constants"_s, NodeConstants) \
     macro("node:sqlite"_s, NodeSqlite) \
@@ -28,9 +27,6 @@
     macro("node:module"_s, NodeModule)  \
     macro("node:process"_s, NodeProcess) \
     macro("bun"_s, BunObject)
-
-#define BUN_FOREACH_CJS_NATIVE_MODULE(macro) \
-    BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro)
 
 namespace Zig {
 // Slot index into GlobalObject::m_nativeModuleDefaults. The generator runs once per

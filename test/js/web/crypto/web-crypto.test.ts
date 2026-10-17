@@ -1,7 +1,12 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createSecretKey } from "node:crypto";
+import { createSecretKey, type webcrypto } from "node:crypto";
+
+type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
+type HmacImportParams = webcrypto.HmacImportParams;
+type JsonWebKey = webcrypto.JsonWebKey;
+type KeyUsage = webcrypto.KeyUsage;
 
 // This is consistent with what Node.js does, probably for polyfills to continue to work.
 it("crypto.subtle setter should not throw", () => {
@@ -110,7 +115,7 @@ describe("Web Crypto", () => {
     // Setup: AES-GCM key that can encrypt arbitrary bytes and also unwrap keys.
     // We encrypt payloads that decrypt to invalid JWK data so the JWK parse path
     // inside SubtleCrypto::unwrapKey fails.
-    async function setup(payload: Uint8Array) {
+    async function setup(payload: Uint8Array<ArrayBuffer>) {
       const keyData = new Uint8Array(32).fill(1);
       const iv = new Uint8Array(12).fill(2);
       const key = await crypto.subtle.importKey("raw", keyData, { name: "AES-GCM" }, false, [
@@ -335,6 +340,70 @@ describe("oversized inputs", () => {
       });
     }
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("RSA-PSS saltLength", () => {
+  // saltLength is an unsigned long, but the OpenSSL setter takes an int whose
+  // negative values select a salt length: -1 is the digest length and -2 means
+  // "whatever fits" on sign and "accept any salt length" on verify. 2**32 - 1
+  // and 2**32 - 2 used to turn into exactly those two values.
+  it("rejects values that do not fit in an int instead of treating them as the -1/-2 selectors", async () => {
+    const { privateKey, publicKey } = await crypto.subtle.generateKey(
+      { name: "RSA-PSS", modulusLength: 1024, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      false,
+      ["sign", "verify"],
+    );
+    const data = new TextEncoder().encode("hello");
+    const signedWithSalt20 = await crypto.subtle.sign({ name: "RSA-PSS", saltLength: 20 }, privateKey, data);
+
+    const sign = (saltLength: number) =>
+      crypto.subtle.sign({ name: "RSA-PSS", saltLength }, privateKey, data).then(
+        () => "signed",
+        e => `rejected ${e.name}`,
+      );
+    const verifySalt20Signature = (saltLength: number) =>
+      crypto.subtle.verify({ name: "RSA-PSS", saltLength }, publicKey, signedWithSalt20, data).then(
+        ok => String(ok),
+        e => `rejected ${e.name}`,
+      );
+
+    expect({
+      sign: {
+        "2**32 - 1": await sign(2 ** 32 - 1),
+        "2**32 - 2": await sign(2 ** 32 - 2),
+        "2**31": await sign(2 ** 31),
+        // Fits in an int; BoringSSL rejects it because it does not fit the key.
+        "2**31 - 1": await sign(2 ** 31 - 1),
+        // 1024-bit key, SHA-256: 128 - 32 - 2 = 94 is the largest salt that fits.
+        "95": await sign(95),
+        "94": await sign(94),
+      },
+      verify: {
+        "2**32 - 1": await verifySalt20Signature(2 ** 32 - 1),
+        "2**32 - 2": await verifySalt20Signature(2 ** 32 - 2),
+        "2**31": await verifySalt20Signature(2 ** 31),
+        "32": await verifySalt20Signature(32),
+        "20": await verifySalt20Signature(20),
+      },
+    }).toEqual({
+      sign: {
+        "2**32 - 1": "rejected OperationError",
+        "2**32 - 2": "rejected OperationError",
+        "2**31": "rejected OperationError",
+        "2**31 - 1": "rejected OperationError",
+        "95": "rejected OperationError",
+        "94": "signed",
+      },
+      verify: {
+        "2**32 - 1": "rejected OperationError",
+        "2**32 - 2": "rejected OperationError",
+        "2**31": "rejected OperationError",
+        // A salt length that does not match the signature is a failed verification, not an error.
+        "32": "false",
+        "20": "true",
+      },
+    });
   });
 });
 
@@ -676,11 +745,11 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
     }
   });
 
-  it.each([
+  it.each<[string, "raw" | "raw-secret"]>([
     ["ChaCha20-Poly1305", "raw-secret"],
     ["AES-GCM", "raw"],
   ])("decrypt of undersized %s input rejects with Node's generic message", async (name, format) => {
-    const key = await crypto.subtle.importKey(format as KeyFormat, new Uint8Array(32), { name }, false, ["decrypt"]);
+    const key = await crypto.subtle.importKey(format, new Uint8Array(32), { name }, false, ["decrypt"]);
     await expect(crypto.subtle.decrypt({ name, iv: new Uint8Array(12) }, key, new Uint8Array(5))).rejects.toThrow(
       "The operation failed for an operation-specific reason",
     );
@@ -764,7 +833,12 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
   // One case per branch of SubtleCrypto::getPublicKey: AKP (ML-DSA/ML-KEM),
   // RSA, EC, and the Ed25519/X25519 owned-EVP_PKEY path. X25519 public keys
   // carry no usages in Node v26.3.0, so its pubUsages is empty.
-  const getPublicKeyCases: [string, AlgorithmIdentifier, KeyUsage[], KeyUsage[]][] = [
+  const getPublicKeyCases: [
+    string,
+    AlgorithmIdentifier | webcrypto.RsaHashedKeyGenParams | webcrypto.EcKeyGenParams,
+    KeyUsage[],
+    KeyUsage[],
+  ][] = [
     ["ML-DSA-65", "ML-DSA-65", ["sign", "verify"], ["verify"]],
     ["ML-KEM-768", "ML-KEM-768", ["encapsulateBits", "decapsulateBits"], ["encapsulateBits"]],
     [
@@ -1091,7 +1165,7 @@ describe("OKP spki/pkcs8 cross-curve import", () => {
     );
 
   it("Ed25519 key imported as X25519 reports 'Invalid key type'", async () => {
-    const ed = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+    const ed = (await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
     const spki = await crypto.subtle.exportKey("spki", ed.publicKey);
     const pkcs8 = await crypto.subtle.exportKey("pkcs8", ed.privateKey);
     expect({
@@ -1101,7 +1175,7 @@ describe("OKP spki/pkcs8 cross-curve import", () => {
   });
 
   it("X25519 key imported as Ed25519 reports 'Invalid key type'", async () => {
-    const x = await crypto.subtle.generateKey("X25519", true, ["deriveBits"]);
+    const x = (await crypto.subtle.generateKey("X25519", true, ["deriveBits"])) as CryptoKeyPair;
     const spki = await crypto.subtle.exportKey("spki", x.publicKey);
     const pkcs8 = await crypto.subtle.exportKey("pkcs8", x.privateKey);
     expect({
@@ -1114,7 +1188,7 @@ describe("OKP spki/pkcs8 cross-curve import", () => {
   // the EC importer's two-element guard bailed without reaching the OID check and
   // reported the generic "Invalid keyData" instead of the type mismatch.
   it("OKP key imported as ECDSA/ECDH reports 'Invalid key type'", async () => {
-    const ed = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+    const ed = (await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
     const spki = await crypto.subtle.exportKey("spki", ed.publicKey);
     const pkcs8 = await crypto.subtle.exportKey("pkcs8", ed.privateKey);
     expect({
@@ -1175,7 +1249,7 @@ describe("empty usages on a private or secret key", () => {
 // mismatch messages but the X25519 twin was left with the empty-message
 // InvalidAccessError. The cfrg vendored test only covers this under X448.
 it("X25519 deriveBits with an ECDH public key reports 'key algorithm mismatch'", async () => {
-  const x = await crypto.subtle.generateKey("X25519", false, ["deriveBits"]);
+  const x = (await crypto.subtle.generateKey("X25519", false, ["deriveBits"])) as CryptoKeyPair;
   const ec = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]);
   const rejection = (p: Promise<unknown>) =>
     p.then(
@@ -1187,7 +1261,7 @@ it("X25519 deriveBits with an ECDH public key reports 'key algorithm mismatch'",
       crypto.subtle.deriveBits({ name: "X25519", public: ec.publicKey }, x.privateKey, 256),
     ),
     ecdhWithX25519Public: await rejection(
-      crypto.subtle.deriveBits({ name: "ECDH", namedCurve: "P-256", public: x.publicKey }, ec.privateKey, 256),
+      crypto.subtle.deriveBits({ name: "ECDH", namedCurve: "P-256", public: x.publicKey } as any, ec.privateKey, 256),
     ),
   }).toEqual({
     x25519WithEcdhPublic: "InvalidAccessError: key algorithm mismatch",

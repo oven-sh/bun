@@ -39,7 +39,7 @@ pub(crate) type FSEventStreamCallback = unsafe extern "C" fn(
 
 // we only care about info and perform
 #[repr(C)]
-pub struct CFRunLoopSourceContext {
+pub(crate) struct CFRunLoopSourceContext {
     pub(crate) version: CFIndex,
     pub(crate) info: *mut c_void,
     pub(crate) retain: Option<unsafe extern "C" fn(*const c_void) -> *const c_void>,
@@ -53,7 +53,7 @@ pub struct CFRunLoopSourceContext {
 }
 
 #[repr(C)]
-pub struct FSEventStreamContext {
+pub(crate) struct FSEventStreamContext {
     pub(crate) version: CFIndex,
     pub(crate) info: *mut c_void,
     pub(crate) pad: [*mut c_void; 3],
@@ -93,11 +93,9 @@ const K_FS_EVENTS_RENAMED: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CREATED
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_RENAMED;
 
 static FSEVENTS_DEFAULT_LOOP_MUTEX: Mutex = Mutex::new();
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 static FSEVENTS_DEFAULT_LOOP: std::sync::OnceLock<&'static FSEventsLoop> =
     std::sync::OnceLock::new();
 
-#[cfg(unix)]
 fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     const { assert!(core::mem::size_of::<T>() == core::mem::size_of::<*mut c_void>()) };
     // SAFETY: handle is a valid dlopen handle; symbol is NUL-terminated
@@ -113,19 +111,12 @@ fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     // bytemuck/as: fn pointers are not Pod and `as` can't cast data→fn pointers.
     Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&ptr) })
 }
-#[cfg(not(unix))]
-fn dlsym<T>(_handle: *mut c_void, _symbol: &core::ffi::CStr) -> Option<T> {
-    // FSEvents is macOS-only; CoreFoundation/CoreServices loaders below are
-    // gated behind `target_os = "macos"`, so this body is unreachable on
-    // Windows but must still type-check.
-    None
-}
 
 // Clone/Copy: bitwise OK — resolved fn pointers plus a framework-static
 // `*const CFStringRef`; the dlopen handle they came from is leaked (never
 // dlclosed), so copies stay valid for the process lifetime.
 #[derive(Clone, Copy)]
-pub struct CoreFoundation {
+pub(crate) struct CoreFoundation {
     pub(crate) array_create: unsafe extern "C" fn(
         CFAllocatorRef,
         *mut *mut c_void,
@@ -164,7 +155,7 @@ unsafe impl Send for CoreFoundation {}
 unsafe impl Sync for CoreFoundation {}
 
 impl CoreFoundation {
-    pub fn get() -> CoreFoundation {
+    pub(crate) fn get() -> CoreFoundation {
         *FSEVENTS_CF.get_or_init(init_core_foundation)
     }
 }
@@ -172,7 +163,7 @@ impl CoreFoundation {
 // Clone/Copy: bitwise OK — resolved fn pointers (from a leaked, never-dlclosed
 // dlopen handle) plus a `u64` sentinel.
 #[derive(Clone, Copy)]
-pub struct CoreServices {
+pub(crate) struct CoreServices {
     pub(crate) fs_event_stream_create: unsafe extern "C" fn(
         CFAllocatorRef,
         FSEventStreamCallback,
@@ -193,7 +184,7 @@ pub struct CoreServices {
 }
 
 impl CoreServices {
-    pub fn get() -> CoreServices {
+    pub(crate) fn get() -> CoreServices {
         *FSEVENTS_CS.get_or_init(init_core_services)
     }
 }
@@ -274,7 +265,7 @@ fn init_core_services() -> CoreServices {
     }
 }
 
-pub struct FSEventsLoop {
+pub(crate) struct FSEventsLoop {
     signal_source: AtomicPtr<c_void>,
     loop_: AtomicPtr<c_void>,
     mutex: Mutex,
@@ -307,7 +298,7 @@ impl FSEventsLoop {
     }
 }
 
-pub struct Task {
+pub(crate) struct Task {
     pub ctx: *mut (),
     pub callback: fn(*mut ()),
 }
@@ -329,7 +320,7 @@ impl Task {
     }
 }
 
-pub struct ConcurrentTask {
+pub(crate) struct ConcurrentTask {
     pub task: Task,
     pub(crate) next: bun_threading::Link<ConcurrentTask>,
     pub(crate) auto_delete: bool,
@@ -816,7 +807,6 @@ impl FSEventsLoop {
         unsafe { (cf.run_loop_stop)(self.loop_.load(Ordering::Relaxed)) };
     }
 
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn shutdown(&'static self) {
         // SAFETY: `thread` is only touched here and in `init()`, always on the JS thread under `FSEVENTS_DEFAULT_LOOP_MUTEX`.
         let Some(thread) = (unsafe { (*self.thread.get()).take() }) else {
@@ -853,7 +843,7 @@ impl FSEventsLoop {
     }
 }
 
-pub struct FSEventsWatcher {
+pub(crate) struct FSEventsWatcher {
     /// Borrowed from the owning `PathWatcher`. The
     /// PathWatcher heap-allocates this watcher and only frees it after `Drop`
     /// (→ `unregister_watcher`) has run, so the bytes outlive every read in
@@ -868,11 +858,10 @@ pub struct FSEventsWatcher {
     pub ctx: *mut c_void,
 }
 
-pub type Callback = fn(ctx: *mut c_void, event: Event, is_file: bool);
+pub(crate) type Callback = fn(ctx: *mut c_void, event: Event, is_file: bool);
 pub(crate) type UpdateEndCallback = fn(ctx: *mut c_void);
 
 impl FSEventsWatcher {
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn init(
         loop_: &'static FSEventsLoop,
         path: &[u8],
@@ -943,7 +932,6 @@ extern "C" fn close_and_wait_on_exit() {
 }
 
 fn close_and_wait() {
-    #[cfg(target_os = "macos")]
     if let Some(&loop_) = FSEVENTS_DEFAULT_LOOP.get() {
         let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
         loop_.shutdown();

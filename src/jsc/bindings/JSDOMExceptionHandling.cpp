@@ -67,13 +67,9 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     int lineNumber = 0;
     int columnNumber = 0;
     String exceptionSourceURL;
-    // if (auto* callFrame = callStack->firstNonNativeCallFrame()) {
-    //     lineNumber = callFrame->lineNumber();
-    //     columnNumber = callFrame->columnNumber();
-    //     exceptionSourceURL = callFrame->sourceURL();
-    // }
 
     Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+    RETURN_IF_EXCEPTION(scope, );
 
     if (exceptionDetails) {
         auto errorMessage = retrieveErrorMessage(*lexicalGlobalObject, vm, exception->value(), scope);
@@ -174,6 +170,8 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
 
     case ExceptionCode::EVENT_RECURSION:
         return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_EVENT_RECURSION, message);
+    case ExceptionCode::WORKER_INVALID_EXEC_ARGV:
+        return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_WORKER_INVALID_EXEC_ARGV, message);
 
     default: {
         // FIXME: All callers to createDOMException need to pass in the correct global object.

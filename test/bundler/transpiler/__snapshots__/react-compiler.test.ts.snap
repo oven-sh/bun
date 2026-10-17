@@ -109,7 +109,7 @@ var __toESM = (mod, isNodeMode, target) => {
       return cached;
   }
   target = mod != null ? __create(__getProtoOf(mod)) : {};
-  const to = isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
+  const to = isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default") ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
   if (mod && typeof mod === "object" || typeof mod === "function") {
     for (let key of __getOwnPropNames(mod))
       if (!__hasOwnProp.call(to, key))
@@ -134,7 +134,7 @@ var require_react = __commonJS(function(exports) {
 });
 
 // entry.tsx
-var import_react = __toESM(require_react(), 1);
+var import_react = __toESM(require_react());
 
 // node_modules/react/jsx-dev-runtime.js
 var $jsxDEV = () => null;
@@ -247,13 +247,6 @@ export {
 
 exports[`bundler react-compiler/DynamicImportInRender 1`] = `
 "var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");
-var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
-  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
-}) : x)(function(x) {
-  if (typeof require !== "undefined")
-    return require.apply(this, arguments);
-  throw Error('Dynamic require of "' + x + '" is not supported');
-});
 
 // entry.jsx
 import { use } from "react";
@@ -284,13 +277,6 @@ export {
 
 exports[`bundler react-compiler/DynamicImportInEffectClosure 1`] = `
 "var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");
-var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
-  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
-}) : x)(function(x) {
-  if (typeof require !== "undefined")
-    return require.apply(this, arguments);
-  throw Error('Dynamic require of "' + x + '" is not supported');
-});
 
 // entry.jsx
 import { useEffect } from "react";
@@ -379,6 +365,108 @@ function Comp() {
 }
 export {
   Comp
+};
+"
+`;
+
+exports[`bundler react-compiler/ZeroMemoSlotsNoRuntimeImport 1`] = `
+"// entry.jsx
+import { useState } from "react";
+function Counter() {
+  let [count] = useState(0);
+  return count + 2;
+}
+export {
+  Counter
+};
+"
+`;
+
+exports[`bundler react-compiler/ZeroMemoSlotsBeforeMemoizedComponent 1`] = `
+"// entry.jsx
+import { useState } from "react";
+import { jsxDEV } from "react/jsx-dev-runtime";
+import { c as _c } from "react/compiler-runtime";
+function Counter() {
+  let [count] = useState(0);
+  return count + 2;
+}
+function Hello(t0) {
+  let $ = _c(2);
+  let { name } = t0;
+  let t1;
+  if ($[0] !== name)
+    t1 = /* @__PURE__ */ jsxDEV("div", {
+      children: [
+        "Hello ",
+        name
+      ]
+    }, undefined, true, undefined, this), $[0] = name, $[1] = t1;
+  else
+    t1 = $[1];
+  return t1;
+}
+export {
+  Counter,
+  Hello
+};
+"
+`;
+
+exports[`bundler react-compiler/PromotedTemporariesAreNamedAfterTheirDeclaration 1`] = `
+"var __EARLY_RETURN_SENTINEL = /* @__PURE__ */ Symbol.for("react.early_return_sentinel");
+
+// entry.jsx
+import * as Lib from "ext";
+import { makeArray } from "ext";
+import { jsxDEV } from "react/jsx-dev-runtime";
+import { c as _c } from "react/compiler-runtime";
+function Component(t0) {
+  let $ = _c(9);
+  let { cond, a, num } = t0;
+  let t1;
+  if ($[0] !== a || $[1] !== cond) {
+    t1 = __EARLY_RETURN_SENTINEL;
+    bb0: {
+      let x = [];
+      if (cond) {
+        x.push(a);
+        t1 = x;
+        break bb0;
+      }
+    }
+    $[0] = a, $[1] = cond, $[2] = t1;
+  } else
+    t1 = $[2];
+  if (t1 !== __EARLY_RETURN_SENTINEL)
+    return t1;
+  let T0, t2;
+  if ($[3] !== num) {
+    let t3;
+    bb1: {
+      if (num > 1) {
+        t3 = [];
+        break bb1;
+      }
+      t3 = makeArray(num);
+    }
+    let arr = t3;
+    T0 = Lib.Stringify;
+    t2 = arr.push(num);
+    $[3] = num, $[4] = T0, $[5] = t2;
+  } else
+    T0 = $[4], t2 = $[5];
+  let t3;
+  if ($[6] !== T0 || $[7] !== t2)
+    t3 = /* @__PURE__ */ jsxDEV(T0, {
+      value: t2
+    }, undefined, false, undefined, this), $[6] = T0, $[7] = t2, $[8] = t3;
+  else
+    t3 = $[8];
+  return t3;
+}
+export {
+  Component
 };
 "
 `;

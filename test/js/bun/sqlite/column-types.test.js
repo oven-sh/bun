@@ -224,20 +224,17 @@ describe("SQLite Statement column types", () => {
     expect(stmt.declaredTypes).toEqual(["INTEGER", "ANY"]);
   });
 
-  it("throws an error when accessing columnTypes before statement execution", () => {
+  it("columnTypes and declaredTypes are available before the statement runs", () => {
     const db = new Database(":memory:");
     db.run(`CREATE TABLE test (id INTEGER, name TEXT)`);
 
-    // Prepare statement but don't execute it
-    const stmt = db.prepare("SELECT * FROM test");
+    expect(db.prepare("SELECT *, 1 FROM test").declaredTypes).toEqual(["INTEGER", "TEXT", null]);
+    expect(db.prepare("INSERT INTO test VALUES (1, 'a') RETURNING name").declaredTypes).toEqual(["TEXT"]);
+    expect(db.prepare("INSERT INTO test VALUES (1, 'a')").declaredTypes).toEqual([]);
+    expect(db.query("SELECT count(*) AS n FROM test").get()).toEqual({ n: 0 });
 
-    // Accessing columnTypes before executing is fine (implicitly executes the statement)
-    expect(stmt.columnTypes).toBeArray();
-
-    // Accessing declaredTypes before executing should throw
-    expect(() => {
-      stmt.declaredTypes;
-    }).toThrow("Statement must be executed before accessing declaredTypes");
+    // columnTypes runs the statement itself.
+    expect(db.prepare("SELECT * FROM test").columnTypes).toBeArray();
   });
 
   it("throws an error when accessing columnTypes on non-read-only statements", () => {

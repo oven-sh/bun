@@ -550,8 +550,8 @@ pub(crate) fn install_hoisted_packages(
         this.tick_lifecycle_scripts();
         this.report_slow_lifecycle_scripts();
 
-        debug_assert!(installer.pending_install_count == 0);
-        // force = true
+        // A folder is never completed if one of its packages could not be downloaded. What waited
+        // for it is installed now. force = true
         installer.install_available_packages::<true>(log_level);
         // Every package is linked; the scripts still to run need no lock.
         installer.staging_lock = None;
@@ -589,6 +589,14 @@ pub(crate) fn install_hoisted_packages(
         // Bin linking reads `successfully_installed`, so move it into the summary only afterwards.
         installer.summary.successfully_installed =
             Some(core::mem::take(&mut installer.successfully_installed));
+        let dependencies = this.lockfile.buffers.dependencies.as_slice();
+        let folders = tree::folder_keys(this.lockfile.buffers.trees.as_slice(), dependencies);
+        installer.summary.replaced_places = (installer.trees.iter().zip(&folders))
+            .flat_map(|(tree, &folder)| {
+                (tree.replaced.iter())
+                    .map(move |&row| tree::place_key(folder, dependencies[row as usize].name_hash))
+            })
+            .collect();
 
         if log_level.show_progress() {
             // See `activate()` note above — reuse the stored `NonNull`'s

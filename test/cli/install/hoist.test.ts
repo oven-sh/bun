@@ -1959,6 +1959,46 @@ describe.concurrent("a node_modules that an older bun laid for a run that leaves
   });
 });
 
+// `x/node_modules/n` is from the older bun. The same run installs `y/node_modules/n`, the same package.
+test("an older bun's nested copy goes while the run installs its owner at another place", async () => {
+  using server = await serveGraph({
+    m: { "1.0.0": { dependencies: { b: "^1.0.0" } } },
+    n: { "1.0.0": { dependencies: { b: "^2.0.0" } }, "2.0.0": {} },
+    x: { "1.0.0": { dependencies: { n: "^1.0.0" } } },
+    y: { "1.0.0": { dependencies: { n: "^1.0.0" } } },
+    b: { "1.0.0": {}, "2.0.0": {} },
+  });
+  const files = (root: object) => ({
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+    "package.json": JSON.stringify({ name: "app", ...root }),
+  });
+  const dependencies = { m: "1.0.0", n: "2.0.0", x: "1.0.0" };
+  using laptop = tempDir("hoist-older-two-places-laptop", {
+    ...files({ dependencies: { ...dependencies, y: "1.0.0" }, devDependencies: { b: "^2.0.0" } }),
+  });
+  using machine = tempDir("hoist-older-two-places-machine", files({ dependencies }));
+  const [dev, dir] = [String(laptop), String(machine)];
+  await run(dev, "install");
+
+  // What an older bun lays with --production is what every bun lays when package.json lacks devDependencies.
+  await run(dir, "install");
+  expect(layout(dir)).toContain("x/n/b@2.0.0");
+  await write(join(dir, "package.json"), file(join(dev, "package.json")));
+  await write(join(dir, "bun.lock"), file(join(dev, "bun.lock")));
+
+  await run(dir, "install", "--production");
+  expect(layout(dir)).toEqual([
+    "b@2.0.0",
+    "m@1.0.0",
+    "m/b@1.0.0",
+    "n@2.0.0",
+    "x@1.0.0",
+    "x/n@1.0.0",
+    "y@1.0.0",
+    "y/n@1.0.0",
+  ]);
+});
+
 // An install removes a folder only if the bun.lock it started from placed a package there.
 describe.concurrent("a folder that no bun.lock placed stays", () => {
   const bunfig = (server: { url: URL }) => `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`;

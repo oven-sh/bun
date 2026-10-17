@@ -1047,7 +1047,7 @@ pub fn install_with_manager(
             install_root_dependencies,
             &workspace_filters,
             core::mem::take(&mut install_summary.places),
-            install_summary.successfully_installed.as_ref(),
+            core::mem::take(&mut install_summary.replaced_places),
             same_version,
         );
     }

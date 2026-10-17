@@ -67,6 +67,9 @@ pub struct Summary {
 
     /// Set by the hoisted linker only. A copy of `tree::Builder::places`.
     pub(crate) places: Vec<(u64, PackageID)>,
+    /// Set by the hoisted linker only. The `tree::place_key` of each package folder that this
+    /// install created or replaced.
+    pub(crate) replaced_places: Vec<u64>,
 
     pub(crate) offline_misses: OfflineMisses,
 }

@@ -1670,13 +1670,14 @@ pub(crate) fn remove_copies_of_the_older_layout(
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
     mut places: Vec<(u64, PackageID)>,
-    installed_now: Option<&DynamicBitSet>,
+    mut replaced_places: Vec<u64>,
     same_version: SameVersion,
 ) {
     let Ok(cache) = crate::package_manager::directories::try_get_cache_directory(manager) else {
         return;
     };
     places.sort_unstable_by_key(|&(key, _)| key);
+    replaced_places.sort_unstable();
     // Hoisting can change what a peer resolves to, so the resolutions are restored afterwards.
     let resolutions = manager.lockfile.buffers.resolutions.clone();
     if let Ok(saved) = hoist_tree(
@@ -1686,7 +1687,7 @@ pub(crate) fn remove_copies_of_the_older_layout(
         workspace_filters,
         tree::Layout::Older,
     ) {
-        remove_from_older_places(manager, &places, cache, installed_now, same_version);
+        remove_from_older_places(manager, &places, &replaced_places, cache, same_version);
         restore_tree(&mut manager.lockfile, saved);
     }
     manager.lockfile.buffers.resolutions = resolutions;
@@ -1771,12 +1772,12 @@ fn tree_path(lockfile: &Lockfile, tree_id: usize) -> Box<[u8]> {
 }
 
 /// `manager.lockfile` must hold the tree of the older layout. `places` is the
-/// `tree::Builder::places` of the current layout, sorted by key.
+/// `tree::Builder::places` of the current layout, sorted by key. `replaced_places` is sorted too.
 fn remove_from_older_places(
     manager: &PackageManager,
     places: &[(u64, PackageID)],
+    replaced_places: &[u64],
     cache: sys::Fd,
-    installed_now: Option<&DynamicBitSet>,
     same_version: SameVersion,
 ) {
     let lockfile: &Lockfile = &manager.lockfile;
@@ -1806,17 +1807,14 @@ fn remove_from_older_places(
             continue;
         }
         // A package with bundled dependencies ships folders at any depth, so a tree inside one is
-        // skipped. So is a tree inside a package that this run installed: its folder is new, and
-        // nothing in it is left over from an older Bun. Scripts can create anything, so inside a
-        // package whose scripts may have run, only a folder that hides the version in bun.lock is
-        // removed.
+        // skipped. So is a tree inside a package folder that this run created or replaced: nothing
+        // in it is left over from an older Bun. Scripts can create anything, so inside a package
+        // whose scripts may have run, only a folder that hides the version in bun.lock is removed.
         let mut same_version = same_version;
         let mut above = id;
         while above != 0 {
             let owner = tree_owner(lockfile, above);
-            let is_new = !is_member_tree(lockfile, above)
-                && installed_now
-                    .is_some_and(|set| set.is_set_allow_out_of_bound(owner as usize, false));
+            let is_new = replaced_places.binary_search(&folders[above]).is_ok();
             if is_new || has_bundled_deps(lockfile, owner) {
                 break;
             }

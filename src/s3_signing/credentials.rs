@@ -357,8 +357,10 @@ impl S3Credentials {
         let path = normalize_name(path);
         let bucket = normalize_name(bucket);
 
-        // if we allow path.len == 0 it will list the bucket for now we disallow
-        if !ALLOW_EMPTY_PATH && path.is_empty() {
+        // An empty key is the bucket root. Without a bucket it would be the root of the endpoint.
+        if path.is_empty()
+            && (!ALLOW_EMPTY_PATH || (bucket.is_empty() && !self.virtual_hosted_style))
+        {
             return Err(SignError::InvalidPath);
         }
 
@@ -457,6 +459,7 @@ impl S3Credentials {
             content_encoding: content_encoding.is_some(),
             content_md5: content_md5.is_some(),
             acl: acl.is_some(),
+            bucket_object_lock: sign_options.bucket_object_lock,
             request_payer,
             session_token: session_token.is_some(),
             storage_class: storage_class.is_some(),
@@ -851,6 +854,12 @@ impl S3Credentials {
             result._headers_len += 1;
         }
 
+        if sign_options.bucket_object_lock {
+            result._headers[result._headers_len as usize] =
+                pico_header_new(b"x-amz-bucket-object-lock-enabled", b"true");
+            result._headers_len += 1;
+        }
+
         if let Some(token) = session_token {
             let session_token_value = Box::<[u8]>::from(token);
             result._headers[result._headers_len as usize] =
@@ -985,7 +994,7 @@ pub struct SignResult {
 }
 
 impl SignResult {
-    pub const MAX_HEADERS: usize = 11;
+    pub const MAX_HEADERS: usize = 12;
 
     pub fn headers(&self) -> &[PicoHeader] {
         &self._headers[0..self._headers_len as usize]
@@ -1070,6 +1079,8 @@ pub struct SignOptions<'a> {
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
     pub request_payer: bool,
+    /// CreateBucket only: sends `x-amz-bucket-object-lock-enabled: true`.
+    pub bucket_object_lock: bool,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1227,6 +1238,7 @@ impl<'a> Default for SignOptions<'a> {
             acl: None,
             storage_class: None,
             request_payer: false,
+            bucket_object_lock: false,
         }
     }
 }
@@ -1261,6 +1273,7 @@ pub(crate) struct SignedHeadersKey {
     pub content_encoding: bool,
     pub content_md5: bool,
     pub acl: bool,
+    pub bucket_object_lock: bool,
     pub request_payer: bool,
     pub session_token: bool,
     pub storage_class: bool,
@@ -1292,6 +1305,9 @@ impl SignedHeaders {
         push!(b"host;");
         if key.acl {
             push!(b"x-amz-acl;");
+        }
+        if key.bucket_object_lock {
+            push!(b"x-amz-bucket-object-lock-enabled;");
         }
         push!(b"x-amz-content-sha256;x-amz-date");
         if key.request_payer {
@@ -1362,6 +1378,9 @@ impl CanonicalRequest {
         w!("host:{}\n", BStr::new(host));
         if key.acl {
             w!("x-amz-acl:{}\n", BStr::new(acl.unwrap()));
+        }
+        if key.bucket_object_lock {
+            w!("x-amz-bucket-object-lock-enabled:true\n");
         }
         w!(
             "x-amz-content-sha256:{}\nx-amz-date:{}\n",

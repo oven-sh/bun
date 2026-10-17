@@ -607,6 +607,7 @@ pub(crate) fn get_presign_url_from(
             content_md5: None,
             search_params: None,
             content_encoding: None,
+            bucket_object_lock: false,
         },
         Some(bun_s3_signing::SignQueryOptions { expires }),
     ) {

@@ -5,7 +5,7 @@ use bun_ptr::RefPtr;
 use super::incremental_graph;
 use super::jsc;
 use super::source_map_store;
-use crate::bake::framework_router;
+use crate::bake::router;
 use crate::server::{StaticRoute, html_bundle::HTMLBundleRoute};
 
 /// `bun.GenericIndex(u30, RouteBundle)`.
@@ -26,7 +26,7 @@ pub(crate) enum State {
 }
 
 pub(crate) struct Framework {
-    pub(crate) route_index: framework_router::RouteIndex,
+    pub(crate) route_index: router::RouteIndex,
     pub(crate) cached_module_list: jsc::StrongOptional,
     pub(crate) cached_client_bundle_url: jsc::StrongOptional,
     pub(crate) cached_css_file_array: jsc::StrongOptional,
@@ -75,7 +75,7 @@ impl Data {
 impl RouteBundle {
     /// Note: takes `&mut SourceMapStore` rather than `&mut DevServer` —
     /// only `dev.source_maps` is touched, and the two keystone
-    /// `DevServer` structs (`dev_server::DevServer` / `dev_server_body::DevServer`)
+    /// `DevServer` structs (`dev_server::DevServer`)
     /// both expose that field but cannot be named here without a cycle.
     pub(crate) fn invalidate_client_bundle(
         &mut self,
@@ -98,7 +98,7 @@ impl RouteBundle {
 
 #[derive(Clone, Copy)]
 pub(crate) enum UnresolvedIndex {
-    Framework(framework_router::RouteIndex),
+    Framework(router::RouteIndex),
     /// `getOrPutRouteBundle` writes `dev_server_id` back through this and
     /// takes its own ref when stored.
     Html(bun_ptr::ThisPtr<HTMLBundleRoute>),

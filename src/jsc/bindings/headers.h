@@ -82,6 +82,7 @@ CPP_DECL void WebCore__FetchHeaders__get_(WebCore::FetchHeaders* arg0, const Enc
 CPP_DECL bool WebCore__FetchHeaders__isEmpty(WebCore::FetchHeaders* arg0);
 CPP_DECL JSC::EncodedJSValue WebCore__FetchHeaders__toJS(WebCore::FetchHeaders* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0, UWSResponseKind kind, void* arg2);
+CPP_DECL void WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(WebCore::FetchHeaders* arg0, bool isSSL, void* arg1);
 CPP_DECL JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::EncodedJSValue SystemError__toTypeErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* arg1);
 
@@ -551,11 +552,13 @@ ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(
     const BunString* proxyHost, uint16_t proxyPort,
     const BunString* proxyAuthorization,
     const BunString* proxyHeaderNames, size_t proxyHeaderNamesCount, const BunString* proxyHeaderValues, size_t proxyHeaderValuesCount,
-    void* sslConfig, bool targetIsSecure,
+    void* sslConfig, const void* proxySSLConfig, bool hasProxyTLS, bool targetIsSecure,
     const BunString* targetAuthorization,
     const BunString* unixSocketPath,
-    bool offerPerMessageDeflate);
+    const BunString* extensions,
+    BunString* connectErrorCode);
 ZIG_DECL size_t Bun__WebSocketHTTPClient__memoryCost(WebSocketHTTPClient* arg0);
+ZIG_DECL void Bun__WebSocketHTTPClient__setPaused(WebSocketHTTPClient* arg0, bool paused);
 #endif
 
 #ifdef __cplusplus
@@ -568,11 +571,13 @@ ZIG_DECL WebSocketHTTPSClient* Bun__WebSocketHTTPSClient__connect(
     const BunString* proxyHost, uint16_t proxyPort,
     const BunString* proxyAuthorization,
     const BunString* proxyHeaderNames, size_t proxyHeaderNamesCount, const BunString* proxyHeaderValues, size_t proxyHeaderValuesCount,
-    void* sslConfig, bool targetIsSecure,
+    void* sslConfig, const void* proxySSLConfig, bool hasProxyTLS, bool targetIsSecure,
     const BunString* targetAuthorization,
     const BunString* unixSocketPath,
-    bool offerPerMessageDeflate);
+    const BunString* extensions,
+    BunString* connectErrorCode);
 ZIG_DECL size_t Bun__WebSocketHTTPSClient__memoryCost(WebSocketHTTPSClient* arg0);
+ZIG_DECL void Bun__WebSocketHTTPSClient__setPaused(WebSocketHTTPSClient* arg0, bool paused);
 
 // Parse TLS options from JavaScript object using SSLConfig.fromJS
 ZIG_DECL void* Bun__WebSocket__parseSSLConfig(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue tlsValue);
@@ -586,12 +591,18 @@ ZIG_DECL void Bun__WebSocketClient__cancel(WebSocketClient* arg0);
 ZIG_DECL size_t Bun__WebSocketClient__bufferedAmount(WebSocketClient* arg0);
 ZIG_DECL bool Bun__WebSocketClient__pause(WebSocketClient* arg0);
 ZIG_DECL bool Bun__WebSocketClient__resume(WebSocketClient* arg0);
-ZIG_DECL void Bun__WebSocketClient__close(WebSocketClient* arg0, uint16_t arg1, const EncodedSlice* arg2);
+ZIG_DECL void Bun__WebSocketClient__setRef(WebSocketClient* arg0, bool ref);
+ZIG_DECL bool Bun__WebSocketClient__remoteAddress(WebSocketClient* arg0, BunString* address, uint16_t* port, bool* isIPv6);
+ZIG_DECL struct us_socket_t* Bun__WebSocketClient__usSocket(WebSocketClient* arg0);
+ZIG_DECL void Bun__WebSocketClient__close(WebSocketClient* arg0, uint16_t code, const unsigned char* utf8Reason, size_t utf8ReasonLen);
 ZIG_DECL void Bun__WebSocketClient__finalize(WebSocketClient* arg0);
-ZIG_DECL void Bun__WebSocketClient__dropConnectionWithoutCallback(WebSocketClient* arg0);
-ZIG_DECL WebSocketClient* Bun__WebSocketClient__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, void* bufferedData, const PerMessageDeflateParams* arg5, void* customSSLCtx, const unsigned char* verifiedHostname, size_t verifiedHostnameLen);
-ZIG_DECL void Bun__WebSocketClient__writeBinaryData(WebSocketClient* arg0, const unsigned char* arg1, size_t arg2, unsigned char arg3);
-ZIG_DECL void Bun__WebSocketClient__writeString(WebSocketClient* arg0, const EncodedSlice* arg1, unsigned char arg2);
+ZIG_DECL WebSocketClient* Bun__WebSocketClient__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, void* bufferedData, const PerMessageDeflateParams* arg5, void* customSSLCtx, const unsigned char* verifiedHostname, size_t verifiedHostnameLen, const WebSocketConnectedOptions* options);
+ZIG_DECL void Bun__WebSocketClient__deliverInitialData(WebSocketClient* arg0);
+ZIG_DECL WebSocketClient* Bun__WebSocketClient__initOverStream(CppWebSocket* arg0, JSC::JSGlobalObject* arg1, const WebSocketConnectedOptions* options, const PerMessageDeflateParams* deflateParams);
+ZIG_DECL void Bun__WebSocketClient__feed(WebSocketClient* arg0, const unsigned char* ptr, size_t len);
+ZIG_DECL void Bun__WebSocketClient__streamClosed(WebSocketClient* arg0);
+ZIG_DECL void Bun__WebSocketClient__writeBinaryData(WebSocketClient* arg0, const unsigned char* arg1, size_t arg2, unsigned char op, unsigned char flags);
+ZIG_DECL void Bun__WebSocketClient__writeString(WebSocketClient* arg0, const EncodedSlice* arg1, unsigned char op, unsigned char flags);
 ZIG_DECL size_t Bun__WebSocketClient__memoryCost(WebSocketClient* arg0);
 
 #endif
@@ -602,12 +613,15 @@ ZIG_DECL void Bun__WebSocketClientTLS__cancel(WebSocketClientTLS* arg0);
 ZIG_DECL size_t Bun__WebSocketClientTLS__bufferedAmount(WebSocketClientTLS* arg0);
 ZIG_DECL bool Bun__WebSocketClientTLS__pause(WebSocketClientTLS* arg0);
 ZIG_DECL bool Bun__WebSocketClientTLS__resume(WebSocketClientTLS* arg0);
-ZIG_DECL void Bun__WebSocketClientTLS__close(WebSocketClientTLS* arg0, uint16_t arg1, const EncodedSlice* arg2);
+ZIG_DECL void Bun__WebSocketClientTLS__setRef(WebSocketClientTLS* arg0, bool ref);
+ZIG_DECL bool Bun__WebSocketClientTLS__remoteAddress(WebSocketClientTLS* arg0, BunString* address, uint16_t* port, bool* isIPv6);
+ZIG_DECL struct us_socket_t* Bun__WebSocketClientTLS__usSocket(WebSocketClientTLS* arg0);
+ZIG_DECL void Bun__WebSocketClientTLS__close(WebSocketClientTLS* arg0, uint16_t code, const unsigned char* utf8Reason, size_t utf8ReasonLen);
 ZIG_DECL void Bun__WebSocketClientTLS__finalize(WebSocketClientTLS* arg0);
-ZIG_DECL void Bun__WebSocketClientTLS__dropConnectionWithoutCallback(WebSocketClientTLS* arg0);
-ZIG_DECL WebSocketClientTLS* Bun__WebSocketClientTLS__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, void* bufferedData, const PerMessageDeflateParams* arg5, void* customSSLCtx, const unsigned char* verifiedHostname, size_t verifiedHostnameLen);
-ZIG_DECL void Bun__WebSocketClientTLS__writeBinaryData(WebSocketClientTLS* arg0, const unsigned char* arg1, size_t arg2, unsigned char arg3);
-ZIG_DECL void Bun__WebSocketClientTLS__writeString(WebSocketClientTLS* arg0, const EncodedSlice* arg1, unsigned char arg2);
+ZIG_DECL WebSocketClientTLS* Bun__WebSocketClientTLS__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, void* bufferedData, const PerMessageDeflateParams* arg5, void* customSSLCtx, const unsigned char* verifiedHostname, size_t verifiedHostnameLen, const WebSocketConnectedOptions* options);
+ZIG_DECL void Bun__WebSocketClientTLS__deliverInitialData(WebSocketClientTLS* arg0);
+ZIG_DECL void Bun__WebSocketClientTLS__writeBinaryData(WebSocketClientTLS* arg0, const unsigned char* arg1, size_t arg2, unsigned char op, unsigned char flags);
+ZIG_DECL void Bun__WebSocketClientTLS__writeString(WebSocketClientTLS* arg0, const EncodedSlice* arg1, unsigned char op, unsigned char flags);
 ZIG_DECL size_t Bun__WebSocketClientTLS__memoryCost(WebSocketClientTLS* arg0);
 #endif
 

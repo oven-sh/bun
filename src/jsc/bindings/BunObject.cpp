@@ -37,6 +37,10 @@
 #include "BunObject+exports.h"
 #include "ErrorCode.h"
 #include "GeneratedBunObject.h"
+#include "GeneratedCsrfJsc.h"
+#include "GeneratedDns.h"
+#include "GeneratedSemverObject.h"
+#include "GeneratedUnsafeObject.h"
 #include "JavaScriptCore/BunV8HeapSnapshotBuilder.h"
 #include "BunObjectModule.h"
 #include "_NativeModule.h"
@@ -68,8 +72,6 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNS__getServers);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__setServers);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__reverse);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__lookupService);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNS__prefetch);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNS__getCacheStats);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
@@ -378,7 +380,7 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     }
 
     bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "braces"_s), 1, Bun::Bindgen::Generated::BunObject::jsBraces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
-    bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "escape"_s), 1, BunObject_callback_shellEscape, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+    bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "escape"_s), 1, Bun::Bindgen::Generated::BunObject::jsShellEscape, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
     bunShell->putDirect(vm, JSC::Identifier::fromString(vm, "ShellError"_s), ShellError.getObject(), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
     return bunShell;
@@ -420,9 +422,9 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookupService"_s), 2, Bun__DNS__lookupService, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "prefetch"_s), 2, Bun__DNS__prefetch, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "prefetch"_s), 1, Bun::Bindgen::Generated::Dns::jsPrefetch, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getCacheStats"_s), 0, Bun__DNS__getCacheStats, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getCacheStats"_s), 0, Bun::Bindgen::Generated::Dns::jsGetCacheStats, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirect(vm, JSC::Identifier::fromString(vm, "ADDRCONFIG"_s), jsNumber(AI_ADDRCONFIG),
         JSC::PropertyAttribute::DontDelete | 0);
@@ -945,8 +947,8 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     embeddedFiles                                  BunObject_lazyPropCb_wrap_embeddedFiles                             DontDelete|PropertyCallback
     S3Client                                       BunObject_lazyPropCb_wrap_S3Client                                  DontDelete|PropertyCallback
     s3                                             BunObject_lazyPropCb_wrap_s3                                        DontDelete|PropertyCallback
-    CSRF                                           BunObject_lazyPropCb_wrap_CSRF                                      DontDelete|PropertyCallback
-    allocUnsafe                                    BunObject_callback_allocUnsafe                                      DontDelete|Function 1
+    CSRF                                           Bun::Bindgen::Generated::CsrfJsc::createCSRF                        DontDelete|PropertyCallback
+    allocUnsafe                                    Bun::Bindgen::Generated::BunObject::jsAllocUnsafe                   DontDelete|Function 1
     argv                                           BunObject_lazyPropCb_wrap_argv                                      DontDelete|PropertyCallback
     build                                          BunObject_callback_build                                            DontDelete|Function 1
     concatArrayBuffers                             functionConcatTypedArrays                                           DontDelete|Function 3
@@ -978,9 +980,9 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     listen                                         BunObject_callback_listen                                           DontDelete|Function 1
     udpSocket                                      BunObject_callback_udpSocket                                        DontDelete|Function 1
     main                                           bunObjectMain                                                       DontDelete|CustomAccessor
-    mmap                                           BunObject_callback_mmap                                             DontDelete|Function 1
+    mmap                                           Bun::Bindgen::Generated::BunObject::jsMmap                          DontDelete|Function 1
     nanoseconds                                    functionBunNanoseconds                                              DontDelete|Function 0
-    openInEditor                                   BunObject_callback_openInEditor                                     DontDelete|Function 1
+    openInEditor                                   Bun::Bindgen::Generated::BunObject::jsOpenInEditor                  DontDelete|Function 1
     origin                                         BunObject_lazyPropCb_wrap_origin                                    DontEnum|ReadOnly|DontDelete|PropertyCallback
     version_with_sha                               constructBunVersionWithSha                                          DontEnum|ReadOnly|DontDelete|PropertyCallback
     password                                       constructPasswordObject                                             DontDelete|PropertyCallback
@@ -1000,16 +1002,16 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     resolve                                        BunObject_callback_resolve                                          DontDelete|Function 1
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
-    semver                                         BunObject_lazyPropCb_wrap_semver                                    ReadOnly|DontDelete|PropertyCallback
+    semver                                         Bun::Bindgen::Generated::SemverObject::createSemver                 ReadOnly|DontDelete|PropertyCallback
     sql                                            defaultBunSQLObject                                                 DontDelete|PropertyCallback
     postgres                                       defaultBunSQLObject                                                 DontDelete|PropertyCallback
     SQL                                            constructBunSQLObject                                               DontDelete|PropertyCallback
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1
-    shrink                                         BunObject_callback_shrink                                           DontDelete|Function 1
+    shrink                                         Bun::Bindgen::Generated::BunObject::jsShrink                        DontDelete|Function 0
     sliceAnsi                                      jsFunctionBunSliceAnsi                                              DontDelete|Function 5
     sleep                                          functionBunSleep                                                    DontDelete|Function 1
-    sleepSync                                      BunObject_callback_sleepSync                                        DontDelete|Function 1
+    sleepSync                                      Bun::Bindgen::Generated::BunObject::jsSleepSync                     DontDelete|Function 1
     spawn                                          BunObject_callback_spawn                                            DontDelete|Function 1
     spawnSync                                      BunObject_callback_spawnSync                                        DontDelete|Function 1
     stderr                                         BunObject_lazyPropCb_wrap_stderr                                    DontDelete|PropertyCallback
@@ -1019,10 +1021,10 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     stripANSI                                      jsFunctionBunStripANSI                                              DontDelete|Function 1
     wrapAnsi                                       jsFunctionBunWrapAnsi                                               DontDelete|Function 3
     Terminal                                       BunObject_lazyPropCb_wrap_Terminal                                  DontDelete|PropertyCallback
-    unsafe                                         BunObject_lazyPropCb_wrap_unsafe                                    DontDelete|PropertyCallback
+    unsafe                                         Bun::Bindgen::Generated::UnsafeObject::createUnsafe                 DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     WebView                                        constructWebViewObject                                              ReadOnly|DontDelete|PropertyCallback
-    which                                          BunObject_callback_which                                            DontDelete|Function 1
+    which                                          Bun::Bindgen::Generated::BunObject::jsWhich                         DontDelete|Function 1
     RedisClient                                    BunObject_lazyPropCb_wrap_ValkeyClient                              DontDelete|PropertyCallback
     redis                                          BunObject_lazyPropCb_wrap_valkey                                    DontDelete|PropertyCallback
     secrets                                        constructSecretsObject                                              DontDelete|PropertyCallback

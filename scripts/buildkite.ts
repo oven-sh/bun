@@ -43,12 +43,19 @@ interface SecretOptions {
   required?: boolean;
 }
 
+/**
+ * The secrets fetched so far, so that each is fetched once. They are not kept
+ * in process.env: every child process inherits that, the tests that
+ * scripts/runner.node.ts starts included.
+ */
+let fetchedSecrets: Map<string, string> | undefined;
+
 export function getSecret(name: string, options?: SecretOptions & { required?: true }): string;
 
 export function getSecret(name: string, options: SecretOptions): string | undefined;
 
 export function getSecret(name: string, { required = true }: SecretOptions = {}): string | undefined {
-  const value = process.env[name];
+  const value = process.env[name] || fetchedSecrets?.get(name);
   if (value) {
     return value;
   }
@@ -69,7 +76,7 @@ export function getSecret(name: string, { required = true }: SecretOptions = {})
       throw new Error(`Secret not found: ${name} (hint: go to ${hint} and create a secret)`);
     }
 
-    process.env[name] = secret;
+    (fetchedSecrets ??= new Map()).set(name, secret);
     return secret;
   }
 
@@ -294,9 +301,10 @@ function getGithubToken(): string | undefined {
     return cachedToken || undefined;
   }
 
-  const token = output(["gh", "auth", "token"])?.trim() ?? "";
-
-  process.env.GITHUB_TOKEN = token;
+  const token = output(["gh", "auth", "token"])?.trim();
+  if (token) {
+    (fetchedSecrets ??= new Map()).set("GITHUB_TOKEN", token);
+  }
   return token || undefined;
 }
 
@@ -431,6 +439,8 @@ interface GithubPullRequestFile {
 /**
  * The files of the pull request this Buildkite build is for, and the ones
  * among them that it adds; none when the build is not for a pull request.
+ * This asks GitHub, so only the pipeline step (.buildkite/ci.ts) calls it, once
+ * per build. The build's other jobs read the list it stores in the meta-data.
  */
 export async function getPullRequestFiles(): Promise<{ allFiles: string[]; newFiles: string[] }> {
   const allFiles: string[] = [];

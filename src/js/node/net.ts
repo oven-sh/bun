@@ -278,6 +278,8 @@ const checkServerIdentityInHandshake = $newRustFunction(
 const releaseHeldFlight = $newRustFunction("runtime/socket/socket.rs", "jsReleaseHeldFlight", 1);
 const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
 const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
+// Created by the first stream socket fd that is adopted for synchronous writes, and by its end().
+let guessHandleType, setImmediateNative, shutdownWriteFd;
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -300,6 +302,8 @@ const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
+// true: end() shuts the write side of the kSyncWriteFd down. A function: the _final callback, while that shutdown is queued.
+const kSyncFdShutdown = Symbol("kSyncFdShutdown");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
@@ -438,6 +442,34 @@ function endNT(self, socket, callback) {
   const current = self._handle;
   (!socket || current?.[kAdoptedTLSRaw] ? current : socket)?.shutdown();
   callback();
+}
+// libuv issues node's shutdown from its pending queue. An immediate stands in: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1175-L1184
+function finalSyncFd(self, callback) {
+  self[kSyncFdShutdown] = callback;
+  // Not the global setImmediate: a fake clock replaces that one.
+  (setImmediateNative ??= $newCppFunction("node/NodeTimers.cpp", "functionSetImmediate", 1))(
+    endSyncFdTask,
+    self,
+    callback,
+  );
+}
+function endSyncFdTask(self, callback) {
+  // cancelSyncFdShutdown() took the callback since end().
+  if (self[kSyncFdShutdown] !== callback) return;
+  self[kSyncFdShutdown] = undefined;
+  (shutdownWriteFd ??= $newRustFunction("node_net_binding.rs", "shutdownWriteFd", 1))(self[kSyncWriteFd]);
+  callback();
+}
+// libuv cancels the shutdown request of a closing handle before 'close'. Left queued, _final would complete in the next life of the socket.
+function cancelSyncFdShutdown(self) {
+  const pending = self[kSyncFdShutdown];
+  self[kSyncFdShutdown] = undefined;
+  if (typeof pending === "function") pending();
+}
+// shutdown(2) on a datagram or SEQPACKET socket stops the sends of every holder. node refuses such an fd.
+function isStreamSocketFd(fd) {
+  const type = (guessHandleType ??= $newRustFunction("udp_socket.rs", "jsDgramGuessHandleType", 1))(fd);
+  return type === "TCP" || type === "PIPE";
 }
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
@@ -2054,6 +2086,8 @@ function Socket(options?): void {
         this[kSyncWriteFd] = fd;
         this._write = fdSyncWrite;
         this._writev = fdSyncWritev;
+        // Not with `readable` omitted: the EOF pushed below ends that socket one tick from here, with no end() call.
+        if (optionsReadable === false && stats.isSocket() && isStreamSocketFd(fd)) this[kSyncFdShutdown] = true;
         // No native reads on this path: an unspecified `readable` gets EOF here (`false` already ended it in the Duplex).
         if (optionsReadable !== true && optionsReadable !== false) {
           this.push(null);
@@ -2293,6 +2327,8 @@ Socket.prototype[kCloseRawConnection] = function () {
 
 Socket.prototype.connect = function connect(...args) {
   $debug("Socket.prototype.connect");
+  // _undestroy() forgets that end() was called, so the _final of that end() completes first.
+  if (typeof this[kSyncFdShutdown] === "function") cancelSyncFdShutdown(this);
   {
     const [options, connectListener] =
       $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
@@ -2310,6 +2346,8 @@ Socket.prototype.connect = function connect(...args) {
       connection = socket;
     }
     if (fd != null) {
+      // A native handle closes its fd when the peer does: the number is not end()'s to shut down after that.
+      if (this[kSyncFdShutdown] === true) this[kSyncFdShutdown] = undefined;
       doConnect(this._handle, {
         data: this,
         fd: fd,
@@ -2476,6 +2514,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   const syncFd = this[kSyncWriteFd];
   if (syncFd !== undefined) {
     this[kSyncWriteFd] = undefined;
+    cancelSyncFdShutdown(this);
     // Drop the instance overrides so a later connect() on this (reusable)
     // socket goes through the fresh handle's normal write path.
     delete this._write;
@@ -2570,7 +2609,10 @@ Socket.prototype._final = function _final(callback) {
   const socket = this._handle;
 
   // already closed call destroy. A server-side wrap attaches its handle on the tick its constructor queued, ahead of endNT.
-  if (!socket && !this[kupgraded]) return callback();
+  if (!socket && !this[kupgraded]) {
+    if (this[kSyncFdShutdown] === true) return finalSyncFd(this, callback);
+    return callback();
+  }
 
   // emit FIN allowHalfOpen only allow the readable side to close first
   process.nextTick(endNT, this, socket, callback);

@@ -2,7 +2,8 @@
 //! provided by BoringSSL, so this module implements the API surface that
 //! `PasswordObject` consumes (`str_hash` / `str_verify` / `Params` / `Mode` /
 //! `Encoding`) and routes to the pure-Rust `rust-argon2` (vendored, patched to
-//! verify legacy `m < 8` hashes) and `bcrypt` crates.
+//! verify legacy `m < 8` hashes and to fail instead of abort when the memory
+//! cost cannot be allocated) and `bcrypt` crates.
 //!
 //!   * argon2: PHC string format only (`str_hash` rejects `.crypt`), 32-byte
 //!     random salt, 32-byte tag, version 0x13.
@@ -104,6 +105,7 @@ pub(crate) mod argon2 {
             E::DecodingFail | E::IncorrectType | E::IncorrectVersion => {
                 crate::Error::InvalidEncoding
             }
+            E::MemoryAllocationFailed => crate::Error::Alloc(bun_alloc::AllocError),
             E::OutputTooShort
             | E::OutputTooLong
             | E::PwdTooShort

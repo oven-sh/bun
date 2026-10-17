@@ -485,14 +485,11 @@ console.log(x);
     "/export-default.js": `export default feature;`,
     "/export-clause.js": `export { feature };`,
     "/typeof.js": `console.log(typeof feature);`,
-    "/typeof-guard.js": `if (typeof feature === "function" && feature("FLAG")) console.log("on");`,
+    "/typeof-guard.js": `console.log(typeof feature === "function" && feature("FLAG") ? "on" : "off");`,
     "/assignment.js": `feature = 1;`,
     "/after-return.js": `export function f() { return 1; console.log(feature); }`,
     // Refused while parsing, before tree shaking could remove the function.
     "/unused-function.js": `function unused() { return feature; }`,
-    // Refused although the statement itself is removed.
-    "/bare-statement.js": `feature;`,
-    "/void-statement.js": `void feature;`,
     "/import-equals.ts": `import f = feature;`,
     // A replaced call, live or dead, must not hide a use in another statement.
     "/use-before-call.js": `console.log(feature); feature("FLAG") ? 1 : 2;`,
@@ -786,6 +783,17 @@ console.log(x);
     }
   });
 
+  // A statement with no effect is removed. Its use of the binding goes with it
+  // only when the statement is a part of its own, which `bun build` makes it.
+  test("a removed statement is refused only when the file is one part", async () => {
+    const source = `import { feature as enabled } from "bun:bundle"; void enabled; console.log("kept");`;
+    using dir = tempDir("bundler-feature-flag", { "removed.js": source });
+    const build = await Bun.build({ entrypoints: [`${dir}/removed.js`], throw: false });
+    expect(build.logs).toEqual([]);
+    expect(await build.outputs[0].text()).not.toContain("enabled");
+    expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(source)).toThrow(usedAsValue("enabled", ""));
+  });
+
   // A reference in a dead branch is refused only where the branch is kept.
   // `bun test --coverage` and `bun --print` turn dead code elimination off.
   test("a reference in a dead branch is refused only when dead code is kept", async () => {
@@ -793,7 +801,9 @@ console.log(x);
     const error = usedAsValue("feature");
 
     expect(new Bun.Transpiler({ loader: "js" }).transformSync(source)).not.toContain("feature");
-    expect(() => new Bun.Transpiler({ loader: "js", deadCodeElimination: false }).transformSync(source)).toThrow(error);
+    expect(() => new Bun.Transpiler({ loader: "js", deadCodeElimination: false }).transformSync(source)).toThrow(
+      usedAsValue("feature", ""),
+    );
 
     using dir = tempDir("bundler-feature-flag", {
       "dead.test.ts": `${source} import { test } from "bun:test"; test("loads", () => {});`,

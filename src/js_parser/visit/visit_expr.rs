@@ -2567,7 +2567,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// The call is replaced, so its target is no longer a use. The uses that a
-    /// part keeps are what `reject_bundler_feature_value_use` reports.
+    /// part keeps are what `reject_bundler_feature_value_uses` reports.
     #[inline(never)]
     fn ignore_bundler_feature_call_target(p: &mut Self) {
         p.ignore_usage(p.bundler_feature_flag_ref);

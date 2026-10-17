@@ -4536,26 +4536,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
     }
 
-    #[cold]
-    pub(crate) fn reject_bundler_feature_value_uses(&mut self, parts: [&[js_ast::Part]; 3]) {
-        for part in parts.into_iter().flatten() {
-            self.reject_bundler_feature_value_use(&part.symbol_uses, part.stmts.slice());
-        }
-    }
-
     /// The "bun:bundle" import is removed at parse time and only a direct
     /// `feature("FLAG")` call is replaced, which also drops the use of its
-    /// target. A use that a part still has after its visit is any other
+    /// target. A use that a part still has after the visit pass is any other
     /// reference, in code that the visit pass did not know to be dead.
     #[cold]
-    fn reject_bundler_feature_value_use(&mut self, uses: &SymbolUseMap, stmts: &[Stmt]) {
+    pub(crate) fn reject_bundler_feature_value_uses(&mut self, parts: [&[js_ast::Part]; 3]) {
         let r#ref = self.bundler_feature_flag_ref;
-        if uses
-            .get(&r#ref)
-            .is_none_or(|uses| uses.count_estimate() == 0)
-        {
-            return;
-        }
         let name: &'a [u8] = self.symbols[r#ref.inner_index() as usize]
             .original_name
             .slice();
@@ -4563,43 +4550,62 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Some(member) if member.ref_.eql(r#ref) => member.loc,
             _ => bun_ast::Loc::EMPTY,
         };
-        let mut note = Vec::<u8>::new();
-        let _ = write!(
-            &mut note,
-            "\"bun:bundle\" does not exist at runtime, so \"{}\" has no value there",
-            bstr::BStr::new(name)
-        );
-        // With one statement in the part, the use is in that statement.
-        let (loc, place, note_source, note_loc) = match stmts {
-            [stmt] if !stmt.loc.is_empty() => (
-                stmt.loc,
-                " in this statement",
+        // Otherwise the whole file is one part and its first statement says nothing.
+        let one_statement_per_part =
+            self.options.tree_shaking && !self.will_wrap_module_in_try_catch_for_using;
+        for part in parts.into_iter().flatten() {
+            if part
+                .symbol_uses
+                .get(&r#ref)
+                .is_none_or(|uses| uses.count_estimate() == 0)
+            {
+                continue;
+            }
+            let mut note = Vec::<u8>::new();
+            let _ = write!(
+                &mut note,
+                "\"bun:bundle\" does not exist at runtime, so \"{}\" has no value there",
+                bstr::BStr::new(name)
+            );
+            let stmt_loc = part
+                .stmts
+                .slice()
+                .first()
+                .map(|stmt| stmt.loc)
+                .filter(|loc| one_statement_per_part && !loc.is_empty());
+            let (loc, place, note) = match stmt_loc {
+                Some(loc) => (
+                    loc,
+                    " in this statement",
+                    bun_ast::range_data(
+                        Some(self.source),
+                        bun_ast::Range {
+                            loc: import_loc,
+                            ..Default::default()
+                        },
+                        note,
+                    ),
+                ),
+                None => (
+                    import_loc,
+                    "",
+                    bun_ast::range_data(None, bun_ast::Range::NONE, note),
+                ),
+            };
+            self.log().add_range_error_fmt_with_notes(
                 Some(self.source),
-                import_loc,
-            ),
-            _ => (import_loc, "", None, bun_ast::Loc::EMPTY),
-        };
-        let notes: Box<[bun_ast::Data]> = Box::new([bun_ast::range_data(
-            note_source,
-            bun_ast::Range {
-                loc: note_loc,
-                ..Default::default()
-            },
-            note,
-        )]);
-        self.log().add_range_error_fmt_with_notes(
-            Some(self.source),
-            bun_ast::Range {
-                loc,
-                ..Default::default()
-            },
-            notes,
-            format_args!(
-                "\"{0}\" from \"bun:bundle\" is used as a value{1}, but it can only be called directly, as in {0}(\"FLAG\")",
-                bstr::BStr::new(name),
-                place
-            ),
-        );
+                bun_ast::Range {
+                    loc,
+                    ..Default::default()
+                },
+                Box::new([note]),
+                format_args!(
+                    "\"{0}\" from \"bun:bundle\" is used as a value{1}, but it can only be called directly, as in {0}(\"FLAG\")",
+                    bstr::BStr::new(name),
+                    place
+                ),
+            );
+        }
     }
 
     /// A type that is named before the import statement is an unbound symbol
@@ -5748,9 +5754,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else if self.declared_symbols.len() > 0 || !self.part_uses.is_empty() {
             // if the part is dead, invalidate all the usage counts
             let symbol_uses = self.take_symbol_uses()?;
-            if self.bundler_feature_flag_ref.is_valid() {
-                self.reject_bundler_feature_value_use(&symbol_uses, stmts);
-            }
             self.clear_symbol_usages_from_dead_part(&js_ast::Part {
                 declared_symbols: self.declared_symbols.clone()?,
                 symbol_uses,

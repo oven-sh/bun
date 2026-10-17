@@ -287,7 +287,7 @@ describe("AbortSignal.timeout", () => {
   }
 
   test("pending signals stay alive while the fake heap holds their timer", () => {
-    vi.useFakeTimers();
+    bunVi.useFakeTimers();
     const before = liveAbortSignals();
     leakObservedTimeouts();
     expect(vi.getTimerCount()).toBe(N);
@@ -299,14 +299,14 @@ describe("AbortSignal.timeout", () => {
   // used to stay pinned (with their listeners) for the rest of the process.
   test("useRealTimers() releases the signals whose timers it dropped", () => {
     const before = liveAbortSignals();
-    vi.useFakeTimers();
+    bunVi.useFakeTimers();
     leakObservedTimeouts();
     vi.useRealTimers();
     expect(liveAbortSignals() - before).toBeLessThan(N * 0.1);
   });
 
   test("clearAllTimers() releases the signals whose timers it cleared", () => {
-    vi.useFakeTimers();
+    bunVi.useFakeTimers();
     const before = liveAbortSignals();
     leakObservedTimeouts();
     vi.clearAllTimers();
@@ -315,7 +315,7 @@ describe("AbortSignal.timeout", () => {
   });
 
   test("a signal the program still holds is left unaborted once its fake timer is dropped", () => {
-    vi.useFakeTimers();
+    bunVi.useFakeTimers();
     const signal = AbortSignal.timeout(1);
     vi.useRealTimers();
     const dependent = AbortSignal.any([signal]);
@@ -328,7 +328,7 @@ describe("AbortSignal.timeout", () => {
   });
 
   test("fires through advanceTimersByTime", () => {
-    vi.useFakeTimers();
+    bunVi.useFakeTimers();
     const signal = AbortSignal.timeout(1000);
     const reasons: string[] = [];
     signal.addEventListener("abort", () => reasons.push(signal.reason.name));
@@ -336,6 +336,44 @@ describe("AbortSignal.timeout", () => {
     expect({ aborted: signal.aborted, reasons }).toEqual({ aborted: false, reasons: [] });
     vi.advanceTimersByTime(1);
     expect({ aborted: signal.aborted, reasons }).toEqual({ aborted: true, reasons: ["TimeoutError"] });
+  });
+
+  // Vitest has nothing that fakes it, so tests written for Vitest wait for one with fake timers on.
+  describe('stays on the real clock with vi.useFakeTimers() of "vitest"', () => {
+    const aborted = (signal: AbortSignal) => new Promise(resolve => signal.addEventListener("abort", resolve));
+
+    test.each<[string, () => Promise<unknown>]>([
+      ["an abort listener", () => aborted(AbortSignal.timeout(1))],
+      ["AbortSignal.any()", () => aborted(AbortSignal.any([AbortSignal.timeout(1)]))],
+      [
+        "fetch()",
+        async () => {
+          await using server = Bun.serve({ port: 0, fetch: () => new Promise(() => {}) });
+          await expect(fetch(server.url, { signal: AbortSignal.timeout(1) })).rejects.toThrow(
+            expect.objectContaining({ name: "TimeoutError" }),
+          );
+        },
+      ],
+    ])("%s", async (_, wait) => {
+      vi.useFakeTimers();
+      await wait();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    test("useRealTimers() doesn't drop it", async () => {
+      vi.useFakeTimers();
+      const signal = AbortSignal.timeout(1);
+      vi.useRealTimers();
+      await aborted(signal);
+    });
+
+    test("the delay doesn't start from the fake clock", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout"] });
+      vi.advanceTimersByTime(3_600_000);
+      const start = performance.now();
+      await aborted(AbortSignal.timeout(30));
+      expect(performance.now() - start).toBeGreaterThanOrEqual(29);
+    });
   });
 });
 // A timer that a fake timer's callback arms with no delay is scheduled 1ms
@@ -363,7 +401,7 @@ describe("a zero-delay timer armed by a timer callback", () => {
     }
 
     test("advanceTimersByTime() fires it once per millisecond", () => {
-      vi.useFakeTimers();
+      bunVi.useFakeTimers();
       const abortedAt = rearmOnAbort();
       vi.advanceTimersByTime(3);
       expect({ abortedAt, now: performance.now(), pending: vi.getTimerCount() }).toEqual({
@@ -374,7 +412,7 @@ describe("a zero-delay timer armed by a timer callback", () => {
     });
 
     test("runOnlyPendingTimers() fires the pending one only", () => {
-      vi.useFakeTimers();
+      bunVi.useFakeTimers();
       const abortedAt = rearmOnAbort();
       vi.runOnlyPendingTimers();
       expect({ abortedAt, now: performance.now(), pending: vi.getTimerCount() }).toEqual({
@@ -385,7 +423,7 @@ describe("a zero-delay timer armed by a timer callback", () => {
     });
 
     test("advanceTimersToNextTimer() moves the clock to the re-armed one", () => {
-      vi.useFakeTimers();
+      bunVi.useFakeTimers();
       const abortedAt = rearmOnAbort();
       vi.advanceTimersToNextTimer();
       vi.advanceTimersToNextTimer();
@@ -397,7 +435,7 @@ describe("a zero-delay timer armed by a timer callback", () => {
     });
 
     test("a nested advanceTimersToNextTimer() in the listener, before it re-arms", () => {
-      vi.useFakeTimers();
+      bunVi.useFakeTimers();
       const abortedAt: number[] = [];
       const arm = () => {
         AbortSignal.timeout(0).addEventListener("abort", () => {
@@ -487,7 +525,7 @@ describe("a zero-delay timer armed by a timer callback", () => {
   });
 
   test("AbortSignal.timeout(0) fires 1ms after the callback that armed it", () => {
-    vi.useFakeTimers();
+    bunVi.useFakeTimers();
     let signal!: AbortSignal;
     setTimeout(() => (signal = AbortSignal.timeout(0)), 5);
     vi.advanceTimersByTime(5);
@@ -508,7 +546,7 @@ describe("a zero-delay timer armed by a timer callback", () => {
   });
 
   test("a timer that was already due 1ms later fires before it", () => {
-    vi.useFakeTimers();
+    bunVi.useFakeTimers();
     const order: string[] = [];
     setTimeout(() => order.push("setTimeout(1)"), 1);
     AbortSignal.timeout(0).addEventListener("abort", () => {
@@ -519,7 +557,7 @@ describe("a zero-delay timer armed by a timer callback", () => {
   });
 
   test("armed outside a timer callback, it is due at the current instant", () => {
-    vi.useFakeTimers();
+    bunVi.useFakeTimers();
     vi.advanceTimersByTime(5);
     const signal = AbortSignal.timeout(0);
     vi.runOnlyPendingTimers();
@@ -1757,6 +1795,7 @@ describe("a timer without a delay", () => {
 describe("useFakeTimers({ toFake, doNotFake })", () => {
   // There's no global to swap for these, so they follow whichever clock setTimeout is on.
   const likeSetTimeout = ["AbortSignal.timeout", "Bun.sleep", "Bun.cron"];
+  const neverFakedBy = (api: unknown) => (api === vi ? ["AbortSignal.timeout"] : []);
   const everything = [
     "setTimeout",
     "setInterval",
@@ -1768,7 +1807,7 @@ describe("useFakeTimers({ toFake, doNotFake })", () => {
     "hrtime",
     ...likeSetTimeout,
   ];
-  // "vitest" fakes what Vitest fakes. "bun:test" leaves setImmediate real, as it always has.
+  // "vitest" fakes what Vitest fakes. "bun:test" leaves setImmediate real and fakes AbortSignal.timeout(), as it always has.
   const defaults = [
     [vi, everything.filter(name => name !== "nextTick" && name !== "queueMicrotask")],
     [bunVi, everything.filter(name => name !== "nextTick" && name !== "queueMicrotask" && name !== "setImmediate")],
@@ -1843,7 +1882,7 @@ describe("useFakeTimers({ toFake, doNotFake })", () => {
     ],
   ])("%j", (options, faked) => {
     for (const [api, byDefault] of defaults) {
-      const expected = typeof faked === "function" ? faked(byDefault) : faked;
+      const expected = without(...neverFakedBy(api))(typeof faked === "function" ? faked(byDefault) : faked);
       api.useFakeTimers(options as any);
       expect(setTimeout !== saved.setTimeout).toBe(expected.includes("setTimeout"));
       expect(whatIsFaked()).toEqual(expected);
@@ -2010,7 +2049,7 @@ describe('toFake: ["performance"] in a beforeEach', () => {
 
 describe("a faked setImmediate", () => {
   test("runs before timeouts due at the same time, in order, with its arguments", () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "setImmediate", "clearImmediate"] });
+    bunVi.useFakeTimers({ toFake: ["setTimeout", "setImmediate", "clearImmediate"] });
     expect(setImmediate).not.toBe(saved.setImmediate);
     const order: unknown[] = [];
     AbortSignal.timeout(0).addEventListener("abort", () => order.push("timeout(0)"));

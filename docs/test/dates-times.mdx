@@ -183,7 +183,7 @@ Vitest and Jest fake `setImmediate` by default. So does `vi` imported from `"vit
 
 As in Vitest and Jest, a fake `setTimeout()` without a delay is due right away, so `advanceTimersByTime(0)` runs it without moving the clock. If it's set while a fake timer's callback is running, it's due 1 ms later.
 
-`AbortSignal.timeout()`, `Bun.sleep()` and `Bun.cron()` follow the fake clock when `setTimeout` is faked.
+`AbortSignal.timeout()`, `Bun.sleep()` and `Bun.cron()` follow the fake clock when `setTimeout` is faked. With `vi` imported from `"vitest"`, `AbortSignal.timeout()` stays on the real clock, as in Vitest.
 
 ### Wait for real time while fake timers are on
 

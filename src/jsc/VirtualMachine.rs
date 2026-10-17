@@ -2913,6 +2913,8 @@ pub struct RuntimeHooks {
     ),
     /// `FakeTimers::min_delay_ms()` of the calling thread's VM. A slot for the same reason as `timer_insert`.
     pub timer_min_delay_ms: fn() -> u32,
+    /// `FakeTimers::abort_signal_timeout_clock()` of the calling thread's VM.
+    pub abort_signal_timeout_clock: fn() -> bun_core::TimespecMockMode,
     /// Reads the calling thread's `Timer::All`; see `timer_insert`.
     pub timers_left: fn() -> TimersLeft,
     /// `RareData.defaultClientSslCtx()` — lazy default-trust-store client
@@ -3166,6 +3168,13 @@ impl VirtualMachine {
     pub fn timer_min_delay_ms() -> u32 {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         (hooks.timer_min_delay_ms)()
+    }
+
+    /// The clock that an `AbortSignal.timeout()` armed now runs on.
+    #[inline]
+    pub fn abort_signal_timeout_clock() -> bun_core::TimespecMockMode {
+        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+        (hooks.abort_signal_timeout_clock)()
     }
 }
 

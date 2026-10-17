@@ -1343,6 +1343,19 @@ fn timer_min_delay_ms() -> u32 {
     unsafe { (*all).fake_timers.min_delay_ms() }
 }
 
+/// For `AbortSignal::Timeout`, like `timer_min_delay_ms`.
+fn abort_signal_timeout_clock() -> bun_core::TimespecMockMode {
+    let all = timer_all();
+    // SAFETY: `all` is the live per-thread `All`; leaf hook, field read only.
+    if !all.is_null()
+        && unsafe { (*all).fake_timers.abort_signal_timeout_clock() } == crate::timer::Clock::Fake
+    {
+        bun_core::TimespecMockMode::AllowMockedTime
+    } else {
+        bun_core::TimespecMockMode::ForceRealTime
+    }
+}
+
 fn timers_left() -> TimersLeft {
     let all = timer_all();
     if all.is_null() {
@@ -1558,6 +1571,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     timer_insert,
     timer_remove,
     timer_min_delay_ms,
+    abort_signal_timeout_clock,
     timers_left,
     default_client_ssl_ctx,
     ssl_ctx_cache_get_or_create,

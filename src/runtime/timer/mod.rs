@@ -703,6 +703,9 @@ impl All {
                 // SAFETY: as above.
                 flags.is_some_and(|flags| unsafe { flags.as_ref() }.fake())
             }
+            EventLoopTimerTag::AbortSignalTimeout => {
+                self.fake_timers.abort_signal_timeout_clock() == Clock::Fake
+            }
             _ => tag.allow_fake_timers() && self.fake_timers.set_timeout_clock() == Clock::Fake,
         };
         if fake {

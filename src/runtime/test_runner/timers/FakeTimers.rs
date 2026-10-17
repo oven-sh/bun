@@ -196,6 +196,7 @@ enum Flavor {
 struct Options {
     now: Option<f64>,
     faked: ApiSet,
+    fakes_abort_signal_timeout: bool,
     tick_mode: TickMode,
     loop_limit: u32,
 }
@@ -206,6 +207,7 @@ impl Options {
         let mut options = Options {
             now: None,
             faked,
+            fakes_abort_signal_timeout: true,
             tick_mode: TickMode::Manual,
             loop_limit: match flavor {
                 Flavor::Vi => 10_000,
@@ -431,6 +433,7 @@ pub(crate) struct FakeTimers {
     active: bool,
     /// Empty while inactive.
     faked: ApiSet,
+    fakes_abort_signal_timeout: bool,
     /// A preload script set up the current mock, so `on_test_file_end` keeps it.
     from_preload: bool,
     /// Bumped by `activate` and `forget_installation`. If it changes mid-run, that run's clock is gone.
@@ -462,6 +465,7 @@ impl Default for FakeTimers {
         Self {
             active: false,
             faked: ApiSet::default(),
+            fakes_abort_signal_timeout: false,
             from_preload: false,
             installs: 0,
             firing: 0,
@@ -572,10 +576,19 @@ impl FakeTimers {
         self.active
     }
 
-    /// `AbortSignal.timeout()`, `Bun.sleep()` and `Bun.cron()` use this too, since they have no function to replace.
+    /// `Bun.sleep()` and `Bun.cron()` use this too, since they have no function to replace.
     pub(crate) fn set_timeout_clock(&self) -> Clock {
         if self.faked.contains(Api::SetTimeout) {
             Clock::Fake
+        } else {
+            Clock::Real
+        }
+    }
+
+    /// Like `setTimeout()` for "bun:test". Vitest has nothing that fakes it, so tests written for it wait for one with fake timers on.
+    pub(crate) fn abort_signal_timeout_clock(&self) -> Clock {
+        if self.fakes_abort_signal_timeout {
+            self.set_timeout_clock()
         } else {
             Clock::Real
         }
@@ -656,6 +669,7 @@ impl FakeTimers {
     fn activate(&mut self, global: &JSGlobalObject, options: &Options, date_now: f64) {
         self.active = true;
         self.faked = options.faked;
+        self.fakes_abort_signal_timeout = options.fakes_abort_signal_timeout;
         self.from_preload = global.bun_vm().is_in_preload;
         self.installs = self.installs.wrapping_add(1);
         self.loop_limit = options.loop_limit;
@@ -1496,14 +1510,14 @@ fn use_fake_timers(
     frame: &CallFrame,
     flavor: Flavor,
 ) -> JsResult<JSValue> {
-    use_fake_timers_with_default(global, frame, flavor, ApiSet::DEFAULT)
+    use_fake_timers_with_default(global, frame, flavor, ApiSet::DEFAULT, true)
 }
 
 /// `vi.useFakeTimers()` of "vitest".
 #[bun_jsc::host_fn]
 fn vitest_use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let faked = ApiSet(ApiSet::DEFAULT.0 | ApiSet::IMMEDIATES.0);
-    use_fake_timers_with_default(global, frame, Flavor::Vi, faked)
+    use_fake_timers_with_default(global, frame, Flavor::Vi, faked, false)
 }
 
 #[optimize(size)]
@@ -1512,8 +1526,10 @@ fn use_fake_timers_with_default(
     frame: &CallFrame,
     flavor: Flavor,
     faked: ApiSet,
+    fakes_abort_signal_timeout: bool,
 ) -> JsResult<JSValue> {
-    let options = Options::from_js(global, frame.argument(0), flavor, faked)?;
+    let mut options = Options::from_js(global, frame.argument(0), flavor, faked)?;
+    options.fakes_abort_signal_timeout = fakes_abort_signal_timeout;
     let date_now = options.now.unwrap_or_else(|| match flavor {
         // vitest starts from the current `Date.now()`, mocked or not (`setSystemTime()`, the previous fake clock).
         Flavor::Vi => bun_jsc::cpp::JSC__JSGlobalObject__jsDateNow(global),

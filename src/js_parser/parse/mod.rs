@@ -417,6 +417,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Parentheses with a rest argument that has an initializer are still a parameter list, with an error.
+    #[cold]
+    fn has_only_rest_initializers(invalid_log: &LocList) -> bool {
+        invalid_log
+            .iter()
+            .all(|invalid| invalid.kind == InvalidLocTag::RestInitializer)
+    }
+
     /// This assumes that the open parenthesis has already been parsed by the caller
     pub(crate) fn parse_paren_expr(
         &mut self,
@@ -573,9 +581,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // there were no conversion errors.
             if Self::IS_TYPESCRIPT_ENABLED
                 && p.lexer.token == T::TColon
-                && invalid_log
-                    .iter()
-                    .all(|invalid| invalid.kind == InvalidLocTag::RestInitializer)
+                && (invalid_log.is_empty() || Self::has_only_rest_initializers(&invalid_log))
             {
                 if opts.is_after_question_and_before_colon {
                     // Only do this very expensive check if we must

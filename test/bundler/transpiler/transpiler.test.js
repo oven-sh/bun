@@ -534,9 +534,7 @@ describe("Bun.Transpiler", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("a+b+c\n2\n");
-      expect(exitCode).toBe(0);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "a+b+c\n2\n", stderr: "", exitCode: 0 });
     });
 
     it('a spread argument of a call of "async" maps to its own column', async () => {

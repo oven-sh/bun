@@ -83,12 +83,19 @@ const views = common.getArrayBufferViews(buffer);
   readable.push(views[2]);
   readable.unshift(views[0]);
 
-  // read() with no size returns one buffered chunk at a time.
-  const buf = readable.read();
+  let buf;
+
+  buf = readable.read();
   assert(buf instanceof Buffer);
   assert.deepStrictEqual([...buf], [...views[0]]);
-  assert.deepStrictEqual([...readable.read()], [...views[1]]);
-  assert.deepStrictEqual([...readable.read()], [...views[2]]);
+
+  buf = readable.read();
+  assert(buf instanceof Buffer);
+  assert.deepStrictEqual([...buf], [...views[1]]);
+
+  buf = readable.read();
+  assert(buf instanceof Buffer);
+  assert.deepStrictEqual([...buf], [...views[2]]);
 }
 
 {

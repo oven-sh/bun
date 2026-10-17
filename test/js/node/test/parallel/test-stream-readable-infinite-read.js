@@ -17,12 +17,9 @@ let i = 0;
 
 readable.on('readable', common.mustCall(function() {
   if (i++ === 10) {
-    // We will just terminate now.
     readable.removeAllListeners('readable');
     return;
   }
 
-  const data = readable.read();
-  // read() with no size returns a single buffered chunk at a time.
-  assert.strictEqual(data.length, 8192);
+  assert.strictEqual(readable.read().length, 8192);
 }, 11));

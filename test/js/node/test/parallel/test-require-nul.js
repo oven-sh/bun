@@ -5,7 +5,7 @@ const assert = require('assert');
 
 // Nul bytes should throw, not abort.
 /* eslint-disable no-control-regex */
-assert.throws(() => require('\u0000ab'), /'\u0000ab'/);
-assert.throws(() => require('a\u0000b'), /'a\u0000b'/);
-assert.throws(() => require('ab\u0000'), /'ab\u0000'/);
+assert.throws(() => require('\u0000ab'), /Cannot find module '\u0000ab'/);
+assert.throws(() => require('a\u0000b'), /Cannot find module 'a\u0000b'/);
+assert.throws(() => require('ab\u0000'), /Cannot find module 'ab\u0000'/);
 /* eslint-enable no-control-regex */

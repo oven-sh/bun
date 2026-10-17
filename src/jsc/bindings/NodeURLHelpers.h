@@ -18,10 +18,7 @@ namespace Bun {
 // True when every xn-- label in `host` is valid UTS #46 punycode.
 bool hasValidPunycodeHost(WTF::StringView host);
 
-// Call this, not WTF::URL::fileSystemPath(): test/internal/source-lints/file-system-path.test.ts scans for the raw call.
-// Empty when `url` is not a file: URL, and when its percent-decoded path is not UTF-8. WTF returns a
-// null String for both, and a null String reads as "": the current directory. On Windows WTF decodes
-// such a path with U+FFFD in it instead (oven-sh/WebKit#789).
+// The only call of WTF::URL::fileSystemPath(): see test/internal/source-lints/file-system-path.test.ts. Empty when `url` is not a file: URL, and (not on Windows) when its percent-decoded path is not UTF-8.
 ALWAYS_INLINE WTF::Markable<WTF::String> fileSystemPath(const WTF::URL& url)
 {
     return url.fileSystemPath();
@@ -48,9 +45,7 @@ enum class FileURLToPathError : uint8_t {
 // `%2f` or `%2F` in a path that has a "%", and on Windows `%5c` or `%5C`.
 bool hasEncodedPathSeparator(WTF::StringView path);
 
-// Node's fileURLToPath() for the host platform, in Node's order of checks. Sets `error` when the result is empty.
-// For a URL from the user where Node's rules apply: Bun.fileURLToPath() and each node:fs function.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/url.js#L1622-L1631
+// Node's fileURLToPath() for a URL from the user, in Node's order of checks (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/url.js#L1622-L1631). Sets `error` when the result is empty.
 ALWAYS_INLINE WTF::Markable<WTF::String> fileURLToPath(const WTF::URL& url, FileURLToPathError& error)
 {
     if (!url.protocolIsFile()) [[unlikely]] {
@@ -75,8 +70,7 @@ ALWAYS_INLINE WTF::Markable<WTF::String> fileURLToPath(const WTF::URL& url, File
     return path;
 }
 
-// What Node's fileURLToPath() throws for `Undecodable`: `URIError: URI malformed`. It has no `code`,
-// so it is not ERR_INVALID_URI.
+// Node's error for `Undecodable`: `URIError: URI malformed`. It has no `code`, so it is not ERR_INVALID_URI.
 JSC::JSObject* createURIMalformedError(JSC::JSGlobalObject*);
 
 } // namespace Bun

@@ -3538,8 +3538,7 @@ extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
 extern "C" bool Bun__hasPlugins(Zig::GlobalObject*);
 
-// Whether `error`, from a resolve of `specifier` that failed, is the resolver's miss of `specifier` itself.
-// It is not when an onResolve plugin answered: then it is what the plugin reported, or the miss of its answer.
+// Whether `error` is the resolver's own miss of `specifier`, and not the error of an onResolve plugin that answered for it.
 static bool isResolveMissOf(Zig::GlobalObject* globalObject, JSValue error, const WTF::String& specifier)
 {
     if (!Bun__hasPlugins(globalObject))

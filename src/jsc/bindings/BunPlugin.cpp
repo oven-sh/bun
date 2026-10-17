@@ -383,8 +383,7 @@ JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String&
     return nullptr;
 }
 
-// `joined` is URL(base, specifier), where `specifier` is a relative path. A "%" of a file name can
-// make an escape that does not decode to UTF-8. Then the join is done again with each "%" escaped.
+// The path of `joined`, which is URL(base, specifier) for a relative path. When a "%" of the name makes an escape that is not UTF-8, the join is done again with each "%" escaped.
 static String fileSystemPathOfRelativeSpecifier(const URL& joined, const URL& base, const String& specifier)
 {
     if (auto path = Bun::fileSystemPath(joined))

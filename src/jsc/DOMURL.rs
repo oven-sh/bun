@@ -6,7 +6,7 @@ bun_opaque::opaque_ffi! {
     pub struct DOMURL;
 }
 
-// `DOMURL`/`VM`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles; the
+// SAFETY: `DOMURL`/`VM`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles; the
 // error out-param is a `#[repr(u8)]` enum that C++ writes only with one of
 // its values, and its `&mut` is exclusive for the call → `safe fn`.
 unsafe extern "C" {
@@ -33,8 +33,7 @@ pub enum ToFileSystemPathError {
     Undecodable = 3,
 }
 
-/// What Node's `fileURLToPath()` throws for [`ToFileSystemPathError::Undecodable`]:
-/// `URIError: URI malformed`, with no `code`.
+/// Node's error for [`ToFileSystemPathError::Undecodable`]: `URIError: URI malformed`, with no `code`.
 pub fn uri_malformed_error(global: &JSGlobalObject) -> JSValue {
     Bun__createURIMalformedError(global)
 }

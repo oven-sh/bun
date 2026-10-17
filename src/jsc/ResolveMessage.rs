@@ -46,9 +46,8 @@ fn import_kind_label(kind: ImportKind) -> &'static [u8] {
 }
 
 /// Host-agnostic bare-specifier check for Node ESM error shaping. Must not vary by host:
-/// relative, separator-led, and ASCII-letter drive forms are path-like, and a `file:` URL names
-/// a file; everything else is a package. Unlike `bun_paths::is_absolute`, the drive byte must be
-/// alphabetic.
+/// relative, separator-led, and ASCII-letter drive forms are path-like; everything else is a
+/// package. Unlike `bun_paths::is_absolute`, the drive byte must be alphabetic.
 fn is_bare_esm_specifier(s: &[u8]) -> bool {
     let is_sep = |b: u8| b == b'/' || b == b'\\';
     match s {
@@ -57,6 +56,7 @@ fn is_bare_esm_specifier(s: &[u8]) -> bool {
         [b'.', b, ..] if is_sep(*b) => return false,
         [b'.', b'.', b, ..] if is_sep(*b) => return false,
         [d, b':', b, ..] if d.is_ascii_alphabetic() && is_sep(*b) => return false,
+        // A `file:` URL names a file, not the package "file:".
         _ if s.starts_with(b"file:") => return false,
         _ => {}
     }

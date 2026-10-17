@@ -8,7 +8,9 @@ const {
   validateObject,
   validateAbortSignal,
   validateEncoding,
+  validateBuffer,
 } = require("internal/validators");
+const { validateReadPosition, validateReadRange } = require("internal/fs/read-write");
 
 const constants = $processBindingConstants.fs;
 
@@ -540,6 +542,7 @@ function asyncWrap(fn: any, name: string) {
           length = buffer.byteLength - offset,
           position = null,
         } = bufferOrParams ?? kEmptyObject);
+        validateBuffer(buffer);
       }
 
       if (offset !== null && typeof offset === "object") {
@@ -554,11 +557,14 @@ function asyncWrap(fn: any, name: string) {
       }
 
       length ??= buffer?.byteLength - offset;
+      validateReadPosition(position, length);
+      if (length === 0) return { __proto__: null, bytesRead: 0, buffer };
+      validateReadRange(buffer, offset, length);
 
       try {
         this[kRef]();
         const bytesRead = await read(fd, buffer, offset, length, position);
-        return { buffer, bytesRead };
+        return { __proto__: null, buffer, bytesRead };
       } finally {
         this[kUnref]();
       }

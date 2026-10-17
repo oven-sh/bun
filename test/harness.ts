@@ -79,7 +79,7 @@ export const bunEnv: NodeJS.Dict<string> = {
   ...process.env,
   // Windows spells it `Path`. `{ ...bunEnv, PATH }` would then hold one variable twice, and which
   // of the two a child process gets changes with the names of the other variables.
-  ...(isWindows && { Path: undefined, PATH: process.env.PATH }),
+  ...(isWindows && process.env.DIAG_FIX !== "0" && { Path: undefined, PATH: process.env.PATH }),
   // Strip ad-hoc JSC debug options that may be set on CI agents — they leak
   // a "WARNING: failed to parse" line to stderr that breaks snapshot tests.
   JSC_useJIT: undefined,

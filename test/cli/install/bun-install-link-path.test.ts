@@ -173,7 +173,7 @@ describe.each(["hoisted", "isolated"])("link:<path> (%s)", linker => {
 
     const { err, exitCode } = await bun(root, ["install"]);
     expect(errorLines(err)).toEqual([
-      'error: Could not find directory "./vendor/later" for linked dependency "later"',
+      'error: directory "./vendor/later" not found for linked dependency "later"',
       "error: later@link:./vendor/later failed to resolve",
     ]);
     expect(existsSync(join(root, "project", "bun.lock"))).toBe(false);
@@ -190,7 +190,7 @@ describe.each(["hoisted", "isolated"])("link:<path> (%s)", linker => {
     const root = String(dir);
 
     const { err, exitCode } = await bun(root, ["install"]);
-    expect(err).toContain('error: Could not find directory "./dep.js" for linked dependency "dep"');
+    expect(err).toContain('error: directory "./dep.js" not found for linked dependency "dep"');
     expect(existsSync(join(root, "project", "bun.lock"))).toBe(false);
     expect(exitCode).toBe(1);
   });
@@ -493,9 +493,7 @@ describe.each(["hoisted", "isolated"])("link:<path> (%s)", linker => {
     expect((await bun(root, ["install"])).exitCode).toBe(0);
 
     const { err, exitCode } = await bun(root, ["patch", "dep"]);
-    expect(err).toContain(
-      "error: cannot patch dep: it is a link: dependency, and bun install never applies a patch to one",
-    );
+    expect(err).toContain('error: refusing to patch link: dependency "dep"');
     expectLinkTo(join(root, "project", "node_modules", "dep"), join(root, "project", "vendor", "dep"));
     expect(exitCode).not.toBe(0);
   });

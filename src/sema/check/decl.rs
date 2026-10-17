@@ -27,6 +27,15 @@ impl Predicate {
 /// `signature.thisParameter` in `Checker::resolved_parameter_types`.
 const THIS_PARAMETER: u32 = u32::MAX;
 
+/// The parameters whose types `sig_params_of_declaration` instantiates, besides a rest parameter.
+#[derive(Copy, Clone)]
+enum Read {
+    /// See `sig_params_with_first`.
+    First(usize),
+    /// The one at the index, and the result has no other.
+    Only(usize),
+}
+
 /// The enclosing type parameters that a piece of type syntax may reference.
 #[derive(Default)]
 struct Mentioned {
@@ -4488,11 +4497,54 @@ impl<'p, 's> Checker<'p, 's> {
 
     #[inline]
     pub fn sig_params(&mut self, sig: SigId) -> List<'p, SigParam> {
+        self.sig_params_with_first(sig, usize::MAX)
+    }
+
+    /// `sig_params` for a caller that reads the types of the first `count` parameters and of a rest
+    /// parameter. tsgo instantiates the type of a parameter when it is asked for
+    /// (`getTypeOfInstantiatedSymbol`), so a limit that the type of another parameter reaches is
+    /// no error. Such a type is `UNRESOLVED` unless it is known, and a list that has one is in
+    /// `partial_sig_params`.
+    #[inline]
+    pub(super) fn sig_params_with_first(&mut self, sig: SigId, count: usize) -> List<'p, SigParam> {
         let recent = self.recent_sig_params[sig.0 as usize % RECENT_SIGS];
         if recent.0 == sig {
             return List::Kept(recent.1);
         }
-        self.sig_params_not_recent(sig)
+        self.sig_params_not_recent(sig, count)
+    }
+
+    /// `param_type_at`, where `params` is such a list for `sig`: a type that it lacks is asked for.
+    pub(super) fn param_type_asked_at(
+        &mut self,
+        sig: SigId,
+        params: &[SigParam],
+        index: usize,
+    ) -> Option<TypeId> {
+        match params.get(index) {
+            Some(param) if param.ty == TypeId::UNRESOLVED && !param.rest => {
+                self.get_type_of_parameter(param);
+                Some(self.type_of_parameter_asked_for(sig, index))
+            }
+            _ => self.param_type_at(params, index),
+        }
+    }
+
+    /// `getTypeOfSymbol(sig.parameters[index])`
+    fn type_of_parameter_asked_for(&mut self, sig: SigId, index: usize) -> TypeId {
+        if let Some(declared) = self.default_construct_base_sig(sig)
+            && let SigData::Decl { file, func, mapper }
+            | SigData::Construct {
+                file, func, mapper, ..
+            } = *self.types().sig(declared)
+            && index < self.hir(file)[func].params.len()
+        {
+            let target = self.instantiated_target(declared);
+            let read = Read::Only(index);
+            let only = self.sig_params_of_declaration(file, func, mapper, target, read);
+            return only.first().map_or(TypeId::UNRESOLVED, |param| param.ty);
+        }
+        TypeId::UNRESOLVED
     }
 
     /// `sig_params` for a caller at a point where tsgo requests the types of the first `count`
@@ -4510,7 +4562,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.type_of_param(file, p);
             }
         }
-        let params = self.sig_params(sig);
+        let params = self.sig_params_with_first(sig, count);
         self.note_parameter_types_resolved(sig, &params, count);
         params
     }
@@ -4600,7 +4652,11 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         for (i, param) in params.iter().enumerate().take(count) {
-            if !self.could_contain_type_variables(param.ty)
+            let ty = match param.ty {
+                TypeId::UNRESOLVED => self.type_of_parameter_asked_for(sig, i),
+                known => known,
+            };
+            if !self.could_contain_type_variables(ty)
                 && let Some((of, declaration)) = param.declaration
                 && let declared = self.type_of_param(of, declaration)
                 && self.has_type_variables(declared)
@@ -4661,7 +4717,8 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> bool {
         self.resolved_parameter_types.contains(&(sig, index as u32))
             || params[index].rest
-            || index < Self::min_args(params) && index + 1 >= self.min_argument_count(params)
+            || index < Self::min_args(params)
+                && index + 1 >= self.min_argument_count_asked(Some(sig), params)
     }
 
     /// `kept` is the stored result of `sig_params(sig)`.
@@ -4670,15 +4727,17 @@ impl<'p, 's> Checker<'p, 's> {
         List::Kept(kept)
     }
 
-    /// `sig_params` for a signature that was not queried recently.
-    fn sig_params_not_recent(&mut self, sig: SigId) -> List<'p, SigParam> {
+    /// `sig_params_with_first` for a signature that was not queried recently.
+    fn sig_params_not_recent(&mut self, sig: SigId, count: usize) -> List<'p, SigParam> {
         let (file, func, mapper) = match self.types().sig(sig) {
-            SigData::WithReturn { sig: inner, .. } => return self.sig_params(*inner),
+            SigData::WithReturn { sig: inner, .. } => {
+                return self.sig_params_with_first(*inner, count);
+            }
             SigData::Synth { params, .. } => return self.cached_sig_params(sig, params),
             // Nothing is cached for these.
             SigData::DefaultConstruct { .. } => {
                 return match self.default_construct_base_sig(sig) {
-                    Some(base) => self.sig_params(base),
+                    Some(base) => self.sig_params_with_first(base, count),
                     None => List::default(),
                 };
             }
@@ -4690,14 +4749,29 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(kept) = self.p.sig_params.get_ref(&self.task, &sig) {
             return self.cached_sig_params(sig, kept);
         }
+        if count != usize::MAX
+            && let Some(&(first, partial)) = self.partial_sig_params.get(&sig)
+            && count.min(partial.len()) <= first
+        {
+            return List::Kept(partial);
+        }
         let scope = self.begin_scope();
         let target = self.instantiated_target(sig);
-        let params = self.sig_params_of_declaration(file, func, mapper, target);
-        if let Ok(stored) = self.end_scope_by_counters(scope) {
-            let kept = (self.p.sig_params).insert_ref(&self.task, sig, params.into(), stored);
-            return self.cached_sig_params(sig, kept.1);
+        let read = Read::First(count);
+        let params = self.sig_params_of_declaration(file, func, mapper, target, read);
+        let first = (params.iter()).position(|param| param.ty == TypeId::UNRESOLVED);
+        match (self.end_scope_by_counters(scope), first) {
+            (Ok(_), Some(first)) if count != usize::MAX => {
+                let partial: &'p [SigParam] = params.leak();
+                self.partial_sig_params.insert(sig, (first, partial));
+                List::Kept(partial)
+            }
+            (Ok(stored), _) => {
+                let kept = (self.p.sig_params).insert_ref(&self.task, sig, params.into(), stored);
+                self.cached_sig_params(sig, kept.1)
+            }
+            (Err(_), _) => List::Own(params.to_vec()),
         }
-        List::Own(params.to_vec())
     }
 
     /// `getSignatureFromDeclaration`: "Include parameter symbol instead of property symbol in the
@@ -4728,9 +4802,14 @@ impl<'p, 's> Checker<'p, 's> {
         func: FnId,
         mapper: MapperId,
         target: Option<SigId>,
+        read: Read,
     ) -> Vec<SigParam, &'s Arena> {
         let hir = self.hir(file);
-        let mut out = Vec::with_capacity_in(hir[func].params.len(), self.arena);
+        let (indices, count) = match read {
+            Read::First(count) => (0..hir[func].params.len(), count),
+            Read::Only(index) => (index..index + 1, 0),
+        };
+        let mut out = Vec::with_capacity_in(indices.len(), self.arena);
         // `getImmediatelyInvokedFunctionExpression`: the argument count of the call of an
         // immediately invoked function expression.
         let bound = self.bound(file);
@@ -4745,8 +4824,9 @@ impl<'p, 's> Checker<'p, 's> {
             &[(source, _)] if matches!(self.data(source), TypeData::ThisParam(_))
         );
         // `instantiateSignatureEx` instantiates the parameters of `signature.target`.
-        let target = target.map(|target| (target, self.sig_params(target)));
-        for (i, node) in hir[func].params.iter().enumerate() {
+        let target = target.map(|target| (target, self.sig_params_with_first(target, count)));
+        for i in indices {
+            let node = hir[func].params.at(i);
             let param = &hir[node];
             let name = match hir[param.pat].kind {
                 PatKind::Ident(name) => name,
@@ -4791,14 +4871,21 @@ impl<'p, 's> Checker<'p, 's> {
                 };
             let mut ty = if is_kept {
                 declared
-            } else {
+            } else if i < count
+                || matches!(read, Read::Only(_))
+                || param.flags.contains(Flags::REST)
+            {
                 self.instantiate(declared, mapper)
+            } else {
+                self.instantiation_if_known(declared, mapper)
+                    .unwrap_or(TypeId::UNRESOLVED)
             };
             // And one whose type is resolved and cannot contain type variables. Of any other it
             // goes back to the declared parameter and combines the mappers.
             if let Some((target, of_target)) = &target
                 && let Some(open) = of_target.get(i).map(|open| open.ty)
                 && open != ty
+                && open != TypeId::UNRESOLVED
                 && !self.could_contain_type_variables(open)
                 && self.is_parameter_type_resolved(*target, of_target, i)
             {

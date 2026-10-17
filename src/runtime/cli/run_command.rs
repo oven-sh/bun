@@ -135,9 +135,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         prettyln!("\n");
                         prettyln!(
                             "  <d>$</r> bun run<r> <blue>{}<r>\n",
-                            bstr::BStr::new(key.as_ref())
+                            bun_core::fmt::escape_control_chars(key.as_ref())
                         );
-                        prettyln!("  <d>  {}<r>\n", bstr::BStr::new(value));
+                        prettyln!("  <d>  {}<r>\n", bun_core::fmt::escape_control_chars(value));
                     }
                     prettyln!("\n");
                 } else {
@@ -257,6 +257,41 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             use_system_shell,
             None,
         )
+    }
+
+    /// Like [`Self::run_package_script_foreground`], but puts the `node_modules/.bin` of `cwd` and
+    /// of its parents at the front of `PATH` while the script runs.
+    pub(crate) fn run_lifecycle_script_foreground(
+        ctx: &mut ContextData,
+        script: &[u8],
+        name: &[u8],
+        cwd: &[u8],
+        env: &mut DotEnv::Loader,
+        silent: bool,
+    ) -> crate::Result<()> {
+        let mut original_path: Vec<u8> = Vec::new();
+        let path = Self::path_for_run(
+            env,
+            b"",
+            Some(&mut original_path),
+            cwd,
+            ctx.debug.run_in_bun,
+        )?;
+        env.map.put(b"PATH", &path)?;
+        let use_system_shell = ctx.debug.use_system_shell;
+        let result = Self::run_package_script_foreground_with_shell_path(
+            ctx,
+            script,
+            name,
+            cwd,
+            env,
+            &[],
+            silent,
+            use_system_shell,
+            Some(original_path.as_slice()),
+        );
+        env.map.put(b"PATH", &original_path)?;
+        result
     }
 
     /// Like [`Self::run_package_script_foreground`], but resolves the shell
@@ -1610,7 +1645,6 @@ impl Run<'_> {
         // (Rust-defined `#[no_mangle]` exports don't need this; the imported
         // C symbols do.)
         crate::napi::fix_dead_code_elimination();
-        crate::webcore::bake_response::fix_dead_code_elimination();
         bun_crash_handler::fix_dead_code_elimination();
         vm.global_exit();
     }

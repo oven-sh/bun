@@ -330,6 +330,18 @@ describe.concurrent("bun info", () => {
       expect(output).toBe("");
     });
 
+    it.each([[["info"]], [["pm", "view"]]])("%j asks the registry for a name longer than a path", async command => {
+      const { output, error, code } = await runCommand(
+        [bunExe(), ...command, Buffer.alloc(5000, "x").toString()],
+        await setupTest(),
+        false,
+      );
+
+      expect(error).toContain("Not Found");
+      expect(output).toBe("");
+      expect(code).toBe(1);
+    });
+
     // TODO: Version validation needs to be fixed - currently falls back to first version instead of failing
     it("should handle non-existent version", async () => {
       const testDir = await setupTest();
@@ -956,11 +968,11 @@ latest: 1.0.0
     // No name and nothing to infer it from.
     expect(await view([], { name: null, command })).toEqual({
       out: "",
-      err: "error: No package name was given and no package.json was found\n",
+      err: "error: no package name given and no package.json found\n",
       code: 1,
     });
     expect(await view(["--json"], { name: null, command })).toEqual({
-      out: `{ "error": "No package name was given and no package.json was found", "version": "" }\n`,
+      out: `{ "error": "no package name given and no package.json found", "version": "" }\n`,
       err: "",
       code: 1,
     });
@@ -1067,6 +1079,9 @@ describe.concurrent("bun info version spec", () => {
     "zz-case": packument("zz-case", { latest: "1.0.0", Next: "2.0.0" }, ["1.0.0", "2.0.0"]),
     "zz-dangling": packument("zz-dangling", { latest: "9.9.9", "v0-legacy": "0.5.0" }, ["1.0.0"]),
     "zz-onlypre": packument("zz-onlypre", { latest: "1.0.0-beta.2" }, ["1.0.0-beta.1", "1.0.0-beta.2"]),
+    "zz-rc": packument("zz-rc", { latest: "2.0.0-rc.1" }, ["1.0.0", "1.1.0", "2.0.0-rc.1"]),
+    // As some mirrors and private registries send it.
+    "zz-untagged": packument("zz-untagged", {}, ["1.0.0", "1.1.0"]),
   };
   let server: ReturnType<typeof Bun.serve>;
   let dir: string;
@@ -1173,6 +1188,17 @@ describe.concurrent("bun info version spec", () => {
       "zz-tags@^1": "1.5.0",
       "zz-onlypre": "1.0.0-beta.2",
     });
+  });
+
+  test.each([
+    ["zz-rc@*", "2.0.0-rc.1"],
+    ["zz-onlypre@*", "1.0.0-beta.2"],
+    ["zz-tags@*", "2.0.0"],
+    ["zz-untagged", "1.1.0"],
+    ["zz-untagged@latest", "1.1.0"],
+    ["zz-untagged@*", "1.1.0"],
+  ])("%s is the version that `bun add` installs", async (spec, version) => {
+    expect(await info(spec, "version")).toEqual({ stdout: `${version}\n`, stderr: "", exitCode: 0 });
   });
 
   test.each(["github:a/b", "file:./zz-tags", "npm:other@1.0.0", "1.0.0.tgz"])(

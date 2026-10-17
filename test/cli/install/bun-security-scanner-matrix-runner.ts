@@ -127,9 +127,10 @@ function expectationsFor(options: SecurityScannerTestOptions): { before: Project
   const scannerRuns = scannerType !== "npm.bunfigonly";
   // Without node_modules bun has to install the npm scanner before it can run it, whatever happens afterwards.
   const installsScannerFirst = scannerType === "npm" && !hasExistingNodeModules;
-  // add and `update <pkg>` scan what they were asked for; everything else scans the whole tree, root
-  // dependencies in name order.
-  const scanned = adds || (updates && args.length > 0) ? installTree(args) : installTree([...roots].sort());
+  // With a lockfile and node_modules, add and `update <pkg>` scan what they were asked for; everything else
+  // scans the whole tree, root dependencies in name order.
+  const narrow = (adds || (updates && args.length > 0)) && hasLockfile && hasExistingNodeModules;
+  const scanned = narrow ? installTree(args) : installTree([...roots].sort());
   const flagged = scanned[0];
   const proceeds =
     scannerRuns && (scannerReturns === "none" || (scannerReturns === "warn" && hasTTY && ttyResponse === "y"));

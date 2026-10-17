@@ -113,6 +113,9 @@ struct IDLStrictStringOrBuffer : WebCore::IDLType<JSStringOrBufferView> {
 // `ToString` of anything else.
 template<AllowBlob allowBlob>
 struct IDLLooseStringOrBuffer : IDLStrictStringOrBuffer<allowBlob> {};
+// But not of `undefined` or `null`.
+template<AllowBlob allowBlob>
+struct IDLLooseNotNullishStringOrBuffer : IDLStrictStringOrBuffer<allowBlob> {};
 
 // The bytes of a BufferSource that is not shared. Valid while the argument is alive and no JavaScript runs.
 struct IDLBufferSourceBytes : WebCore::IDLType<std::span<const uint8_t>> {

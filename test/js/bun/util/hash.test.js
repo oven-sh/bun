@@ -292,10 +292,22 @@ describe("what Bun.hash and its algorithms take", () => {
     }
   });
 
-  it("no argument is undefined", () => {
+  it("nothing to hash is refused, and does not hash as its name", () => {
+    const refusal = expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: "data must be a string, ArrayBuffer, ArrayBufferView or Blob",
+    });
     for (const hash of functions) {
-      expect(hash()).toBe(hash(undefined));
-      expect(hash()).toBe(hash("undefined"));
+      expect(() => hash()).toThrow(refusal);
+      expect(() => hash(undefined)).toThrow(refusal);
+      expect(() => hash(null, 1)).toThrow(refusal);
+    }
+  });
+
+  it("anything else is converted to a string", () => {
+    for (const hash of functions) {
+      for (const value of [0, 5, NaN, false, 10n, [1, 2], {}]) expect(hash(value)).toBe(hash(String(value)));
     }
   });
 

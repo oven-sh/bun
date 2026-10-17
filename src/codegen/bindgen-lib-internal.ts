@@ -724,23 +724,28 @@ export class PossiblySharedBytesType extends BytesType {
  * changes during the call. The bytes of a shared buffer, which another thread could change, are a copy.
  */
 export class StringOrBufferType extends Type {
-  readonly isLoose: boolean;
+  readonly conversion: "Strict" | "Loose" | "LooseNotNullish";
   readonly allowBlob: boolean;
-  constructor(isLoose = false, allowBlob = false) {
+  constructor(conversion: StringOrBufferType["conversion"] = "Strict", allowBlob = false) {
     super();
-    this.isLoose = isLoose;
+    this.conversion = conversion;
     this.allowBlob = allowBlob;
   }
   /** `ToString` of anything else. */
   get loose(): StringOrBufferType {
-    return new StringOrBufferType(true, this.allowBlob);
+    return new StringOrBufferType("Loose", this.allowBlob);
+  }
+  /** After `.loose`: `undefined` and `null` are refused, and not `"undefined"` and `"null"`. */
+  get notNullish(): StringOrBufferType {
+    assert(this.conversion !== "Strict", ".notNullish follows .loose: without it they are refused already");
+    return new StringOrBufferType("LooseNotNullish", this.allowBlob);
   }
   /** Also the bytes of a `Blob`. One whose bytes are not in memory, a file, throws. */
   get orBlob(): StringOrBufferType {
-    return new StringOrBufferType(this.isLoose, true);
+    return new StringOrBufferType(this.conversion, true);
   }
   get idlType(): string {
-    return `Bun::Bindgen::IDL${this.isLoose ? "Loose" : "Strict"}StringOrBuffer<Bun::Bindgen::AllowBlob::${this.allowBlob ? "Yes" : "No"}>`;
+    return `Bun::Bindgen::IDL${this.conversion}StringOrBuffer<Bun::Bindgen::AllowBlob::${this.allowBlob ? "Yes" : "No"}>`;
   }
   get tsType(): string {
     return `string | ArrayBuffer | SharedArrayBuffer | ArrayBufferView${this.allowBlob ? " | Blob" : ""}`;

@@ -121,6 +121,8 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     );
   }
   expect(b.stringOrBuffer.orBlob.loose.idlType).toBe(b.stringOrBuffer.loose.orBlob.idlType);
+  expect(b.stringOrBuffer.orBlob.loose.notNullish.idlType).toBe(b.stringOrBuffer.loose.notNullish.orBlob.idlType);
+  expect(() => b.stringOrBuffer.notNullish).toThrow(".notNullish follows .loose: without it they are refused already");
   expect(() => b.u32.asBigInt).toThrow(".asBigInt follows b.u64");
   expect(() => b.u64.allowBigInt.asBigInt).toThrow(".asBigInt follows b.u64");
   for (const value of [

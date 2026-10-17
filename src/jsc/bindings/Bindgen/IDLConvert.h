@@ -151,14 +151,17 @@ private:
             if (isBlob)
                 return result.initializeAsBuffer();
         }
-        if constexpr (std::same_as<IDL, IDLStrictStringOrBuffer<allowBlob>>) {
-            if (!value.inherits<JSC::StringObject>()) {
-                if constexpr (allowBlob == AllowBlob::Yes)
-                    ctx.throwTypeMustBe(globalObject, scope, "a string, ArrayBuffer, ArrayBufferView or Blob"_s);
-                else
-                    ctx.throwTypeMustBe(globalObject, scope, "a string, ArrayBuffer or ArrayBufferView"_s);
-                return;
-            }
+        bool isRefused = false;
+        if constexpr (std::same_as<IDL, IDLStrictStringOrBuffer<allowBlob>>)
+            isRefused = !value.inherits<JSC::StringObject>();
+        else if constexpr (std::same_as<IDL, IDLLooseNotNullishStringOrBuffer<allowBlob>>)
+            isRefused = value.isUndefinedOrNull();
+        if (isRefused) {
+            if constexpr (allowBlob == AllowBlob::Yes)
+                ctx.throwTypeMustBe(globalObject, scope, "a string, ArrayBuffer, ArrayBufferView or Blob"_s);
+            else
+                ctx.throwTypeMustBe(globalObject, scope, "a string, ArrayBuffer or ArrayBufferView"_s);
+            return;
         }
         JSC::JSString* string = value.toString(&globalObject);
         RETURN_IF_EXCEPTION(scope, void());
@@ -173,6 +176,9 @@ struct WebCore::Converter<Bun::Bindgen::IDLStrictStringOrBuffer<allowBlob>>
 template<Bun::Bindgen::AllowBlob allowBlob>
 struct WebCore::Converter<Bun::Bindgen::IDLLooseStringOrBuffer<allowBlob>>
     : Bun::Bindgen::Detail::StringOrBufferConverter<Bun::Bindgen::IDLLooseStringOrBuffer<allowBlob>, allowBlob> {};
+template<Bun::Bindgen::AllowBlob allowBlob>
+struct WebCore::Converter<Bun::Bindgen::IDLLooseNotNullishStringOrBuffer<allowBlob>>
+    : Bun::Bindgen::Detail::StringOrBufferConverter<Bun::Bindgen::IDLLooseNotNullishStringOrBuffer<allowBlob>, allowBlob> {};
 
 template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictStringOrStringObject> : Bun::DefaultTryConverter<Bun::Bindgen::IDLStrictStringOrStringObject> {
     template<Bun::IDLConversionContext Ctx>

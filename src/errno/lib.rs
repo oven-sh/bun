@@ -206,9 +206,6 @@ pub use windows_errno::{posix, *};
 #[cfg(not(windows))]
 #[allow(non_camel_case_types)]
 pub mod posix {
-    /// glibc/musl/bionic `mode_t` == `unsigned int`.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub type mode_t = u32;
     /// Darwin/FreeBSD `mode_t` == `__uint16_t` in `<sys/types.h>`.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub type mode_t = u16;

@@ -1197,19 +1197,13 @@ pub mod O {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub const PATH: i32 = libc::O_PATH;
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub const NOATIME: i32 = libc::O_NOATIME;
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub const TMPFILE: i32 = libc::O_TMPFILE;
-    // Windows defines these (non-zero) so the `O.PATH` /
-    // `O.NOATIME` bit-tests in `openat_windows_impl` are meaningful.
+    // Windows defines this (non-zero) so the `O.PATH` bit-test in
+    // `openat_windows_impl` is meaningful.
     #[cfg(windows)]
     pub const PATH: i32 = 0o10000000;
-    #[cfg(windows)]
-    pub const NOATIME: i32 = 0o1000000;
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     pub const PATH: i32 = 0;
-    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
-    pub const NOATIME: i32 = 0;
     // Defined for every platform; Darwin-only flags map to 0
     // elsewhere so `flags & O.EVTONLY` etc. compile and are no-ops.
     #[cfg(unix)]
@@ -1240,12 +1234,6 @@ pub mod O {
     pub const EVTONLY: i32 = libc::O_EVTONLY;
     #[cfg(not(target_os = "macos"))]
     pub const EVTONLY: i32 = 0;
-    // Darwin-only: fail with ELOOP if *any* path component is a symlink, not
-    // just the final one like O_NOFOLLOW. 0 elsewhere so the bit-or is a no-op.
-    #[cfg(target_os = "macos")]
-    pub const NOFOLLOW_ANY: i32 = libc::O_NOFOLLOW_ANY;
-    #[cfg(not(target_os = "macos"))]
-    pub const NOFOLLOW_ANY: i32 = 0;
 }
 // ──────────────────────────────────────────────────────────────────────────
 // `File` / `Dir` — high-level handles. Extracted to file.rs / dir.rs.
@@ -3654,8 +3642,6 @@ impl TimeLike {
 }
 #[cfg(unix)]
 pub const UTIME_NOW: i64 = libc::UTIME_NOW;
-#[cfg(windows)]
-pub const UTIME_NOW: i64 = -1;
 
 #[cfg(windows)]
 #[path = "sys_uv.rs"]
@@ -4531,12 +4517,6 @@ mod windows_impl {
         zb.0[p.len()] = 0;
         // SAFETY: NUL-terminated above.
         chdir(ZStr::from_buf(&zb.0[..], p.len()))
-    }
-    pub fn umask(mode: Mode) -> Mode {
-        unsafe extern "C" {
-            safe fn _umask(m: core::ffi::c_int) -> core::ffi::c_int;
-        }
-        _umask(mode as core::ffi::c_int) as Mode
     }
     pub(crate) fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
         // Winsock `recv`. Winsock's `len` is a
@@ -8104,11 +8084,6 @@ pub mod posix {
     #[inline]
     pub const fn s_islnk(m: u32) -> bool {
         (m & libc::S_IFMT as u32) == libc::S_IFLNK as u32
-    }
-    #[cfg(unix)]
-    #[inline]
-    pub const fn s_isdir(m: u32) -> bool {
-        (m & libc::S_IFMT as u32) == libc::S_IFDIR as u32
     }
 
     // ── signals ──

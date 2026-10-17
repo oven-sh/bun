@@ -1094,10 +1094,12 @@ function asyncWrap(fn: any, name: string) {
       let closing = false;
       let pendingEndPromise: Promise<number> | null = null;
       let error: unknown = null;
+      // Set by a rejected write, which later writes reject with. Only fail() sets `error` (as in node).
+      let writeError: unknown = null;
       // Count of in-flight async writes (write() doesn't serialize callers,
       // so several can be on the threadpool at once).
       let asyncPending = 0;
-      // Set when end()/fail() must tear down while an async write is still on
+      // Set when end()/fail() or a rejected write must tear down while an async write is still on
       // the threadpool: writeAll/writevAll run it from their finally so the
       // fd is never closed under an in-flight write.
       let deferredTeardown: (() => void) | null = null;
@@ -1166,8 +1168,11 @@ function asyncWrap(fn: any, name: string) {
         } catch (err) {
           // A failed/aborted write may have hit the disk partially and the
           // cursor/limit were advanced optimistically; the writer's state is
-          // no longer trustworthy, so poison it like fail() does.
-          if (!closed && !error) error = err;
+          // no longer trustworthy: refuse further writes, give the ref back once none is in flight. Node does neither.
+          if (!closed && !writeError && err) {
+            writeError = err;
+            deferredTeardown = releaseRef;
+          }
           throw err;
         } finally {
           if (--asyncPending === 0) {
@@ -1217,7 +1222,10 @@ function asyncWrap(fn: any, name: string) {
         } catch (err) {
           // See writeAll: the optimistic cursor/limit accounting is invalid
           // after a failure, so subsequent writes must reject.
-          if (!closed && !error) error = err;
+          if (!closed && !writeError && err) {
+            writeError = err;
+            deferredTeardown = releaseRef;
+          }
           throw err;
         } finally {
           if (--asyncPending === 0) {
@@ -1274,11 +1282,11 @@ function asyncWrap(fn: any, name: string) {
       return {
         __proto__: null,
         write(chunk, options = kEmptyObject) {
-          if (error) {
-            return Promise.$reject(error);
-          }
           if (closed) {
-            return Promise.$reject($ERR_INVALID_STATE_TypeError("The writer is closed"));
+            return Promise.$reject(error || $ERR_INVALID_STATE_TypeError("The writer is closed"));
+          }
+          if (writeError) {
+            return Promise.$reject(writeError);
           }
           if (handle[kFd] === -1) {
             // The handle was closed before this writer took its ref.
@@ -1306,11 +1314,11 @@ function asyncWrap(fn: any, name: string) {
         },
 
         writev(chunks, options = kEmptyObject) {
-          if (error) {
-            return Promise.$reject(error);
-          }
           if (closed) {
-            return Promise.$reject($ERR_INVALID_STATE_TypeError("The writer is closed"));
+            return Promise.$reject(error || $ERR_INVALID_STATE_TypeError("The writer is closed"));
+          }
+          if (writeError) {
+            return Promise.$reject(writeError);
           }
           if (handle[kFd] === -1) {
             return Promise.$reject($ERR_INVALID_STATE("The FileHandle is closed"));
@@ -1339,7 +1347,7 @@ function asyncWrap(fn: any, name: string) {
         },
 
         writeSync(chunk) {
-          if (error || closed || asyncPending) return false;
+          if (writeError || closed || asyncPending) return false;
           if (handle[kFd] === -1) throw $ERR_INVALID_STATE("The FileHandle is closed");
           chunk = toUint8Array(chunk);
           const length = chunk.byteLength;
@@ -1376,7 +1384,7 @@ function asyncWrap(fn: any, name: string) {
         },
 
         writevSync(chunks) {
-          if (error || closed || asyncPending) return false;
+          if (writeError || closed || asyncPending) return false;
           if (handle[kFd] === -1) throw $ERR_INVALID_STATE("The FileHandle is closed");
           chunks = convertChunks(chunks);
           let totalSize = 0;

@@ -517,8 +517,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     [[maybe_unused]] bool fromEmbedded = false;
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
-        // Throws ERR_DLOPEN_FAILED when the file is embedded but cannot be
-        // written to the temp dir.
         BunString resolved = Bun__resolveEmbeddedNodeFile(globalObject, &bunStr);
         RETURN_IF_EXCEPTION(scope, {});
         if (!resolved.isDead()) {

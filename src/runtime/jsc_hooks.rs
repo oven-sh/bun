@@ -4578,11 +4578,8 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
 ///
 /// The filename is a hash of the contents, so every `dlopen()` of the same
 /// embedded library — across calls, Worker VMs, and restarts — shares one
-/// file instead of leaking a copy per call (#29585). Returns `Ok(None)` when
-/// the input is empty or absent from the graph. Returns `Err` when a
-/// filesystem step fails; the error carries the absolute temp path, so the
-/// caller can report it through `embedded_file_extract_error` instead of
-/// handing the virtual `/$bunfs/` path to the OS loader.
+/// file instead of leaking a copy per call (#29585). `Ok(None)` when the
+/// input is not an embedded file. `Err` carries the absolute temp path.
 pub(crate) fn resolve_embedded_file_to_buf(
     input_path: &[u8],
     extname: &[u8],
@@ -4615,8 +4612,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
         return Ok(None);
     };
 
-    // `TMPDIR` can be relative (#45054). Resolve it against the cwd once, so
-    // the file is opened, written and loaded through one absolute path.
+    // `TMPDIR` can be relative (#45054).
     let mut tmpdir_path_buf = bun_paths::path_buffer_pool::get();
     let Some(tmpdir_path) = Fs::FileSystem::instance()
         .abs_buf_checked(&[Fs::RealFS::tmpdir_path()], &mut tmpdir_path_buf[..])
@@ -4650,8 +4646,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
         return Ok(None);
     };
 
-    // The absolute scratch path is what a failure below reports. The
-    // success path overwrites `out_buf` with the final path.
+    // A failure below reports this path. Success overwrites it.
     let scratch_len = write_absolute(out_buf, tmpdir_path, scratch_name.as_bytes())?;
 
     // 0600: the file persists, only the owning euid ever dlopens it, and the
@@ -4679,9 +4674,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
     write_absolute(out_buf, tmpdir_path, final_name.as_bytes()).map(Some)
 }
 
-/// Writes `{tmpdir}/{name}` into `out_buf` and returns the length. Leaves
-/// room for the NUL that `bun:ffi` appends. `ENAMETOOLONG` when it does not
-/// fit.
+/// Writes `{tmpdir}/{name}` into `out_buf`, with room for a trailing NUL.
 fn write_absolute(out_buf: &mut [u8], tmpdir: &[u8], name: &[u8]) -> bun_sys::Maybe<usize> {
     let capacity = out_buf.len();
     match bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
@@ -4697,10 +4690,7 @@ fn write_absolute(out_buf: &mut [u8], tmpdir: &[u8], name: &[u8]) -> bun_sys::Ma
     }
 }
 
-/// The `ERR_DLOPEN_FAILED` error for an embedded library that could not be
-/// written to the temp dir. `errno`, `syscall` and `path` come from the
-/// failed call; the message names the embedded path and `BUN_TMPDIR`, the
-/// knob that moves the extraction.
+/// `ERR_DLOPEN_FAILED` for an embedded library that could not be extracted.
 pub(crate) fn embedded_file_extract_error(
     global: &JSGlobalObject,
     input_path: &[u8],
@@ -4733,9 +4723,8 @@ fn extract_owner_uid() -> u32 {
     bun_sys::windows::user_unique_id()
 }
 
-/// Support embedded .node files. `Dead` when `path` is not an embedded file.
-/// Throws on `global` and returns `Dead` when the file is embedded but could
-/// not be written to the temp dir: the caller must check for an exception.
+/// Support embedded .node files. `Dead` when `path` is not an embedded file,
+/// or after a throw when it could not be extracted.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(
     global: &JSGlobalObject,

@@ -1442,10 +1442,7 @@ impl FFI {
                 &mut filepath_buf[..],
             ) {
                 Ok(Some(len)) => {
-                    // NUL-terminate in place so `DynLib::open`
-                    // can pass the slice to libc without copying. `resolve_*_to_buf`
-                    // is bounded by `Fs::FileSystem::tmpname` + a tmpdir join (both
-                    // fit in `PATH_MAX`), so `filepath_buf[len]` is in bounds.
+                    // NUL-terminate for `DynLib::open`; `write_absolute` left room.
                     filepath_buf[len] = 0;
                     break 'brk &filepath_buf[0..len];
                 }
@@ -2298,9 +2295,6 @@ static CREATE_COMPILER_RT_DIR_ONCE: Once = Once::new();
 
 impl CompilerRT {
     fn create_compiler_rt_dir() {
-        // `bun_resolver::fs::FileSystem` (the inline canonical surface) doesn't
-        // yet expose an inherent `tmpdir()`; use the crate-local
-        // `FileSystemTmpdirExt` shim from `upgrade_command`.
         use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
         let Ok(tmpdir) = Fs::FileSystem::instance().tmpdir() else {
             return;

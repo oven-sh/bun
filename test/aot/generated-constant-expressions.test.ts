@@ -17,13 +17,11 @@ generated(
 );
 generated(
   "folded values",
-  seeds
-    .slice(0, 24)
-    .flatMap(seed =>
-      languages.map(isTypeScript => ({
-        name: `seed ${seed}, ${isTypeScript ? "TypeScript" : "JavaScript"}`,
-        isAlwaysRun: seed <= 2,
-        make: () => places(seed, isTypeScript),
-      })),
-    ),
+  seeds.slice(0, 24).flatMap(seed =>
+    languages.map(isTypeScript => ({
+      name: `seed ${seed}, ${isTypeScript ? "TypeScript" : "JavaScript"}`,
+      isAlwaysRun: seed <= 2,
+      make: () => places(seed, isTypeScript),
+    })),
+  ),
 );

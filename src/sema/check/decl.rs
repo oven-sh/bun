@@ -610,7 +610,9 @@ impl<'p, 's> Checker<'p, 's> {
                             });
                             continue 'operand;
                         }
-                        super::mapped::combine_surrogate_pairs(&mut text);
+                        if self.p.files.options.uses_engine_arithmetic {
+                            super::mapped::combine_surrogate_pairs(&mut text);
+                        }
                         of_template.value = Some(EnumValue::String(self.atoms().intern(&text)));
                         result = of_template;
                     }
@@ -645,7 +647,9 @@ impl<'p, 's> Checker<'p, 's> {
             }
             (Some(a), Some(b), Some(BinOp::Add)) => {
                 let mut text = [self.constant_text(a), self.constant_text(b)].concat();
-                super::mapped::combine_surrogate_pairs(&mut text);
+                if self.p.files.options.uses_engine_arithmetic {
+                    super::mapped::combine_surrogate_pairs(&mut text);
+                }
                 Some(EnumValue::String(self.atoms().intern(&text)))
             }
             _ => None,

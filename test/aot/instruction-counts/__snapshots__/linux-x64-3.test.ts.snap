@@ -1,5 +1,12 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`gives a fresh object another prototype 1`] = `
+"typed, function: 54.42 instructions (kernel 31.17, stub AllocateTypedObject 18.16, the runtime 4.80, elsewhere 0.21, module 0.07), 405 bytes
+typed, module level: 51.30 instructions (module 28.13, stub AllocateTypedObject 18.16, the runtime 4.80, elsewhere 0.21), 1564 bytes
+untyped, function: 105.79 instructions (kernel 34.12, stub CallHostFunction2 32, stub NewObjectFromDescriptor2 21.05, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInR15 10, the runtime 4.33, stub WriteBarrier 4, elsewhere 0.21, module 0.07), 381 bytes
+untyped, module level: 103.77 instructions (module 32.09, stub CallHostFunction2 32, stub NewObjectFromDescriptor2 21.05, stub GetByNameWithDirectColumnWithReceiverInRAX 10, the runtime 4.41, stub WriteBarrier 4, elsewhere 0.21), 1286 bytes"
+`;
+
 exports[`makes a JSON Response from an object, a status and three headers 1`] = `
 "typed, function: 4777.52 instructions (the runtime 4406.02, kernel 148.90, elsewhere 99, stub ReadKnownCustomGetterByName 36, stub GetByNameWithDirectColumnWithReceiverInRAX 26, stub NewObjectFromDescriptor2 21, stub OperationValueWithInstance 14, stub PlainOperationWithInstance 10, stub PlainOperation 4, stub ReadOutOfLineByName 4, stub OperationValueWithInstance to operationAOTTypedNewJSONResponse 2, stub PlainOperation to operationAOTTypedJSONAppendInteger 2, stub PlainOperationWithInstance to operationAOTTypedJSONAppendString 2, stub PlainOperationWithInstance to operationAOTTypedJSONPrepare 2, module 0.60), 1188 bytes
 typed, module level: 5154.22 instructions (the runtime 4855.07, elsewhere 103, module 93.15, stub ReadKnownCustomGetterByName 36, stub GetByNameWithDirectColumnWithReceiverInRAX 26, stub NewObjectFromDescriptor2 21, stub OperationValueWithInstance 14, stub ReadOutOfLineByName 4, stub OperationValueWithInstance to operationAOTTypedNewJSONResponse 2), 1887 bytes

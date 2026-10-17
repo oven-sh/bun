@@ -232,6 +232,7 @@ function createIncomingMessage(url: any, method: any, handle: any, hasBody: any,
   const capture = EventEmitterPrototype[kCapture];
   const req: IncomingMessageFields = {
     _events: { close: undefined, error: undefined, data: undefined, end: undefined, readable: undefined },
+    _eventsCount: 0,
     _readableState: state,
     [kShapeMode]: true,
     _maxListeners: undefined,

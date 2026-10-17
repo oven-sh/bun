@@ -5,13 +5,14 @@ import { dirname } from "node:path";
 export type Measurement = {
   instructions: number;
   allThreadsInstructions?: number;
-  counter: "rusage" | "perf" | "ptrace";
+  counter: "rusage" | "perf" | "ptrace" | "none";
   privateBytes: number;
   residentBytes: number;
 };
 export type Request = { command: string[]; env: Record<string, string | undefined>; afterMark?: boolean; forcePtrace?: boolean };
 
 const timeoutSeconds = 120;
+const canCountBySingleSteps = process.arch !== "arm64";
 
 function spawnBlockedOnStdin({ command, env }: Request) {
   return Bun.spawn({ cmd: ["/bin/sh", "-c", 'read line; exec "$0" "$@"', ...command], cwd: dirname(command[0]), env, stdin: "pipe", stdout: "ignore", stderr: "inherit" });
@@ -116,8 +117,9 @@ async function measureWithPerf(libc: Libc, request: Request): Promise<Measuremen
     if (Number(libc.read(counter, ptr(value), 8)) !== 8) throw new Error("reading the instruction counter failed");
     return Number(value[0]);
   };
+  const hasCounters = counters.every(counter => counter >= 0);
   try {
-    if (counters.some(counter => counter < 0)) return undefined;
+    if (!hasCounters && canCountBySingleSteps) return undefined;
     child.stdin.write("\n");
     child.stdin.end();
     await waitUntilStopped(
@@ -128,7 +130,9 @@ async function measureWithPerf(libc: Libc, request: Request): Promise<Measuremen
       child,
       request.command,
     );
-    return { instructions: readCounter(counters[0]), allThreadsInstructions: readCounter(counters[1]), counter: "perf", ...readMemory(child.pid, request.command[0]) };
+    const memory = readMemory(child.pid, request.command[0]);
+    if (!hasCounters) return { instructions: 0, allThreadsInstructions: 0, counter: "none", ...memory };
+    return { instructions: readCounter(counters[0]), allThreadsInstructions: readCounter(counters[1]), counter: "perf", ...memory };
   } finally {
     for (const counter of counters) if (counter >= 0) libc.close(counter);
     child.kill("SIGKILL");
@@ -235,7 +239,7 @@ export async function measureStartup(request: Request): Promise<Measurement> {
   const PR_SET_THP_DISABLE = 41;
   libc.prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0);
   const measured = !request.forcePtrace && (await measureWithPerf(libc, request));
-  if (!measured && process.arch === "arm64") throw new Error("this machine has no hardware instruction counter, and single-stepping cannot count on arm64: a store-exclusive never succeeds under it");
+  if (!measured && !canCountBySingleSteps) throw new Error("single-stepping cannot count on arm64: a store-exclusive never succeeds under it");
   return measured || measureWithPtrace(libc, request);
 }
 

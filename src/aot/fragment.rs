@@ -20,6 +20,7 @@ pub enum FuncKey {
     ModuleSettling(FileId),
     ModuleDriver(FileId),
     ModuleInner(FileId),
+    BuiltinModuleLoads(FileId),
     DynamicImport(FileId, bool),
     Required(FileId),
     DynamicImportBody(FileId, bool),
@@ -51,6 +52,7 @@ impl FuncKey {
             | FuncKey::ModuleSettling(file)
             | FuncKey::ModuleDriver(file)
             | FuncKey::ModuleInner(file)
+            | FuncKey::BuiltinModuleLoads(file)
             | FuncKey::DynamicImport(file, _)
             | FuncKey::Required(file)
             | FuncKey::DynamicImportBody(file, _)

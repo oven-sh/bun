@@ -1,5 +1,3 @@
-// CALLS+ descend ThrowAtSite
-// CALLS+ refuse ThrowAtSite
 function descend(depth: number): number {
   if (depth === 0) throw new RangeError("deep");
   return descend(depth - 1) + 1;

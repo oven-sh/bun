@@ -995,6 +995,7 @@ impl Mappings {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Order {
     Line,
+    Signature,
     Documentation,
     Directive,
     MemberStart,
@@ -1022,6 +1023,14 @@ impl Insertions {
     fn add_line_in_order(&mut self, javascript: &[u8], at: u32, order: Order, text: &[u8]) {
         let indent = &javascript[line_start(javascript, at as usize)..at as usize];
         self.add(at, order, [text, b"\n", if is_blank(indent) { indent } else { b"" }].concat());
+    }
+
+    fn ignore_after_line_breaks(&mut self, start: u32, end: u32) {
+        for (_, _, _, text) in self.list.iter_mut().filter(|inserted| start < inserted.0 && inserted.0 <= end) {
+            if let Some(last) = bun_core::strings::last_index_of_char(&text[..], b'\n') {
+                text.splice(last..last, b"\n// @ts-ignore".iter().copied());
+            }
+        }
     }
 
     fn apply(mut self, javascript: &[u8]) -> Vec<u8> {
@@ -1166,6 +1175,7 @@ struct Declared {
     import: Option<(StmtId, ImportedAs)>,
     is_ambient_value: bool,
     is_function: bool,
+    is_default_expression: bool,
 }
 
 impl<'a, 's> Syntax<'a, 's> {
@@ -1338,6 +1348,14 @@ impl<'a, 's> Syntax<'a, 's> {
                         entry.bindings.push(at);
                         entry.import = Some((id, imported_as));
                     }
+                }
+                StmtKind::ExportDefault(mut value) => {
+                    while let Some(inner) = self.operand_of_cast(value) {
+                        value = inner;
+                    }
+                    let entry = declared.entry(b"default").or_default();
+                    entry.bindings.extend(file.exprs.get(value.idx()).map(|value| value.pos));
+                    entry.is_default_expression = true;
                 }
                 _ => {}
             }
@@ -1538,10 +1556,14 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
                 names[index].insert(name, ambient);
                 continue;
             }
-            if !is_wanted && (index >= mapped || found.statements.is_empty()) {
+            if found.is_default_expression || !is_wanted && (index >= mapped || found.statements.is_empty()) {
                 continue;
             }
             if found.import.is_some() && bundle.keeps_modules_apart {
+                continue;
+            }
+            if bundle.keeps_modules_apart && index < mapped && !found.bindings.is_empty() {
+                names[index].insert(name, name.to_vec());
                 continue;
             }
             if let Some((statement, imported_as)) = found.import {
@@ -1862,6 +1884,7 @@ pub fn add_types(path: &[u8], javascript: &[u8], mappings: &[u8], sources: &[Sou
     }
     let mut written: Vec<Option<Written<'_, '_>>> = Vec::new();
     let mut source_slots: FxHashMap<(Place, u32, u32), Slot> = FxHashMap::default();
+    let mut optional_parameter_properties: FxHashMap<(u32, u32), (u32, bool)> = FxHashMap::default();
     for (index, (file, &(_, text, types))) in files.iter().zip(&texts).enumerate() {
         let Some(file) = file else {
             written.push(None);
@@ -1878,6 +1901,10 @@ pub fn add_types(path: &[u8], javascript: &[u8], mappings: &[u8], sources: &[Sou
         for (parameter, id) in file.params.iter().zip(0..).filter(|(parameter, _)| parameter.flags.contains(Flags::PARAMETER_PROPERTY)) {
             let Some(binding) = syntax.binding_slot(parameter.pat, parameter.ty, parameter.flags.contains(Flags::OPTIONAL)) else { continue };
             source_slots.insert((Place::MemberType, index as u32, binding.key), Slot { place: Place::MemberType, ..binding });
+            if let Some(annotation) = parameter.ty.some().filter(|_| parameter.flags.contains(Flags::OPTIONAL)) {
+                let is_parenthesized_in_a_union = matches!(file[annotation].kind, TypeNodeKind::Fn(_) | TypeNodeKind::Cond { .. });
+                optional_parameter_properties.insert((index as u32, binding.key), (syntax.type_span(annotation).0, is_parenthesized_in_a_union));
+            }
             for modifier in file.modifier_list(file.param_modifiers(ParamId(id))) {
                 let flag = modifier.kind.flag();
                 let place = if flag.intersects(Flags::PUBLIC | Flags::PRIVATE | Flags::PROTECTED) {
@@ -1908,6 +1935,7 @@ pub fn add_types(path: &[u8], javascript: &[u8], mappings: &[u8], sources: &[Sou
         insertions: Insertions { list: Vec::new() },
         dropped_casts: 0,
         hoisted: Vec::new(),
+        optional_parameter_properties,
     };
     transfer.copy_slots(&source_slots);
     transfer.annotate_generated_code();
@@ -1930,6 +1958,7 @@ struct Transfer<'t, 'a, 's> {
     insertions: Insertions,
     dropped_casts: usize,
     hoisted: Vec<u8>,
+    optional_parameter_properties: FxHashMap<(u32, u32), (u32, bool)>,
 }
 
 impl<'a> Transfer<'_, 'a, '_> {
@@ -1966,6 +1995,11 @@ impl<'a> Transfer<'_, 'a, '_> {
             let is_computed = module.syntax.is_in_computed_key(found.key);
             let (order, text) = match slot.place {
                 Place::MemberType if is_computed && text.starts_with(b":") && output.byte(output.after_trivia(slot.start)) != b'=' => (Order::Slot, [&b"!"[..], &text].concat()),
+                Place::MemberType if self.optional_parameter_properties.contains_key(&(source, key)) => {
+                    let (annotation, is_parenthesized) = self.optional_parameter_properties[&(source, key)];
+                    let (open, close): (&[u8], &[u8]) = if is_parenthesized { (b" (", b") | undefined") } else { (b" ", b" | undefined") };
+                    (Order::Slot, [&module.trimmed_text(found.start, annotation)[..], open, &module.trimmed_text(annotation, found.end), close].concat())
+                }
                 Place::Implements => (Order::Slot, [&b" "[..], &text[..]].concat()),
                 Place::ClassKeyword | Place::MemberName => (Order::MemberName, [&text[..], b" "].concat()),
                 Place::MemberStart => (Order::MemberStart, [&text[..], b" "].concat()),
@@ -2110,9 +2144,8 @@ impl<'a> Transfer<'_, 'a, '_> {
                     continue;
                 }
                 let source_position = syntax.file[chain.operand].pos;
-                let found = find(chain.operand);
-                let found = found.or_else(|| [Shape::Leaf, Shape::Prefix].iter().find_map(|&shape| output_expressions.get(&(shape, index as u32, source_position)).copied().filter(|&literal| is_literal(literal))));
-                let Some(operand) = found.or_else(|| find_via_ancestor(&chain)) else { continue };
+                let found = find(chain.operand).or_else(|| find_via_ancestor(&chain));
+                let Some(operand) = found.or_else(|| [Shape::Leaf, Shape::Prefix].iter().find_map(|&shape| output_expressions.get(&(shape, index as u32, source_position)).copied().filter(|&literal| is_literal(literal)))) else { continue };
                 let member = enum_member_cast(chain.operand).filter(|_| is_literal(operand));
                 if member.is_none() && chain.casts.is_empty() {
                     continue;
@@ -2318,7 +2351,9 @@ impl<'a> Transfer<'_, 'a, '_> {
                     let text = documentation.map_or(text.clone(), |documentation| [documentation, b"\n", &text].concat());
                     let next = statements[place..].iter().map(|&next| &file[next]).find_map(anchor_of);
                     let next = next.map(|next| if depth == 0 { top_level[top_level.partition_point(|&start| start <= next).saturating_sub(1)] } else { next });
+                    let is_signature = matches!(statement.kind, StmtKind::Fn(function) if matches!(file[function].body, FnBody::None)) && !file.modifiers_to_flags(statement.modifiers).contains(Flags::AMBIENT);
                     match next {
+                        Some(next) if is_signature => insertions.add_line_in_order(javascript, next, Order::Signature, &text),
                         Some(next) => insertions.add_line_before(javascript, next, &text),
                         None if depth == 0 => self.hoisted.extend_from_slice(&[&text[..], b"\n"].concat()),
                         None => {}
@@ -2360,7 +2395,11 @@ impl<'a> Transfer<'_, 'a, '_> {
         for line in ignored {
             let indent = javascript[line..].iter().take_while(|byte| matches!(byte, b' ' | b'\t')).count();
             match templates.iter().filter(|template| template.0 < line && line < template.1).min() {
-                None => insertions.add_line_in_order(javascript, (line + indent) as u32, Order::Directive, b"// @ts-ignore"),
+                None => {
+                    insertions.add_line_in_order(javascript, (line + indent) as u32, Order::Directive, b"// @ts-ignore");
+                    let end = bun_core::strings::index_of_char_usize(&javascript[line..], b'\n').map_or(javascript.len(), |length| line + length);
+                    insertions.ignore_after_line_breaks((line + indent) as u32, end as u32);
+                }
                 Some(&(start, _)) if line_start(javascript, line - 1) <= start => insertions.add(start as u32, Order::Directive, b"/* @ts-ignore */".to_vec()),
                 Some(_) => {}
             }
@@ -2546,6 +2585,9 @@ fn target_of_declaration(services: &mut Services<'_, '_, '_>, is_source: &dyn Fn
             Kind::NamedImports | Kind::ImportClause | Kind::ImportDeclaration => node = parent,
             _ => return None,
         }
+    }
+    if services.node_kind(declaration) == Kind::ExportAssignment {
+        return Some(Target::Declaration { path, name: b"default"[..].into() });
     }
     let name = services.node_child(declaration, Child::Name);
     let name = services.node_text(NodeRef { file: declaration.file, node: name });

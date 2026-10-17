@@ -2639,6 +2639,7 @@ function createServerResponse(req: any, handle: any, highWaterMark: any, rejectN
     [kPipelinedQueuedState]: undefined,
     [kImplicitHeaderFromEnd]: false,
     [kUniqueHeaders]: null,
+    _ended: false,
     _maxRequestsPerSocket: 0,
     [kBytesBuffered]: 0,
     [kAccountingFlushScheduled]: false,

@@ -356,6 +356,24 @@ pub fn set_keeps_frame_pointer_chain(is_such_code: fn(usize) -> bool) {
     let _ = KEEPS_FRAME_POINTER_CHAIN.set(is_such_code);
 }
 
+#[cfg(windows)]
+pub fn with_current_context<R>(run: impl FnOnce(usize, usize) -> R) -> R {
+    unsafe extern "system" {
+        fn RtlCaptureContext(context: *mut bun_windows_sys::CONTEXT);
+    }
+    let mut context = core::mem::MaybeUninit::<bun_windows_sys::CONTEXT>::zeroed();
+    // SAFETY: the pointer is valid for a write of a whole CONTEXT, which all-zero bytes are a value of
+    let context = unsafe {
+        RtlCaptureContext(context.as_mut_ptr());
+        context.assume_init()
+    };
+    #[cfg(target_arch = "x86_64")]
+    let pc = context.Rip;
+    #[cfg(target_arch = "aarch64")]
+    let pc = context.Pc;
+    run(pc as usize, &raw const context as usize)
+}
+
 pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
     if out.is_empty() {
         return 0;

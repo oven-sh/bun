@@ -23,6 +23,7 @@ const privateGrowthFactor: Record<string, number> = { request: 4, workers: 8, te
 const scenariosWithOtherThreads = ["workers", "terminate"];
 let freeSlots = Math.max(1, Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism());
 const waiting: (() => void)[] = [];
+let hasSaidThatNothingCounts = false;
 
 async function measure(request: Request): Promise<Measurement> {
   if (freeSlots > 0) freeSlots--;
@@ -50,6 +51,10 @@ async function measureLeast(executable: string, scenario: string): Promise<Measu
   };
   const request = { command: [executable, scenario], env, afterMark: scenario !== "nothing", forcePtrace: !!process.env.AOT_STARTUP_SCALING_PTRACE };
   const first = await measure(request);
+  if (first.counter === "none" && !hasSaidThatNothingCounts) {
+    hasSaidThatNothingCounts = true;
+    console.error("SKIPPED: test/aot/startup-scaling: instructions: this machine has no hardware instruction counter; memory is measured");
+  }
   const all = first.counter === "ptrace" ? [first] : [first, ...(await Promise.all(Array.from({ length: runs - 1 }, () => measure(request))))];
   const least = (select: (measurement: Measurement) => number) => Math.min(...all.map(select));
   return {

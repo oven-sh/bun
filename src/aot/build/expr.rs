@@ -30,6 +30,7 @@ struct ConditionResult {
     when: bool,
     why: CoerceReason,
     is_tested: bool,
+    sink: Option<Sink>,
 }
 
 impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
@@ -217,6 +218,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.keep_unconvertible_objects(fx, held, value);
         }
         held
+    }
+
+    fn coerce_for_lenient_sink(&mut self, fx: &mut Fx, sink: Option<Sink>, value: V) -> V {
+        match sink {
+            Some(sink) if sink.keeps_unconvertible_objects => self.coerce_for_sink(fx, sink, value),
+            _ => value,
+        }
     }
 
     fn expr_into_sink(&mut self, fx: &mut Fx, sink: Sink) -> V {
@@ -4690,14 +4698,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn logical(&mut self, fx: &mut Fx, op: hir::BinOp, e: ExprId, left: ExprId, right: ExprId) -> V {
         let (more, join) = (fx.b.new_block(), fx.b.new_block());
         let result = self.new_result(fx, Some(e));
-        let why = fx.sink.filter(|sink| sink.e == e).map_or(CoerceReason::Store, |sink| sink.why);
+        let sink = fx.sink.filter(|sink| sink.e == e);
+        let why = sink.map_or(CoerceReason::Store, |sink| sink.why);
         let is_tested = self.is_tested(fx, e);
-        let retained = Some(ConditionResult { result, when: op == hir::BinOp::Or, why, is_tested });
+        let retained = Some(ConditionResult { result, when: op == hir::BinOp::Or, why, is_tested, sink });
         match op {
             hir::BinOp::And => self.branch_with_result(fx, left, more, join, retained),
             hir::BinOp::Or => self.branch_with_result(fx, left, join, more, retained),
             _ => self.branch_unless_nullish(fx, left, more, !is_tested, &mut |this, fx, value, operand| {
                 let value = if is_tested { value } else { this.coerce_tested_value(fx, value, operand) };
+                let value = this.coerce_for_lenient_sink(fx, sink, value);
                 this.write_as(fx, result, value, why);
                 fx.b.jump(join);
             }),
@@ -4725,7 +4735,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn short_circuit(&mut self, fx: &mut Fx, op: hir::BinOp, e: Option<ExprId>, a: V, b: impl FnOnce(&mut Self, &mut Fx) -> V) -> V {
         let (more, done, join) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
         let result = self.new_result(fx, e);
-        let why = fx.sink.filter(|sink| Some(sink.e) == e).map_or(CoerceReason::Store, |sink| sink.why);
+        let sink = fx.sink.filter(|sink| Some(sink.e) == e);
+        let why = sink.map_or(CoerceReason::Store, |sink| sink.why);
         match op {
             hir::BinOp::And => self.branch(fx, a, more, done),
             hir::BinOp::Or => self.branch(fx, a, done, more),
@@ -4739,7 +4750,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.switch_to(done);
         match op {
             hir::BinOp::And => self.write_falsy_as(fx, result, a, why),
-            _ => self.write_as(fx, result, a, why),
+            _ => {
+                let a = self.coerce_for_lenient_sink(fx, sink, a);
+                self.write_as(fx, result, a, why)
+            }
         }
         fx.b.jump(join);
         fx.b.switch_to(more);
@@ -4917,6 +4931,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.switch_to(edge);
         let value = if retained.is_tested { value } else { self.coerce_tested_value(fx, value, e) };
         if retained.when {
+            let value = self.coerce_for_lenient_sink(fx, retained.sink, value);
             self.write_as(fx, retained.result, value, retained.why);
         } else {
             self.write_falsy_as(fx, retained.result, value, retained.why);
@@ -5541,7 +5556,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             };
             let reference = reference.after_load();
             return self.short_circuit(fx, op, None, current, |this, fx| {
-                let value = this.assigned_value(fx, value, target);
+                let value = match this.store_target_type(fx, &reference) {
+                    Some((want, _)) if matches!(reference, Reference::Variable(_) | Reference::Other(_)) => {
+                        let named = this.target_name(fx, target);
+                        this.expr_with_name_into_if_convertible(fx, value, named, want)
+                    }
+                    _ => this.assigned_value(fx, value, target),
+                };
                 this.store(fx, &reference, value, pos);
                 value
             });

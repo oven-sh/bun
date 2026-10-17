@@ -744,6 +744,11 @@ describe("Bun.ModuleGraph with --aot", () => {
         export function call(f: () => number) { return f() * 100 + count(); }
         export function* each() { while (true) yield count(); }
         export async function later() { await 1; return count(); }
+        export function* take(limit: number) { try { for (let i = 0; i < limit; i++) yield count(); return "end"; } finally { count(); } }
+        export function* through(inner: Iterable<number>) { yield count(); yield* inner; yield count(); }
+        export async function* eachLater() { while (true) yield count(); }
+        export function sumOf(values: Iterable<number>) { let sum = 0; for (const value of values) sum += value; return sum * 1000 + count(); }
+        export const current = () => n;
         export class Counter { get next() { return count(); } }
         export class Empty {}
         export class Derived extends Empty { field = count(); }
@@ -821,6 +826,44 @@ describe("Bun.ModuleGraph with --aot", () => {
       ).toEqual(everywhere([102, 302, 401, 205, 706, 7, 3, 8, 4, 9]));
     },
   );
+
+  test.concurrent("generators of one graph stepped from another, and from the host, use their own variables", async () => {
+    expect(
+      await run(`
+        const a = await new Bun.ModuleGraph().import(url);
+        const b = await new Bun.ModuleGraph().import(url);
+        const host = await import(url);
+        const state = () => [a.current(), b.current(), host.current()].join("/");
+        const out: unknown[] = [];
+        const ofA = a.each();
+        out.push(ofA.next().value, ofA.next().value, state());
+        let sum = 0;
+        for (const value of b.take(3)) sum += value;
+        out.push(sum, state());
+        out.push([...a.take(2)].join(), state());
+        const [first, second] = b.take(5);
+        out.push(first, second, state());
+        out.push(Array.from(host.take(2)).join(), state());
+        out.push([...a.through(b.take(2))].join(), state());
+        out.push(a.sumOf(b.take(2)), host.sumOf(a.take(1)), state());
+        const stopped = a.take(9);
+        out.push(stopped.next().value, JSON.stringify(stopped.return(5)), JSON.stringify(stopped.next()), state());
+        const thrown = b.take(9);
+        thrown.next();
+        try { thrown.throw(new Error("out")); } catch (error) { out.push((error as Error).message); }
+        out.push(state());
+        const later = a.eachLater();
+        out.push((await later.next()).value, (await later.next()).value, state());
+        let seen = 0;
+        for await (const value of b.eachLater()) { seen += value; if (value > 20 || ++sum > 8) break; }
+        out.push(seen, state());
+        const own = host.each();
+        out.push(own.next().value, ofA.next().value, own.next().value, state());
+        out.push(new Map([[1, 2]]).entries().next().value!.join(), JSON.stringify(ofA.next()), Object.getPrototypeOf(ofA.next()) === Object.prototype);
+        return out;
+      `),
+    ).toEqual(everywhere([1, 2, "2/0/0", 6, "2/4/0", "3,4", "5/4/0", 5, 6, "5/7/0", "1,2", "5/7/3", "6,8,9,7", "7/10/3", 23008, 9004, "10/13/4", 11, "{\"value\":5,\"done\":true}", "{\"done\":true}", "12/13/4", "out", "12/15/4", 13, 14, "14/15/4", 51, "14/18/4", 5, 15, 6, "15/18/6", "1,2", "{\"value\":16,\"done\":false}", true]));
+  });
 
   test.concurrent("closure outlives its graph", async () => {
     expect(

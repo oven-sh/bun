@@ -200,7 +200,7 @@ function resolvesToOriginals(object: object, originals: Original[]): boolean {
 }
 interface EmitterFields {
   _events: any;
-  _eventsCount?: any;
+  _eventsCount: any;
   [kShapeMode]: any;
   _maxListeners: any;
   [kCapture]: any;
@@ -283,7 +283,7 @@ interface ServerResponseFields extends EmitterFields {
   [kPipelinedQueuedState]: any;
   [kImplicitHeaderFromEnd]: any;
   [kUniqueHeaders]: any;
-  _ended?: any;
+  _ended: any;
   _maxRequestsPerSocket: any;
   [kBytesBuffered]: any;
   [kAccountingFlushScheduled]: any;

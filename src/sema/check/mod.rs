@@ -201,6 +201,15 @@ pub(crate) use file_local_fields;
 /// `instantiateSignature` created it for the call.
 pub(crate) type AssignedSignature = (Option<SigId>, bool);
 
+#[derive(Default)]
+pub struct CommentDirectives(errors_aliases::Directives);
+
+impl CommentDirectives {
+    pub fn silence(&mut self, file: FileId, hir: &hir::File, start: u32) -> bool {
+        self.0.preceding(file, hir, start) != sink::NO_DIRECTIVE
+    }
+}
+
 pub struct CompilerDiagnostic {
     pub file: FileId,
     pub start: u32,

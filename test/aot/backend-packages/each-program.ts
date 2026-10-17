@@ -57,7 +57,7 @@ function testEachProgram(folder: string, part: number, parts: number, needsTheDi
           const built = await run([bunExe(), "build", "--compile", "--aot", "--compile-in-place", `./${program}.ts`, ...(given[program] ?? []), "--outfile", executable]);
           expect({ output: built.exitCode ? built.stdout + built.stderr : "", exitCode: built.exitCode }).toEqual({ output: "", exitCode: 0 });
           const compiled = await run([executable]);
-          expect({ stdout: steady(compiled.stdout), exitCode: compiled.exitCode }).toEqual({ stdout: steady(plain.stdout), exitCode: plain.exitCode });
+          expect({ stdout: steady(compiled.stdout), exitCode: compiled.exitCode, stderr: compiled.exitCode === plain.exitCode ? "" : compiled.stderr }).toEqual({ stdout: steady(plain.stdout), exitCode: plain.exitCode, stderr: "" });
           if (program in needsTheDisk) return;
 
           const movedAway = join(String(dir), "moved-away");
@@ -65,7 +65,7 @@ function testEachProgram(folder: string, part: number, parts: number, needsTheDi
           mkdirSync(project);
           try {
             const alone = await run([executable]);
-            expect({ stdout: steady(alone.stdout), exitCode: alone.exitCode }).toEqual({ stdout: steady(plain.stdout), exitCode: plain.exitCode });
+            expect({ stdout: steady(alone.stdout), exitCode: alone.exitCode, stderr: alone.exitCode === plain.exitCode ? "" : alone.stderr }).toEqual({ stdout: steady(plain.stdout), exitCode: plain.exitCode, stderr: "" });
           } finally {
             rmSync(project, { recursive: true, force: true });
             renameSync(movedAway, project);

@@ -45,3 +45,16 @@ for (const p of points) typedSum += p.x + p.y;
 attempt("a typed object", function (): any { const loose: any = (function (list: any): any { return list; })(points); const p = adopt(loose[0], parent); return [p.x, p.y, p.kind, points[0]!.x + points[0]!.y, typedSum].join(" "); });
 if (typeof (globalThis as any).gc === "function") (globalThis as any).gc();
 attempt("after a collection", function (): any { let total = 0; for (let i = 0; i < 50; i++) total += adopt(make(i), parent).greet().length; return total; });
+const byValue: any = (function (f: any): any { return f; })(Object.setPrototypeOf);
+attempt("through a value", function (): any { let total = 0; for (let i = 0; i < 300; i++) { const o = make(i); total += (byValue(o, parent) === o ? 1 : 0) + o.greet().length; } return total; });
+attempt("through a value, not extensible", function (): any { return byValue(Object.preventExtensions(make(30)), parent).greet(); });
+attempt("through a value, a cycle", function (): any { const top = make(31); return byValue(top, Object.create(top)).name; });
+attempt("through a value, a typed object", function (): any { const loose: any = (function (list: any): any { return list; })(points); const p = byValue(loose[1], other); return [p.x, p.y, p.kind].join(" "); });
+attempt("by call", function (): any { return Object.setPrototypeOf.call(null, make(32), parent).greet(); });
+attempt("by apply", function (): any { return Reflect.apply(Object.setPrototypeOf, undefined, [make(33), parent]).greet(); });
+attempt("a third argument", function (): any { return (Object.setPrototypeOf as any)(make(34), parent, 1).greet(); });
+attempt("a receiver of its own", function (): any { const holder: any = { set: Object.setPrototypeOf }; return holder.set(make(35), other).greet(); });
+const kept: any[] = [];
+for (let i = 0; i < 40; i++) kept.push(make(i));
+if (typeof (globalThis as any).gc === "function") { (globalThis as any).gc(); (globalThis as any).gc(); }
+attempt("objects that have outlived a collection", function (): any { adopt(make(0), parent); let total = 0; for (const o of kept) total += adopt(o, parent).greet().length; if (typeof (globalThis as any).gc === "function") (globalThis as any).gc(); for (const o of kept) total += o.greet().length + (Object.getPrototypeOf(o) === parent ? 1 : 0); return total; });

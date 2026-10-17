@@ -229,12 +229,13 @@ test("bun test --aot takes decorators as bun test compiles them: by the tsconfig
   }
 });
 
+const runtime = (name: string, result: string, made: string) => ({
+  [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "1.0.0" }),
+  [`node_modules/${name}/jsx-runtime.ts`]: `export function jsx(tag: string, props: { children?: unknown }): ${result} { return ${made}; }\nexport const jsxs = jsx;\nexport const jsxDEV = jsx;\nexport const Fragment = "fragment";\nexport namespace JSX {\n  export type Element = ${result};\n  export interface IntrinsicElements { [name: string]: { children?: unknown } }\n}\n`,
+  [`node_modules/${name}/jsx-dev-runtime.ts`]: `export * from "./jsx-runtime";\n`,
+});
+
 test("bun run --aot takes JSX as bun run compiles it: by the tsconfig.json of the working directory", async () => {
-  const runtime = (name: string, result: string, made: string) => ({
-    [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "1.0.0" }),
-    [`node_modules/${name}/jsx-runtime.ts`]: `export function jsx(tag: string, props: { children?: unknown }): ${result} { return ${made}; }\nexport const jsxs = jsx;\nexport const jsxDEV = jsx;\nexport const Fragment = "fragment";\nexport namespace JSX {\n  export type Element = ${result};\n  export interface IntrinsicElements { [name: string]: { children?: unknown } }\n}\n`,
-    [`node_modules/${name}/jsx-dev-runtime.ts`]: `export * from "./jsx-runtime";\n`,
-  });
   using dir = tempDir("tsconfig-governs-each-file", {
     ...runtime("text-jsx", "string", `tag + ":" + String(props.children)`),
     ...runtime("length-jsx", "number", `(tag + ":" + String(props.children)).length`),
@@ -262,3 +263,30 @@ test("a @jsxImportSource comment counts wherever it stands in the file, as witho
     expect(exitCode).toBe(0);
   }
 });
+
+test("bun check --aot takes JSX and decorators as bun build --compile compiles them: by the tsconfig.json nearest to each file", async () => {
+  using dir = tempDir("tsconfig-governs-each-file", {
+    ...runtime("text-jsx", "string", `tag + ":" + String(props.children)`),
+    ...runtime("length-jsx", "number", `(tag + ":" + String(props.children)).length`),
+    "tsconfig.json": config({ jsx: "react-jsx", jsxImportSource: "text-jsx", experimentalDecorators: false }),
+    "main.tsx": `import { length } from "./inner/length";\nimport { marked } from "./legacy/marked";\nconst shown: string = <b>x</b>;\nconsole.log(shown, length, marked);\n`,
+    "inner/tsconfig.json": config({ jsx: "react-jsx", jsxImportSource: "length-jsx" }),
+    "inner/length.tsx": `export const length: number = <b>x</b>;\n`,
+    "inner/wrong.tsx": `export const wrong: string = <b>x</b>;\n`,
+    "legacy/tsconfig.json": config({ experimentalDecorators: true }),
+    "legacy/marked.ts": `function mark(target: any, key: string) { (target.marked ??= []).push(key); }\nexport class Marked { @mark two(): number { return 2; } }\nexport const marked: string = (Marked.prototype as any).marked.join();\n`,
+  });
+  const outfile = join(String(dir), "out");
+  for (const aot of [[], ["--aot"]]) {
+    const built = await run(String(dir), "build", "--compile", ...aot, "./main.tsx", "--outfile", outfile);
+    expect({ codes: codes(built.said), exitCode: built.exitCode }).toEqual({ codes: [], exitCode: 0 });
+    await using ran = Bun.spawn({ cmd: [outfile], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    expect(await ran.stdout.text()).toBe("b:x 3 two\n");
+  }
+  const checked = await run(String(dir), "check", "--aot", "main.tsx");
+  expect({ errors: errors(checked.said), exitCode: checked.exitCode }).toEqual({ errors: [], exitCode: 0 });
+  const refused = await run(String(dir), "build", "--compile", "--aot", "./inner/wrong.tsx", "--outfile", outfile);
+  expect(codes(refused.said)).toContain("TS2322");
+  expect(refused.exitCode).not.toBe(0);
+  expect(errors((await run(String(dir), "check", "--aot", "inner/wrong.tsx")).said)).toEqual(["inner/wrong.tsx TS2322"]);
+}, 120_000);

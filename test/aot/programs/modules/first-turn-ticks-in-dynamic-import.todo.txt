@@ -1,1 +1,0 @@
-The builtin modules of a graph that `import()` loads are loaded while it is evaluated, not before: in a program that has not read process.nextTick until then, the ticks of that turn run ahead of its promise jobs.

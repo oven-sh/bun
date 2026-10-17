@@ -94,6 +94,43 @@ test("a type error in a file of a package that the program takes only types from
   expect({ exitCode, stdout }).toEqual({ exitCode: 0, stdout: "2 a\n" });
 }, 120_000);
 
+async function withoutBundler(directory: string, ...args: string[]) {
+  await using ran = Bun.spawn({ cmd: [bunExe(), ...args], cwd: directory, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+  return { said: stdout + stderr, stdout, exitCode };
+}
+const takesFromClient = (index: string) => ({
+  "package.json": JSON.stringify({ name: "app" }),
+  "tsconfig.json": strict(),
+  "main.ts": `import { half, type Client } from "ships-typescript";\nconst client: Client = { name: "a" };\nconsole.log(half(4), client.name);\n`,
+  "node_modules/ships-typescript/package.json": JSON.stringify({ name: "ships-typescript", main: "index.ts", types: "index.ts" }),
+  "node_modules/ships-typescript/index.ts": `${index}\nexport function half(n: number): number { return n / 2; }\n`,
+  "node_modules/ships-typescript/client.ts": `import { nameOf } from "./utils";\nexport interface Client { name: string }\nexport function connect(): Client { return { name: nameOf(1) }; }\n`,
+  "node_modules/ships-typescript/utils.ts": `export function nameOf(id: number): string { const wrong: string = id; return wrong; }\n`,
+});
+
+test("bun check --aot and bun run --aot say the same of such a package as the build", async () => {
+  using dir = tempDir("aot-dependency-types-only", takesFromClient(`export type { Client } from "./client";`));
+  const checked = await withoutBundler(String(dir), "check", "--aot", "main.ts");
+  expect(checked.said).not.toContain("TS100009");
+  expect(checked.said).not.toContain("ships-typescript");
+  expect(checked.exitCode).toBe(0);
+  const ran = await withoutBundler(String(dir), "run", "--aot", "main.ts");
+  expect(ran.said).not.toContain("TS100009");
+  expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: "2 a\n", exitCode: 0 });
+}, 120_000);
+
+test.each([
+  ["beside its types", `export type { Client } from "./client";\nexport { connect } from "./client";`],
+  ["by import()", `export type { Client } from "./client";\nexport const later = () => import("./client");`],
+  ["among its types", `export { type Client, connect } from "./client";`],
+])("a package that the program takes code from %s is tried by bun check --aot", async (_, index) => {
+  using dir = tempDir("aot-dependency-code-too", takesFromClient(index));
+  const checked = await withoutBundler(String(dir), "check", "--aot", "main.ts");
+  expect(checked.said).toContain("TS100009");
+  expect(checked.said).toContain("ships-typescript");
+}, 120_000);
+
 test("a type error beside a decorated class of a dependency does not stop the build either", async () => {
   using dir = tempDir("aot-dependency-decorated", {
     "package.json": JSON.stringify({ name: "app" }),

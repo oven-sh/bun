@@ -245,19 +245,17 @@ for (const [id, file] of sourceFiles.entries()) {
   if (triggered.length) lines.push(`triggered\t${id}\t${[...new Set(triggered)].sort((a, b) => a - b).join("\t")}`);
 }
 
-const firstTick = [
+const alwaysIncluded = [
   "internal/process/next_tick_queue",
   "internal/process/ticks",
   "internal/validators",
   "internal/shared",
   "internal/fixed_queue",
   "internal/async_hooks_tick",
+  "node:util",
+  "node:path",
 ];
-for (const id of idsOf(firstTick)) {
-  lines.push(`first_tick\t${id}`);
-}
-
-for (const id of idsOf(["node:util", "node:path"])) {
+for (const id of idsOf(alwaysIncluded)) {
   lines.push(`always\t${id}`);
 }
 

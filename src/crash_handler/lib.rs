@@ -1741,6 +1741,7 @@ mod draft {
                         unsafe extern "system" fn(*mut core::ffi::c_void) -> i32,
                     >(handle_unhandled_exception_windows),
                 ));
+                libc::signal(libc::SIGABRT, handle_abort_windows as extern "C" fn(core::ffi::c_int) as usize);
             }
         }
         #[cfg(any(
@@ -1984,6 +1985,7 @@ mod draft {
             // filter back to the OS default.
             unsafe {
                 bun_sys::windows::kernel32::SetUnhandledExceptionFilter(None);
+                libc::signal(libc::SIGABRT, libc::SIG_DFL);
             }
             return;
         }
@@ -2120,6 +2122,11 @@ mod draft {
                 fp: context as usize,
             },
         );
+    }
+
+    #[cfg(windows)]
+    extern "C" fn handle_abort_windows(_signal: core::ffi::c_int) {
+        bun_core::debug::with_current_context(|pc, context| crash_handler(CrashReason::Abort, TraceSeed::Fault { pc, fp: context }))
     }
 
     #[cfg(windows)]

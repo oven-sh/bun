@@ -85,9 +85,10 @@ enum Dependency {
 }
 
 #[derive(Default)]
-struct LoadedGraph {
-    files: FxHashSet<FileId>,
-    builtin_modules: FxHashSet<Atom>,
+struct BuiltinModuleLoads {
+    of_entry_points: Vec<Vec<Atom>>,
+    function_owners: FxHashMap<FileId, FileId>,
+    of_function_owners: FxHashMap<FileId, Vec<Atom>>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -115,6 +116,7 @@ pub(crate) enum Source {
     ModuleSettling(FileId),
     ModuleDriver(FileId),
     ModuleInner(FileId),
+    BuiltinModuleLoads(FileId),
     Initializer(Sym),
     ExportedObjectMember(FileId),
     ExportedObjectDefault(FileId, bool),
@@ -146,6 +148,7 @@ impl Source {
             Source::ModuleSettling(file) => FuncKey::ModuleSettling(file),
             Source::ModuleDriver(file) => FuncKey::ModuleDriver(file),
             Source::ModuleInner(file) => FuncKey::ModuleInner(file),
+            Source::BuiltinModuleLoads(owner) => FuncKey::BuiltinModuleLoads(owner),
             Source::Initializer(sym) => FuncKey::Initializer(sym.file, sym.id),
             Source::ExportedObjectMember(file) => FuncKey::ExportedObjectMember(file),
             Source::ExportedObjectDefault(file, is_node_mode) => FuncKey::ExportedObjectDefault(file, is_node_mode),
@@ -295,6 +298,8 @@ pub struct Shared<'a> {
     lazy_module_dependencies: Vec<OnceLock<Vec<(FileId, Dependency)>>>,
     dependencies: Vec<OnceLock<Vec<Dependency>>>,
     unresolved_imports: FxHashMap<FileId, Vec<(FileId, Atom)>>,
+    entry_points_reaching: Vec<u64>,
+    builtin_module_loads: BuiltinModuleLoads,
 }
 
 #[derive(Default)]
@@ -366,6 +371,8 @@ impl<'a> Shared<'a> {
             lazy_module_dependencies: (0..program.files.modules.len()).map(|_| OnceLock::new()).collect(),
             dependencies: (0..program.files.modules.len()).map(|_| OnceLock::new()).collect(),
             unresolved_imports: FxHashMap::default(),
+            entry_points_reaching: Vec::new(),
+            builtin_module_loads: BuiltinModuleLoads::default(),
         };
         let mut c = program.checker();
         c.set_logs_type_errors(constants.logs_type_errors);
@@ -375,8 +382,8 @@ impl<'a> Shared<'a> {
             let marked = (0..program.files.modules.len() as u32).map(FileId).map(|file| (file, shared.calls_marked_pure[file.idx()].get_or_init(|| comments::calls_marked_pure(c.hir(file)))));
             c.set_calls_marked_pure(marked.filter(|(_, calls)| !calls.is_empty()).map(|(file, calls)| (file, calls.clone())).collect());
         }
-        let (modules, async_modules) = FileBuild::new(&mut c, &shared, NO_FILE).report_module_graph();
-        (shared.modules, shared.async_modules) = (modules, async_modules);
+        let (modules, async_modules, entry_points_reaching) = FileBuild::new(&mut c, &shared, NO_FILE).report_module_graph();
+        (shared.modules, shared.async_modules, shared.entry_points_reaching) = (modules, async_modules, entry_points_reaching);
         shared.modules_deferred = FileBuild::new(&mut c, &shared, NO_FILE).deferred_import_modules();
         shared.json_modules_read_by_name = FileBuild::new(&mut c, &shared, NO_FILE).json_modules_read_by_name();
         shared.json_modules_loaded_whole = FileBuild::new(&mut c, &shared, NO_FILE).json_modules_loaded_whole();
@@ -416,6 +423,13 @@ impl<'a> Shared<'a> {
         c.set_imported_code(code.into_iter().flatten());
         let resolved = c.map_slices(&shared.modules, FILES_PER_CHECKER, Some(in_parallel), &|c, files| FileBuild::new(c, &shared, NO_FILE).resolve_imports_for(files));
         FileBuild::new(&mut c, &shared, NO_FILE).report_resolved_imports(resolved.into_iter(), in_parallel);
+        c.map_slices(&shared.modules, FILES_PER_CHECKER, Some(in_parallel), &|c, files| {
+            let build = FileBuild::new(c, &shared, NO_FILE);
+            for &file in files {
+                build.cached_dependencies_of(file);
+            }
+        });
+        shared.builtin_module_loads = FileBuild::new(&mut c, &shared, NO_FILE).builtin_module_loads();
         shared
     }
 
@@ -710,13 +724,8 @@ pub fn translate_file(c: &mut Checker<'_, '_>, shared: &Shared<'_>, file: FileId
 }
 
 pub fn builtin_modules_of_entry_points(c: &mut Checker<'_, '_>, shared: &Shared<'_>) -> Vec<Vec<Box<[u8]>>> {
-    let build = FileBuild::new(c, shared, NO_FILE);
-    let of_entry_point = |roots: &Vec<FileId>| {
-        let mut in_order = Vec::new();
-        build.load_graph(roots, &mut LoadedGraph::default(), &mut in_order);
-        in_order.into_iter().map(|specifier| build.c.atoms().bytes(specifier).into()).collect()
-    };
-    shared.entry_points.iter().map(of_entry_point).collect()
+    let of_entry_point = |specifiers: &Vec<Atom>| specifiers.iter().map(|&specifier| c.atoms().bytes(specifier).into()).collect();
+    shared.builtin_module_loads.of_entry_points.iter().map(of_entry_point).collect()
 }
 
 pub fn files_imported_by(c: &mut Checker<'_, '_>, shared: &Shared<'_>, file: FileId) -> Vec<FileId> {
@@ -1071,7 +1080,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             Op::FuncRef(func) | Op::Closure { func, .. } | Op::ClosureOnce { func, .. } | Op::CallDirect { func, .. } => match self.sources[func.idx()] {
                 Source::Function { file, .. } | Source::DefaultConstructor { file, .. } | Source::ModuleNamespaceReader(file) | Source::ExportedObjectMember(file) | Source::ExportedObjectDefault(file, _) | Source::ExportVariablesReader(file) => Some(file),
                 Source::EnumObject(sym) | Source::NamespaceObject(sym) | Source::Initializer(sym) => Some(sym.file),
-                Source::Module(_) | Source::DynamicImport(..) | Source::Required(_) | Source::DynamicImportBody(..) | Source::ModuleBody(_) | Source::ModuleDriver(_) | Source::ModuleInner(_) | Source::ModuleTouch(_) | Source::ModuleSettling(_) | Source::FilesByPath(_) | Source::EvaluateByIndex(_) | Source::EvaluateSingleFile(..) | Source::NamespaceForHost(_) | Source::Validator(..) => None,
+                Source::Module(_) | Source::DynamicImport(..) | Source::Required(_) | Source::DynamicImportBody(..) | Source::ModuleBody(_) | Source::ModuleDriver(_) | Source::ModuleInner(_) | Source::BuiltinModuleLoads(_) | Source::ModuleTouch(_) | Source::ModuleSettling(_) | Source::FilesByPath(_) | Source::EvaluateByIndex(_) | Source::EvaluateSingleFile(..) | Source::NamespaceForHost(_) | Source::Validator(..) => None,
             },
             _ => None,
         };
@@ -1117,26 +1126,98 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         shared.dependencies[file.idx()].get_or_init(|| self.dependencies_of(file))
     }
 
-    fn load_graph(&self, roots: &[FileId], loaded: &mut LoadedGraph, builtin_modules_in_order: &mut Vec<Atom>) {
-        let mut pending: Vec<FileId> = roots.iter().rev().copied().collect();
-        while let Some(file) = pending.pop() {
-            if self.is_declaration_only(file) || !loaded.files.insert(file) {
-                continue;
-            }
-            let first_imported = pending.len();
+    fn builtin_module_loads(&self) -> BuiltinModuleLoads {
+        let shared = self.shared;
+        let modules: Vec<FileId> = shared.modules.iter().copied().filter(|&file| !self.is_builtin_file(file)).collect();
+        let mut specifiers: Vec<Atom> = Vec::new();
+        let mut numbers: FxHashMap<Atom, usize> = FxHashMap::default();
+        let mut imported_directly: Vec<(FileId, usize)> = Vec::new();
+        for &file in &modules {
             for &dependency in self.cached_dependencies_of(file) {
-                match dependency {
-                    Dependency::Module(imported) => pending.push(imported),
-                    Dependency::External(specifier) => {
-                        let specifier = self.host_specifier(specifier);
-                        if imports::is_builtin_specifier(self.c.atoms().bytes(specifier)) && loaded.builtin_modules.insert(specifier) {
-                            builtin_modules_in_order.push(specifier);
-                        }
+                let Dependency::External(specifier) = dependency else { continue };
+                let specifier = self.host_specifier(specifier);
+                if imports::is_builtin_specifier(self.c.atoms().bytes(specifier)) {
+                    let number = *numbers.entry(specifier).or_insert_with(|| {
+                        specifiers.push(specifier);
+                        specifiers.len() - 1
+                    });
+                    imported_directly.push((file, number));
+                }
+            }
+        }
+        let words = specifiers.len().div_ceil(64);
+        let mut sets = vec![0u64; self.files.modules.len() * words];
+        for (file, number) in imported_directly {
+            sets[file.idx() * words + number / 64] |= 1 << (number % 64);
+        }
+        let mut has_changed = words > 0;
+        while std::mem::take(&mut has_changed) {
+            for &file in modules.iter().rev() {
+                for &dependency in self.cached_dependencies_of(file) {
+                    let Dependency::Module(imported) = dependency else { continue };
+                    for word in 0..words {
+                        let added = sets[imported.idx() * words + word] & !sets[file.idx() * words + word];
+                        sets[file.idx() * words + word] |= added;
+                        has_changed |= added != 0;
                     }
                 }
             }
-            pending[first_imported..].reverse();
         }
+        let set_of = |file: FileId| &sets[file.idx() * words..][..words];
+        let listed = |set: &[u64]| -> Vec<Atom> { specifiers.iter().enumerate().filter(|(number, _)| set[number / 64] >> (number % 64) & 1 != 0).map(|(_, &specifier)| specifier).collect() };
+        let sets_of_entry_points: Vec<Vec<u64>> = shared.entry_points.iter().map(|roots| (0..words).map(|word| roots.iter().fold(0, |all, &root| all | set_of(root)[word])).collect()).collect();
+        let is_reached_by_any = self.host_may_request_modules() || shared.entry_points.len() > 64;
+        let mut owner_of_set: FxHashMap<Vec<u64>, FileId> = FxHashMap::default();
+        let mut function_owners: FxHashMap<FileId, FileId> = FxHashMap::default();
+        for &file in &modules {
+            let reaching = shared.entry_points_reaching[file.idx()];
+            let loaded_already = |word: usize| {
+                let reaching_sets = sets_of_entry_points.iter().enumerate().filter(|&(number, _)| is_reached_by_any || reaching == 0 || reaching >> number & 1 != 0);
+                reaching_sets.map(|(_, set)| set[word]).reduce(|all, set| all & set).unwrap_or(0)
+            };
+            let left: Vec<u64> = (0..words).map(|word| set_of(file)[word] & !loaded_already(word)).collect();
+            if left.iter().any(|&word| word != 0) {
+                function_owners.insert(file, *owner_of_set.entry(left).or_insert(file));
+            }
+        }
+        BuiltinModuleLoads {
+            of_entry_points: sets_of_entry_points.iter().map(|set| listed(set)).collect(),
+            function_owners,
+            of_function_owners: owner_of_set.iter().map(|(set, &owner)| (owner, listed(set))).collect(),
+        }
+    }
+
+    fn emit_builtin_module_loads(&mut self, fx: &mut Fx, owner: FileId) {
+        let shared = self.shared;
+        let name = self.out.strs.intern(b"builtin modules are loaded");
+        let flag = self.add_global(name, owner, Ty::NONE, GlobalKey::ModuleInternal(owner, "builtin modules are loaded"));
+        self.out.globals[flag.idx()].initialization = ir::Initialization::Undefined;
+        let known = self.emit(fx, Op::GlobalGet(flag));
+        let undefined = self.emit(fx, Op::Undefined);
+        let is_first = self.emit(fx, Op::StrictEq { a: known, b: undefined });
+        let (load, done) = (fx.b.new_block(), fx.b.new_block());
+        self.branch(fx, is_first, load, done);
+        fx.b.seal(load);
+        fx.b.seal(done);
+        fx.b.switch_to(done);
+        self.terminate_with_return(fx, V::NONE);
+        fx.b.switch_to(load);
+        let yes = self.emit(fx, Op::Bool(true));
+        self.emit(fx, Op::GlobalSet(flag, yes));
+        let throwing = fx.b.new_block();
+        fx.handlers.push(throwing);
+        for &specifier in shared.builtin_module_loads.of_function_owners.get(&owner).into_iter().flatten() {
+            let global = self.external_module_global(owner, specifier);
+            self.load_external_module(fx, global, owner, specifier);
+        }
+        fx.handlers.pop();
+        self.terminate_with_return(fx, V::NONE);
+        fx.b.seal(throwing);
+        fx.b.switch_to(throwing);
+        let error = self.emit(fx, Op::Caught);
+        let undefined = self.emit(fx, Op::Undefined);
+        self.emit(fx, Op::GlobalSet(flag, undefined));
+        fx.b.terminate(Term::Throw { value: error, unwind: None, pos: 0 });
     }
 
     fn is_side_effect_import(&self, file: FileId, imported: FileId) -> bool {
@@ -1500,7 +1581,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         dependencies
     }
 
-    fn report_module_graph(&mut self) -> (Vec<FileId>, FxHashSet<FileId>) {
+    fn report_module_graph(&mut self) -> (Vec<FileId>, FxHashSet<FileId>, Vec<u64>) {
         let (mut modules, mut edges, mut builtin_requires) = (Vec::new(), Vec::new(), Vec::new());
         let mut seen: FxHashSet<FileId> = FxHashSet::default();
         let mut pending = self.shared.roots.clone();
@@ -1584,7 +1665,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 waiting.extend(importers.get(&module).into_iter().flatten().copied());
             }
         }
-        (modules, async_modules)
+        let mut entry_points_reaching = vec![0u64; self.files.modules.len()];
+        for (number, roots) in self.shared.entry_points.iter().enumerate().take(64) {
+            let mut pending = roots.clone();
+            while let Some(file) = pending.pop() {
+                if entry_points_reaching[file.idx()] >> number & 1 == 0 {
+                    entry_points_reaching[file.idx()] |= 1 << number;
+                    let first = edges.partition_point(|edge| edge.0 < file);
+                    pending.extend(edges[first..].iter().take_while(|edge| edge.0 == file).map(|edge| edge.1));
+                }
+            }
+        }
+        (modules, async_modules, entry_points_reaching)
     }
 
     pub(crate) fn is_lazy(&mut self, sym: Sym) -> bool {
@@ -2143,6 +2235,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn emit_dynamic_import(&mut self, fx: &mut Fx, file: FileId, is_node_mode: bool, ticket: V) {
+        if let Some(&owner) = self.shared.builtin_module_loads.function_owners.get(&file) {
+            let func = self.deferred_module_function(owner, Source::BuiltinModuleLoads(owner));
+            self.emit_throwing(fx, Op::CallDirect { func, args: ir::Args::new() });
+        }
         let undefined = self.emit(fx, Op::Undefined);
         self.emit_throwing(fx, Op::Await(undefined));
         let later_roots: Vec<FileId> = self.shared.entry_points().iter().filter(|roots| roots.first() == Some(&file)).flat_map(|roots| roots[1..].iter().rev().copied()).collect();
@@ -2290,7 +2386,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         match source {
             Source::Module(file) | Source::ModuleBody(file) | Source::ModuleDriver(file) | Source::ModuleInner(file) | Source::ModuleTouch(file) | Source::ModuleSettling(file) | Source::Function { file, .. } | Source::DefaultConstructor { file, .. } => file == self.file,
             Source::Initializer(sym) => sym.file == self.file,
-            Source::EnumObject(_) | Source::NamespaceObject(_) | Source::ModuleNamespaceReader(_) | Source::DynamicImport(..) | Source::Required(_) | Source::DynamicImportBody(..) | Source::ExportedObjectMember(_) | Source::ExportedObjectDefault(..) | Source::FilesByPath(_) | Source::EvaluateByIndex(_) | Source::EvaluateSingleFile(..) | Source::ExportVariablesReader(_) | Source::NamespaceForHost(_) | Source::Validator(..) => true,
+            Source::EnumObject(_) | Source::NamespaceObject(_) | Source::ModuleNamespaceReader(_) | Source::BuiltinModuleLoads(_) | Source::DynamicImport(..) | Source::Required(_) | Source::DynamicImportBody(..) | Source::ExportedObjectMember(_) | Source::ExportedObjectDefault(..) | Source::FilesByPath(_) | Source::EvaluateByIndex(_) | Source::EvaluateSingleFile(..) | Source::ExportVariablesReader(_) | Source::NamespaceForHost(_) | Source::Validator(..) => true,
         }
     }
 
@@ -2644,7 +2740,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             Source::Function { file, func, class, .. } => (file, func, class),
             Source::DefaultConstructor { file, class } => (file, FnId::NONE, Some((file, class))),
             Source::EnumObject(sym) | Source::NamespaceObject(sym) | Source::Initializer(sym) => (sym.file, FnId::NONE, None),
-            Source::DynamicImport(file, _) | Source::Required(file) | Source::DynamicImportBody(file, _) | Source::ModuleBody(file) | Source::ModuleDriver(file) | Source::ModuleInner(file) | Source::ModuleNamespaceReader(file) | Source::ExportedObjectMember(file) | Source::ExportedObjectDefault(file, _) | Source::FilesByPath(file) | Source::EvaluateByIndex(file) | Source::EvaluateSingleFile(file, _) | Source::ExportVariablesReader(file) | Source::NamespaceForHost(file) | Source::Validator(file, _) => (file, FnId::NONE, None),
+            Source::BuiltinModuleLoads(file) | Source::DynamicImport(file, _) | Source::Required(file) | Source::DynamicImportBody(file, _) | Source::ModuleBody(file) | Source::ModuleDriver(file) | Source::ModuleInner(file) | Source::ModuleNamespaceReader(file) | Source::ExportedObjectMember(file) | Source::ExportedObjectDefault(file, _) | Source::FilesByPath(file) | Source::EvaluateByIndex(file) | Source::EvaluateSingleFile(file, _) | Source::ExportVariablesReader(file) | Source::NamespaceForHost(file) | Source::Validator(file, _) => (file, FnId::NONE, None),
         };
         let role = match source {
             Source::Function { role, .. } => role,
@@ -2754,6 +2850,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.emit_evaluate(&mut fx, file, V::NONE);
             }
             Source::ModuleInner(file) => self.emit_inner_module_evaluation(&mut fx, file),
+            Source::BuiltinModuleLoads(owner) => self.emit_builtin_module_loads(&mut fx, owner),
             Source::Module(file) => {
                 if self.host_may_request_modules() && self.shared.entry_points().iter().any(|files| files.first() == Some(&file)) {
                     self.files_by_path(file);

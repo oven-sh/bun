@@ -1602,7 +1602,7 @@ pub fn is_type_only_diagnostic(code: u32) -> bool {
         code,
         1205 | 1250..=1252 | 1269 | 1272 | 1280 | 1282..=1288 | 1294 | 1295 | 1323 | 1324 | 1343 | 1378 | 1432 | 1484 | 1485 | 1501 | 1503
             | 2343 | 2354 | 2441 | 2529 | 2725 | 2737 | 2791 | 2807 | 2823 | 2854 | 2865 | 2866
-            | 4111..=4116 | 5097 | 6133 | 6138 | 6192 | 6196 | 6198 | 6199 | 6205 | 7027..=7030 | 9007..=9039 | 18055..=18057 | 18060
+            | 4111..=4116 | 5097 | 6059 | 6133 | 6138 | 6192 | 6196 | 6198 | 6199 | 6205 | 7027..=7030 | 9007..=9039 | 18055..=18057 | 18060
     )
 }
 
@@ -1620,6 +1620,61 @@ fn is_stricter_than_ecmascript(hir: &bun_sema::hir::File<'_>, reported: &Diagnos
         }),
         _ => false,
     }
+}
+
+fn files_that_code_reaches(files: &bun_sema::program::Files<'_>) -> Vec<bool> {
+    use bun_sema::hir::{ResolutionMode, SpecifierKind, StmtKind};
+    let modules = &files.modules;
+    let mut is_reached: Vec<bool> = modules.iter().map(|module| !module.is_dependency).collect();
+    let mut left: Vec<usize> = (0..modules.len()).filter(|&i| is_reached[i]).collect();
+    while let Some(i) = left.pop() {
+        let (module, hir) = (&modules[i], &modules[i].hir);
+        let mut only_for_types: Vec<(Atom, usize)> = Vec::new();
+        if hir.jsx.is_empty() {
+            for statement in hir.ids(hir.body) {
+                let specifier = match hir[statement].kind {
+                    StmtKind::Import(import) => {
+                        let import = &hir[import];
+                        let names_only_types = import.default.is_none() && import.namespace.is_none() && !import.named.is_empty() && import.named.iter().all(|name| hir[name].type_only);
+                        (import.type_only || names_only_types).then_some(import.spec)
+                    }
+                    StmtKind::ExportNamed(export) => {
+                        let export = &hir[export];
+                        let names_only_types = !export.items.is_empty() && export.items.iter().all(|item| hir[item].type_only);
+                        (export.has_module_specifier && (export.type_only || names_only_types)).then_some(export.spec)
+                    }
+                    StmtKind::ExportStar { spec, type_only: true, .. } => Some(spec),
+                    _ => None,
+                };
+                match specifier.and_then(|specifier| only_for_types.iter_mut().find(|known| known.0 == specifier)) {
+                    Some(known) => known.1 += 1,
+                    None => only_for_types.extend(specifier.map(|specifier| (specifier, 1))),
+                }
+            }
+            for used in hir.specifier_uses.iter().filter(|used| used.kind == SpecifierKind::ImportType) {
+                if !only_for_types.iter().any(|known| known.0 == used.spec) {
+                    only_for_types.push((used.spec, 0));
+                }
+            }
+            only_for_types.retain(|&(specifier, statements)| {
+                let others = || hir.specifier_uses.iter().filter(|used| used.spec == specifier && used.kind != SpecifierKind::ImportType);
+                others().all(|used| used.kind == SpecifierKind::Import) && others().count() == statements
+            });
+        }
+        let targets_of = |specifier: Atom| [ResolutionMode::None, ResolutionMode::Import, ResolutionMode::Require].into_iter().filter_map(move |mode| module.imports.get(&(specifier, mode)).copied());
+        let skipped: Vec<FileId> = only_for_types.iter().flat_map(|known| targets_of(known.0)).collect();
+        let followed: Vec<FileId> = match skipped.is_empty() {
+            true => Vec::new(),
+            false => hir.specifier_uses.iter().filter(|used| !only_for_types.iter().any(|known| known.0 == used.spec)).flat_map(|used| targets_of(used.spec)).collect(),
+        };
+        for &target in module.edges {
+            if !is_reached[target.idx()] && (!skipped.contains(&target) || followed.contains(&target)) {
+                is_reached[target.idx()] = true;
+                left.push(target.idx());
+            }
+        }
+    }
+    is_reached
 }
 
 fn is_missing_host_declaration_code(code: u32) -> bool {
@@ -3325,6 +3380,8 @@ fn check_project_of(
             if let Some(of_the_working_directory) = of_the_working_directory {
                 disk.lower_every_file_as(of_the_working_directory, &project.options);
             }
+        } else if governs_each_file && disk.is_without_bundler {
+            disk.lower_each_file_by_its_tsconfig(of.config, &project.options);
         }
             let is_elsewhere = (of.elsewhere).map(|elsewhere| |path: &[u8]| elsewhere.contains(path));
             check_named_files(
@@ -5131,9 +5188,10 @@ fn check_named_files(
         for file in compiled.filter_map(|path| program.files.by_path.get(&path)) {
             is_left_out[file.idx()] = true;
         }
+        let code_reaches = host.is_without_bundler().then(|| files_that_code_reaches(&program.files));
         to_check.retain(|file| {
             let is_typed_dependency = matches!(modules[file.idx()].hir.kind, FileKind::Ts | FileKind::Tsx) && modules[file.idx()].is_dependency;
-            is_left_out[file.idx()] |= is_typed_dependency && host.is_without_bundler();
+            is_left_out[file.idx()] |= is_typed_dependency && code_reaches.as_ref().is_some_and(|code_reaches| code_reaches[file.idx()]);
             !is_typed_dependency
         });
         let entry_points: Vec<Vec<u8>> = request.paths.iter().map(|path| host::from_argument(&cwd, path)).collect();

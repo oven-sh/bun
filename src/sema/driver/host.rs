@@ -469,7 +469,8 @@ pub struct Disk {
     pub(crate) file_class_options: Vec<(Vec<u8>, ClassOptions)>,
     pub(crate) is_without_bundler: bool,
     pub(crate) lowers_like_the_runtime: bool,
-    lowering_of_every_file: OnceLock<Option<(FileJsxOptions, ClassOptions)>>,
+    lowering_of_every_file: OnceLock<Option<Arc<(FileJsxOptions, ClassOptions)>>>,
+    lowering_by_tsconfig: OnceLock<LoweringByTsconfig>,
     pub(crate) import_constants: FxHashMap<(Vec<u8>, Vec<u8>), Vec<u8>>,
     pub(crate) build_constants: Option<Arc<bun_sema::fold::BuildConstants>>,
     pub(crate) early_paths: Option<bun_threading::Guarded<std::sync::mpsc::Receiver<(Vec<u8>, Option<&'static [u8]>)>>>,
@@ -485,6 +486,13 @@ pub struct Disk {
     pub(crate) wait_for_deferred_sources: bun_threading::Guarded<Option<WaitForDeferredSources>>,
     deferred: OnceLock<InstalledSources>,
     pub(crate) abandoned: bun_threading::Guarded<Option<Abandoned>>,
+}
+
+struct LoweringByTsconfig {
+    config_of_the_program: Option<Vec<u8>>,
+    of_the_program: (FileJsxOptions, ClassOptions),
+    by_directory: bun_threading::Guarded<FxHashMap<Vec<u8>, Option<Arc<(FileJsxOptions, ClassOptions)>>>>,
+    by_config: bun_threading::Guarded<FxHashMap<Vec<u8>, Option<Arc<(FileJsxOptions, ClassOptions)>>>>,
 }
 
 pub(crate) fn lowering_in(options: &bun_sema::resolve::Options) -> (FileJsxOptions, ClassOptions) {
@@ -1005,6 +1013,7 @@ impl Disk {
             is_without_bundler: false,
             lowers_like_the_runtime: false,
             lowering_of_every_file: OnceLock::new(),
+            lowering_by_tsconfig: OnceLock::new(),
             import_constants: FxHashMap::default(),
             build_constants: None,
             early_paths: None,
@@ -1024,12 +1033,42 @@ impl Disk {
 
     pub(crate) fn lower_every_file_as(&self, of_the_working_directory: (FileJsxOptions, ClassOptions), of_the_program: &bun_sema::resolve::Options) {
         let differs = of_the_working_directory != lowering_in(of_the_program);
-        let _ = self.lowering_of_every_file.set(differs.then_some(of_the_working_directory));
+        let _ = self.lowering_of_every_file.set(differs.then(|| Arc::new(of_the_working_directory)));
     }
 
-    fn lowering_of(&self, path: &[u8]) -> Option<&(FileJsxOptions, ClassOptions)> {
-        let of_every_file = self.lowering_of_every_file.get()?.as_ref()?;
-        (!is_declaration_file_name(path) && !is_bundled(path) && !contains(path, crate::PRELUDE_DIRECTORY)).then_some(of_every_file)
+    pub(crate) fn lower_each_file_by_its_tsconfig(&self, config_of_the_program: Option<&[u8]>, of_the_program: &bun_sema::resolve::Options) {
+        let _ = self.lowering_by_tsconfig.set(LoweringByTsconfig {
+            config_of_the_program: config_of_the_program.map(<[u8]>::to_vec),
+            of_the_program: lowering_in(of_the_program),
+            by_directory: bun_threading::Guarded::new(FxHashMap::default()),
+            by_config: bun_threading::Guarded::new(FxHashMap::default()),
+        });
+    }
+
+    fn lowering_of(&self, path: &[u8]) -> Option<Arc<(FileJsxOptions, ClassOptions)>> {
+        if is_declaration_file_name(path) || is_bundled(path) || contains(path, crate::PRELUDE_DIRECTORY) {
+            return None;
+        }
+        if let Some(of_every_file) = self.lowering_of_every_file.get() {
+            return of_every_file.clone();
+        }
+        let lowering = self.lowering_by_tsconfig.get()?;
+        let directory = dirname::<Posix>(path);
+        if let Some(known) = lowering.by_directory.lock().get(directory) {
+            return known.clone();
+        }
+        let enclosing = bun_sema::config::find_config(self, directory).filter(|enclosing| Some(enclosing) != lowering.config_of_the_program.as_ref());
+        let found = enclosing.and_then(|enclosing| {
+            if let Some(known) = lowering.by_config.lock().get(&enclosing) {
+                return known.clone();
+            }
+            let loaded = bun_sema::config::load_overriding(self, &bun_sema::session::Session::new(), &enclosing, &|_| Vec::new()).ok();
+            let own = loaded.map(|project| lowering_in(&project.options)).filter(|own| *own != lowering.of_the_program).map(Arc::new);
+            lowering.by_config.lock().insert(enclosing, own.clone());
+            own
+        });
+        lowering.by_directory.lock().insert(directory.to_vec(), found.clone());
+        found
     }
 
     pub(crate) fn install_deferred_sources(&self, cwd: &[u8], sources: DeferredSources) {
@@ -2342,8 +2381,8 @@ impl Host for Disk {
             say_as_pragmas(&mut file.jsx_pragmas, of_file, atoms);
         } else if self.is_without_bundler && !file.jsx.is_empty() {
             bun_sema_parser::read_jsx_pragmas_of_every_comment(&mut file, text, atoms);
-            if let Some(of_every_file) = self.lowering_of(path) {
-                say_as_pragmas(&mut file.jsx_pragmas, &of_every_file.0, atoms);
+            if let Some(own) = self.lowering_of(path) {
+                say_as_pragmas(&mut file.jsx_pragmas, &own.0, atoms);
             }
         }
         file
@@ -2372,7 +2411,7 @@ impl Host for Disk {
     fn class_options(&self, path: &[u8]) -> Option<ClassOptions> {
         let deferred = self.deferred.get().map_or(&[][..], |deferred| &deferred.file_class_options[..]);
         if self.file_class_options.is_empty() && deferred.is_empty() {
-            return self.lowering_of(path).filter(|_| !is_javascript_file(self, path)).map(|of_every_file| of_every_file.1);
+            return self.lowering_of(path).filter(|_| !is_javascript_file(self, path)).map(|own| own.1);
         }
         let key = to_path(path, self.case_sensitive);
         self.file_class_options.iter().chain(deferred).find(|it| it.0 == *key).map(|it| it.1)

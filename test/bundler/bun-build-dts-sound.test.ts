@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "crypto";
-import { cpSync, existsSync, mkdirSync, readdirSync, renameSync } from "fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import { unsupported } from "../aot/run-programs";
@@ -45,7 +45,7 @@ describe("bun build --dts: the typed JavaScript", () => {
     expect((await text(String(dir), "dist", "index.d.ts")).split("\n")[0]).toBe(`// @sound index.sound.ts ${createHash("sha256").update(javascript).digest("hex")}`);
     expect(typed).toContain("function serve<S extends Server>(server: S, ...rest: string[]): string {");
     expect(typed).toContain("class Polite implements Greeter {");
-    expect(typed).toContain("  private moods?: Options;");
+    expect(typed).toContain("  private moods?: Options | undefined;");
     expect(typed).toContain("new Map<string, number>");
     expect(typed).toContain("type Options2 = { name: string; loud?: boolean };");
     expect(typed).toContain("export type { Options2 as Options };");
@@ -101,6 +101,7 @@ describe("bun build --dts: the typed JavaScript", () => {
     [
       "directives",
       [
+        "  R,\n// @ts-ignore\n>(call: (...args: T) => R, args: readonly unknown[]): R => call(...args);",
         "// @ts-ignore\ninterface Wide extends Narrow { value: string }",
         "  // @ts-ignore\n  if (names.length > 9)\n    // @ts-ignore\n    found = names.missing;\n  const kept: string = found;",
         "  if (!list.includes(wanted))\n    // @ts-ignore\n    return;\n  return wanted;",
@@ -211,6 +212,15 @@ describe("bun build --dts: the typed JavaScript", () => {
         'declare const LIMIT2: "import it from ./limits";',
         "declare const injected: number;",
         "var visit: { (node: string): void; BREAK: symbol; SKIP: symbol } = function visit(node) {",
+      ],
+    ],
+    ["default-values", ["var resolvers_default = { ...shared, bun: 3 };", "type Known = keyof typeof resolvers_default;"]],
+    [
+      "trailing-types",
+      [
+        "type Either = string | number;\nfunction pick(from: string): string;\nfunction pick(from: number): number;\nfunction pick(from: Either): Either {",
+        "  private label?: string | undefined;\n  readonly format?: ((text: string) => string) | undefined;",
+        '  const found = ("chosen" in box ? box.chosen : (await load()).fallback) as typeof Holder;',
       ],
     ],
     [
@@ -395,6 +405,47 @@ console.log(serve(server, "a", "b"), new Polite("hi").greet({ name: "you" }, 2))
     const built = await spawned([bunExe(), "build", "src/index.ts", "src/issue.ts", "src/named.ts", "--no-bundle", "--root", "src", "--outdir", "dist", "--target", "bun", "--dts"], String(dir));
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
     expect(await text(String(dir), "dist", "index.sound.ts")).toContain('import { Issue } from "welcome/issue";');
+  });
+
+  test("--no-bundle under a tsconfig.json with rootDir: the typed files in --outdir need not be under it", async () => {
+    using dir = tempDir("build-sound-root-dir", {
+      "package.json": JSON.stringify({ name: "welcome", version: "1.0.0", type: "module", main: "./dist/index.js", types: "./dist/index.d.ts" }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext"], rootDir: "src", outDir: "built", declaration: true } }),
+      "src/index.ts": `import { greet } from "./greet";\nexport const welcome = (name: string): string => greet(name) + "!";\n`,
+      "src/greet.ts": `export const greet = (name: string): string => "hello " + name;\n`,
+    });
+    const built = await spawned([bunExe(), "build", "src/index.ts", "src/greet.ts", "--no-bundle", "--root", "src", "--outdir", "dist", "--target", "bun", "--dts"], String(dir));
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["greet.d.ts", "greet.js", "greet.sound.ts", "index.d.ts", "index.js", "index.sound.ts"]);
+  });
+
+  test("--no-bundle: a default-exported function that a type of its file names gets no stand-in", async () => {
+    using dir = tempDir("build-sound-default-function", {
+      "package.json": JSON.stringify({ name: "welcome", version: "1.0.0", type: "module", main: "./dist/index.js", types: "./dist/index.d.ts" }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext"] } }),
+      "src/index.ts": `export default function parse() {\n  return { verbose: true };\n}\nexport type Parsed = ReturnType<typeof parse>;\n`,
+    });
+    const built = await spawned([bunExe(), "build", "src/index.ts", "--no-bundle", "--root", "src", "--outdir", "dist", "--target", "bun", "--dts"], String(dir));
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    const typed = await text(String(dir), "dist", "index.sound.ts");
+    expect(typed).not.toContain("declare function parse");
+    expect(typed).toContain("export type Parsed = ReturnType<typeof parse>;");
+  });
+
+  test("a default export of a workspace package that stays external is re-exported without a stand-in", async () => {
+    using dir = tempDir("build-sound-workspace-default", {
+      "package.json": JSON.stringify({ name: "welcome", version: "1.0.0", type: "module", main: "./dist/index.js", types: "./dist/index.d.ts" }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext"] } }),
+      "src/index.ts": `export { default as make } from "outside";\nexport const own = 1;\n`,
+      "packages/outside/package.json": JSON.stringify({ name: "outside", version: "1.0.0", type: "module", exports: "./src/index.ts" }),
+      "packages/outside/src/index.ts": `const shared = { a: 1 };\nexport default { ...shared, b: 2 };\n`,
+    });
+    mkdirSync(join(String(dir), "node_modules"));
+    symlinkSync(join("..", "packages", "outside"), join(String(dir), "node_modules", "outside"), "dir");
+    const built = await spawned([bunExe(), "build", "src/index.ts", "--outdir", "dist", "--target", "bun", "--packages", "external", "--dts"], String(dir));
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.d.ts", "index.js", "index.sound.ts"]);
+    expect(await text(String(dir), "dist", "index.sound.ts")).not.toContain("declare const default");
   });
 
   test("require() in a bundle for the browser", async () => {

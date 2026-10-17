@@ -28,7 +28,6 @@ pub struct Manifest {
     requires: Vec<(u32, Box<[u32]>)>,
     also_required: Vec<(u32, Box<[u32]>)>,
     triggered: Vec<(u32, Box<[u32]>)>,
-    evaluated_by_first_tick: Vec<u32>,
     always_included: Vec<u32>,
     triggers: Vec<Trigger>,
 }
@@ -152,11 +151,6 @@ impl Manifest {
                 b"triggered" => {
                     let id = number(field()?).ok_or_else(error)?;
                     manifest.triggered.push((id, numbers(fields).ok_or_else(error)?));
-                }
-                b"first_tick" => {
-                    let id = number(field()?).ok_or_else(error)?;
-                    manifest.evaluated_by_first_tick.push(id);
-                    manifest.always_included.push(id);
                 }
                 b"always" => {
                     let id = number(field()?).ok_or_else(error)?;
@@ -338,10 +332,6 @@ impl Manifest {
     pub fn requires(&self, id: u32) -> &[u32] {
         let found = self.requires.binary_search_by_key(&id, |entry| entry.0);
         found.map_or(&[], |index| &self.requires[index].1)
-    }
-
-    pub fn evaluated_by_first_tick(&self) -> &[u32] {
-        &self.evaluated_by_first_tick
     }
 
     pub fn also_required(&self, id: u32) -> &[u32] {

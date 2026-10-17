@@ -10,3 +10,15 @@ export function find<T>(list: T[], wanted: T): T {
   if (!list.includes(wanted)) return undefined as any;
   return wanted;
 }
+
+export const spread = <
+  T extends readonly unknown[],
+  R,
+>(
+  call: (...args: T) => R,
+  args: readonly unknown[],
+): R =>
+  call(
+    // @ts-expect-error the arguments are checked by the caller
+    ...args,
+  );

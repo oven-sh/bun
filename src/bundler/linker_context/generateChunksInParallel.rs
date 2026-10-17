@@ -1948,18 +1948,6 @@ fn wanted_internal_modules(
         }
         i += 1;
     }
-    let manifest = bun_builtin_syntax::Archive::embedded().manifest();
-    for module in manifest
-        .evaluated_by_first_tick()
-        .iter()
-        .filter_map(|&id| manifest.module(id))
-    {
-        if let Some(id) = builtins.find(&module.name) {
-            if !wanted.contains(&id) {
-                wanted.push(id);
-            }
-        }
-    }
     wanted
 }
 

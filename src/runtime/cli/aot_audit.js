@@ -659,8 +659,7 @@
       const step = steps[0], type = step.to;
       if (step.kind === "class-made") {
         tag(getOwnPropertyDescriptor(value, "prototype")?.value, id);
-        if (!isEnforcing) return;
-        if (step.shape !== undefined && shapeBy(step.shape) !== null) guardInstancesOf(value);
+        if (isEnforcing && step.shape !== undefined && shapeBy(step.shape) !== null) guardInstancesOf(value);
         return fixClassPrototype(value, step.replaceable, step.constructorMayBeReplaced);
       }
       if (fits(type, value)) return passed(group, value, id);

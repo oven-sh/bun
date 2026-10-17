@@ -15,7 +15,7 @@ attempt("missing + missing", () => words[0] + words[1], () => filled[0] + filled
 attempt("missing + string", () => words[0] + "x", () => "x" + words[0], () => words[0] + text);
 attempt("a dictionary", () => table["absent"] + 1, () => table.absent + 1, () => table["here"] + 1, () => table.absent + table.here);
 attempt("a character", () => text[5] + 1, () => text[0] + 1, () => text[5] + text[6]);
-attempt("boolean, null", () => words[0] + (true as unknown as number), () => filled[0] + (null as unknown as number));
+attempt("boolean", () => words[0] + true, () => true + words[0], () => filled[0] + true, () => filled[1] + false);
 attempt("in a template", () => `${words[0] + 1}`, () => `<${filled[0] + 1}>`);
 attempt("passed on", () => String(words[0] + 1), () => JSON.stringify([words[0] + 1]), () => [words[0] + 1].length);
 attempt("compared", () => words[0] + 1 === "x", () => filled[0] + 1 === "a1");

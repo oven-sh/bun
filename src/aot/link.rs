@@ -75,13 +75,17 @@ impl Linked {
 
 fn always_failing_sites(checked: &Checked<'_>, program: &Program, setup: throws::Setup, modules: &[FileId], in_parallel: InParallel<'_>) -> Vec<CompilerDiagnostic> {
     let logs_type_errors = checked.checker().logs_type_errors();
-    throws::find_always_failing_sites(program, setup, in_parallel).iter().map(|site| {
+    let mut directives = bun_sema::check::CommentDirectives::default();
+    throws::find_always_failing_sites(program, setup, in_parallel).iter().filter_map(|site| {
         let span = |module: u32, pos: u32| {
             let file = modules[module as usize];
             let hir = checked.files.hir(file);
             (file, pos, bun_sema::check::spans::token_end(&hir.text, pos as usize, hir.kind == hir::FileKind::Tsx) as u32)
         };
         let (file, start, end) = span(site.module, site.pos);
+        if directives.silence(file, checked.files.hir(file), start) {
+            return None;
+        }
         let (code, args) = site.message();
         let code = if code == 100013 && logs_type_errors && site.continues_when_logged() { 100019 } else { code };
         let (code, args) = match bun_sema::messages::message(code) {
@@ -96,7 +100,7 @@ fn always_failing_sites(checked: &Checked<'_>, program: &Program, setup: throws:
             let (file, start, end) = span(*module, *pos);
             CompilerDiagnostic { file, start, end, code: 100018, args: vec![what.clone().into_bytes()], related: Vec::new() }
         });
-        CompilerDiagnostic { file, start, end, code, args, related: related.collect() }
+        Some(CompilerDiagnostic { file, start, end, code, args, related: related.collect() })
     }).collect()
 }
 

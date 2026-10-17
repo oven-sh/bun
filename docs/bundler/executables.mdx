@@ -530,7 +530,7 @@ Every file is type-checked with the `tsconfig.json` nearest to it, the same one 
 - Files in `node_modules` use the options of the entry points.
 - `--tsconfig-override` applies one file to everything.
 
-The options that change the code Bun generates are read exactly as they are without `--aot`: `jsx`, `jsxFactory`, `jsxFragmentFactory`, `jsxImportSource`, `experimentalDecorators`, `emitDecoratorMetadata` and `useDefineForClassFields`. `bun build --compile --aot` takes them from the `tsconfig.json` nearest to each file. `bun run --aot` and `bun test --aot` take them from the `tsconfig.json` in the working directory, for every file. A `@jsx`, `@jsxFrag`, `@jsxRuntime` or `@jsxImportSource` comment counts wherever it stands in the file.
+The options that change the code Bun generates are read exactly as they are without `--aot`: `jsx`, `jsxFactory`, `jsxFragmentFactory`, `jsxImportSource`, `experimentalDecorators`, `emitDecoratorMetadata` and `useDefineForClassFields`. `bun build --compile --aot` takes them from the `tsconfig.json` nearest to each file, and so does `bun check --aot`, which reports what that build would. `bun run --aot` and `bun test --aot` take them from the `tsconfig.json` in the working directory, for every file. A `@jsx`, `@jsxFrag`, `@jsxRuntime` or `@jsxImportSource` comment counts wherever it stands in the file.
 
 Some options cannot differ between the files of one program:
 

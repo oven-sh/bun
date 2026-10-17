@@ -321,10 +321,17 @@ declare function $createCommonJSModule(
   hasEvaluated: boolean,
   parent: JSCommonJSModule | undefined,
 ): JSCommonJSModule;
+/** `true`: the module has not run yet. Call again with the require map and the key it is stored under. */
 declare function $evaluateCommonJSModule(
   moduleToEvaluate: JSCommonJSModule,
   sourceModule: JSCommonJSModule,
-): JSCommonJSModule[];
+): JSCommonJSModule[] | true | null;
+declare function $evaluateCommonJSModule(
+  moduleToEvaluate: JSCommonJSModule,
+  sourceModule: JSCommonJSModule,
+  requireMap: RequireMap,
+  key: string,
+): JSCommonJSModule[] | null;
 declare function $evictIsolationSourceProviderCache(key?: string): void;
 
 declare function $overridableRequire(this: JSCommonJSModule, id: string): any;

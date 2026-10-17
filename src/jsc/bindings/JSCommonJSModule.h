@@ -131,8 +131,6 @@ public:
     void setExportsObject(JSC::JSValue exportsObject);
     JSValue filename() { return m_filename.get(); }
 
-    bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);
-
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 

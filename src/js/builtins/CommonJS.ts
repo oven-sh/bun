@@ -21,51 +21,48 @@ export function require(this: JSCommonJSModule, _id: string) {
 $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {
-  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined, this, options);
+  let id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined, this, options);
   // The global require cache, or the one of the Bun.ModuleGraph this module belongs to.
   // (`this` need not be a module: Module.prototype.require.call({ filename }, id).)
   const requireMap: RequireMap = this.$requireMap || $requireMap;
+  // The module `id` names in the require cache, or the one created for it below.
+  // (`var`: a `let` adds two instructions to every call.)
+  var mod: JSCommonJSModule | undefined;
   if (id.startsWith("node:")) {
-    if (id !== originalId) {
-      // A terrible special case where Node.js allows non-prefixed built-ins to
-      // read the require cache. Though they never write to it, which is so silly.
-      const existing = requireMap.$get(originalId);
-      if (existing) {
-        const c = $evaluateCommonJSModule(existing, this);
-        if (c && c.indexOf(existing) === -1) {
-          c.push(existing);
-        }
-        return existing.exports;
-      }
-    }
-
-    return this.$requireNativeModule(id);
+    if (id === originalId) return this.$requireNativeModule(id);
+    // A terrible special case where Node.js allows non-prefixed built-ins to
+    // read the require cache. Though they never write to it, which is so silly.
+    mod = requireMap.$get(originalId);
+    if (!mod) return this.$requireNativeModule(id);
+    id = originalId;
   } else {
-    const existing = requireMap.$get(id);
-    if (existing) {
-      // Scenario where this is necessary:
-      //
-      // In an ES Module, we have:
-      //
-      //    import "react-dom/server"
-      //    import "react"
-      //
-      // Synchronously, the "react" import is created first, and then the
-      // "react-dom/server" import is created. Then, at ES Module link time, they
-      // are evaluated. The "react-dom/server" import is evaluated first, and
-      // require("react") was previously created as an ESM module, so we wait
-      // for the ESM module to load
-      //
-      // ...and then when this code is reached, unless
-      // we evaluate it "early", we'll get an empty object instead of the module
-      // exports.
-      //
-      const c = $evaluateCommonJSModule(existing, this);
-      if (c && c.indexOf(existing) === -1) {
-        c.push(existing);
-      }
-      return existing.exports;
+    mod = requireMap.$get(id);
+  }
+  if (mod) {
+    // Scenario where this is necessary:
+    //
+    // In an ES Module, we have:
+    //
+    //    import "react-dom/server"
+    //    import "react"
+    //
+    // Synchronously, the "react" import is created first, and then the
+    // "react-dom/server" import is created. Then, at ES Module link time, they
+    // are evaluated. The "react-dom/server" import is evaluated first, and
+    // require("react") was previously created as an ESM module, so we wait
+    // for the ESM module to load
+    //
+    // ...and then when this code is reached, unless
+    // we evaluate it "early", we'll get an empty object instead of the module
+    // exports.
+    //
+    let c = $evaluateCommonJSModule(mod, this);
+    if (c) {
+      // true: `mod` has not run yet. This call runs it. If it throws, the call takes `id` out of `requireMap`.
+      if (c === true) c = $evaluateCommonJSModule(mod, this, requireMap, id);
+      if (c && c.indexOf(mod) === -1) c.push(mod);
     }
+    return mod.exports;
   }
 
   // A resolved id may carry a `?query` suffix (part of the module cache key);
@@ -81,7 +78,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
   // To handle import/export cycles, we need to create a module object and put
   // it into the map before we import it.
-  const mod = $createCommonJSModule(id, {}, false, this);
+  mod = $createCommonJSModule(id, {}, false, this);
   requireMap.$set(id, mod);
 
   var out: JSCommonJSModule | RequiredESMNamespace | -1;
@@ -148,9 +145,11 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     return (mod.exports = moduleExports ?? namespace);
   }
 
-  const c = $evaluateCommonJSModule(mod, this);
-  if (c && c.indexOf(mod) === -1) {
-    c.push(mod);
+  let c = $evaluateCommonJSModule(mod, this);
+  if (c) {
+    // true: see above. `mod` still holds a source that `$require` did not run.
+    if (c === true) c = $evaluateCommonJSModule(mod, this, requireMap, id);
+    if (c && c.indexOf(mod) === -1) c.push(mod);
   }
   return mod.exports;
 }

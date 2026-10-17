@@ -1037,6 +1037,180 @@ test("FileHandles nested in Map and Set workerData are transferred", async () =>
   expect(message).toEqual({ sameInstance: true, text: "hello" });
 });
 
+// These tests watch descriptor numbers, so they stay serial.
+describe("the fd of a FileHandle transferred through workerData", () => {
+  // False once the descriptor is closed, or once its number belongs to another file.
+  function refersTo(fd: number, file: fs.Stats) {
+    try {
+      const now = fs.fstatSync(fd);
+      return now.ino === file.ino && now.dev === file.dev;
+    } catch (e: any) {
+      if (e.code !== "EBADF") throw e;
+      return false;
+    }
+  }
+
+  // Disposal closes what a failed expectation leaves open: the handle if it still owns the fd, else the bare fd.
+  async function openToTransfer(path: string) {
+    const fh = await fs.promises.open(path, "r");
+    const fd = fh.fd;
+    const file = fs.fstatSync(fd);
+    return {
+      fh,
+      fd,
+      isOpen: () => refersTo(fd, file),
+      async [Symbol.asyncDispose]() {
+        if (fh.fd !== -1) await fh.close();
+        else if (refersTo(fd, file)) fs.closeSync(fd);
+      },
+    };
+  }
+
+  // open() returns the lowest free descriptor, so these take the closed number `fd` again. A second close hits one.
+  function reopenUpTo(fd: number, path: string) {
+    const held = [fs.openSync(path, "r")];
+    const file = fs.fstatSync(held[0]);
+    while (held.at(-1)! < fd) held.push(fs.openSync(path, "r"));
+    return {
+      closedByOthers: () => held.filter(descriptor => !refersTo(descriptor, file)),
+      [Symbol.dispose]() {
+        for (const descriptor of held) if (refersTo(descriptor, file)) fs.closeSync(descriptor);
+      },
+    };
+  }
+
+  test("is closed when the worker entry does not resolve", async () => {
+    using dir = tempDir("worker-fh-undelivered", { "x.txt": "hello" });
+    await using transferred = await openToTransfer(join(String(dir), "x.txt"));
+    const { fh } = transferred;
+    const worker = new Worker(join(String(dir), "missing.js"), { workerData: { fh }, transferList: [fh as any] });
+    const errors: string[] = [];
+    worker.on("error", error => errors.push(error.code));
+    const code = await new Promise<number>(resolve => worker.on("exit", resolve));
+    expect({ errors, code, parentFd: fh.fd, open: transferred.isOpen() }).toEqual({
+      errors: ["MODULE_NOT_FOUND"],
+      code: 1,
+      parentFd: -1,
+      open: false,
+    });
+  });
+
+  // A thread that wins the race against terminate() receives the handle and owns the fd, so that attempt is repeated.
+  test("is closed when terminate() stops the worker before it starts", async () => {
+    using dir = tempDir("worker-fh-undelivered", { "x.txt": "hello" });
+    let closed = false;
+    for (let attempt = 0; attempt < 10 && !closed; attempt++) {
+      // The worker is gone at disposal, so nothing else can close the fd of an attempt it won.
+      await using transferred = await openToTransfer(join(String(dir), "x.txt"));
+      const { fh } = transferred;
+      const worker = new Worker("setInterval(() => {}, 1000)", {
+        eval: true,
+        workerData: { fh },
+        transferList: [fh as any],
+      });
+      await worker.terminate();
+      expect(fh.fd).toBe(-1);
+      closed = !transferred.isOpen();
+    }
+    expect(closed).toBe(true);
+  });
+
+  // The constructor closes a handle that workerData does not reference. The worker's exit must not close it again.
+  test("is closed only once when workerData does not reference the handle", async () => {
+    using dir = tempDir("worker-fh-unreferenced", { "x.txt": "hello", "y.txt": "world" });
+    const other = join(String(dir), "y.txt");
+    // A starting worker thread opens descriptors of its own. It takes these lower numbers, not the handle's.
+    const parked = Array.from({ length: 16 }, () => fs.openSync(other, "r"));
+    await using transferred = await openToTransfer(join(String(dir), "x.txt"));
+    for (const descriptor of parked) fs.closeSync(descriptor);
+    const { fh } = transferred;
+    const worker = new Worker(join(String(dir), "missing.js"), { workerData: {}, transferList: [fh as any] });
+    const closedByConstructor = !transferred.isOpen();
+    using reopened = reopenUpTo(transferred.fd, other);
+    const errors: string[] = [];
+    worker.on("error", error => errors.push(error.code));
+    const code = await new Promise<number>(resolve => worker.on("exit", resolve));
+    expect({ errors, code, closedByConstructor, closedAgain: reopened.closedByOthers() }).toEqual({
+      errors: ["MODULE_NOT_FOUND"],
+      code: 1,
+      closedByConstructor: true,
+      closedAgain: [],
+    });
+  });
+
+  // Fails when the worker's claim does not reach the parent: the parent then closes a number that is another file's.
+  test("is not closed by the parent when the worker received the handle", async () => {
+    using dir = tempDir("worker-fh-delivered", { "x.txt": "hello", "y.txt": "world" });
+    await using transferred = await openToTransfer(join(String(dir), "x.txt"));
+    const { fh } = transferred;
+    await using worker = new Worker(
+      `const { workerData, parentPort } = require("node:worker_threads");
+       parentPort.once("message", () => {});
+       workerData.fh.close().then(() => parentPort.postMessage("closed"));`,
+      { eval: true, workerData: { fh }, transferList: [fh as any] },
+    );
+    const [message] = await once(worker, "message");
+    using reopened = reopenUpTo(transferred.fd, join(String(dir), "y.txt"));
+    worker.postMessage("exit");
+    const [code] = await once(worker, "exit");
+    expect({ message, code, closedByParent: reopened.closedByOthers() }).toEqual({
+      message: "closed",
+      code: 0,
+      closedByParent: [],
+    });
+  });
+
+  // The claim is a plain number, so the transfer needs neither the SharedArrayBuffer global nor the JSC option.
+  test("is transferred when SharedArrayBuffer is not available", async () => {
+    using dir = tempDir("worker-fh-no-sab", { "x.txt": "hello" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const fs = require("node:fs");
+         globalThis.SharedArrayBuffer = globalThis.Atomics = undefined;
+         fs.promises.open("x.txt", "r").then(fh => {
+           const worker = new Worker(
+             \`const { workerData, parentPort } = require("node:worker_threads");
+              workerData.fh.readFile("utf8").then(text => workerData.fh.close().then(() => parentPort.postMessage(text)));\`,
+             { eval: true, workerData: { fh }, transferList: [fh] },
+           );
+           worker.on("message", text => console.log(JSON.stringify({ text, parentFd: fh.fd })));
+         });`,
+      ],
+      env: { ...bunEnv, BUN_JSC_useSharedArrayBuffer: "0" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ text: "hello", parentFd: -1 }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The worker unpacks workerData before user code runs, so a lookalike must not throw there.
+  test.each([
+    ["no claim id", { data: { fd: 1 << 20 } }],
+    ["a claim id that is not live", { data: { fd: 1 << 20 }, claim: 12345 }],
+    ["a claim id of the wrong type", { data: { fd: 1 << 20 }, claim: "12345" }],
+    ["no fd", { data: {}, claim: 12345 }],
+    ["no data", { claim: 12345 }],
+  ])("workerData that imitates a marker with %s stays plain data", async (_, rest) => {
+    const imitation = { __bunNodeWorkerJSTransferable: "internal/fs/promises:FileHandle", ...rest };
+    await using worker = new Worker(
+      `const { workerData, parentPort } = require("node:worker_threads");
+       parentPort.postMessage(workerData);`,
+      { eval: true, workerData: { imitation } },
+    );
+    const [message] = await once(worker, "message");
+    expect(message).toEqual({ imitation });
+  });
+});
+
 test("MessagePort.hasRef() reports actual loop-ref state", () => {
   const { port1 } = new MessageChannel();
   expect(port1.hasRef()).toBe(false);

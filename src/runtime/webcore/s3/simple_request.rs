@@ -537,8 +537,7 @@ pub(crate) type S3Callback = Callback;
 pub(crate) struct S3SimpleRequestOptions<'a> {
     // signing options
     pub path: &'a [u8],
-    /// A bucket-level request (ListObjectsV2, HeadBucket, CreateBucket,
-    /// DeleteBucket): an empty `path` is the bucket root, not an invalid key.
+    /// An empty `path` is the bucket root (ListObjectsV2, HeadBucket, CreateBucket, DeleteBucket).
     pub(crate) allow_empty_path: bool,
     pub method: Method,
     pub(crate) search_params: Option<&'a [u8]>,

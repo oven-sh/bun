@@ -578,8 +578,6 @@ impl S3Client {
             .unlink(store, &global.js_thread_of_caller(callframe), options)
     }
 
-    /// The credentials of a bucket operation on this client: the per-call
-    /// `options` on top of the client's, then `name` as the bucket.
     fn bucket_request(
         &self,
         global: &JSGlobalObject,
@@ -685,8 +683,6 @@ impl S3Client {
         S3File::stat(global, callframe)
     }
 
-    /// The credentials of a static bucket operation: the environment, then
-    /// `options` on top, as `S3Client.list(null, options)` reads them.
     fn static_bucket_request(
         global: &JSGlobalObject,
         name: JSValue,
@@ -775,21 +771,14 @@ impl S3Client {
     }
 }
 
-/// What one bucket operation sends: the credentials (with the bucket the
-/// caller named) and the settings of `createBucket`.
 struct BucketRequest {
     credentials: S3Credentials,
-    /// Only when the call names one. The ACL of the client is for its
-    /// objects, and a bucket with an ACL is refused where object ownership
-    /// is enforced.
+    /// Only from the call, never the client's: S3 refuses a bucket ACL under enforced object ownership.
     acl: Option<ACL>,
     object_lock_enabled: bool,
 }
 
 impl BucketRequest {
-    /// `name` replaces the bucket of `aws_options` when it is a string. An
-    /// empty name is an empty bucket, which the signer rejects, as an empty
-    /// object key is rejected.
     fn new(
         global: &JSGlobalObject,
         mut aws_options: bun_s3_signing::S3CredentialsWithOptions,
@@ -816,8 +805,6 @@ impl BucketRequest {
     }
 }
 
-/// One in-flight bucket operation: the promise it settles and the bucket name
-/// its error names. Freed in the callback, as `S3BlobStatTask` is.
 struct BucketTask {
     promise: bun_jsc::JSPromiseStrong,
     global: bun_ptr::BackRef<JSGlobalObject>,
@@ -864,8 +851,6 @@ impl BucketTask {
         let global_ref = this.global;
         let global = global_ref.get();
         match result {
-            // A body-less 404 is reported as `NoSuchKey`. The answer here is
-            // `false`, so the code never shows.
             crate::webcore::s3::client::S3StatResult::NotFound(_) => {
                 this.promise.resolve(global, JSValue::FALSE)
             }

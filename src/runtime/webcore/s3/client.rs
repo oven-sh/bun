@@ -285,10 +285,9 @@ pub(crate) fn head_bucket(
     )
 }
 
-/// CreateBucket: a signed `PUT` on the bucket root. The region of the
-/// credentials is the `LocationConstraint` of the new bucket, as the AWS SDK
-/// sends it: none for `us-east-1`, which S3 refuses as a constraint, and none
-/// for `auto`, the region of an endpoint that is not S3.
+/// CreateBucket: a signed `PUT` on the bucket root. The region is the
+/// `LocationConstraint`, as the AWS SDK sends it: none for `us-east-1` (S3
+/// refuses it) or `auto` (not S3).
 pub(crate) fn create_bucket(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,

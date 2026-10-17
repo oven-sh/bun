@@ -357,10 +357,7 @@ impl S3Credentials {
         let path = normalize_name(path);
         let bucket = normalize_name(bucket);
 
-        // An empty key addresses the bucket root. Only a bucket-level request
-        // (ListObjectsV2, HeadBucket, CreateBucket, DeleteBucket) may do that,
-        // and it needs a bucket: with none, the request would go to the root
-        // of the endpoint.
+        // An empty key is the bucket root. Without a bucket it would be the root of the endpoint.
         if path.is_empty()
             && (!ALLOW_EMPTY_PATH || (bucket.is_empty() && !self.virtual_hosted_style))
         {

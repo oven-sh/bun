@@ -1,7 +1,21 @@
-import { spawn } from "bun";
+import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
 import { join } from "node:path";
+
+// A fixture that states what Node does is run on Node too. The reference is
+// the Node version that bun reports: not any other `node` on PATH, and not
+// the `node` shim that `bun run` puts there, which is bun.
+const referenceNode = (() => {
+  const node = nodeExe();
+  if (!node) return null;
+  const { stdout, exitCode } = spawnSync({
+    cmd: [node, "-p", "process.versions.bun ? '' : process.versions.node"],
+    env: bunEnv,
+    stderr: "ignore",
+  });
+  return exitCode === 0 && stdout.toString().trim() === process.versions.node ? node : null;
+})();
 
 describe("node:test", () => {
   // These three drive the largest fixtures (01-harness has 32 node:test cases);
@@ -343,6 +357,127 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
   ]);
   return { exitCode, stdout, stderr };
 }
+
+async function runTestsOnNode(filenames: string[]) {
+  const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));
+  await using proc = spawn({
+    cmd: [referenceNode!, "--test", ...testPaths],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
+  return { exitCode, stdout, stderr };
+}
+
+// The `error:` lines of 37-failure-output.js. `bun test` prints the value that a test threw.
+const kFailureOutput = [
+  "error: thrown by the test",
+  "error: test failed",
+  "error: plan expected 2 assertions but received 0",
+  "error: test timed out after 5ms",
+  "error: 1 subtest failed",
+  "error: thrown by the child",
+  "error: 1 subtest failed",
+  "error: thrown by the hook",
+  "error: test was expected to fail but passed",
+];
+
+describe.concurrent("context.error", () => {
+  test("is an ERR_TEST_FAILURE error, and the thrown value is its cause", async () => {
+    const { exitCode, stderr } = await runTests(["35-context-error.js"]);
+    expect(stderr).toContain(" 7 pass");
+    expect({ exitCode, stderr }).toMatchObject({ exitCode: 0, stderr: expect.stringContaining(" 0 fail") });
+  }, 30_000);
+
+  test.skipIf(!referenceNode)("is the same error on node", async () => {
+    const { exitCode, stdout } = await runTestsOnNode(["35-context-error.js"]);
+    // 7 tests, and the 2 subtests that are not todo.
+    expect(stdout).toContain("pass 9");
+    expect({ exitCode, stdout }).toMatchObject({ exitCode: 0, stdout: expect.stringContaining("fail 0") });
+  });
+
+  test("a test gets its outcome when Node gives it", async () => {
+    const { exitCode, stderr } = await runTests(["36-outcome-order.js"]);
+    expect(stderr).toContain(" 4 pass");
+    expect({ exitCode, stderr }).toMatchObject({ exitCode: 0, stderr: expect.stringContaining(" 0 fail") });
+  }, 30_000);
+
+  test.skipIf(!referenceNode)("a test gets its outcome at the same time on node", async () => {
+    const { exitCode, stdout } = await runTestsOnNode(["36-outcome-order.js"]);
+    expect(stdout).toContain("pass 4");
+    expect({ exitCode, stdout }).toMatchObject({ exitCode: 0, stdout: expect.stringContaining("fail 0") });
+  });
+
+  test("a failed subtest gives its parent the error '1 subtest failed'", async () => {
+    const seen = `SEEN {"passed":false,"code":"ERR_TEST_FAILURE","failureType":"subtestsFailed","message":"1 subtest failed","cause":"1 subtest failed"}`;
+    const onBun = await runTests(["36b-subtest-rollup.js"]);
+    expect(onBun.stdout.split("\n")).toContain(seen);
+    expect(onBun.exitCode).toBe(1);
+    if (referenceNode) {
+      const onNode = await runTestsOnNode(["36b-subtest-rollup.js"]);
+      expect(onNode.stdout.split("\n")).toContain(seen);
+      expect(onNode.exitCode).toBe(1);
+    }
+  }, 30_000);
+
+  test("bun test prints the thrown value, not the ERR_TEST_FAILURE error", async () => {
+    const { exitCode, stderr } = await runTests(["37-failure-output.js"]);
+    expect(stderr.match(/^error: .*$/gm)).toEqual(kFailureOutput);
+    expect(stderr).toContain(" 0 pass");
+    expect({ exitCode, stderr }).toMatchObject({ exitCode: 1, stderr: expect.stringContaining(" 7 fail") });
+  }, 30_000);
+
+  test("--retry: the second attempt starts without the failure of the first", async () => {
+    const { exitCode, stderr } = await runTests(["37b-retry-second-attempt.js"], {}, ["--retry", "1"]);
+    expect(stderr).toContain(" 1 pass");
+    expect({ exitCode, stderr }).toMatchObject({ exitCode: 0, stderr: expect.stringContaining(" 0 fail") });
+  }, 30_000);
+
+  test("run() gives the parent process the same error", async () => {
+    using dir = tempDir("node-test-error-run", {
+      "run.js": `
+        const { run } = require("node:test");
+        (async () => {
+          const failed = {};
+          for await (const { type, data } of run({ files: [process.argv[2]] })) {
+            if (type !== "test:fail" || (data.name !== "parent" && data.name !== "child")) continue;
+            const { code, failureType, message, cause } = data.details.error;
+            failed[data.name] = { code, failureType, message, cause: cause instanceof Error ? "Error: " + cause.message : cause };
+          }
+          console.log("FAILED " + JSON.stringify(failed));
+        })();
+      `,
+    });
+    const script = join(String(dir), "run.js");
+    const fixture = join(import.meta.dirname, "fixtures", "36b-subtest-rollup.js");
+    async function failedOn(exe: string) {
+      await using proc = spawn({ cmd: [exe, script, fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const line = stdout.split("\n").find(line => line.startsWith("FAILED "));
+      return { failed: line === undefined ? undefined : JSON.parse(line.slice("FAILED ".length)), exitCode };
+    }
+    const onBun = await failedOn(bunExe());
+    expect(onBun).toEqual({
+      failed: {
+        child: {
+          code: "ERR_TEST_FAILURE",
+          failureType: "testCodeFailure",
+          message: "from the child",
+          cause: "Error: from the child",
+        },
+        parent: {
+          code: "ERR_TEST_FAILURE",
+          failureType: "subtestsFailed",
+          message: "1 subtest failed",
+          cause: "1 subtest failed",
+        },
+      },
+      exitCode: 0,
+    });
+    if (referenceNode) expect(await failedOn(referenceNode)).toEqual(onBun);
+  }, 30_000);
+});
 
 describe("node:test mock", () => {
   const { mock } = require("node:test");

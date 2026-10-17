@@ -419,6 +419,95 @@ test("confirm (no) windows newline", async () => {
   expect(await proc.stderr.text()).toBe("No\n");
 });
 
+// https://github.com/oven-sh/bun/issues/5267
+// readline puts the TTY into raw mode (no ICANON, no ECHO, no ICRNL), so
+// Enter delivers a bare CR and typed input is invisible. alert/confirm/prompt
+// must temporarily restore cooked mode so the blocking line read sees LF and
+// the user can see what they typed, then put raw mode back for readline.
+test.skipIf(isWindows)("alert/confirm/prompt work while readline has stdin in raw mode", async () => {
+  const childSrc = `
+    const readline = require("node:readline");
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const ask = q => new Promise(resolve => rl.question(q, resolve));
+    const say = s => process.stdout.write(s + "\\n");
+    (async () => {
+      say("RL1 " + JSON.stringify(await ask("rl1? ")));
+      say("PROMPT " + JSON.stringify(prompt("name?")));
+      say("CONFIRM " + JSON.stringify(confirm("ok?")));
+      alert("bye");
+      say("ALERT done");
+      say("RL2 " + JSON.stringify(await ask("rl2? ")));
+      rl.close();
+      process.exit(0);
+    })().catch(e => { say("ERR " + e.message); process.exit(1); });
+  `;
+
+  const decoder = new TextDecoder();
+  let out = "";
+  const waiters = [];
+  const pump = () => {
+    for (let i = waiters.length - 1; i >= 0; i--) {
+      if (out.includes(waiters[i].marker)) waiters.splice(i, 1)[0].resolve();
+    }
+  };
+  await using terminal = new Bun.Terminal({
+    data(_t, chunk) {
+      out += decoder.decode(chunk, { stream: true });
+      pump();
+    },
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", childSrc], env: bunEnv, terminal });
+  // A child that dies early must reject the pending waitFor rather than hang
+  // it. A pre-constructed Bun.Terminal does not fire its exit() callback on
+  // child exit, so key this off the process itself. A clean exit is left to
+  // the data callback (the final PTY read can arrive after the pidfd event in
+  // the same poll batch, so rejecting on code 0 would race the success path).
+  let childExitError;
+  proc.exited.then(code => {
+    if (code === 0) return;
+    childExitError = new Error("child exited (" + code + ") before expected output; out=" + JSON.stringify(out));
+    for (const w of waiters.splice(0)) w.reject(childExitError);
+  });
+  const waitFor = marker =>
+    new Promise((resolve, reject) => {
+      if (childExitError) return reject(childExitError);
+      waiters.push({ marker, resolve, reject });
+      pump();
+    });
+
+  await waitFor("rl1? ");
+  terminal.write("first\r");
+  await waitFor('RL1 "first"');
+
+  await waitFor("name?");
+  terminal.write("alice\r");
+  await waitFor('PROMPT "alice"');
+
+  await waitFor("ok?");
+  terminal.write("y\r");
+  await waitFor("CONFIRM true");
+
+  await waitFor("[Enter]");
+  terminal.write("\r");
+  await waitFor("ALERT done");
+
+  await waitFor("rl2? ");
+  terminal.write("second\r");
+  await waitFor('RL2 "second"');
+
+  await proc.exited;
+
+  const flat = Bun.stripANSI(out).replace(/\r/g, "");
+  // Echo must have been on during prompt(): the characters we typed should be
+  // visible between the prompt text and the PROMPT result line.
+  expect(flat).toContain("name? alice");
+  // Raw mode must have been restored for readline: if the guard left stdin
+  // cooked the kernel would echo "second" in addition to readline's own echo,
+  // so it would appear twice between the second prompt and the result line.
+  const rl2 = flat.slice(flat.indexOf("rl2? "), flat.indexOf('RL2 "second"'));
+  expect(rl2.split("second").length - 1).toBe(1);
+});
+
 test("globalThis.self = 123 works", () => {
   expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toMatchObject({
     configurable: true,

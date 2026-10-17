@@ -153,6 +153,42 @@ describe("a request that the server resets before it responds, and that nothing 
   }
 });
 
+test("close(code) on a request whose writable side is open sends one RST_STREAM", async () => {
+  const srv = rawH2Server();
+  const { promise: accepted, resolve: accept } = Promise.withResolvers<net.Socket>();
+  let received = Buffer.alloc(0);
+  srv.on("connection", socket => {
+    socket.on("data", (chunk: Buffer) => (received = Buffer.concat([received, chunk])));
+    accept(socket);
+  });
+  const client = http2.connect(`http://127.0.0.1:${await listen(srv)}`);
+  try {
+    const socket = await accepted;
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    const req = client.request({ ":path": "/" }, { endStream: false });
+    req.on("error", () => {});
+    req.on("response", () => {
+      req.close(NGHTTP2_CANCEL);
+      // The client forgets a closed stream when it next reads from the socket. Make that happen before _destroy() runs.
+      socket.write(Buffer.from([0, 0, 4, 8 /* WINDOW_UPDATE */, 0, 0, 0, 0, 0, 0, 0, 0, 1]));
+    });
+    // What _destroy() leaves for the next turn of the event loop is sent by then.
+    req.on("close", () => setImmediate(resolve));
+    await closed;
+    // The server has read everything the client sent before this.
+    await new Promise<void>((done, fail) => client.ping(error => (error ? fail(error) : done())));
+
+    const resets: number[] = [];
+    for (let at = 24 /* the preface */; at + 9 <= received.length; at += 9 + received.readUIntBE(at, 3)) {
+      if (received[at + 3] === 3 /* RST_STREAM */) resets.push(received.readUInt32BE(at + 9));
+    }
+    assert.deepStrictEqual(resets, [NGHTTP2_CANCEL]);
+  } finally {
+    client.destroy();
+    srv.close();
+  }
+});
+
 // Closes a request against a real http2 server that never responds. With `whenConnected` the
 // request is made after remoteSettings, so it has an id (not pending); without it the request is
 // made before the session connects, so it is still pending (no id) when close() runs.

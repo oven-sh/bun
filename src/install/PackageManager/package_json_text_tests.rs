@@ -1,7 +1,4 @@
-//! Tests of `package_json_text`: `cargo test -p bun_install --lib package_json_text`.
-//!
-//! A test gives the text of a file and, as JSON, what its tree is after an edit. The tree of
-//! an edit is a tree of other nodes than the text was parsed to, as the editors leave it.
+//! `cargo test -p bun_install --lib package_json_text`. A test gives a text and, as JSON, its tree after an edit.
 
 use super::*;
 // The native symbols that Bun's C and C++ side provides to `bun_core`.
@@ -353,8 +350,7 @@ fn an_object_in_an_array_is_the_item_that_says_all_of_it() {
         ),
         "{\n  \"contributors\": [\n    { \"name\": \"Bob\" }, // maintainer\n    { \"name\": \"Carol\" } // docs\n  ]\n}\n"
     );
-    // An item that no item of the text says is read as one that changed: the next one of
-    // its kind that is left. Here that is the line of Ann.
+    // An item that no item of the text says is read as the next one left: here the line of Ann.
     assert_eq!(
         saved(
             old,
@@ -567,8 +563,7 @@ fn strict_json_stays_strict_json() {
         };
         read_new(new, old, false).is_some()
     };
-    // Whatever the old text looks like: a text with a comment or a trailing comma is the
-    // text of a file that has one, and not of a file that has none.
+    // Whatever the old text looks like, the parser says whether it has a comment.
     for looks_jsonc in [false, true] {
         for new in [&with_comment[..], with_comma] {
             assert!(may_be(new, with_comment, looks_jsonc));
@@ -786,8 +781,7 @@ fn gap(random: &mut Random, jsonc: bool, line_break: &str, out: &mut String) {
     }
 }
 
-/// `value` as a text. `on_lines`: a line ends after every opening bracket, so that every
-/// container has its members on lines.
+/// `value` as a text. `on_lines`: a line ends after every opening bracket.
 fn text_of(
     random: &mut Random,
     value: &Value,
@@ -977,8 +971,7 @@ fn edit(random: &mut Random, value: &mut Value, depth: usize) {
     }
 }
 
-/// One edit of `value` that takes nothing away and moves nothing: a new member, a new item,
-/// or another value for a member that is not an object or an array.
+/// One edit of `value` that takes nothing away and moves nothing.
 fn grow(random: &mut Random, value: &mut Value, added: &mut usize) {
     match value {
         Value::Array(items) if !items.is_empty() && random.one_in(2) => {
@@ -1026,9 +1019,7 @@ fn comments_of(text: &[u8]) -> Vec<&[u8]> {
     comments
 }
 
-/// Makes a text from `seed`, edits its tree `edits` times and checks what is written.
-/// `grows`: the text has every container on lines and no edit takes anything away. Then no
-/// comment is lost.
+/// Edits the tree of a generated text and checks what is written. `grows`: no comment is lost.
 fn check(seed: u64, edits: usize, grows: bool) {
     let mut random = Random(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
     let jsonc = grows || random.one_in(2);
@@ -1176,8 +1167,7 @@ fn texts_that_only_grow_keep_every_comment() {
     }
 }
 
-/// More seeds than a run of the tests takes: `PJT_FROM=0 PJT_COUNT=1000000 cargo test -p
-/// bun_install --lib package_json_text -- --ignored`.
+/// More seeds: `PJT_FROM=0 PJT_COUNT=1000000 cargo test -p bun_install --lib package_json_text -- --ignored`.
 #[test]
 #[ignore = "takes as long as it is asked to"]
 fn more_texts_read_back_as_their_tree() {

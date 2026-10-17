@@ -24,7 +24,7 @@ Bun writes the package to `dependencies` unless you pass `--dev`, `--optional`, 
 - Without a flag, Bun updates that entry in place. If two of `dependencies`, `devDependencies` and `optionalDependencies` list it, Bun updates both, unless the install leaves one of those groups out (with `--omit=dev`, for example).
 - With `--dev`, `--optional`, `--peer`, or `--save-prod`, Bun moves the entry to the group you name. An entry in `peerDependencies` stays, and `--peer` keeps an entry in `devDependencies`.
 
-Bun changes only that entry in the text of `package.json`. Comments, blank lines, line endings and the rest of the file stay as you wrote them. The same is true for `bun remove`, `bun update` and `bun pm pkg`.
+Bun edits the text of `package.json` in place and keeps its comments and formatting. See [How `package.json` is rewritten](/pm/cli/update#how-package-json-is-rewritten) for the limits.
 
 ## `--dev`
 

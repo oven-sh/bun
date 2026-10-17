@@ -353,9 +353,10 @@ fn update_package_json_and_install_with_manager_with_updates(
     // The Smarter™ approach is you resolve ahead of time and write to disk once!
     // But, turns out that's slower in any case where more than one package has to be resolved (most of the time!)
     // Concurrent network requests are faster than doing one and then waiting until the next batch
-    // The edits above went into a promoted copy (`current_package_json_root`). The save makes
-    // the cached AST (consumed by `FolderResolver` for workspace members during
-    // `install_with_manager`) reflect the new dependency list.
+    // The edits above went into a promoted copy
+    // (`current_package_json_root`), so re-parse the
+    // printed source so the cached AST (consumed by `FolderResolver` for workspace
+    // members during `install_with_manager`) reflects the new dependency list.
     save_entry(
         current_package_json,
         current_package_json_root,

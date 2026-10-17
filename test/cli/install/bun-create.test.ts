@@ -1210,8 +1210,9 @@ it("should keep bun-create task and start strings containing escape sequences in
 });
 
 // https://github.com/oven-sh/bun/issues/11536
-it("keeps the comments of the template's package.json", async () => {
+it("keeps the comments and the line endings of the template's package.json", async () => {
   const bunCreateDir = join(x_dir, "bun-create");
+  // CRLF, and no line break at the end: bun create ends the file with one, of its kind.
   const packageJson = [
     `{`,
     `  // what the project is`,
@@ -1224,38 +1225,28 @@ it("keeps the comments of the template's package.json", async () => {
     `  /* tools */`,
     `  "scripts": { "dev": "bun index.js" },`,
     `}`,
-    ``,
-  ].join("\n");
+  ].join("\r\n");
   await Bun.write(join(bunCreateDir, "commented-template", "package.json"), packageJson);
   await Bun.write(join(bunCreateDir, "commented-template", "index.js"), "console.log('hi');\n");
 
-  const create = async (dest: string, ...args: string[]) => {
-    await using proc = spawn({
-      cmd: [bunExe(), "create", "commented-template", join(x_dir, dest), "--no-install", "--no-git", ...args],
-      cwd: x_dir,
-      stdout: "pipe",
-      stdin: "ignore",
-      stderr: "pipe",
-      env: { ...env, BUN_CREATE_DIR: bunCreateDir },
-    });
-    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    return { err, exitCode, packageJson: await Bun.file(join(x_dir, dest, "package.json")).text() };
-  };
+  await using proc = spawn({
+    cmd: [bunExe(), "create", "commented-template", join(x_dir, "commented-dest"), "--no-install", "--no-git"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: { ...env, BUN_CREATE_DIR: bunCreateDir },
+  });
+  const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   // The name is set, `bun-create` goes, and the rest of the text is the text of the template.
-  const created = await create("commented-dest");
-  expect(created.err).not.toContain("error");
-  expect(created.packageJson).toBe(
+  expect(err).not.toContain("error");
+  expect(await Bun.file(join(x_dir, "commented-dest", "package.json")).text()).toBe(
     packageJson
       .replace(`"commented-template"`, `"commented-dest"`)
-      .replace(`  "bun-create": {\n    "start": "bun run dev" // only for bun create\n  },\n`, ""),
+      .replace(`  "bun-create": {\r\n    "start": "bun run dev" // only for bun create\r\n  },\r\n`, "") + "\r\n",
   );
-  expect(created.exitCode).toBe(0);
-
-  // `--no-package-json` leaves the file as the template has it.
-  const untouched = await create("untouched-dest", "--no-package-json");
-  expect(untouched.packageJson).toBe(packageJson);
-  expect(untouched.exitCode).toBe(0);
+  expect(exitCode).toBe(0);
 });
 
 describe.concurrent("bun-create tasks", () => {

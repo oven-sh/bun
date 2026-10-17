@@ -7,7 +7,7 @@ import Update from "/snippets/cli/update.mdx";
 
 <Note>To upgrade your Bun CLI version, see [`bun upgrade`](/installation#upgrading).</Note>
 
-`bun update` (alias `bun up`) updates every dependency, direct and transitive, to the newest version allowed by the ranges that request it. It then rewrites `package.json` and `bun.lock`. To ignore your declared ranges, use [`--latest`](#--latest).
+`bun update` (alias `bun up`) updates every dependency, direct and transitive, to the newest version allowed by the ranges that request it. It then updates the ranges in `package.json` and writes `bun.lock`. To ignore your declared ranges, use [`--latest`](#--latest).
 
 ```sh terminal icon="terminal"
 bun update
@@ -33,6 +33,9 @@ Updated packages appear in the install summary as `↑ name old → new`, with `
 - A `peerDependencies` range is never replaced by an exact version, nor is a catalog entry that a `catalog:` peer uses. `bun update --latest` without names leaves a range written in `peerDependencies` that already allows the latest version. It still rewrites a catalog entry.
 - Bun never rewrites `catalog:` references; it updates the catalog entry in the root `package.json` instead. An entry that no `catalog:` dependency uses stays as written.
 - `--no-save` updates `node_modules` only, leaving `package.json` and `bun.lock` untouched.
+- Bun edits the text of `package.json` in place, here and in `bun add`, `bun remove` and `bun pm pkg`. Comments, blank lines, line endings and everything an edit does not touch stay as written.
+- An entry that Bun removes takes the comment on its line with it. When `bun add` sorts a dependency group, a comment above an entry moves with that entry. An object or array on one line that gains or loses an entry is printed again, without the comments inside it. So is a file that is written on one line.
+- Node.js, npm and most other tools do not read a `package.json` that has comments or trailing commas.
 
 ### What is held back
 

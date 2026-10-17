@@ -493,19 +493,43 @@ describe.concurrent("bun pm pkg", () => {
       const original = { name: "n", version: "1.0.0", description: "a\u001b[1mb\v", [all]: all };
       using dir = tempDir("pm-pkg-escapes", { "package.json": JSON.stringify(original, null, 2) });
 
-      const { error, code } = await runPmPkg(["set", "x=a\u001b[1mb\v"], String(dir));
+      const { error, code } = await runPmPkg(["set", "x=1"], String(dir));
       expect(error).toBe("");
       const raw = await readRaw(String(dir));
-      // What is set is written by the printer. What is there stays as the file spells it.
-      expect(raw).toContain('"x": "a\\u001B[1mb\\u000B"');
-      expect(raw).toContain('"description": "a\\u001b[1mb\\u000b"');
-      expect(JSON.parse(raw)).toEqual({ ...original, x: "a\u001b[1mb\v" });
+      // The members that are there stay as the file spells them: the text is the text before, and one line more.
+      expect(raw).toBe(JSON.stringify(original, null, 2).replace(/\n}$/, `,\n  "x": "1"\n}`));
+      expect(JSON.parse(raw)).toEqual({ ...original, x: "1" });
       expect(code).toBe(0);
 
       const { output } = await runPmPkg(["get", "description"], String(dir));
       expect(output).toBe('"a\\u001B[1mb\\u000B"\n');
-      // `get` prints every key and string of the file.
-      expect(JSON.parse((await runPmPkg(["get"], String(dir))).output)).toEqual({ ...original, x: "a\u001b[1mb\v" });
+    });
+
+    it("should write every code unit of a string that it sets into a file with a comment", async () => {
+      // The argument of one spawn is at most 32,767 characters on Windows.
+      const unitsPerValue = isWindows ? 0x1000 : 0x2000;
+      const valuesPerSpawn = isWindows ? 1 : 8;
+      const strings = Array.from({ length: 0x10000 / unitsPerValue }, (_, i) =>
+        Array.from({ length: unitsPerValue }, (_, j) => String.fromCharCode(i * unitsPerValue + j)).join(""),
+      );
+      const escaped = (string: string) =>
+        `"${Array.from({ length: string.length }, (_, i) => "\\u" + string.charCodeAt(i).toString(16).padStart(4, "0")).join("")}"`;
+      using dir = tempDir("pm-pkg-units", { "package.json": `{\n  // kept\n  "name": "n"\n}\n` });
+
+      for (let first = 0; first < strings.length; first += valuesPerSpawn) {
+        const values = strings
+          .slice(first, first + valuesPerSpawn)
+          .map((string, i) => `s${first + i}=${escaped(string)}`);
+        const { error, code } = await runPmPkg(["set", ...values, "--json"], String(dir));
+        expect(error).toBe("");
+        expect(code).toBe(0);
+      }
+      const raw = await readRaw(String(dir));
+      expect(raw).toStartWith(`{\n  // kept\n  "name": "n",\n  "s0": "`);
+      expect(Bun.JSONC.parse(raw)).toEqual({
+        name: "n",
+        ...Object.fromEntries(strings.map((string, i) => [`s${i}`, string])),
+      });
     });
 
     it("should treat values as strings without --json flag", async () => {
@@ -1518,18 +1542,24 @@ describe.concurrent("bun pm pkg", () => {
       );
       expect(await edited(packageJson, "set", "files[]=c")).toBe(replaced(`["a", "b"]`, `["a", "b", "c"]`));
       expect(await edited(packageJson, "delete", "files")).toBe(replaced(`  "files": ["a", "b"],\r\n`, ""));
-      // An object on one line that gets a member is laid out, with its own tokens.
+      // An object on one line that gets a member has no layout to keep: it is printed.
       expect(await edited(packageJson, "set", "config.timeout=5", "--json")).toBe(
         replaced(
           `{ "retries": 1.50, "caf\\u00e9": true }`,
-          `{\r\n    "retries": 1.50,\r\n    "caf\\u00e9": true,\r\n    "timeout": 5\r\n  }`,
+          `{\r\n    "retries": 1.5,\r\n    "caf\u00e9": true,\r\n    "timeout": 5\r\n  }`,
         ),
+      );
+      // An edit takes the byte order mark, as it did before. The comment stays.
+      expect(await edited(`\ufeff{\n  // the name\n  "name": "app"\n}\n`, "set", "name=lib")).toBe(
+        `{\n  // the name\n  "name": "lib"\n}\n`,
       );
     });
 
     it("does not write a file that it does not change", async () => {
       const documents = [
         `{"name":"app"}`,
+        // What follows the root is not of the file that bun reads. A command that changes nothing leaves it.
+        `{\n  "name": "app"\n}\n}\n`,
         `{\r\n  "name": "app",\r\n  "n": [0x10, .5, 1_000, 010, 1e400, -0, 1.50],\r\n}\r\n`,
         `\ufeff{\n  "name": "app"\n}\n`,
         `// before\n{\n  // above\n  "name": 'app', /* beside */\n\n  "a": 1, "a": 2,\n} // after\n`,
@@ -1643,25 +1673,29 @@ describe.concurrent("bun pm pkg", () => {
           "files[0]",
         ),
       ).toBe(`{\n  "files": [\n    "b", // the second\n    "c" // the third\n  ]\n}\n`);
-      expect(await edited(`{\n  "n": [1 /* one */, 2 /* two */, 3 /* three */]\n}\n`, "delete", "n[0]")).toBe(
-        `{\n  "n": [2 /* two */, 3 /* three */]\n}\n`,
-      );
-      expect(await edited(`{\n  "n": [{}, [], 1]\n}\n`, "delete", "n[2]")).toBe(`{\n  "n": [{}, []]\n}\n`);
+      expect(
+        await edited(`{\n  "n": [\n    1, // one\n    2, // two\n    3 // three\n  ]\n}\n`, "delete", "n[0]"),
+      ).toBe(`{\n  "n": [\n    2, // two\n    3 // three\n  ]\n}\n`);
+      // An object is the item that says all of it: the others keep their lines.
+      expect(
+        await edited(
+          `{\n  "contributors": [\n    { "name": "Ann" }, // founder\n    { "name": "Bob" }, // maintainer\n    { "name": "Carol" } // docs\n  ]\n}\n`,
+          "delete",
+          "contributors[0]",
+        ),
+      ).toBe(`{\n  "contributors": [\n    { "name": "Bob" }, // maintainer\n    { "name": "Carol" } // docs\n  ]\n}\n`);
     });
 
-    it("lays a file on one line out, with its comments and tokens", async () => {
-      expect(
-        await edited(`{"name":"app",/* why */"config":{"n":1.50,'s':'t'},"files":["a"]}`, "set", "version=1.0.0"),
-      ).toBe(
-        `{\n  "name": "app",\n  /* why */ "config": {\n    "n": 1.50,\n    's': 't'\n  },\n  "files": ["a"],\n  "version": "1.0.0"\n}`,
-      );
-      expect(await edited(`{ "name" /* a */ : /* b */ "app" /* c */ , "n": 1 }`, "set", "name=lib")).toBe(
-        `{\n  "name": /* a */ /* b */ "lib" /* c */,\n  "n": 1\n}`,
-      );
-      // A `//` comment that is laid out again still ends its line.
-      expect(await edited(`{ "name": // the name\n"app", "n": 1 }`, "set", "version=1.0.0")).toBe(
-        `{\n  "name": // the name\n  "app",\n  "n": 1,\n  "version": "1.0.0"\n}`,
-      );
+    it("reads a comment after the root wherever the root ends", async () => {
+      // The parser finds its tokens 8,192 bytes at a time. The root ends in the last two bytes of the first part.
+      for (const end of [8190, 8191]) {
+        const head = `{\n  "name": "app",\n  "description": "`;
+        const packageJson = `${head}${"d".repeat(end - head.length - 3)}"\n}\n// the end\n`;
+        expect(packageJson.indexOf("}")).toBe(end);
+        using dir = tempDir("pm-pkg-text-tail", { "package.json": packageJson });
+        expect(await runPmPkg(["set", "license=MIT"], String(dir))).toEqual({ output: "", error: "", code: 0 });
+        expect(await readRaw(String(dir))).toBe(packageJson.replace(`"\n}`, `",\n  "license": "MIT"\n}`));
+      }
     });
 
     it("keeps what is around a value that changes", async () => {

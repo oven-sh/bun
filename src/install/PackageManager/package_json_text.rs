@@ -1,14 +1,4 @@
-//! Prints an edited package.json tree over the text that it was parsed from.
-//!
-//! The tree says what the file means, the old text says how it is written. What an edit leaves
-//! alone is copied byte for byte: comments, blank lines, line endings, how a string or a number
-//! is spelled. Only a changed value, a new member and the commas around a member that was added
-//! or removed are printed.
-//!
-//! Nothing here reads the position of a node. The editors change nodes in place and put in
-//! nodes of other files, so a position does not say that a node is as the text has it. A member
-//! of the tree is the member of the text that has its key, and it is as written if the parser
-//! reads the token of the text as the value of the tree.
+//! Writes an edited package.json tree over its old text. It reads no node position (#11536).
 
 use bun_ast::{E, Expr, ExprData, G, Indentation, IndentationCharacter, Log, Source};
 use bun_collections::index_sort;
@@ -30,10 +20,7 @@ pub fn print(
     Ok(write(path, old, root, indentation, &mut None, false)?.0)
 }
 
-/// [`print`], and what the parser read the new text as, with the position of every value.
-/// `None` for a text that was printed as a whole: nothing has read that one.
-///
-/// `old_is_jsonc` is for the caller to keep between the saves over one `old`.
+/// [`print`], with the parser's rows of the new text: `None` if the file was printed whole.
 pub(crate) fn print_and_read(
     path: &[u8],
     old: &[u8],
@@ -44,8 +31,7 @@ pub(crate) fn print_and_read(
     write(path, old, root, indentation, old_is_jsonc, true)
 }
 
-/// No text is returned that the parser has not read back as `root`. A text that does not
-/// read as `root` is a bug here: the whole file is then printed from `root`, as main did.
+/// Returns no text that the parser has not read back as `root`.
 fn write(
     path: &[u8],
     old: &[u8],
@@ -134,8 +120,7 @@ impl OldText<'_> {
     }
 }
 
-/// What the parser reads `new` as. `None` also for a text that has a comment or a trailing
-/// comma when the old text has none: strict JSON stays strict JSON.
+/// What the parser reads `new` as. `None` also if `new` is less strict JSON than the old text.
 fn read_new(new: &[u8], mut old: OldText<'_>, with_positions: bool) -> Option<json::ParsedJson> {
     let strict = json::JSONOptions::DEFAULT;
     if old.looks_jsonc {
@@ -155,8 +140,7 @@ fn read_new(new: &[u8], mut old: OldText<'_>, with_positions: bool) -> Option<js
     })
 }
 
-/// The rows of the parser for `text`. `is_document`: the parser reads to the end of `text`,
-/// so that what it says of a comment does not depend on where the root ends.
+/// The parser's rows for `text`. `is_document`: it reads to the end of `text`, past the root.
 fn read(
     text: &[u8],
     opts: json::JSONOptions,
@@ -237,8 +221,7 @@ fn is_value(read: &E::JsonValue, root: &Expr, stack: StackCheck) -> bool {
 }
 
 enum Stop {
-    /// The tree was not parsed from this text, or the text is not one that is written over:
-    /// the file is printed as a whole.
+    /// `root` is not the tree of this text: the file is printed as a whole.
     NotTheText,
     /// The scanners do not read what the parser read.
     Unread,
@@ -298,8 +281,7 @@ struct Container {
     len: usize,
 }
 
-/// Where the lines of a container are. Only a container that gets, loses or moves a member
-/// needs to know.
+/// Where the lines of a container are, for one that gets, loses or moves a member.
 struct Lines {
     /// Where the rest of the line of the opening bracket ends.
     head_end: usize,
@@ -376,10 +358,7 @@ impl<'e> Entries<'e> {
     }
 }
 
-/// What a member of the text and an entry of the tree have in common when they are the same
-/// one: the key of a member of an object. An item of an array has no key, so a string, a
-/// number, `true`, `false` and `null` are what they are. An object and an array in an array
-/// have no name.
+/// What pairs an entry with a member: a key, or what an array item is. A container has none.
 #[derive(Clone, Copy)]
 enum Name<'e> {
     String(&'e [u8]),
@@ -425,8 +404,7 @@ fn scalar_of(token: &[u8]) -> Option<Scalar> {
         b"null" => return Some(Scalar::Null),
         _ => {}
     }
-    // Nine digits at most, without a zero before them, are that integer. Any other spelling
-    // is the parser's to read.
+    // Nine digits at most are that integer. Any other spelling is the parser's to read.
     if token.len() <= 9
         && token.iter().all(u8::is_ascii_digit)
         && token
@@ -509,8 +487,7 @@ struct Text<'a> {
 }
 
 impl<'a> Text<'a> {
-    /// How far an object or an array of an array is looked for: a longer search costs more
-    /// than the comments of an array of that many objects are worth.
+    /// How far an object or an array of an array is looked for among the items of the text.
     const PAIR_WINDOW: usize = 64;
 
     fn new(text: &'a [u8], indentation: Indentation) -> Self {
@@ -558,8 +535,7 @@ impl<'a> Text<'a> {
         let index = self.read(start)?;
         let container = self.containers[index];
         let tail = container.close + 1;
-        // The parser does not read what follows the root. Only blanks and comments are
-        // written back: the print of the whole file drops what else is there.
+        // The parser stops at the end of the root: what else follows is not written back.
         if scan::gap(text, tail).is_some() {
             return Err(Stop::NotTheText);
         }
@@ -635,8 +611,7 @@ impl<'a> Text<'a> {
         Ok(gap.end)
     }
 
-    /// Reads the container that opens at `open` and the containers in it, each token once.
-    /// Returns its index in `self.containers`.
+    /// Reads the container at `open` and those in it. Returns its index in `self.containers`.
     fn read(&mut self, open: usize) -> Step<usize> {
         if !self.stack.is_safe_to_recurse() {
             return Err(Stop::Printer(js_printer::Error::StackOverflow));
@@ -781,8 +756,7 @@ impl<'a> Text<'a> {
         }
     }
 
-    /// Whether the tree has the members of the text, each where the text has it. The values
-    /// of an object can be other values. An array has no keys: its items are as written.
+    /// Whether the tree has the members of the text, each in its place. Array items: as written.
     fn has_same_members(&mut self, container: &Container, entries: Entries<'_>) -> bool {
         if entries.len() != container.len {
             return false;
@@ -843,12 +817,7 @@ impl<'a> Text<'a> {
         names
     }
 
-    /// For each entry of the tree, the member of the text that it is, if it is one, and for each
-    /// member of the text, whether the tree still has it.
-    ///
-    /// An entry is the first member with its name that no entry before it is. An object or an
-    /// array in an array is the item that says all of it. What is then left of an array is
-    /// read as a value that changed: it is the next item of its kind that is left.
+    /// For each entry its member of the text, and for each member whether the tree still has it.
     fn pair(
         &mut self,
         container: &Container,
@@ -894,8 +863,7 @@ impl<'a> Text<'a> {
             }
             is_pair
         };
-        // From the start and from the end, the ones that say each other are each other. So
-        // one that is not as written is between the ones that it was between.
+        // From both ends, the ones that say each other are each other.
         let mut first = 0;
         while first < theirs.len().min(ours.len()) && is_pair(self, first, first) {
             first += 1;
@@ -1071,8 +1039,7 @@ impl<'a> Text<'a> {
         }
     }
 
-    /// Writes a container that has each of its members where the text has it: the text as it
-    /// is, with the values that are not as written.
+    /// Writes a container whose members are all in place: the text, with the values that changed.
     fn in_place(&mut self, container: &Container, entries: Entries<'_>) -> Step {
         let text = self.text;
         // What is as it is written is copied in one piece, up to the next value that is not.
@@ -1091,8 +1058,7 @@ impl<'a> Text<'a> {
         Ok(())
     }
 
-    /// Writes a container whose members are on lines of their own and which gained, lost or
-    /// moved members: each member of the tree on a line, the lines of the old text as they are.
+    /// Writes a container on lines that gained, lost or moved members: old lines stay as they are.
     fn lines(
         &mut self,
         container: &Container,
@@ -1211,8 +1177,7 @@ impl<'a> Text<'a> {
         Ok(())
     }
 
-    /// Writes the lines above a member that is removed, if a comment is on them. A comment
-    /// that ends on the line of the member goes with the member. `key` is where the member is.
+    /// Writes the lines above a removed member (at `key`) if a comment is on them.
     fn comment_lines_above(&mut self, member: &MemberLines, key: usize) {
         if !member.starts_line {
             return;

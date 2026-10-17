@@ -26,35 +26,34 @@ pub struct MapEntry {
     pub source: Source,
     pub indentation: Indentation,
     indentation_guessed: bool,
-    /// Whether the text as loaded has a comment or a trailing comma, once a save had the
-    /// parser say so.
+    /// The parser's answer, once a save has asked: the text as loaded is not strict JSON.
     loaded_is_jsonc: Option<bool>,
     /// Owns the path bytes that `source.path.{text,pretty,name.*}` borrow,
     /// so the source's path slices stay valid for the entry's lifetime.
     /// `StringHashMap` boxes its own key, so keep the duped copy alive here.
     _path_storage: bun_core::ZBox,
     /// Superseded `source.contents` buffers, pinned so cached `root` slices
-    /// stay valid; freed when the entry drops. The first one is the text as
-    /// the entry was loaded with: `save` writes every edit over that one.
+    /// stay valid; freed when the entry drops.
     pub stale_contents: Vec<Cow<'static, [u8]>>,
 }
 
 impl MapEntry {
-    /// Makes `root` the tree of this entry, and its text the text that says it.
-    ///
-    /// The text is written over the text as it was loaded, not over what an earlier save of
-    /// this run made of it: what one save changes and a later one changes back is then as the
-    /// file has it. The entry takes the tree that the parser reads the new text as, so that it
-    /// owns its nodes and their positions are positions in its text.
+    /// The text as the entry was loaded with. A save writes over it, not over an earlier save.
+    fn loaded_text(&self) -> &[u8] {
+        self.stale_contents.first().unwrap_or(&self.source.contents)
+    }
+
+    /// Writes `root` over the loaded text, and takes the tree that the parser reads back.
     pub fn save(&mut self, root: Expr, log: &mut Log) -> Result<(), Error> {
-        let loaded = self.stale_contents.first().unwrap_or(&self.source.contents);
+        let mut loaded_is_jsonc = self.loaded_is_jsonc;
         let (text, read) = package_json_text::print_and_read(
             self.source.path.text,
-            loaded,
+            self.loaded_text(),
             root,
             self.indentation,
-            &mut self.loaded_is_jsonc,
+            &mut loaded_is_jsonc,
         )?;
+        self.loaded_is_jsonc = loaded_is_jsonc;
         let old = core::mem::replace(&mut self.source.contents, Cow::Owned(text));
         self.stale_contents.push(old);
         let Some(read) = read else {

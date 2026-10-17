@@ -408,8 +408,7 @@ impl ParsedJson {
         parse_to_rows(source, log, PACKAGE_JSON_OPTS, false)
     }
 
-    /// With the options as given, for a caller that reads one text in more than one dialect.
-    /// `is_document`: nothing but whitespace and comments may follow the value.
+    /// `opts` as given. `is_document`: only whitespace and comments may follow the value.
     pub fn parse_with_opts(
         opts: JSONOptions,
         is_document: bool,
@@ -961,8 +960,7 @@ pub mod scan {
     /// The gap at `p`; `None` when only whitespace and comments are left.
     #[inline]
     pub fn gap(contents: &[u8], p: usize) -> Option<Gap> {
-        // Most gaps are blanks and line feeds, and most tokens start with a byte that no gap
-        // has: those do not need the scanner of every gap.
+        // Most gaps are blanks and line feeds before a byte that no gap has.
         let blanks = contents
             .get(p..)?
             .iter()
@@ -1063,8 +1061,7 @@ pub mod scan {
         Null,
     }
 
-    /// What the parser reads the token `token` as. The parser itself reads it, so a spelling
-    /// that only it accepts (`0x10`, `.5`, `1_000`, `- 1`) has the value that it gives it.
+    /// What the parser itself reads `token` as: `0x10`, `.5`, `1_000` and `- 1` are numbers to it.
     #[cold]
     pub fn scalar(token: &[u8]) -> Option<Scalar> {
         use bun_ast::expr::Data;

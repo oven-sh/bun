@@ -321,9 +321,10 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
   }, 30_000);
 
-  test("bun init keeps the comments and the indentation of an existing package.json", async () => {
+  test("bun init keeps the comments, the indentation and the line endings of an existing package.json", async () => {
+    // The file has CRLF and no line break at its end. bun init ends it with one, of its kind.
     await using temp = tempDir("bun-init-keeps-text", {
-      "package.json": `{\n\t// what this is\n\t"name": "x", /* keep */\n\t"scripts": {\n\t\t"check": "echo mine" // mine\n\t}\n}\n`,
+      "package.json": `{\r\n\t// what this is\r\n\t"name": "x", /* keep */\r\n\t"scripts": {\r\n\t\t"check": "echo mine" // mine\r\n\t}\r\n}`,
     });
 
     await using proc = Bun.spawn({
@@ -336,7 +337,10 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
 
     expect(await Bun.file(path.join(temp, "package.json")).text()).toBe(
-      `{\n\t// what this is\n\t"name": "x", /* keep */\n\t"scripts": {\n\t\t"check": "echo mine", // mine\n\t\t"typecheck": "bun --check"\n\t},\n\t"module": "index.ts",\n\t"type": "module",\n\t"private": true,\n\t"devDependencies": {\n\t\t"@types/bun": "latest"\n\t},\n\t"peerDependencies": {\n\t\t"typescript": "^7"\n\t}\n}\n`,
+      `{\n\t// what this is\n\t"name": "x", /* keep */\n\t"scripts": {\n\t\t"check": "echo mine", // mine\n\t\t"typecheck": "bun --check"\n\t},\n\t"module": "index.ts",\n\t"type": "module",\n\t"private": true,\n\t"devDependencies": {\n\t\t"@types/bun": "latest"\n\t},\n\t"peerDependencies": {\n\t\t"typescript": "^7"\n\t}\n}\n`.replaceAll(
+        "\n",
+        "\r\n",
+      ),
     );
   }, 30_000);
 

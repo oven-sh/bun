@@ -949,7 +949,7 @@ describe.concurrent("package.json text", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The next two pass before the change too: a reprint of the whole file that says the same was not written.
+  // The next three pass before the change too: a reprint of the whole file that says the same was not written.
   // An edit in the text must not write it either.
   test("a command that changes nothing does not write the file", async () => {
     // `bun update` finds nothing to update. The numbers are not spelled the way a printer spells them.
@@ -963,6 +963,16 @@ describe.concurrent("package.json text", () => {
       expect(await text()).toBe(packageJson);
       expect(lstatSync(path).mtimeMs).toBe(mtimeMs);
       expect(exitCode).toBe(0);
+    }
+  });
+
+  test("a file that is not an object is left alone by a command that changes nothing", async () => {
+    // The parser reads the first value of this file as its root.
+    const packageJson = `"name": "app",\n  "version": "1.0.0"\n}\n`;
+    const { run, text } = await project(packageJson);
+    for (const args of [["update"], ["update", "--latest"]]) {
+      expect((await run(...args)).exitCode).toBe(0);
+      expect(await text()).toBe(packageJson);
     }
   });
 

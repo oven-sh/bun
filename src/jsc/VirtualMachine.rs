@@ -6019,8 +6019,46 @@ impl VirtualMachine {
         self.run_error_handler(value, None);
     }
 
+    /// Prints an error, a build message or a resolve message. The one stack
+    /// guard of the error printer lives here: a nested `cause` or `.errors`
+    /// member is guarded by the loop in `print_error_instance_body` instead,
+    /// which prints `[Error ...]` in its place.
+    ///
     /// Note: takes runtime bools and the concrete `bun_core::io::Writer`.
     pub(crate) fn print_errorlike_object(
+        &mut self,
+        value: JSValue,
+        exception: Option<&Exception>,
+        exception_list: Option<&mut ExceptionList>,
+        formatter: &mut crate::console_object::Formatter,
+        writer: &mut bun_core::io::Writer,
+        allow_ansi_color: bool,
+        allow_side_effects: bool,
+    ) {
+        // The formatter's `stack_check` was seated by the caller
+        // (`format2` / `Bun.inspect` / `print_exception`).
+        if !formatter
+            .stack_check
+            .is_safe_to_recurse_with_extra(Self::ERROR_PRINT_STACK_HEADROOM)
+        {
+            formatter.failed = true;
+            if formatter.can_throw_stack_overflow {
+                let _ = self.global().throw_stack_overflow();
+            }
+            return;
+        }
+        self.print_errorlike_object_unguarded(
+            value,
+            exception,
+            exception_list,
+            formatter,
+            writer,
+            allow_ansi_color,
+            allow_side_effects,
+        );
+    }
+
+    fn print_errorlike_object_unguarded(
         &mut self,
         value: JSValue,
         exception: Option<&Exception>,
@@ -6685,19 +6723,6 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) -> crate::CrateResult<()> {
-        // The formatter's `stack_check` was seated by the caller
-        // (`format2` / `Bun.inspect` / `print_exception`).
-        if !formatter
-            .stack_check
-            .is_safe_to_recurse_with_extra(Self::ERROR_PRINT_STACK_HEADROOM)
-        {
-            formatter.failed = true;
-            if formatter.can_throw_stack_overflow {
-                let _ = self.global().throw_stack_overflow();
-            }
-            return Ok(());
-        }
-
         // Note: `Holder` is ~4 KB (32 ZigStackFrames + 6 source lines +
         // ZigException). It sits next to the large runtime-dispatched body, so
         // box it to keep the per-level recursion frame small enough for the
@@ -7318,7 +7343,7 @@ impl VirtualMachine {
                     if over_cap {
                         result = pretty_write!(writer, "<r><cyan>[Error ...]<r>\n");
                     } else {
-                        self.print_errorlike_object(
+                        self.print_errorlike_object_unguarded(
                             err,
                             None,
                             exception_list.as_deref_mut(),

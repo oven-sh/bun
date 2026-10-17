@@ -767,9 +767,8 @@ public:
 
     /* lenientHttpFlags: bit 0 = lenient header values (llhttp LENIENT_HEADERS),
      * bit 1 = lenient transfer-encoding (llhttp LENIENT_TRANSFER_ENCODING). */
-    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation, uint8_t lenientHttpFlags, bool httpAllowHalfOpen) {
+    TemplatedApp &&setFlags(bool requireHostHeader, uint8_t lenientHttpFlags, bool httpAllowHalfOpen) {
         httpContext->getSocketContextData()->flags.requireHostHeader = requireHostHeader;
-        httpContext->getSocketContextData()->flags.useStrictMethodValidation = useStrictMethodValidation;
         httpContext->getSocketContextData()->flags.useInsecureHTTPParser = (lenientHttpFlags & 1) != 0;
         httpContext->getSocketContextData()->flags.useLenientTransferEncoding = (lenientHttpFlags & 2) != 0;
         httpContext->getSocketContextData()->flags.httpAllowHalfOpen = httpAllowHalfOpen;

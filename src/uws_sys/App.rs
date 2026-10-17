@@ -128,7 +128,6 @@ impl<const SSL: bool> App<SSL> {
     pub fn set_flags(
         &mut self,
         require_host_header: bool,
-        use_strict_method_validation: bool,
         lenient_http_flags: u8,
         http_allow_half_open: bool,
     ) {
@@ -136,7 +135,6 @@ impl<const SSL: bool> App<SSL> {
             Self::SSL_FLAG,
             self.as_raw(),
             require_host_header,
-            use_strict_method_validation,
             lenient_http_flags,
             http_allow_half_open,
         )
@@ -519,7 +517,6 @@ pub mod c {
             ssl: i32,
             app: &mut uws_app_t,
             require_host_header: bool,
-            use_strict_method_validation: bool,
             lenient_http_flags: u8,
             http_allow_half_open: bool,
         );

@@ -33,7 +33,6 @@ struct HttpFlags {
     bool rejectUnauthorized: 1 = false;
     bool usingCustomExpectHandler: 1 = false;
     bool requireHostHeader: 1 = true;
-    bool useStrictMethodValidation: 1 = false;
     /* node:http parser leniency. Two llhttp lenient bits: useInsecureHTTPParser = LENIENT_HEADERS
      * ("relaxed"+"insecure"); useLenientTransferEncoding = LENIENT_TRANSFER_ENCODING ("insecure"
      * only). TE+CL conflict, chunked-size/CRLF, version, header-token checks stay enforced. */

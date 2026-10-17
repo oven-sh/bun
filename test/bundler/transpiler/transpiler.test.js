@@ -464,20 +464,49 @@ describe("Bun.Transpiler", () => {
       exp("x = a ? /*! L */ (b) : c => { return d }", "x = a ? b : (c) => {\n  /*! L */\n  return d;\n};\n");
       exp('x = a ? /*! L */ (b) : T => import("m") : c', 'x = a ? (b) => import("m") : c;\n');
 
+      // The outcome of an attempt is reused only in the same parser state.
+      // "async (h) : R => ..." is tried as an async arrow function first. In its
+      // body "await" is a keyword, so "/x? class { p = /" is a regular expression,
+      // and "(a) : T => #q in o" is tried outside a class, where "#q" is an error.
+      // The attempt for "async (h)" is then discarded, and the real parse reads
+      // "await / x ? class { ... } : no". It reaches the same "(a) :" inside the
+      // class this time, where "(a): T => #q in o" is an arrow function.
+      exp(
+        "x = y ? async (h) : R => await /x? class { p = /.y/g.test(s) ? (a) : T => #q in o : e; #q = 1 } : no;",
+        "x = y ? async(h) : (R) => await / x ? class {\n  p = /.y/g.test(s) ? (a) => (#q in o) : e;\n  #q = 1;\n} : no;\n",
+      );
+      // The same in parentheses: the ": e" was taken for a type annotation of "p" and dropped.
+      exp(
+        "x = y ? async (h) : R => await /x? class { #p = 1; static async m(){ q = (p = /.y/g.test(s) ? (a) : T => #p in o : e) => body; } } : no;",
+        "x = y ? async(h) : (R) => await / x ? class {\n  #p = 1;\n  static async m() {\n    q = (p = /.y/g.test(s) ? (a) => (#p in o) : e) => body;\n  }\n} : no;\n",
+      );
+      // The attempt reaches ": T" after "(p = await /x? async (a, c = /.y/g)", which is not
+      // async: "await" is a name there, and the "z" on the next line is an error. The real
+      // parse reaches the same ":" after "async (a, c = /.y/g)", where "await z" is the body.
+      exp(
+        "x = y ? async (h) : R => q ? (p = await /x? async (a, c = /.y/g) : T => await\nz : no) : w;",
+        "x = y ? async(h) : (R) => q ? p = await / x ? async (a, c = /.y/g) => await z : no : w;\n",
+      );
+
       // The attempt parses the body, so an attempt nested in the body must not
       // run again when the body is parsed for real: 2^40 parses would hang.
-      let kept = "d";
-      let discarded = "d";
-      let keptOut = "d";
-      let discardedOut = "d";
-      for (let i = 0; i < 40; i++) {
-        kept = `a ? (b) : c => ${kept} : e`;
-        keptOut = `a ? (b) => ${keptOut} : e`;
-        discarded = `a ? (b) : c => ${discarded}`;
-        discardedOut = `a ? b : (c) => ${discardedOut}`;
+      for (const [head, call] of [
+        ["(b)", "b"],
+        ["async (b)", "async(b)"],
+      ]) {
+        let kept = "d";
+        let discarded = "d";
+        let keptOut = "d";
+        let discardedOut = "d";
+        for (let i = 0; i < 40; i++) {
+          kept = `a ? ${head} : c => ${kept} : e`;
+          keptOut = `a ? ${head} => ${keptOut} : e`;
+          discarded = `a ? ${head} : c => ${discarded}`;
+          discardedOut = `a ? ${call} : (c) => ${discardedOut}`;
+        }
+        exp(`x = ${kept}`, `x = ${keptOut};\n`);
+        exp(`x = ${discarded}`, `x = ${discardedOut};\n`);
       }
-      exp(`x = ${kept}`, `x = ${keptOut};\n`);
-      exp(`x = ${discarded}`, `x = ${discardedOut};\n`);
     });
 
     it('a call of "async" before a ":" stays a call', async () => {

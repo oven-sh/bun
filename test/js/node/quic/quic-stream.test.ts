@@ -406,64 +406,73 @@ describe("QuicStream.opened", () => {
   test("is fulfilled for a stream that had stream credit", async () => {
     await using server = await startServer();
     const client = await connect(server.address!, clientOptions);
-    await client.opened;
-    const stream = await client.createBidirectionalStream();
-    stream.closed.catch(() => {});
-    expect(stream.pending).toBe(false);
-    expect(stream.opened).toBeInstanceOf(Promise);
-    expect(stream.opened).toBe(stream.opened);
-    await expect(stream.opened).resolves.toBeUndefined();
-    client.close();
+    try {
+      await client.opened;
+      const stream = await client.createBidirectionalStream();
+      stream.closed.catch(() => {});
+      expect(stream.pending).toBe(false);
+      expect(stream.opened).toBeInstanceOf(Promise);
+      expect(stream.opened).toBe(stream.opened);
+      await expect(stream.opened).resolves.toBeUndefined();
+    } finally {
+      client.close();
+    }
   });
 
   test("is fulfilled once a pending stream gets its ID", async () => {
     await using server = await startServer();
     const client = await connect(server.address!, clientOptions);
-    await client.opened;
-    const first = await client.createBidirectionalStream();
-    first.closed.catch(() => {});
-    const second = await client.createBidirectionalStream();
-    second.closed.catch(() => {});
-    expect(second.pending).toBe(true);
-    expect(second.id).toBeNull();
-    const opened = second.opened.then(() => ({ pending: second.pending, id: second.id }));
+    try {
+      await client.opened;
+      const first = await client.createBidirectionalStream();
+      first.closed.catch(() => {});
+      const second = await client.createBidirectionalStream();
+      second.closed.catch(() => {});
+      expect(second.pending).toBe(true);
+      expect(second.id).toBeNull();
+      const opened = second.opened.then(() => ({ pending: second.pending, id: second.id }));
 
-    // Close the first stream in both directions so the server grants credit.
-    first.writer.writeSync(Uint8Array.of(1));
-    first.writer.endSync();
-    for await (const _ of first) {
+      // Close the first stream in both directions so the server grants credit.
+      first.writer.writeSync(Uint8Array.of(1));
+      first.writer.endSync();
+      for await (const _ of first) {
+      }
+      await first.closed;
+
+      expect(await opened).toEqual({ pending: false, id: 4n });
+    } finally {
+      client.close();
     }
-    await first.closed;
-
-    expect(await opened).toEqual({ pending: false, id: 4n });
-    client.close();
   });
 
   test("rejects when a pending stream is destroyed before it opens", async () => {
     await using server = await startServer();
     const client = await connect(server.address!, clientOptions);
-    await client.opened;
-    const first = await client.createBidirectionalStream();
-    first.closed.catch(() => {});
-    const awaited = await client.createBidirectionalStream();
-    awaited.closed.catch(() => {});
-    const readLater = await client.createBidirectionalStream();
-    readLater.closed.catch(() => {});
-    expect(awaited.pending).toBe(true);
-    expect(readLater.pending).toBe(true);
+    try {
+      await client.opened;
+      const first = await client.createBidirectionalStream();
+      first.closed.catch(() => {});
+      const awaited = await client.createBidirectionalStream();
+      awaited.closed.catch(() => {});
+      const readLater = await client.createBidirectionalStream();
+      readLater.closed.catch(() => {});
+      expect(awaited.pending).toBe(true);
+      expect(readLater.pending).toBe(true);
 
-    const opened = awaited.opened;
-    awaited.destroy(new Error("destroyed while pending"));
-    await expect(opened).rejects.toThrow("destroyed while pending");
+      const opened = awaited.opened;
+      awaited.destroy(new Error("destroyed while pending"));
+      await expect(opened).rejects.toThrow("destroyed while pending");
 
-    // `opened` read for the first time after the destroy settles the same way.
-    readLater.destroy(new Error("destroyed before read"));
-    await expect(readLater.opened).rejects.toThrow("destroyed before read");
+      // `opened` read for the first time after the destroy settles the same way.
+      readLater.destroy(new Error("destroyed before read"));
+      await expect(readLater.opened).rejects.toThrow("destroyed before read");
 
-    // A stream that did open stays fulfilled after a destroy with an error.
-    first.destroy(new Error("after open"));
-    await expect(first.opened).resolves.toBeUndefined();
-    client.close();
+      // A stream that did open stays fulfilled after a destroy with an error.
+      first.destroy(new Error("after open"));
+      await expect(first.opened).resolves.toBeUndefined();
+    } finally {
+      client.close();
+    }
   });
 });
 
@@ -481,31 +490,34 @@ describe("QuicStream.onstopsending", () => {
       await serverSession.closed.catch(() => {});
     }, serverOptions);
     const client = await connect(server.address!, clientOptions);
-    await client.opened;
+    try {
+      await client.opened;
 
-    const stream = await client.createBidirectionalStream();
-    stream.closed.catch(() => {});
-    expect(() => {
-      (stream as any).onstopsending = 1;
-    }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+      const stream = await client.createBidirectionalStream();
+      stream.closed.catch(() => {});
+      expect(() => {
+        (stream as any).onstopsending = 1;
+      }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
 
-    const stopped = Promise.withResolvers<{ sameStream: boolean; error: any }>();
-    (stream as any).onstopsending = function (this: any, error: any) {
-      stopped.resolve({ sameStream: this === stream, error });
-    };
-    expect(typeof (stream as any).onstopsending).toBe("function");
+      const stopped = Promise.withResolvers<{ sameStream: boolean; error: any }>();
+      (stream as any).onstopsending = function (this: any, error: any) {
+        stopped.resolve({ sameStream: this === stream, error });
+      };
+      expect(typeof (stream as any).onstopsending).toBe("function");
 
-    stream.writer.writeSync(Uint8Array.of(1));
-    const remote = await accepted.promise;
-    remote.stopSending(42n);
+      stream.writer.writeSync(Uint8Array.of(1));
+      const remote = await accepted.promise;
+      remote.stopSending(42n);
 
-    const { sameStream, error } = await stopped.promise;
-    expect(sameStream).toBe(true);
-    expect(error).toMatchObject({ code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 42n });
-    // The writer is errored with the same error (Node's writer does this).
-    expect(stream.writer.desiredSize).toBeNull();
-    await expect(stream.writer.write(Uint8Array.of(2))).rejects.toBe(error);
-    client.close();
+      const { sameStream, error } = await stopped.promise;
+      expect(sameStream).toBe(true);
+      expect(error).toMatchObject({ code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 42n });
+      // The writer is errored with the same error (Node's writer does this).
+      expect(stream.writer.desiredSize).toBeNull();
+      await expect(stream.writer.write(Uint8Array.of(2))).rejects.toBe(error);
+    } finally {
+      client.close();
+    }
   });
 
   // lsquic applies a STOP_SENDING that opens a stream before it announces the
@@ -523,17 +535,20 @@ describe("QuicStream.onstopsending", () => {
       await serverSession.closed.catch(() => {});
     }, serverOptions);
     const client = await connect(server.address!, clientOptions);
-    await client.opened;
+    try {
+      await client.opened;
 
-    const stream = await client.createBidirectionalStream();
-    stream.closed.catch(() => {});
-    stream.stopSending(11n);
+      const stream = await client.createBidirectionalStream();
+      stream.closed.catch(() => {});
+      stream.stopSending(11n);
 
-    const { before, error, after } = await stopped.promise;
-    expect(before).toBeGreaterThan(0);
-    expect(error).toMatchObject({ code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 11n });
-    expect(after).toBeNull();
-    client.close();
+      const { before, error, after } = await stopped.promise;
+      expect(before).toBeGreaterThan(0);
+      expect(error).toMatchObject({ code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 11n });
+      expect(after).toBeNull();
+    } finally {
+      client.close();
+    }
   });
 
   // The writer marks `closed` handled when it fails. The STOP_SENDING path
@@ -550,20 +565,23 @@ describe("QuicStream.onstopsending", () => {
       await serverSession.closed.catch(() => {});
     }, serverOptions);
     const client = await connect(server.address!, clientOptions);
-    client.closed.catch(() => {});
-    await client.opened;
+    try {
+      client.closed.catch(() => {});
+      await client.opened;
 
-    // `stream.closed` is never observed on purpose.
-    const stream = await client.createBidirectionalStream();
-    const stopped = Promise.withResolvers<void>();
-    (stream as any).onstopsending = () => stopped.resolve();
-    stream.writer.writeSync(Uint8Array.of(1));
-    const remote = await accepted.promise;
-    remote.destroy(new Error("peer error"), { code: 9n });
-    await stopped.promise;
-    while (!stream.destroyed) await new Promise(r => setImmediate(r));
-    await new Promise(r => setImmediate(r));
-    client.close();
+      // `stream.closed` is never observed on purpose.
+      const stream = await client.createBidirectionalStream();
+      const stopped = Promise.withResolvers<void>();
+      (stream as any).onstopsending = () => stopped.resolve();
+      stream.writer.writeSync(Uint8Array.of(1));
+      const remote = await accepted.promise;
+      remote.destroy(new Error("peer error"), { code: 9n });
+      await stopped.promise;
+      while (!stream.destroyed) await new Promise(r => setImmediate(r));
+      await new Promise(r => setImmediate(r));
+    } finally {
+      client.close();
+    }
     await client.closed;
   });
 });

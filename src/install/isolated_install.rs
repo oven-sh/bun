@@ -565,8 +565,7 @@ impl Ancestors<'_> {
             })
     }
 
-    /// Whether `ids`, a dependency of `node_id`, is a row of the node's own package. A companion
-    /// is lent, not declared: it binds nothing.
+    /// Whether `ids`, a dependency of `node_id`, is a row of the node's own package, not a companion.
     fn binds_row(&self, node_id: store::node::Id, ids: store::node::DependencyIds) -> bool {
         self.pkg_dependencies[self.node_pkg_ids[node_id.get() as usize] as usize]
             .contains(ids.dep_id)
@@ -582,10 +581,8 @@ impl Ancestors<'_> {
             .filter(|&ids| self.binds_row(node_id, ids))
     }
 
-    /// The `@types/<peer>` of the peer that `binder` binds with `peer_row`: the binder's own row of
-    /// that name, or the companion it was lent. A binder that only passes the peer on (a workspace
-    /// peers on it) has the companion of the node it got the peer from. A dependent never pairs
-    /// one node's peer with another node's types.
+    /// The `@types/<peer>` next to the peer that `binder` binds with `peer_row`. A binder that only
+    /// passes the peer on (a workspace that peers on it) has the companion of its own binder.
     fn companion_at(
         &self,
         binder: store::node::Id,
@@ -1005,7 +1002,7 @@ fn build_store(
                         while let Some(bit) = it.next() {
                             let peer_name_hash = peer_names[bit];
                             let types_name_hash = peer_types.companion_of(peer_name_hash);
-                            // The companion is bound with the peer, so it is part of the key too.
+                            // The companion is part of the key too.
                             let (resolved, companion): (PackageID, Option<PackageID>) = 'resolved: {
                                 let mut curr_id = entry.parent_id;
                                 while curr_id != store::node::Id::INVALID {
@@ -1101,9 +1098,7 @@ fn build_store(
                     // before mutating node_peers.
                     let dedupe_peers: Vec<_> =
                         node_peers[dedupe_node_id.get() as usize].list.clone();
-                    // A peer is marked into the ancestors below the first one that has a
-                    // dependency of its name: its binder. Its companion stops there too, not
-                    // at the first `@types` of its own name.
+                    // A companion stops at its peer's binder, not at the first `@types` of its name.
                     companion_marks.clear();
                     if !peer_types.is_empty() {
                         companion_marks.resize(dedupe_peers.len(), false);
@@ -1316,8 +1311,7 @@ fn build_store(
             }
         }
 
-        // Only a package the global store can hold gains from a companion, and one that declares
-        // the `@types` itself links its own.
+        // Not for a package the global store never holds, nor one that declares the `@types` itself.
         let companion_of = |peer_dep: &install::Dependency| {
             peer_types
                 .companion_of(peer_dep.name_hash)
@@ -1329,8 +1323,7 @@ fn build_store(
         };
 
         for &peer_dep_id in &peer_dep_ids {
-            // `marked_above`: the nodes from the one where the peer was found marked, up to the
-            // binder. They carry the peer already, and get the companion too.
+            // `marked_above`: from the node the peer was found marked on, up to the binder.
             let types_name_hash = companion_of(&dependencies[peer_dep_id as usize]);
             let (resolved_pkg_id, auto_installed, companion, marked_above) = 'resolved_pkg_id: {
                 // Go through the peers parents looking for a package with the same name.

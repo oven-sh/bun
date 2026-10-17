@@ -32,12 +32,9 @@ pub struct Store {
     pub(crate) hidden_hoist_keys: Vec<entry::DependenciesItem>,
 }
 
-/// The `@types/<peer>` package of each peer name, for the `@types` packages in the lockfile.
-///
-/// TypeScript checks a declaration file at its real path and resolves its imports by walking up
-/// from there, falling back to `@types/*`. From `<cache>/links` that walk never reaches the
-/// project, so under `install.globalStore` the node that binds a peer also lends its `@types/<peer>`
-/// to the dependent: the companion. Empty when the option is off.
+/// The `@types/<peer>` name of each peer name the lockfile has both of. Under `install.globalStore`
+/// the node that binds a peer lends its `@types/<peer>` to the dependent, as TypeScript looks for
+/// the types next to the dependent, and `<cache>/links` is not below the project.
 #[derive(Default)]
 pub struct PeerTypes {
     by_peer: ArrayHashMap<PackageNameHash, PackageNameHash>,
@@ -633,8 +630,7 @@ pub mod node {
         // each node in this list becomes a symlink in the package's node_modules
         pub nodes: Vec<Id>,
 
-        /// A peer of the node has an `@types` package in the lockfile, but the node that binds
-        /// the peer has none to lend (see `PeerTypes`). Only the project can serve the types.
+        /// The node that binds a peer of this node has no `@types/<peer>` to lend (`PeerTypes`).
         pub missing_peer_types: bool,
     }
 
@@ -670,8 +666,7 @@ pub mod node {
         pub(crate) dep_id: DependencyID,
         pub(crate) pkg_id: PackageID,
         pub(crate) auto_installed: bool,
-        /// The `@types/<peer>` lent with a peer (see `PeerTypes`). It serves no peer of its own
-        /// name: a dependent that peers on `@types/<peer>` binds to the nearest real one.
+        /// The `@types/<peer>` lent with a peer (`PeerTypes`). It binds no peer of its own name.
         pub(crate) companion: bool,
     }
 

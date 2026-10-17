@@ -173,6 +173,23 @@ pub enum IncludeDependencies {
     None,
 }
 
+/// Why a "package.json" that was read gave no [`PackageJSON`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LoadError {
+    /// It is not JSON. The resolver's log has the messages, located in the file.
+    Syntax,
+    /// Its root is not an object.
+    NotAnObject,
+}
+
+/// What [`PackageJSON::parse`] found: a file that did not load is not one that is not there.
+pub enum Load<T> {
+    Loaded(T),
+    /// There is no file, or none that can be read.
+    Absent,
+    Failed(LoadError),
+}
+
 const NODE_MODULES_PATH: &str = const_format::concatcp!(SEP_STR, "node_modules", SEP_STR);
 
 /// If a name is in several groups, the last group wins, as it does in `bun install`.
@@ -387,7 +404,7 @@ impl PackageJSON {
         dirname_fd: Fd,
         package_id: Option<PackageID>,
         include_scripts_: IncludeScripts,
-    ) -> Option<PackageJSON> {
+    ) -> Load<PackageJSON> {
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
         // SAFETY: PORT (Stacked Borrows) — `r.fs()`/`r.log()` return RAW `*mut`
@@ -411,7 +428,7 @@ impl PackageJSON {
                     bstr::BStr::new(input_path)
                 ),
             );
-            return None;
+            return Load::Absent;
         };
         let package_json_path = r_fs
             .dirname_store
@@ -444,7 +461,7 @@ impl PackageJSON {
                     );
                 }
 
-                return None;
+                return Load::Absent;
             }
         };
         // Reshaped for borrowck — `mem::take` the contents (leaving
@@ -479,7 +496,7 @@ impl PackageJSON {
         // On the success path it is *moved* (not leaked) into
         // `package_json.source_contents` at the bottom of this fn, so the heap
         // allocation lives for the life of the returned `PackageJSON`. On every
-        // early `return None` below `entry_contents` drops and frees normally, after
+        // early return below `entry_contents` drops and frees normally, after
         // `json_source` is already dead. `Box<[u8]>` heap address is stable
         // across the move.
         let contents_static: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&entry_contents) };
@@ -487,7 +504,7 @@ impl PackageJSON {
 
         let parsed_json = match r.caches.json.parse_package_json(r_log, &json_source) {
             Ok(Some(v)) => v,
-            Ok(None) => return None,
+            Ok(None) => return Load::Failed(LoadError::Syntax),
             Err(err) => {
                 if cfg!(debug_assertions) {
                     Output::print_error(format_args!(
@@ -496,16 +513,16 @@ impl PackageJSON {
                         bstr::BStr::new(err.name())
                     ));
                 }
-                return None;
+                return Load::Failed(LoadError::Syntax);
             }
         };
         let json: js_ast::Expr = parsed_json.root;
 
         if !json.is_object() {
             // Invalid package.json in node_modules is noisy.
-            // Let's just ignore it.
+            // Let's not log it.
             // (allocator.free dropped — entry.contents owned by `entry`)
-            return None;
+            return Load::Failed(LoadError::NotAnObject);
         }
 
         let mut package_json = PackageJSON {
@@ -1050,7 +1067,7 @@ impl PackageJSON {
         // `mem::forget`, forbidden per docs/PORTING.md §Forbidden patterns).
         package_json.source_contents = entry_contents;
         package_json.json_tape = parsed_json.tape;
-        Some(package_json)
+        Load::Loaded(package_json)
     }
 }
 

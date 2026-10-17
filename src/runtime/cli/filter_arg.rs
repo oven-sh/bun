@@ -12,7 +12,7 @@ use bun_install::package_manager::workspace_selection::{
 use bun_parsers::json;
 use bun_paths::path_buffer_pool;
 use bun_paths::{PathBuffer, platform, resolve_path};
-use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
+use bun_resolver::package_json::{IncludeDependencies, IncludeScripts, Load};
 
 use crate::cli::Command;
 
@@ -190,7 +190,7 @@ pub(crate) fn select_packages(
         if ctx.workspaces && dir == &*root_dir {
             continue;
         }
-        let Some(json) = bun_resolver::PackageJSON::parse::<{ IncludeDependencies::Main }>(
+        let Load::Loaded(json) = bun_resolver::PackageJSON::parse::<{ IncludeDependencies::Main }>(
             resolver,
             dir,
             bun_sys::Fd::invalid(),

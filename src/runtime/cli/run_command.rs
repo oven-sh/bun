@@ -2016,7 +2016,12 @@ impl RunCommand {
             ));
             new_path.push(DELIMITER);
 
-            new_path.extend_from_slice(&path);
+            // A trailing delimiter is an empty segment, which execvp reads as the cwd.
+            if path.is_empty() {
+                new_path.pop();
+            } else {
+                new_path.extend_from_slice(&path);
+            }
         }
 
         Ok(new_path)

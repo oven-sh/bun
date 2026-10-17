@@ -12,6 +12,9 @@ use bun_lint::linter::{LintMessage, RuleId};
 use bun_lint::rule::Plugin;
 use bun_lint::source::LineStarts;
 use bun_sema::util::FxHashMap;
+use bun_sema_driver::format::{
+    escaped, offset_of_column, write_agent_source, write_escaped, write_escaped_lines,
+};
 use std::io::Write;
 
 macro_rules! pretty {
@@ -49,18 +52,26 @@ impl Problem<'_> {
     }
 }
 
-/// Relative to the working directory, or absolute when that would need two or more `../`.
+/// Relative to the working directory, or absolute when that would need two or more `../`. [`escaped`]:
+/// the formats that have it are Bun's own.
 fn display_path(path: &[u8], cwd: &[u8]) -> Vec<u8> {
     let path = paths::from_native(path);
     if !paths::is_absolute(&path) {
-        return path;
+        return escaped(path).into();
     }
     let relative = paths::relative(cwd, &path);
     if relative.starts_with(b"../../") {
-        path
+        escaped(path).into()
     } else {
-        relative
+        escaped(relative).into()
     }
+}
+
+/// What a rule says where it has line breaks of its own: each line as [`escaped`].
+fn escaped_lines(text: &[u8]) -> Vec<u8> {
+    let mut lines = Vec::with_capacity(text.len());
+    write_escaped_lines(&mut lines, text);
+    lines
 }
 
 /// What is kept for the next problem, which is in the same file as a rule.
@@ -399,9 +410,9 @@ fn write_pretty_problem<'r>(
 ) -> bool {
     let helped = with_help(problem, meta, place);
     let (result, message) = (problem.result, helped.as_ref().unwrap_or(problem.message));
-    let rule = problem.rule();
+    let rule: Vec<u8> = escaped(problem.rule()).into();
     let mut text = Vec::with_capacity(message.message.len() + rule.len() + 16);
-    text.extend_from_slice(&message.message);
+    write_escaped_lines(&mut text, &message.message);
     if !rule.is_empty() {
         text.extend_from_slice(match meta.color {
             true => bun_core::pretty_fmt!("<r>  <d>", true).as_bytes(),
@@ -430,23 +441,20 @@ fn write_pretty_problem<'r>(
     let file = place.of(result, meta).2.clone();
     let at = (&file[..], line, column);
     write_said(out, meta, kind, text, Some((at, &shown[blank..])));
-    let texts = [message.first_label(), message.help(), message.note()];
-    let texts = texts.iter().filter(|it| !it.is_empty());
+    let texts: [Vec<u8>; 3] = [
+        escaped(message.first_label()).into(),
+        escaped_lines(message.help().as_bytes()),
+        escaped_lines(message.note().as_bytes()),
+    ];
     let labels = message.details.iter().flat_map(|it| &it.labels);
     let labels = labels.filter(|it| !it.2.is_empty());
-    let has_notes = texts.clone().next().is_some() || labels.clone().next().is_some();
+    let has_notes = texts.iter().any(|it| !it.is_empty()) || labels.clone().next().is_some();
     if has_notes {
         out.push(b'\n');
     }
-    for text in texts {
+    for text in texts.into_iter().filter(|it| !it.is_empty()) {
         out.push(b'\n');
-        write_said(
-            out,
-            meta,
-            bun_ast::Kind::Note,
-            text.as_bytes().to_vec(),
-            None,
-        );
+        write_said(out, meta, bun_ast::Kind::Note, text, None);
     }
     for ((line, column), _, text) in labels {
         let shown = lines(result, (*line, *line), meta, place);
@@ -460,7 +468,7 @@ fn write_pretty_problem<'r>(
             out,
             meta,
             bun_ast::Kind::Note,
-            text.as_bytes().to_vec(),
+            escaped(text.as_bytes()).into(),
             Some(spot),
         );
     }
@@ -572,13 +580,14 @@ fn write_pretty_problems(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta)
         let first_line = strings::split(&group[0].message.message, b"\n")
             .next()
             .unwrap_or_default();
+        let rule: Vec<u8> = escaped(group[0].rule()).into();
         pretty!(
             out,
             meta.color,
             "  {:>4}  {}  <d>{}<r>\n",
             group.len(),
-            BStr::new(first_line),
-            BStr::new(&linked(&group[0].rule(), group[0].message, meta))
+            escaped(first_line),
+            BStr::new(&linked(&rule, group[0].message, meta))
         );
     }
     let rest: usize = groups[shown + compact..].iter().map(Vec::len).sum();
@@ -634,7 +643,7 @@ fn write_agent_problem<'r>(
         "<{tag} file=\"{}\" line=\"{line}\" column=\"{column}\"",
         BStr::new(&attribute(&display_path(&result.path, meta.cwd))),
     );
-    let rule = problem.rule();
+    let rule = escaped(problem.rule());
     if !rule.is_empty() {
         let _ = write!(out, " rule=\"{}\"", BStr::new(&attribute(&rule)));
     }
@@ -645,7 +654,7 @@ fn write_agent_problem<'r>(
         let _ = write!(out, " times=\"{}\"", group.len());
     }
     out.extend_from_slice(b">\n");
-    out.extend_from_slice(&message.message);
+    write_escaped_lines(out, &message.message);
     out.push(b'\n');
     if let (Some(_), line @ 1..) = (&result.text, line) {
         let first = line.saturating_sub(2).max(1);
@@ -657,33 +666,38 @@ fn write_agent_problem<'r>(
             shown.pop();
         }
         if shown.iter().all(|line| line.len() <= 1000) && !shown.is_empty() {
-            let from = column.saturating_sub(1) as usize;
-            let to = (message.end.filter(|end| end.0 == line))
-                .map(|(_, end_column)| end_column.saturating_sub(1) as usize);
-            bun_sema_driver::format::write_agent_source(out, first, &shown, line, (from, to));
+            // `Source::position` has counted them.
+            let marked = shown.get((line - first) as usize).copied();
+            let offset = |column: u32| {
+                let units = strings::utf8_decoded_len_utf16;
+                let column = column.saturating_sub(1) as usize;
+                offset_of_column(marked.unwrap_or_default(), column, units)
+            };
+            let to =
+                (message.end.filter(|end| end.0 == line)).map(|(_, end_column)| offset(end_column));
+            write_agent_source(out, first, &shown, line, (offset(column), to));
         }
     }
     let first = ((message.line, message.column), message.first_label());
     let others = message.details.iter().flat_map(|it| &it.labels);
     for ((line, column), text) in std::iter::once(first).chain(others.map(|it| (it.0, &*it.2))) {
         if !text.is_empty() {
-            let _ = writeln!(
-                out,
-                "<label line=\"{line}\" column=\"{column}\">{text}</label>"
-            );
+            let _ = write!(out, "<label line=\"{line}\" column=\"{column}\">");
+            write_escaped(out, text.as_bytes());
+            out.extend_from_slice(b"</label>\n");
         }
     }
     for (tag, text) in [("help", message.help()), ("note", message.note())] {
         if !text.is_empty() {
-            let _ = writeln!(out, "<{tag}>{text}</{tag}>");
+            let _ = write!(out, "<{tag}>");
+            write_escaped_lines(out, text.as_bytes());
+            let _ = writeln!(out, "</{tag}>");
         }
     }
     for suggestion in &message.suggestions {
-        let _ = writeln!(
-            out,
-            "<suggestion>{}</suggestion>",
-            BStr::new(&suggestion.message)
-        );
+        out.extend_from_slice(b"<suggestion>");
+        write_escaped(out, &suggestion.message);
+        out.extend_from_slice(b"</suggestion>\n");
     }
     if group.len() > 1 {
         const MAX_LOCATIONS: usize = 10;
@@ -772,11 +786,8 @@ pub(super) fn write_github(out: &mut Vec<u8>, results: &[FileResult], meta: &Met
                 rule => rule,
             }),
         );
-        let text = strings::replace_owned(
-            &strings::replace_owned(&message.message, b"%", b"%25"),
-            b"\r",
-            b"%0D",
-        );
+        // No carriage return is left to encode.
+        let text = strings::replace_owned(&escaped_lines(&message.message), b"%", b"%25");
         out.extend_from_slice(&strings::replace_owned(&text, b"\n", b"%0A"));
     }
 }

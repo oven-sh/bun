@@ -4,12 +4,19 @@
 //! errors.
 //! For everything else: TypeScript's plain format, which editors, continuous integration and other
 //! tools already parse.
+//!
+//! What the checked files have chosen (a message argument, a path, a source line), those of an
+//! installed package too, is in TypeScript's format byte for byte what `tsc` prints, and the `file`
+//! of a workflow command is the path that GitHub looks for. Everywhere else its control characters
+//! are escape sequences: [`escaped`], [`write_message`].
 
-use crate::{Category, Diagnostic, Report, TaskOutput};
+use crate::{Category, Diagnostic, MessageChain, Report, TaskOutput};
 use bstr::{BStr, BString, ByteSlice};
+use bun_core::fmt::escape_control_chars;
 use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
+use bun_sema::messages;
 use bun_sema::resolve::get_relative_path_from_directory;
 use bun_sema::util::FxHashMap;
 use bun_sema::util::SharedSort;
@@ -54,19 +61,114 @@ pub struct Style<'a> {
     pub show_all: bool,
 }
 
-/// Relative to the working directory, or absolute when that would need two or more `../`.
+/// Whether `text` may have a control character: it has one that is ASCII, or something that is not
+/// ASCII. Most text has neither, and is printed as it is.
+fn may_have_control_characters(text: &[u8]) -> bool {
+    strings::index_of_newline_or_non_ascii(text, 0).is_some() || strings::contains_char(text, 0x7f)
+}
+
+/// `text` on one line, with its control characters as escape sequences (`\x1b`): neither a line of a
+/// layout nor a command of the terminal.
+pub fn escaped(text: impl Into<BString>) -> BString {
+    let text = text.into();
+    match may_have_control_characters(&text) {
+        true => alloc_print!("{}", escape_control_chars(&text)),
+        false => text,
+    }
+}
+
+/// [`escaped`], written to `out`.
+pub fn write_escaped(out: &mut Vec<u8>, text: &[u8]) {
+    match may_have_control_characters(text) {
+        true => {
+            let _ = write!(out, "{}", escape_control_chars(text));
+        }
+        false => out.extend_from_slice(text),
+    }
+}
+
+/// `text`, which has line breaks of its own: each of its lines as [`escaped`].
+pub fn write_escaped_lines(out: &mut Vec<u8>, text: &[u8]) {
+    for (i, line) in strings::split(text, b"\n").enumerate() {
+        if i > 0 {
+            out.push(b'\n');
+        }
+        write_escaped(out, line);
+    }
+}
+
+/// Relative to the working directory, or absolute when that would need two or more `../`. [`escaped`]:
+/// no layout of `tsc` has it.
 fn display_path(path: &[u8], style: &Style) -> BString {
     let relative = relative_path(path, style.cwd, style);
     if relative.starts_with(b"../../") {
-        crate::host::to_native(path).into()
+        escaped(crate::host::to_native(path))
     } else {
-        relative
+        escaped(relative)
     }
 }
 
 /// `ConvertToRelativePath`
 fn relative_path(path: &[u8], from: &[u8], style: &Style) -> BString {
     get_relative_path_from_directory(from, path, style.is_case_sensitive).into()
+}
+
+/// The message of `d` where the layout is not TypeScript's: `d.text` with its control characters as
+/// escape sequences, and with each argument on one line, so that only the elaboration starts a line.
+pub fn write_message(out: &mut Vec<u8>, d: &Diagnostic) {
+    if !may_have_control_characters(&d.text) {
+        out.extend_from_slice(&d.text);
+        return;
+    }
+    fn has_line_break(args: &[Box<[u8]>], chain: &[MessageChain]) -> bool {
+        (args.iter()).any(|arg| strings::contains_char(arg, b'\n'))
+            || (chain.iter()).any(|it| has_line_break(&it.args, &it.message_chain))
+    }
+    // No template has a line break: those of `d.text` are the elaboration's.
+    if !has_line_break(&d.args, &d.message_chain) {
+        return write_escaped_lines(out, &d.text);
+    }
+    // `d.text`, as `Explained::new` and `of_config_error` make it of these arguments.
+    fn composed(code: u32, args: &[Box<[u8]>], chain: &[MessageChain]) -> Vec<u8> {
+        let template = messages::message(code).map_or("Unknown error.", |it| it.1);
+        let mut text = Vec::new();
+        messages::format(&mut text, template, args);
+        for it in chain {
+            it.flatten(&mut text, 1);
+        }
+        crate::in_terms_of_bun(text)
+    }
+    fn escaped_args(code: u32, args: &[Box<[u8]>]) -> Box<[Box<[u8]>]> {
+        let on_one_line = |arg: &[u8]| Vec::from(escaped(arg));
+        match (code, args) {
+            // The paths of the cycle follow the argument that has them all, a line each: `open_build_task`.
+            (6202, [_, paths @ ..]) if !paths.is_empty() => {
+                let paths: Vec<Vec<u8>> = paths.iter().map(|path| on_one_line(path)).collect();
+                Box::new([paths.join(&b'\n').into()])
+            }
+            _ => args.iter().map(|arg| on_one_line(arg).into()).collect(),
+        }
+    }
+    fn escaped_chain(chain: &[MessageChain]) -> Vec<MessageChain> {
+        let chain = chain.iter().map(|it| MessageChain {
+            code: it.code,
+            args: escaped_args(it.code, &it.args),
+            message_chain: escaped_chain(&it.message_chain),
+        });
+        chain.collect()
+    }
+    // If these arguments do not make the start of `d.text`, it is not known what does: then its lines are escaped as they
+    // are. What was added to the text since it was composed follows.
+    let again = composed(d.code, &d.args, &d.message_chain);
+    let Some(added) = d.text.strip_prefix(&again[..]) else {
+        return write_escaped_lines(out, &d.text);
+    };
+    let (args, chain) = (
+        escaped_args(d.code, &d.args),
+        escaped_chain(&d.message_chain),
+    );
+    out.extend_from_slice(&composed(d.code, &args, &chain));
+    write_escaped_lines(out, added);
 }
 
 /// `1234` as `1,234`.
@@ -103,11 +205,12 @@ fn fitting(text: &[u8], width: usize) -> &[u8] {
 /// source lines up to the line it starts on.
 /// Only an error includes its code.
 fn to_data(d: &Diagnostic, style: &Style, says_code: bool, shown: usize) -> bun_ast::Data {
+    let mut text = Vec::with_capacity(d.text.len() + 8);
     // Bun's own diagnostics have no code.
-    let text = match d.code {
-        code if code != 0 && says_code => alloc_print!("TS{code}: {}", d.text.as_bstr()).into(),
-        _ => d.text.clone(),
-    };
+    if d.code != 0 && says_code {
+        let _ = write!(text, "TS{}: ", d.code);
+    }
+    write_message(&mut text, d);
     // Leading blank lines carry no information.
     let lines = &d.source[..d.source.len().min((d.line - d.source_line) as usize + 1)];
     let lines = &lines[lines.len().saturating_sub(shown)..];
@@ -307,9 +410,33 @@ fn attribute(text: &[u8]) -> BString {
     out
 }
 
+/// The offset in `line` of its column `column`, which is counted from 0 in UTF-16 code units. `units`: how many of them
+/// bytes that are not UTF-8 are to whoever has counted the column.
+pub fn offset_of_column(line: &[u8], column: usize, units: fn(&[u8]) -> u32) -> usize {
+    if line.is_ascii() {
+        return column.min(line.len());
+    }
+    let (mut offset, mut counted) = (0, 0);
+    for chunk in line.utf8_chunks() {
+        for character in chunk.valid().chars() {
+            if counted >= column {
+                return offset;
+            }
+            counted += character.len_utf16();
+            offset += character.len_utf8();
+        }
+        if counted >= column {
+            return offset;
+        }
+        counted += units(chunk.invalid()) as usize;
+        offset += chunk.invalid().len();
+    }
+    offset
+}
+
 /// The `<source>` of a problem, for an agent: `lines`, which are not none and of which the first has the number `first`, and
-/// carets below the line with the number `at`, from the column `from` up to the column `to`, both counted from 0. `None`: up to the
-/// end of the line.
+/// carets below the line with the number `at`, from its byte `from` up to its byte `to`: [`offset_of_column`]. `None`: up
+/// to the end of the line.
 pub fn write_agent_source(
     out: &mut Vec<u8>,
     first: u32,
@@ -321,14 +448,27 @@ pub fn write_agent_source(
     let gutter = bun_core::fmt::digit_count(first as usize + lines.len() - 1);
     for (line, text) in (first..).zip(lines) {
         let text = strings::replace_owned(text, b"\t", b" ");
-        let _ = writeln!(out, "{line:>gutter$} | {}", text.trim_ascii_end().as_bstr());
+        let _ = write!(out, "{line:>gutter$} | ");
+        write_escaped(out, text.trim_ascii_end());
+        out.push(b'\n');
         if line == at {
-            let (from, to) = (
-                from.min(text.len()),
-                to.unwrap_or(text.len()).min(text.len()),
-            );
-            let carets = "^".repeat(to.saturating_sub(from).max(1));
-            let _ = writeln!(out, "{:1$}{carets}", "", gutter + 3 + from);
+            let from = from.min(text.len());
+            let to = to.unwrap_or(text.len()).clamp(from, text.len());
+            // As many as are printed for it: an escape sequence is longer than its character. The end of `out` is where
+            // it is written, to be counted.
+            let mut columns = |part: &[u8]| {
+                if !may_have_control_characters(part) {
+                    return part.len();
+                }
+                let printed = out.len();
+                let _ = write!(out, "{}", escape_control_chars(part));
+                let columns = strings::wtf8_len_utf16(&out[printed..]) as usize;
+                out.truncate(printed);
+                columns
+            };
+            let before = gutter + 3 + columns(&text[..from]);
+            let carets = "^".repeat(columns(&text[from..to]).max(1));
+            let _ = writeln!(out, "{:before$}{carets}", "");
         }
     }
     out.extend_from_slice(b"</source>\n");
@@ -352,7 +492,7 @@ fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], st
         let _ = write!(out, " times=\"{}\"", duplicates.len() + 1);
     }
     out.extend_from_slice(b">\n");
-    out.extend_from_slice(&d.text);
+    write_message(out, d);
     out.push(b'\n');
     let has_long_line = d
         .source
@@ -371,13 +511,18 @@ fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], st
         let end = d.source.len().min(at + 3);
         let end = end - blank(&mut d.source[at + 1..end].iter().rev());
         let lines: Vec<&[u8]> = d.source[first..end].iter().map(Vec::as_slice).collect();
-        let to = (d.end_line == d.line).then(|| d.end_column as usize - 1);
+        // `line_and_character` has counted them.
+        let offset = |column: u32| {
+            let units = strings::utf8_lossy_len_utf16;
+            offset_of_column(&d.source[at], column as usize - 1, units)
+        };
+        let to = (d.end_line == d.line).then(|| offset(d.end_column));
         write_agent_source(
             out,
             d.source_line + first as u32,
             &lines,
             d.line,
-            (d.column as usize - 1, to),
+            (offset(d.column), to),
         );
     }
     for note in &d.related {
@@ -391,7 +536,9 @@ fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], st
                 note.column
             );
         }
-        let _ = writeln!(out, ">{}</related>", note.text.as_bstr());
+        out.push(b'>');
+        write_message(out, note);
+        out.extend_from_slice(b"</related>\n");
     }
     let duplicates: Vec<&Diagnostic> = (duplicates.iter().copied())
         .filter(|other| !other.path.is_empty())
@@ -439,14 +586,21 @@ fn write_github_annotation(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
             d.end_column
         );
     }
-    // (`bun_core::fmt::github_action` leaves `%` unchanged.)
-    let text = strings::replace_owned(
-        &strings::replace_owned(&d.text, b"%", b"%25"),
-        b"\r",
-        b"%0D",
-    );
+    // (`bun_core::fmt::github_action` leaves `%` unchanged.) No carriage return is left to encode.
+    let mut text = Vec::new();
+    write_message(&mut text, d);
+    let text = strings::replace_owned(&text, b"%", b"%25");
     let text = strings::replace_owned(&text, b"\n", b"%0A");
     let _ = writeln!(out, "title=TS{}::{}", d.code, text.as_bstr());
+}
+
+/// A line of `--traceResolution`, `--listFiles` or `--explainFiles`.
+fn write_line(out: &mut Vec<u8>, line: &[u8], style: &Style) {
+    match style.layout {
+        Layout::Plain => out.extend_from_slice(line),
+        Layout::Pretty | Layout::Agent => write_escaped(out, line),
+    }
+    out.push(b'\n');
 }
 
 /// Writes the diagnostics, in order.
@@ -472,8 +626,7 @@ pub fn write_diagnostics(out: &mut Vec<u8>, report: &Report, style: &Style) {
     };
     for task in std::iter::once(&before_the_tasks).chain(tasks) {
         for line in take(&mut trace, task.resolution_trace) {
-            out.extend_from_slice(line);
-            out.push(b'\n');
+            write_line(out, line, style);
         }
         let diagnostics = take(&mut diagnostics, task.diagnostics);
         // `QuietDiagnosticReporter`
@@ -498,8 +651,7 @@ pub fn write_diagnostics(out: &mut Vec<u8>, report: &Report, style: &Style) {
             }
         }
         for line in take(&mut listed_files, task.listed_files) {
-            out.extend_from_slice(line);
-            out.push(b'\n');
+            write_line(out, line, style);
         }
     }
 }
@@ -561,7 +713,9 @@ fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
                 first.code,
                 width
             );
-            let reported = summary_line(&first.text);
+            let mut message = Vec::new();
+            write_message(&mut message, first);
+            let reported = summary_line(&message);
             let place = alloc_print!("{}:{}", display_path(&first.path, style), first.line);
             // Truncate the message to the terminal width. Append the first location only if it fits.
             let room = match style.width {
@@ -704,7 +858,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
             out,
             style.color,
             "<red>error<r><d>:<r> {}\n",
-            BStr::new(&file.message(&relative_path(&file.path, style.cwd, style)))
+            BStr::new(&file.message(&escaped(relative_path(&file.path, style.cwd, style))))
         );
     }
     // A repository can have a hundred fixtures that nobody installs.
@@ -714,7 +868,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
             1 => ("is", BString::from("1 dependency")),
             n => ("are", alloc_print!("{n} dependencies")),
         };
-        let manifest = relative_path(&it.manifest, style.cwd, style);
+        let manifest = escaped(relative_path(&it.manifest, style.cwd, style));
         let elsewhere = match it.is_of_working_directory {
             true => BString::default(),
             false => alloc_print!(" --cwd={}", BStr::new(dirname::<Posix>(&manifest))),
@@ -839,7 +993,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
         .unwrap_or(1);
     for (first, count) in &by_file {
         let path = if style.layout == Layout::Plain {
-            relative_path(&first.path, style.cwd, style)
+            escaped(relative_path(&first.path, style.cwd, style))
         } else {
             display_path(&first.path, style)
         };

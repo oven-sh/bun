@@ -1934,11 +1934,12 @@ fn nested_configs(disk: &host::Disk, top: &[u8]) -> Vec<Vec<u8>> {
 /// For a directory without a configuration file at or above it, and `below` under it.
 fn no_project_here(cwd: &[u8], below: &[Vec<u8>]) -> Diagnostic {
     const NAMED: usize = 8;
+    // The text is Bun's own in every layout, and its line breaks are too.
     let relative =
-        |config: &'_ [u8]| -> Vec<u8> { get_relative_path_from_directory(cwd, config, true) };
+        |config: &'_ [u8]| format::escaped(get_relative_path_from_directory(cwd, config, true));
     let mut text = [
         b"No tsconfig.json in '",
-        &*displayed_path(cwd),
+        &format::escaped(&*displayed_path(cwd))[..],
         b"' or above it. Below it:",
     ]
     .concat();
@@ -2224,7 +2225,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         report.diagnostics.push(Diagnostic {
             text: [
                 b"Nothing to check: no TypeScript files in '",
-                &displayed_path(&paths[0])[..],
+                &format::escaped(&*displayed_path(&paths[0]))[..],
                 b"'",
             ]
             .concat(),
@@ -2751,8 +2752,12 @@ impl Graph<'_> {
         if let Some(&index) = self.index_of.get(&path) {
             // `analyzing`
             if index.is_none() && !in_circular_context {
+                // The argument is what `tsc` has: the paths, a line each. Each path follows it, for no placeholder:
+                // `format::write_message` escapes a path and keeps the lines.
                 let stack = self.circularity_stack.join(&b'\n');
-                self.errors.push(global(6202, &[stack]));
+                let paths = self.circularity_stack.iter().map(Vec::as_slice);
+                let args: Vec<&[u8]> = std::iter::once(&stack[..]).chain(paths).collect();
+                self.errors.push(global(6202, &args));
             }
             return Err(index);
         }

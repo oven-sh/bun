@@ -3194,7 +3194,7 @@ test.concurrent("the output of a failed script is printed byte for byte", async 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [err, exitCode] = await Promise.all([proc.stderr.bytes(), proc.exited]);
+  const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.bytes(), proc.exited]);
   const hex = Buffer.from(err).toString("hex");
   expect(hex).toContain("636166e90a");
   expect(hex).toContain("feff0a");

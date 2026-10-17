@@ -3868,8 +3868,9 @@ describe.concurrent("--recursive and --filter", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(err).toBe('error: refusing to publish: "publish" is the value of a flag, not the command\n');
+    expect(published(out)).toEqual([]);
     expect(registry.asked).toEqual([]);
     expect(exitCode).toBe(1);
   });

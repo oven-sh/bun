@@ -747,6 +747,201 @@ copy "~user1/file" to "~user2/file"
 ````````````````````````````````
 
 
+## [Issue 247](https://github.com/mity/md4c/issues/247)
+
+Tabs in verbatim content are preserved after removing structural indentation.
+Only the remainder of a partially consumed tab is expanded to spaces.
+
+```````````````````````````````` example
+<!--
+→x
+-->
+```
+<!--
+→y
+-->
+```
+→z
+.
+<!--
+→x
+-->
+<pre><code>&lt;!--
+→y
+--&gt;
+</code></pre>
+<pre><code>z
+</code></pre>
+````````````````````````````````
+
+```````````````````````````````` example
+```
+→→x
+ → y
+```
+.
+<pre><code>→→x
+ → y
+</code></pre>
+````````````````````````````````
+
+```````````````````````````````` example
+~~~
+→
+ →→
+~~~
+.
+<pre><code>→
+ →→
+</code></pre>
+````````````````````````````````
+
+```````````````````````````````` example
+  ```
+→→x
+  →y
+```
+.
+<pre><code>  →x
+→y
+</code></pre>
+````````````````````````````````
+
+```````````````````````````````` example
+> ```
+> →→x
+> ```
+.
+<blockquote>
+<pre><code>→→x
+</code></pre>
+</blockquote>
+````````````````````````````````
+
+```````````````````````````````` example
+> ```
+>→→x
+> ```
+.
+<blockquote>
+<pre><code>  →x
+</code></pre>
+</blockquote>
+````````````````````````````````
+
+```````````````````````````````` example
+- ```
+  →x
+  ```
+.
+<ul>
+<li><pre><code>→x
+</code></pre>
+</li>
+</ul>
+````````````````````````````````
+
+```````````````````````````````` example
+- ```
+→→x
+  ```
+.
+<ul>
+<li><pre><code>  →x
+</code></pre>
+</li>
+</ul>
+````````````````````````````````
+
+```````````````````````````````` example
+1. ```
+→→x
+   ```
+.
+<ol>
+<li><pre><code> →x
+</code></pre>
+</li>
+</ol>
+````````````````````````````````
+
+```````````````````````````````` example
+<pre>
+→x
+</pre>
+.
+<pre>
+→x
+</pre>
+````````````````````````````````
+
+```````````````````````````````` example
+> - <pre>
+>   →x
+>   </pre>
+.
+<blockquote>
+<ul>
+<li><pre>
+→x
+</pre>
+</li>
+</ul>
+</blockquote>
+````````````````````````````````
+
+```````````````````````````````` example
+→→x
+    →y
+.
+<pre><code>→x
+→y
+</code></pre>
+````````````````````````````````
+
+```````````````````````````````` example
+ →→x
+.
+<pre><code>→x
+</code></pre>
+````````````````````````````````
+
+```````````````````````````````` example
+    x
+    →
+.
+<pre><code>x
+</code></pre>
+````````````````````````````````
+
+```````````````````````````````` example
+    x
+    →
+    y
+.
+<pre><code>x
+→
+y
+</code></pre>
+````````````````````````````````
+
+```````````````````````````````` example
+  ```
+    x
+```
+.
+<pre><code>  x
+</code></pre>
+````````````````````````````````
+
+```````````````````````````````` example
+→x
+.
+<pre><code>x
+</code></pre>
+````````````````````````````````
+
+
 ## [Issue 248](https://github.com/mity/md4c/issues/248)
 
 (These are in spec.txt, but we need the [no-normalize] flag in order to
@@ -790,3 +985,27 @@ bar
 bar</p>
 ````````````````````````````````
 
+
+## Empty item inside nested block quotes
+
+Closing the empty item must keep the remaining block quote markers consumed.
+
+```````````````````````````````` example
+> > > > -
+> > > >
+> > > >
+> > > >   b
+.
+<blockquote>
+<blockquote>
+<blockquote>
+<blockquote>
+<ul>
+<li></li>
+</ul>
+<p>b</p>
+</blockquote>
+</blockquote>
+</blockquote>
+</blockquote>
+````````````````````````````````

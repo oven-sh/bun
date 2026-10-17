@@ -267,6 +267,8 @@ pub struct VerbatimLine {
     pub indent: u32,
 }
 
+const _: () = assert!(size_of::<VerbatimLine>() == 12);
+
 /// Container types: blockquote or list item.
 #[derive(Copy, Clone, Default)]
 pub struct Container {

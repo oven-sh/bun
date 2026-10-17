@@ -135,6 +135,8 @@ struct AnsiRenderer<'a> {
     code_fenced: bool,
     /// Buffer of the current code block body, flushed on leaveBlock(.code).
     code_buf: Vec<u8>,
+    /// True inside an HTML block, whose lines keep the white space they start with.
+    in_html_block: bool,
     /// Heading level currently being rendered (0 = none).
     heading_level: u8,
     /// Buffer of the current heading text, flushed on leaveBlock(.h).
@@ -229,6 +231,9 @@ const SPAN_CODE: u32 = 1 << 4;
 /// produce output quadratic in the input size.
 const MAX_INDENT_COLS: u32 = 128;
 
+/// A tab that a line of code or HTML starts with is shown as spaces up to the next multiple of this.
+const TAB_STOP: usize = 4;
+
 struct InlineStyle {
     flag: u32,
     on: &'static [u8],
@@ -287,6 +292,7 @@ impl<'a> AnsiRenderer<'a> {
             code_lang: b"",
             code_fenced: false,
             code_buf: Vec::new(),
+            in_html_block: false,
             heading_level: 0,
             heading_buf: Vec::new(),
             table_cells: Vec::new(),
@@ -449,6 +455,7 @@ impl<'a> AnsiRenderer<'a> {
             }
             BlockType::Html => {
                 self.ensure_newline();
+                self.in_html_block = true;
             }
             BlockType::P => {
                 // When a paragraph sits directly inside a list item, the li
@@ -509,6 +516,7 @@ impl<'a> AnsiRenderer<'a> {
             }
             BlockType::Html => {
                 self.ensure_newline();
+                self.in_html_block = false;
             }
             BlockType::P => {
                 self.write_styled(ansi_b::RESET, b"");
@@ -697,6 +705,11 @@ impl<'a> AnsiRenderer<'a> {
                 // (\x1b[22m) rather than a full reset, then reapply any
                 // outer span/link styles.
                 self.write_styled(ansi_b::DIM, b"");
+                let content = if self.in_html_block && self.last_was_newline {
+                    self.write_html_block_indentation(content)
+                } else {
+                    content
+                };
                 self.write_content(content);
                 self.write_styled(b"\x1b[22m", b"");
                 self.reapply_styles();
@@ -745,6 +758,18 @@ impl<'a> AnsiRenderer<'a> {
         }
         // Normal paragraph flow: respect wrapping + indent.
         self.write_wrapped(data);
+    }
+
+    /// `write_wrapped` makes one space of the blanks that a line starts with: they are written here.
+    #[inline(never)]
+    fn write_html_block_indentation<'c>(&mut self, content: &'c [u8]) -> &'c [u8] {
+        let (indentation, rest) = content.split_at(leading_blanks(content));
+        let written = self.out.list.len();
+        let column = self.col.saturating_sub(self.current_indent()) as usize;
+        write_indentation(&mut self.out, column, indentation);
+        let width = self.out.list.len().saturating_sub(written);
+        self.col = self.col.saturating_add(width as u32);
+        rest
     }
 
     /// Emit a chunk to output, wrapping at word boundaries when the column
@@ -1440,6 +1465,24 @@ impl<'a> AnsiRenderer<'a> {
             &src[0..src.len() - 1]
         } else {
             &src
+        };
+        let mut without_leading_tabs = OutputBuffer {
+            list: Vec::new(),
+            oom: false,
+        };
+        let body: &[u8] = if strings::contains_char(body, b'\t') {
+            for (index, line) in strings::split(body, b"\n").enumerate() {
+                if index > 0 {
+                    without_leading_tabs.write_byte(b'\n');
+                }
+                let blanks = leading_blanks(line);
+                write_indentation(&mut without_leading_tabs, 0, &line[..blanks]);
+                without_leading_tabs.write(&line[blanks..]);
+            }
+            self.out.oom |= without_leading_tabs.oom;
+            &without_leading_tabs.list
+        } else {
+            body
         };
 
         let top_border: &[u8] = if self.theme.colors {
@@ -2345,6 +2388,27 @@ fn code_span_open(light: bool) -> &'static [u8] {
         b"\x1b[48;5;254m\x1b[38;5;124m"
     } else {
         b"\x1b[48;5;236m\x1b[38;5;215m"
+    }
+}
+
+fn leading_blanks(line: &[u8]) -> usize {
+    line.iter()
+        .take_while(|&&byte| helpers::is_blank(byte))
+        .count()
+}
+
+/// Writes `indentation`, which starts at `column` of its line, with each tab as spaces up to the next `TAB_STOP`.
+fn write_indentation(out: &mut OutputBuffer, mut column: usize, indentation: &[u8]) {
+    if indentation.iter().all(|&byte| byte == b' ') {
+        return out.write(indentation);
+    }
+    for &byte in indentation {
+        let width = match byte {
+            b'\t' => TAB_STOP - column % TAB_STOP,
+            _ => 1,
+        };
+        out.write(&b"    "[..width]);
+        column += width;
     }
 }
 

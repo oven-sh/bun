@@ -154,6 +154,7 @@ impl Loader {
             Loader::Css => "input.css",
             Loader::File => "input",
             Loader::Json => "input.json",
+            Loader::Jsonc => "input.jsonc",
             Loader::Toml => "input.toml",
             Loader::Yaml => "input.yaml",
             Loader::Json5 => "input.json5",
@@ -164,7 +165,7 @@ impl Loader {
             Loader::Bunsh => "input.sh",
             Loader::Html => "input.html",
             Loader::Md => "input.md",
-            _ => "",
+            Loader::Base64 | Loader::Dataurl | Loader::Sqlite | Loader::SqliteEmbedded => "",
         }
     }
 

@@ -1001,7 +1001,7 @@ fn react_compiler_filter(
     let (include, exclude) = (patterns(&scope.include), patterns(&scope.exclude));
     Box::leak(Box::new(move |path: &[u8]| {
         // The original of a mocked module is loaded as "file.ts?actual".
-        let path = path.split(|&byte| byte == b'?').next().unwrap_or(path);
+        let path = &path[..strings::index_of_char(path, b'?').map_or(path.len(), |at| at as usize)];
         let name = bun_paths::basename(path);
         let stem = &name[..name.len() - bun_paths::extension(name).len()];
         if scanner::TEST_NAME_SUFFIXES

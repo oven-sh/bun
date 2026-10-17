@@ -84,7 +84,7 @@ describe("node:http", () => {
         http
           .get({ port, agent: false }, res => {
             seen.client = tlsOnly.filter(name => name in res.socket);
-            res.resume().on("end", resolve);
+            res.resume().on("end", resolve).on("error", reject);
           })
           .on("error", reject);
         await promise;
@@ -1533,32 +1533,28 @@ describe("node https server", async () => {
     key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "cert.key")),
     cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "cert.pem")),
   };
-  const createServer = onRequest => {
-    return new Promise<{ server: https.Server; done: () => void; url: URL }>(resolve => {
-      const server = createHttpsServer(httpsOptions, (req, res) => {
-        onRequest(req, res);
-      });
-      listen(server, "https").then(url => {
-        resolve({
-          server,
-          done: () => server.close(),
-          url,
-        });
-      });
-    });
-  };
-  it("is marked encrypted (#5867)", async () => {
+  it.each([
+    { how: "https.createServer(options)", start: () => createHttpsServer(httpsOptions).listen(0) },
+    { how: "http.createServer().listen({ tls })", start: () => createServer().listen({ port: 0, tls: httpsOptions }) },
+  ])("the socket of $how is marked encrypted (#5867)", async ({ start }) => {
     let seen;
-    const { server, url, done } = await createServer(async (req, res) => {
-      const { encrypted, authorized, authorizationError, servername } = req.connection;
-      seen = { encrypted, authorized, authorizationError, servername };
+    const server = start().on("request", (req, res) => {
+      const { encrypted, _secureEstablished, authorized, authorizationError, servername } = req.connection;
+      seen = { encrypted, _secureEstablished, authorized, authorizationError, servername };
       res.end();
     });
     try {
-      await fetch(url, { tls: { rejectUnauthorized: false } });
-      expect(seen).toEqual({ encrypted: true, authorized: false, authorizationError: null, servername: "localhost" });
+      await once(server, "listening");
+      await fetch(`https://localhost:${server.address().port}`, { tls: { rejectUnauthorized: false } });
+      expect(seen).toEqual({
+        encrypted: true,
+        _secureEstablished: true,
+        authorized: false,
+        authorizationError: null,
+        servername: "localhost",
+      });
     } finally {
-      done();
+      server.close();
     }
   });
 });

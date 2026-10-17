@@ -181,12 +181,13 @@ describe.concurrent("a package.json that does not parse", () => {
     expect(await run(String(dir), cwd, args)).toEqual({ stdout: "", stderr, exitCode: 1 });
   });
 
-  // `--parallel` and `--sequential` give a name that is no script and no file to the shell.
+  // `--parallel` and `--sequential` give a name that is no script and no file to the shell, which does not find it.
+  // The shell is Bun's on Windows.
   test.each(["--parallel", "--sequential"])("bun run %s: the script further up does not run", async flag => {
     using dir = project({ "package.json": text });
     const { stdout, stderr, exitCode } = await run(String(dir), "child", ["run", flag, "greet"]);
     expect(stderr).toStartWith(error + "\n");
-    expect({ stdout, exitCode: exitCode === 0 ? 0 : "not 0" }).toEqual({ stdout: "", exitCode: "not 0" });
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: isWindows ? 1 : 127 });
   });
 
   test("bun run --parallel: a pattern matches no script", async () => {

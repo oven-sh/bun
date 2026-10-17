@@ -134,6 +134,24 @@ const ZERO_HASH: MetaHash = [0u8; 32];
 // which avoids threading a `&mut [u8]` lifetime through the load call graph.
 pub(crate) type Stream = bun_io::FixedBufferStream<Vec<u8>>;
 
+/// What two lockfile entries of one package disagree on.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PinConflict {
+    TarballUrl,
+    GitRef,
+    Integrity,
+}
+
+impl PinConflict {
+    pub(crate) fn noun(self) -> &'static str {
+        match self {
+            Self::TarballUrl => "tarball URL",
+            Self::GitRef => "git ref",
+            Self::Integrity => "integrity",
+        }
+    }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Lockfile struct
 // ────────────────────────────────────────────────────────────────────────────
@@ -2563,11 +2581,51 @@ impl Lockfile {
         })
     }
 
-    /// Appends `pkg` to `this.packages`, and adds to `this.package_index`.
+    /// What `entry` disagrees on with the package that an earlier entry of its name and resolution
+    /// appended. `Resolution::eql` leaves out the npm tarball URL and, beside a commit, the git
+    /// ref. `kept_integrity` takes the hash of `entry` when it has none or a weaker algorithm's.
+    /// Entries with one hash are one tarball, whatever URL each of them names.
+    pub(crate) fn pin_conflict(
+        kept: &Resolution,
+        kept_integrity: &mut crate::Integrity,
+        entry: &Resolution,
+        entry_integrity: &crate::Integrity,
+        buf: &[u8],
+    ) -> Option<PinConflict> {
+        if entry_integrity.tag.is_supported() {
+            if kept_integrity == entry_integrity {
+                return None;
+            }
+            if kept_integrity.tag == entry_integrity.tag {
+                return Some(PinConflict::Integrity);
+            }
+            if !kept_integrity.tag.is_supported() || entry_integrity.tag.0 > kept_integrity.tag.0 {
+                *kept_integrity = *entry_integrity;
+            }
+        }
+        match entry.tag {
+            ResolutionTag::Npm => {
+                (!entry.npm().url.eql(kept.npm().url, buf, buf)).then_some(PinConflict::TarballUrl)
+            }
+            ResolutionTag::Git | ResolutionTag::Github => {
+                let (repository, kept_repository) = (entry.repository(), kept.repository());
+                let same_ref = repository
+                    .committish
+                    .eql(kept_repository.committish, buf, buf)
+                    && repository.resolved.eql(kept_repository.resolved, buf, buf);
+                (!same_ref).then_some(PinConflict::GitRef)
+            }
+            _ => None,
+        }
+    }
+
+    /// Appends `pkg` to `this.packages`, and adds to `this.package_index`. An entry of a package
+    /// that is already there folds into it: the caller decides what a `PinConflict` between the
+    /// two means.
     pub(crate) fn append_package_dedupe(
         &mut self,
         pkg: &mut Package,
-    ) -> Result<PackageID, AllocError> {
+    ) -> Result<(PackageID, Option<PinConflict>), AllocError> {
         let entry = self.package_index.get_or_put(pkg.name_hash)?;
         let buf = self.buffers.string_bytes.as_slice();
 
@@ -2576,8 +2634,16 @@ impl Lockfile {
             if let Some(&existing_id) = (entry.value_ptr.as_slice().iter())
                 .find(|&&id| pkg.resolution.eql(&resolutions[id as usize], buf, buf))
             {
+                let kept = resolutions[existing_id as usize];
+                let conflict = Self::pin_conflict(
+                    &kept,
+                    &mut self.packages.items_meta_mut()[existing_id as usize].integrity,
+                    &pkg.resolution,
+                    &pkg.meta.integrity,
+                    buf,
+                );
                 pkg.meta.id = existing_id;
-                return Ok(existing_id);
+                return Ok((existing_id, conflict));
             }
         }
 
@@ -2589,7 +2655,7 @@ impl Lockfile {
         } else {
             *entry.value_ptr = PackageIndexEntry::Id(new_id);
         }
-        Ok(new_id)
+        Ok((new_id, None))
     }
 
     pub(crate) fn get_or_put_id(

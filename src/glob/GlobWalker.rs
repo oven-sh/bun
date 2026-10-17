@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-use crate::matcher::{Dots, Shape};
+use crate::matcher::{Below, Dots, Shape, Token};
 use bun_alloc::AllocError;
 use bun_collections::AutoBitSet;
 use bun_core::Error;
@@ -247,6 +247,8 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     pub(crate) pattern_components: Vec<Component>,
     /// `Shape::of` each component's pattern, so matching an entry doesn't parse the groups again.
     component_shapes: Vec<Shape>,
+    /// Set if the last component is a `SyntaxHint::Tail`.
+    tail: Option<Box<Tail>>,
     pub matched_paths: MatchedMap,
 
     pub(crate) dot: bool,
@@ -583,6 +585,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         };
 
         let mut had_dot_dot = false;
+        let below_tail_len = work_item.below_tail_len;
         // Single-index sets (the initial WorkItem) may point to Dot/DotBack
         // or collapsible `**` runs. Multi-index sets only arise mid-traversal
         // after `**/X` boundaries and are already past any Dots.
@@ -730,6 +733,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             iterator.set_name_filter(filter);
         }
 
+        if let Some(tail) = self.walker.tail.as_deref() {
+            let has_tail = active.is_set(self.walker.pattern_components.len() - 1);
+            debug_assert!(!has_tail || active.count() == 1);
+            tail.enter(dir_path.as_bytes(), below_tail_len, has_tail);
+        }
+
         self.iter_state = IterState::Directory(Directory {
             fd,
             iter: iterator,
@@ -754,7 +763,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         match comp.syntax_hint {
             // `*` and `**` match everything; a filter gains nothing and for `**`
             // would incorrectly hide subdirectories we need to recurse into.
-            SyntaxHint::Single | SyntaxHint::Double | SyntaxHint::Dot | SyntaxHint::DotBack => {
+            SyntaxHint::Single
+            | SyntaxHint::Double
+            | SyntaxHint::Dot
+            | SyntaxHint::DotBack
+            | SyntaxHint::Tail => {
                 return None;
             }
             _ => {}
@@ -807,7 +820,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     // exact followed-link ancestor chain of this work item.
                     self.walker
                         .followed_links
-                        .truncate(work_item.followed_links_len);
+                        .truncate(work_item.followed_links_len as usize);
                     if let Some(link) = work_item.followed_link.take() {
                         self.walker.followed_links.push(link);
                     }
@@ -888,6 +901,16 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     symlink_full_path_len - entry_start,
                                 )
                             };
+                            if let Some(tail) = self.walker.tail.as_deref() {
+                                // The name of the link is matched in its directory, which is read no more.
+                                let below = work_item.below_tail_len;
+                                let name_len = u32::try_from(entry_name.len()).expect("int cast");
+                                tail.enter(
+                                    &work_item_path[..entry_start],
+                                    below.saturating_sub(name_len),
+                                    below != NOT_BELOW_TAIL,
+                                );
+                            }
 
                             self.iter_state = IterState::GetNext;
                             let maybe_dir_fd: Option<A::Handle> =
@@ -1276,10 +1299,12 @@ pub struct WorkItem<A: Accessor> {
     pub(crate) active: ComponentSet,
     pub(crate) kind: WorkItemKind,
     pub(crate) entry_start: u32,
+    /// If a directory above has the tail: how many bytes at the end of the path are below the directory that the tail starts in.
+    pub(crate) below_tail_len: u32,
     pub(crate) fd: Option<A::Handle>,
     /// `followed_links.len()` when this item was pushed: the length of its
     /// followed-link ancestor chain, restored by truncation when it is popped.
-    followed_links_len: usize,
+    followed_links_len: u32,
     /// The followed link this item descends into, pushed onto `followed_links`
     /// (after the truncation above) when it is popped.
     followed_link: Option<FollowedLink>,
@@ -1298,6 +1323,7 @@ impl<A: Accessor> WorkItem<A> {
             active,
             kind,
             entry_start: 0,
+            below_tail_len: NOT_BELOW_TAIL,
             fd: None,
             followed_links_len: 0,
             followed_link: None,
@@ -1324,6 +1350,9 @@ impl<A: Accessor> WorkItem<A> {
     }
 }
 
+/// `WorkItem::below_tail_len` if no directory above has the tail.
+const NOT_BELOW_TAIL: u32 = u32::MAX;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1341,6 +1370,8 @@ pub struct Component {
     pub(crate) syntax_hint: SyntaxHint,
     pub(crate) trailing_sep: bool,
 }
+
+const _: () = assert!(size_of::<Component>() == 16);
 
 impl Default for Component {
     fn default() -> Self {
@@ -1376,6 +1407,8 @@ pub enum SyntaxHint {
     Dot,
     /// ../
     DotBack,
+    /// The rest of a pattern, from the first path segment in which a group crosses a separator, or from the first `**` before it. See `Tail`.
+    Tail,
 }
 
 impl SyntaxHint {
@@ -1425,7 +1458,10 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 SyntaxHint::Double => log!("  **"),
                 SyntaxHint::Dot => log!("  ."),
                 SyntaxHint::DotBack => log!("  ../"),
-                SyntaxHint::Literal | SyntaxHint::WildcardFilepath | SyntaxHint::None => log!(
+                SyntaxHint::Literal
+                | SyntaxHint::WildcardFilepath
+                | SyntaxHint::None
+                | SyntaxHint::Tail => log!(
                     "  hint={} component_str={}",
                     <&'static str>::from(cmp.syntax_hint),
                     bstr::BStr::new(cmp.pattern_slice(pattern))
@@ -1460,6 +1496,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             end_byte_of_basename_excluding_special_syntax: 0,
             pattern_components: Vec::new(),
             component_shapes: Vec::new(),
+            tail: None,
             matched_paths: MatchedMap::default(),
             path_buf: bun_paths::path_buffer_pool::get(),
             workbuf: Vec::new(),
@@ -1469,7 +1506,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             _accessor: core::marker::PhantomData,
         };
 
-        Self::build_pattern_components(
+        this.tail = Self::build_pattern_components(
             &mut this.pattern_components,
             &this.pattern,
             &mut this.end_byte_of_basename_excluding_special_syntax,
@@ -1727,6 +1764,13 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             return Some(0);
         }
 
+        // The tail stays active in a directory that a path below can match in.
+        if pattern.syntax_hint == SyntaxHint::Tail {
+            let (matches, descends) = self.eval_below_tail(entry_name, true);
+            *add = matches;
+            return descends.then_some(0);
+        }
+
         // For non-`**` components the dot check lives in match_pattern_impl,
         // which lets patterns that explicitly start with `.` through.
         let matches = self.match_pattern_impl(pattern, entry_name);
@@ -1781,6 +1825,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         if !self.dot
             && Self::starts_with_dot(filepath)
             && !Self::starts_with_dot(pattern_component.pattern_slice(&self.pattern))
+            && pattern_component.syntax_hint != SyntaxHint::Tail
         {
             return false;
         }
@@ -1790,6 +1835,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
         match pattern_component.syntax_hint {
             SyntaxHint::Double | SyntaxHint::Single => true,
+            SyntaxHint::Tail => self.eval_below_tail(filepath, false).0,
             SyntaxHint::WildcardFilepath => {
                 match_wildcard_filepath(pattern_component.pattern_slice(&self.pattern), filepath)
             }
@@ -1895,6 +1941,10 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             if self.match_pattern_impl(comp, entry_name) {
                 return true;
             }
+            // The tail does not match the entry, but it can match a path below it.
+            if comp.syntax_hint == SyntaxHint::Tail && self.eval_below_tail(entry_name, true).1 {
+                return true;
+            }
             // Mirror match_pattern_dir's `**/X` peek so the SymLink/Unknown
             // pre-filter doesn't drop entries eval_dir would accept.
             if comp.syntax_hint == SyntaxHint::Double
@@ -1905,6 +1955,25 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             }
         }
         false
+    }
+
+    /// `Tail::eval` for the entry `name`. Only a `SyntaxHint::Tail` component asks.
+    #[inline(never)]
+    fn eval_below_tail(&self, name: &[u8], is_dir: bool) -> (bool, bool) {
+        let Some(tail) = self.tail.as_deref() else {
+            return (false, false);
+        };
+        // What a negated pattern leaves out says nothing of a name that starts with a dot, so the name decides.
+        let is_hidden = tail.is_negated && !self.dot && Self::starts_with_dot(name);
+        if is_hidden || (self.is_ignored)(name) {
+            return (false, false);
+        }
+        let dots = if self.dot || tail.is_negated {
+            Dots::Match
+        } else {
+            Dots::Hide
+        };
+        tail.eval(name, is_dir, dots)
     }
 
     /// Subset of `active` whose components are non-wildcard literals that
@@ -1918,9 +1987,18 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             let may_follow = match comp.syntax_hint {
                 SyntaxHint::Literal => true,
                 SyntaxHint::Double => false,
+                // As for a `**`: a tail that can go through any number of directories does not go through a link.
+                SyntaxHint::Tail => {
+                    self.follow_matched_symlinks
+                        && self.tail.as_deref().is_some_and(|tail| !tail.is_unbounded)
+                }
                 _ => self.follow_matched_symlinks,
             };
-            if may_follow && self.match_pattern_impl(comp, entry_name) {
+            let is_tail = comp.syntax_hint == SyntaxHint::Tail;
+            if may_follow
+                && (self.match_pattern_impl(comp, entry_name)
+                    || (is_tail && self.eval_below_tail(entry_name, true).1))
+            {
                 subset.set(idx);
             }
         }
@@ -2017,8 +2095,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     /// Single push site: snapshots the followed-link ancestor chain (and the
     /// link `item` itself descends into) so the pop site can restore it.
     fn push_work_item(&mut self, mut item: WorkItem<A>, followed_link: Option<FollowedLink>) {
-        item.followed_links_len = self.followed_links.len();
+        item.followed_links_len = u32::try_from(self.followed_links.len()).expect("int cast");
         item.followed_link = followed_link;
+        if let Some(tail) = self.tail.as_deref() {
+            item.below_tail_len = tail.below(work_item_logical_path(&item.path));
+        }
         self.workbuf.push(item);
     }
 
@@ -2181,16 +2262,20 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         Some(component)
     }
 
+    /// Makes one component for each path segment of `pattern`. Returns the tail, if the pattern has one.
     fn build_pattern_components(
         pattern_components: &mut Vec<Component>,
         pattern: &[u8],
         end_byte_of_basename_excluding_special_syntax: &mut u32,
         basename_excluding_special_syntax_component_idx: &mut u32,
-    ) -> Result<(), AllocError> {
+    ) -> Result<Option<Box<Tail>>, AllocError> {
         let mut start_byte: u32 = 0;
         let pattern_len: u32 = u32::try_from(pattern.len()).expect("int cast");
 
-        let mut prev_is_backslash = false;
+        let mut brackets = Brackets::default();
+        // Where the first group that crosses a separator starts, once a separator in a bracket made this ask the matcher.
+        let mut crossing_at = u32::MAX;
+        let mut is_asked = false;
         let mut saw_special = false;
         let mut i: u32 = 0;
         let mut width: u32 = 0;
@@ -2198,7 +2283,21 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             let c = pattern[i as usize];
             width = u32::from(strings::wtf8_byte_sequence_length(c));
 
-            if bun_core::path_sep::is_sep_native(c) {
+            let is_separator = bun_core::path_sep::is_sep_native(c);
+            // A separator or a `**` in a bracket can be in a group. The tokens of the matcher say if a group crosses a separator.
+            if (is_separator || (c == b'*' && pattern.get(i as usize + 1) == Some(&b'*')))
+                && !is_asked
+                && brackets.may_be_open(i)
+            {
+                is_asked = true;
+                crossing_at = first_crossing_group(pattern).unwrap_or(u32::MAX);
+            }
+            // The tail starts with the path segment that the group is in. Before it the pattern is cut as without the group.
+            if i >= crossing_at {
+                return Ok(Some(push_tail(pattern_components, pattern, start_byte)));
+            }
+
+            if is_separator {
                 let mut end_byte = i;
                 // is last char
                 if (i + width) as usize == pattern.len() {
@@ -2215,18 +2314,18 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                     pattern_components.push(component);
                 }
                 start_byte = i + width;
-            } else if c == b'\\' {
-                if prev_is_backslash {
-                    prev_is_backslash = false;
-                    i += 1;
-                    continue;
-                }
-                prev_is_backslash = true;
+            } else if matches!(c, b'\\' | b'[' | b']' | b'{' | b'}' | b'(' | b')') {
+                brackets.read(pattern, i, c);
             }
-            // TODO: Support other escaping glob syntax
             i += 1;
         }
         debug_assert!(i == 0 || i as usize == pattern.len());
+        // `Brackets` is open wherever a group of the matcher is, so a group that crosses a separator made this ask.
+        debug_assert!(
+            is_asked
+                || core::str::from_utf8(pattern).is_err()
+                || first_crossing_group(pattern).is_none()
+        );
         i = i.saturating_sub(1);
 
         if let Some(component) = Self::make_component(
@@ -2247,8 +2346,349 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             *end_byte_of_basename_excluding_special_syntax = (i + width).min(pattern_len);
         }
 
-        Ok(())
+        Ok(None)
     }
+}
+
+/// Returns `pattern` as the matcher reads it. For the walker a `\` is a separator on Windows. For the matcher it is an escape.
+fn for_matcher(pattern: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if cfg!(windows) && strings::contains_char(pattern, b'\\') {
+        let slash = |byte: &u8| if *byte == b'\\' { b'/' } else { *byte };
+        return pattern.iter().map(slash).collect::<Vec<u8>>().into();
+    }
+    pattern.into()
+}
+
+/// Returns where the first group of `pattern` that crosses a separator starts: one of its alternatives has a separator or a `**`, at any depth.
+#[cold]
+#[inline(never)]
+fn first_crossing_group(pattern: &[u8]) -> Option<u32> {
+    let pattern = &*for_matcher(pattern);
+    let shape = Shape::of(pattern);
+    let tokens = Tokens::new(pattern, &shape);
+    let mut at = 0;
+    while at < pattern.len() {
+        let (token, end) = tokens.at(at);
+        if let Token::Group { first } = token
+            && !shape.is_sequence_at(first)
+            && crosses_separator(&tokens, first..end - 1)
+        {
+            return Some(u32::try_from(at).expect("int cast"));
+        }
+        at = end;
+    }
+    None
+}
+
+/// Makes the tail of `pattern` and its component. `start_byte` is where the path segment of the first group that crosses a separator starts.
+#[cold]
+#[inline(never)]
+fn push_tail(
+    pattern_components: &mut Vec<Component>,
+    pattern: &[u8],
+    mut start_byte: u32,
+) -> Box<Tail> {
+    // The tail starts at the first `**` before the group, which reads every directory below it anyway. Then no other component is active with the tail.
+    let doubles = |it: &Component| it.syntax_hint == SyntaxHint::Double;
+    if let Some(first_double) = pattern_components.iter().position(doubles) {
+        start_byte = pattern_components[first_double].start;
+        pattern_components.truncate(first_double);
+    }
+    let text = for_matcher(&pattern[start_byte as usize..]);
+    let (tail, trailing_sep) = Tail::new(&text, start_byte != 0);
+    pattern_components.push(Component {
+        start: start_byte,
+        len: u32::try_from(pattern.len()).expect("int cast") - start_byte,
+        syntax_hint: SyntaxHint::Tail,
+        trailing_sep,
+        ..Default::default()
+    });
+    Box::new(tail)
+}
+
+/// What `{`, `(`, `[` and `\` have opened before a byte of a pattern, as far as one look at each byte tells. For a pattern that is valid UTF-8 it can say open when nothing is, and never the reverse.
+#[derive(Default)]
+struct Brackets {
+    /// One bit for each open group, the innermost lowest: 1 for `(`.
+    kinds: u64,
+    depth: u32,
+    /// Index of the first member of the open class, which a `]` can be. Zero if no class is open.
+    class_from: u32,
+    /// The byte before this index is escaped.
+    escaped_until: u32,
+    /// A closer did not fit its opener, or `kinds` is full. From then on every byte may be in a group.
+    is_unsure: bool,
+    /// No `]` is left, so a `[` is plain text.
+    has_no_class_end: bool,
+}
+
+impl Brackets {
+    /// Returns true if the byte at `at` may be in a group or in a class, or is escaped.
+    #[inline(always)]
+    fn may_be_open(&self, at: u32) -> bool {
+        self.depth != 0 || self.class_from != 0 || self.is_unsure || at < self.escaped_until
+    }
+
+    /// `c`, the byte at `at`, is one of `\`, `[`, `]`, `{`, `}`, `(`, `)`.
+    fn read(&mut self, pattern: &[u8], at: u32, c: u8) {
+        if at < self.escaped_until {
+            return;
+        }
+        if c == b'\\' {
+            self.escaped_until = at + 2;
+        } else if self.class_from != 0 {
+            // The first member of a class can be a `]`.
+            if c == b']' && at != self.class_from {
+                self.class_from = 0;
+            }
+        } else if c == b'[' {
+            if self.has_no_class_end {
+                return;
+            }
+            let after = &pattern[at as usize + 1..];
+            match strings::index_of_char(after, b']') {
+                Some(_) => self.class_from = at + 1 + u32::from(matches!(after[0], b'^' | b'!')),
+                None => self.has_no_class_end = true,
+            }
+        } else if c == b'{' || (c == b'(' && Self::is_after_group_prefix(pattern, at)) {
+            self.is_unsure |= self.depth >= u64::BITS;
+            self.kinds = (self.kinds << 1) | u64::from(c == b'(');
+            self.depth += 1;
+        } else if (c == b'}' || c == b')') && self.depth != 0 {
+            if self.kinds & 1 == u64::from(c == b')') {
+                self.kinds >>= 1;
+                self.depth -= 1;
+            } else {
+                self.is_unsure = true;
+            }
+        }
+    }
+
+    fn is_after_group_prefix(pattern: &[u8], at: u32) -> bool {
+        at != 0 && matches!(pattern[at as usize - 1], b'?' | b'*' | b'+' | b'@' | b'!')
+    }
+}
+
+/// What a pattern says from the first path segment in which a group crosses a separator, or from the first `**` before it. No set of components says that, so the matcher reads it, against the path of each entry below the directory that the tail starts in.
+struct Tail {
+    /// The pattern from that segment on, with `/` for every separator and no empty segment.
+    pattern: Box<[u8]>,
+    shape: Shape,
+    /// Says which directories can have a match below them, if the matcher can say that of the pattern.
+    below: Option<Below>,
+    /// A `**` or a group that repeats across separators is in it, so it can go through any number of directories.
+    is_unbounded: bool,
+    /// The whole pattern starts with a `!`: the tail matches what the rest of it does not.
+    is_negated: bool,
+    entered: core::cell::RefCell<Entered>,
+}
+
+/// The directory that a walk reads now, as its tail sees it.
+struct Entered {
+    /// The tail is active in the directory.
+    has_tail: bool,
+    /// The path of the directory below the one that the tail starts in, with a separator after it. The name of an entry goes after that.
+    path: Vec<u8>,
+    dir_len: usize,
+}
+
+impl Tail {
+    /// `text` is a pattern from where a path segment starts. `is_after_separator` is false if it is the whole pattern. Also returns true if the pattern ends with a separator: then it matches only directories, as `Component::trailing_sep` says.
+    fn new(text: &[u8], is_after_separator: bool) -> (Tail, bool) {
+        let bangs = crate::matcher::negations(text);
+        let mut pattern = Vec::with_capacity(text.len() + bangs);
+        if is_after_separator {
+            // Only a `!` that starts a whole pattern negates, but the matcher reads this part as one.
+            for _ in 0..bangs {
+                pattern.extend_from_slice(b"\\!");
+            }
+        } else {
+            // Two `!` negate nothing. Without them the matcher can say which directories have a match below them.
+            pattern.extend_from_slice(&text[..bangs % 2]);
+        }
+        let is_negated = !is_after_separator && bangs % 2 == 1;
+        let rest = &text[bangs..];
+        let mut brackets = Brackets::default();
+        let mut is_after_segment = false;
+        for (at, &byte) in rest.iter().enumerate() {
+            let at = u32::try_from(at).expect("int cast");
+            let ends_segment = byte == b'/' && !brackets.may_be_open(at);
+            if matches!(byte, b'\\' | b'[' | b']' | b'{' | b'}' | b'(' | b')') {
+                brackets.read(rest, at, byte);
+            }
+            // The components have no empty segment, so the tail has none: `a//b` is `a/b`.
+            if !(ends_segment && is_after_segment) {
+                pattern.push(byte);
+            }
+            is_after_segment = ends_segment;
+        }
+        let trailing_sep = is_after_segment;
+        if trailing_sep {
+            pattern.pop();
+        }
+        let shape = Shape::of(&pattern);
+        let tail = Tail {
+            below: Below::of(&pattern, &shape),
+            is_unbounded: is_unbounded(&Tokens::new(&pattern, &shape)),
+            is_negated,
+            entered: core::cell::RefCell::new(Entered {
+                has_tail: false,
+                path: Vec::with_capacity(128),
+                dir_len: 0,
+            }),
+            pattern: pattern.into_boxed_slice(),
+            shape,
+        };
+        (tail, trailing_sep)
+    }
+
+    /// Notes `dir_path` as the directory that the walk reads now. `below` is its `WorkItem::below_tail_len`.
+    fn enter(&self, dir_path: &[u8], below: u32, has_tail: bool) {
+        let is_separator = |byte: &u8| bun_core::path_sep::is_sep_native(*byte);
+        let mut entered = self.entered.borrow_mut();
+        entered.has_tail = has_tail;
+        if !has_tail {
+            return;
+        }
+        // The tail starts in this directory, unless a directory above has it.
+        let below = match below {
+            NOT_BELOW_TAIL => 0,
+            below => below as usize,
+        };
+        debug_assert!(below <= dir_path.len());
+        entered.path.clear();
+        (entered.path).extend_from_slice(&dir_path[dir_path.len() - below..]);
+        if !entered.path.last().is_none_or(is_separator) {
+            entered.path.push(b'/');
+        }
+        entered.dir_len = entered.path.len();
+    }
+
+    /// Returns `WorkItem::below_tail_len` for `path`, an entry of the directory that the walk reads now.
+    fn below(&self, path: &[u8]) -> u32 {
+        let entered = self.entered.borrow();
+        if !entered.has_tail {
+            return NOT_BELOW_TAIL;
+        }
+        let name_len = strings::basename(path).len();
+        // The directory of `path` is the one that the walk reads now.
+        debug_assert!({
+            let is_separator = |byte: &u8| bun_core::path_sep::is_sep_native(*byte);
+            let same = |(a, b): (&u8, &u8)| a == b || (is_separator(a) && is_separator(b));
+            let (parent, dir) = (
+                &path[..path.len() - name_len],
+                &entered.path[..entered.dir_len],
+            );
+            parent.len() >= dir.len() && parent.iter().rev().zip(dir.iter().rev()).all(same)
+        });
+        u32::try_from(entered.dir_len + name_len).expect("int cast")
+    }
+
+    /// For the entry `name` of the directory that the walk reads now: returns if the tail matches it and, for a directory, if a path below it can match.
+    #[cold]
+    #[inline(never)]
+    fn eval(&self, name: &[u8], is_dir: bool, dots: Dots) -> (bool, bool) {
+        let mut entered = self.entered.borrow_mut();
+        debug_assert!(entered.has_tail);
+        let dir_len = entered.dir_len;
+        let path = &mut entered.path;
+        path.truncate(dir_len);
+        path.extend_from_slice(name);
+        let matches = self.matches(path, dots);
+        if !is_dir {
+            return (matches, false);
+        }
+        path.push(b'/');
+        (matches, self.may_match_below(path, dots))
+    }
+
+    /// Returns true if the tail matches `path`, a path from the directory that the tail starts in.
+    fn matches(&self, path: &[u8], dots: Dots) -> bool {
+        (crate::matcher::match_prepared::<{ cfg!(windows) }>(
+            &self.pattern,
+            &self.shape,
+            path,
+            dots,
+        ))
+        .matches()
+    }
+
+    /// Returns false only if no path below the directory `path` matches. `path` ends with a separator.
+    fn may_match_below(&self, path: &[u8], dots: Dots) -> bool {
+        (self.below.as_ref())
+            .is_none_or(|below| below.may_match::<{ cfg!(windows) }>(&self.pattern, path, dots))
+    }
+}
+
+/// The tokens of a pattern, as the matcher reads them.
+struct Tokens<'a> {
+    pattern: &'a [u8],
+    shape: &'a Shape,
+    /// The first `[` that no `]` closes. The matcher reads to the end of the pattern to find that out, and no `[` after it is closed either.
+    no_class_from: core::cell::Cell<usize>,
+}
+
+impl<'a> Tokens<'a> {
+    fn new(pattern: &'a [u8], shape: &'a Shape) -> Tokens<'a> {
+        Tokens {
+            pattern,
+            shape,
+            no_class_from: core::cell::Cell::new(usize::MAX),
+        }
+    }
+
+    /// Returns the token that starts at `at` and the index after it.
+    fn at(&self, at: usize) -> (Token, usize) {
+        if self.pattern[at] == b'[' && at >= self.no_class_from.get() {
+            return (Token::Literal, at + 1);
+        }
+        let (token, end) = crate::matcher::token_at(self.pattern, at, self.shape);
+        if token == Token::Literal && self.pattern[at] == b'[' {
+            self.no_class_from.set(at);
+        }
+        (token, end)
+    }
+}
+
+/// Returns true if `part`, the inside of a group, can match a separator: it has one, a `**`, or a class or an escape with one, at any depth.
+fn crosses_separator(tokens: &Tokens, part: core::ops::Range<usize>) -> bool {
+    let pattern = tokens.pattern;
+    let mut at = part.start;
+    while at < part.end {
+        let (token, end) = tokens.at(at);
+        match token {
+            Token::Literal if pattern[at] == b'/' => return true,
+            Token::Globstar => return true,
+            Token::Class if strings::contains_char(&pattern[at..end], b'/') => return true,
+            Token::Escape if pattern[at + 1] == b'/' => return true,
+            // Go into it: its closer and the separators of its alternatives are literals here.
+            Token::Group { first } => at = first,
+            _ => at = end,
+        }
+    }
+    false
+}
+
+/// Returns true if the pattern has a `**`, or a `+(..)` or `*(..)` that crosses a separator.
+fn is_unbounded(tokens: &Tokens) -> bool {
+    // The end of the outermost open group that repeats.
+    let mut repeats_until = 0;
+    let mut at = 0;
+    while at < tokens.pattern.len() {
+        let (token, end) = tokens.at(at);
+        match token {
+            Token::Globstar => return true,
+            Token::Literal if tokens.pattern[at] == b'/' && at < repeats_until => return true,
+            Token::Group { first } => {
+                if matches!(tokens.pattern[at], b'+' | b'*') {
+                    repeats_until = repeats_until.max(end);
+                }
+                at = first;
+            }
+            _ => at = end,
+        }
+    }
+    false
 }
 
 // Drop frees Vec/Box fields automatically.

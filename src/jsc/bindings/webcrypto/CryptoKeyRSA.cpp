@@ -135,7 +135,7 @@ JsonWebKey CryptoKeyRSA::exportJwk() const
 {
     JsonWebKey result {};
     result.kty = "RSA"_s;
-    result.key_ops = usages();
+    result.key_ops = toJwkKeyOps(usages());
     result.ext = extractable();
 
     auto rsaComponents = exportData();

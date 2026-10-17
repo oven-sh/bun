@@ -146,6 +146,8 @@ void CryptoAlgorithmECDH::importKey(CryptoKeyFormat format, KeyData&& data, cons
             exceptionCallback(DataError, "Invalid JWK \"use\" Parameter"_s);
             return;
         }
+        if (!validateJwkKeyOps(key, usages, exceptionCallback))
+            return;
 
         // A present-but-wrong "crv" is a curve mismatch; an absent "crv" falls through
         // to importJwk's "Invalid keyData".

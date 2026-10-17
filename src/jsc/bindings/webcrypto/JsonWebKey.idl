@@ -30,7 +30,7 @@
     // The following fields are defined in Section 3.1 of JSON Web Key
     DOMString kty;
     DOMString use;
-    sequence<CryptoKeyUsage> key_ops;
+    sequence<DOMString> key_ops;
     DOMString alg;
 
     // The following fields are defined in JSON Web Key Parameters Registration

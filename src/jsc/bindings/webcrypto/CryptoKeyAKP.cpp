@@ -325,7 +325,7 @@ ExceptionOr<JsonWebKey> CryptoKeyAKP::exportJwk() const
     JsonWebKey result;
     result.kty = "AKP"_s;
     result.alg = CryptoAlgorithmRegistry::singleton().name(algorithmIdentifier());
-    result.key_ops = usages();
+    result.key_ops = toJwkKeyOps(usages());
     result.ext = extractable();
 
     if (type() == CryptoKeyType::Private) {

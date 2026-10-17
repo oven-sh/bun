@@ -6633,6 +6633,7 @@ impl VirtualMachine {
         };
 
         if let Some((mapping, display_url, external_code)) = resolved {
+            let names_original_file = display_url.is_some();
             if let Some(src) = display_url {
                 frames[top].source_url = src;
             }
@@ -6664,7 +6665,9 @@ impl VirtualMachine {
                 original_source.source_code.into_utf8()
             };
 
-            if enable_source_code_preview.get() && code.slice().is_empty() {
+            // The executed text is not the original file's: a preview of it under the
+            // original file's name and position would mislead, so there is none.
+            if enable_source_code_preview.get() && code.slice().is_empty() && !names_original_file {
                 exception.collect_source_lines(error_instance, global);
             }
 

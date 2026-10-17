@@ -39,6 +39,7 @@ pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<
             map_name = Box::from(&b"data: URL"[..]);
         }
         Ok(None) | Err(_) => {
+            let url = strip_query_and_fragment(url);
             let map_path: Box<[u8]> = if let Some(path) = path_from_file_url(url) {
                 path
             } else if url_scheme(url).is_some() || url.starts_with(b"//") {
@@ -47,29 +48,17 @@ pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<
             } else {
                 // A virtual module (plugin namespace) has no directory to resolve against.
                 let source_dir = source_dir?;
-                let url = strip_query_and_fragment(url);
-                let decoded;
-                let url: &[u8] = if bun_core::strings::contains_char(url, b'%') {
-                    match bun_url::PercentEncoding::decode_alloc(url) {
-                        Ok(d) => {
-                            decoded = d;
-                            &decoded
-                        }
-                        Err(_) => url,
-                    }
-                } else {
-                    url
-                };
+                let decoded = bun_url::PercentEncoding::decode_lenient_alloc(url);
                 let mut buf = bun_paths::path_buffer_pool::get();
                 Box::from(bun_paths::resolve_path::join_abs_string_buf_checked::<
                     bun_paths::resolve_path::platform::Auto,
-                >(source_dir, &mut buf[..], &[url])?)
+                >(source_dir, &mut buf[..], &[&decoded])?)
             };
 
             json = match bun_sys::File::read_from(bun_sys::Fd::cwd(), &map_path) {
                 Ok(bytes) => bytes,
                 // Published packages routinely name a `.map` they do not ship; like esbuild, say nothing.
-                Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
+                Err(err) if matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {
                     bun_core::scoped_log!(
                         InputSourceMap,
                         "missing source map {}",

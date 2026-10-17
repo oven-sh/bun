@@ -306,7 +306,7 @@ Bytecode compilation moves parsing overhead for large input files from runtime t
 
 The `--minify` argument reduces the size of the transpiled output code. For a large application, this can save megabytes of space. For smaller applications, it might still improve start time a little.
 
-The `--sourcemap` argument embeds a sourcemap compressed with zstd, so that errors & stacktraces point to their original locations instead of the transpiled location. Bun decompresses & resolves the sourcemap automatically when an error occurs.
+The `--sourcemap` argument embeds a sourcemap compressed with zstd, so that errors & stacktraces point to their original locations instead of the transpiled location. Bun decompresses & resolves the sourcemap automatically when an error occurs. If an input file carries its own `//# sourceMappingURL=` comment (for example the output of an earlier build step), that map is composed into the embedded one, so the stack trace names the original source file.
 
 The `--bytecode` argument enables bytecode compilation. Every time you run JavaScript code in Bun, JavaScriptCore (the engine) compiles your source code into bytecode. `--bytecode` moves that parsing work from runtime to bundle time, which shortens startup.
 

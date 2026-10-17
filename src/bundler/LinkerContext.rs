@@ -1287,14 +1287,27 @@ impl<'a> LinkerContext<'a> {
 
         j.push_static(b"],\n  \"sourcesContent\": [");
 
-        for (i, &index) in source_id_map.keys().iter().enumerate() {
-            j.push_static(if i == 0 { b"\n    " } else { b",\n    " });
-            j.push_static(match input_source_maps[index as usize].as_deref() {
-                None => quoted_source_map_contents[index as usize]
-                    .as_deref()
-                    .unwrap_or(b""),
-                Some(input_source_map) => &input_source_map.quoted_sources_content,
-            });
+        let mut first_content = true;
+        macro_rules! push_content {
+            ($quoted:expr) => {{
+                j.push_static(if first_content { b"\n    " } else { b",\n    " });
+                first_content = false;
+                j.push_static($quoted);
+            }};
+        }
+        for &index in source_id_map.keys() {
+            match input_source_maps[index as usize].as_deref() {
+                None => push_content!(
+                    quoted_source_map_contents[index as usize]
+                        .as_deref()
+                        .unwrap_or(b"")
+                ),
+                Some(input_source_map) => {
+                    for quoted in input_source_map.quoted_sources_content.iter() {
+                        push_content!(quoted);
+                    }
+                }
+            }
         }
         j.push_static(b"\n  ],\n  \"mappings\": \"");
 

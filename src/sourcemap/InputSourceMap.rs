@@ -13,8 +13,8 @@ pub struct InputSourceMap {
     mappings: mapping::List,
     /// `sources` with `sourceRoot` applied and relative entries resolved against the map's directory.
     pub sources: Box<[InputSource]>,
-    /// `sourcesContent` per source as JSON (`"..."` or `null`), joined with `",\n    "`.
-    pub quoted_sources_content: Box<[u8]>,
+    /// `sourcesContent` per source as JSON: `"..."` or `null`.
+    pub quoted_sources_content: Box<[Box<[u8]>]>,
 }
 
 pub struct InputSource {
@@ -241,13 +241,8 @@ impl InputSourceMap {
             mappings.sort();
         }
 
-        let mut quoted = MutableString::init_empty();
-        for (i, (source, content)) in sources.iter().zip(&sources_content).enumerate() {
-            if i > 0 {
-                quoted
-                    .append(b",\n    ")
-                    .map_err(|_| ParseError::msg("out of memory"))?;
-            }
+        let mut quoted_sources_content: Vec<Box<[u8]>> = Vec::with_capacity(sources.len());
+        for (source, content) in sources.iter().zip(&sources_content) {
             let from_disk;
             let content: Option<&[u8]> = match content {
                 Some(content) => Some(content),
@@ -257,19 +252,22 @@ impl InputSourceMap {
                 }
                 None => None,
             };
-            match content {
-                Some(content) => bun_core::quote_for_json(content, &mut quoted, false)
-                    .map_err(|_| ParseError::msg("out of memory"))?,
-                None => quoted
-                    .append(b"null")
-                    .map_err(|_| ParseError::msg("out of memory"))?,
-            }
+            quoted_sources_content.push(match content {
+                Some(content) => {
+                    let mut quoted = MutableString::init(content.len() + 2)
+                        .map_err(|_| ParseError::msg("out of memory"))?;
+                    bun_core::quote_for_json(content, &mut quoted, false)
+                        .map_err(|_| ParseError::msg("out of memory"))?;
+                    quoted.list.into_boxed_slice()
+                }
+                None => Box::from(&b"null"[..]),
+            });
         }
 
         Ok(Some(InputSourceMap {
             mappings,
             sources: sources.into_boxed_slice(),
-            quoted_sources_content: quoted.list.into_boxed_slice(),
+            quoted_sources_content: quoted_sources_content.into_boxed_slice(),
         }))
     }
 
@@ -304,10 +302,7 @@ fn resolve_source(name: &[u8], source_root: &[u8], map_dir: Option<&[u8]>) -> In
 
     if let Some(path) = path_from_file_url(&name) {
         return InputSource {
-            path: match map_dir {
-                Some(map_dir) => join_path(map_dir, &path).unwrap_or(path),
-                None => path,
-            },
+            path,
             is_file: true,
         };
     }
@@ -317,7 +312,10 @@ fn resolve_source(name: &[u8], source_root: &[u8], map_dir: Option<&[u8]>) -> In
     let Some(map_dir) = map_dir else {
         return verbatim(&name);
     };
-    match join_path(map_dir, &percent_decode(&name)) {
+    match join_path(
+        map_dir,
+        &bun_url::PercentEncoding::decode_lenient_alloc(&name),
+    ) {
         Some(path) => InputSource {
             path,
             is_file: true,
@@ -355,51 +353,17 @@ pub fn url_scheme(url: &[u8]) -> Option<&[u8]> {
     None
 }
 
-/// The percent-decoded path of a `file:` URL; `None` for other URLs or a remote host.
+/// The absolute file-system path a `file:` URL names (query and fragment dropped); `None` for any other URL.
 pub fn path_from_file_url(url: &[u8]) -> Option<Box<[u8]>> {
     let scheme = url_scheme(url)?;
-    if !scheme.eq_ignore_ascii_case(b"file") {
+    // `file:rel.map` (no `/` after the scheme) is not a file URL, as in esbuild.
+    if !scheme.eq_ignore_ascii_case(b"file") || url.get(scheme.len() + 1) != Some(&b'/') {
         return None;
     }
-    let mut rest = &url[scheme.len() + 1..];
-    if let Some(after_slashes) = rest.strip_prefix(b"//") {
-        let host_end = bun_core::strings::index_of_char_usize(after_slashes, b'/')
-            .unwrap_or(after_slashes.len());
-        let host = &after_slashes[..host_end];
-        if !host.is_empty() && !host.eq_ignore_ascii_case(b"localhost") {
-            return None;
-        }
-        rest = &after_slashes[host_end..];
+    let path = bun_url::path_from_file_url(&bun_core::String::borrow_utf8(url));
+    if path.is_dead() {
+        return None;
     }
-    let decoded = percent_decode(rest);
-    // `file:///C:/dir/file.js` names `C:/dir/file.js` on Windows.
-    if cfg!(windows)
-        && decoded.len() >= 3
-        && decoded[0] == b'/'
-        && decoded[1].is_ascii_alphabetic()
-        && decoded[2] == b':'
-    {
-        return Some(Box::from(&decoded[1..]));
-    }
-    Some(Box::from(&*decoded))
-}
-
-fn percent_decode(text: &[u8]) -> Cow<'_, [u8]> {
-    if !bun_core::strings::contains_char(text, b'%') {
-        return Cow::Borrowed(text);
-    }
-    let mut out = Vec::with_capacity(text.len());
-    let mut i = 0;
-    while i < text.len() {
-        if text[i] == b'%' && i + 2 < text.len() {
-            if let Some(byte) = bun_core::fmt::hex_pair_value(text[i + 1], text[i + 2]) {
-                out.push(byte);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(text[i]);
-        i += 1;
-    }
-    Cow::Owned(out)
+    let path = path.to_owned_slice();
+    bun_paths::is_absolute(&path).then(|| path.into_boxed_slice())
 }

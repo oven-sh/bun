@@ -3479,7 +3479,7 @@ impl PragmaArg {
                 break;
             }
             let (c, width) = bun_core::lexer::char_and_size(url_and_rest_of_code, pos);
-            if is_whitespace(c) || Self::is_newline(c) {
+            if strings::is_js_whitespace(c as u32) {
                 url_len = pos;
                 break;
             }

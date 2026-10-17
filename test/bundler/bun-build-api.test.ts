@@ -14,6 +14,7 @@ import {
 } from "harness";
 import path, { join } from "path";
 import { SourceMapConsumer } from "source-map";
+import { pathToFileURL } from "url";
 import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
@@ -1027,6 +1028,42 @@ describe("Bun.build", () => {
       [`Unsupported JSX runtime: "bogus"`, 2, 16, 5],
       [`Unsupported JSX runtime: "fake"`, 3, 16, 4],
     ]);
+  });
+
+  // A `file:` URL in a `sourceMappingURL` comment names the sidecar by absolute
+  // path. Its query is dropped, like the query of a relative sidecar path.
+  test.concurrent("an input source map named by a file: URL is composed", async () => {
+    const map = JSON.stringify({
+      version: 3,
+      sources: ["../src/lib.ts"],
+      sourcesContent: ["export function f(): never {\n  throw new Error('MARK');\n}\n"],
+      names: [],
+      mappings: "AAAO,gBAAS,IAAU;AACxB,QAAM,IAAI,MAAM,MAAM;AACxB;",
+    });
+    using dir = tempDir("build-api-file-url-input-map", {
+      "lib/lib.js.map": map,
+      "lib/localhost.js.map": map,
+      "entry.js": `import { f as a } from "./lib/lib.js";\nimport { f as b } from "./lib/localhost.js";\n[a, b][Date.now() % 1]();\n`,
+    });
+    const root = String(dir);
+    const fileUrl = pathToFileURL(join(root, "lib/lib.js.map")).href;
+    const localhostUrl = fileUrl.replace("file://", "file://localhost").replace("lib.js.map", "localhost.js.map");
+    writeFileSync(
+      join(root, "lib/lib.js"),
+      `export function f() {\n  throw new Error("MARK");\n}\n//# sourceMappingURL=${fileUrl}?v=1\n`,
+    );
+    writeFileSync(
+      join(root, "lib/localhost.js"),
+      `export function f() {\n  throw new Error("MARK");\n}\n//# sourceMappingURL=${localhostUrl}\n`,
+    );
+    const build = await Bun.build({
+      entrypoints: [join(root, "entry.js")],
+      outdir: join(root, "out"),
+      sourcemap: "external",
+    });
+    expect(build.logs).toEqual([]);
+    const output = JSON.parse(await Bun.file(join(root, "out/entry.js.map")).text());
+    expect(output.sources).toEqual(["../src/lib.ts", "../src/lib.ts", "../entry.js"]);
   });
 
   test.concurrent("fails instead of truncating when a module is too deeply nested to print", async () => {

@@ -1530,7 +1530,9 @@ describe("bundler", () => {
       "/a.js": `console.log("a1");\nconsole.log("a2");\n`,
       "/b.js": `console.log("b1");\nconsole.log("b2");\n`,
       // `ab.js` is `a.js` and `b.js` concatenated, described by an index map
-      // with one section per file. The second section has no `sourcesContent`.
+      // with one section per file. The sections are listed out of offset
+      // order, so the first line of `ab.js` maps to source 1 and the parsed
+      // mappings need a sort. The `b.js` section has no `sourcesContent`.
       "/ab.js":
         `console.log("a1");\nconsole.log("a2");\nconsole.log("b1");\nconsole.log("b2");\n` +
         `//# sourceMappingURL=data:application/json;base64,${Buffer.from(
@@ -1538,11 +1540,10 @@ describe("bundler", () => {
             version: 3,
             sections: [
               {
-                offset: { line: 0, column: 0 },
+                offset: { line: 2, column: 0 },
                 map: {
                   version: 3,
-                  sources: ["a.js"],
-                  sourcesContent: [`console.log("a1");\nconsole.log("a2");\n`],
+                  sources: ["b.js"],
                   names: [],
                   mappings: encodeSourceMappings([
                     [
@@ -1559,10 +1560,11 @@ describe("bundler", () => {
                 },
               },
               {
-                offset: { line: 2, column: 0 },
+                offset: { line: 0, column: 0 },
                 map: {
                   version: 3,
-                  sources: ["b.js"],
+                  sources: ["a.js"],
+                  sourcesContent: [`console.log("a1");\nconsole.log("a2");\n`],
                   names: [],
                   mappings: encodeSourceMappings([
                     [
@@ -1588,10 +1590,10 @@ describe("bundler", () => {
     sourceMap: "external",
     async onAfterBundle(api) {
       const map = JSON.parse(api.readFile("/out/entry.js.map"));
-      expect(map.sources).toEqual(["../a.js", "../b.js", "../entry.js"]);
+      expect(map.sources).toEqual(["../b.js", "../a.js", "../entry.js"]);
       expect(map.sourcesContent).toEqual([
-        `console.log("a1");\nconsole.log("a2");\n`,
         api.readFile("/b.js"),
+        `console.log("a1");\nconsole.log("a2");\n`,
         api.readFile("/entry.js"),
       ]);
       expect(
@@ -1751,6 +1753,95 @@ describe("bundler", () => {
     outdir: "/out",
     onAfterBundle(api) {
       expect(api.readFile("/out/entry.js")).not.toInclude("sourceMappingURL");
+    },
+  });
+  itBundled("edgecase/InputSourceMapQueryAndPercentEncoding", {
+    files: {
+      // `?`/`#` are dropped from the URL. `file:rel` is not a file URL and is
+      // ignored. A percent-encoded sidecar name decodes.
+      "/lib/rel.js": inputSourceMapFixture.js.replaceAll("MARK", "REL1") + `//# sourceMappingURL=rel.js.map#hash\n`,
+      "/lib/rel.js.map": inputSourceMapFixture.map({ sources: ["../src/rel.ts"] }),
+      "/lib/bad.js": inputSourceMapFixture.js.replaceAll("MARK", "BAD1") + `//# sourceMappingURL=file:bad.js.map\n`,
+      "/lib/bad.js.map": inputSourceMapFixture.map({ sources: ["../src/bad.ts"] }),
+      "/lib/with space.js":
+        inputSourceMapFixture.js.replaceAll("MARK", "SPC1") + `//# sourceMappingURL=with%20space.js.map\n`,
+      "/lib/with space.js.map": inputSourceMapFixture.map({ sources: ["../src/with%20space.ts"] }),
+      "/entry.js": `import { f as b } from "./lib/rel.js";\nimport { f as c } from "./lib/bad.js";\nimport { f as d } from "./lib/with space.js";\n[b, c, d][Date.now() % 1]({ x: 1 });\n`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    sourceMap: "external",
+    async onAfterBundle(api) {
+      const map = JSON.parse(api.readFile("/out/entry.js.map"));
+      expect(map.sources).toEqual(["../src/rel.ts", "../lib/bad.js", "../src/with space.ts", "../entry.js"]);
+      expect(await originalPositionsFor(api, "/out/entry.js", [`"REL1"`, `"BAD1"`, `"SPC1"`])).toEqual({
+        '"REL1"': "../src/rel.ts:6:18",
+        '"BAD1"': "../lib/bad.js:3:18",
+        '"SPC1"': "../src/with space.ts:6:18",
+      });
+    },
+  });
+  itBundled("edgecase/InputSourceMapNotADirectory", {
+    files: {
+      // `notdir` is a file, so the sidecar path cannot exist: silent, like a missing one.
+      "/lib/lib.js": inputSourceMapFixture.js + `//# sourceMappingURL=notdir/lib.js.map\n`,
+      "/lib/notdir": "",
+      "/entry.js": `import { f } from "./lib/lib.js";\nf({ x: 1 });\n`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    sourceMap: "external",
+    onAfterBundle(api) {
+      expect(JSON.parse(api.readFile("/out/entry.js.map")).sources).toEqual(["../lib/lib.js", "../entry.js"]);
+    },
+  });
+  itBundled("edgecase/InputSourceMapUrlSourcesAtRuntime", {
+    files: {
+      // A `sources` entry that is a URL (webpack, rollup) is kept as written.
+      // The runtime must print it as written too, not joined onto the bundle's directory.
+      "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "dist/index.js" }),
+      "/node_modules/pkg/dist/index.js": inputSourceMapFixture.js + `//# sourceMappingURL=index.js.map\n`,
+      "/node_modules/pkg/dist/index.js.map": inputSourceMapFixture.map({ sources: ["webpack://pkg/./src/index.ts"] }),
+      "/entry.js": `import { f } from "pkg";\nf({ x: 1 });\n`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    target: "bun",
+    sourceMap: "linked",
+    run: {
+      exitCode: 1,
+      validate({ stderr }) {
+        expect(stderr).toInclude("error: MARK");
+        expect(stderr).toInclude("webpack://pkg/./src/index.ts:6:9");
+        expect(stderr).not.toInclude("out/webpack:");
+      },
+    },
+    onAfterBundle(api) {
+      expect(JSON.parse(api.readFile("/out/entry.js.map")).sources).toEqual([
+        "webpack://pkg/./src/index.ts",
+        "../entry.js",
+      ]);
+    },
+  });
+  itBundled("edgecase/InputSourceMapNoOriginalOnDiskAtRuntime", {
+    files: {
+      // The map has no `sourcesContent` and the original is not on disk, so
+      // the runtime has no text to preview. It must not show the bundle's
+      // lines under the original file's name and position.
+      "/lib/lib.js": inputSourceMapFixture.js + `//# sourceMappingURL=lib.js.map\n`,
+      "/lib/lib.js.map": inputSourceMapFixture.map({ sourcesContent: undefined }),
+      "/entry.js": `import { f } from "./lib/lib.js";\nf({ x: 1 });\n`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    target: "bun",
+    sourceMap: "linked",
+    run: {
+      exitCode: 1,
+      validate({ stderr }) {
+        expect(stderr).toMatch(/src[\\/]lib\.ts:6:9/);
+        expect(stderr).not.toInclude("| ");
+      },
     },
   });
   itBundled("edgecase/NoUselessConstructorTS", {

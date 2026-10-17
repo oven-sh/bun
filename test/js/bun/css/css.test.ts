@@ -3,9 +3,10 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
+  attrTest,
   cssTest,
   cssTestTodo,
   indoc,
@@ -1887,6 +1888,169 @@ describe("css tests", () => {
             `,
       { safari: Some(16 << 16) },
     );
+  });
+
+  // border-image, mask-border and mask-box-image share one value serializer.
+  describe("border-image, mask-border and mask-box-image values", () => {
+    // Every component has its initial value: the value is `none`, never empty.
+    for (const value of [
+      "none",
+      "NONE",
+      "stretch",
+      "100%",
+      "none 100%",
+      "100% / 1",
+      "100% / 1 / 0 stretch",
+      "none 100% / 1 / 0 stretch",
+    ]) {
+      minify_test(`.foo { border-image: ${value} }`, ".foo{border-image:none}");
+    }
+    for (const name of [
+      "-webkit-border-image",
+      "-moz-border-image",
+      "-o-border-image",
+      "mask-box-image",
+      "-webkit-mask-box-image",
+    ]) {
+      minify_test(`.foo { ${name}: none }`, `.foo{${name}:none}`);
+    }
+    for (const value of ["none", "alpha", "none alpha", "stretch"]) {
+      minify_test(`.foo { mask-border: ${value} }`, ".foo{mask-border:none}");
+    }
+
+    cssTest(
+      `
+      .foo {
+        border-image: none;
+      }
+    `,
+      indoc`
+      .foo {
+        border-image: none;
+      }
+    `,
+    );
+
+    minify_test(".foo { border-image: none !important }", ".foo{border-image:none!important}");
+    minify_test(
+      ".foo { -webkit-border-image: none; border-image: none !important }",
+      ".foo{-webkit-border-image:none;border-image:none!important}",
+    );
+    minify_test(
+      `
+      .foo {
+        border-image-source: none;
+        border-image-slice: 100%;
+        border-image-width: 1;
+        border-image-outset: 0;
+        border-image-repeat: stretch;
+      }
+    `,
+      ".foo{border-image:none}",
+    );
+    minify_test(
+      ".foo { border-image: url(border.png) 1 } .foo.active { border-image: none }",
+      ".foo{border-image:url(border.png) 1}.foo.active{border-image:none}",
+    );
+    minify_test(".foo { border: 1px solid red; border-image: none }", ".foo{border:1px solid red;border-image:none}");
+    minify_test(".foo { border-image: none; border: 1px solid red }", ".foo{border:1px solid red}");
+    // parcel-bundler/lightningcss#1146: an unparsed longhand flushes the buffered shorthand first.
+    minify_test(
+      ".test1 { border-image: none; border-image-source: unknow } .test2 { border-image: none; border-image-repeat: unknow }",
+      ".test1{border-image:none;border-image-source:unknow}.test2{border-image:none;border-image-repeat:unknow}",
+    );
+    minify_test(
+      ".foo { border-image: none; border-image-source: var(--img) }",
+      ".foo{border-image:none;border-image-source:var(--img)}",
+    );
+
+    // No source: the value starts with the first component that is printed, not with a space.
+    minify_test(".foo { border-image: 10 }", ".foo{border-image:10}");
+    minify_test(".foo { border-image: round }", ".foo{border-image:round}");
+    minify_test(".foo { border-image: 100% / / 2 }", ".foo{border-image:100%//2}");
+    minify_test(".foo { border-image: 10 fill / 2 / 3 round space }", ".foo{border-image:10 fill/2/3 round space}");
+    minify_test(".foo { -webkit-mask-box-image: 10 }", ".foo{-webkit-mask-box-image:10}");
+    minify_test(".foo { mask-border: 10 luminance }", ".foo{mask-border:10 luminance}");
+    minify_test(".foo { mask-border: luminance }", ".foo{mask-border:none luminance}");
+
+    // A value with a source is printed as before.
+    minify_test(".foo { border-image: url(test.png) 60 }", ".foo{border-image:url(test.png) 60}");
+    minify_test(".foo { border-image: url(test.png) round }", ".foo{border-image:url(test.png) round}");
+    minify_test(
+      ".foo { border-image: url(foo.png) 10 40 fill / 10px round }",
+      ".foo{border-image:url(foo.png) 10 40 fill/10px round}",
+    );
+    minify_test(".foo { border-image: url(foo.png) 100% / / 3 }", ".foo{border-image:url(foo.png) 100%//3}");
+    minify_test(".foo { mask-border: url('border-mask.png') 25; }", ".foo{mask-border:url(border-mask.png) 25}");
+    minify_test(
+      ".foo { mask-border: url(border-mask.png) 25 luminance }",
+      ".foo{mask-border:url(border-mask.png) 25 luminance}",
+    );
+    minify_test(
+      ".foo { mask-border: url(border-mask.png) luminance }",
+      ".foo{mask-border:url(border-mask.png) luminance}",
+    );
+
+    // Each of these rules prints its declarations from a different place.
+    minify_test("@media print { .foo { border-image: none } }", "@media print{.foo{border-image:none}}");
+    minify_test(
+      "@keyframes k { from { border-image: none } to { border-image: url(a.png) 10 } }",
+      "@keyframes k{0%{border-image:none}to{border-image:url(a.png) 10}}",
+    );
+    minify_test("@page { border-image: none }", "@page{border-image:none}");
+    minify_test(
+      "@container style(border-image: none) { .foo { color: red } }",
+      "@container style(border-image:none){.foo{color:red}}",
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: none;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-image: none;
+        -moz-border-image: none;
+        -o-border-image: none;
+        border-image: none;
+      }
+    `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        opera: 12 << 16,
+      },
+    );
+
+    test("style attribute", () => {
+      expect([
+        attrTest("border-image: none", "", false),
+        attrTest("border-image: 10; mask-border: luminance", "", false),
+        attrTest("border-image: none !important", "", true),
+      ]).toEqual([
+        "border-image: none",
+        "border-image: 10; mask-border: none luminance",
+        "border-image:none!important",
+      ]);
+    });
+
+    test("Bun.build keeps a `border-image: none` reset", async () => {
+      using dir = tempDir("css-border-image-none", {
+        "a.css": ".btn { border-image: linear-gradient(red, blue) 1 }\n.btn.plain { border-image: none }\n",
+      });
+      const outputs: string[] = [];
+      for (const minify of [false, true]) {
+        const result = await Bun.build({ entrypoints: [join(String(dir), "a.css")], minify });
+        outputs.push(await result.outputs[0].text());
+      }
+      // Without `minify` the first line is a comment with the path of the input file.
+      expect(outputs.map(css => css.replace(/^\/\*.*\*\/\n/, ""))).toEqual([
+        ".btn {\n  border-image: linear-gradient(red, #00f) 1;\n}\n\n.btn.plain {\n  border-image: none;\n}\n",
+        ".btn{border-image:linear-gradient(red,#00f) 1}.btn.plain{border-image:none}\n",
+      ]);
+    });
   });
 
   describe("margin", () => {

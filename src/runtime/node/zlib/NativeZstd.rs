@@ -458,11 +458,48 @@ mod _impl {
             }
         }
 
+        /// Keeps the dictionary and parameters, as node does since v26.10.0 (nodejs/node#65867).
         pub(crate) fn reset(&mut self) -> Error {
-            // Matches node's `ZstdContext::ResetStream()`, which calls `Init()`
-            // with its default (empty) dictionary — a reset drops the dictionary.
-            // `init` frees the previous context itself.
-            self.init(self.pledged_src_size, None)
+            // No `..`: a field added to `Context` must be kept or cleared here to compile.
+            let Self {
+                mode,
+                state,
+                pledged_src_size,
+                flush: _,
+                input: _,
+                output: _,
+                remaining: _,
+            } = *self;
+            // JS can reach this with no context: init() was never called, or it failed.
+            let Some(state) = state else {
+                return Error::OK;
+            };
+            let result = match mode {
+                NodeMode::ZSTD_COMPRESS => {
+                    // SAFETY: state is a valid CCtx set by init().
+                    let result =
+                        unsafe { c::ZSTD_CCtx_reset(state.cast(), c::ZSTD_reset_session_only) };
+                    if c::ZSTD_isError(result) > 0 {
+                        result
+                    } else {
+                        // A session reset clears the pledged size: zstd keeps it for one frame.
+                        // SAFETY: state is a valid CCtx set by init().
+                        unsafe {
+                            c::ZSTD_CCtx_setPledgedSrcSize(state.cast(), pledged_src_size as _)
+                        }
+                    }
+                }
+                // SAFETY: state is a valid DCtx set by init().
+                NodeMode::ZSTD_DECOMPRESS => unsafe {
+                    c::ZSTD_DCtx_reset(state.cast(), c::ZSTD_reset_session_only)
+                },
+                _ => unreachable!(),
+            };
+            if c::ZSTD_isError(result) == 0 {
+                return Error::OK;
+            }
+            self.remaining = result as u64;
+            self.get_error_info()
         }
 
         /// Frees the Zstd encoder/decoder state without changing mode.

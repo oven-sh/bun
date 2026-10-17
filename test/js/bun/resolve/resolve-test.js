@@ -74,10 +74,8 @@ it("import.meta.resolveSync", async () => {
     join(import.meta.path, "../node_modules/package-json-exports/foo/bar.js"),
   );
 
-  // if they never exported /package.json, allow reading from it too
-  expect(import.meta.resolveSync("package-json-exports/package.json")).toBe(
-    join(import.meta.path, "../node_modules/package-json-exports/package.json"),
-  );
+  // "./package.json" is gated by the exports map like every other subpath (Node parity)
+  expect(() => import.meta.resolveSync("package-json-exports/package.json")).toThrow(ResolveMessage);
 
   // if an unnecessary ".js" extension was added, try against /baz
   expect(import.meta.resolveSync("package-json-exports/baz.js")).toBe(

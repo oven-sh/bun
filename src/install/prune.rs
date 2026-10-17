@@ -1241,6 +1241,8 @@ fn plan_hoisted(
     // The parent tree and the folder name of each such package that has a tree of its own. A tree
     // comes after its parent.
     let mut bundlers: Vec<(tree::Id, &[u8])> = Vec::new();
+    // Their trees, and every tree below those.
+    let mut skipped: Vec<tree::Id> = Vec::new();
 
     let mut visited = handle_oom(DynamicBitSet::init_empty(pkg_res.len()));
     for tree_idx in 0..hoisted.folders.len() {
@@ -1248,13 +1250,14 @@ fn plan_hoisted(
         if folder_path.is_empty() {
             continue;
         }
-        if tree_idx != 0
-            && bundlers.contains(&(
-                trees[tree_idx].parent,
-                trees[tree_idx].folder_name(deps, buf),
-            ))
-        {
-            continue;
+        if tree_idx != 0 {
+            let tree = &trees[tree_idx];
+            if skipped.contains(&tree.parent)
+                || bundlers.contains(&(tree.parent, tree.folder_name(deps, buf)))
+            {
+                skipped.push(tree_idx as tree::Id);
+                continue;
+            }
         }
         let importer = tree_importer.get(tree_idx).copied().unwrap_or(0);
         if selection.is_some_and(|sel| importer != 0 && !sel.selected.is_set(importer as usize)) {

@@ -632,19 +632,6 @@ pub mod fs {
     }
 
     impl<'a> PathName<'a> {
-        /// Returns the extension of `path` including the leading `.`, or `""`
-        /// for extensionless / dotfile basenames.
-        pub fn find_extname(path: &[u8]) -> &[u8] {
-            let start = last_index_of_sep(path).map(|i| i + 1).unwrap_or(0);
-            let base = &path[start..];
-            if let Some(dot) = crate::strings::last_index_of_char(base, b'.') {
-                if dot > 0 {
-                    return &base[dot..];
-                }
-            }
-            b""
-        }
-
         #[inline]
         pub fn ext_without_leading_dot(&self) -> &'a [u8] {
             if !self.ext.is_empty() && self.ext[0] == b'.' {

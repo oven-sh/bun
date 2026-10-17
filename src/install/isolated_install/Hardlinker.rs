@@ -58,6 +58,10 @@ impl Hardlinker {
     /// Links every file of the walk. A file whose link the file system
     /// refuses is copied instead. `Ok(true)`: the file system refuses every
     /// link from `src` to `dest`, and the walk copied from that file on.
+    ///
+    /// The copies are made in the link loop, behind `copy_the_rest`. A second
+    /// loop for them would be a second caller of `dest.append`, and the
+    /// compiler then stops inlining it into the link loop.
     pub(crate) fn link(&mut self) -> sys::Result<bool> {
         if crate::PackageManager::verbose_install() {
             bun_core::pretty_errorln!(
@@ -94,6 +98,7 @@ impl Hardlinker {
                 (off, len)
             };
 
+            let mut copy_the_rest = false;
             while let Some(entry) = self.walker.next()? {
                 // A `path.save()` ResetScope would hold `&mut Path` and keep
                 // `self.src`/`self.dest` exclusively borrowed for the rest of
@@ -117,15 +122,46 @@ impl Hardlinker {
                         EntryKind::File => {
                             let mut destfile_path_buf = bun_paths::w_path_buffer_pool::get();
                             let mut destfile_path_buf2 = bun_paths::w_path_buffer_pool::get();
-                            let Some(destfile_path) = Self::dest_file_path(
-                                self.dest.slice(),
-                                &cwd_buf[dest_cwd_off..dest_cwd_off + dest_cwd_len],
-                                &mut destfile_path_buf[..],
-                                &mut destfile_path_buf2[..],
-                            ) else {
-                                break 'body Err(name_too_long());
+                            // `dest` may already be absolute (global virtual store
+                            // entries live under the cache, not cwd); only prefix the
+                            // working-directory path when it's project-relative.
+                            // Stash the dest slice once so the `&self` borrow
+                            // doesn't span the buffer-mut below.
+                            let dest_slice: &[u16] = self.dest.slice();
+                            let dest_parts: &[&[u16]] = if !dest_slice.is_empty()
+                                && bun_paths::Platform::Windows.is_absolute_t::<u16>(dest_slice)
+                            {
+                                &[dest_slice]
+                            } else {
+                                &[
+                                    &cwd_buf[dest_cwd_off..dest_cwd_off + dest_cwd_len],
+                                    dest_slice,
+                                ]
                             };
+                            // The join and the NT prefix below write into the buffers unchecked.
+                            let needed_len =
+                                dest_parts.iter().map(|part| part.len() + 1).sum::<usize>()
+                                    + bun_paths::windows::NT_OBJECT_PREFIX.len();
+                            if needed_len > destfile_path_buf2.len() {
+                                break 'body Err(name_too_long());
+                            }
+                            let joined = bun_paths::resolve_path::join_string_buf_w_same::<
+                                bun_paths::platform::Windows,
+                            >(
+                                &mut destfile_path_buf[..], dest_parts
+                            );
+                            let destfile_path = bun_paths::strings::add_nt_path_prefix_if_needed(
+                                &mut destfile_path_buf2[..],
+                                joined,
+                            );
 
+                            if copy_the_rest {
+                                break 'body Self::copy_file(
+                                    self.src.slice_z(),
+                                    &self.dest,
+                                    destfile_path,
+                                );
+                            }
                             let Err(link_err1) = sys::link_w(self.src.slice_z(), destfile_path)
                             else {
                                 break 'body Ok(());
@@ -196,15 +232,9 @@ impl Hardlinker {
                             match copy_refused_link(refused, move || {
                                 Self::copy_file(src, dest, destfile_path)
                             }) {
-                                Ok(false) => Ok(()),
-                                Ok(true) => {
-                                    return self
-                                        .copy_rest(
-                                            src_saved_len,
-                                            dest_saved_len,
-                                            &cwd_buf[dest_cwd_off..dest_cwd_off + dest_cwd_len],
-                                        )
-                                        .map(|()| true);
+                                Ok(rest) => {
+                                    copy_the_rest = rest;
+                                    Ok(())
                                 }
                                 Err(err) => Err(err),
                             }
@@ -219,12 +249,13 @@ impl Hardlinker {
                 result?;
             }
 
-            return Ok(false);
+            return Ok(copy_the_rest);
         }
 
         #[cfg(not(windows))]
         {
             let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
+            let mut copy_the_rest = false;
             while let Some(entry) = self.walker.next()? {
                 // A `dest.save()` ResetScope would hold `&mut Path` and keep
                 // `self.dest` exclusively borrowed across the body. Capture
@@ -241,6 +272,14 @@ impl Hardlinker {
                         EntryKind::Directory => Fd::cwd().make_path(self.dest.slice()),
                         EntryKind::File => {
                             let (dir, name) = (entry.dir, entry.basename);
+                            if copy_the_rest {
+                                break 'body Self::copy_file(
+                                    dir,
+                                    name,
+                                    self.dest.slice_z(),
+                                    &mut copy_file_state,
+                                );
+                            }
                             let Err(link_err1) =
                                 sys::linkat(dir, name, Fd::cwd(), self.dest.slice_z())
                             else {
@@ -273,11 +312,9 @@ impl Hardlinker {
                             match copy_refused_link(refused, move || {
                                 Self::copy_file(dir, name, dest, state)
                             }) {
-                                Ok(false) => Ok(()),
-                                Ok(true) => {
-                                    return self
-                                        .copy_rest(dest_saved_len, &mut copy_file_state)
-                                        .map(|()| true);
+                                Ok(rest) => {
+                                    copy_the_rest = rest;
+                                    Ok(())
                                 }
                                 Err(err) => Err(err),
                             }
@@ -291,39 +328,8 @@ impl Hardlinker {
                 result?;
             }
 
-            Ok(false)
+            Ok(copy_the_rest)
         }
-    }
-
-    /// The absolute NT path of `dest`. `None`: it does not fit the buffers.
-    #[cfg(windows)]
-    fn dest_file_path<'a>(
-        dest: &[u16],
-        cwd: &[u16],
-        buf: &mut [u16],
-        buf2: &'a mut [u16],
-    ) -> Option<&'a bun_core::WStr> {
-        // `dest` may already be absolute (global virtual store
-        // entries live under the cache, not cwd); only prefix the
-        // working-directory path when it's project-relative.
-        let dest_parts: &[&[u16]] =
-            if !dest.is_empty() && bun_paths::Platform::Windows.is_absolute_t::<u16>(dest) {
-                &[dest]
-            } else {
-                &[cwd, dest]
-            };
-        // The join and the NT prefix below write into the buffers unchecked.
-        let needed_len = dest_parts.iter().map(|part| part.len() + 1).sum::<usize>()
-            + bun_paths::windows::NT_OBJECT_PREFIX.len();
-        if needed_len > buf2.len() {
-            return None;
-        }
-        let joined = bun_paths::resolve_path::join_string_buf_w_same::<bun_paths::platform::Windows>(
-            buf, dest_parts,
-        );
-        Some(bun_paths::strings::add_nt_path_prefix_if_needed(
-            buf2, joined,
-        ))
     }
 
     /// Copies one file of the walk to `destfile_path`, the absolute NT path
@@ -345,53 +351,6 @@ impl Hardlinker {
             .map_err(|code| sys::Error::from_win32(code, sys::Tag::copyfile))
     }
 
-    /// The file system refused a link. Copies what is left of the walk.
-    /// `src_len` and `dest_len` cut the refused entry's path off the two paths.
-    #[cfg(windows)]
-    #[cold]
-    fn copy_rest(&mut self, src_len: usize, dest_len: usize, cwd: &[u16]) -> sys::Result<()> {
-        self.src.set_length(src_len);
-        self.dest.set_length(dest_len);
-        while let Some(entry) = self.walker.next()? {
-            let src_saved_len = self.src.len();
-            let dest_saved_len = self.dest.len();
-
-            let result: sys::Result<()> = 'body: {
-                if self.src.append(entry.path.as_slice()).is_err()
-                    || self.dest.append(entry.path.as_slice()).is_err()
-                {
-                    break 'body Err(name_too_long());
-                }
-
-                match entry.kind {
-                    EntryKind::Directory => {
-                        sys::make_path::make_path::<u16>(&sys::Dir::cwd(), self.dest.slice())
-                    }
-                    EntryKind::File => {
-                        let mut destfile_path_buf = bun_paths::w_path_buffer_pool::get();
-                        let mut destfile_path_buf2 = bun_paths::w_path_buffer_pool::get();
-                        let Some(destfile_path) = Self::dest_file_path(
-                            self.dest.slice(),
-                            cwd,
-                            &mut destfile_path_buf[..],
-                            &mut destfile_path_buf2[..],
-                        ) else {
-                            break 'body Err(name_too_long());
-                        };
-                        Self::copy_file(self.src.slice_z(), &self.dest, destfile_path)
-                    }
-                    _ => Ok(()),
-                }
-            };
-
-            self.src.set_length(src_saved_len);
-            self.dest.set_length(dest_saved_len);
-
-            result?;
-        }
-        Ok(())
-    }
-
     /// Copies one file of the walk to `dest`.
     #[cfg(not(windows))]
     fn copy_file(
@@ -409,44 +368,5 @@ impl Hardlinker {
             }
             result => result,
         }
-    }
-
-    /// The file system refused a link. Copies what is left of the walk.
-    /// `dest_len` cuts the refused entry's path off `dest`. `link` leaves that
-    /// to this function: a `set_length` call in `link` that is not inlined
-    /// makes each access to `dest` in the link loop cost one more instruction.
-    #[cfg(not(windows))]
-    #[cold]
-    fn copy_rest(
-        &mut self,
-        dest_len: usize,
-        copy_file_state: &mut bun_sys::copy_file::CopyFileState,
-    ) -> sys::Result<()> {
-        self.dest.set_length(dest_len);
-        while let Some(entry) = self.walker.next()? {
-            let dest_saved_len = self.dest.len();
-
-            let result: sys::Result<()> = 'body: {
-                if self.dest.append(entry.path.as_bytes()).is_err() {
-                    break 'body Err(name_too_long());
-                }
-
-                match entry.kind {
-                    EntryKind::Directory => Fd::cwd().make_path(self.dest.slice()),
-                    EntryKind::File => Self::copy_file(
-                        entry.dir,
-                        entry.basename,
-                        self.dest.slice_z(),
-                        copy_file_state,
-                    ),
-                    _ => Ok(()),
-                }
-            };
-
-            self.dest.set_length(dest_saved_len);
-
-            result?;
-        }
-        Ok(())
     }
 }

@@ -159,6 +159,39 @@ for (const [name, inspect] of process.versions.bun
   });
 }
 
+const thrownBy = fn => {
+  try {
+    fn();
+  } catch (error) {
+    return error;
+  }
+};
+
+// node rethrows what a nested value throws (the catch of formatRaw, lib/internal/util/inspect.js).
+test("util.inspect rethrows the error of a nested inspect.custom", () => {
+  const error = new Error("nested hook");
+  const hook = {
+    [customSymbol]() {
+      throw error;
+    },
+  };
+  expect(thrownBy(() => util.inspect({ a: hook }))).toBe(error);
+  expect(thrownBy(() => util.inspect([[hook]]))).toBe(error);
+
+  // `getters: true` catches what the getter or its value throws. It can be null.
+  const throwsNull = {
+    [customSymbol]() {
+      throw null;
+    },
+  };
+  const viaGetter = {
+    get g() {
+      return { a: throwsNull };
+    },
+  };
+  expect(util.inspect(viaGetter, { getters: true })).toBe("{ g: [Getter: <Inspection threw (null)>] }");
+});
+
 describe("Web Streams [nodejs.util.inspect.custom]", () => {
   const inspect = util.inspect;
 
@@ -329,5 +362,139 @@ describe("Web Streams [nodejs.util.inspect.custom]", () => {
     // The prototype hosting the method is never passed to it, so inspecting it
     // formats as a plain object instead of throwing.
     expect(inspect(globalThis[className].prototype)).toContain("encoding: [Getter]");
+  });
+});
+
+// The expected texts are node v26.3.0's.
+describe("URL", () => {
+  const href = "http://example.com/a?k=v";
+  class MyURL extends URL {}
+
+  // node's formatRaw() prints a URL that no hook formatted as its href
+  // (lib/internal/util/inspect.js). node:assert and Console#dir ask for that.
+  describe("with customInspect: false", () => {
+    const raw = { customInspect: false };
+
+    test("prints the href", () => {
+      expect(util.inspect(new URL(href), raw)).toBe(href);
+      expect(util.inspect([new URL(href)], raw)).toBe(`[ ${href} ]`);
+      expect(util.inspect({ url: new URL(href) }, raw)).toBe(`{ url: ${href} }`);
+      expect(util.inspect({ a: { b: { c: { d: new URL(href) } } } }, { ...raw, depth: null })).toBe(
+        `{\n  a: { b: { c: { d: ${href} } } }\n}`,
+      );
+      expect(util.formatWithOptions(raw, "%O", new URL(href))).toBe(href);
+    });
+
+    test("prints the href of a subclass without the class name", () => {
+      expect(util.inspect(new MyURL(href), raw)).toBe(href);
+    });
+
+    test("prints own properties after the href", () => {
+      const url = new URL("http://example.com/own");
+      url.extra = 1;
+      expect(util.inspect(url, raw)).toBe("http://example.com/own { extra: 1 }");
+    });
+
+    test("prints the href that the URL has now", () => {
+      const url = new URL("http://example.com/a");
+      url.pathname = "/changed";
+      url.searchParams.set("q", "1");
+      url.hash = "h";
+      expect(util.inspect(url, raw)).toBe("http://example.com/changed?q=1#h");
+    });
+
+    test("prints the href up to the depth and URL {} past it", () => {
+      expect(util.inspect(new URL(href), { ...raw, depth: 0 })).toBe(href);
+      expect(util.inspect({ a: new URL(href) }, { ...raw, depth: 1 })).toBe(`{ a: ${href} }`);
+      expect(util.inspect({ a: new URL(href) }, { ...raw, depth: 0 })).toBe("{ a: URL {} }");
+      expect(util.inspect(new URL(href), { ...raw, depth: -1 })).toBe("URL {}");
+    });
+
+    test("prints the accessors of the prototype after the href with showHidden", () => {
+      class WithGetter extends URL {
+        get foo() {
+          return 1;
+        }
+      }
+      expect(util.inspect(new WithGetter(href), { ...raw, showHidden: true })).toStartWith(
+        `${href} {\n  [foo]: [Getter],\n  href: [Getter/Setter],`,
+      );
+      expect(util.formatWithOptions(raw, "%o", new URL(href))).toStartWith(`${href} {\n  href: [Getter/Setter],`);
+    });
+
+    test("prints the href when the hook is shadowed or returns the URL", () => {
+      const shadowed = new URL(href);
+      Object.defineProperty(shadowed, customSymbol, { value: undefined });
+      expect(util.inspect(shadowed)).toBe(href);
+
+      const returnsItself = new URL(href);
+      Object.defineProperty(returnsItself, customSymbol, {
+        value() {
+          return this;
+        },
+      });
+      expect(util.inspect(returnsItself)).toBe(href);
+    });
+
+    test("does not ask globalThis.URL what a URL is", () => {
+      const url = new URL(href);
+      const NativeURL = globalThis.URL;
+      globalThis.URL = class URL {};
+      try {
+        expect(util.inspect(url, raw)).toBe(href);
+      } finally {
+        globalThis.URL = NativeURL;
+      }
+    });
+
+    // node's isURL() reads `href` of every value that gets to its URL arm. Here only a URL is read.
+    test("tests the native URL class before reading href", () => {
+      let reads = 0;
+      class Link {
+        get href() {
+          reads++;
+          throw new Error("href getter");
+        }
+      }
+      class Sub extends URL {}
+      expect(util.inspect(new Link(), raw)).toBe("Link {}");
+      expect(util.inspect(Object.create(URL.prototype), raw)).toBe("URL {}");
+      expect(util.format("%o", Sub)).toStartWith(
+        "<ref *1> [class Sub extends URL] {\n  [length]: 0,\n  [name]: 'Sub',\n  [prototype]: URL {\n    [constructor]: [Circular *1],\n    href: [Getter/Setter],",
+      );
+      // util.inspect unwraps one Proxy. The Proxy that is left is not a URL, and the getter of URL does not take it.
+      expect(thrownBy(() => util.inspect(new Proxy(new Proxy(new URL(href), {}), {}), raw))).toBeUndefined();
+      expect(reads).toBe(0);
+
+      class NumberHref extends URL {
+        get href() {
+          return 42;
+        }
+      }
+      expect(util.inspect(new NumberHref(href), raw)).toBe("NumberHref [URL] {}");
+
+      // node tests `typeof href === "string"`, so it prints an empty href too: the value has no text.
+      class EmptyHref extends URL {
+        get href() {
+          return "";
+        }
+      }
+      expect(util.inspect(new EmptyHref(href), raw)).toBe("");
+      expect(util.inspect({ a: new EmptyHref(href) }, raw)).toBe("{ a:  }");
+    });
+
+    test("rethrows the error of the href getter of a URL, like node", () => {
+      const error = new Error("href getter");
+      class Broken extends URL {
+        get href() {
+          throw error;
+        }
+      }
+      expect(thrownBy(() => util.inspect(new Broken(href), raw))).toBe(error);
+      expect(thrownBy(() => util.inspect({ a: new Broken(href) }, raw))).toBe(error);
+      expect(thrownBy(() => util.inspect([new Broken(href)], raw))).toBe(error);
+      // One level past the default depth: the read comes before the depth test.
+      expect(thrownBy(() => util.inspect({ a: { b: { c: new Broken(href) } } }, raw))).toBe(error);
+    });
   });
 });

@@ -409,14 +409,17 @@ describe("fs.mkdir - recursive with a relative path that names the cwd", () => {
     if (process.platform === "win32") inputs.push(".\\\\", "sub\\\\..");
     const out = {};
     for (const p of inputs) {
+      // A result of undefined becomes null so JSON keeps the key. An error
+      // without a code keeps its message so it cannot read as success.
+      const fail = e => e.code ?? String(e);
       const row = {};
-      try { row.sync = fs.mkdirSync(p, { recursive: true }); } catch (e) { row.sync = e.code; }
-      try { row.promises = await fs.promises.mkdir(p, { recursive: true }); } catch (e) { row.promises = e.code; }
-      row.callback = await new Promise(resolve => fs.mkdir(p, { recursive: true }, (err, result) => resolve(err ? err.code : result)));
+      try { row.sync = fs.mkdirSync(p, { recursive: true }) ?? null; } catch (e) { row.sync = fail(e); }
+      try { row.promises = (await fs.promises.mkdir(p, { recursive: true })) ?? null; } catch (e) { row.promises = fail(e); }
+      row.callback = await new Promise(resolve => fs.mkdir(p, { recursive: true }, (err, result) => resolve(err ? fail(err) : result ?? null)));
       row.exists = fs.existsSync(p);
       out[p] = row;
     }
-    try { fs.mkdirSync("", { recursive: true }); out.empty = "ok"; } catch (e) { out.empty = e.code; }
+    try { fs.mkdirSync("", { recursive: true }); out.empty = null; } catch (e) { out.empty = e.code ?? String(e); }
     console.log(JSON.stringify(out));
   `;
 
@@ -430,7 +433,7 @@ describe("fs.mkdir - recursive with a relative path that names the cwd", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const row = { sync: undefined, promises: undefined, callback: undefined, exists: true };
+    const row = { sync: null, promises: null, callback: null, exists: true };
     const expected: Record<string, unknown> = {
       ".": row,
       "./": row,
@@ -440,7 +443,7 @@ describe("fs.mkdir - recursive with a relative path that names the cwd", () => {
       empty: "ENOENT",
     };
     if (isWindows) Object.assign(expected, { ".\\": row, "sub\\..": row });
-    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(JSON.parse(stdout)).toStrictEqual(expected);
     expect(exitCode).toBe(0);
   });
 });

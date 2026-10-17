@@ -2114,7 +2114,9 @@ function getNodeHTTPServerSocket() {
       return (this[kHandle] ?? this.#peer)?.authorizationError ?? null;
     }
 
+    // Like Node's net.Socket, for a tunnel: the handle holds the event loop while it reads and is ref'd. https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1621-L1646
     ref() {
+      this[kHandle]?.setRef(true);
       return this;
     }
 
@@ -2214,6 +2216,7 @@ function getNodeHTTPServerSocket() {
     }
 
     unref() {
+      this[kHandle]?.setRef(false);
       return this;
     }
 

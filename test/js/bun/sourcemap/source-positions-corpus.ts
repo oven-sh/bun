@@ -203,7 +203,7 @@ export const cases: Record<string, Case> = {
   },
   // An implicit constructor, the initializers of the fields and a static block are not functions of the file.
   "classes.ts": {
-    functions: "1/2",
+    functions: "2/3",
     lines: `
  4|function v() {
  4|  return 1;
@@ -223,8 +223,20 @@ export const cases: Record<string, Case> = {
  0|    return 1;
  -|  }
  -|}
+ 1|export class Returns extends Implicit {
+ 1|  constructor(x: object) {
+ 1|    super();
+ 1|    try {
+ 1|      return x;
+ 0|    } catch {
+ 0|      v();
+ -|    }
+ 0|    v();
+ -|  }
+ -|}
  1|new Fields();
  1|new Fields();
+ 1|new Returns({});
 `,
   },
   "loops.ts": {

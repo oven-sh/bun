@@ -643,6 +643,8 @@ When Bun's S3 API throws an error, the error has a `code` property with one of t
 
 When the S3 service itself returns an error (that is, not Bun), the error is an `S3Error` instance: an `Error` instance with the name `"S3Error"`.
 
+`S3Client` and `S3File` do not follow redirects. When the service answers with a 3xx, the operation rejects with the `S3Error` for that response, for example `PermanentRedirect` or `TemporaryRedirect`. Set `region` or `endpoint` to the location of the bucket and call the operation again.
+
 ## `S3Client` static methods
 
 The `S3Client` class provides several static methods for interacting with S3.
@@ -875,6 +877,8 @@ const response = await fetch("s3://my-bucket/my-file.txt", {
   },
 });
 ```
+
+`fetch` does not follow a redirect for an `s3://` URL. It resolves with the 3xx response, and you can read the `Location` header from it.
 
 ### UTF-8, UTF-16, and BOM (byte order mark)
 

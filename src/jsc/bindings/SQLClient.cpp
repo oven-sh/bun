@@ -15,8 +15,6 @@
 #include <JavaScriptCore/GCDeferralContext.h>
 #include "GCDefferalContext.h"
 #include "wtf/Assertions.h"
-#include <wtf/dragonbox/dragonbox.h>
-#include <wtf/dtoa.h>
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/ArrayAllocationProfile.h"
@@ -98,6 +96,8 @@ enum class DataCellTag : uint8_t {
     UnsignedInteger = 11,
     UnsignedBigint = 12,
     Numbers = 13,
+    Int32Array = 14,
+    Float32Array = 15,
 };
 
 enum class BunResultMode : uint8_t {
@@ -254,6 +254,24 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         } else {
             for (uint32_t i = 0; i < length; i++)
                 array->initializeIndexWithoutBarrier(initializationScope, i, values[i], indexingType);
+        }
+        return array;
+    }
+    case DataCellTag::Int32Array:
+    case DataCellTag::Float32Array: {
+        size_t length = cell.value.raw.length;
+        JSArrayBufferView* array = cell.tag == DataCellTag::Int32Array
+            ? static_cast<JSArrayBufferView*>(JSInt32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeInt32>(), length))
+            : JSFloat32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat32>(), length);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        // Each element is 4 bytes of size and 4 of value, big-endian.
+        auto* elements = static_cast<const uint8_t*>(cell.value.raw.ptr);
+        auto* values = static_cast<uint32_t*>(array->vector());
+        for (size_t i = 0; i < length; i++) {
+            uint32_t value;
+            memcpy(&value, elements + i * 8 + 4, sizeof(value));
+            values[i] = std::byteswap(value);
         }
         return array;
     }
@@ -496,37 +514,6 @@ extern "C" EncodedJSValue SQL__createStatementDescription(JSC::JSGlobalObject* g
     statement->putDirect(vm, Identifier::fromString(vm, "types"_s), typesArray);
     statement->putDirect(vm, Identifier::fromString(vm, "columns"_s), columnsArray);
     return JSValue::encode(statement);
-}
-
-// What the shortest decimal form of `value` reads as: 0.1f gives 0.1, where a conversion gives 0.10000000149011612.
-extern "C" double Bun__Float32__toShortestDouble(float value)
-{
-    static constexpr double powersOfTen[] = {
-        1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
-        1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22
-    };
-    constexpr int32_t largestExactPower = std::size(powersOfTen) - 1;
-    if (!std::isfinite(value) || !value)
-        return value;
-
-    // As the server's float4out: a decimal halfway between two floats, which reads as `value` only when ties go to
-    // even, does not count. Ties to odd leave it out for an even significand, ties to even for an odd one.
-    namespace rounding = WTF::dragonbox::policy::decimal_to_binary_rounding;
-    auto decimal = std::bit_cast<uint32_t>(value) & 1
-        ? WTF::dragonbox::to_decimal(value, rounding::nearest_to_even)
-        : WTF::dragonbox::to_decimal(value, rounding::nearest_to_odd);
-    // A double holds the 9 digits at most and the power of ten exactly, so the one operation rounds once.
-    double result = decimal.significand;
-    if (decimal.exponent >= 0 && decimal.exponent <= largestExactPower)
-        result *= powersOfTen[decimal.exponent];
-    else if (decimal.exponent < 0 && decimal.exponent >= -largestExactPower)
-        result /= powersOfTen[-decimal.exponent];
-    else {
-        WTF::NumberToStringBuffer buffer;
-        size_t parsedLength;
-        return WTF::parseDouble(byteCast<Latin1Character>(WTF::numberToStringAndSize(value, buffer)), parsedLength);
-    }
-    return decimal.is_negative ? -result : result;
 }
 
 extern "C" uint32_t JSC__JSObject__maxInlineCapacity = JSC::JSFinalObject::maxInlineCapacity;

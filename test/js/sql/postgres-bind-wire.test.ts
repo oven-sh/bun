@@ -215,7 +215,7 @@ describe("named statements", () => {
 
   test("the columns that have a decoder for it are asked for in binary, the rest in text", async () => {
     await sql.unsafe(`select $1 /* formats: params=${OID.int4} cols=${columns} */`, [1]);
-    expect(resultFormats(drain())).toEqual([[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0]]);
+    expect(resultFormats(drain())).toEqual([[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0]]);
   });
 
   test("raw() asks for the columns in binary that it has always handed out in binary", async () => {

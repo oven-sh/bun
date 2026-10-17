@@ -277,11 +277,6 @@ fn parse_array(
     Ok(cell)
 }
 
-unsafe extern "C" {
-    /// What the shortest decimal form of `value` reads as, which is what the server prints for a float4.
-    safe fn Bun__Float32__toShortestDouble(value: f32) -> f64;
-}
-
 fn take<const SIZE: usize>(rest: &mut &[u8]) -> Result<[u8; SIZE]> {
     let (head, tail) = rest
         .split_first_chunk::<SIZE>()
@@ -338,7 +333,7 @@ fn binary_level(element: types::Tag, lengths: &[usize], rest: &mut &[u8]) -> Res
             JSValue::js_number_from_int32(i32::from_be_bytes(bytes))
         }),
         T::float4 => binary_numbers(*length, rest, |bytes| {
-            double(Bun__Float32__toShortestDouble(f32::from_be_bytes(bytes)))
+            double(f32::from_be_bytes(bytes).into())
         }),
         T::float8 => binary_numbers(*length, rest, |bytes| double(f64::from_be_bytes(bytes))),
         _ => Err(AnyPostgresError::UnknownFormatCode),
@@ -348,6 +343,7 @@ fn binary_level(element: types::Tag, lengths: &[usize], rest: &mut &[u8]) -> Res
 /// What the server's `array_send` writes.
 fn binary_array(element: types::Tag, mut rest: &[u8]) -> Result<SQLDataCell> {
     let dimensions = u32::from_be_bytes(take(&mut rest)?) as usize;
+    // Set also for an array that had a NULL once.
     let _has_nulls: [u8; 4] = take(&mut rest)?;
     let oid = u32::from_be_bytes(take(&mut rest)?);
     if dimensions > MAX_ARRAY_DIMENSIONS || types::Tag::from_oid(oid) != element {
@@ -362,6 +358,20 @@ fn binary_array(element: types::Tag, mut rest: &[u8]) -> Result<SQLDataCell> {
             .ok_or(AnyPostgresError::InvalidBinaryData)?;
         // JS arrays start at 0.
         let _lower_bound: [u8; 4] = take(&mut rest)?;
+    }
+    // A typed array has one dimension and no place for a NULL.
+    let typed = match element {
+        types::Tag::int4 => Some(Tag::Int32Array),
+        types::Tag::float4 => Some(Tag::Float32Array),
+        _ => None,
+    };
+    if let Some(tag) = typed
+        && dimensions <= 1
+        && let (elements, []) = rest.as_chunks::<8>()
+        && elements.len() == lengths[0]
+        && elements.iter().all(|wire| wire[..4] == [0, 0, 0, 4])
+    {
+        return Ok(SQLDataCell::typed_array(tag, elements));
     }
     let mut cell = binary_level(element, &lengths[..dimensions], &mut rest)?;
     if !rest.is_empty() {
@@ -385,6 +395,12 @@ fn from_binary(tag: types::Tag, bytes: &[u8]) -> Result<SQLDataCell> {
                 .try_into()
                 .map_err(|_| AnyPostgresError::UnsupportedIntegerSize)?;
             Ok(SQLDataCell::int4(i32::from_be_bytes(bytes)))
+        }
+        T::float4 => {
+            let bytes: [u8; 4] = bytes
+                .try_into()
+                .map_err(|_| AnyPostgresError::InvalidBinaryData)?;
+            Ok(SQLDataCell::float8(f32::from_be_bytes(bytes).into()))
         }
         T::float8 => {
             let bytes: [u8; 8] = bytes

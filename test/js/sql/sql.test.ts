@@ -254,12 +254,12 @@ if (isDockerServiceEnabled("postgres_plain")) {
 
         {
           const [{ x }] = await sql`select ${sql.array([100000, -2147483648, 2147483647], "INT")} as x`;
-          expect(x).toEqual([100000, -2147483648, 2147483647]);
+          expect(x).toEqual(new Int32Array([100000, -2147483648, 2147483647]));
         }
         {
           const [{ x }] =
             await sql`select ${sql.array(Int32Array.from([100000, -2147483648, 2147483647]) as any, "INT")} as x`;
-          expect(x).toEqual([100000, -2147483648, 2147483647]);
+          expect(x).toEqual(new Int32Array([100000, -2147483648, 2147483647]));
         }
       });
 
@@ -1032,7 +1032,7 @@ if (isDockerServiceEnabled("postgres_plain")) {
     // t("Empty array", async () => [true, Array.isArray((await sql`select ${sql.array([], 1009)} as x`)[0].x)]);
 
     test("string arg with ::int -> Array<int>", async () =>
-      expect((await sql`select ${"{1,2,3}"}::int[] as x`)[0].x).toEqual([1, 2, 3]));
+      expect((await sql`select ${"{1,2,3}"}::int[] as x`)[0].x).toEqual(new Int32Array([1, 2, 3])));
 
     // t("Array of Integer", async () => ["3", (await sql`select ${sql.array([1, 2, 3])} as x`)[0].x[2]]);
 
@@ -3873,7 +3873,7 @@ CREATE TABLE ${table_name} (
           { a: [4, 5, 6], b: 3 },
         ]);
         const binary_mode = await reserved`select * from ${table_name} where b = ${2}`;
-        expect(binary_mode.map(row => row)).toEqual([{ a: [1, 2, 3], b: 2 }]);
+        expect(binary_mode.map(row => row)).toEqual([{ a: new Int32Array([1, 2, 3]), b: 2 }]);
       }
     });
     test("reserve connection", async () => {

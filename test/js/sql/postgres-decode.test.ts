@@ -1,4 +1,5 @@
-// What a PostgreSQL value reads as in JS. It has to be the same on every path a result takes, in text or in binary.
+// What a PostgreSQL value reads as in JS. It has to be the same on every path a result takes, in text or in binary,
+// but for float4, int4[] and float4[].
 import { SQL } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, describeWithContainer } from "harness";
@@ -9,7 +10,7 @@ function show(value: unknown): string {
   if (typeof value === "bigint") return value + "n";
   if (typeof value === "string") return JSON.stringify(value);
   if (value instanceof Date) return `Date(${Number.isNaN(value.getTime()) ? "Invalid" : value.toISOString()})`;
-  if (ArrayBuffer.isView(value)) return `${value.constructor.name}(${Array.from(value as Uint8Array).join(",")})`;
+  if (ArrayBuffer.isView(value)) return `${value.constructor.name}(${Array.from(value as Uint8Array, show).join(",")})`;
   if (Array.isArray(value)) return `[${value.map(show).join(",")}]`;
   if (typeof value === "object" && value !== null) {
     return `{${Object.entries(value)
@@ -31,15 +32,6 @@ const scalars: Table = [
   [`'1'::xid`, `1`],
   [`'5'::xid8`, `"5"`],
 
-  // The shortest text that gives the same float4, which is what the server prints.
-  [`0.1::float4`, `0.1`],
-  [`3.14159::float4`, `3.14159`],
-  [`123456.789::float4`, `123456.79`],
-  [`16777217::float4`, `16777216`],
-  [`1e-40::float4`, `1e-40`],
-  [`'NaN'::float4`, `NaN`],
-  [`'-Infinity'::float4`, `-Infinity`],
-  [`'-0'::float4`, `-0`],
   [`0.1::float8`, `0.1`],
   [`1e-7::float8`, `1e-7`],
   [`5e-324::float8`, `5e-324`],
@@ -98,21 +90,12 @@ const scalars: Table = [
 ];
 
 const arrays: Table = [
-  [`'{1,2,3}'::int4[]`, `[1,2,3]`],
-  [`'{}'::int4[]`, `[]`],
-  [`'{1,NULL,3}'::int4[]`, `[1,null,3]`],
-  [`'{2147483647,-2147483648}'::int4[]`, `[2147483647,-2147483648]`],
-  [`'{{1,2},{3,4}}'::int4[]`, `[[1,2],[3,4]]`],
-  [`'{{{{{{1}}}}}}'::int4[]`, `[[[[[[1]]]]]]`],
   // The bounds are not part of a JS array.
-  [`'[0:2]={1,2,3}'::int4[]`, `[1,2,3]`],
+  [`'[0:2]={1,2,3}'::int2[]`, `[1,2,3]`],
   [`'[0:1][2:3]={{1,2},{3,4}}'::int4[]`, `[[1,2],[3,4]]`],
   [`'[-1:0]={a,b}'::text[]`, `["a","b"]`],
   [`(select indkey::int2[] from pg_index where indexrelid = 'pg_class_relname_nsp_index'::regclass)`, `[2,3]`],
 
-  [`'{1.5,0.1,NULL}'::float4[]`, `[1.5,0.1,null]`],
-  [`'{NaN,Infinity,-Infinity,-0}'::float4[]`, `[NaN,Infinity,-Infinity,-0]`],
-  [`array[0.0000001::float4, 1e20::float4]`, `[1e-7,100000000000000000000]`],
   [`'{1.1,-0,NULL}'::float8[]`, `[1.1,-0,null]`],
   [`'{NaN,Infinity,-Infinity}'::float8[]`, `[NaN,Infinity,-Infinity]`],
   [`array[0.0000001::float8, 1e20::float8]`, `[1e-7,100000000000000000000]`],
@@ -277,6 +260,139 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     });
   }
 
+  // These three read as they always have: by the format that the value arrives in.
+  describe("float4, int4[] and float4[]", () => {
+    type ByFormat = [expression: string, text: string, binary: string][];
+    const values: ByFormat = [
+      [`0.1::float4`, `0.1`, `0.10000000149011612`],
+      [`0.3::float4`, `0.3`, `0.30000001192092896`],
+      [`3.14159::float4`, `3.14159`, `3.141590118408203`],
+      [`123456.789::float4`, `123456.79`, `123456.7890625`],
+      [`16777217::float4`, `16777216`, `16777216`],
+      [`1e-40::float4`, `1e-40`, `9.99994610111476e-41`],
+      [`1e-45::float4`, `1e-45`, `1.401298464324817e-45`],
+      [`3.4028235e38::float4`, `3.4028235e+38`, `3.4028234663852886e+38`],
+      [`1.5::float4`, `1.5`, `1.5`],
+      [`'NaN'::float4`, `NaN`, `NaN`],
+      [`'-Infinity'::float4`, `-Infinity`, `-Infinity`],
+      [`'-0'::float4`, `-0`, `-0`],
+      [`null::float4`, `null`, `null`],
+      [`'{1,2,3}'::int4[]`, `[1,2,3]`, `Int32Array(1,2,3)`],
+      [`'{2147483647,-2147483648,0}'::int4[]`, `[2147483647,-2147483648,0]`, `Int32Array(2147483647,-2147483648,0)`],
+      [`'{}'::int4[]`, `[]`, `Int32Array()`],
+      [`null::int4[]`, `null`, `null`],
+      [`'{1.5,0.1}'::float4[]`, `[1.5,0.1]`, `Float32Array(1.5,0.10000000149011612)`],
+      [`'{}'::float4[]`, `[]`, `Float32Array()`],
+      [`null::float4[]`, `null`, `null`],
+    ];
+    // A typed array has one dimension and no place for a NULL.
+    const plain: ByFormat = [
+      [`'{1,NULL,3}'::int4[]`, `[1,null,3]`, `[1,null,3]`],
+      [`'{NULL}'::int4[]`, `[null]`, `[null]`],
+      [`'{{1,2},{3,4}}'::int4[]`, `[[1,2],[3,4]]`, `[[1,2],[3,4]]`],
+      [`'{{{{{{1}}}}}}'::int4[]`, `[[[[[[1]]]]]]`, `[[[[[[1]]]]]]`],
+      [`'{1.5,0.1,NULL}'::float4[]`, `[1.5,0.1,null]`, `[1.5,0.10000000149011612,null]`],
+      [`'{{0.1},{0.3}}'::float4[]`, `[[0.1],[0.3]]`, `[[0.10000000149011612],[0.30000001192092896]]`],
+    ];
+    const typed: ByFormat = [
+      // The bounds are not part of a JS array.
+      [`'[0:2]={1,2,3}'::int4[]`, `[1,2,3]`, `Int32Array(1,2,3)`],
+      [`'[5:6]={1.5,2.5}'::float4[]`, `[1.5,2.5]`, `Float32Array(1.5,2.5)`],
+      [`'{NaN,Infinity,-Infinity,-0}'::float4[]`, `[NaN,Infinity,-Infinity,-0]`, `Float32Array(NaN,Infinity,-Infinity,-0)`], // prettier-ignore
+      [`array[0.0000001::float4, 1e20::float4]`, `[1e-7,100000000000000000000]`, `Float32Array(1.0000000116860974e-7,100000002004087730000)`], // prettier-ignore
+      // The server still says of these that they hold a NULL.
+      [`('{1,NULL,3,4}'::int4[])[3:4]`, `[3,4]`, `Int32Array(3,4)`],
+      [`('{1.5,NULL}'::float4[])[1:1] || '{0.1}'::float4[]`, `[1.5,0.1]`, `Float32Array(1.5,0.10000000149011612)`],
+    ];
+
+    const select = (table: ByFormat) => "select " + table.map(([expression], i) => `${expression} as c${i}`).join(", ");
+    type Run = (sql: SQL, text: string) => Promise<Record<string, unknown> | unknown[]>;
+    const runs: [name: string, binary: boolean, binaryUnprepared: boolean, run: Run][] = [
+      ["the first run", false, false, async (sql, text) => (await template(sql, text))[0]],
+      [
+        "the second run",
+        true,
+        false,
+        async (sql, text) => {
+          await template(sql, text);
+          return (await template(sql, text))[0];
+        },
+      ],
+      [
+        "values() on the second run",
+        true,
+        false,
+        async (sql, text) => {
+          await template(sql, text);
+          return (await template(sql, text).values())[0];
+        },
+      ],
+      ["with a parameter", true, false, async (sql, text) => (await sql.unsafe(text + " where $1 = 1", [1]))[0]],
+      [
+        "with a parameter, the second run",
+        true,
+        false,
+        async (sql, text) => {
+          await sql.unsafe(text + " where $1 = 1", [1]);
+          return (await sql.unsafe(text + " where $1 = 1", [1]))[0];
+        },
+      ],
+      ["simple()", false, false, async (sql, text) => (await sql.unsafe(text).simple())[0]],
+      ["sql.unsafe() without values", false, false, async (sql, text) => (await sql.unsafe(text))[0]],
+      [
+        "raw().execute().values() on the second run",
+        true,
+        false,
+        async (sql, text) => {
+          await template(sql, text);
+          return (await template(sql, text).raw().execute().values())[0];
+        },
+      ],
+      [
+        "FETCH from a binary cursor",
+        true,
+        true,
+        async (sql, text) =>
+          (await sql.unsafe(`begin; declare c binary cursor for ${text}; fetch all from c; commit`).simple())[2][0],
+      ],
+    ];
+
+    describe.each<[string, ByFormat]>([
+      ["values", values],
+      ["a NULL or more dimensions make a plain array", plain],
+      ["bounds, exponents, names of numbers and a NULL that is gone do not", typed],
+    ])("%s", (_, table) => {
+      describe.each([true, false])("prepare: %p", prepare => {
+        test.each(runs)("%s", async (_, binary, binaryUnprepared, run) => {
+          await container.ready;
+          await using sql = connect({ prepare });
+          const row = await run(sql, select(table));
+          expect(Object.values(row).map((value, i) => [table[i][0], show(value)])).toEqual(
+            table.map(([expression, text, inBinary]) => [
+              expression,
+              (prepare ? binary : binaryUnprepared) ? inBinary : text,
+            ]),
+          );
+        });
+      });
+    });
+
+    test("a float4 that was read in binary finds its row", async () => {
+      await container.ready;
+      await using sql = connect();
+      await sql.unsafe("create temp table readings (id int, r real, a real[])");
+      await sql.unsafe("insert into readings values (1, 0.1, '{0.1,0.3}')");
+      const found = [];
+      for (let run = 0; run < 2; run++) {
+        const [row] = await sql`select r, a from readings where id = ${1}`;
+        found.push(
+          await sql`select count(*)::int as r, count(*) filter (where a[2] = ${row.a[1]})::int as a from readings where r = ${row.r}`,
+        );
+      }
+      expect(found).toEqual([[{ r: 1, a: 1 }], [{ r: 1, a: 1 }]]);
+    });
+  });
+
   describe("raw()", () => {
     // [type, literal, the text format, the binary format in hex of a column that raw() asks for in binary]
     const columns: [type: string, literal: string, text: string, binary?: string][] = [
@@ -320,7 +436,6 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     ];
     // A mode that decodes asks for these the other way, and execute() writes the Bind of a prepared statement.
     const otherwiseDecoded: Record<string, string> = {
-      "float4": "1.5",
       "numeric": "1.5",
       "time": "03:04:05",
       "int2[]": "0x0000000100000000000000150000000200000001000000020001000000020002",
@@ -408,7 +523,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       },
     );
 
-    const undecodable = ["float4", "numeric", "time"];
+    const undecodable = ["numeric", "time"];
 
     test("raw().execute().values() decodes what raw() asked for", async () => {
       await using sql = await session();
@@ -433,7 +548,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
   });
 
   // An element of an array of numbers is read by other code than a column. Three readers have to agree on every
-  // value: the array's, the column's, and JS's own on the text that the server prints.
+  // value: the array's, the column's in the same format, and JS's own on the text that the server prints.
   test.each(["float4", "float8", "int4", "int2"])(
     "%s: an element of an array is the number that a column gives",
     async type => {
@@ -471,17 +586,21 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
         // up to nine digits, the point anywhere among them
         else values.push(String(((random() % 10 ** (1 + (i % 9))) / 10 ** (random() % 10)) * (i % 3 ? 1 : -1)));
       }
-      const list = "null," + values.map(value => `'${value}'`).join(",");
+      const quoted = values.map(value => `'${value}'`).join(",");
 
-      const rows = await sql.unsafe(
-        `select v, v::text as t from unnest(array[${list}]::${type}[]) with ordinality as u(v, i) order by i`,
-      );
-      // In text, and in binary.
-      for (const path of ["simple", "second run"]) {
-        const elements = (await paths[path](sql, `array[${list}]::${type}[]`))[0].v;
-        expect(elements.length).toBeGreaterThan(2000);
-        expect(elements.map(show)).toEqual(rows.map(row => show(row.v)));
-        expect(elements.map(show)).toEqual(rows.map(row => show(row.t === null ? null : Number(row.t))));
+      // With a NULL, and without one: an int4[] and a float4[] are a typed array then, in binary.
+      for (const list of ["null," + quoted, quoted]) {
+        const columns = `select v, v::text as t from unnest(array[${list}]::${type}[]) with ordinality as u(v, i)`;
+        for (const binary of [false, true]) {
+          const rows = binary
+            ? await sql.unsafe(columns + " where $1 = 1 order by i", [1])
+            : await sql.unsafe(columns + " order by i").simple();
+          const elements = (await paths[binary ? "second run" : "simple"](sql, `array[${list}]::${type}[]`))[0].v;
+          const number = type === "float4" && binary ? (text: string) => Math.fround(Number(text)) : Number;
+          expect(elements.length).toBeGreaterThan(2000);
+          expect(Array.from(elements, show)).toEqual(rows.map(row => show(row.v)));
+          expect(Array.from(elements, show)).toEqual(rows.map(row => show(row.t === null ? null : number(row.t))));
+        }
       }
     },
   );
@@ -547,6 +666,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       [`true`, `true`],
       [`7::int4`, `7`],
       [`1.5::float8`, `1.5`],
+      [`0.1::float4`, `0.10000000149011612`],
       [`'2024-01-02 03:04:05'::timestamp`, `Date(2024-01-02T03:04:05.000Z)`],
       [`'2024-01-02 03:04:05+00'::timestamptz`, `Date(2024-01-02T03:04:05.000Z)`],
       [`'\\xdead'::bytea`, `Buffer(222,173)`],
@@ -555,21 +675,20 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       [`'a'::char(3)`, `"a  "`],
       [`'{"a":1}'::json`, `{a:1}`],
       [`null::int2`, `null`],
-      [`'{1,2}'::int4[]`, `[1,2]`],
+      [`'{1,2}'::int4[]`, `Int32Array(1,2)`],
       [`'{-32768,null,32767}'::int2[]`, `[-32768,null,32767]`],
       [`'{null}'::int4[]`, `[null]`],
       [`'{}'::float8[]`, `[]`],
       [`'{{1,2},{3,null}}'::int4[]`, `[[1,2],[3,null]]`],
       [`'{{{{{{1},{2}}}}}}'::int2[]`, `[[[[[[1],[2]]]]]]`],
-      [`'[0:2]={1,2,3}'::int4[]`, `[1,2,3]`],
+      [`'[0:2]={1,2,3}'::int4[]`, `Int32Array(1,2,3)`],
       [`'[-1:0][5:6]={{1,2},{3,4}}'::float8[]`, `[[1,2],[3,4]]`],
-      [`'{0.1,-0,NaN,Infinity,-Infinity,1e-45,3.4028235e38,16777216,null}'::float4[]`, `[0.1,-0,NaN,Infinity,-Infinity,1e-45,3.4028235e+38,16777216,null]`], // prettier-ignore
+      [`'{0.1,-0,NaN,Infinity,-Infinity,1e-45,3.4028235e38,16777216,null}'::float4[]`, `[0.10000000149011612,-0,NaN,Infinity,-Infinity,1.401298464324817e-45,3.4028234663852886e+38,16777216,null]`], // prettier-ignore
       [`'{0.1,-0,NaN,-Infinity,5e-324,1.7976931348623157e308}'::float8[]`, `[0.1,-0,NaN,-Infinity,5e-324,1.7976931348623157e+308]`], // prettier-ignore
       ...[
         `5::int2`,
         `7::int8`,
         `3::oid`,
-        `1.5::float4`,
         `1.50::numeric`,
         `'2024-01-02'::date`,
         `'03:04:05'::time`,

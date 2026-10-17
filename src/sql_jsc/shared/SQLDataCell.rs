@@ -56,6 +56,8 @@ pub enum Tag {
     Uint4 = 11,
     Uint8 = 12,
     Numbers = 13,
+    Int32Array = 14,
+    Float32Array = 15,
 }
 
 #[repr(C)]
@@ -338,6 +340,21 @@ impl SQLDataCell {
                 numbers: Array::new(values),
             },
             free_value: 1,
+            ..Default::default()
+        }
+    }
+
+    /// `tag` is `Int32Array` or `Float32Array`. `elements` is borrowed, as the bytes of `raw` are: for each
+    /// element 4 bytes of size and 4 of value, big-endian, which is what the PostgreSQL server sends.
+    pub(crate) fn typed_array(tag: Tag, elements: &[[u8; 8]]) -> SQLDataCell {
+        SQLDataCell {
+            tag,
+            value: Value {
+                raw: Raw {
+                    ptr: elements.as_ptr().cast(),
+                    len: elements.len() as u64,
+                },
+            },
             ..Default::default()
         }
     }

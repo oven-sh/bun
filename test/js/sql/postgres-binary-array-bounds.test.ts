@@ -248,12 +248,14 @@ test("a binary array that is not one rejects", async () => {
     await decode([
       ...malformed,
       int4Array([], int4s()),
+      int4Array([3], int4s(1, 0, -1)),
       int4Array([3], int4s(1, null, -1)),
       int4Array([2, 2], int4s(1, 2, 3, null)),
     ]),
   ).toEqual([
     ...malformed.map(() => "ERR_POSTGRES_INVALID_BINARY_DATA"),
-    [],
+    new Int32Array(),
+    new Int32Array([1, 0, -1]),
     [1, null, -1],
     [
       [1, 2],

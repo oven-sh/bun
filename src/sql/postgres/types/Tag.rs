@@ -144,6 +144,7 @@ impl Tag {
         match self {
             Tag::bool
             | Tag::int4
+            | Tag::float4
             | Tag::float8
             | Tag::timestamp
             | Tag::timestamptz
@@ -151,7 +152,7 @@ impl Tag {
             | Tag::int4_array
             | Tag::float4_array => formats != ResultFormats::Text,
             Tag::int2_array | Tag::float8_array => formats == ResultFormats::Decodable,
-            Tag::float4 | Tag::numeric | Tag::time => formats == ResultFormats::Raw,
+            Tag::numeric | Tag::time => formats == ResultFormats::Raw,
             _ => false,
         }
     }

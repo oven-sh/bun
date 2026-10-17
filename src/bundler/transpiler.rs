@@ -3059,9 +3059,10 @@ impl<'a> Transpiler<'a> {
         // `'bump`-threading note).
         let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
 
+        let source = bun_ast::Source::init_path_string(file_path_text, entry.contents());
         let (mut sheet, extra) = match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
             alloc,
-            entry.contents(),
+            &source,
             opts,
             None,
             bun_ast::Index::source(0u32),

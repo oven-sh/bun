@@ -335,7 +335,6 @@ where
     ) {
         delimiters |= css::Delimiters::CURLY_BRACKET;
     }
-    let source_location = input.current_source_location();
     let mut property = input.parse_until_before(delimiters, |input2: &mut css::Parser| {
         css::Property::parse(property_id, input2, options)
     })?;
@@ -351,27 +350,23 @@ where
         if let css::Property::Composes(composes) = &mut property {
             match composes_ctx.composes_state() {
                 css::ComposesState::DisallowEntirely => {}
-                css::ComposesState::Allow(_) => {
+                css::ComposesState::Allow => {
                     composes_ctx.record_composes(composes);
                 }
-                css::ComposesState::DisallowNested(info) => {
-                    options.warn_fmt(
+                css::ComposesState::DisallowNested => {
+                    options.warn_at(
+                        composes.loc,
                         format_args!("\"composes\" is not allowed inside nested selectors"),
-                        info.line,
-                        info.column,
                     );
                 }
-                css::ComposesState::DisallowNotSingleClass(info) => {
-                    options.warn_fmt_with_notes(
+                css::ComposesState::DisallowNotSingleClass(rule_start) => {
+                    options.warn_with_note(
+                        composes.loc,
                         format_args!("\"composes\" only works inside single class selectors"),
-                        source_location.line,
-                        source_location.column,
-                        Box::new([bun_ast::Data {
-                            text: b"The parent selector is not a single class selector because of the syntax here:"
-                                .as_slice()
-                                .into(),
-                            location: Some(info.to_logger_location(options.filename)),
-                        }]),
+                        rule_start,
+                        format_args!(
+                            "The parent selector is not a single class selector because of the syntax here:"
+                        ),
                     );
                 }
             }

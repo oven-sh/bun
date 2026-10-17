@@ -159,9 +159,10 @@ fn testing_impl(
     };
 
     let mut import_records = Vec::<ImportRecord>::default();
+    let sheet = bun_ast::Source::init_path_string(b"", source.slice());
     match StyleSheet::<DefaultAtRule>::parse(
         alloc,
-        source.slice(),
+        &sheet,
         parser_options,
         Some(&mut import_records),
         bun_ast::Index::INVALID,
@@ -319,10 +320,11 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     let parser_options = ParserOptions::default(Some(&mut log));
 
     let mut import_records = Vec::<ImportRecord>::default();
+    let attribute = bun_ast::Source::init_path_string(b"", source.slice());
     match StyleAttribute::parse(
         alloc,
-        source.slice(),
-        &parser_options,
+        &attribute,
+        parser_options,
         &mut import_records,
         bun_ast::Index::INVALID,
     ) {

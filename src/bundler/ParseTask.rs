@@ -1273,7 +1273,6 @@ pub mod parse_worker {
             Loader::Css => {
                 // make css ast
                 let mut import_records = Vec::<ImportRecord>::default();
-                let source_code = &source.contents;
                 let mut temp_log = Log::init();
                 // `temp_log` is flushed into `log` on every exit path via linear
                 // control flow (scopeguard would alias `log`/`temp_log`).
@@ -1293,7 +1292,7 @@ pub mod parse_worker {
 
                 let (mut css_ast, extra) = match bun_css::BundlerStyleSheet::parse_bundler(
                     bump,
-                    source_code,
+                    source,
                     parser_options,
                     &mut import_records,
                     bun_ast::Index::source(source.index.0),

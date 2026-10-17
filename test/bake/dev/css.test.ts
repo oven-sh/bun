@@ -95,6 +95,30 @@ devTest("css file with initial syntax error gets recovered", {
     );
   },
 });
+devTest("css file with a warning on its first line and a syntax error shows both", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `hello world`,
+    }),
+    "styles.css": `
+      @unknown-rule x;
+      body {
+        color: red;
+      }}
+    `,
+  },
+  async test(dev) {
+    // The overlay reads line 0 as a message with no position. A warning on
+    // the first line had line 0 and a position after it.
+    await using c = await dev.client("/", {
+      errors: [
+        "styles.css:1:14: warn: invalid @ rule encountered: '@unknown-rule'",
+        "styles.css:4:3: error: Unexpected end of input",
+      ],
+    });
+  },
+});
 devTest("add new css import later", {
   files: {
     "index.html": emptyHtmlFile({

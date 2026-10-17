@@ -68,8 +68,10 @@ MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&&
 
 MessagePort::~MessagePort()
 {
-    if (!m_isDetached)
-        m_pipe->close(m_side, MessagePortPipe::CloseKind::Collected);
+    if (!m_isDetached) {
+        auto* context = scriptExecutionContext();
+        m_pipe->close(m_side, MessagePortPipe::CloseKind::Collected, context ? context->identifier() : 0);
+    }
 }
 
 ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
@@ -415,8 +417,8 @@ bool MessagePort::virtualHasPendingActivity() const
 {
     // Called from the GC thread concurrently with the mutator; must be
     // lockless. m_pipe is a Ref<> held for the port's whole lifetime, so
-    // the dereference is always safe; state() and isOtherSideOpen() are
-    // atomic loads. The plain bool reads can observe stale values but
+    // the dereference is always safe; state() and isOtherSideClosedByRequest()
+    // are atomic loads. The plain bool reads can observe stale values but
     // cannot crash — at worst the wrapper is collected one cycle early
     // or late, which is the same tolerance as before this refactor.
     if (!scriptExecutionContext() || m_isDetached)
@@ -450,7 +452,10 @@ bool MessagePort::virtualHasPendingActivity() const
     // it loads our state *afterwards*. Reading our inbox first races: a 0-queued
     // load taken before the send, combined with a Closed load taken after the
     // close, collects the wrapper while a message is in flight.
-    if (m_pipe->isOtherSideOpen(m_side))
+    // A merely-collected peer (Closed without ClosedByRequest) pins the wrapper,
+    // but only until our 'close' event fires: a same-context collection never
+    // fires it (see CloseKind); a cross-context one does, releasing the refs.
+    if (!m_closeEventDispatched && !m_pipe->isOtherSideClosedByRequest(m_side))
         return true;
     return MessagePortPipe::queuedCount(m_pipe->state(m_side)) > 0;
 }
@@ -559,15 +564,10 @@ WebCoreOpaqueRoot root(MessagePort* port)
 
 void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
 {
-    // A closed or transferred-away port can never receive messages again, so
-    // taking a self-ref (and an event-loop ref) here would only leak:
-    // close()/disentangle() have already run and nothing will ever release a
-    // ref taken afterwards. Same once the peer has closed: peerClosed() already
-    // ran jsUnref(), and nothing releases a ref re-taken after it, so `.ref()`
-    // or a late `onmessage =` would pin the loop forever. Node no-ops both.
-    // Only an explicit peer close counts: node never closes a channel because a
-    // port was collected, so keying on Closed alone made this GC-dependent.
-    if (!isEntangled() || m_pipe->isOtherSideClosedByRequest(m_side))
+    // A closed, transferred-away, or peer-closed port never receives again, so a
+    // ref taken now would never be released; node no-ops ref() on all three. A
+    // same-context collection never fires 'close', so that hold stays (see CloseKind).
+    if (!isEntangled() || m_closeEventDispatched || m_pipe->isOtherSideClosedByRequest(m_side))
         return;
 
     // Re-acquire the message-listener loop-ref (if a listener is present) that .unref() released.

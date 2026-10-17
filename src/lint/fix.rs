@@ -246,9 +246,10 @@ fn is_about_the_next_line(comment: &Token) -> bool {
     let text = comment.text();
     let start = text.iter().take_while(is_before_content).count();
     let content = text.get(start..).unwrap_or_default();
-    // `biome-ignore-all` and `deno-lint-ignore-file` are about the file.
+    // `biome-ignore-all` and `deno-lint-ignore-file` are about the file. TypeScript goes by the prefix: `@ts-ignore-next-line`.
     let is_at_start = |directive: &&[u8]| {
-        (content.strip_prefix(*directive)).is_some_and(|rest| rest.first() != Some(&b'-'))
+        (content.strip_prefix(*directive))
+            .is_some_and(|rest| !rest.starts_with(b"-all") && !rest.starts_with(b"-file"))
     };
     DIRECTIVES.iter().any(is_at_start)
 }

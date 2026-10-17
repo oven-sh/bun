@@ -557,6 +557,108 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
+test("primary does not root the worker object graph per live worker", async () => {
+  using dir = tempDir("cluster-internal-msg-roots", {
+    "primary.ts": `
+import cluster from "node:cluster";
+import { heapStats } from "bun:jsc";
+
+if (!cluster.isPrimary) {
+  process.on("message", () => {});
+  await new Promise(() => {});
+}
+
+const N = 3;
+
+function protectedCounts() {
+  Bun.gc(true);
+  const p = heapStats().protectedObjectTypeCounts;
+  return { Function: p.Function ?? 0, Object: p.Object ?? 0 };
+}
+
+const before = protectedCounts();
+
+// Fork, wait for every worker to come online, kill them all, and wait for the
+// channel to close. The workers live only in this frame, so nothing user-side
+// references them after it returns.
+async function runWorkers() {
+  const workers: import("node:cluster").Worker[] = [];
+  for (let i = 0; i < N; i++) workers.push(cluster.fork());
+  await Promise.all(
+    workers.map(
+      w =>
+        new Promise<void>((resolve, reject) => {
+          w.once("online", resolve);
+          w.once("error", reject);
+          w.once("exit", code => reject(new Error("worker exited before online: " + code)));
+        }),
+    ),
+  );
+
+  const during = protectedCounts();
+
+  for (const w of workers) w.process.kill();
+  await Promise.all(
+    workers.map(
+      w =>
+        new Promise<void>((resolve, reject) => {
+          let n = 0;
+          const step = () => { if (++n === 2) resolve(); };
+          w.once("exit", step);
+          w.once("disconnect", step);
+          w.once("error", reject);
+        }),
+    ),
+  );
+  return during;
+}
+
+const during = await runWorkers();
+
+// Poll with a deadline: the wrapper stays strongly held until the IPC pipe
+// handle has finished closing, which on Windows takes a timer-driven loop
+// turn, while a Strong-rooted Subprocess never goes away no matter how long
+// we wait. The count includes the shared Subprocess prototype object (same
+// class name, lives as long as the process), so 1 means no instance is live.
+let liveSubprocess = Infinity;
+const deadline = performance.now() + 3000;
+do {
+  await new Promise(r => setTimeout(r, 1));
+  Bun.gc(true);
+  liveSubprocess = heapStats().objectTypeCounts.Subprocess ?? 0;
+} while (liveSubprocess > 1 && performance.now() < deadline);
+
+console.log(JSON.stringify({ N, before, during, liveSubprocess }));
+process.exit(0);
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "primary.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  const { N, before, during, liveSubprocess } = JSON.parse(stdout.trim());
+  // No per-worker protected roots while the workers are alive. Strict equality
+  // against the baseline: a regression shows up as `before + N`.
+  expect({
+    protectedFunctionDelta: during.Function - before.Function,
+    protectedObjectDelta: during.Object - before.Object,
+    exitCode,
+  }).toEqual({
+    protectedFunctionDelta: 0,
+    protectedObjectDelta: 0,
+    exitCode: 0,
+  });
+  // After every worker exits and user code holds no reference, every Subprocess
+  // instance is collectable. Only the prototype object remains. A root cycle
+  // keeps all N instances alive.
+  expect(liveSubprocess).toBe(1);
+});
+
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
   // `kHandle` is a private symbol that only `cluster.fork()` sets, so a
   // `cluster.Worker({ process })` built around a plain object (how Node's own

@@ -41,17 +41,22 @@ pub(crate) type ReaderImpl = bun_io::BufferedReader;
 
 struct State {
     fd: Fd,
-    /// Bytes the underlying reader produced while `readers` was empty, handed
-    /// to the next listener ahead of anything read for it. See `deliver`.
+    /// Bytes read while `readers` was empty. `start()` hands them to the next listener.
     buf: Vec<u8>,
     readers: Readers,
-    /// The raw `sys::Error`. `SystemError` is not `Clone`
-    /// in the Rust port yet, so we keep the source error to re-derive a fresh
-    /// `SystemError` per callee in `on_reader_done_cb`.
+    /// A read error that arrived while `readers` was empty. The next listener gets it in place of its next EOF.
     raw_err: Option<sys::Error>,
     evtloop: EventLoopHandle,
     #[cfg(windows)]
     is_reading: bool,
+    /// The reader reported EOF. The Windows reader closes its source (and the fd) there, so a later listener has nothing to read.
+    #[cfg(windows)]
+    reached_eof: bool,
+    /// `ReaderImpl::start()` is on the stack, and `on_reader_error` keeps what it reports in `start_err`.
+    #[cfg(not(windows))]
+    starting: bool,
+    #[cfg(not(windows))]
+    start_err: Option<sys::Error>,
     /// Weak self-ref so `keepalive()` can bump the strong count from `&self`
     /// without unsafe Arc-pointer reconstruction. Set via `Arc::new_cyclic` in
     /// `init()` (the sole constructor).
@@ -63,10 +68,7 @@ struct State {
 }
 
 pub(crate) struct IOReader {
-    /// Split out of `State` so `state()`'s `&mut State` never overlaps the
-    /// `&mut ReaderImpl` the read-loop caller holds while invoking vtable
-    /// callbacks (see `BufferedReaderParent` aliasing contract). Both cells
-    /// root at SharedReadWrite; callbacks touch only `state` fields.
+    /// Its own cell, so that `state()` never overlaps a `&mut ReaderImpl`. `reader()` says which callbacks may reach it.
     reader: UnsafeCell<ReaderImpl>,
     state: UnsafeCell<State>,
 }
@@ -88,18 +90,7 @@ impl IOReader {
     #[inline]
     #[allow(clippy::mut_from_ref)] // interior mutability via UnsafeCell; single-threaded
     fn reader(&self) -> &mut ReaderImpl {
-        // SAFETY: single-threaded. Split into its own cell so a `&mut ReaderImpl`
-        // held by the bun_io read loop never overlaps a `&mut State` derived in a
-        // vtable callback (see struct doc comment).
-        //
-        // Reached from inside `on_read_chunk_cb` / `on_reader_done_cb` only
-        // through `pause()`: the posix read loops dispatch both through a raw
-        // pointer and a copied vtable, holding no borrow across the dispatch,
-        // and `WindowsBufferedReader::on_read_chunk` launders its receiver
-        // around the dispatch so that the parent can pause it from there (as
-        // `FileReader::set_flowing` does). Must not be reached from
-        // `on_reader_error`: `start()` receives that one from inside
-        // `ReaderImpl::start()`, i.e. under its `&mut self`.
+        // SAFETY: single-threaded, and never overlapping `state()` (separate cells). The POSIX read loop dispatches its callbacks through a raw pointer and holds no borrow of the reader across them, so a callback may pause it and a command started from a callback may `start()` it; the one dispatch under a `&mut ReaderImpl`, a registration failure reported from inside `ReaderImpl::start()`, is deferred by `on_reader_error`. The Windows reader calls back under its `&mut self`: `on_read_chunk` launders it, so a chunk callback may pause or restart the reader, and after EOF `start()` does not come here. A command started from an error notification does, under the receiver of `WindowsBufferedReader::on_read` (see the note there).
         unsafe { &mut *self.reader.get() }
     }
 
@@ -145,6 +136,12 @@ impl IOReader {
                 evtloop,
                 #[cfg(windows)]
                 is_reading: false,
+                #[cfg(windows)]
+                reached_eof: false,
+                #[cfg(not(windows))]
+                starting: false,
+                #[cfg(not(windows))]
+                start_err: None,
                 self_weak: std::sync::Weak::clone(w),
                 read_guards: Vec::new(),
                 interp: None,
@@ -207,43 +204,41 @@ impl IOReader {
         let _ = reading;
     }
 
-    /// Idempotent function to start the reading; also resumes after `pause()`.
-    /// Anything in `State::buf` is deliberately not delivered from here but
-    /// from the next read callback (`flush_buffered`): the caller is running
-    /// inside the trampoline, and delivering would re-enter it.
+    /// Idempotent function to start the reading for the listeners that `add_reader` registered.
     pub(crate) fn start(&self) -> Yield {
         #[cfg(not(windows))]
         {
             let r = self.reader();
             r.unpause();
-            let need_start = match &r.handle {
-                bun_io::pipes::PollOrFd::Closed => true,
-                bun_io::pipes::PollOrFd::Poll(p) => !p.is_registered(),
-                bun_io::pipes::PollOrFd::Fd(_) => true,
-            };
-            if need_start {
+            // A `cat` that starts after a failed read reads the fd again.
+            r.flags.remove(bun_io::pipe_reader::PosixFlags::READ_FAILED);
+            if !r.has_pending_read() {
                 let fd = self.state().fd;
-                if let Err(e) = r.start(fd, true) {
-                    self.on_reader_error(&e);
+                self.state().starting = true;
+                let started = r.start(fd, true);
+                let s = self.state();
+                s.starting = false;
+                if let Some(e) = s.start_err.take().or_else(|| started.err()) {
+                    return self.complete_listeners(Some(&e));
                 }
             }
-            return Yield::suspended();
+            self.hand_over_parked()
         }
         #[cfg(windows)]
         {
             let s = self.state();
+            if s.reached_eof {
+                return self.complete_listeners(None);
+            }
             if s.is_reading {
-                // The read issued for the previous listener is still in
-                // flight (`pause()` could not cancel it); clearing the pause
-                // lets its completion re-arm for the new listener.
-                self.reader().unpause();
                 return Yield::suspended();
             }
             s.is_reading = true;
             if let Err(e) = self.reader().start_with_current_pipe() {
-                self.on_reader_error(&e);
+                self.set_reading(false);
+                return self.complete_listeners(Some(&e));
             }
-            Yield::suspended()
+            self.hand_over_parked()
         }
     }
 
@@ -258,20 +253,22 @@ impl IOReader {
     /// Unregister a listener; no-op if it was never added.
     pub(crate) fn remove_reader(&self, reader: ChildPtr) {
         let s = self.state();
-        let Some(idx) = s.readers.iter().position(|r| *r == reader) else {
-            return;
-        };
-        s.readers.swap_remove(idx);
-        if s.readers.is_empty() {
-            self.pause();
+        if let Some(idx) = s.readers.iter().position(|r| *r == reader) {
+            // Keeps the order: `deliver` relies on it.
+            s.readers.remove(idx);
+            if s.readers.is_empty() {
+                self.pause();
+            }
         }
     }
 
-    /// Nobody is listening any more, so stop consuming the fd: what has not
-    /// been read yet stays in it for whatever reads it next (a later `cat` on
-    /// this reader, or a subprocess inheriting the fd), as it would after a
-    /// real `cat` exited. `start()` resumes.
+    /// Stops the reads while nobody listens, so that unread input stays in the fd for the next reader. Only `start()` resumes.
     fn pause(&self) {
+        // A read that is out cannot be taken back: its chunk is parked when it completes.
+        #[cfg(windows)]
+        if self.reader().has_pending_read() {
+            return;
+        }
         self.reader().pause();
     }
 
@@ -283,80 +280,39 @@ impl IOReader {
         // memory.
         let _keepalive = self.keepalive();
         self.set_reading(false);
-        self.flush_buffered();
-        self.deliver(chunk);
+        if self.state().readers.is_empty() {
+            // Read with nobody listening: by the POSIX drain after a hang-up, or by a Windows read that was out when the last listener left.
+            self.state().buf.extend_from_slice(chunk);
+            self.pause();
+            return false;
+        }
+        let last = self.deliver(chunk);
+        self.run_yield(last);
 
-        // No re-arm here: the posix read loop re-arms from the `bool` we
-        // return, and on Windows `on_file_read` re-arms unless the reader is
-        // paused (`WindowsBufferedReader::on_read` also clears the chunk
-        // buffer). A listener-less reader was paused by `deliver` /
-        // `remove_reader`, so the `false` returned for it is only advisory.
         let should_continue =
             has_more != bun_io::ReadState::Eof && !self.state().readers.is_empty();
         if should_continue {
             self.set_reading(true);
+            // No re-arm here: the POSIX read loop re-arms from the `bool` returned below, and on Windows `on_file_read` issues the next read unless the reader is paused (`WindowsBufferedReader::on_read` also clears the chunk buffer).
         }
         should_continue
     }
 
-    /// Hands `chunk` to the listeners, or keeps it if there are none.
-    ///
-    /// Chunks can arrive without listeners: `pause()` does not stop a read
-    /// that is already in flight (Windows), and the posix loop drains a
-    /// hung-up pipe to EOF regardless of what we return. Bytes the kernel has
-    /// already given us cannot be put back, so they wait in `State::buf` for
-    /// the next listener (`flush_buffered`) instead of being dropped.
-    fn deliver(&self, chunk: &[u8]) {
-        let s = self.state();
-        if s.readers.is_empty() {
-            s.buf.extend_from_slice(chunk);
-            self.pause();
-            return;
-        }
-        // NOTE: reshaped for borrowck — `dispatch_read_chunk`/`run_yield`
-        // both re-derive `state()` (and the interpreter callback may re-enter
-        // `add_reader`/`remove_reader`), so we must NOT hold a long-lived
-        // `&mut State` across the dispatch. Re-derive `state()` per access
-        // instead.
-        let mut i = 0usize;
-        while i < self.state().readers.len() {
-            let r = self.state().readers[i];
-            let interp = self.state().interp;
-            let mut remove = false;
-            self.run_yield(dispatch_read_chunk(r, chunk, &mut remove, interp));
-            if remove {
-                self.remove_reader(r);
-            } else {
-                i += 1;
-            }
-        }
-    }
-
-    /// Delivers what `deliver` set aside once there is a listener again,
-    /// ahead of the next chunk or the EOF of the read `start()` issued for it.
-    /// Not ahead of a read error: `start()` can report one synchronously from
-    /// inside `ReaderImpl::start()` (see `reader()`), and a `cat` discards its
-    /// pending output on a read error anyway.
-    fn flush_buffered(&self) {
-        let s = self.state();
-        if s.buf.is_empty() || s.readers.is_empty() {
-            return;
-        }
-        let buffered = core::mem::take(&mut s.buf);
-        self.deliver(&buffered);
-    }
-
     fn on_reader_error(&self, err: &sys::Error) {
+        #[cfg(not(windows))]
+        if self.state().starting {
+            // Reported from inside `ReaderImpl::start()`, under its `&mut self`: `start()` completes the listeners when that call has returned.
+            self.state().start_err = Some(err.clone());
+            return;
+        }
         // `dispatch_reader_done` may drop the last external Arc; keep `self`
         // alive across the loop.
         let _keepalive = self.keepalive();
         self.set_reading(false);
         let s = self.state();
-        s.raw_err = Some(err.clone());
-        // NOTE: reshaped for borrowck — copy out before dispatching.
-        let readers: Vec<ChildPtr> = s.readers.clone();
+        s.raw_err = s.readers.is_empty().then(|| err.clone());
         let interp = s.interp;
-        for r in readers {
+        for r in self.take_readers() {
             // Re-derive a fresh SystemError per callee (see
             // IOWriter.on_error note).
             let ee = err.to_shell_system_error();
@@ -371,18 +327,87 @@ impl IOReader {
         // Hold a strong ref across the body.
         let _keepalive = self.keepalive();
         self.set_reading(false);
-        self.flush_buffered();
         let s = self.state();
-        let readers: Vec<ChildPtr> = s.readers.clone();
+        // Set before any notification: the next `cat` can start from inside one.
+        #[cfg(windows)]
+        {
+            s.reached_eof = true;
+        }
+        if s.readers.is_empty() {
+            return;
+        }
         let interp = s.interp;
         // `SystemError` isn't `Clone` yet, so we keep the source `sys::Error`
         // (which IS `Clone`) and re-derive a fresh `SystemError` per callee —
         // same approach as `on_reader_error`.
-        let raw_err = s.raw_err.clone();
-        for r in readers {
+        let raw_err = s.raw_err.take();
+        for r in self.take_readers() {
             let ee = raw_err.as_ref().map(|e| e.to_shell_system_error());
             self.run_yield(dispatch_reader_done(r, ee, interp));
         }
+    }
+
+    /// Completes every listener from inside `start()`, with `err` or with EOF. The last completion is returned for the caller's trampoline, so `cat`s that complete one after the other from `start()` do not nest one `Yield::run` each.
+    fn complete_listeners(&self, err: Option<&sys::Error>) -> Yield {
+        let _keepalive = self.keepalive();
+        let interp = self.state().interp;
+        let mut readers = self.take_readers();
+        let last = readers.pop();
+        let complete = |r: ChildPtr| {
+            let ee = err.map(sys::Error::to_shell_system_error);
+            dispatch_reader_done(r, ee, interp)
+        };
+        for r in readers {
+            self.run_yield(complete(r));
+        }
+        last.map_or(Yield::suspended(), complete)
+    }
+
+    /// Gives `chunk` to the listeners that are registered now, and returns the dispatch to the last one for the caller to run. A dispatch can remove its own listener (the ones behind it move up), and a command it starts can add one at the end, which does not get this chunk.
+    fn deliver(&self, chunk: &[u8]) -> Yield {
+        let mut end = self.state().readers.len();
+        let mut i = 0usize;
+        while i < end {
+            // `state()` is derived again for each access: a dispatch re-enters `add_reader` and `remove_reader`.
+            let Some(&r) = self.state().readers.get(i) else {
+                break;
+            };
+            let interp = self.state().interp;
+            let mut remove = false;
+            let dispatch = dispatch_read_chunk(r, chunk, &mut remove, interp);
+            if remove {
+                self.remove_reader(r);
+            }
+            if i + 1 == end {
+                return dispatch;
+            }
+            self.run_yield(dispatch);
+            if self.state().readers.get(i) == Some(&r) {
+                i += 1;
+            } else {
+                end -= 1;
+            }
+        }
+        Yield::suspended()
+    }
+
+    /// Gives the bytes read with nobody listening to the listeners that `start()` was called for.
+    fn hand_over_parked(&self) -> Yield {
+        let s = self.state();
+        if s.buf.is_empty() || s.readers.is_empty() {
+            return Yield::suspended();
+        }
+        let parked = core::mem::take(&mut s.buf);
+        self.deliver(&parked)
+    }
+
+    /// The listeners of the read that just ended. They leave the list before they are notified: a notification can start the next `cat`, and an entry left behind would be notified again under a recycled `NodeId`.
+    fn take_readers(&self) -> Readers {
+        let readers = core::mem::take(&mut self.state().readers);
+        // Not on Windows: there these callbacks run under the reader's `&mut self`, and it reads nothing more after EOF or an error.
+        #[cfg(not(windows))]
+        self.pause();
+        readers
     }
 
     fn run_yield(&self, y: Yield) {
@@ -403,11 +428,7 @@ impl IOReader {
 // BufferedReaderParent — wires the bun_io BufferedReader vtable
 // ──────────────────────────────────────────────────────────────────────────
 
-// Derefs `this` only to call `&self` inherent methods (autoref → `&*this`);
-// no `&mut IOReader` is materialized, satisfying the init() *const→*mut
-// invariant. Aliasing with the caller's live `&mut ReaderImpl` is handled by
-// the state/reader UnsafeCell split — callbacks touch only `state`, never
-// `reader()`.
+// Derefs `this` only to call `&self` methods, so no `&mut IOReader` is materialized. `reader()` says what the callbacks may do with the reader.
 bun_io::impl_buffered_reader_parent! {
     ShellIoReader for IOReader;
     has_on_read_chunk = true;

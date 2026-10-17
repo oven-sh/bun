@@ -361,7 +361,7 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
     MarkedArgumentBuffer values;
     WTF::Vector<std::pair<WTF::String, size_t>, 16> stringChunks;
     // Script picks the chunk count here and the byte total below, so both reserves are fallible.
-    if (length > Bun::maxVectorSize<std::pair<WTF::String, size_t>>() || !stringChunks.tryReserveCapacity(length)) [[unlikely]] {
+    if (!Bun::tryReserveCapacityWithinLimit(stringChunks, length)) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
     }

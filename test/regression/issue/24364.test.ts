@@ -65,5 +65,4 @@ export default plugin;
   expect(stderr).toBe("");
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
-  // tsc reads 250 files. With a cold page cache that takes about 5 seconds.
-}, 30_000);
+});

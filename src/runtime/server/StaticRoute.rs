@@ -235,12 +235,10 @@ impl StaticRoute {
                 }
             }
 
-            return Ok(Some(RefPtr::new(StaticRoute::new(
-                blob,
-                headers,
-                None,
-                response.status_code(),
-            ))));
+            let mut route = StaticRoute::new(blob, headers, None, response.status_code());
+            // The bytes `on_get` sends. `blob.size()` is the unknown-size sentinel for an S3 store.
+            route.cached_blob_size = route.blob.slice().len() as u64;
+            return Ok(Some(RefPtr::new(route)));
         }
 
         Ok(None)

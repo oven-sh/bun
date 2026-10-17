@@ -166,6 +166,85 @@ module.exports = debugMode => {
       if (err) throw new Error(err);
     },
 
+    test_v8_function_template_new_target() {
+      const vm = require("node:vm");
+      const NativeThing = nativeModule.create_native_thing_class();
+      class Wrapped extends NativeThing {
+        extra() {
+          return "extra-called";
+        }
+      }
+      function Other() {}
+      const OtherProxy = new Proxy(Other, {});
+      function NonObjectPrototype() {}
+      NonObjectPrototype.prototype = 5;
+      // A bound function has no "prototype" property at all.
+      const Bound = Other.bind(null);
+      const [Foreign, foreignObjectPrototype] = vm.runInNewContext(
+        "function Foreign() {}; Foreign.prototype = null; [Foreign, Object.prototype]",
+      );
+
+      const names = new Map([
+        [NativeThing, "NativeThing"],
+        [NativeThing.prototype, "NativeThing.prototype"],
+        [Wrapped, "Wrapped"],
+        [Wrapped.prototype, "Wrapped.prototype"],
+        [Other, "Other"],
+        [Other.prototype, "Other.prototype"],
+        [OtherProxy, "OtherProxy"],
+        [NonObjectPrototype, "NonObjectPrototype"],
+        [Bound, "Bound"],
+        [Foreign, "Foreign"],
+        [Object.prototype, "Object.prototype"],
+        [foreignObjectPrototype, "Object.prototype of the realm of Foreign"],
+      ]);
+      const nameOf = value => names.get(value) ?? String(value);
+      // newTarget, isConstructCall and internalFieldCount are what the native callback saw.
+      const report = (label, instance) => {
+        console.log(
+          `${label}: prototype = ${nameOf(Object.getPrototypeOf(instance))}, NewTarget() = ${nameOf(instance.newTarget)}, ` +
+            `IsConstructCall() = ${instance.isConstructCall}, InternalFieldCount() = ${instance.internalFieldCount}`,
+        );
+      };
+
+      report("new NativeThing()", new NativeThing());
+
+      const wrapped = new Wrapped();
+      report("new Wrapped()", wrapped);
+      console.log("wrapped instanceof Wrapped:", wrapped instanceof Wrapped);
+      console.log("wrapped instanceof NativeThing:", wrapped instanceof NativeThing);
+      console.log("wrapped.extra():", wrapped.extra?.());
+      console.log("wrapped.protoMethod():", wrapped.protoMethod());
+
+      report("Reflect.construct(NativeThing, [], Other)", Reflect.construct(NativeThing, [], Other));
+      report("Reflect.construct(NativeThing, [], OtherProxy)", Reflect.construct(NativeThing, [], OtherProxy));
+      // When new.target.prototype is not an object, V8 uses Object.prototype from the realm of
+      // new.target, the same as for an instance of a JS function.
+      report(
+        "Reflect.construct(NativeThing, [], NonObjectPrototype)",
+        Reflect.construct(NativeThing, [], NonObjectPrototype),
+      );
+      report("Reflect.construct(NativeThing, [], Bound)", Reflect.construct(NativeThing, [], Bound));
+      report("Reflect.construct(NativeThing, [], Foreign)", Reflect.construct(NativeThing, [], Foreign));
+
+      const ThrowingPrototype = new Proxy(Other, {
+        get(target, key, proxyReceiver) {
+          if (key === "prototype") throw new Error("the prototype getter threw");
+          return Reflect.get(target, key, proxyReceiver);
+        },
+      });
+      try {
+        Reflect.construct(NativeThing, [], ThrowingPrototype);
+        console.log("Reflect.construct(NativeThing, [], ThrowingPrototype): did not throw");
+      } catch (e) {
+        console.log("Reflect.construct(NativeThing, [], ThrowingPrototype): threw", e.message);
+      }
+
+      const receiver = {};
+      NativeThing.call(receiver);
+      report("NativeThing.call(receiver)", receiver);
+    },
+
     test_v8_map() {
       const map = new Map();
       const ret = nativeModule.test_v8_map(map);

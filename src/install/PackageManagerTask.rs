@@ -135,9 +135,7 @@ impl Id {
         Id(hasher.final_())
     }
 
-    /// The download or read for a row of the lockfile, which is checked against what that row
-    /// pins. Rows that pin other bytes for one URL do not share it, and neither does a dependency
-    /// that `for_tarball` resolves from that URL.
+    /// A row of the lockfile has its own download, which is checked against what that row pins.
     pub(crate) fn for_locked_tarball(url: &[u8], resolved: &[u8], integrity: &Integrity) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(b"locked-tarball:");

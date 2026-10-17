@@ -585,6 +585,17 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("announces the Retry-After of the tarball after that of the manifest", async () => {
+    using registry = flakyRegistry((_, hit) => (hit === 1 ? busy(429, "1") : undefined));
+    using dir = project(registry.url);
+    const { lines, exitCode } = await install(String(dir));
+    expect(lines.filter(line => line.includes("asked to wait"))).toEqual([
+      "warn: registry asked to wait 1s before retrying",
+      "warn: registry asked to wait 1s before retrying",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   it.each([
     ["manifest", 429],
     ["tarball", 503],
@@ -594,7 +605,7 @@ describe.concurrent("backoff", () => {
     const { err, lines, out, exitCode } = await install(String(dir));
     expect(err).not.toContain("error:");
     expect(lines.filter(line => line.includes("asked to wait"))).toEqual([
-      "warn: the registry asked to wait 1s before the next attempt",
+      "warn: registry asked to wait 1s before retrying",
     ]);
     expect(out).toContain("1 package installed");
     expect(registry.gaps(failing)).toEqual([expect.any(Number)]);
@@ -616,9 +627,9 @@ describe.concurrent("backoff", () => {
     let err = "";
     for await (const chunk of proc.stderr.pipeThrough(new TextDecoderStream())) {
       err += chunk;
-      if (err.includes("next attempt\n")) break;
+      if (err.includes("before retrying\n")) break;
     }
-    expect(err).toContain("warn: the registry asked to wait 60s before the next attempt\n");
+    expect(err).toContain("warn: registry asked to wait 60s before retrying\n");
     expect(registry.at.manifest).toHaveLength(1);
   });
 
@@ -630,7 +641,7 @@ describe.concurrent("backoff", () => {
     { retryAfter: "soon", backoff: "1", wait: /^1ms$/ },
     { retryAfter: "Wed, 21 Oct 2096 07:28:00 GMT", backoff: "1", wait: /^1ms$/ },
     { retryAfter: "3600", backoff: "0", wait: /^0ms$/ },
-    { retryAfter: null, backoff: "nonsense", wait: /^(2[0-9][0-9]|300)ms$/ },
+    { retryAfter: null, backoff: "nonsense", wait: /^([45][0-9]|60)ms$/ },
   ])("Retry-After %j", async ({ retryAfter, backoff, wait }) => {
     using registry = flakyRegistry((_, hit) => (hit === 1 ? busy(503, retryAfter) : undefined));
     using dir = project(registry.url);
@@ -839,8 +850,30 @@ describe.concurrent("backoff", () => {
         BUN_CONFIG_HTTP_RETRY_BACKOFF: "1000",
         BUN_CONFIG_HTTP_RETRY_COUNT: "1",
       });
-      expect(err).toMatch(/^warn: the request to the registry failed\. Retry 1\/1 in \d+ms\.\.\.$/m);
+      expect(err).toContain("warn: registry request failed, retrying\n");
       expect({ requests, exitCode }).toEqual({ requests: 2, exitCode: 1 });
+    });
+  });
+
+  // The manifest fails twice, and both waits are long enough to be worth a line.
+  describe("two retries", () => {
+    const run = async (...flags: string[]) => {
+      using registry = flakyRegistry((kind, hit) => (kind === "manifest" && hit <= 2 ? busy(503) : undefined));
+      using dir = project(registry.url);
+      const { lines, exitCode } = await install(String(dir), { BUN_CONFIG_HTTP_RETRY_BACKOFF: "190" }, ...flags);
+      expect(exitCode).toBe(0);
+      return lines.filter(line => /retry/i.test(line));
+    };
+
+    it("get one line for both", async () => {
+      expect(await run()).toEqual(["warn: registry requests failed, retrying"]);
+    });
+
+    it("get a line each with --verbose", async () => {
+      expect(await run("--verbose")).toEqual([
+        expect.stringMatching(/^warn: HTTPError downloading package manifest bar\. Retry 1\/5 in \d+ms\.\.\.$/),
+        expect.stringMatching(/^warn: HTTPError downloading package manifest bar\. Retry 2\/5 in \d+ms\.\.\.$/),
+      ]);
     });
   });
 
@@ -848,7 +881,7 @@ describe.concurrent("backoff", () => {
   it("does not retry a certificate it refuses", async () => {
     using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: () => new Response("unreachable") });
     using dir = project(server.url.href);
-    // The default backoff: five retries would take over 6 seconds.
+    // The default backoff: five retries would take over a second.
     const { lines, exitCode } = await install(String(dir), { BUN_CONFIG_HTTP_RETRY_BACKOFF: "" }, "--verbose");
     expect(lines.filter(line => line.includes("downloading package manifest"))).toEqual([
       "error: DEPTH_ZERO_SELF_SIGNED_CERT downloading package manifest bar",
@@ -1016,7 +1049,9 @@ describe.concurrent("backoff", () => {
       expect(err).not.toContain("error:");
       expect(out).toContain("9 packages installed");
       expect(exitCode).toBe(0);
-      return lines.filter(line => line.includes("downloading package manifest") || line.includes("at a time"));
+      return lines.filter(
+        line => line.includes("downloading package manifest") || line.includes("concurrent requests"),
+      );
     }
 
     // A lower limit leaves the held manifests waiting for one that is never sent, until the server drops them.
@@ -1029,7 +1064,7 @@ describe.concurrent("backoff", () => {
     it("loses a quarter once the same request was dropped twice", async () => {
       expect(await peakAfter(2, 6)).toEqual([
         "warn: ConnectionClosed downloading package manifest bar. Retry 1/5 in 1ms...",
-        "warn: A request failed twice. Sending at most 6 requests at a time",
+        "warn: request failed twice, limiting to 6 concurrent requests",
         "warn: ConnectionClosed downloading package manifest bar. Retry 2/5 in 2ms...",
       ]);
     });

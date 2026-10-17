@@ -1270,7 +1270,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
       notes[name] = JSON.parse(stdout).notes;
     }
     const disagree = (name: string, field: string, registry: string, file: string) =>
-      `the registry and the package.json of ${name}@2.0.0 disagree on ${field}: ${registry} vs ${file} (bun install goes by the registry)`;
+      `registry and package.json of ${name}@2.0.0 disagree on ${field}: ${registry} vs ${file} (bun install uses the registry's)`;
     expect(notes.respelled.filter(note => note.includes("disagree"))).toEqual([]);
     delete notes.respelled;
     expect(notes).toEqual({
@@ -1357,7 +1357,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
         `{"name":"p","version":"1.0.0","main":"./a.js"}`,
         `{"name":"p","version":"1.0.0","main":"./a.js","main":"./b.js"}`,
       ),
-    ).toEqual(["main is in package.json more than once"]);
+    ).toEqual(["main listed more than once in package.json"]);
   });
 
   test("a comment-only change is not 'formatting only', and neither is a TypeScript type change", async () => {

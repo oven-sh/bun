@@ -159,6 +159,7 @@ struct Migrator<'a> {
     /// configured registry nor the default one.
     unverifiable: Vec<u32>,
     silent: bool,
+    verbose: bool,
     /// `npm-shrinkwrap.json` or `package-lock.json`, for warnings.
     lockfile_name: &'static str,
 }
@@ -202,6 +203,7 @@ pub(super) fn migrate_packages(
     index.reserve(entry_count);
 
     let silent = manager.options.log_level.is_silent();
+    let verbose = manager.options.log_level.is_verbose();
     let mut migrator = Migrator {
         this,
         manager,
@@ -219,6 +221,7 @@ pub(super) fn migrate_packages(
         patched: String::new(),
         unverifiable: Vec::new(),
         silent,
+        verbose,
         lockfile_name,
     };
 
@@ -257,7 +260,9 @@ pub(super) fn migrate_packages(
                 entry.map_or(bun_ast::Loc::EMPTY, |&j| {
                     packages_properties[j as usize].key_loc
                 }),
-                format_args!("no integrity, and the configured registry has none for this version"),
+                format_args!(
+                    "missing integrity, and configured registry has none for this version"
+                ),
             );
             return Err(Error::InvalidNPMLockfile);
         }
@@ -269,13 +274,13 @@ pub(super) fn migrate_packages(
         let url = resolved.and_then(|url| url.as_str()).unwrap_or_default();
         let more = match more.len() {
             0 => String::new(),
-            count => format!(", and {count} more like it"),
+            count => format!(", and {count} more"),
         };
         log.add_warning_fmt(
             Some(source),
             entry.key_loc,
             format_args!(
-                "no integrity: downloaded from the configured registry, not from {}{}",
+                "missing integrity, downloading from configured registry instead of {}{}",
                 bun_core::fmt::for_terminal(bstr::BStr::new(url)),
                 more,
             ),
@@ -284,11 +289,11 @@ pub(super) fn migrate_packages(
 
     if !migrator.patched.is_empty() {
         bun_core::warn!(
-            "skipped npm patches for {} from {}",
+            "skipping npm patches for {} from {}",
             migrator.patched,
             lockfile_name,
         );
-        bun_core::note!("bun patch \\<pkg\\>");
+        bun_core::note!("recreate them with bun patch \\<pkg\\>");
     }
 
     #[cfg(debug_assertions)]
@@ -784,7 +789,7 @@ impl<'a> Migrator<'a> {
                 else {
                     if !self.silent {
                         bun_core::warn!(
-                            "skipped \"{}@{}\" from {}: unsupported version specifier",
+                            "skipping \"{}@{}\" from {}: unsupported version specifier",
                             bun_core::fmt::escape_control_chars(name),
                             bun_core::fmt::for_terminal(bstr::BStr::new(spec)),
                             self.lockfile_name,
@@ -873,9 +878,9 @@ impl<'a> Migrator<'a> {
                         INVALID_PACKAGE_ID
                     }
                     None => {
-                        if !has_entry && !self.silent {
+                        if !has_entry && self.verbose {
                             bun_core::warn!(
-                                "skipped \"{}@{}\" from package-lock.json: no entry for this dependency of \"{}\"",
+                                "skipping \"{}@{}\" from package-lock.json: no entry for this dependency of \"{}\"",
                                 bun_core::fmt::for_terminal(bstr::BStr::new(name)),
                                 bun_core::fmt::for_terminal(bstr::BStr::new(spec)),
                                 bun_core::fmt::for_terminal(bstr::BStr::new(if key.is_empty() {
@@ -936,9 +941,9 @@ impl<'a> Migrator<'a> {
                 .copied()
                 .filter(|&t| !self.link_entries.is_set(t as usize));
             let Some(t) = target else {
-                if !self.silent {
+                if self.verbose {
                     bun_core::warn!(
-                        "workspace \"{}\" ({}) is not in {}; resolving it from package.json",
+                        "workspace \"{}\" ({}) not in {}, resolving from package.json",
                         bun_core::fmt::escape_control_chars(&ws.name),
                         bun_core::fmt::escape_control_chars(path),
                         self.lockfile_name,
@@ -1039,7 +1044,7 @@ impl<'a> Migrator<'a> {
         self.skipped_external.set(t as usize);
         if !self.silent {
             bun_core::warn!(
-                "skipped \"{}\" from {}: transitive folder dependency \"{}\" is outside the project",
+                "skipping \"{}\" from {}: transitive folder dependency \"{}\" is outside the project",
                 bun_core::fmt::escape_control_chars(name),
                 self.lockfile_name,
                 bun_core::fmt::escape_control_chars(self.entries[t as usize].key.slice()),
@@ -1058,9 +1063,9 @@ impl<'a> Migrator<'a> {
 
     /// The edge is dropped: the install resolves it from its declarer's `file:` spec.
     fn skip_copied_folder(&mut self, t: u32, name: &[u8]) {
-        if !self.silent && !self.shadowed.is_set(t as usize) {
+        if self.verbose && !self.shadowed.is_set(t as usize) {
             bun_core::warn!(
-                "skipped \"{}\" from {}: a folder npm copied (--install-links)",
+                "skipping \"{}\" from {}: folder copied by npm (--install-links)",
                 bun_core::fmt::escape_control_chars(name),
                 self.lockfile_name,
             );
@@ -1096,7 +1101,7 @@ impl<'a> Migrator<'a> {
     }
 
     fn warn_unreachable(&self) {
-        if self.silent {
+        if !self.verbose {
             return;
         }
         let mut count: usize = 0;
@@ -1125,7 +1130,7 @@ impl<'a> Migrator<'a> {
             let _ = write!(list, " and {} more", count - 5);
         }
         bun_core::warn!(
-            "skipped {} {} {} not depended on by any package: {}",
+            "skipping {} unused {} {}: {}",
             count,
             self.lockfile_name,
             if count == 1 { "entry" } else { "entries" },

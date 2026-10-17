@@ -45,6 +45,7 @@ use bun_threading::Guarded;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Reverse;
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread::ThreadId;
@@ -146,8 +147,8 @@ pub(crate) fn for_each_parallel_in_turns(
         run,
         work,
     };
-    // A thread of a pool that waited here for the others could wait for ever: they may all be waiting like it. It has its turn.
-    if !bun_threading::thread_pool::Thread::current().is_null() || keeps_regions() {
+    // A thread of the pool has its turn.
+    if keeps_regions() {
         return region.work_off();
     }
     let mut runners = vec![(); region.threads];
@@ -161,20 +162,34 @@ pub(crate) fn for_each_parallel_in_turns(
     );
 }
 
-pub(crate) fn for_each_on_this_thread(
+/// The same, on the calling thread and on at most `helpers` threads of the pool. The calling thread begins at once, and in the
+/// end waits until each of the others has looked for work.
+pub(crate) fn for_each_with_helpers(
     caches: &ThreadCaches,
+    helpers: usize,
     count: usize,
+    run: usize,
     work: &(dyn Fn(usize) + Sync),
 ) {
+    let helpers = match helpers.min(count.div_ceil(run).saturating_sub(1)) {
+        0 => 0,
+        _ if keeps_regions() => 0,
+        helpers => helpers,
+    };
     let region = Region {
         caches,
-        threads: 1,
+        threads: 1 + helpers,
         next: AtomicUsize::new(0),
         count,
-        run: count.max(1),
+        run,
         work,
     };
-    region.work_off();
+    pool_of_regions().each_while(
+        (),
+        |(), (), _| region.work_off(),
+        &mut vec![(); helpers],
+        || region.work_off(),
+    );
 }
 
 static OWN_POOL: OnceLock<bun_threading::ThreadPool> = OnceLock::new();
@@ -192,8 +207,10 @@ pub fn keep_regions_on_this_thread() {
     KEEP_REGIONS.lock().push(std::thread::current().id());
 }
 
+/// A thread of a pool that waited for the others could wait for ever: they may all be waiting like it.
 fn keeps_regions() -> bool {
-    KEEP_REGIONS.lock().contains(&std::thread::current().id())
+    !bun_threading::thread_pool::Thread::current().is_null()
+        || KEEP_REGIONS.lock().contains(&std::thread::current().id())
 }
 
 /// From now on parallel regions run on a pool of their own. For work that waits on its thread for what Bun's pool does:
@@ -310,14 +327,9 @@ pub struct PlanOptions {
     /// TypeScript's own baselines: its test runner compiles every test in one process, and
     /// `nextSymbolId` belongs to the process.
     pub reproduces_symbol_ids: bool,
-    /// How many projects of a `tsc -b` run are loaded or checked at the same time, at most. Each
-    /// occupies memory.
+    /// How many projects of a `tsc -b` run are loaded or checked at the same time, at most, if each reads the sources of
+    /// what it references. Otherwise four times as many. Each occupies memory.
     pub projects_at_once: usize,
-    /// A project with at most this many files of its own is small: see `projects_at_once`. Where
-    /// there are at least as many projects as threads, a small project is built by one thread,
-    /// and at most four times `projects_at_once` of them at once, and no more than there are
-    /// threads: each program occupies memory.
-    pub files_of_a_small_project: usize,
     /// `Request::after_file` is only called for the files that are checked, not at the end for the
     /// declaration files and the JSON files that are not. Then nothing reads what the last step
     /// publishes, so it publishes nothing. The declaration files of the project itself, which are
@@ -385,7 +397,6 @@ impl Default for PlanOptions {
             checkers: 0,
             reproduces_symbol_ids: true,
             projects_at_once: 4,
-            files_of_a_small_project: 64,
             after_file_is_for_checked_files: false,
             checks_only_named: false,
             reads_sources_of_references: false,
@@ -1085,8 +1096,10 @@ pub struct WithoutInclude {
     pub config_path: Vec<u8>,
     /// How many files it includes.
     pub included: usize,
-    /// The files of `Request::paths` that were checked in it, each a `tspath.Path`. Sorted.
-    pub files: Vec<Vec<u8>>,
+    /// How many files of `Request::paths` were checked in it.
+    pub asked_for: usize,
+    /// The first of them, a `tspath.Path`.
+    pub example: Vec<u8>,
     pub load_time: Duration,
 }
 
@@ -1407,7 +1420,8 @@ pub fn check_provided_then<R>(
     let cwd = host::from_native(request.cwd);
     let named = (request.project).or_else(|| request.paths.first().map(Vec::as_slice));
     let project = named.map_or_else(|| cwd.clone(), |it| host::from_argument(&cwd, it));
-    let mut disk = host::Disk::with_already_read(threads, provided.already_read, &project);
+    let mut disk =
+        host::Disk::with_already_read(threads, provided.already_read, &project).started_in(&cwd);
     disk.before_read = provided.before_read;
     disk.scripts_of_page = provided.scripts_of_page;
     disk.keeps_byte_order_marks = provided.keeps_byte_order_marks;
@@ -2649,12 +2663,19 @@ struct WithOutputs<'h> {
     awaited: Guarded<Vec<usize>>,
     /// `Host::take_unreadable`, for this project: others are read through `disk` at the same time.
     unreadable: Guarded<Vec<Vec<u8>>>,
-    /// A small project (`PlanOptions::files_of_a_small_project`): the thread that builds it
-    /// loads and checks it, with the plan of one thread. That thread has the stack of a worker.
-    is_small: bool,
+    /// How many projects are being built now. The thread that builds this one loads and checks it, so it has the stack of a
+    /// worker, and `helpers` help it. `None`: it only waits, and the pool does the work.
+    built_now: Option<&'h AtomicUsize>,
 }
 
 impl WithOutputs<'_> {
+    /// The threads are divided equally among the projects that are being built. With a project for every thread, each is
+    /// the work of one thread, which waits for no other. Rounded up: the threads of one project do wait for each other.
+    fn helpers(&self, built_now: &AtomicUsize) -> usize {
+        let projects = built_now.load(Ordering::Relaxed).max(1);
+        self.disk.threads().max(1).div_ceil(projects) - 1
+    }
+
     fn add(&mut self, path: Vec<u8>, text: Arc<Vec<u8>>) {
         let mut directory = dirname::<Posix>(&path);
         while directory.len() > 1 && self.directories.insert(directory.to_vec()) {
@@ -2792,32 +2813,28 @@ impl Host for WithOutputs<'_> {
         self.disk.parse_package_json(arena, text)
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
-        if self.is_small {
-            return self.disk.on_this_thread(count, work);
+        match self.built_now {
+            Some(built_now) => (self.disk).with_helpers(self.helpers(built_now), count, work),
+            None => self.disk.parallel(count, work),
         }
-        self.disk.parallel(count, work);
     }
     fn is_of_one_thread(&self) -> bool {
-        self.is_small
+        (self.built_now).is_some_and(|built_now| self.helpers(built_now) == 0)
     }
-    fn on_this_thread(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
-        self.disk.on_this_thread(count, work);
+    fn with_helpers(&self, helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
+        self.disk.with_helpers(helpers, count, work);
     }
     fn loaded(&self) {
         self.disk.loaded();
     }
     fn threads(&self) -> usize {
-        match self.is_small {
-            true => 1,
-            false => self.disk.threads(),
-        }
+        self.disk.threads()
     }
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
-        // The thread that builds a small project reads its files too: the threads that only
-        // read serve one load at a time.
-        match self.is_small {
-            true => None,
-            false => self.disk.io_pool(),
+        // The threads that only read serve one load at a time.
+        match self.built_now.map(|it| it.load(Ordering::Relaxed)) {
+            Some(2..) => None,
+            _ => self.disk.io_pool(),
         }
     }
 }
@@ -2971,7 +2988,6 @@ fn check_with_references(
     let is_solution =
         |index: usize| roots[index].is_empty() && projects[index].project.has_references;
     let loaded = || (0..count).filter(|&index| !is_left_out[index] && !is_solution(index));
-    let built_at_once = loaded().count();
     if !request.plan_options.shares_every_file {
         let variants = variants_of_several(loaded().map(|index| &projects[index].project.options));
         host.share_declaration_files(variants, loaded().count());
@@ -3030,20 +3046,14 @@ fn check_with_references(
     // What each project has emitted, once it is built: see `WithOutputs::files`.
     type Emitted = Vec<(Vec<u8>, Arc<Vec<u8>>)>;
     let emitted: Vec<Guarded<Emitted>> = (0..count).map(|_| Guarded::new(Vec::new())).collect();
-    // A thread that waits for the pool to check a handful of files costs more than checking
-    // them: where there are more projects than are built at once, each small one is loaded and
-    // checked by the thread that builds it, and as many of them at once as there are threads.
-    let large_at_once = (request.plan_options.projects_at_once)
-        .clamp(1, host.threads().max(1))
-        .min(count.max(1));
-    // A program that reads the sources of what it references has all of those files too. With
-    // fewer projects than threads, one thread each would leave threads idle.
-    let is_small = |index: usize| {
-        !reads_sources
-            && built_at_once > large_at_once
-            && built_at_once >= host.threads()
-            && roots[index].len() <= request.plan_options.files_of_a_small_project
+    // Each program occupies memory: it has its own copy of the declaration files it reaches, however few files the project
+    // lists. One that reads the sources of what it references has all of those files too.
+    let at_once = match reads_sources {
+        true => request.plan_options.projects_at_once,
+        false => request.plan_options.projects_at_once * 4,
     };
+    let at_once = at_once.clamp(1, host.threads().max(1)).min(count.max(1));
+    let built_now = (!reads_sources).then(|| AtomicUsize::new(0));
     // `is_built`: by project, now. `Err`: the projects that have to be built first, besides those
     // that it references.
     let build = |index: usize, is_built: &[bool]| -> Result<Option<Report>, Vec<usize>> {
@@ -3088,7 +3098,7 @@ fn check_with_references(
                 .collect(),
             awaited: Guarded::new(Vec::new()),
             unreadable: Guarded::new(Vec::new()),
-            is_small: is_small(index),
+            built_now: built_now.as_ref(),
         };
         for i in (0..index).filter(|&i| is_built[i]) {
             for (path, text) in emitted[i].lock().iter() {
@@ -3202,77 +3212,95 @@ fn check_with_references(
         }
         Ok(Some(checked))
     };
-    // `buildOrClean`: a project is built as soon as those that it references are. The threads here
-    // only coordinate: the work of every project is done by the pool, whose threads turn to
-    // another project where one has no task for them.
+    // `buildOrClean`: a project is built as soon as those that it references are.
     struct Builds {
-        is_started: Vec<bool>,
+        /// What can be built now.
+        ready: BTreeSet<usize>,
+        /// By project: how many of those that it waits for are not built. Besides those that it references, they are what
+        /// `build` has returned.
+        waits_for: Vec<usize>,
+        /// By project: those that wait for it.
+        waiting: Vec<Vec<usize>>,
         is_built: Vec<bool>,
-        /// By project: what `build` has returned.
-        awaited: Vec<Vec<usize>>,
-        /// How many projects that are not small are being built.
-        large: usize,
+        /// How many are being built.
+        running: usize,
+        /// How many are neither built nor being built.
+        left: usize,
+    }
+    let mut waiting = vec![Vec::new(); count];
+    for (index, first) in up_stream.iter().enumerate() {
+        for &it in first {
+            waiting[it].push(index);
+        }
     }
     let builds = Guarded::new(Builds {
-        is_started: vec![false; count],
+        ready: (0..count).filter(|&it| up_stream[it].is_empty()).collect(),
+        waits_for: up_stream.iter().map(Vec::len).collect(),
+        waiting,
         is_built: vec![false; count],
-        awaited: vec![Vec::new(); count],
-        large: 0,
+        running: 0,
+        left: count,
     });
+    // Those that a thread is about to begin count too.
+    let count_those_built_now = |state: &Builds| {
+        if let Some(built_now) = &built_now {
+            let projects = (state.running + state.ready.len()).min(at_once);
+            built_now.store(projects, Ordering::Relaxed);
+        }
+    };
+    count_those_built_now(&builds.lock());
     let one_is_built = bun_threading::Condvar::new();
     let reports: Vec<Guarded<Option<Report>>> = (0..count).map(|_| Guarded::new(None)).collect();
     let build_what_is_ready = || {
+        let mut state = builds.lock();
         loop {
-            let mut state = builds.lock();
-            let index = loop {
-                let is_ready = |&i: &usize| {
-                    let mut first = up_stream[i].iter().chain(&state.awaited[i]);
-                    !state.is_started[i]
-                        && (is_small(i) || state.large < large_at_once)
-                        && first.all(|&it| state.is_built[it])
-                };
-                if let Some(index) = (0..count).find(is_ready) {
-                    break index;
-                }
-                if state.is_started.iter().all(|&it| it) {
+            // The first in build order.
+            let Some(index) = state.ready.pop_first() else {
+                if state.left == 0 {
                     return;
                 }
                 one_is_built.wait_guarded(&mut state);
+                continue;
             };
-            state.is_started[index] = true;
-            state.large += usize::from(!is_small(index));
+            state.left -= 1;
+            state.running += 1;
             let is_built = state.is_built.clone();
             drop(state);
             let built = build(index, &is_built);
-            let mut state = builds.lock();
-            state.large -= usize::from(!is_small(index));
+            state = builds.lock();
+            let now = &mut *state;
+            now.running -= 1;
             match built {
                 Ok(report) => {
                     *reports[index].lock() = report;
-                    state.is_built[index] = true;
+                    now.is_built[index] = true;
+                    for it in std::mem::take(&mut now.waiting[index]) {
+                        now.waits_for[it] -= 1;
+                        if now.waits_for[it] == 0 {
+                            now.ready.insert(it);
+                        }
+                    }
                 }
                 Err(awaited) => {
-                    state.awaited[index].extend(awaited);
-                    state.is_started[index] = false;
+                    now.left += 1;
+                    for it in awaited.into_iter().filter(|&it| !now.is_built[it]) {
+                        now.waiting[it].push(index);
+                        now.waits_for[index] += 1;
+                    }
+                    if now.waits_for[index] == 0 {
+                        now.ready.insert(index);
+                    }
                 }
             }
-            drop(state);
+            count_those_built_now(&state);
             one_is_built.notify_all();
         }
     };
-    // Each program occupies memory: it has its own copy of the declaration files it reaches,
-    // however few files the project lists. One thread checks a small project, so four of them
-    // take the place of a large one.
-    let at_once = match (0..count).any(is_small) {
-        true => (host.threads().min(count)).min(large_at_once * 4),
-        false => large_at_once,
-    };
-    // The thread that builds a small project parses and checks it, so it needs the stack of a
-    // worker: the calling thread has the stack it was given, and only waits then.
-    let has_small = (0..count).any(is_small);
+    // A thread that loads and checks what it builds needs the stack of a worker: the calling thread has the stack it was
+    // given, and only waits then.
     std::thread::scope(|scope| {
         let mut started = 0;
-        for _ in usize::from(!has_small)..at_once {
+        for _ in usize::from(built_now.is_none())..at_once {
             // Without the thread, the others build its share.
             let builder = std::thread::Builder::new()
                 .stack_size(STACK_OF_A_WORKER as usize)
@@ -3283,7 +3311,7 @@ fn check_with_references(
                 });
             started += usize::from(builder.is_ok());
         }
-        if !has_small || started == 0 {
+        if built_now.is_none() || started == 0 {
             build_what_is_ready();
         }
     });
@@ -3544,10 +3572,7 @@ fn check_named_files(
     run: Option<&Run<'_>>,
     in_room: Option<&Place<'_>>,
 ) -> Report {
-    // A small project of a build is checked by the one thread that builds it, and has the plan
-    // of one thread.
     let threads = match request.threads {
-        _ if host.is_of_one_thread() => 1,
         0 => usize::from(bun_core::get_thread_count()),
         n => n,
     };
@@ -3710,11 +3735,15 @@ fn check_named_files(
     let program: &Program = root;
     report.files_loaded = program.files.modules.len();
     report.load_time = started.elapsed();
-    if let Some(named) = named.filter(|_| includes_everything) {
+    if includes_everything
+        && let Some(named) = named
+        && let Some(example) = named.first()
+    {
         report.without_include.push(WithoutInclude {
             config_path: config_path.clone(),
             included,
-            files: named.to_vec(),
+            asked_for: named.len(),
+            example: example.clone(),
             load_time: report.load_time,
         });
     }
@@ -4134,7 +4163,8 @@ fn check_named_files(
     // Of all the files, so that those that are only emitted are not divided over an empty published state.
     let cost =
         costs.iter().sum::<usize>() + only_emitted.iter().map(|&it| cost_of(it)).sum::<usize>();
-    let is_one_thread = threads == 1
+    // The thread that builds a project of a build checks it alone if the others have projects of their own.
+    let is_one_thread = (threads == 1 || host.is_of_one_thread())
         && !request.plan_options.tasks_on_one_thread
         && cost <= request.plan_options.one_thread_max_cost;
     let all: Vec<usize> = (0..to_check.len()).collect();

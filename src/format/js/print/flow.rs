@@ -167,11 +167,17 @@ fn includes_function_type_in_object_type(node: Node<'_>, is_in_object_type: bool
     while let Some((node, is_in_object_type)) = rest.pop() {
         let (is_function_type, is_object_type, operand) = match node {
             Node::Type(ty) => (
-                ty.tag() == TypeTag::Fn,
+                // A hook type and a component type are nodes of their own.
+                matches!(ty.kind(), TypeKind::Fn(func) if keyword_of_function_type(ty, func).is_none()),
                 ty.tag() == TypeTag::Object,
                 ty.flow_nullable_operand(),
             ),
-            Node::Func(_) => (true, false, None),
+            // The value of a method, of an accessor or of a call property is a function type. An indexer has none.
+            Node::Func(func) => (
+                matches!(func.owner(), Node::Member(_)) && func.kind() != FnKind::IndexSignature,
+                false,
+                None,
+            ),
             _ => (false, false, None),
         };
         if is_function_type && is_in_object_type {
@@ -186,19 +192,33 @@ fn includes_function_type_in_object_type(node: Node<'_>, is_in_object_type: bool
     false
 }
 
+/// `T %checks`, which is a predicate around the `T` in the tree.
+fn is_checks_predicate(ty: TypeNode<'_>) -> bool {
+    matches!(ty.kind(), TypeKind::Predicate { param, .. } if param.is("%checks"))
+}
+
+/// Whether `ty` is the return type of an arrow function. Of `T %checks` that is the `T` for Prettier.
+fn is_return_type_of_arrow(ty: TypeNode<'_>) -> bool {
+    let outer = match ty.parent() {
+        Node::Type(parent) if is_checks_predicate(parent) => parent,
+        _ => ty,
+    };
+    matches!(outer.parent(), Node::Func(owner) if owner.is_arrow() && owner.return_type() == Some(outer))
+}
+
 /// Prettier's `needsParentheses` for the types of Flow.
 pub(crate) fn needs_parentheses(ty: TypeNode<'_>) -> bool {
+    // The `=>` of a function type in an object type would be taken for that of the arrow function. Prettier also prints
+    // `(): (a is { b: () => void }) => c`, which is a syntax error.
+    if ty.tag() != TypeTag::Predicate
+        && is_return_type_of_arrow(ty)
+        && !ty.flow_nullable_operand().is_some_and(needs_parentheses)
+        && includes_function_type_in_object_type(Node::Type(ty), false)
+    {
+        return true;
+    }
     let parent = match ty.parent() {
         Node::Type(parent) => Some(parent),
-        // The `=>` of a function type in an object type would be taken for that of the arrow function.
-        Node::Func(owner)
-            if owner.is_arrow()
-                && owner.return_type() == Some(ty)
-                && !ty.flow_nullable_operand().is_some_and(needs_parentheses)
-                && includes_function_type_in_object_type(Node::Type(ty), false) =>
-        {
-            return true;
-        }
         _ => None,
     };
     let parent_tag = parent.map(TypeNode::tag);
@@ -262,7 +282,6 @@ fn function_type_needs_parentheses<'a>(ty: TypeNode<'a>, func: Func<'a>) -> bool
         Some(_) if func.return_type().is_none() => return false,
         _ => {}
     }
-    let is_return_type_of_arrow = |it: TypeNode<'a>| matches!(it.parent(), Node::Func(owner) if owner.is_arrow() && owner.return_type() == Some(it));
     if is_return_type_of_arrow(ty) {
         return true;
     }
@@ -608,13 +627,14 @@ pub(crate) fn write_type_parameter_modifiers<'a>(param: TypeParam<'a>, f: &mut F
     write!(f, FormatModifiers(param.modifiers()));
 }
 
-/// `: Bound`, ` extends Bound`. Babel's tree does not say which it is: `T extends A` is `T: A` for `babel-flow`.
+/// `: Bound`, ` extends Bound`, as it is written. Babel's tree does not say which it is, so with `babel` and `babel-flow`
+/// Prettier prints `T: A` for `T extends A`.
 pub(crate) fn write_type_parameter_bound<'a>(
     param: TypeParam<'a>,
     bound: TypeNode<'a>,
     f: &mut Formatter<'a>,
 ) {
-    match param.flow_token_after_name() == b":" || goes_to_babel(f.options(), f.file().path()) {
+    match param.flow_token_after_name() == b":" {
         true => write!(f, FormatTypeAnnotation(bound)),
         false => write!(f, [" extends ", bound]),
     }
@@ -728,7 +748,12 @@ pub(crate) fn write_object_type<'a>(
                 soft_block_indent_with_maybe_space(&content, f.options().bracket_spacing.value());
             match ObjectLike::TSTypeLiteral(ty, members).should_hug(f) {
                 true => write!(f, inner),
-                false => write!(f, group(&inner).should_expand(should_expand)),
+                false => write!(
+                    f,
+                    group(&inner)
+                        .should_expand(should_expand)
+                        .stays_expanded(f.options().expand == Expand::Auto)
+                ),
             }
         }
     }
@@ -1205,6 +1230,18 @@ pub(crate) fn as_match_expression(e: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
         && head.tag() == ExprTag::Call
         && braces.tag() == ExprTag::Object)
         .then_some((head, braces))
+}
+
+/// The `{ .. }` of a match expression.
+pub(crate) fn is_braces_of_match(braces: Expr<'_>) -> bool {
+    matches!(braces.parent(), Node::Expr(e)
+        if as_match_expression(e).is_some_and(|(_, it)| it == braces))
+}
+
+/// `pattern => body` in a match expression, which is a property in the tree. For Prettier the body is in no property.
+pub(crate) fn is_match_expression_case(case: Prop<'_>) -> bool {
+    case.file().is_flow()
+        && matches!(case.parent(), Node::Expr(braces) if is_braces_of_match(braces))
 }
 
 /// `match (a) { .. }` as a statement is a `switch` statement in the tree, which does not start with `switch`. Returns the

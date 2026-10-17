@@ -968,11 +968,11 @@ latest: 1.0.0
     // No name and nothing to infer it from.
     expect(await view([], { name: null, command })).toEqual({
       out: "",
-      err: "error: No package name was given and no package.json was found\n",
+      err: "error: no package name given and no package.json found\n",
       code: 1,
     });
     expect(await view(["--json"], { name: null, command })).toEqual({
-      out: `{ "error": "No package name was given and no package.json was found", "version": "" }\n`,
+      out: `{ "error": "no package name given and no package.json found", "version": "" }\n`,
       err: "",
       code: 1,
     });

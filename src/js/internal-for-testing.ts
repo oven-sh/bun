@@ -262,14 +262,35 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   range: $bindgen("bindgen_test.bind.ts", "range"),
   words: $bindgen("bindgen_test.bind.ts", "words"),
   sumBytes: $bindgen("bindgen_test.bind.ts", "sumBytes"),
-  sumBytesOptional: $bindgen("bindgen_test.bind.ts", "sumBytesOptional"),
   sumBytesThenText: $bindgen("bindgen_test.bind.ts", "sumBytesThenText"),
   sumBeforeAndAfterCallback: $bindgen("bindgen_test.bind.ts", "sumBeforeAndAfterCallback"),
-  withValueEcho: $bindgen("bindgen_test.bind.ts", "withValueEcho"),
   fail: $bindgen("bindgen_test.bind.ts", "fail"),
   TestCounter: $bindgen("bindgen_test.bind.ts", "TestCounter"),
   TestHolder: $bindgen("bindgen_test.bind.ts", "TestHolder"),
   makeToken: $bindgen("bindgen_test.bind.ts", "makeToken"),
+  bytesOf: $bindgen("bindgen_test.bind.ts", "bytesOf"),
+  bytesOfOrToString: $bindgen("bindgen_test.bind.ts", "bytesOfOrToString"),
+  bytesOfString: $bindgen("bindgen_test.bind.ts", "bytesOfString"),
+  bytesOfBufferOrBlob: $bindgen("bindgen_test.bind.ts", "bytesOfBufferOrBlob"),
+  bytesOfRefusingUndefined: $bindgen("bindgen_test.bind.ts", "bytesOfRefusingUndefined"),
+  bytesOfThen: $bindgen("bindgen_test.bind.ts", "bytesOfThen"),
+  bytesOfThenCopyingShared: $bindgen("bindgen_test.bind.ts", "bytesOfThenCopyingShared"),
+  bytesOfThenCopied: $bindgen("bindgen_test.bind.ts", "bytesOfThenCopied"),
+  bytesOfAreSameMemory: $bindgen("bindgen_test.bind.ts", "bytesOfAreSameMemory"),
+  bytesOfAreSameMemoryCopyingShared: $bindgen("bindgen_test.bind.ts", "bytesOfAreSameMemoryCopyingShared"),
+  bytesBeforeAndAfterCallback: $bindgen("bindgen_test.bind.ts", "bytesBeforeAndAfterCallback"),
+  bytesBeforeAndAfterCallbackCopyingShared: $bindgen(
+    "bindgen_test.bind.ts",
+    "bytesBeforeAndAfterCallbackCopyingShared",
+  ),
+  pinnedBytesAfterCallback: $bindgen("bindgen_test.bind.ts", "pinnedBytesAfterCallback"),
+  stringAsIsOrBytes: $bindgen("bindgen_test.bind.ts", "stringAsIsOrBytes"),
+  asBigInt: $bindgen("bindgen_test.bind.ts", "asBigInt"),
+  integerOrBigInt: $bindgen("bindgen_test.bind.ts", "integerOrBigInt"),
+  looseInteger: $bindgen("bindgen_test.bind.ts", "looseInteger"),
+  looseIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "looseIntegerOrBigInt"),
+  looseDoubleOrBigInt: $bindgen("bindgen_test.bind.ts", "looseDoubleOrBigInt"),
+  wideIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "wideIntegerOrBigInt"),
 };
 
 export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
@@ -614,16 +635,30 @@ export const linearFifoOrderedRemoveProbe = $newRustFunction(
 ) as (scenario: number) => number[];
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
 
-interface setSocketOptionsFn {
-  (socket: Bun.Socket, sendBuffer: 1, size: number): void;
-  (socket: Bun.Socket, recvBuffer: 2, size: number): void;
-}
-
-export const setSocketOptions: setSocketOptionsFn = $newRustFunction(
+const setNativeSocketOptions: (socket: unknown, option: 1 | 2, size: number) => void = $newRustFunction(
   "runtime/socket/socket.rs",
   "jsSetSocketOptions",
   3,
 );
+
+/**
+ * `setsockopt()` with `SO_SNDBUF` (`option` 1) or `SO_RCVBUF` (`option` 2) on the connection behind `socket`.
+ *
+ * To get backpressure without sending megabytes, shrink the send buffer of the side that sends. On loopback the kernel
+ * grows the sender's buffer to its maximum (4 MiB on Linux) at once, so shrinking the receiver's buffer changes little.
+ *
+ * @param socket A `Bun.Socket`, a `ServerWebSocket`, a `WebSocket`, a `node:net` socket, the socket of a `node:http`
+ * server's request, or a WebSocket of the `ws` package (built-in or from npm). It has to be connected.
+ */
+export function setSocketOptions(socket: any, option: 1 | 2, size: number): void {
+  // `ws`: the stream the WebSocket runs on, or what the built-in has in its place on a native client.
+  socket = socket._socket ?? socket;
+  setNativeSocketOptions(
+    socket[require("internal/http").kHandle] ?? socket._handle ?? socket[Symbol.for("::bunternal::")] ?? socket,
+    option,
+    size,
+  );
+}
 
 /**
  * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure

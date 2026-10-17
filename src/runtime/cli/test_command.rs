@@ -937,6 +937,11 @@ fn should_drain_event_loop() -> bool {
     env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
 
+/// `--bail` exits without running the hooks that are left, so nothing else stops what the tests spawned.
+fn kill_tracked_processes_before_bail(vm: &mut VirtualMachine) {
+    bun_test::Execution::report_killed_processes(vm.auto_killer.kill().processes);
+}
+
 /// jest and vitest never run a test file's `process.on('exit')` listeners; node's test harness asserts from them.
 pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
     !(reporter.jest.node_test_used || should_drain_event_loop())
@@ -1413,6 +1418,7 @@ impl CommandLineReporter {
                     Output::flush();
                     this.write_junit_report_if_needed();
                     this.write_timings_if_needed();
+                    kill_tracked_processes_before_bail(VirtualMachine::get_mut());
                     Global::exit(1);
                 }
             }
@@ -2969,6 +2975,7 @@ impl TestCommand {
                         );
                         reporter.write_junit_report_if_needed();
                         reporter.write_timings_if_needed();
+                        kill_tracked_processes_before_bail(vm);
 
                         vm.exit_handler.exit_code = 1;
                         vm.is_shutting_down = true;

@@ -384,6 +384,39 @@ describe("bun test", () => {
       expect(stderr).toContain("Bailed out after 3 failures");
       expect(stderr).not.toContain("test #4");
     });
+
+    // --bail exits before afterAll runs, so the runner stops what the hooks and tests started.
+    test.each([
+      ["an assertion fails", `test("fails", () => { expect(1).toBe(2); });`],
+      ["a test times out", `test("fails", async () => { await new Promise(() => {}); }, 100);`],
+    ])("kills the child processes of beforeAll when %s", (_, failingTest) => {
+      const stderr = runTest({
+        args: ["--bail"],
+        input: `
+          import { afterAll, beforeAll, expect, test } from "bun:test";
+
+          let fromBeforeAll;
+          afterAll(() => fromBeforeAll.kill());
+
+          beforeAll(() => {
+            fromBeforeAll = Bun.spawn({
+              cmd: [process.execPath, "-e", "await Bun.stdin.text()"],
+              stdin: "pipe",
+              stdout: "ignore",
+              stderr: "ignore",
+            });
+          });
+
+          ${failingTest}
+
+          test("never runs", () => {});
+        `,
+        expectExitCode: 1,
+      });
+      expect(stderr.match(/killed \d+ dangling process(?:es)?/g)).toEqual(["killed 1 dangling process"]);
+      expect(stderr).toContain("Bailed out after 1 failure");
+      expect(stderr).not.toContain("never runs");
+    });
   });
   describe("--timeout", () => {
     test("must provide a number timeout", () => {

@@ -868,7 +868,7 @@ impl BunTest {
             match (*this).phase {
                 Phase::Collection => {}
                 Phase::Execution => {
-                    if let Err(e) = (*this).execution.handle_timeout(global) {
+                    if let Err(e) = (*this).execution.handle_timeout() {
                         (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, &RefDataValue::Done);
                     }
                 }

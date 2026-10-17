@@ -1628,6 +1628,80 @@ test("jest.mock() and friends return jest, and vi.doMock() returns a disposable"
   expect(await import(a)).toBe(ns);
 });
 
+describe.concurrent("two factories in one file that run at the same time", () => {
+  const second = `vi.mock("./second", async () => ({ name: "second with " + (await import("./first")).name }));`;
+  test.each([
+    [
+      "the second gets the mock of the first, which their importer waits for anyway",
+      `vi.mock("./first", async () => (await import("./slow"), { name: "first" }));
+       ${second}`,
+      `(await import("./both")).names`,
+      ["first", "second with first"],
+    ],
+    [
+      "also after it has awaited something else",
+      `vi.mock("./first", async () => (await import("./slow"), { name: "first" }));
+       vi.mock("./second", async () => (await new Promise(setImmediate), { name: "second with " + (await import("./first")).name }));`,
+      `(await import("./both")).names`,
+      ["first", "second with first"],
+    ],
+    [
+      "also through a module that it loads",
+      `vi.mock("./first", async () => (await import("./slow"), { name: "first" }));
+       vi.mock("./second", async () => ({ name: "second with " + (await import("./through")).name }));`,
+      `(await import("./both")).names`,
+      ["first", "second with first"],
+    ],
+    [
+      "if each asks for the other's module, the one that asks last gets the original",
+      `vi.mock("./first", async () => (await import("./slow"), { name: "first with " + (await import("./second")).name }));
+       ${second}`,
+      `(await import("./both")).names`,
+      ["first with real second", "second with first with real second"],
+    ],
+    [
+      "a factory that the other one started gets the original",
+      `vi.mock("./first", async () => ({ name: "first with " + (await import("./second")).name }));
+       ${second}`,
+      `[(await import("./first")).name]`,
+      ["first with second with real first"],
+    ],
+    [
+      "with no importer in common the second doesn't wait, and gets the original",
+      `const gate = vi.hoisted(() => Promise.withResolvers());
+       vi.mock("./first", async () => (await gate.promise, { name: "first" }));
+       ${second}`,
+      `await (async () => {
+         const first = import("./first");
+         const second = await import("./second");
+         gate.resolve();
+         return [(await first).name, second.name];
+       })()`,
+      ["first", "second with real first"],
+    ],
+  ])("%s", async (_, mocks, names, expected) => {
+    await expectFixturesToPass(
+      {
+        "first.ts": `export const name = "real first";`,
+        "second.ts": `export const name = "real second";`,
+        "through.ts": `export { name } from "./first";`,
+        "both.ts": `import { name as first } from "./first"; import { name as second } from "./second"; export const names = [first, second];`,
+        // Takes more than one turn of the event loop to load.
+        "slow.ts": `import "./slower";`,
+        "slower.ts": `export {};`,
+        "at-once.test.ts": `
+          import { expect, test, vi } from "vitest";
+          ${mocks}
+          test("names", async () => {
+            expect(${names}).toEqual(${JSON.stringify(expected)});
+          });
+        `,
+      },
+      1,
+    );
+  });
+});
+
 test.concurrent(
   "a relative path is resolved beside the file of the call, also in an arrow that ends in the call",
   async () => {
@@ -3215,19 +3289,17 @@ describe.concurrent("a module that a factory loads while it runs", () => {
     );
   });
 
-  test("fails with a circular import error if the factory has no source file", async () => {
+  test("gets the original if the factory has no source file either", async () => {
     await expectFixturesToPass(
       {
         "a.ts": `export const a = "real-a";`,
         "b.ts": `import { a } from "./a"; export const seen = () => a;`,
         "mock-function.test.ts": `
           import { expect, mock, test } from "bun:test";
-          import { join } from "node:path";
           mock.module("./a", mock(() => ({ a: "mocked-a", seen: require("./b").seen })));
-          test("the import fails instead of never settling", async () => {
-            await expect(import("./a")).rejects.toThrow(
-              'Circular import: "' + join(import.meta.dir, "a.ts") + '" is imported by a module that its own mock factory loads while it runs',
-            );
+          test("a mock function as the factory", async () => {
+            const { a, seen } = await import("./a");
+            expect([a, seen()]).toEqual(["mocked-a", "real-a"]);
           });
         `,
       },

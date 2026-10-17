@@ -1177,7 +1177,14 @@ JSValue JSModuleMock::callFactory(Zig::GlobalObject* globalObject, bool synchron
         MarkedArgumentBuffer arguments;
         arguments.append(JSC::JSBoundFunction::create(vm, globalObject, importOriginal, this, ArgList(), 0, nullptr, makeSource("importOriginal"_s, JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted)));
         RETURN_IF_EXCEPTION(scope, {});
-        RELEASE_AND_RETURN(scope, JSC::profiledCall(globalObject, ProfilingReason::API, factoryValue, JSC::getCallData(factoryValue), JSC::jsUndefined(), arguments));
+        // The context survives the factory's awaits, so an import() it makes later can still be traced back to it.
+        globalObject->setAsyncContextTrackingEnabled(true);
+        auto* asyncContext = globalObject->m_asyncContextData.get();
+        JSValue previous = asyncContext->getInternalField(0);
+        asyncContext->putInternalField(vm, 0, Bun::createAsyncContextFrame(globalObject, this, previous));
+        JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, factoryValue, JSC::getCallData(factoryValue), JSC::jsUndefined(), arguments);
+        asyncContext->putInternalField(vm, 0, previous);
+        RELEASE_AND_RETURN(scope, result);
     }
 
     if (!dependency && !factoryValue && !spy)
@@ -4057,6 +4064,41 @@ String keyOfImportByPackage(Zig::GlobalObject* globalObject, const String& key, 
     return hasOriginal ? Zig::originalModuleKey(key) : key;
 }
 
+// Whether some unfinished module imports both, directly or through other modules. Vitest loads a module's imports one at a time, so the
+// later import's factory starts after the earlier one's has returned. Here both run at the same time, so the later one has to wait for the
+// earlier one to see the same thing. Their importer waits for both anyway.
+__attribute__((minsize)) static bool haveUnfinishedImporterInCommon(Zig::GlobalObject* globalObject, const String& earlier, const String& later)
+{
+    Zig::ModuleImporters importersOf;
+    for (auto& [mapKey, entry] : Bun::testFileModuleLoader(globalObject)->moduleMap()) {
+        auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
+        if (!cyclic || cyclic->isSCCEvaluated())
+            continue;
+        for (auto& resolved : cyclic->resolvedRequests().values())
+            Zig::addImporter(importersOf, String(mapKey.first), String { resolved.get() });
+    }
+    auto importersAbove = [&](const String& key) {
+        UncheckedKeyHashSet<String> above;
+        Vector<String> queue { key };
+        for (size_t i = 0; i < queue.size(); ++i) {
+            auto importers = importersOf.find(queue[i]);
+            if (importers == importersOf.end())
+                continue;
+            for (auto& importer : importers->value) {
+                if (above.add(importer).isNewEntry)
+                    queue.append(importer);
+            }
+        }
+        return above;
+    };
+    auto aboveEarlier = importersAbove(earlier);
+    for (auto& importer : importersAbove(later)) {
+        if (aboveEarlier.contains(importer))
+            return true;
+    }
+    return false;
+}
+
 __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
 {
     // A fetch in flight for a mock that has since been replaced still waits for the old factory.
@@ -4088,6 +4130,29 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
     auto* importerRecord = importerEntry ? dynamicDowncast<JSC::CyclicModuleRecord>(importerEntry->record()) : nullptr;
     bool isImporterBeingLoaded = importerRecord && importerRecord->status() == JSC::CyclicModuleRecord::Status::New;
 
+    // The factories the running code was called from: the innermost one and those waiting for it. See callFactory().
+    Vector<JSObject*, 2> callers;
+    auto& names = WebCore::builtinNames(globalObject->vm());
+    for (JSObject* frame = globalObject->m_asyncContextData.get()->getInternalField(0).getObject(); frame;) {
+        JSValue storage = frame->getDirect(globalObject->vm(), names.storagePublicName());
+        if (storage && storage.inherits<Zig::JSModuleMock>())
+            callers.append(asObject(storage));
+        JSValue previous = frame->getDirect(globalObject->vm(), names.prevPublicName());
+        frame = previous ? previous.getObject() : nullptr;
+    }
+    // Plus the factories that imported one of those factories' modules. They may be waiting for it, so it must not wait for theirs.
+    for (bool grew = !callers.isEmpty(); std::exchange(grew, false);) {
+        for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
+            if (callers.contains(running.mock.get()))
+                continue;
+            grew = callers.containsIf([&](JSObject* caller) { return running.importChain.contains(uncheckedDowncast<Zig::JSModuleMock>(caller)->specifier->tryGetValue().data); });
+            if (grew) {
+                callers.append(running.mock.get());
+                break;
+            }
+        }
+    }
+
     // Iterate to a fixed point: the key picked for one running factory must not wait for another running factory's mock either.
     String given = key;
     String asked;
@@ -4097,6 +4162,11 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
             String mocked = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())->specifier->tryGetValue().data;
             // Once another mock has replaced it, imports from its file are no longer attributed to the factory.
             bool isFactory = importer == running.file && (!Zig::registeredModuleMock(globalObject, mocked) || Zig::isStillRegisteredModuleMock(globalObject, mocked, uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())));
+            // The file alone can't tell which of its factories called import(). The async context can.
+            if (!callers.isEmpty() && !callers.contains(running.mock.get()))
+                isFactory = isFactory && !haveUnfinishedImporterInCommon(globalObject, mocked, uncheckedDowncast<Zig::JSModuleMock>(callers[0])->specifier->tryGetValue().data);
+            else if (!callers.isEmpty())
+                isFactory = true;
             if (!isInChain && !isFactory && (isImporterBeingLoaded || !running.importChainWithoutQuery.contains(importer)))
                 continue;
             // A module that was linked as itself is patched in place: nothing waits for this factory, and the patch reaches whatever imports it meanwhile.

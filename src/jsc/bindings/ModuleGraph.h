@@ -125,6 +125,8 @@ public:
 
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
 JSC::Structure* createModuleGraphFrameStructure(JSC::VM&, JSC::JSGlobalObject*);
+// A frame of the async context on top of `previous`. `storage` is not an AsyncLocalStorage, so no getStore() finds it.
+JSC::JSObject* createAsyncContextFrame(Zig::GlobalObject*, JSC::JSObject* storage, JSC::JSValue previous);
 
 // ── Which graph ──────────────────────────────────────────────────────────────────────
 // The graph `loader` is the loader of; null for the global object's own.

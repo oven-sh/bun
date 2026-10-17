@@ -244,6 +244,60 @@ for (const StringDecoder of [FakeStringDecoderCall, RealStringDecoder, SubString
   });
 }
 
+// Node assigns `this.encoding` in the constructor, so it's an enumerable own
+// data property. Shape-sensitive operations (hasOwn, spread, JSON.stringify)
+// must see it; previously Bun exposed it only via a prototype accessor.
+it("encoding is an enumerable own data property", () => {
+  const d = new RealStringDecoder("utf16le");
+  expect({
+    value: d.encoding,
+    hasOwn: Object.hasOwn(d, "encoding"),
+    ownNames: Object.getOwnPropertyNames(d),
+    spread: { ...d },
+    json: JSON.stringify(d),
+    desc: Object.getOwnPropertyDescriptor(d, "encoding"),
+    protoDesc: Object.getOwnPropertyDescriptor(RealStringDecoder.prototype, "encoding"),
+  }).toEqual({
+    value: "utf16le",
+    hasOwn: true,
+    ownNames: ["encoding"],
+    spread: { encoding: "utf16le" },
+    json: '{"encoding":"utf16le"}',
+    desc: { value: "utf16le", writable: true, enumerable: true, configurable: true },
+    protoDesc: undefined,
+  });
+
+  // Same shape when StringDecoder is applied to a foreign `this` (util.inherits path).
+  const f = new FakeStringDecoderCall("utf16le");
+  expect({
+    desc: Object.getOwnPropertyDescriptor(f, "encoding"),
+    spread: { ...f },
+  }).toEqual({
+    desc: { value: "utf16le", writable: true, enumerable: true, configurable: true },
+    spread: { encoding: "utf16le" },
+  });
+
+  // Same shape on an instance of a subclass.
+  const s = new SubStringDecoder("latin1");
+  expect({
+    desc: Object.getOwnPropertyDescriptor(s, "encoding"),
+    json: JSON.stringify(s),
+  }).toEqual({
+    desc: { value: "latin1", writable: true, enumerable: true, configurable: true },
+    json: '{"encoding":"latin1"}',
+  });
+
+  // It is plain data, as in Node: an assignment sticks and the decoder keeps the constructor's encoding.
+  d.encoding = "hex";
+  expect({
+    value: d.encoding,
+    decoded: d.write(Buffer.from("hi", "utf16le")),
+  }).toEqual({
+    value: "hex",
+    decoded: "hi",
+  });
+});
+
 // Node's normalizeEncoding() maps every UTF-16LE alias (including the legacy
 // ucs2/ucs-2 spellings) to the canonical name "utf16le", and
 // StringDecoder#encoding exposes the normalized name.

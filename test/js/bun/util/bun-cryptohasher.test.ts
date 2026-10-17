@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { createHash, createHmac } from "node:crypto";
+import { createSecureContext } from "node:tls";
 
 // Every digest literal in this file was checked against python hashlib (openssl for md4).
 
@@ -330,10 +331,51 @@ describe("HMAC", () => {
     });
   }
 
+  // A failed WebCrypto key parse leaves its error in BoringSSL's thread-local
+  // error queue. update() must not report that stale entry as its own failure.
+  test.each([
+    ["pkcs8", { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, ["sign"]],
+    ["spki", { name: "ECDSA", namedCurve: "P-256" }, ["verify"]],
+  ] as const)("update() after a failed subtle.importKey(%s) is unaffected", async (format, algorithm, usages) => {
+    const hmac = () => new Bun.CryptoHasher("sha256", "key").update("data").digest("hex");
+    const expected = hmac();
+
+    const rejection = await crypto.subtle
+      .importKey(format, new Uint8Array([0, 0, 0]), algorithm, false, usages as KeyUsage[])
+      .then(
+        () => "resolved",
+        (e: Error) => e.name,
+      );
+    expect(rejection).toBe("DataError");
+
+    expect(hmac()).toBe(expected);
+    expect(hmac()).toBe(expected);
+  });
+
   const unsupported = [["shake128"], ["shake256"]] as const;
   test.each(unsupported)("%s is not supported", algorithm => {
     expect(() => new Bun.CryptoHasher(algorithm, "key")).toThrow("HMAC is not supported for this algorithm yet");
     expect(new Bun.CryptoHasher(algorithm).algorithm).toBe(algorithm);
+  });
+
+  // createSecureContext throws the oldest entry (PEM_NO_START_LINE) and leaves the
+  // SSL-library entry behind it in the queue. update() must decide success from
+  // HMAC_Update itself.
+  test("update() after a failed tls.createSecureContext is unaffected", () => {
+    const hmac = () => new Bun.CryptoHasher("sha256", "key").update("data").digest("hex");
+    const hash = () => new Bun.CryptoHasher("sha256").update("data").digest("hex");
+    const expected = { hmac: hmac(), hash: hash() };
+    expect(() => createSecureContext({ key: "not a pem", cert: "not a pem" })).toThrow(
+      expect.objectContaining({ code: "ERR_OSSL_PEM_NO_START_LINE" }),
+    );
+    expect({ hmac: hmac(), hash: hash() }).toEqual(expected);
+  });
+
+  test("the unsupported-algorithm error is not replaced by a stale BoringSSL error", () => {
+    expect(() => createSecureContext({ key: "not a pem", cert: "not a pem" })).toThrow(
+      expect.objectContaining({ code: "ERR_OSSL_PEM_NO_START_LINE" }),
+    );
+    expect(() => new Bun.CryptoHasher("shake128", "key")).toThrow("HMAC is not supported for this algorithm yet");
   });
 });
 

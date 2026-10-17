@@ -12,8 +12,9 @@ pub(crate) struct HMAC {
 }
 
 impl HMAC {
-    pub(crate) fn init(algorithm: evp::Algorithm, key: &[u8]) -> Option<Box<HMAC>> {
-        let md = algorithm.md()?;
+    /// `UnsupportedAlgorithm` when the digest has no HMAC support, `BoringSSLError` when `HMAC_Init_ex` fails.
+    pub(crate) fn init(algorithm: evp::Algorithm, key: &[u8]) -> crate::Result<Box<HMAC>> {
+        let md = algorithm.md().ok_or(crate::Error::UnsupportedAlgorithm)?;
         let mut ctx = MaybeUninit::<boringssl::HMAC_CTX>::uninit();
         // SAFETY: HMAC_CTX_init writes the entire struct; ctx is valid uninit memory.
         unsafe { boringssl::HMAC_CTX_init(ctx.as_mut_ptr()) };
@@ -34,14 +35,16 @@ impl HMAC {
         {
             // SAFETY: ctx was initialized by HMAC_CTX_init.
             unsafe { boringssl::HMAC_CTX_cleanup(&raw mut ctx) };
-            return None;
+            return Err(crate::Error::BoringSSLError);
         }
-        Some(Box::new(HMAC { ctx, algorithm }))
+        Ok(Box::new(HMAC { ctx, algorithm }))
     }
 
-    pub(crate) fn update(&mut self, data: &[u8]) {
+    /// Returns `false` when `HMAC_Update` fails.
+    #[must_use]
+    pub(crate) fn update(&mut self, data: &[u8]) -> bool {
         // SAFETY: self.ctx is initialized; data is a valid readable slice.
-        let _ = unsafe { boringssl::HMAC_Update(&raw mut self.ctx, data.as_ptr(), data.len()) };
+        unsafe { boringssl::HMAC_Update(&raw mut self.ctx, data.as_ptr(), data.len()) == 1 }
     }
 
     pub(crate) fn size(&self) -> usize {

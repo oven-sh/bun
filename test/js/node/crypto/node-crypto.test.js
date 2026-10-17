@@ -3,6 +3,7 @@ import { bunEnv, bunExe } from "harness";
 
 import crypto from "node:crypto";
 import { PassThrough, Readable } from "node:stream";
+import { createSecureContext } from "node:tls";
 import util from "node:util";
 import vm from "node:vm";
 
@@ -332,6 +333,21 @@ describe("createHash", () => {
       }
     });
   }
+
+  it("reports its own error, not a stale BoringSSL error from an earlier failure", () => {
+    // A failed PEM parse leaves entries in BoringSSL's error queue and nothing drains them.
+    expect(() => createSecureContext({ key: "not a pem", cert: "not a pem" })).toThrow(
+      expect.objectContaining({ code: "ERR_OSSL_PEM_NO_START_LINE" }),
+    );
+    expect(() => crypto.createHash("nope")).toThrow(Error("Digest method not supported"));
+
+    expect(() => createSecureContext({ key: "not a pem", cert: "not a pem" })).toThrow(
+      expect.objectContaining({ code: "ERR_OSSL_PEM_NO_START_LINE" }),
+    );
+    expect(() => crypto.createHash("sha256", { outputLength: 28 })).toThrow(
+      expect.objectContaining({ code: "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH" }),
+    );
+  });
 
   // https://github.com/oven-sh/bun/issues/18019
   describe.each([

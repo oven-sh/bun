@@ -2041,6 +2041,52 @@ test.concurrent.each([
   expect(await run(dir, "--no-install", "-p", "require('n')")).toBe("2.1.0\n");
 });
 
+// Bun installed `pk/w1/node_modules/n`, so it is not a part of the workspace.
+test.concurrent(
+  "an older bun's nested copy goes below a package in the node_modules of a workspace with a script",
+  async () => {
+    const graph: Record<string, Record<string, object>> = {
+      m: { "1.0.0": { dependencies: { b: "^1.0.0" } } },
+      n: { "1.0.0": {}, "2.0.0": { dependencies: { b: "^2.0.0" } } },
+      b: { "1.0.0": {}, "2.0.0": {}, "2.1.0": {} },
+    };
+    using server = await serveGraph(graph, {
+      "n-2.0.0": { "index.js": `module.exports = require("b/package.json").version;` },
+    });
+    const { "2.1.0": published, ...before } = graph.b;
+    graph.b = before;
+
+    const files = (root: object) => ({
+      "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+      "package.json": JSON.stringify({
+        name: "app",
+        workspaces: ["pk/*"],
+        dependencies: { m: "1.0.0", n: "^1.0.0" },
+        ...root,
+      }),
+      "pk/w1/package.json": JSON.stringify({
+        name: "w1",
+        dependencies: { n: "^2.0.0" },
+        scripts: { postinstall: "echo built" },
+      }),
+    });
+    using laptop = tempDir("hoist-older-in-workspace-laptop", files({ devDependencies: { b: "^2.0.0" } }));
+    using machine = tempDir("hoist-older-in-workspace-machine", files({}));
+    const [dev, dir] = [String(laptop), String(machine)];
+
+    // What an older bun lays with --production is what every bun lays when package.json lacks devDependencies.
+    await run(dir, "install");
+    expect(layout(dir, "pk/w1")).toContain("pk/w1/n/b@2.0.0");
+
+    graph.b = { ...before, "2.1.0": published };
+    await run(dev, "install");
+    await write(join(dir, "package.json"), file(join(dev, "package.json")));
+    await write(join(dir, "bun.lock"), file(join(dev, "bun.lock")));
+    await run(dir, "install", "--production");
+    expect(await run(join(dir, "pk", "w1"), "--no-install", "-p", "require('n')")).toBe("2.1.0\n");
+  },
+);
+
 // `x/node_modules/n` is from the older bun. The same run installs `y/node_modules/n`, the same package.
 test.concurrent("an older bun's nested copy goes while the run installs its owner at another place", async () => {
   using server = await serveGraph({

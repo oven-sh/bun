@@ -1833,7 +1833,8 @@ fn remove_from_older_places(
         // skipped. So is a tree inside a package folder that this run created or replaced: nothing
         // in it is left over from an older Bun. Scripts can create anything, so inside a package
         // whose scripts may have run, only a folder that hides the version in bun.lock is removed.
-        // A workspace with scripts is skipped: its folder is the user's own.
+        // The `node_modules` of a workspace with scripts is skipped, because that folder is the
+        // user's own. The packages that Bun installed in it are not.
         let mut same_version = same_version;
         let mut above = id;
         while above != 0 {
@@ -1843,7 +1844,7 @@ fn remove_from_older_places(
                 break;
             }
             if can_have_run_scripts(lockfile, trees[above].folder_name(deps, buf), owner) {
-                if is_member_tree(lockfile, above) {
+                if above == id && is_member_tree(lockfile, above) {
                     break;
                 }
                 same_version = SameVersion::Keep;

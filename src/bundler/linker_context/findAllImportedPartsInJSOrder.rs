@@ -622,10 +622,8 @@ fn for_each_edge(
 ) {
     let records = c.graph.ast.items_import_records()[source_index as usize].as_slice();
     let css = c.graph.ast.items_css();
-    if css[source_index as usize].is_some()
-        || c.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html
-    {
-        // A CSS or HTML file has no parts; every record counts.
+    if css[source_index as usize].is_some() {
+        // A CSS file has no parts; every record counts.
         for record in records {
             if record.source_index.is_valid() {
                 each(0, Edge::Import(record.source_index.get()));
@@ -635,6 +633,19 @@ fn for_each_edge(
     }
 
     let parts = c.graph.ast.items_parts()[source_index as usize].as_slice();
+    if c.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html {
+        // Every record counts, under its part: `call_wrapped_html_scripts` ends a part at each call.
+        for (part_index, part) in parts.iter().enumerate() {
+            for &record_id in part.import_record_indices.slice() {
+                let record: &ImportRecord = &records[record_id as usize];
+                if record.source_index.is_valid() {
+                    each(part_index as u32, Edge::Import(record.source_index.get()));
+                }
+            }
+        }
+        return;
+    }
+
     let parts_live = &c.graph.parts_live[source_index as usize];
     // The namespace export part (index 0) counts last: what it names goes after what the `import` statements import.
     const _: () = assert!(bun_ast::NAMESPACE_EXPORT_PART_INDEX == 0);

@@ -308,7 +308,7 @@ impl hooks::AutoInstaller for PackageManager {
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
-                    "\"{}@{}\" is not in the cache, and only `bun install` downloads it",
+                    "\"{}@{}\" not in cache, run `bun install`",
                     bun_core::fmt::escape_control_chars(
                         self.lockfile
                             .packages

@@ -13,22 +13,32 @@ use crate::{NetworkTask, PackageManager};
 
 /// Install thread only. Its tasks are not in `pending_tasks`: `pending_task_count` adds `len()`.
 #[derive(Default)]
-pub(crate) struct RetryQueue(Vec<(Instant, *mut NetworkTask)>);
+pub(crate) struct RetryQueue {
+    waiting: Vec<(Instant, *mut NetworkTask)>,
+    /// Without `--verbose`, one line stands for every retry of the install.
+    announced: bool,
+    /// The highest attempt for which a wait that the registry asked for was announced, since the
+    /// queue was last empty.
+    announced_asked: u16,
+}
 
 impl RetryQueue {
     pub(crate) fn len(&self) -> usize {
-        self.0.len()
+        self.waiting.len()
     }
 
     pub(crate) fn pop_due(&mut self) -> Option<*mut NetworkTask> {
-        if self.0.is_empty() {
+        if self.waiting.is_empty() {
             return None;
         }
         let now = Instant::now();
-        let index = self.0.iter().position(|(due, _)| *due <= now)?;
-        Some(self.0.swap_remove(index).1)
+        let index = self.waiting.iter().position(|(due, _)| *due <= now)?;
+        Some(self.waiting.swap_remove(index).1)
     }
 }
+
+/// A shorter wait is not worth a line. The default backoff gets this long at the third retry.
+const ANNOUNCED_WAIT: Duration = Duration::from_millis(150);
 
 /// Returns the wait. `attempt` is 1 for the first retry.
 pub(crate) fn retry(
@@ -42,13 +52,33 @@ pub(crate) fn retry(
         enqueue::enqueue_network_task(manager, task);
         return Duration::ZERO;
     }
-    // Rate limits hit many requests at once: one line per wave.
-    if asked && manager.retry_queue.len() == 0 && manager.options.log_level != LogLevel::Silent {
+    // A host that never answers costs minutes per attempt, so that is said at the first retry, also
+    // with `--verbose`, whose lines are only printed once everything is resolved.
+    let timed_out = matches!(response.fail, Some(bun_http::Error::Timeout));
+    // An outage hits many requests at once. `--verbose` has a line for each retry of each request.
+    let (queue, log_level) = (&mut manager.retry_queue, manager.options.log_level);
+    // The requests of a later wave start at the first attempt again.
+    if queue.len() == 0 {
+        queue.announced_asked = 0;
+    }
+    let line = if asked && attempt > queue.announced_asked {
+        queue.announced_asked = attempt;
+        Some(format!(
+            "registry asked to wait {}s before retrying",
+            wait.as_secs()
+        ))
+    } else if !asked
+        && !queue.announced
+        && (timed_out || (wait >= ANNOUNCED_WAIT && !log_level.is_verbose()))
+    {
+        queue.announced = true;
+        Some("registry requests failed, retrying".to_owned())
+    } else {
+        None
+    };
+    if let Some(line) = line.filter(|_| log_level != LogLevel::Silent) {
         Output::flush();
-        manager.progress.log(format_args!(
-            "warn: the registry asked to wait {}s before the next attempt\n",
-            wait.as_secs(),
-        ));
+        manager.progress.log(format_args!("warn: {line}\n"));
     }
 
     let due = Instant::now() + wait;
@@ -56,7 +86,7 @@ pub(crate) fn retry(
         enqueue::enqueue_network_task(manager, task);
         return Duration::ZERO;
     }
-    manager.retry_queue.0.push((due, task));
+    manager.retry_queue.waiting.push((due, task));
     wait
 }
 
@@ -70,6 +100,7 @@ impl PackageManager {
         response_buffer: &mut MutableString,
     ) -> bun_http::Result<HTTPResponseMetadata> {
         let mut attempt: u16 = 0;
+        let mut announced = false;
         loop {
             response_buffer.reset();
             let response = request.send_sync_for_result(response_buffer)?;
@@ -81,18 +112,17 @@ impl PackageManager {
             let (wait, asked) = wait_before(self, attempt, &response);
             if self.options.log_level != LogLevel::Silent {
                 if asked {
+                    bun_core::warn!("registry asked to wait {}s before retrying", wait.as_secs(),);
+                } else if self.options.log_level.is_verbose() {
                     bun_core::warn!(
-                        "the registry asked to wait {}s before the next attempt",
-                        wait.as_secs(),
-                    );
-                } else if wait >= Duration::from_millis(750) {
-                    // A long wait is announced. The default backoff gets this long at the third retry.
-                    bun_core::warn!(
-                        "the request to the registry failed. Retry {}/{} in {}ms...",
+                        "registry request failed, retry {}/{} in {}ms",
                         attempt,
                         self.options.max_retry_count,
                         wait.as_millis(),
                     );
+                } else if wait >= ANNOUNCED_WAIT && !announced {
+                    announced = true;
+                    bun_core::warn!("registry request failed, retrying");
                 }
             }
             std::thread::sleep(wait);
@@ -111,7 +141,7 @@ fn wait_before(
         .env()
         .get(b"BUN_CONFIG_HTTP_RETRY_BACKOFF")
         .and_then(|ms| bun_core::parse_unsigned::<u32>(ms, 10).ok())
-        .unwrap_or(250);
+        .unwrap_or(50);
     // Under auto-install the JS thread is blocked on this request.
     if base_ms == 0 || manager.options.runtime_auto_install {
         return (Duration::ZERO, false);

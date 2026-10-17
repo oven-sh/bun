@@ -136,11 +136,18 @@ export const TestToken = b.class({
 });
 export const makeToken = b.fn({ args: { id: b.u32 }, returns: TestToken, capability: "heap" });
 
+export const integerOrBigInt = b.fn({ args: { value: b.u32.allowBigInt }, returns: b.u32 });
+export const looseInteger = b.fn({ args: { value: b.u16.loose }, returns: b.u16 });
+export const looseIntegerOrBigInt = b.fn({ args: { value: b.u16.loose.allowBigInt }, returns: b.u16 });
+export const looseDoubleOrBigInt = b.fn({ args: { value: b.f64.loose.allowBigInt }, returns: b.f64 });
+/** In decimal: a number does not hold every `u64`. */
+export const wideIntegerOrBigInt = b.fn({ args: { value: b.u64.allowBigInt }, returns: b.string.utf8 });
+
 /** An alternative for each kind of value. What `bytes` and `blob` refuse, and everything else, goes to `options`. */
 export const TestAnything = b.union({
   nothing: b.null,
   flag: b.bool,
-  integer: b.i32,
+  integer: b.i32.allowBigInt,
   text: b.string,
   bytes: b.bufferSource.arrayBuffer,
   blob: b.blob,

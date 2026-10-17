@@ -268,7 +268,6 @@ export interface BundlerTestInput {
   minChunkSize?: number;
   /** `false` skips chunk folding (`merge_small_chunks`). Internal to Bun's tests: api backend only. */
   foldChunks?: boolean;
-  serverComponents?: boolean;
   reactCompiler?: boolean;
   reactFastRefresh?: boolean;
   reactCompilerOutputMode?: "client" | "ssr";
@@ -539,7 +538,6 @@ function expectBundled(
     root: outbase,
     run,
     runtimeFiles,
-    serverComponents = false,
     reactCompiler = false,
     reactFastRefresh = false,
     reactCompilerOutputMode,
@@ -583,10 +581,6 @@ function expectBundled(
     mode,
     ...unknownProps
   } = opts;
-
-  if (serverComponents) {
-    splitting = true;
-  }
 
   // TODO: Remove this check once all options have been implemented
   if (Object.keys(unknownProps).length > 0) {
@@ -899,7 +893,6 @@ function expectBundled(
               splitRequire === false && `--no-split-require`,
               modulePreload === false && `--no-module-preload`,
               minChunkSize !== undefined && `--min-chunk-size=${minChunkSize}`,
-              serverComponents && "--server-components",
               reactCompiler && "--react-compiler",
               reactFastRefresh && "--react-fast-refresh",
               outbase && `--root=${outbase}`,

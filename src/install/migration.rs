@@ -198,7 +198,7 @@ pub fn detect_and_load_other_lockfile<'a>(
         };
         if !manager.options.log_level.is_silent() && !reported_unsupported_lockfile_version(&err) {
             bun_core::warn!(
-                "{} cannot be migrated ({}); trying {}",
+                "cannot migrate {} ({}), trying {}",
                 name,
                 err.value.name(),
                 next,
@@ -361,7 +361,7 @@ fn report_unsupported_lockfile_version(
     Output::flush();
     if let Some(next) = next {
         bun_core::warn!(
-            "{} is lockfileVersion {}, which bun cannot migrate; trying {}",
+            "cannot migrate {}: unsupported lockfileVersion {}, trying {}",
             lockfile_name,
             version,
             next,
@@ -371,13 +371,13 @@ fn report_unsupported_lockfile_version(
     }
     if falls_back_to_package_json(manager) {
         bun_core::warn!(
-            "{} is lockfileVersion {}, which bun cannot migrate; resolving from package.json instead",
+            "cannot migrate {}: unsupported lockfileVersion {}, resolving from package.json",
             lockfile_name,
             version,
         );
     } else {
         bun_core::pretty_errorln!(
-            "<r><red>error<r><d>:<r> {} is lockfileVersion {}, which bun cannot migrate",
+            "<r><red>error<r><d>:<r> cannot migrate {}: unsupported lockfileVersion {}",
             lockfile_name,
             version,
         );
@@ -571,12 +571,11 @@ pub(crate) fn warn_unlocked_dependencies(
     lockfile_name: &str,
     dropped: &[Dependency],
 ) {
-    let log_level = manager.options.log_level;
-    if log_level.is_silent() {
+    if !manager.options.log_level.is_verbose() {
         return;
     }
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let unlocked = || {
+    let unlocked = {
         let unbound = (lockfile.buffers.dependencies.iter())
             .zip(lockfile.buffers.resolutions.iter())
             .filter(|(_, resolution)| **resolution == crate::INVALID_PACKAGE_ID)
@@ -590,26 +589,13 @@ pub(crate) fn warn_unlocked_dependencies(
                 && lockfile.workspace_paths.get(&dep.name_hash).is_none()
         })
     };
-    let count = unlocked().count();
-    for dep in unlocked().take(if log_level.is_verbose() { count } else { 1 }) {
-        let name = bun_core::fmt::for_terminal(bstr::BStr::new(dep.name.slice(buf)));
-        let range = bun_core::fmt::for_terminal(bstr::BStr::new(dep.version.literal.slice(buf)));
-        if count == 1 || log_level.is_verbose() {
-            bun_core::warn!(
-                "{} has no entry for \"{}@{}\"; bun resolves it",
-                lockfile_name,
-                name,
-                range
-            );
-        } else {
-            bun_core::warn!(
-                "{} has no entry for \"{}@{}\" and {} more (--verbose lists them); bun resolves them",
-                lockfile_name,
-                name,
-                range,
-                count - 1
-            );
-        }
+    for dep in unlocked {
+        bun_core::warn!(
+            "{} missing \"{}@{}\", resolving it",
+            lockfile_name,
+            bun_core::fmt::for_terminal(bstr::BStr::new(dep.name.slice(buf))),
+            bun_core::fmt::for_terminal(bstr::BStr::new(dep.version.literal.slice(buf))),
+        );
     }
 }
 

@@ -80,6 +80,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Tag::EArrow => Self::e_arrow(self, e, in_),
             Tag::EFunction => Self::e_function(self, e, in_),
             Tag::EClass => Self::e_class(self, e, in_),
+            Tag::ESuper => self.super_expr_count = self.super_expr_count.wrapping_add(1),
             _ => {}
         }
     }

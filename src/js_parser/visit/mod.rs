@@ -1228,6 +1228,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if let Some(val) = property.value {
+                    let super_expr_count = self.super_expr_count;
                     if let Some(name) = name_to_keep {
                         let was_anon = val.is_anonymous_named();
                         let prev_dcn = self.decorator_class_name;
@@ -1245,6 +1246,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         self.decorator_class_name = prev_dcn;
                     } else {
                         self.visit_expr(property.value.as_mut().unwrap());
+                    }
+                    if self.super_expr_count != super_expr_count {
+                        property.flags.insert(flags::Property::HasSuper);
                     }
 
                     if Self::IS_TYPESCRIPT_ENABLED {

@@ -338,7 +338,7 @@ export var __esm = (fn, res, err) => () => {
   return res;
 };
 
-// This is used for JSX inlining with React.
+// A symbol for lowered code that cannot name `Symbol`: `$$typeof.constructor()` makes a new one.
 export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
 
 export var __jsonParse = /* @__PURE__ */ a => JSON.parse(a);

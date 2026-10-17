@@ -3047,6 +3047,8 @@ pub mod flags {
         IsSpread,
         /// The `#private` field that decorator lowering adds for the value of an `accessor`.
         IsAccessorStorage,
+        /// The visit pass saw a `super` in the body of this method.
+        HasSuper,
     }
     pub type PropertySet = EnumSet<Property>;
     pub const PROPERTY_NONE: PropertySet = EnumSet::empty();

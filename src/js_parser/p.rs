@@ -360,6 +360,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) commonjs_replacement_stmts: StmtNodeList,
     /// How many `this` expressions the visit pass has seen.
     pub(crate) this_expr_count: u32,
+    /// How many `super` expressions the visit pass saw, for `flags::Property::HasSuper`.
+    pub(crate) super_expr_count: u32,
 
     pub(crate) parse_pass_symbol_uses: ParsePassSymbolUsageType<'a>,
 
@@ -9766,6 +9768,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             had_commonjs_named_exports_this_visit: false,
             commonjs_replacement_stmts: js_ast::StmtNodeList::EMPTY,
             this_expr_count: 0,
+            super_expr_count: 0,
             parse_pass_symbol_uses: None,
             has_commonjs_export_names: false,
             should_fold_typescript_constant_expressions: false,

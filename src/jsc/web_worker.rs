@@ -883,10 +883,15 @@ impl WebWorker {
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
             Ok(p) => p,
             Err(_) => {
+                // `terminated_by_parent` is written under the handle's lock, after the flag the load polled.
+                let stopped_by_parent = {
+                    let _handle = self.vm_handle.lock();
+                    self.terminated_by_parent.load(Ordering::Relaxed)
+                };
                 // A load error; not a stop the worker chose (its code stands) or its parent asked for.
                 if !self.exit_called.load(Ordering::Relaxed)
                     && !self.entry_rejection_seen.get()
-                    && !self.terminated_by_parent.load(Ordering::Relaxed)
+                    && !stopped_by_parent
                 {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }

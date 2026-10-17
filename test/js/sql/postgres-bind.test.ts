@@ -2,7 +2,7 @@
 // The bytes on the wire are pinned in postgres-bind-wire.test.ts.
 import { SQL } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { describeWithContainer } from "harness";
+import { bunEnv, bunExe, describeWithContainer } from "harness";
 
 const columns = {
   text: "text",
@@ -831,6 +831,90 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
   });
 
   // PostgreSQL starts both timeouts when it sends ReadyForQuery and stops them at the next message of any kind.
+  // Script can keep the array that the values of a query are in, and put an accessor on it.
+  describe("the array of values is read once, before anything is written", () => {
+    const script = `
+      const way = process.env.WAY;
+      const text = "select $1::text as x, $2::text as y";
+      const code = error => String(error?.code ?? error?.name);
+      async function run(action, at) {
+        const sql = new Bun.SQL(process.env.URL, { max: 1, prepare: process.env.PREPARE === "true" });
+        await sql.unsafe(text, ["w", "w"]);
+        let query, kept, reads = 0;
+        if (way === "an indexed setter on Array.prototype") {
+          // It sees every array that is filled from index 0 with a plain put.
+          Object.defineProperty(Array.prototype, 0, {
+            configurable: true,
+            set(value) {
+              Object.defineProperty(this, 0, { value, writable: true, enumerable: true, configurable: true });
+              if (value === "a") kept = this;
+            },
+          });
+          query = sql\`select \${"a"}::text as x, \${"b"}::text as y\`;
+          query.execute();
+          delete Array.prototype[0];
+        } else {
+          // Array.prototype.slice asks it for the copy.
+          const given = ["a", "b"];
+          kept = [];
+          given.constructor = { [Symbol.species]: function () { return kept; } };
+          query = sql.unsafe(text, given);
+          if (kept.length === 0) kept = given;
+        }
+        if (kept) {
+          Object.defineProperty(kept, 0, {
+            enumerable: true,
+            configurable: true,
+            get() {
+              if (++reads !== at) return "a";
+              if (action === "cancel") return query.cancel(), "a";
+              return { toString: () => (sql.close({ timeout: 0 }), "a") };
+            },
+          });
+        }
+        const first = query.then(JSON.stringify, code);
+        const later = sql.unsafe(text, ["c", "d"]).then(JSON.stringify, code);
+        const outcome = [await first, await later];
+        console.log(JSON.stringify([action, at, reads, ...outcome]));
+        await sql.close({ timeout: 0 });
+      }
+      await run("control", 0);
+      for (let at = 1; at <= 4; at++) for (const action of ["cancel", "close"]) await run(action, at);
+      process.exit(0);
+    `;
+    const own = '[{"x":"a","y":"b"}]';
+    const next = '[{"x":"c","y":"d"}]';
+    const closed = "ERR_POSTGRES_CONNECTION_CLOSED";
+
+    test.concurrent.each<[string, number, boolean]>([
+      ["Symbol.species of the array for sql.unsafe()", 1, true],
+      ["Symbol.species of the array for sql.unsafe()", 1, false],
+      // The accessor comes after execute().
+      ["an indexed setter on Array.prototype", 0, true],
+      ["an indexed setter on Array.prototype", 0, false],
+    ])("%s: %d, prepare: %p", async (way, reads, prepare) => {
+      await container.ready;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, URL: url(), WAY: way, PREPARE: String(prepare) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // [what the accessor does, at which read, reads, the query, the query behind it]
+      const cases: unknown[][] = [["control", 0, reads, own, next]];
+      for (let at = 1; at <= 4; at++) {
+        const runs = at <= reads;
+        cases.push(["cancel", at, reads, runs ? "ERR_POSTGRES_QUERY_CANCELLED" : own, next]);
+        // In toString() of what the accessor gives, which is called before anything is written too.
+        cases.push(["close", at, reads, runs ? closed : own, runs ? closed : next]);
+      }
+      expect(stdout.trim().split("\n")).toEqual(cases.map(line => JSON.stringify(line)));
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe.concurrent("after a simple query the server still ends an idle session", () => {
     // Resolves once the server has ended the backend `pid`, or has left it in one state for
     // 2 seconds by its own clock. The limits below are 50 ms.

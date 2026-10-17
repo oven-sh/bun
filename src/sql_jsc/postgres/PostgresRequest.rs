@@ -90,6 +90,19 @@ pub(crate) fn needs_parameter_types(global: &JSGlobalObject, values: JSValue) ->
     Ok(false)
 }
 
+/// A copy of `values` that script can neither reach nor see being filled. Script can hold `values`
+/// and put an accessor on it, so reading it can run user code.
+pub(crate) fn private_copy(global: &JSGlobalObject, values: JSValue) -> JsResult<JSValue> {
+    let mut iter = JSArrayIterator::init(values, global)?;
+    let copy = JSValue::create_empty_array(global, iter.len as usize)?;
+    let mut index: u32 = 0;
+    while let Some(value) = iter.next()? {
+        copy.put_index(global, index, value)?;
+        index += 1;
+    }
+    Ok(copy)
+}
+
 /// Replaces each value by the text that `write_bind` sends for it, unless it can encode the value
 /// itself without running JS. Once per request: it would take that text for a string.
 /// `true`: it replaced one, so user code may have run.

@@ -1753,6 +1753,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
+        if matches!(body, HTTPRequestBody::ReadableStream(_)) {
+            if let Some(sig) = &signal {
+                if sig.aborted() {
+                    let reason = sig.js_reason(global_this);
+                    return reject_before_send(global_this, &mut body, reason);
+                }
+            }
+        }
         if let HTTPRequestBody::ReadableStream(ref readable_stream) = body {
             // we cannot direct stream to s3 we need to use multi part upload
             // `defer body.ReadableStream.deinit()` → Drop on `body` scope exit.
@@ -1765,6 +1773,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     )),
                 )
                 .to_js());
+            }
+            // fetch's own `timeout` is the idle timeout of each request of the upload.
+            if let Some(seconds) = idle_timeout_seconds {
+                credentials_with_options.options.idle_timeout_seconds = Some(seconds);
+            } else if disable_timeout {
+                credentials_with_options.options.idle_timeout_seconds = Some(0);
             }
             let promise = jsc::JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
@@ -1795,6 +1809,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 _url_proxy_buffer: owned_buffer,
                 promise,
                 global: global_this,
+                signal: signal.clone(),
             });
             // Shim: erases both the payload type and the `Result` return when
             // coercing to the `fn (S3UploadResult, *mut c_void)` callback shape.
@@ -1807,7 +1822,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `dupe()` heap-allocates a fresh intrusive-refcounted copy.
             // `upload_stream` adopts the ref by value (no extra bump) and the
             // MultiPartUpload derefs on completion.
-            let _ = s3::upload_stream(
+            // The upload's own promise settles the same way as `promise`: nobody awaits it.
+            let upload = s3::upload_stream(
                 credentials_with_options.credentials.dupe(),
                 s3_path,
                 readable_stream.get().unwrap(),
@@ -1820,9 +1836,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 headers.as_ref().and_then(|h| h.get_content_encoding()),
                 proxy_url,
                 credentials_with_options.request_payer,
+                signal,
                 Some(s3_stream_wrapper_resolve),
                 bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>(),
             )?;
+            if let Some(upload) = upload.as_any_promise() {
+                upload.set_handled(global_this.vm());
+            }
             // url/url_proxy_buffer ownership moved into s3_stream above.
             return Ok(promise_value);
         }
@@ -2018,6 +2038,7 @@ struct S3StreamWrapper<'a> {
     url: ZigURL<'a>,
     _url_proxy_buffer: Box<[u8]>,
     global: &'a JSGlobalObject,
+    signal: Option<AbortSignalRef>,
 }
 
 impl<'a> S3StreamWrapper<'a> {
@@ -2048,6 +2069,13 @@ impl<'a> S3StreamWrapper<'a> {
                 self_.promise.resolve(global, response_js)?;
             }
             s3::S3UploadResult::Failure(err) => {
+                if let Some(signal) = &self_.signal {
+                    if signal.aborted() {
+                        let reason = signal.js_reason(global);
+                        self_.promise.reject(global, Ok(reason))?;
+                        return Ok(());
+                    }
+                }
                 let response = Box::new(Response::init(
                     response::Init {
                         method: Method::PUT,

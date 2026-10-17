@@ -630,6 +630,31 @@ await s3file.delete();
 
 `delete` is the same as `unlink`.
 
+### Timeouts and cancellation
+
+An endpoint that accepts the connection and never answers would otherwise hold a request for the process-wide HTTP idle timeout (5 minutes). Two options bound it, with the same names as `fetch()`:
+
+- `timeout`: the idle timeout of each request, in milliseconds. The timer resets whenever bytes are sent or received on the connection, and the request fails with an `S3Error` whose `code` is `"Timeout"` when it fires. A transfer that keeps moving is not cut off. `false` or `0` turns it off. It can be set on the client, on the file, or per call. Each request of an operation gets its own timeout, and each retry a fresh one: a multipart upload is several requests, each retried up to `retry` times.
+- `signal`: an `AbortSignal` for one operation. The promise rejects with `signal.reason`, and the parts of a multipart upload that are already on the server are removed with one `AbortMultipartUpload` request (bounded by `timeout`). It is accepted on `stat`, `exists`, `size`, `delete`, `unlink`, `write`, `writer`, and `list`, not on `file()`.
+
+Reads (`text()`, `arrayBuffer()`, `stream()`, `new Response(file)`) take no `signal`: they are bounded by the `timeout` of the file. To cancel a read, use `fetch("s3://bucket/key", { signal })` or cancel the reader of `file.stream()`. `Bun.write(s3file, data, options)` takes the same options as `s3.write()`.
+
+```ts s3.ts icon="/icons/typescript.svg"
+const client = new Bun.S3Client({ timeout: 10_000 });
+
+// Fail once the endpoint stalls for 2 seconds
+const text = await client.file("my-file.txt", { timeout: 2_000 }).text();
+
+// Bound the whole operation to 5 seconds: rejects with a TimeoutError
+const stat = await client.stat("my-file.txt", { signal: AbortSignal.timeout(5_000) });
+
+// Cancel an upload
+const controller = new AbortController();
+const upload = client.write("my-file.txt", bigFile, { signal: controller.signal });
+controller.abort();
+await upload; // rejects with controller.signal.reason
+```
+
 ## Error codes
 
 When Bun's S3 API throws an error, the error has a `code` property with one of the following values:
@@ -641,7 +666,7 @@ When Bun's S3 API throws an error, the error has a `code` property with one of t
 - `ERR_S3_INVALID_SIGNATURE`
 - `ERR_S3_INVALID_SESSION_TOKEN`
 
-When the S3 service itself returns an error (that is, not Bun), the error is an `S3Error` instance: an `Error` instance with the name `"S3Error"`.
+When the S3 service itself returns an error (that is, not Bun), the error is an `S3Error` instance: an `Error` instance with the name `"S3Error"`. A request that fails before a response arrives is an `S3Error` as well, with the HTTP client's error name as its `code`: `"Timeout"`, `"Aborted"`, `"ConnectionRefused"`, and so on.
 
 ## `S3Client` static methods
 

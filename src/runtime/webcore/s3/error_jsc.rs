@@ -2,7 +2,7 @@
 //! stay in `s3_signing/`; the `*JSGlobalObject`-taking variants live here.
 
 use bun_core::String as BunString;
-use bun_jsc::{ErrorCode, JSGlobalObject, JSPromise, JSValue, JsError};
+use bun_jsc::{AbortSignalRef, ErrorCode, JSGlobalObject, JSPromise, JSValue, JsError};
 use bun_s3_signing::Error as SignError;
 use bun_s3_signing::error::{self as s3_error, get_sign_error_message};
 
@@ -173,31 +173,73 @@ pub(crate) fn s3_error_to_js_with_async_stack(
     value
 }
 
-/// Method-syntax extension over [`S3Error`] so call sites in `S3File` /
-/// `blob::Store` can use the spelling `err.to_js_with_async_stack(…)`.
-/// Forwards to the free fn above; returns `JsResult` because the consuming
-/// `JSPromiseStrong::reject` takes `JsResult<JSValue>`.
-pub(crate) trait S3ErrorJsc {
-    fn to_js_with_async_stack(
-        &self,
-        global_object: &JSGlobalObject,
-        path: Option<&[u8]>,
-        promise: &JSPromise,
-    ) -> bun_jsc::JsResult<JSValue>;
-}
-impl S3ErrorJsc for S3Error<'_> {
-    #[inline]
-    fn to_js_with_async_stack(
-        &self,
-        global_object: &JSGlobalObject,
-        path: Option<&[u8]>,
-        promise: &JSPromise,
-    ) -> bun_jsc::JsResult<JSValue> {
-        Ok(s3_error_to_js_with_async_stack(
-            self,
-            global_object,
-            path,
-            promise,
-        ))
+/// What an operation rejects with: the reason of its `signal` once that fired, the S3
+/// error otherwise.
+pub(crate) fn s3_rejection(
+    err: &S3Error,
+    signal: Option<&AbortSignalRef>,
+    global_object: &JSGlobalObject,
+    path: Option<&[u8]>,
+) -> JSValue {
+    if let Some(signal) = signal {
+        if signal.aborted() {
+            return signal.js_reason(global_object);
+        }
     }
+    s3_error_to_js(err, global_object, path)
+}
+
+/// As [`s3_rejection`], with the async frames of `promise` on the S3 error.
+pub(crate) fn s3_rejection_with_async_stack(
+    err: &S3Error,
+    signal: Option<&AbortSignalRef>,
+    global_object: &JSGlobalObject,
+    path: Option<&[u8]>,
+    promise: &JSPromise,
+) -> JSValue {
+    if let Some(signal) = signal {
+        if signal.aborted() {
+            return signal.js_reason(global_object);
+        }
+    }
+    s3_error_to_js_with_async_stack(err, global_object, path, promise)
+}
+
+/// `options.signal` of one operation. It is the operation's, never the handle's: not
+/// part of `S3CredentialsWithOptions`.
+pub(crate) fn get_signal(
+    options: Option<JSValue>,
+    global_object: &JSGlobalObject,
+) -> bun_jsc::JsResult<Option<AbortSignalRef>> {
+    let Some(opts) = options else {
+        return Ok(None);
+    };
+    if !opts.is_object() {
+        return Ok(None);
+    }
+    let Some(value) = opts.fast_get(global_object, bun_jsc::BuiltinName::signal)? else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    match bun_jsc::AbortSignal::ref_from_js(value) {
+        Some(signal) => Ok(Some(signal)),
+        None => {
+            Err(global_object.throw_invalid_property_type_value(b"signal", b"AbortSignal", value))
+        }
+    }
+}
+
+/// A promise already rejected with the reason of `signal`, when that fired before the
+/// operation started.
+pub(crate) fn rejected_if_aborted(
+    signal: Option<&AbortSignalRef>,
+    global_object: &JSGlobalObject,
+) -> Option<JSValue> {
+    let signal = signal?;
+    if !signal.aborted() {
+        return None;
+    }
+    Some(JSPromise::rejected_promise(global_object, signal.js_reason(global_object)).to_js())
 }

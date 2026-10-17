@@ -60,6 +60,9 @@ pub struct MultiPartUploadOptions {
     pub part_size: u64,
     /// default is 3, max 255
     pub retry: u8,
+    /// Socket idle timeout of each request, in seconds (`timeout` in ms, rounded up).
+    /// `None` is the process-wide default, `Some(0)` is no timeout.
+    pub idle_timeout_seconds: Option<u32>,
 }
 
 impl MultiPartUploadOptions {
@@ -78,6 +81,7 @@ impl Default for MultiPartUploadOptions {
             queue_size: 5,
             part_size: Self::DEFAULT_PART_SIZE as u64,
             retry: 3,
+            idle_timeout_seconds: None,
         }
     }
 }

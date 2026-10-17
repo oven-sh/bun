@@ -101,7 +101,7 @@ use bun_core::{declare_scope, scoped_log};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JsCell};
+use bun_jsc::{AbortSignalRef, GlobalRef, JsCell};
 use bun_ptr::RefPtr;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::S3Credentials;
@@ -113,8 +113,8 @@ use bun_s3_signing::storage_class::StorageClass;
 // re-export hub instead.
 use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 use crate::webcore::s3::simple_request::{
-    self as s3_simple_request, S3CommitResult, S3DeleteResult, S3DownloadResult, S3PartResult,
-    S3UploadResult, execute_simple_s3_request,
+    self as s3_simple_request, RequestConfig, S3CommitResult, S3DeleteResult, S3DownloadResult,
+    S3PartResult, S3UploadResult, execute_simple_s3_request,
 };
 use crate::webcore::s3::xml_response;
 use bun_collections::index_sort;
@@ -140,6 +140,8 @@ pub struct MultiPartUpload {
     /// An upload waits for its script to write more, which the script of a `Bun.ModuleGraph` that
     /// was disposed never does: the graph's context fails it.
     pub(crate) abort_handle: bun_jsc::AbortHandle,
+    /// The operation's `signal`: followed by every request of the upload except the rollback.
+    pub(crate) signal: Option<AbortSignalRef>,
     /// The context of the script that started the upload: its requests are that script's.
     pub(crate) context: bun_jsc::ContextId,
     pub(crate) vm: &'static VirtualMachine,
@@ -385,13 +387,15 @@ impl UploadPart {
             &ctx.credentials,
             ctx.context(),
             s3_simple_request::S3RequestOptions {
-                path: &ctx.path,
-                method: bun_http::Method::PUT,
                 proxy_url: ctx.proxy_url(),
                 body: self.data(),
                 search_params: Some(search_params),
-                request_payer: ctx.request_payer,
-                ..Default::default()
+                ..s3_simple_request::S3RequestOptions::new(
+                    &ctx.path,
+                    bun_http::Method::PUT,
+                    &ctx.request_config(),
+                    ctx.signal.clone(),
+                )
             },
             s3_simple_request::S3Callback::Part(Self::on_part_response),
             std::ptr::from_ref::<Self>(self).cast_mut().cast::<c_void>(),
@@ -466,8 +470,6 @@ impl MultiPartUpload {
                         &self_.credentials,
                         self_.context(),
                         s3_simple_request::S3RequestOptions {
-                            path: &self_.path,
-                            method: bun_http::Method::PUT,
                             proxy_url: self_.proxy_url(),
                             body: self_.buffered.get().slice(),
                             content_type: self_.content_type.as_deref(),
@@ -475,8 +477,12 @@ impl MultiPartUpload {
                             content_encoding: self_.content_encoding.as_deref(),
                             acl: self_.acl,
                             storage_class: self_.storage_class,
-                            request_payer: self_.request_payer,
-                            ..Default::default()
+                            ..s3_simple_request::S3RequestOptions::new(
+                                &self_.path,
+                                bun_http::Method::PUT,
+                                &self_.request_config(),
+                                self_.signal.clone(),
+                            )
                         },
                         s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
                         this.cast::<c_void>(),
@@ -814,9 +820,9 @@ impl MultiPartUpload {
         match result {
             S3CommitResult::Failure(err) => {
                 let mut options = self_.options.get();
-                // (Retried in the context of the script that uploads: once that has stopped the
-                // request would only be aborted again.)
-                if options.retry > 0 && !self_.context().is_stopped() {
+                // (Retried in the context of the script that uploads: once that has stopped, or
+                // the signal fired, the request would only be aborted again.)
+                if options.retry > 0 && !self_.context().is_stopped() && !self_.signal_aborted() {
                     options.retry -= 1;
                     self_.options.set(options);
                     // retry commit
@@ -859,9 +865,10 @@ impl MultiPartUpload {
             BStr::new(self_.upload_id.get())
         );
         match result {
-            S3DeleteResult::Failure(_err) => {
+            S3DeleteResult::Failure(err) => {
                 let mut options = self_.options.get();
-                if options.retry > 0 {
+                // A store that did not answer in time is not asked again.
+                if options.retry > 0 && !matches!(err.code, b"Timeout" | b"Aborted") {
                     options.retry -= 1;
                     self_.options.set(options);
                     // retry rollback
@@ -897,13 +904,15 @@ impl MultiPartUpload {
             &self.credentials,
             self.context(),
             s3_simple_request::S3RequestOptions {
-                path: &self.path,
-                method: bun_http::Method::POST,
                 proxy_url: self.proxy_url(),
                 body: self.multipart_upload_list.get().as_slice(),
                 search_params: Some(search_params),
-                request_payer: self.request_payer,
-                ..Default::default()
+                ..s3_simple_request::S3RequestOptions::new(
+                    &self.path,
+                    bun_http::Method::POST,
+                    &self.request_config(),
+                    self.signal.clone(),
+                )
             },
             s3_simple_request::S3Callback::Commit(Self::on_commit_multi_part_request),
             self.as_ctx_ptr(),
@@ -930,13 +939,15 @@ impl MultiPartUpload {
             // until they expire), and has to go out when the upload fails because its context stopped.
             self.vm.root_context(),
             s3_simple_request::S3RequestOptions {
-                path: &self.path,
-                method: bun_http::Method::DELETE,
                 proxy_url: self.proxy_url(),
-                body: b"",
                 search_params: Some(search_params),
-                request_payer: self.request_payer,
-                ..Default::default()
+                // Not aborted by the signal that fails the upload: the store has to hear it.
+                ..s3_simple_request::S3RequestOptions::new(
+                    &self.path,
+                    bun_http::Method::DELETE,
+                    &self.request_config(),
+                    None,
+                )
             },
             s3_simple_request::S3Callback::Delete(Self::on_rollback_multi_part_request),
             self.as_ctx_ptr(),
@@ -961,18 +972,19 @@ impl MultiPartUpload {
                 &self.credentials,
                 self.context(),
                 s3_simple_request::S3RequestOptions {
-                    path: &self.path,
-                    method: bun_http::Method::POST,
                     proxy_url: self.proxy_url(),
-                    body: b"",
                     search_params: Some(b"?uploads="),
                     content_type: self.content_type.as_deref(),
                     content_disposition: self.content_disposition.as_deref(),
                     content_encoding: self.content_encoding.as_deref(),
                     acl: self.acl,
                     storage_class: self.storage_class,
-                    request_payer: self.request_payer,
-                    ..Default::default()
+                    ..s3_simple_request::S3RequestOptions::new(
+                        &self.path,
+                        bun_http::Method::POST,
+                        &self.request_config(),
+                        self.signal.clone(),
+                    )
                 },
                 s3_simple_request::S3Callback::Download(Self::start_multi_part_request_result),
                 self.as_ctx_ptr(),
@@ -1079,6 +1091,18 @@ impl MultiPartUpload {
         self.proxy.as_deref()
     }
 
+    fn request_config(&self) -> RequestConfig {
+        RequestConfig {
+            options: self.options.get(),
+            request_payer: self.request_payer,
+        }
+    }
+
+    /// The `signal` fired: nothing of this upload is sent again.
+    pub(crate) fn signal_aborted(&self) -> bool {
+        self.signal.as_ref().is_some_and(|signal| signal.aborted())
+    }
+
     fn process_buffered(&self, part_size: usize) {
         // The upload of a context that has stopped sends nothing (its writer is a disposed
         // `Bun.ModuleGraph`'s leftover script): what stops a context aborts it, a turn later for
@@ -1103,8 +1127,6 @@ impl MultiPartUpload {
                 &self.credentials,
                 self.context(),
                 s3_simple_request::S3RequestOptions {
-                    path: &self.path,
-                    method: bun_http::Method::PUT,
                     proxy_url: self.proxy_url(),
                     body: self.buffered.get().slice(),
                     content_type: self.content_type.as_deref(),
@@ -1112,8 +1134,12 @@ impl MultiPartUpload {
                     content_encoding: self.content_encoding.as_deref(),
                     acl: self.acl,
                     storage_class: self.storage_class,
-                    request_payer: self.request_payer,
-                    ..Default::default()
+                    ..s3_simple_request::S3RequestOptions::new(
+                        &self.path,
+                        bun_http::Method::PUT,
+                        &self.request_config(),
+                        self.signal.clone(),
+                    )
                 },
                 s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
                 self.as_ctx_ptr(),

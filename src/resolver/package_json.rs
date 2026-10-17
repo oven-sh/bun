@@ -429,6 +429,7 @@ impl PackageJSON {
             false,
             None,
             None,
+            fs::BomHandling::Convert,
         ) {
             Ok(e) => e,
             Err(err) => {

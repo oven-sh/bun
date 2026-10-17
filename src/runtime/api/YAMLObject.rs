@@ -1230,15 +1230,13 @@ impl<'a> ParserCtx<'a> {
             ExprData::ENull(_) => Ok(JSValue::NULL),
             ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
             ExprData::ENumber(number) => Ok(JSValue::js_number(number.value())),
-            ExprData::EString(str) => {
-                if SHARES_LONG_STRINGS && Self::is_shared_string(&expr) {
-                    return self.shared_string_to_js(args, str);
-                }
-                Ok(bun_js_parser_jsc::value_string_to_js(
-                    str.get(),
-                    self.global,
-                )?)
+            ExprData::EString(str) if SHARES_LONG_STRINGS && Self::is_shared_string(&expr) => {
+                self.shared_string_to_js(args, str)
             }
+            ExprData::EString(str) => Ok(bun_js_parser_jsc::value_string_to_js(
+                str.get(),
+                self.global,
+            )?),
             ExprData::EArray(e_array) => {
                 let key = e_array.as_ptr().cast_const().cast::<c_void>();
                 if let Some(arr) = self.seen_objects.get(&key) {

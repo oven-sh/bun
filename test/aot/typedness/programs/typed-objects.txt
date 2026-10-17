@@ -38,7 +38,7 @@ classes-implementing-interfaces: 11 layouts, 7 given, 5 open, places 98 of 127, 
 classes-opened-only-by-reflect-construct: 4 layouts, 0 given, 4 open, places 23 of 42, reads 7 of 26
 closures-accessors-arrays-survive-gc: 5 layouts, 0 given, 0 open, places 79 of 96, reads 25 of 53
 compound-assignments: 1 layouts, 0 given, 1 open, places 36 of 80, reads 154 of 199
-computed-and-special-keys: 5 layouts, 1 given, 4 open, places 34 of 52, reads 31 of 98
+computed-and-special-keys: 5 layouts, 1 given, 4 open, places 34 of 52, reads 29 of 97
 conditional-types-one-union-several-generics: 11 layouts, 0 given, 0 open, places 41 of 55, reads 6 of 14
 const-literal-proxy-via-object-assign: 4 layouts, 0 given, 1 open, places 6 of 15, reads 5 of 8
 const-proxy-via-object-assign: 3 layouts, 0 given, 1 open, places 6 of 14, reads 5 of 8
@@ -256,7 +256,7 @@ object-assign-empty-target-in-typed-array: 2 layouts, 0 given, 3 open, places 12
 object-assign-empty-target-vs-other-records: 3 layouts, 0 given, 3 open, places 16 of 29, reads 3 of 7
 object-assign-empty-target-vs-spread-copy: 3 layouts, 0 given, 5 open, places 13 of 23, reads 1 of 3
 object-assign: 5 layouts, 0 given, 9 open, places 28 of 47, reads 15 of 80
-object-create-through-interfaces: 2 layouts, 6 given, 3 open, places 26 of 43, reads 7 of 60
+object-create-through-interfaces: 7 layouts, 0 given, 7 open, places 36 of 51, reads 8 of 60
 object-rest-patterns: 11 layouts, 12 given, 9 open, places 66 of 101, reads 30 of 71
 object-spread: 9 layouts, 22 given, 12 open, places 38 of 65, reads 5 of 42
 object-stops-matching-between-reads: 0 layouts, 3 given, 0 open, places 52 of 87, reads 23 of 83

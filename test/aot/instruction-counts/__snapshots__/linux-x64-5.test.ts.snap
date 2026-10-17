@@ -1,5 +1,26 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`asks whether a value is an instance of a class that is also handed about as a value 1`] = `
+"typed, function: 19.30 instructions (kernel 19.18, module 0.12), 371 bytes
+typed, module level: 19.23 instructions (module 19.23), 1933 bytes
+untyped, function: 86.01 instructions (kernel 46.89, stub InstanceOfCached 39, module 0.12), 544 bytes
+untyped, module level: 84.90 instructions (module 45.90, stub InstanceOfCached 39), 2114 bytes"
+`;
+
+exports[`queues a tick with two arguments 1`] = `
+"typed, function: 265.35 instructions (built-in modules 174, stub CallValueNamed3 35, stub AllocateTypedObject 17, kernel 16.75, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 14, stub ReadOutOfLineByName 4, stub ReturnFromCallWithList 4, module 0.60), 157 bytes
+typed, module level: 265.75 instructions (built-in modules 174, stub CallValue3 33, stub CallMethodByName3 25, stub AllocateTypedObject 17, module 12.75, stub ReturnFromCallWithList 4), 1881 bytes
+untyped, function: 265.35 instructions (built-in modules 174, stub CallValueNamed3 35, stub AllocateTypedObject 17, kernel 16.75, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 14, stub ReadOutOfLineByName 4, stub ReturnFromCallWithList 4, module 0.60), 157 bytes
+untyped, module level: 265.75 instructions (built-in modules 174, stub CallValue3 33, stub CallMethodByName3 25, stub AllocateTypedObject 17, module 12.75, stub ReturnFromCallWithList 4), 1769 bytes"
+`;
+
+exports[`reads the pathname and three search parameters of a URL made from a path and a base 1`] = `
+"typed, function: 1731.35 instructions (the runtime 1213, kernel 437.75, elsewhere 52, stub PlainOperationWithInstance 20, stub PlainOperationWithInstance to operationAOTTypedFindPlainQueryValue 6, stub PlainOperationWithInstance to operationAOTTypedScanPlainURLWithPlainBase 2, module 0.60), 3604 bytes
+typed, module level: 1726 instructions (the runtime 1213, module 433, elsewhere 52, stub PlainOperationWithInstance 20, stub PlainOperationWithInstance to operationAOTTypedFindPlainQueryValue 6, stub PlainOperationWithInstance to operationAOTTypedScanPlainURLWithPlainBase 2), 4507 bytes
+untyped, function: 1732.40 instructions (the runtime 1213, kernel 438.80, elsewhere 52, stub PlainOperationWithInstance 20, stub PlainOperationWithInstance to operationAOTTypedFindPlainQueryValue 6, stub PlainOperationWithInstance to operationAOTTypedScanPlainURLWithPlainBase 2, module 0.60), 3869 bytes
+untyped, module level: 1729 instructions (the runtime 1213, module 436, elsewhere 52, stub PlainOperationWithInstance 20, stub PlainOperationWithInstance to operationAOTTypedFindPlainQueryValue 6, stub PlainOperationWithInstance to operationAOTTypedScanPlainURLWithPlainBase 2), 4790 bytes"
+`;
+
 exports[`reads a property that the prototype holds from an object made with Object.create(prototype) 1`] = `
 "typed, function: 67.14 instructions (stub GetByNameAsStringOrNullishPreservingTwo 32, kernel 30.07, stub ReadInheritedInlineByName 5, module 0.07), 230 bytes
 typed, module level: 65.08 instructions (stub GetByNameAsStringOrNullishPreservingTwo 32, module 28.07, stub ReadInheritedInlineByName 5), 1708 bytes

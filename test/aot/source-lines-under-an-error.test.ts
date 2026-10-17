@@ -3,7 +3,7 @@
 // anywhere else. The file is read as it is: nothing is parsed.
 import { expect } from "bun:test";
 import { realpathSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./run-programs";
 import { test } from "./supported";
@@ -33,7 +33,7 @@ const shown = `1 | export function deep(n: number): number {
 TypeError: at the bottom
       at deep (/$bunfs/root/src/deep.ts:2:26)`;
 
-test.skipIf(isWindows)("the lines under an error come from the file on disk, unparsed", async () => {
+test("the lines under an error come from the file on disk, unparsed", async () => {
   using dir = tempDir("source-lines-under-an-error", files);
   const root = realpathSync(String(dir));
   const env = { ...bunEnv, NO_COLOR: "1" };

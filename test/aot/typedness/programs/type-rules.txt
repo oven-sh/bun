@@ -39,7 +39,7 @@ delete-fields: 4 layouts, 0 given, 4 open, places 42 of 52, reads 6 of 37
 delete-optional-field: 2 layouts, 0 given, 2 open, places 7 of 16, reads 0 of 6
 delete-required-field: 3 layouts, 0 given, 0 open, places 26 of 36, reads 1 of 15
 delete-required-fields-throws: 4 layouts, 0 given, 6 open, places 18 of 32, reads 9 of 23
-detached-methods: 7 layouts, 9 given, 7 open, places 38 of 95, reads 20 of 66
+detached-methods: 8 layouts, 0 given, 8 open, places 41 of 98, reads 22 of 63
 discriminant-changed-after-creation: 2 layouts, 15 given, 0 open, places 58 of 115, reads 5 of 71
 enum-or-zero: 2 layouts, 0 given, 0 open, places 18 of 33, reads 10 of 21
 extra-properties: 2 layouts, 0 given, 0 open, places 20 of 31, reads 7 of 20
@@ -68,7 +68,7 @@ language-error-messages: 3 layouts, 7 given, 3 open, places 26 of 60, reads 2 of
 mapped-types: 1 layouts, 0 given, 0 open, places 6 of 14, reads 3 of 7
 method-replaced-by-any-function: 5 layouts, 0 given, 3 open, places 28 of 44, reads 6 of 12
 methods-and-super: 2 layouts, 0 given, 0 open, places 64 of 99, reads 8 of 91
-methods-through-interfaces: 2 layouts, 6 given, 2 open, places 22 of 47, reads 3 of 17
+methods-through-interfaces: 3 layouts, 0 given, 3 open, places 34 of 50, reads 9 of 14
 missing-arguments-through-any: 0 layouts, 0 given, 0 open, places 12 of 20, reads 0 of 1
 missing-property-reads: 0 layouts, 0 given, 0 open, places 24 of 43, reads 13 of 15
 mixed-objects-through-one-interface: 0 layouts, 0 given, 0 open, places 13 of 32, reads 1 of 10
@@ -99,7 +99,7 @@ object-and-class-prototypes: 5 layouts, 7 given, 4 open, places 83 of 107, reads
 object-assign: 1 layouts, 0 given, 2 open, places 14 of 28, reads 6 of 35
 object-cast-to-primitive-throws-on-use: 9 layouts, 0 given, 10 open, places 20 of 58, reads 0 of 12
 object-create-class-prototype-not-instance: 1 layouts, 0 given, 1 open, places 13 of 22, reads 2 of 27
-object-create-through-interfaces: 2 layouts, 6 given, 3 open, places 10 of 34, reads 4 of 46
+object-create-through-interfaces: 6 layouts, 0 given, 6 open, places 20 of 41, reads 6 of 44
 object-missing-required-properties: 3 layouts, 0 given, 2 open, places 9 of 18, reads 1 of 5
 object-prototype-not-extensible: 0 layouts, 0 given, 0 open, places 1 of 9, reads 0 of 5
 object-rest-patterns: 4 layouts, 0 given, 4 open, places 18 of 32, reads 4 of 10
@@ -134,7 +134,7 @@ same-errors-in-tagged-template: 3 layouts, 0 given, 0 open, places 22 of 40, rea
 same-value-annotated-twice: 9 layouts, 0 given, 9 open, places 51 of 118, reads 22 of 28
 standard-functions-keep-their-declared-types: 2 layouts, 0 given, 1 open, places 12 of 31, reads 4 of 11
 stores-through-another-type: 2 layouts, 0 given, 0 open, places 27 of 36, reads 2 of 14
-stores-through-interfaces: 3 layouts, 0 given, 5 open, places 14 of 38, reads 2 of 19
+stores-through-interfaces: 0 layouts, 2 given, 1 open, places 7 of 32, reads 1 of 19
 stores-to-error-and-function-prototype: 0 layouts, 0 given, 0 open, places 4 of 14, reads 0 of 9
 structural-class-types: 3 layouts, 0 given, 4 open, places 19 of 29, reads 7 of 37
 subclass-checked-against-interface: 4 layouts, 0 given, 4 open, places 19 of 35, reads 6 of 17

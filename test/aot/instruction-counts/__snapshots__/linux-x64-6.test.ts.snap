@@ -1,5 +1,12 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`reads the pathname of a URL made from a path and a base 1`] = `
+"typed, function: 494.35 instructions (the runtime 362, kernel 124.75, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedScanPlainURLWithPlainBase 2, module 0.60), 1102 bytes
+typed, module level: 479 instructions (the runtime 362, module 110, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedScanPlainURLWithPlainBase 2), 2027 bytes
+untyped, function: 498.40 instructions (the runtime 362, kernel 128.80, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedScanPlainURLWithPlainBase 2, module 0.60), 1166 bytes
+untyped, module level: 483 instructions (the runtime 362, module 114, stub PlainOperationWithInstance 5, stub PlainOperationWithInstance to operationAOTTypedScanPlainURLWithPlainBase 2), 2046 bytes"
+`;
+
 exports[`asks with \`in\` for a name that the prototype holds, of an object made with Object.create(prototype) 1`] = `
 "typed, function: 66.18 instructions (kernel 44.11, stub InByValCached 22, module 0.07), 317 bytes
 typed, module level: 60.09 instructions (module 38.09, stub InByValCached 22), 1699 bytes

@@ -157,8 +157,8 @@ rpc-client-from-interface: 35 layouts, 3 given, 31 open, places 194 of 249, read
 stored-fields: 2 layouts, 12 given, 0 open, places 22 of 48, reads 2 of 12
 stream-branches-passed-to-typed-function: 1 layouts, 0 given, 2 open, places 15 of 35, reads 3 of 18
 string-object-cast-returned-by-async: 1 layouts, 0 given, 0 open, places 12 of 32, reads 4 of 12
-stub-function-cast-to-typed-function: 16 layouts, 7 given, 12 open, places 64 of 92, reads 6 of 24
-stub-function-cast-via-any-or-unknown: 9 layouts, 7 given, 6 open, places 51 of 75, reads 3 of 12
+stub-function-cast-to-typed-function: 20 layouts, 0 given, 15 open, places 83 of 106, reads 9 of 24
+stub-function-cast-via-any-or-unknown: 13 layouts, 0 given, 10 open, places 69 of 89, reads 8 of 12
 table-annotated-and-satisfies: 4 layouts, 0 given, 0 open, places 12 of 22, reads 6 of 13
 table-parsed-as-whole: 0 layouts, 19 given, 0 open, places 19 of 38, reads 1 of 15
 table-with-one-entry-parsed: 3 layouts, 1 given, 0 open, places 16 of 32, reads 5 of 16
@@ -199,7 +199,7 @@ union-parsed-generic-object: 13 layouts, 0 given, 19 open, places 78 of 103, rea
 union-parsed-generic-parsed-data: 12 layouts, 0 given, 18 open, places 77 of 102, reads 6 of 15
 union-parsed-generic-string: 12 layouts, 0 given, 18 open, places 77 of 102, reads 6 of 15
 union-with-array-member: 6 layouts, 2 given, 1 open, places 20 of 36, reads 8 of 17
-unknown-containers-cast-to-typed: 2 layouts, 6 given, 2 open, places 15 of 46, reads 1 of 16
+unknown-containers-cast-to-typed: 4 layouts, 0 given, 5 open, places 25 of 52, reads 7 of 16
 untyped-built-object-as-prototype: 0 layouts, 6 given, 0 open, places 9 of 22, reads 0 of 14
 untyped-built-object-assign-onto-alias: 2 layouts, 0 given, 2 open, places 21 of 33, reads 9 of 14
 untyped-built-object-computed-key-stores: 2 layouts, 0 given, 2 open, places 22 of 36, reads 11 of 16

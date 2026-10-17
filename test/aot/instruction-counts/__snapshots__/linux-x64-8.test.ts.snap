@@ -8,8 +8,8 @@ untyped, module level: 247.84 instructions (module 77.08, stub PutByNameWithDire
 `;
 
 exports[`calls a method that the prototype holds on an object made with Object.create(prototype) 1`] = `
-"typed, function: 97.17 instructions (kernel 36.09, plus 22, stub CallMethodByName1 21, stub CallValue1 10, stub BoxNumber 8, module 0.07), 265 bytes
-typed, module level: 94.09 instructions (module 33.09, plus 22, stub CallMethodByName1 21, stub CallValue1 10, stub BoxNumber 8), 1698 bytes
+"typed, function: 100.17 instructions (kernel 36.09, plus 21, stub CallMethodByName1 21, stub CallValue1 10, stub BoxNumber 8, stub UnboxNumberArgument0ToFPR0 4, module 0.07), 265 bytes
+typed, module level: 97.09 instructions (module 33.09, plus 21, stub CallMethodByName1 21, stub CallValue1 10, stub BoxNumber 8, stub UnboxNumberArgument0ToFPR0 4), 1687 bytes
 untyped, function: 101.17 instructions (kernel 33.09, stub CallMethodByName1 21, stub Add 16, stub CallValue1 10, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDI 10, plus 9, exports of object-create-inherited-method.untyped.function.js 2, module 0.07), 266 bytes
 untyped, module level: 97.11 instructions (module 29.11, stub CallMethodByName1 21, stub Add 16, stub CallValue1 10, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRDI 10, plus 9, exports of object-create-inherited-method.untyped.module-level.js 2), 1874 bytes"
 `;

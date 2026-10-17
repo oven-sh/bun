@@ -78,10 +78,10 @@ untyped, module level: 101.52 instructions (stub CallMethodByName1 25, stub Add 
 `;
 
 exports[`passes object literals typed any, which nothing else holds, to a typed function, which reads three fields 1`] = `
-"typed, function: 214.67 instructions (stub ConvertByPlan 120.56, kernel 32.19, stub NewObjectFromDescriptor3 23.08, the runtime 18.70, stub ColdOperationValue to operationAOTTypedCoerce 16, stub ColdOperationValue to operationAOTTypedCoerce with arguments 3, elsewhere 0.72, stub ColdOperationValue 0.29, module 0.12), 361 bytes
-typed, module level: 214.09 instructions (stub ConvertByPlan 120.56, module 32.15, stub NewObjectFromDescriptor3 23.08, the runtime 18.43, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce 16, stub ColdOperationValueWithoutFPRs to operationAOTTypedCoerce with arguments 3, elsewhere 0.72, stub ColdOperationValueWithoutFPRs 0.14), 1424 bytes
-untyped, function: 65.27 instructions (kernel 31.15, stub Add 24, stub GetByNameWithDirectColumnWithReceiverInRAX 10, module 0.12), 254 bytes
-untyped, module level: 61.18 instructions (module 27.18, stub Add 24, stub GetByNameWithDirectColumnWithReceiverInRAX 10), 1242 bytes"
+"typed, function: 57.68 instructions (kernel 32.19, stub AllocateTypedObject 17.26, the runtime 7.76, elsewhere 0.34, module 0.12), 404 bytes
+typed, module level: 58.58 instructions (module 33.16, stub AllocateTypedObject 17.26, the runtime 7.82, elsewhere 0.34), 1606 bytes
+untyped, function: 65.27 instructions (kernel 31.15, stub Add 24, stub GetByNameWithDirectColumnWithReceiverInRAX 10, module 0.12), 257 bytes
+untyped, module level: 61.18 instructions (module 27.18, stub Add 24, stub GetByNameWithDirectColumnWithReceiverInRAX 10), 1230 bytes"
 `;
 
 exports[`reads two properties that the class does not declare, through a parameter of type any, and keeps them as they are 1`] = `

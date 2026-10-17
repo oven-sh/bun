@@ -63,7 +63,7 @@ fully-known-predicates: 1 layouts, 0 given, 1 open, places 63 of 78, reads 26 of
 function-expression-own-name: 6 layouts, 0 given, 0 open, places 164 of 214, reads 18 of 94
 function-object-operations: 4 layouts, 0 given, 5 open, places 144 of 208, reads 15 of 102
 function-typed-member-not-callable: 4 layouts, 0 given, 0 open, places 1792 of 1813, reads 336 of 389
-function-value-results-typed: 3 layouts, 3 given, 1 open, places 174 of 280, reads 25 of 122
+function-value-results-typed: 5 layouts, 0 given, 3 open, places 260 of 284, reads 55 of 122
 functions-as-values: 0 layouts, 0 given, 0 open, places 31 of 40, reads 1 of 10
 functions-with-added-properties: 3 layouts, 0 given, 2 open, places 62 of 73, reads 6 of 42
 generic-copies-with-added-members: 5 layouts, 0 given, 0 open, places 36 of 50, reads 17 of 19

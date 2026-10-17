@@ -16,7 +16,7 @@ closures-capture-their-holder: 0 layouts, 7 given, 0 open, places 2 of 22, reads
 closures-capture-their-holder-typed: 2 layouts, 0 given, 4 open, places 25 of 44, reads 1 of 10
 constructor-function-imported-by-typed-code: 0 layouts, 0 given, 0 open, places 0 of 8, reads 0 of 0
 container-operations-register-pressure: 1 layouts, 0 given, 0 open, places 2226 of 2239, reads 33 of 96
-containers-unexpected-storage: 2 layouts, 7 given, 4 open, places 126 of 228, reads 24 of 74
+containers-unexpected-storage: 3 layouts, 0 given, 5 open, places 127 of 229, reads 24 of 74
 define-property-descriptor-stored-field: 1 layouts, 0 given, 2 open, places 72 of 118, reads 3 of 29
 descriptor-literals: 0 layouts, 0 given, 0 open, places 0 of 8, reads 0 of 0
 element-accesses-outside-loops: 0 layouts, 7 given, 0 open, places 2 of 22, reads 0 of 8

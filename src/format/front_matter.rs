@@ -21,8 +21,13 @@ pub(crate) fn has_indented_delimiter(raw: &[u8]) -> bool {
         })
 }
 
+/// A delimiter is three characters and no more: `----` is a rule in Markdown. Prettier and oxfmt take the first three for
+/// the delimiter, so the fourth dash of a closing line starts what comes after the front matter.
 pub(crate) fn parse(text: &[u8]) -> Option<FrontMatter> {
     let delimiter = text.get(..3).filter(|it| matches!(*it, b"---" | b"+++"))?;
+    if text.get(3) == Some(&delimiter[0]) {
+        return None;
+    }
     let first_line_break = 3 + bun_core::strings::index_of_char_usize(&text[3..], b'\n')?;
     let first_line = &text[3..first_line_break];
     let language_start =
@@ -30,12 +35,19 @@ pub(crate) fn parse(text: &[u8]) -> Option<FrontMatter> {
     let language = bun_core::strings::trim_js_whitespace_end(
         bun_core::strings::trim_js_whitespace_start(first_line),
     );
-    let find = |needle: &[u8]| {
-        Some(first_line_break + bun_core::strings::index_of(&text[first_line_break..], needle)?)
+    let find = |needle: &[u8; 4]| {
+        let mut from = first_line_break;
+        loop {
+            let at = from + bun_core::strings::index_of(&text[from..], needle)?;
+            if text.get(at + 4) != Some(&needle[3]) {
+                return Some(at);
+            }
+            from = at + 4;
+        }
     };
     let is_yaml = delimiter == b"---" && matches!(language, b"" | b"yaml");
-    let end_delimiter =
-        find(&[b"\n", delimiter].concat()).or_else(|| find(b"\n...").filter(|_| is_yaml))?;
+    let end_delimiter = find(&[b'\n', delimiter[0], delimiter[1], delimiter[2]])
+        .or_else(|| find(b"\n...").filter(|_| is_yaml))?;
     Some(FrontMatter {
         end: end_delimiter + 4,
         explicit_language: (language_start, language_start + language.len()),

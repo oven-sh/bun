@@ -792,6 +792,18 @@ fn of_prettier(directory: &[u8], at: usize) -> Option<Vec<u8>> {
     has_it.then(|| [b"prettier in ", name].concat())
 }
 
+/// Whether the configuration file nearest to `directory`, from there upwards, is one of oxfmt. `None`: there is none. The names
+/// tell, and what a `package.json` has: nothing is loaded, so a configuration that is a program does not run.
+fn nearest_is_of_oxfmt(directory: &[u8]) -> Option<bool> {
+    paths::ancestors(directory).find_map(|directory| {
+        let at = (0..NAMES.len()).find(|&at| {
+            fs::is_file(&paths::join(directory, NAMES[at]))
+                && (at < NAMES_OF_OXFMT || of_prettier(directory, at).is_some())
+        })?;
+        Some(at < NAMES_OF_OXFMT)
+    })
+}
+
 /// Which formatters are among the dependencies of a project. That tells what one without a configuration file is
 /// formatted with.
 #[derive(Copy, Clone, Default)]
@@ -1094,30 +1106,28 @@ impl<'c> Configs<'c> {
             classes: Arc::default(),
         };
         let mut formatters = Formatters::default();
-        let mut is_oxfmt = match configs.for_directory(&environment.cwd) {
-            Ok(scope) => match &scope.config {
-                Some(config) => config.is_oxfmt,
-                None => is_like_oxfmt.unwrap_or_else(|| {
-                    formatters = Formatters::depended_on(&environment.cwd);
-                    let has_oxfmt = formatters.oxfmt || formatters.vite_plus;
-                    let has_prettier = formatters.prettier;
-                    // Depending on both suggests a migration to oxfmt, so oxfmt wins.
-                    if has_oxfmt && has_prettier {
-                        configs.note.get_or_init(|| {
-                            b"No config file found, and package.json depends on both oxfmt and prettier\n  Formatting like oxfmt. Add a config file to change that.".to_vec()
-                        });
-                    }
-                    has_oxfmt
-                }),
-            },
+        // With `--config` the files of the project are not loaded.
+        let of_project = match &named {
+            Some(_) => Ok(is_like_oxfmt.or_else(|| nearest_is_of_oxfmt(&environment.cwd))),
+            None => (configs.for_directory(&environment.cwd))
+                .map(|scope| scope.config.as_ref().map(|config| config.is_oxfmt)),
+        };
+        let mut is_oxfmt = match of_project {
+            Ok(Some(is_oxfmt)) => is_oxfmt,
+            Ok(None) => is_like_oxfmt.unwrap_or_else(|| {
+                formatters = Formatters::depended_on(&environment.cwd);
+                let has_oxfmt = formatters.oxfmt || formatters.vite_plus;
+                let has_prettier = formatters.prettier;
+                // Depending on both suggests a migration to oxfmt, so oxfmt wins.
+                if has_oxfmt && has_prettier {
+                    configs.note.get_or_init(|| {
+                        b"No config file found, and package.json depends on both oxfmt and prettier\n  Formatting like oxfmt. Add a config file to change that.".to_vec()
+                    });
+                }
+                has_oxfmt
+            }),
             // The name of the one that cannot be used tells.
-            Err(_) => paths::ancestors(&environment.cwd)
-                .find_map(|directory| {
-                    NAMES
-                        .iter()
-                        .position(|name| fs::is_file(&paths::join(directory, name)))
-                })
-                .is_some_and(|at| at < NAMES_OF_OXFMT),
+            Err(_) => nearest_is_of_oxfmt(&environment.cwd).unwrap_or(false),
         };
         if let Some(path) = &named {
             let path = paths::resolve(&environment.cwd, &paths::from_native(path));
@@ -1479,7 +1489,7 @@ impl<'c> Configs<'c> {
 
     /// One-time note for the user about which of two config files was picked.
     pub(crate) fn note(&self) -> Option<&[u8]> {
-        // The lookup also runs before `--config` is applied. Ignore what it found then.
+        // What package.json depends on is also asked for a file that `--config` names.
         let is_looked_for = self.named.is_none() && self.options.config_lookup;
         self.note.get().filter(|_| is_looked_for).map(|it| &it[..])
     }

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isRoot, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isRoot, isWindows, tempDir } from "harness";
 import {
   chmodSync,
   existsSync,
@@ -1823,6 +1823,21 @@ export const a: number[] = [file, one, two];
       expect(notIncluded.stdout).toBe(error("scripts/s.ts"));
       expect(named.stdout).toBe(error("src/generated/g.ts"));
       expect(written.stdout).toBe(error("src/a.ts"));
+    });
+
+    // Every write to /dev/full fails with ENOSPC, as on a full disk.
+    test.skipIf(!isLinux)("what can't be written to standard output is an error with exit code 2", async () => {
+      using dir = project({ "a.ts": `export {};\n` });
+      await using proc = spawn({
+        cmd: ["sh", "-c", 'exec "$0" "$@" > /dev/full', bunExe(), "check", "--listFilesOnly"],
+        cwd: String(dir),
+        env,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("error: Cannot write standard output: ENOSPC: ");
+      expect(exitCode).toBe(2);
     });
 
     test("--listFiles and --listFilesOnly", async () => {

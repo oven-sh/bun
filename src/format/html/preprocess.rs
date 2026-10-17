@@ -6,6 +6,7 @@
 use super::ast::{Flags, Id, Kind, Node, Span, Tree};
 use super::utilities::{is_pre_like, is_script_like_tag};
 use super::{Options, Parser};
+use crate::options::HtmlWhitespaceSensitivity;
 use bun_core::strings;
 use std::borrow::Cow;
 
@@ -14,6 +15,14 @@ struct Preprocessor<'t, 'a, 'o> {
     options: &'o Options<'o>,
     stack_check: bun_core::StackCheck,
     is_nested_too_deeply: bool,
+}
+
+/// Of a `<text>` of SVG and of an element in one: whether white space at its start and at its end is shown. It is not
+/// where it meets other white space, or an end of the `<text>`.
+#[derive(Copy, Clone)]
+struct SvgTextEdges {
+    start: bool,
+    end: bool,
 }
 
 /// Returns whether the tree is not nested too deeply.
@@ -26,7 +35,7 @@ pub(crate) fn preprocess<'a>(tree: &mut Tree<'a>, options: &Options<'_>) -> bool
         stack_check: crate::stack::check_for_tree(),
         is_nested_too_deeply: false,
     };
-    preprocessor.visit(root, false);
+    preprocessor.visit(root, false, None);
     !preprocessor.is_nested_too_deeply
 }
 
@@ -57,7 +66,12 @@ fn moved_by(text: &[u8], start: u32, mut units: u32) -> u32 {
 }
 
 impl<'a> Preprocessor<'_, 'a, '_> {
-    fn visit(&mut self, id: Id, is_in_svg_foreign_object: bool) {
+    fn visit(
+        &mut self,
+        id: Id,
+        is_in_svg_foreign_object: bool,
+        svg_text_edges: Option<SvgTextEdges>,
+    ) {
         if !self.stack_check.is_safe_to_recurse() {
             self.is_nested_too_deeply = true;
             return;
@@ -82,7 +96,7 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             self.add_has_htm_component_closing_tag(child);
         }
         if has_children_property {
-            self.add_is_space_sensitive(id);
+            self.add_is_space_sensitive(id, svg_text_edges);
         }
         let mut next = self.tree.first_child(id);
         while let Some(child) = next {
@@ -91,10 +105,13 @@ impl<'a> Preprocessor<'_, 'a, '_> {
                 self.tree[child].kind,
                 Kind::Text | Kind::Comment | Kind::DocType
             ) {
-                self.visit(
-                    child,
-                    is_in_svg_foreign_object || self.is_svg_foreign_object(child),
-                );
+                let is_in_svg_foreign_object =
+                    is_in_svg_foreign_object || self.is_svg_foreign_object(child);
+                let svg_text_edges = match is_in_svg_foreign_object {
+                    true => None,
+                    false => self.svg_text_edges(child, svg_text_edges),
+                };
+                self.visit(child, is_in_svg_foreign_object, svg_text_edges);
             }
         }
         if has_children_property {
@@ -117,6 +134,30 @@ impl<'a> Preprocessor<'_, 'a, '_> {
     fn is_svg_foreign_object(&self, id: Id) -> bool {
         let node = &self.tree[id];
         node.kind == Kind::Element && node.namespace == b"svg" && &node.name[..] == b"foreignObject"
+    }
+
+    /// `around`: those of the parent.
+    fn svg_text_edges(&self, id: Id, around: Option<SvgTextEdges>) -> Option<SvgTextEdges> {
+        let node = &self.tree[id];
+        if node.kind != Kind::Element || node.namespace != b"svg" {
+            return None;
+        }
+        let Some(around) = around else {
+            let is_ignored = matches!(
+                self.options.format.html_whitespace_sensitivity,
+                HtmlWhitespaceSensitivity::Ignore
+            );
+            return (&node.name[..] == b"text" && !is_ignored).then_some(SvgTextEdges {
+                start: false,
+                end: false,
+            });
+        };
+        Some(SvgTextEdges {
+            start: !node.has(Flags::HAS_LEADING_SPACES)
+                && (self.tree.prev(id).is_some() || around.start),
+            end: !node.has(Flags::HAS_TRAILING_SPACES)
+                && (self.tree.next(id).is_some() || around.end),
+        })
     }
 
     fn remove_ignorable_first_lf(&mut self, id: Id) {
@@ -367,9 +408,10 @@ impl<'a> Preprocessor<'_, 'a, '_> {
         );
     }
 
-    fn add_is_space_sensitive(&mut self, id: Id) {
+    fn add_is_space_sensitive(&mut self, id: Id, svg_text_edges: Option<SvgTextEdges>) {
         let Some(first) = self.tree.first_child(id) else {
-            let is_sensitive = self.tree.is_dangling_space_sensitive(id, self.options);
+            let is_sensitive = self.tree.is_dangling_space_sensitive(id, self.options)
+                || svg_text_edges.is_some_and(|edges| edges.start && edges.end);
             self.tree[id]
                 .flags
                 .set(Flags::IS_DANGLING_SPACE_SENSITIVE, is_sensitive);
@@ -378,8 +420,22 @@ impl<'a> Preprocessor<'_, 'a, '_> {
         let mut next = Some(first);
         while let Some(child) = next {
             next = self.tree.next(child);
-            let is_leading = self.tree.is_leading_space_sensitive(child, self.options);
-            let is_trailing = self.tree.is_trailing_space_sensitive(child, self.options);
+            let mut is_leading = self.tree.is_leading_space_sensitive(child, self.options);
+            let mut is_trailing = self.tree.is_trailing_space_sensitive(child, self.options);
+            // To Prettier every element of SVG is a block, with a line of its own. In a `<text>` they are parts of one
+            // text: `H<tspan>2</tspan>O` would be shown as "H 2 O". What has white space next to it stays as Prettier
+            // has it.
+            if let Some(edges) = svg_text_edges {
+                let node = &self.tree[child];
+                is_leading |= match self.tree.prev(child) {
+                    Some(_) => !node.has(Flags::HAS_LEADING_SPACES),
+                    None => edges.start,
+                };
+                is_trailing |= match next {
+                    Some(_) => !node.has(Flags::HAS_TRAILING_SPACES),
+                    None => edges.end,
+                };
+            }
             let flags = &mut self.tree[child].flags;
             flags.set(Flags::IS_LEADING_SPACE_SENSITIVE, is_leading);
             flags.set(Flags::IS_TRAILING_SPACE_SENSITIVE, is_trailing);

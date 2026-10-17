@@ -1,14 +1,18 @@
-//! `--staged` and `--changed` for `bun lint` and `bun fmt`. Both get their list of files from git.
+//! `--staged` and `--changed` for `bun lint` and `bun fmt`. Both get their list of files from git. `--staged` also gets the
+//! text of a file from git if the index has something else than the disk.
 //!
 //! Git runs in the working directory and inherits this process's environment. In a hook, that environment tells git
 //! where the index is. These calls start no program that `git diff --name-only` wouldn't start itself: no pager, no
 //! external diff, no textconv, no submodule scan, no fetch.
 
 use crate::args::{UsageError, error};
+use crate::embedded::Framework;
 use crate::run::{Environment, Fatal};
 use crate::{fs, paths};
 use bun_core::strings;
-use bun_sema::util::FxHashSet;
+use bun_sema::resolve::ScriptKind;
+use bun_sema::util::{FxHashMap, FxHashSet};
+use bun_sema_driver::host::{AlreadyRead, as_read, from_native};
 use std::borrow::Cow;
 
 /// Which files to ask git for.
@@ -50,12 +54,11 @@ pub enum NotRun {
 }
 
 /// `git diff` that prints NUL-terminated paths relative to the repository root, whatever the user's git config says.
-const DIFF: [&[u8]; 10] = [
+const DIFF: [&[u8]; 9] = [
     b"--no-optional-locks",
     b"-c",
     b"diff.relative=false",
     b"diff",
-    b"--name-only",
     b"-z",
     b"--no-renames",
     b"--ignore-submodules=all",
@@ -121,6 +124,21 @@ fn in_the_words_of_git(first: &str, finished: &Finished) -> Fatal {
     Fatal(text)
 }
 
+/// `stored`, a blob, with the line endings that a checkout gives it. Git can store LF for a file that it checks out with
+/// CRLF (`eol=crlf`, `core.autocrlf`). Every other file of the run is read as it's checked out, so this one has to match.
+/// Git only says what it converts in one more call, and the file at `path` on disk shows it too.
+fn with_line_endings_of(path: &[u8], stored: &[u8]) -> Vec<u8> {
+    let is_converted = !strings::contains_char(stored, b'\r')
+        && matches!(fs::link_kind_and_size(path), Some((fs::LinkKind::File, _)))
+        && fs::read(path).is_ok_and(|on_disk| strings::contains(&on_disk, b"\r\n"));
+    match is_converted {
+        true => strings::split(stored, b"\n")
+            .collect::<Vec<_>>()
+            .join(&b"\r\n"[..]),
+        false => stored.to_vec(),
+    }
+}
+
 /// The object ID git printed. `None` if git failed or printed anything else.
 fn object_id(finished: &Finished) -> Option<&[u8]> {
     let id = finished.stdout.trim_ascii();
@@ -135,16 +153,17 @@ pub(crate) struct Files<'e> {
     top: Vec<u8>,
     /// Absolute paths, in `top`.
     named: FxHashSet<Vec<u8>>,
-    /// Files with unstaged changes. Only filled in for a `--staged` run that writes files.
-    partly_staged: FxHashSet<Vec<u8>>,
+    /// For `--staged`: what the index has of a file that is different on disk, or gone from it. It has the files in `named`,
+    /// and those that one of them can import.
+    in_the_index: FxHashMap<Vec<u8>, Vec<u8>>,
+    /// The files in `named` that a search of the disk can't find: deleted since they were staged, or not a regular file now.
+    not_on_disk: Vec<Vec<u8>>,
 }
 
 impl<'e> Files<'e> {
-    /// `writes` is true if the run writes files.
     #[optimize(size)]
     pub(crate) fn read(
         only: &'e Only,
-        writes: bool,
         environment: &'e Environment<'e>,
     ) -> Result<Files<'e>, Fatal> {
         let mut files = Files {
@@ -152,7 +171,8 @@ impl<'e> Files<'e> {
             environment,
             top: Vec::new(),
             named: FxHashSet::default(),
-            partly_staged: FxHashSet::default(),
+            in_the_index: FxHashMap::default(),
+            not_on_disk: Vec::new(),
         };
         let flag = only.flag();
         // `--show-toplevel` is only here to fail where there's no work tree, like inside `.git`. `--show-cdup` is the
@@ -170,8 +190,8 @@ impl<'e> Files<'e> {
         match only {
             Only::Staged => {
                 files.named = files.diff(&top, &[b"--cached", IS_THERE])?;
-                if writes {
-                    files.partly_staged = files.diff(&top, &[])?;
+                if !files.named.is_empty() {
+                    files.read_the_index(&top)?;
                 }
             }
             Only::Changed(since) => {
@@ -221,15 +241,79 @@ impl<'e> Files<'e> {
     fn names(&self, top: &[u8], args: &[&[u8]]) -> Result<FxHashSet<Vec<u8>>, Fatal> {
         let finished = self.git(args, b"")?;
         if !finished.is_ok {
-            let first = format!("{} cannot read the git repository", self.only.flag());
-            return Err(in_the_words_of_git(&first, &finished));
+            return Err(self.unreadable(&finished));
         }
         let names = strings::split(&finished.stdout, b"\0").filter(|it| !it.is_empty());
         Ok(names.map(|it| paths::join(top, it)).collect())
     }
 
     fn diff(&self, top: &[u8], args: &[&[u8]]) -> Result<FxHashSet<Vec<u8>>, Fatal> {
-        self.names(top, &[&DIFF[..], args].concat())
+        self.names(top, &[&DIFF[..], &[b"--name-only"], args].concat())
+    }
+
+    fn unreadable(&self, finished: &Finished) -> Fatal {
+        let first = format!("{} cannot read the git repository", self.only.flag());
+        in_the_words_of_git(&first, finished)
+    }
+
+    /// Fills in `in_the_index`. What the index has as a symlink doesn't count as a file, whatever it is on disk.
+    fn read_the_index(&mut self, top: &[u8]) -> Result<(), Fatal> {
+        let finished = self.git(&[&DIFF[..], &[b"--raw", b"--no-abbrev"]].concat(), b"")?;
+        if !finished.is_ok {
+            return Err(self.unreadable(&finished));
+        }
+        // `:<mode in the index> <mode on disk> <ID in the index> <zeros> <status>`, NUL, the path, NUL.
+        let mut parts = strings::split(&finished.stdout, b"\0");
+        let (mut is_no_file, mut wanted) = (FxHashSet::default(), Vec::new());
+        while let Some(entry) = parts.next().filter(|it| !it.is_empty()) {
+            let mut fields = strings::split(entry, b" ");
+            let (Some(mode), Some(mode_on_disk), Some(id), Some(name)) =
+                (fields.next(), fields.next(), fields.next(), parts.next())
+            else {
+                return Err(self.unreadable(&finished));
+            };
+            let path = paths::join(top, name);
+            // A conflict has no mode, and a second entry with "our" side of it.
+            if !mode.starts_with(b":100") || is_no_file.contains(&path) {
+                self.named.remove(&path);
+                is_no_file.insert(path);
+                continue;
+            }
+            let can_be_imported = ScriptKind::from_file_name(name).is_some()
+                || name.ends_with(b".json")
+                || Framework::of(name).is_some();
+            let is_named = self.named.contains(&path);
+            if is_named && !mode_on_disk.starts_with(b"100") {
+                self.not_on_disk.push(path.clone());
+            }
+            if can_be_imported || is_named {
+                wanted.push((path, id));
+            }
+        }
+        if wanted.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<&[u8]> = wanted.iter().map(|it| it.1).collect();
+        let input = [&ids.join(&b'\n')[..], b"\n"].concat();
+        let read = self.git(&[b"cat-file", b"--batch"], &input)?;
+        let mut rest = &read.stdout[..];
+        for (path, id) in wanted {
+            // `<ID> blob <size>`, a line break, the content, a line break. Or `<ID> missing`, in a partial clone.
+            let content = strings::split_once_char(rest, b'\n').and_then(|(first, after)| {
+                let size = strings::rsplit_once_char(first, b' ')?.1;
+                after.split_at_checked(bun_core::fmt::parse_decimal::<usize>(size)?)
+            });
+            let Some((content, after)) = content.filter(|_| read.is_ok) else {
+                let shown = paths::relative(&self.environment.cwd, &path);
+                let (shown, id) = (bstr::BStr::new(&shown), bstr::BStr::new(id));
+                let first = format!("--staged cannot read what is staged of {shown} (blob {id})");
+                return Err(in_the_words_of_git(&first, &read));
+            };
+            let content = with_line_endings_of(&path, content);
+            self.in_the_index.insert(path, content);
+            rest = after.get(1..).unwrap_or_default();
+        }
+        Ok(())
     }
 
     /// Resolves `written` to a commit ID. Later git calls only get the ID, because they could parse `written` as a flag
@@ -285,9 +369,33 @@ impl<'e> Files<'e> {
             && matches!(fs::link_kind_and_size(path), Some((fs::LinkKind::File, _)))
     }
 
+    /// The staged files that aren't on disk, so only the index has them: absolute paths, each with the size of its text.
+    pub(crate) fn not_on_disk(&self) -> impl Iterator<Item = (&[u8], u64)> {
+        (self.not_on_disk.iter())
+            .filter_map(|path| Some((&path[..], self.in_the_index.get(path)?.len() as u64)))
+    }
+
     /// True if writing `path` and staging it again would also stage changes the user didn't stage.
     pub(crate) fn is_partly_staged(&self, path: &[u8]) -> bool {
-        self.partly_staged.contains(&*self.as_listed(path))
+        self.staged_text(path).is_some()
+    }
+
+    /// What will be committed of a [partly staged](Files::is_partly_staged) file. The file on disk has something else.
+    pub(crate) fn staged_text(&self, path: &[u8]) -> Option<&[u8]> {
+        if self.in_the_index.is_empty() {
+            return None;
+        }
+        (self.in_the_index.get(&*self.as_listed(path))).map(Vec::as_slice)
+    }
+
+    /// `in_the_index`, for whatever follows imports: it finds what the commit has, staged or not.
+    pub(crate) fn already_read(&self, keeps_byte_order_marks: bool) -> AlreadyRead {
+        (self.in_the_index.iter())
+            .map(|(path, text)| {
+                let text = as_read(path, text.clone(), keeps_byte_order_marks);
+                (from_native(path), text)
+            })
+            .collect()
     }
 
     /// Message for a run with no files left. `verb` is what the run does to files, like "lint".
@@ -358,5 +466,16 @@ impl<'e> Files<'e> {
                 &finished,
             )),
         }
+    }
+}
+
+/// The text that a run reads for the file at `path` (absolute).
+pub(crate) fn read(only: Option<&Files>, path: &[u8]) -> bun_sys::Result<Vec<u8>> {
+    match only.and_then(|it| it.staged_text(path)) {
+        Some(text) if text.len() as u64 > bun_lint::fix::MAX_STRING_LENGTH => Err(
+            bun_sys::Error::from_code(bun_sys::E::EFBIG, bun_sys::Tag::read),
+        ),
+        Some(text) => Ok(text.to_vec()),
+        None => fs::read(path),
     }
 }

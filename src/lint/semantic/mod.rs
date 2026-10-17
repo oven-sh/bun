@@ -1173,6 +1173,19 @@ impl<'a> Scope<'a> {
         Scope::new(self.file, ScopeId(self.data().variable_scope))
     }
 
+    /// `scope.type === "module"`, for a rule that asks it to find out whether something is at the top level of the file. With
+    /// no ESLint or oxlint config the function around a CommonJS file counts too. There nobody chose `sourceType`, and
+    /// `import/no-commonjs` and `import/no-amd` are about exactly the files that have no `import`.
+    pub fn is_top_level_of_module(self) -> bool {
+        match self.kind() {
+            ScopeKind::Module => true,
+            ScopeKind::Function => {
+                self.file.language().stands_alone && matches!(self.node(), Node::File(_))
+            }
+            _ => false,
+        }
+    }
+
     /// Strict mode applies: a module, a class, or under a `"use strict"` directive.
     #[inline]
     pub fn is_strict(self) -> bool {

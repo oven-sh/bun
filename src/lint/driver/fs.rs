@@ -195,9 +195,10 @@ pub(crate) fn real_path(path: &[u8]) -> Option<Vec<u8>> {
     Some(paths::from_native(real.ok()?))
 }
 
-/// What a temporary file is called after the name of the file that it stands for. No two are called the same in a run: two threads
-/// have the same random numbers, and can write the same file, which they have reached by two paths.
-fn temporary_suffix() -> String {
+/// The name of a temporary file. It's short and has nothing of the name of the file that it stands for, which can be as long as
+/// a name can be. No two are called the same in a run: two threads have the same random numbers, and can write the same file,
+/// which they have reached by two paths.
+fn temporary_name() -> String {
     static COUNT: AtomicU32 = AtomicU32::new(0);
     let count = COUNT.fetch_add(1, Ordering::Relaxed);
     format!(".{:016x}{count:x}.tmp", bun_core::fast_random())
@@ -248,7 +249,8 @@ struct Before {
 /// old one, or the old one is in use.
 fn replace(real: &[u8], text: &[u8], old: &Before) -> bun_sys::Result<bool> {
     let before = &old.stat;
-    let temporary = [real, temporary_suffix().as_bytes()].concat();
+    let directory = &real[..real.len() - paths::basename(real).len()];
+    let temporary = [directory, temporary_name().as_bytes()].concat();
     let mode = before.st_mode as bun_sys::Mode & 0o7777;
     let Ok(file) = File::openat(
         Fd::cwd(),
@@ -283,24 +285,73 @@ fn replace(real: &[u8], text: &[u8], old: &Before) -> bun_sys::Result<bool> {
     written.map(|_| is_replaced)
 }
 
+/// Writes `text` over the start of `file`. `Err`: why it stopped, and how many bytes it had written by then.
+fn write_at_start(file: &File, text: &[u8]) -> Result<(), (bun_sys::Error, usize)> {
+    let mut written = 0;
+    while written < text.len() {
+        match bun_sys::pwrite(file.handle(), &text[written..], written as i64) {
+            Ok(0) => {
+                let error = bun_sys::Error::from_code(bun_sys::E::EIO, bun_sys::Tag::write);
+                return Err((error, written));
+            }
+            Ok(count) => written += count,
+            Err(error) => return Err((error, written)),
+        }
+    }
+    Ok(())
+}
+
+/// Writes `text` into the file at `real`. The file is only cut to its new length once all of `text` is in it. If that fails
+/// partway (disk full, quota, file size limit), the old text is put back.
+fn overwrite(real: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
+    let flags = O::RDWR | O::CLOEXEC | O::NOFOLLOW;
+    let (file, old) = File::openat(Fd::cwd(), real, flags, 0)
+        .and_then(|file| file.read_to_end().map(|old| (file, old)))
+        .map_err(|error| describe(&error))?;
+    let cut_to = |length: usize| bun_sys::ftruncate(file.handle(), length as i64);
+    let (error, written) = match write_at_start(&file, text) {
+        Ok(()) => match cut_to(text.len()) {
+            Ok(()) => return Ok(()),
+            Err(error) => (error, text.len()),
+        },
+        Err(failed) => failed,
+    };
+    // Only what was overwritten: a file size limit also refuses to write bytes past it that are already there, and on macOS
+    // to set a length past it that the file already has.
+    let restored = write_at_start(&file, &old[..written.min(old.len())])
+        .map_err(|(error, _)| error)
+        .and_then(|()| match written > old.len() {
+            true => cut_to(old.len()),
+            false => Ok(()),
+        });
+    let mut why = describe(&error);
+    if restored.is_err() {
+        why.extend_from_slice(b". The file may be damaged: its old text could not be put back");
+    }
+    Err(why)
+}
+
 /// Replaces the text of the file at `real`, a path of the system without links: by a file that takes its name, so that nobody
 /// reads a part of `text`, where that leaves all else as it is. Otherwise in place, as ESLint and Prettier write every file.
-fn write_through(real: &[u8], text: &[u8]) -> bun_sys::Result<()> {
-    // Who may not write a file may not replace it either.
-    let file = File::openat(Fd::cwd(), real, O::RDWR | O::CLOEXEC | O::NOFOLLOW, 0)?;
-    let before = Before {
-        stat: file.stat()?,
-        #[cfg(unix)]
-        attributes: attributes(&file),
+fn write_through(real: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
+    let is_replaced = || -> bun_sys::Result<bool> {
+        // If you can't write a file, you shouldn't be able to replace it either.
+        let file = File::openat(Fd::cwd(), real, O::RDWR | O::CLOEXEC | O::NOFOLLOW, 0)?;
+        let before = Before {
+            stat: file.stat()?,
+            #[cfg(unix)]
+            attributes: attributes(&file),
+        };
+        // On Windows nothing takes the name of a file that is open.
+        drop(file);
+        // A file with two names would be two files afterwards.
+        Ok(before.stat.st_nlink <= 1 && replace(real, text, &before)?)
     };
-    // On Windows nothing takes the name of a file that is open.
-    drop(file);
-    // A file with two names would be two files afterwards.
-    if before.stat.st_nlink <= 1 && replace(real, text, &before)? {
-        return Ok(());
+    match is_replaced() {
+        Ok(true) => Ok(()),
+        Ok(false) => overwrite(real, text),
+        Err(error) => Err(describe(&error)),
     }
-    let flags = O::WRONLY | O::TRUNC | O::CLOEXEC | O::NOFOLLOW;
-    File::openat(Fd::cwd(), real, flags, 0)?.write_all(text)
 }
 
 /// The nearest directory from `cwd` upward that has a `.git` or a `.jj`, as for the ignore files, or else `cwd`. Without links.
@@ -313,6 +364,17 @@ fn repository(cwd: &[u8]) -> Option<Vec<u8>> {
     };
     let found = paths::ancestors(&cwd).find(is_root).map(<[u8]>::to_vec);
     Some(found.unwrap_or(cwd))
+}
+
+const LEADS_OUT: &[u8] = b"it is a symlink to a file outside the repository";
+
+/// Whether `path`, which is below `cwd`, gets to `real`, its path without links, by a link that leads out of the repository.
+fn leads_out(cwd: &[u8], path: &[u8], real: &[u8]) -> bool {
+    // `bun lint` has the path as the system writes it.
+    let (portable, real) = (paths::from_native(path), paths::from_native(real));
+    real != portable
+        && paths::inside(cwd, &portable).is_some()
+        && !repository(cwd).is_some_and(|it| paths::inside(&it, &real).is_some())
 }
 
 /// The real paths of the files that a run has written. Two paths can lead to one file (a link, a letter in the other case), and
@@ -335,30 +397,61 @@ pub(crate) fn write_atomically(
             .map(<[u8]>::to_vec)
             .map_err(|error| describe(&error))
     };
-    // `bun lint` has the path as the system writes it.
-    let portable = paths::from_native(path);
-    let leads_out = |real: &[u8]| {
-        let real = paths::from_native(real);
-        real != portable
-            && paths::inside(cwd, &portable).is_some()
-            && !repository(cwd).is_some_and(|it| paths::inside(&it, &real).is_some())
-    };
     let mut real = resolve()?;
     // NTFS keeps a file that is open and has lost its name to another in a directory of its own. That is where this one is if
     // another thread, which has reached it by another path, has replaced it since it was opened here. The new one has the name.
-    if cfg!(windows) && leads_out(&real) {
+    if cfg!(windows) && leads_out(cwd, path, &real) {
         real = resolve()?;
     }
-    if leads_out(&real) {
-        return Err(b"it is a symlink to a file outside the repository".to_vec());
+    if leads_out(cwd, path, &real) {
+        return Err(LEADS_OUT.to_vec());
     }
     if !written.0.lock().insert(real.clone()) {
         return Ok(());
     }
-    write_through(&real, text).map_err(|error| describe(&error))
+    write_through(&real, text)
 }
 
-/// Writes a file that need not exist, and makes the directories that it is in.
-pub(crate) fn write_new(path: &[u8], text: &[u8]) -> bun_sys::Result<()> {
-    File::make_open(path, O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC, 0o666)?.write_all(text)
+/// `path` without links, where the file and some of the directories that it is in need not exist. A link to nothing is followed to
+/// where the file would be made.
+fn real_path_of_new(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
+    let mut path = path.to_vec();
+    let (mut missing, mut followed): (Vec<Vec<u8>>, Vec<Vec<u8>>) = (Vec::new(), Vec::new());
+    let fails = |code| bun_sys::Error::from_code(code, bun_sys::Tag::open);
+    loop {
+        if let Some(real) = real_path(&path) {
+            let missing = missing.iter().rev();
+            return Ok(missing.fold(real, |it, name| paths::join(&it, name)));
+        }
+        let parent = paths::dirname(&path).to_vec();
+        if matches!(link_kind_and_size(&path), Some((LinkKind::Link, _))) {
+            if followed.contains(&path) {
+                return Err(fails(bun_sys::E::ELOOP));
+            }
+            let (mut link, mut target) = (path_buffer_pool::get(), path_buffer_pool::get());
+            let len = bun_sys::readlink(for_libuv(&path, &mut link), &mut target[..])?;
+            let target = paths::from_native(&target[..len]);
+            followed.push(path);
+            path = paths::resolve(&real_path(&parent).unwrap_or(parent), &target);
+        } else if parent.len() < path.len() {
+            missing.push(paths::basename(&path).to_vec());
+            path = parent;
+        } else {
+            return Err(fails(bun_sys::E::ENOENT));
+        }
+    }
+}
+
+/// Writes a file that need not exist, and makes the directories that it is in. `Err`: why it is not written. As for
+/// [`write_atomically`], a link below `cwd` is not followed out of the repository.
+pub(crate) fn write_new(cwd: &[u8], path: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
+    let real = real_path_of_new(path).map_err(|error| describe(&error))?;
+    if leads_out(cwd, path, &real) {
+        return Err(LEADS_OUT.to_vec());
+    }
+    // Open the path that was checked, not `path`, and follow no link that has appeared there since.
+    let flags = O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC | O::NOFOLLOW;
+    File::make_open(&real, flags, 0o666)
+        .and_then(|file| file.write_all(text))
+        .map_err(|error| describe(&error))
 }

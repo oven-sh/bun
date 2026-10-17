@@ -345,6 +345,9 @@ bitflags::bitflags! {
         const NEXT = 1 << 1;
         const JEST = 1 << 2;
         const VITEST = 1 << 3;
+        /// Not a framework: the nearest package.json has `"type": "module"`. It's read from the same file, and config objects
+        /// ask for it the same way.
+        const TYPE_MODULE = 1 << 4;
         /// Monorepos usually list these only in the root package.json, so nested packages inherit them.
         const TEST_RUNNERS = Self::JEST.bits() | Self::VITEST.bits();
     }

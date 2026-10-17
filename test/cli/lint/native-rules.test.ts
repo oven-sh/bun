@@ -797,6 +797,69 @@ describe.concurrent("rule options", () => {
   });
 });
 
+// oxlint renames in all of these, and the two variables become one.
+describe.concurrent("unicorn/catch-error-name only renames when `error` is free", () => {
+  const id = "unicorn/catch-error-name";
+  type Fix = { range: [number, number]; text: string };
+
+  /** For each report, `code` with its fix applied, or `null` if it has no fix. */
+  async function renamed(code: string) {
+    const { stdout } = await lint({ "a.mjs": code, ...bunfig({ [id]: "error" }) }, ["-f", "json", "a.mjs"]);
+    const [{ messages }] = JSON.parse(stdout) as { messages: { ruleId: string; fix?: Fix }[] }[];
+    return messages
+      .filter(it => it.ruleId === id)
+      .map(({ fix }) => (fix ? code.slice(0, fix.range[0]) + fix.text + code.slice(fix.range[1]) : null));
+  }
+
+  test.each([
+    ["the block assigns to an outer `error`", "let error;\ntry {\n  f();\n} catch (e) {\n  error = e;\n}\ng(error);\n"],
+    [
+      "a function in the block does",
+      "let error;\ntry {\n  f();\n} catch (e) {\n  g(() => (error = e));\n}\ng(error);\n",
+    ],
+    ["the function given to .catch() does", "let error;\np.catch(e => {\n  error = e;\n});\ng(error);\n"],
+    ["the second function given to .then() reads it", "let error;\np.then(undefined, e => g(e, error));\n"],
+    [
+      "the block reads a parameter of the function around it",
+      "function f(error) {\n  try {\n    g();\n  } catch (e) {\n    h(error, e);\n  }\n}\nf();\n",
+    ],
+    ["the block reads a global", "try {\n  f();\n} catch (e) {\n  g(e, error);\n}\n"],
+    [
+      "an inner block declares `error` around a use",
+      "try {\n  f();\n} catch (e) {\n  {\n    const error = 1;\n    g(e, error);\n  }\n}\n",
+    ],
+    [
+      "an inner function has a parameter `error` around a use",
+      "try {\n  f();\n} catch (e) {\n  g(error => h(e, error));\n}\n",
+    ],
+    ["the block of the catch declares `error`", "try {\n  f();\n} catch (e) {\n  const error = 1;\n  g(error);\n}\n"],
+    ["the function itself declares `error`", "p.catch(e => {\n  const error = g(e);\n  return error;\n});\n"],
+  ])("no fix: %s", async (_, code) => {
+    expect(await renamed(code)).toEqual([null]);
+  });
+
+  test.each([
+    [
+      "nothing else is called `error`",
+      "try {\n  f();\n} catch (e) {\n  g(e);\n}\n",
+      "try {\n  f();\n} catch (error) {\n  g(error);\n}\n",
+    ],
+    [
+      "an outer `error` isn't used in the block",
+      "function f(error) {\n  try {\n    g(error);\n  } catch (e) {\n    h(e);\n  }\n}\nf();\n",
+      "function f(error) {\n  try {\n    g(error);\n  } catch (error) {\n    h(error);\n  }\n}\nf();\n",
+    ],
+    [
+      "an inner `error` isn't around a use",
+      "try {\n  f();\n} catch (e) {\n  g(e);\n  h(error => error);\n}\n",
+      "try {\n  f();\n} catch (error) {\n  g(error);\n  h(error => error);\n}\n",
+    ],
+    ["`{ e }` keeps its key", "p.catch(e => g({ e }));\n", "p.catch(error => g({ e: error }));\n"],
+  ])("a fix: %s", async (_, code, fixed) => {
+    expect(await renamed(code)).toEqual([fixed]);
+  });
+});
+
 describe.concurrent("comments", () => {
   const rules = bunfig({
     "unicorn/no-null": "error",
@@ -1566,6 +1629,15 @@ describe.concurrent("unknown rules", () => {
       "vue/no-dupe-keys",
       `"vue/no-dupe-keys" is not supported\n  bun lint has no vue rules. To run eslint-plugin-vue, add it to plugins in [lint]`,
     ],
+    // --rules lists these, but only an ESLint config can say which files are JSON or Markdown.
+    [
+      "json/no-duplicate-keys",
+      `"json/no-duplicate-keys" needs an ESLint config\n  Set language: "json/json" for the files in an eslint.config.js`,
+    ],
+    [
+      "markdown/no-empty-links",
+      `"markdown/no-empty-links" needs an ESLint config\n  Set language: "markdown/commonmark" for the files in an eslint.config.js`,
+    ],
   ];
 
   test.each(cases)("%s is rejected", async (written, said, saidToFlag = said) => {
@@ -1704,6 +1776,25 @@ describe.concurrent("invalid rule settings", () => {
     });
   });
 
+  test.each(["eqeqeq:", "eqeqeq: ", "no-var: error, eqeqeq:", "eqeqeq: [, smart]", "", " ", "{}"])(
+    "--rule %j is rejected: it has a rule without a severity, or no rule",
+    async value => {
+      expect(await lint({ ...source, ...bunfig({ eqeqeq: "error" }) }, ["--rule", value])).toEqual({
+        stdout: "",
+        stderr: `error: Invalid value for option 'rule' - expected type Object, received value: ${value}.\nnote: run 'bun lint --help' for more information\n`,
+        exitCode: 2,
+      });
+    },
+  );
+
+  test("a bad --rule isn't blamed on the line of bunfig.toml that sets the same rule", async () => {
+    expect(await lint({ ...source, ...bunfig({ eqeqeq: "warn" }) }, ["--rule", "eqeqeq: null"])).toEqual({
+      stdout: "",
+      stderr: `error: null is not a valid severity for eqeqeq\n  Expected "off", "warn", or "error"\n`,
+      exitCode: 2,
+    });
+  });
+
   test("options aren't validated when the rule is off", async () => {
     const { stderr, exitCode } = await lint({ ...source, ...bunfig({ eqeqeq: ["off", "smrt"] }) }, ["-f", "json"]);
     expect(stderr).not.toContain("error:");
@@ -1737,6 +1828,14 @@ describe.concurrent("ESLint and oxlint configs keep their own behavior", () => {
     ]);
     expect(problems(inFlat.stdout)).toEqual(["a.js:2 no-debugger", "a.js:4 no-debugger"]);
     expect(problems(inLegacy.stdout)).toEqual(["a.js:2 no-debugger", "a.js:4 no-debugger"]);
+  });
+
+  test("to an ESLint config, eslint/no-var in a comment isn't no-var", async () => {
+    const code =
+      "var a = 1; // eslint-disable-line eslint/no-var\nvar b = 2; // eslint-disable-line no-var\nexport { a, b };\n";
+    const { stdout } = await lint({ "a.js": code, ...flat({ "no-var": "error" }) }, ["-f", "json"]);
+    expect(problems(stdout)).toEqual(["a.js:1 eslint/no-var", "a.js:1 no-var"]);
+    expect(stdout).toContain("Definition for rule 'eslint/no-var' was not found.");
   });
 
   test("an ESLint config still has to declare its plugins", async () => {

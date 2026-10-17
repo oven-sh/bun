@@ -488,7 +488,6 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
             )
         },
     );
-    let _ = Output::writer().write_all(&out);
     let mut summary = Vec::new();
     format::write_summary(
         &mut summary,
@@ -523,9 +522,8 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
             );
         }
     }
-    let _ = Output::error_writer().write_all(&summary);
-    Output::flush();
-    Global::exit(u32::from(!report.is_ok()));
+    let exit_code = super::lint_command::print(&out, &summary, u8::from(!report.is_ok()));
+    Global::exit(u32::from(exit_code));
 }
 
 /// What is run.

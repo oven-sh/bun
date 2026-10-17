@@ -71,7 +71,10 @@ impl Rule for NoUnnecessaryAwait {
             return;
         }
         let start = e.span().start;
-        cx.report(Span::new(start, start + 5), UNNECESSARY_AWAIT)
-            .fix(|fixer| is_fixable(e, argument).then(|| fixer.replace(e, fixer.file().slice(argument.outer_span()))));
+        // `await null` still lets the caller and the queued microtasks run first, and code is written to rely on that. oxlint
+        // removes it with `--fix`.
+        cx.report(Span::new(start, start + 5), UNNECESSARY_AWAIT).fix_dangerously(|fixer| {
+            is_fixable(e, argument).then(|| fixer.replace(e, fixer.file().slice(argument.outer_span())))
+        });
     }
 }

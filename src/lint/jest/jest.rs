@@ -73,12 +73,39 @@ impl<'a> Ctx<'a, '_> {
         };
     }
 
-    /// Whether a fix may write the name `name`. In a file that imports from `bun:test` nothing else is declared than what it
-    /// imports: `bun test` declares `it` and the like only where nothing is imported from there.
-    pub(crate) fn can_write(&self, name: &[u8]) -> bool {
-        self.runner != Runner::Bun
-            || (std::str::from_utf8(name).ok())
-                .is_some_and(|it| self.file.top_level_scope().get(it).is_some())
+    /// Whether a fix may write the name `name` at `at`: whether it is the runner's function there. For Jest and Vitest that is a
+    /// global, or imported. In a file that imports from `bun:test` nothing else is declared than what it imports: `bun test`
+    /// declares `it` and the like only where nothing is imported from there.
+    pub(crate) fn can_write(&self, name: &[u8], at: Expr<'a>) -> bool {
+        let is_bun = self.runner == Runner::Bun;
+        let Some(symbol) = Node::Expr(at).scope().resolve_bytes(name) else {
+            return !is_bun;
+        };
+        let is_of_runner = |source: &[u8]| match is_bun {
+            true => source == BUN_TEST,
+            false => source == b"@jest/globals" || is_vitest_import_source(source),
+        };
+        let is_required = || {
+            let patterns = all_required_from_bun_test(self.file).take_while(|_| is_bun);
+            let properties = patterns.filter_map(|it| match it.kind() {
+                PatKind::Object(properties) => Some(properties),
+                _ => None,
+            });
+            properties.flatten().any(|it| {
+                it.value().symbol() == Some(symbol)
+                    && (it.key().and_then(|it| it.name())).is_some_and(|it| it.bytes() == name)
+            })
+        };
+        symbol.declarations().all(|it| match it {
+            Declaration::ImportSpec(it) => {
+                it.imported().bytes() == name
+                    && is_of_runner(it.import().spec().bytes())
+                    && !it.is_type_only()
+                    && !it.import().is_type_only()
+            }
+            Declaration::Var(_) => is_required(),
+            _ => false,
+        })
     }
 
     /// Whether a fix may change a title. A snapshot in a file of its own is found by the titles.

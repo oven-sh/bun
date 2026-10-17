@@ -227,6 +227,7 @@ pub struct File<'a> {
     /// [`File::in_language`]
     parsed: Option<(&'a crate::languages::Parsed, crate::source::LineBreaks)>,
     language: &'a LanguageOptions,
+    configured_language: &'a LanguageOptions,
     body: hir::IdList<hir::StmtId>,
     path: &'a [u8],
     kind: FileKind,
@@ -241,7 +242,8 @@ pub struct File<'a> {
 
 impl<'a> File<'a> {
     /// `path`: as it is reported. `types`: the type checker, if the file is part of a program that
-    /// has been checked.
+    /// has been checked. `language`: what the configuration has for the file. [`File::language`] can be
+    /// [another](LanguageOptions::without_module_syntax).
     pub fn new<H: hir::Storage, B: hir::Storage>(
         path: &'a [u8],
         hir: &'a hir::FileIn<H>,
@@ -250,11 +252,20 @@ impl<'a> File<'a> {
         language: &'a LanguageOptions,
         types: Option<crate::types::Checker<'a>>,
     ) -> File<'a> {
+        let makes_a_module = hir::rare::TOP_LEVEL_AWAIT | hir::rare::IMPORT_META;
+        let configured_language = language;
+        let language = match language.without_module_syntax.as_deref() {
+            Some(commonjs) if !hir.has_module_syntax && hir.rare_syntax & makes_a_module == 0 => {
+                commonjs
+            }
+            _ => language,
+        };
         let hides_casts = hir.is_js && !hir.jsdoc_comments.is_empty();
         // Every lookup in the list is a binary search by the keyword's position.
         debug_assert!(hir.import_attributes.is_sorted_by_key(|it| it.0));
         File {
             language,
+            configured_language,
             body: hir.body,
             kind: hir.kind,
             is_js: hir.is_js,
@@ -374,6 +385,13 @@ impl<'a> File<'a> {
     #[inline]
     pub fn language(&self) -> &'a LanguageOptions {
         self.language
+    }
+
+    /// What [`File::new`] was given. For reading another file with the options of this one: unlike [`File::language`] it
+    /// doesn't say that the other file is CommonJS because this one is.
+    #[inline]
+    pub fn configured_language(&self) -> &'a LanguageOptions {
+        self.configured_language
     }
 
     /// ESLint's `context.settings`.

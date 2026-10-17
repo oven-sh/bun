@@ -39,7 +39,7 @@ use bun_sema::json::Json;
 use bun_sema::resolve::{AsRequire, Host, Resolver, ScriptKind, ancestors, join, typescript_path};
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, ShardedMap};
-use bun_sema_driver::host::{Disk, from_argument, from_native};
+use bun_sema_driver::host::{AlreadyRead, Disk, from_argument, from_native};
 use bun_threading::Guarded;
 use smallvec::SmallVec;
 use std::any::Any;
@@ -51,6 +51,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub struct Store {
     session: Session,
     disk: OnceLock<Disk>,
+    already_read: OnceLock<AlreadyRead>,
     cwd: Vec<u8>,
     /// A tsconfig.json that nothing names is the nearest to the file, as for TypeScript, and not that of `cwd`, as for
     /// eslint-import-resolver-typescript.
@@ -65,6 +66,7 @@ impl Store {
         Store {
             session: Session::new(),
             disk: OnceLock::new(),
+            already_read: OnceLock::new(),
             cwd: from_native(cwd),
             is_by_file: false,
             tsconfig: None,
@@ -88,9 +90,15 @@ impl Store {
         }
     }
 
+    /// Files that are read as `already_read` has them, not as they are on the disk. Before a rule asks for anything.
+    pub fn provide(&self, already_read: AlreadyRead) {
+        let _ = self.already_read.set(already_read);
+    }
+
     fn disk(&self) -> &Disk {
         self.disk.get_or_init(|| {
-            Disk::with_already_read(1, FxHashMap::default(), &self.cwd).started_in(&self.cwd)
+            let already_read = self.already_read.get().cloned().unwrap_or_default();
+            Disk::with_already_read(1, already_read, &self.cwd).started_in(&self.cwd)
         })
     }
 }
@@ -1323,6 +1331,7 @@ impl Modules for Graph<'_> {
         let how = [
             language.parser as u8,
             language.scope_source_type() as u8,
+            u8::from(language.without_module_syntax.is_some()),
             u8::from(language.jsx),
             u8::from(language.experimental_decorators),
             u8::from(language.eslint_8.is_some()),

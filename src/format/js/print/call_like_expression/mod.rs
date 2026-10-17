@@ -52,12 +52,7 @@ fn write_call<'a>(
         return write!(f, [head, arguments]);
     }
 
-    // A member access needs no parentheses as a callee, unless an optional chain ends with it. Then
-    // it is a member access only in JavaScript: see `is_member_expression`.
-    if matches!(callee.tag(), ExprTag::Dot | ExprTag::Index)
-        && (!callee.is_chain_root()
-            || (f.context().has_tree_of_babel() && !chain_expression_needs_parentheses(callee, f)))
-    {
+    if is_link_of_member_chain(callee, f) {
         return write_member_chain(e, f);
     }
 
@@ -67,6 +62,23 @@ fn write_call<'a>(
         true => write!(f, group(&content)),
         false => write!(f, content),
     }
+}
+
+/// A member access needs no parentheses as a callee, unless an optional chain ends with it. Then
+/// it is a member access only in JavaScript: see `is_member_expression`.
+fn is_link_of_member_chain<'a>(callee: Expr<'a>, f: &Formatter<'a>) -> bool {
+    matches!(callee.tag(), ExprTag::Dot | ExprTag::Index)
+        && (!callee.is_chain_root()
+            || (f.context().has_tree_of_babel() && !chain_expression_needs_parentheses(callee, f)))
+}
+
+/// Whether [`write_member_chain`] writes the call `e`.
+pub(crate) fn is_written_as_member_chain<'a>(
+    e: Expr<'a>,
+    call: Call<'a>,
+    f: &Formatter<'a>,
+) -> bool {
+    is_link_of_member_chain(call.callee(), f) && !keeps_arguments_on_one_line(e, call, f)
 }
 
 fn keeps_arguments_on_one_line<'a>(e: Expr<'a>, call: Call<'a>, f: &Formatter<'a>) -> bool {

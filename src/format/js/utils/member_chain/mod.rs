@@ -51,6 +51,20 @@ pub(crate) fn write_member_chain<'a>(call_expression: Expr<'a>, f: &mut Formatte
     }
 }
 
+/// What the chain that ends with the call `call_expression` starts with. It is written first, and each link after it has its
+/// comments directly before it.
+pub(crate) fn head_of_member_chain<'a>(
+    call_expression: Expr<'a>,
+    f: &Formatter<'a>,
+) -> Option<Expr<'a>> {
+    let mut members = Members::new();
+    push_chain_members(call_expression, &mut members, f);
+    match members.last() {
+        Some(ChainMember::Node(head)) => Some(*head),
+        _ => None,
+    }
+}
+
 /// The statement that the code is parsed as is not there for Prettier: the root is a `JsExpressionRoot` or an `NGRoot`.
 fn is_all_of_expression_in_html(f: &Formatter<'_>) -> bool {
     !matches!(

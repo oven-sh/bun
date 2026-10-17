@@ -376,6 +376,7 @@ pub(crate) fn run<'a>(
     lx.is_babel = options.dialect.babel;
     lx.is_oxc = options.dialect.oxc;
     lx.is_script = (is_ecmascript || options.dialect.oxc) && options.dialect.script;
+    lx.notes_html_opens = options.dialect.oxc || is_ecmascript && options.dialect.module_or_script;
     let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
     let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
     let seed = Seed {
@@ -534,6 +535,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.report_what_the_scanner_flagged();
         if !self.lx.private_names.is_empty() {
             self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
+        }
+        if self.has_top_level_await {
+            self.f.rare_syntax |= rare::TOP_LEVEL_AWAIT;
         }
         self.note_odd_exports();
         *file = self.f;

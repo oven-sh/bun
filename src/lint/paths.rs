@@ -102,6 +102,18 @@ pub fn relative(base: &[u8], path: &[u8]) -> Vec<u8> {
     relative_as(Style::of(base), base, path)
 }
 
+/// `path` for a message to a person. A file name can have a line break or a terminal's escape sequence in it.
+pub fn shown(path: &[u8]) -> Vec<u8> {
+    bun_core::fmt::escape_control_chars(path)
+        .to_string()
+        .into_bytes()
+}
+
+/// [`relative`], [`shown`].
+pub fn relative_shown(base: &[u8], path: &[u8]) -> Vec<u8> {
+    shown(&relative(base, path))
+}
+
 pub fn relative_as(style: Style, base: &[u8], path: &[u8]) -> Vec<u8> {
     // So it is for nearly every file.
     if let Some(rest) = inside_as(style, base, path) {

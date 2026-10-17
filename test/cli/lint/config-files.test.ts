@@ -5649,6 +5649,23 @@ describe.concurrent("what the configuration asks for and cannot be done", () => 
     expect(exitCode).toBe(2);
     expect((await lint(files, ["--allow-unsupported", "."])).exitCode).toBe(1);
   });
+
+  // Windows has no such file names.
+  test.skipIf(isWindows)("a file name can't color the terminal or start a new line", async () => {
+    const files = {
+      "eslint.config.mjs": `export default [
+        { files: ["**/*.one"], plugins: { p: { languages: { l: {} } } }, language: "p/l" },
+      ];`,
+      "b\x1b[31m.one": "",
+      "c\nd.one": "",
+    };
+    const { stderr, exitCode } = await lint(files);
+    // `lint` turns every backslash into a slash.
+    expect(stderr).toContain(
+      "2 files were not linted because they need eslint, which is not installed (2 *.one): b/x1b[31m.one, c/nd.one\n  Run bun add -d eslint",
+    );
+    expect(exitCode).toBe(2);
+  });
 });
 
 // ESLint has deprecated its rules about layout, and eslint-plugin-react its `jsx-space-before-closing`. They are not built in: `bun fmt`

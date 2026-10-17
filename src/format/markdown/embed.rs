@@ -126,7 +126,8 @@ fn flatten<'d>(doc: &'d Doc<'_>, ops: &mut Vec<Op<'d>>, stack_check: bun_core::S
         | Doc::DedentToRoot(_)
         | Doc::IfBreak { .. }
         | Doc::LineSuffix(_)
-        | Doc::LineSuffixBoundary => false,
+        | Doc::LineSuffixBoundary
+        | Doc::KeepBlanks => false,
     }
 }
 

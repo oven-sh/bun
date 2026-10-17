@@ -115,6 +115,11 @@ pub(super) fn loop_with_head<'a>(file: &'a File<'a>, statement: usize) -> Option
     (head.idx() == statement).then_some(kind)
 }
 
+/// [`names::count_of_redeclarations`]
+pub(super) fn count_of_redeclarations<'a>(file: &'a File<'a>) -> usize {
+    names::count_of_redeclarations(file)
+}
+
 /// `const` and nothing behind it. `let a,;`. `for (const a, b of c)`.
 fn declaration_list<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     if !file.has_rare_syntax(rare::ODD_DECLARATION) {

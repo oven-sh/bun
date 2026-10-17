@@ -17,6 +17,7 @@ import {
   chownSync,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -3479,6 +3480,22 @@ describe.concurrent("bun lint", () => {
         },
         isDebug || isASAN ? 120_000 : 30_000,
       );
+
+      // oxlint 1.87 removes it with --fix. The function then no longer yields to its caller.
+      test("only --fix-dangerously removes an await that unicorn/no-unnecessary-await reports", async () => {
+        const code = "async function worker() {\n  await null;\n  const retries = await 3;\n  return retries;\n}\n";
+        const files = { ".oxlintrc.json": "{}", "a.js": code };
+        for (const flags of [["--fix"], ["--fix-suggestions"], ["--fix", "--fix-suggestions"]]) {
+          const result = await lint(files, [...flags, "a.js"], { reads: ["a.js"] });
+          expect(result.files["a.js"]).toBe(code);
+          expect(result.stdout).toContain("no-unnecessary-await");
+        }
+        const result = await lint(files, ["--fix-dangerously", "a.js"], { reads: ["a.js"] });
+        expect(result.files["a.js"]).toBe(
+          "async function worker() {\n  null;\n  const retries = 3;\n  return retries;\n}\n",
+        );
+        expect(result.stdout).not.toContain("no-unnecessary-await");
+      });
 
       // What oxlint 1.87 writes.
       describe("a comment that disables nothing is removed from the scripts of a .vue file only, there by every flag", () => {
@@ -7468,6 +7485,176 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         const dry = await lint(all, ["--fix-dry-run", "-f", "json", "a.js"]);
         expect(JSON.parse(dry.raw)[0].output).toBe("let a = two;\nexport { a };\n");
       });
+
+      // TypeScript's parser accepts `var a,` at the end of a line. Only its checker reports the comma.
+      test("a syntax error that the parser accepts is refused too, and isn't counted as fixed", async () => {
+        const comma = `{
+          meta: { fixable: "code" },
+          create: context => ({
+            VariableDeclaration(node) {
+              const end = node.range[1];
+              if (context.sourceCode.text[end - 1] === ";")
+                context.report({ node, message: "comma", fix: fixer => fixer.replaceTextRange([end - 1, end], ",") });
+            },
+          }),
+        }`;
+        const all = {
+          "eslint.config.mjs": `export default [
+            { files: ["*.ts"], languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } } },
+            { files: ["a.ts"], plugins: { p: { rules: { comma: ${comma} } } }, rules: { "p/comma": "error" } },
+            { files: ["b.ts"], rules: { "no-var": "error" } },
+          ];`,
+          "a.ts": "var a: number;\nexport { a };\n",
+          "b.ts": "var b = 1;\nexport { b };\n",
+        };
+        const result = await lint(all, ["--fix", "-f", "unix", "a.ts", "b.ts"], { reads: ["a.ts", "b.ts"] });
+        expect(result.files).toEqual({ "a.ts": all["a.ts"], "b.ts": "let b = 1;\nexport { b };\n" });
+        expect(result.stderr).toContain(warning("p/comma", "a.ts"));
+        expect(result.stderr).toContain("Fixed 1 problem in 1 file");
+        expect(result.stdout).toContain("[Error/p/comma]");
+        expect(result.exitCode).toBe(1);
+        const dry = await lint(all, ["--fix-dry-run", "-f", "json", "a.ts"]);
+        expect(JSON.parse(dry.raw)[0].output).toBeUndefined();
+      });
+
+      // In JavaScript the parser refuses these. In TypeScript only the type checker does.
+      describe("a name that is declared twice in TypeScript", () => {
+        /** A config with `p/adds`, whose fix adds the line `added` to `a.ts`, and with `no-var` for `b.ts`. */
+        const config = (added: string) => `
+          const adds = {
+            meta: { fixable: "code" },
+            create: context => ({
+              Program(node) {
+                const added = ${JSON.stringify(added)};
+                if (!context.sourceCode.text.includes(added))
+                  context.report({ node, message: "adds", fix: fixer => fixer.insertTextAfter(node.body.at(-1), "\\n" + added) });
+              },
+            }),
+          };
+          export default [
+            { files: ["*.ts"], languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } } },
+            { files: ["a.ts"], plugins: { p: { rules: { adds } } }, rules: { "p/adds": "error" } },
+            { files: ["b.ts"], rules: { "no-var": "error" } },
+          ];`;
+
+        test.each([
+          [`import { a } from "./a";\nexport const b = a;\n`, `import { a } from "./b";`],
+          [`import { a } from "./a";\nexport const b = a;\n`, `const a = 1;`],
+          [`import a from "./a";\nexport const b = a;\n`, `class a {}`],
+          [`let a = 1;\nexport { a };\n`, `let a = 2;`],
+          [`class A {}\nexport { A };\n`, `const A = 1;`],
+        ])("%j and %j: the fix is refused and isn't counted", async (text, added) => {
+          const all = { "eslint.config.mjs": config(added), "a.ts": text, "b.ts": "var b = 1;\nexport { b };\n" };
+          const result = await lint(all, ["--fix", "-f", "unix", "a.ts", "b.ts"], { reads: ["a.ts", "b.ts"] });
+          expect(result.files).toEqual({ "a.ts": text, "b.ts": "let b = 1;\nexport { b };\n" });
+          expect(result.stderr).toContain(warning("p/adds", "a.ts"));
+          expect(result.stderr).toContain("Fixed 1 problem in 1 file");
+          expect(result.stdout).toContain("[Error/p/adds]");
+          expect(result.exitCode).toBe(1);
+        });
+
+        test.each([
+          [`class A {}\nexport { A };\n`, `interface A {}`],
+          [`function f() {}\nexport { f };\n`, `namespace f { export const a = 1; }`],
+          [`const A = 1;\nexport { A };\n`, `type A = number;`],
+          [`import type { a } from "./a";\nexport type B = a;\n`, `const a = 1;`],
+          [`declare function f(a: string): void;\nexport { f };\n`, `declare function f(a: number): void;`],
+          [`var a = 1;\nexport { a };\n`, `var a = 2;`],
+        ])("%j and %j merge, so the fix is written", async (text, added) => {
+          const all = { "eslint.config.mjs": config(added), "a.ts": text };
+          const result = await lint(all, ["--fix", "-f", "unix", "a.ts"], { reads: ["a.ts"] });
+          expect(result.files).toEqual({ "a.ts": `${text.trimEnd()}\n${added}\n` });
+          expect(result.stderr).not.toContain("syntax error");
+          expect(result.exitCode).toBe(0);
+        });
+
+        test("a file that already has one still gets its fixes", async () => {
+          const all = {
+            "eslint.config.mjs": config("unused"),
+            "b.ts": `import { a } from "./a";\nimport { a } from "./b";\nvar b = a;\nexport { b };\n`,
+          };
+          const result = await lint(all, ["--fix", "-f", "unix", "b.ts"], { reads: ["b.ts"] });
+          expect(result.files).toEqual({ "b.ts": all["b.ts"].replace("var", "let") });
+          expect(result.stderr).not.toContain("syntax error");
+          expect(result.stderr).toContain("Fixed 1 problem in 1 file");
+          expect(result.exitCode).toBe(0);
+        });
+      });
+    });
+
+    describe("import/no-namespace picks names that are free", () => {
+      const config = `export default [{
+        files: ["*.ts"],
+        languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+        plugins: { import: { meta: { name: "eslint-plugin-import" }, rules: {} } },
+        rules: { "import/no-namespace": "error" },
+      }];`;
+      const twoDeep = (call: string) => `run(() => {\n  run(() => {\n    ${call};\n  });\n});\n`;
+
+      test.each([
+        [
+          "two namespaces have a member of one name, used two functions down",
+          `import * as dns from "./dns";\nimport * as ip from "./ip";\n${twoDeep("log(dns.setup(), ip.setup())")}`,
+          `import { setup } from "./dns";\nimport { setup as ip_setup } from "./ip";\n${twoDeep("log(setup(), ip_setup())")}`,
+        ],
+        [
+          "the name is already imported, and the member is used two functions down",
+          `import * as dns from "./dns";\nimport { setup } from "./ip";\n${twoDeep("log(setup() === dns.setup())")}`,
+          `import { setup as dns_setup } from "./dns";\nimport { setup } from "./ip";\n${twoDeep("log(setup() === dns_setup())")}`,
+        ],
+        [
+          "both namespaces are fixed in one pass",
+          `import * as dns from "./dns";\ndns.setup();\nimport * as ip from "./ip";\nip.setup();\n`,
+          `import { setup } from "./dns";\nsetup();\nimport { setup as ip_setup } from "./ip";\nip_setup();\n`,
+        ],
+        [
+          "the name is used for a global somewhere else",
+          `import * as dns from "./dns";\n${twoDeep("dns.setup()")}setup();\n`,
+          `import { setup as dns_setup } from "./dns";\n${twoDeep("dns_setup()")}setup();\n`,
+        ],
+        [
+          "nothing else has the name",
+          `import * as dns from "./dns";\n${twoDeep("dns.setup()")}`,
+          `import { setup } from "./dns";\n${twoDeep("setup()")}`,
+        ],
+      ])("%s", async (_, text, fixed) => {
+        const all = { "eslint.config.mjs": config, "a.ts": text };
+        const result = await lint(all, ["--fix", "a.ts"], { reads: ["a.ts"] });
+        expect(result.files).toEqual({ "a.ts": fixed });
+        expect(result.stderr).not.toContain("syntax error");
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
+    describe("one-var and `declare`", () => {
+      const bunfig = (option: string) => `[lint.rules]\n"one-var" = ["error", "${option}"]\n`;
+
+      test.each([
+        ["a.d.ts", "declare var a: number;\ndeclare var b: number;\n"],
+        ["a.ts", "declare const a: number;\nconst b = 1;\nexport { a, b };\n"],
+        ["a.ts", "const a = 1;\ndeclare const b: number;\nexport { a, b };\n"],
+      ])("%s: %j is reported and not joined", async (name, text) => {
+        const all = { "bunfig.toml": bunfig("always"), [name]: text };
+        const result = await lint(all, ["--fix", "-f", "unix", name], { reads: [name] });
+        expect(result.files).toEqual({ [name]: text });
+        expect(result.stdout).toContain("[Error/one-var]");
+        expect(result.stderr).not.toContain("syntax error");
+        expect(result.stderr).not.toContain("Fixed");
+        expect(result.exitCode).toBe(1);
+      });
+
+      test("every statement that a split makes starts with `declare`", async () => {
+        const all = {
+          "bunfig.toml": bunfig("never"),
+          "a.d.ts": "declare var a: number, b: number;\nexport declare const c: 1,\n  d: 2;\n",
+        };
+        const result = await lint(all, ["--fix", "-f", "unix", "a.d.ts"], { reads: ["a.d.ts"] });
+        expect(result.files).toEqual({
+          "a.d.ts":
+            "declare var a: number; declare var b: number;\nexport declare const c: 1;\n  export declare const d: 2;\n",
+        });
+        expect(result.stdout).not.toContain("one-var");
+      });
     });
 
     test("--fix-type", async () => {
@@ -8010,6 +8197,148 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       });
       expect(JSON.parse(pruned.files["eslint-suppressions.json"]!)).toEqual(JSON.parse(suppressions(2, 1)));
     });
+
+    test("--suppress-all keeps what the file has about other files", async () => {
+      const others = {
+        "gone.js": { "no-var": { count: 4 } },
+        "b.js": { "no-debugger": { count: 7 }, "eqeqeq": { count: 1 } },
+      };
+      const existing = JSON.stringify({ ...others, "a.js": { "no-debugger": { count: 1 } } });
+      const result = await lint({ ...files, "eslint-suppressions.json": existing }, ["--suppress-all", "a.js"], {
+        reads: ["eslint-suppressions.json"],
+      });
+      expect(JSON.parse(result.files["eslint-suppressions.json"]!)).toEqual({
+        ...others,
+        "a.js": { "no-debugger": { count: 2 } },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // ESLint 10.12.0 takes any object, and writes it back without the values it doesn't understand.
+    test.each<[string[]]>([[["--suppress-all"]], [["--prune-suppressions"]], [[]]])(
+      "a JSON file that is not a suppressions file is refused, and stays as it is: %j",
+      async flags => {
+        const text = '{ "name": "mine", "version": "1.0.0", "scripts": { "build": "make" } }\n';
+        const result = await lint(
+          { ...files, "package.json": text },
+          [...flags, "--suppressions-location", "package.json"],
+          {
+            reads: ["package.json"],
+            mayFail: true,
+          },
+        );
+        expect(result.files).toEqual({ "package.json": text });
+        expect(result.stderr).toContain("Not a suppressions file: <dir>/package.json");
+        expect(result.exitCode).toBe(2);
+      },
+    );
+  });
+
+  // The rule that --fix follows for source files.
+  describe("the suppressions file and the file of --output-file", () => {
+    const inProject = {
+      ".git/HEAD": "ref: refs/heads/main\n",
+      "eslint.config.js": config({ "no-debugger": "error" }),
+      "a.js": "debugger;\n",
+    };
+    const tree = Object.fromEntries(Object.entries(inProject).map(([name, text]) => [`project/${name}`, text]));
+    // One error more than there is, so that --prune-suppressions has something to write.
+    const before = JSON.stringify({ "a.js": { "no-debugger": { count: 2 } } });
+    /** The flags that write the file at `name`, and the exit code where they can. */
+    const writers: [string, (name: string) => string[], number][] = [
+      ["--suppress-all", name => ["--suppress-all", "--suppressions-location", name], 0],
+      ["--prune-suppressions", name => ["--prune-suppressions", "--suppressions-location", name], 0],
+      ["--output-file", name => ["-f", "unix", "-o", name], 1],
+    ];
+    const refusal = "it is a symlink to a file outside the repository";
+    const link = (from: string, to: string, type?: "junction") => (dir: string) =>
+      symlinkSync(join(dir, to), join(dir, from), type);
+
+    describe.each(writers)("%s", (flag, flags, exitCode) => {
+      // There is nothing to prune in a file that isn't there, so this flag never makes the file it names.
+      const prunes = flag === "--prune-suppressions";
+      const refusalOfNew = prunes ? "The suppressions file does not exist" : refusal;
+
+      test.skipIf(isWindows)("refuses to write through a link that leads out of the repository", async () => {
+        const options = { cwd: "project", before: link("project/f", "outside/f"), reads: ["outside/f"], mayFail: true };
+        const [toFile, toNothing] = await Promise.all([
+          lint({ ...tree, "outside/f": before }, flags("f"), options),
+          lint({ ...tree, "outside/other": "" }, flags("f"), options),
+        ]);
+        expect([toFile.files, toNothing.files]).toEqual([{ "outside/f": before }, { "outside/f": null }]);
+        expect(toFile.stderr).toContain(refusal);
+        expect(toNothing.stderr).toContain(refusalOfNew);
+        expect([toFile.exitCode, toNothing.exitCode]).toEqual([2, 2]);
+      });
+
+      test("refuses to write in a linked directory that leads out of the repository", async () => {
+        const reads = ["outside/f", "outside/new/f"];
+        const options = { cwd: "project", before: link("project/linked", "outside", "junction"), reads, mayFail: true };
+        const [existing, missing, inNewDirectory] = await Promise.all([
+          lint({ ...tree, "outside/f": before }, flags("linked/f"), options),
+          lint({ ...tree, "outside/other": "" }, flags("linked/f"), options),
+          lint({ ...tree, "outside/other": "" }, flags("linked/new/f"), options),
+        ]);
+        expect([existing.files, missing.files, inNewDirectory.files]).toEqual([
+          { "outside/f": before, "outside/new/f": null },
+          { "outside/f": null, "outside/new/f": null },
+          { "outside/f": null, "outside/new/f": null },
+        ]);
+        expect(existing.stderr).toContain(refusal);
+        expect(missing.stderr).toContain(refusalOfNew);
+        expect(inNewDirectory.stderr).toContain(refusalOfNew);
+        expect([existing.exitCode, missing.exitCode, inNewDirectory.exitCode]).toEqual([2, 2, 2]);
+      });
+
+      test("writes to a path outside the repository that has no link in it", async () => {
+        const result = await lint({ ...tree, "outside/f": before }, flags("../outside/f"), {
+          cwd: "project",
+          reads: ["outside/f"],
+        });
+        expect(result.files["outside/f"]).not.toBe(before);
+        expect(result.exitCode).toBe(exitCode);
+      });
+
+      test("writes in a linked directory that stays in the repository", async () => {
+        const result = await lint({ ...tree, "project/real/f": before }, flags("linked/f"), {
+          cwd: "project",
+          before: link("project/linked", "project/real", "junction"),
+          reads: ["project/real/f"],
+        });
+        expect(result.files["project/real/f"]).not.toBe(before);
+        expect(result.exitCode).toBe(exitCode);
+      });
+
+      test.skipIf(isWindows)("writes through a link that stays in the repository, which is still a link", async () => {
+        using dir = tempDir("bun-lint", { ...tree, [prunes ? "project/real/f" : "project/real/other"]: before });
+        link("project/f", "project/real/f")(String(dir));
+        const result = await run(join(String(dir), "project"), flags("f"));
+        expect(readFileSync(join(String(dir), "project/real/f"), "utf8")).not.toBe(before);
+        expect(lstatSync(join(String(dir), "project/f")).isSymbolicLink()).toBe(true);
+        expect(result.exitCode).toBe(exitCode);
+      });
+    });
+
+    test.skipIf(isWindows)("the same for the suppressions file with the usual name", async () => {
+      const name = "eslint-suppressions.json";
+      const options = {
+        cwd: "project",
+        before: link(`project/${name}`, "outside/f"),
+        reads: ["outside/f"],
+        mayFail: true,
+      };
+      const results = await Promise.all([
+        lint({ ...tree, "outside/f": before }, ["--suppress-all"], options),
+        lint({ ...tree, "outside/f": before }, ["--prune-suppressions"], options),
+        lint({ ...tree, "outside/other": "" }, ["--suppress-all"], options),
+        lint({ ...tree, "outside/other": "" }, ["--prune-suppressions"], options),
+      ]);
+      expect(results.map(it => it.files["outside/f"])).toEqual([before, before, null, null]);
+      for (const result of results) {
+        expect(result.stderr).toContain(refusal);
+        expect(result.exitCode).toBe(2);
+      }
+    });
   });
 
   describe("--stdin", () => {
@@ -8273,6 +8602,27 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(result.files["reports/lint.txt"]).toContain("[Error/no-debugger]");
       expect(result.exitCode).toBe(1);
     });
+
+    // Every write to /dev/full fails with ENOSPC, as on a full disk.
+    test
+      .skipIf(!isLinux)
+      .each([[["-f", "json"]], [["--fix-dry-run", "-f", "json"]], [["--print-config", "a.js"]], [["--rules"]]])(
+      "what can't be written to standard output is an error with exit code 2: %j",
+      async args => {
+        using dir = tempDir("bun-lint", { "eslint.config.js": basic, "a.js": "export {};\n" });
+        await using proc = spawn({
+          cmd: ["sh", "-c", 'exec "$0" "$@" > /dev/full', ...command, ...args],
+          env,
+          cwd: String(dir),
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain("error: Cannot write standard output: ENOSPC: ");
+        expect(exitCode).toBe(2);
+      },
+    );
 
     test("an unknown format fails with 2", async () => {
       const { stderr, exitCode } = await lint(files, ["-f", "nothing"]);
@@ -9712,6 +10062,93 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         slow,
       );
     });
+
+    const floatingOn: [config: string, files: Record<string, string>, flags: string[]][] = [
+      ["no config", {}, ["--type-aware"]],
+      ["eslint.config.js", { "eslint.config.js": files["eslint.config.js"] }, []],
+      [
+        ".oxlintrc.json",
+        {
+          ".oxlintrc.json": JSON.stringify({
+            categories: { correctness: "off" },
+            rules: { "typescript/no-floating-promises": "error" },
+          }),
+        },
+        ["--type-aware"],
+      ],
+    ];
+    const saves = "export async function save() {\n  return 1;\n}\nsave();\n";
+
+    // `tsc -b` refuses these (TS6202). `tsc -p` and an editor take them, and nothing is built here either.
+    describe("tsconfig.json files that reference each other in a circle", () => {
+      const compilerOptions = {
+        ...JSON.parse(files["tsconfig.json"]).compilerOptions,
+        noEmit: false,
+        composite: true,
+        rootDir: "src",
+        outDir: "dist",
+      };
+      const project = (name: string, ...references: string[]) => ({
+        [`${name}/tsconfig.json`]: JSON.stringify({
+          compilerOptions,
+          include: ["src"],
+          references: references.map(path => ({ path })),
+        }),
+        [`${name}/src/index.ts`]: saves,
+      });
+      const shapes: [shape: string, files: Record<string, string>, expected: string[]][] = [
+        [
+          "a circle of two",
+          {
+            ...project("a", "../b"),
+            ...project("b", "../a"),
+            "a/src/use.ts": `import { save } from "../../b/src/index";\nsave();\n`,
+          },
+          ["a/index.ts:4", "a/use.ts:2", "b/index.ts:4"],
+        ],
+        ["a project that references itself", project("a", "."), ["a/index.ts:4"]],
+        [
+          "a circle of three, a project that references it and one that doesn't",
+          {
+            ...project("a", "../b"),
+            ...project("b", "../c"),
+            ...project("c", "../a"),
+            ...project("d", "../a"),
+            ...project("e"),
+          },
+          ["a/index.ts:4", "b/index.ts:4", "c/index.ts:4", "d/index.ts:4", "e/index.ts:4"],
+        ],
+      ];
+      describe.each(floatingOn)("%s", (_, config, flags) => {
+        describe.each(["1", "8"])("--threads %s", threads => {
+          test.each(shapes)("%s", async (_, projects, expected) => {
+            const args = ["-f", "unix", "--threads", threads, ...flags];
+            const { raw, stderr, exitCode } = await lint({ ...config, ...projects }, args);
+            const reports = raw.matchAll(/(\w)[\\/]src[\\/](\w+\.ts:\d+):\d+: .*no-floating-promises/g);
+            const found = Array.from(reports, it => `${it[1]}/${it[2]}`);
+            expect(found.sort()).toEqual(expected);
+            expect(stderr).not.toContain("without type information");
+            expect(exitCode).toBe(1);
+          });
+        });
+      });
+    });
+
+    // The link can be opened, and reading it fails, also for root.
+    test.skipIf(!isLinux).each(floatingOn.slice(0, 2))(
+      "a tsconfig.json that can't be read is an error, and its files are linted without types: %s",
+      async (_, config, flags) => {
+        const { raw, exitCode } = await lint(
+          { ...config, "src/index.ts": "debugger;\n" + saves },
+          ["-f", "unix", "--rule", "no-debugger: error", ...flags],
+          { before: dir => symlinkSync("/proc/self/mem", join(dir, "tsconfig.json")) },
+        );
+        expect(raw).toMatch(/tsconfig\.json:\d+:\d+: Invalid tsconfig: Cannot read file /);
+        expect(raw).toContain("no-debugger");
+        expect(raw).not.toContain("no-floating-promises");
+        expect(exitCode).toBe(1);
+      },
+    );
 
     // `subst` gives the directory a drive letter, as in test/cli/check/check.test.ts.
     test.skipIf(!isWindows)(

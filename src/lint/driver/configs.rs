@@ -95,8 +95,8 @@ const NAMES: [(&[u8], Flavor, Syntax); 10] = [
 ];
 
 /// The config used when there's no config file: which files are linted, and with which rules. For `$severityByKind` see
-/// `Reader::grade_by_kind`, for `$framework` see `Config::get_with_frameworks`, for `$withoutWarnings` see
-/// `Reader::without_warnings`. The words `UNUSED_ON_PURPOSE` and `TEST_GLOBALS` are replaced with the constants of that name,
+/// `Reader::grade_by_kind`, for `$framework` and `$packageType` see `Config::get_with_frameworks`, for `$withoutWarnings` see
+/// `Reader::without_warnings`, for `$sourceTypeBySyntax` and `$packageIsModule` see `LanguageOptions::follow_the_runtime`. The words `UNUSED_ON_PURPOSE` and `TEST_GLOBALS` are replaced with the constants of that name,
 /// and the `basePath` `"PROJECT"` with the project's directory, so that a project in `~/test/app` isn't all tests.
 ///
 /// The first `rules` only sets options. With `$defaultOptions` they're the rules' default options in a project with no config file:
@@ -174,6 +174,13 @@ const BUILT_IN: &[u8] = br#"[
             "@typescript-eslint/no-unused-vars": "warn"
         }
     },
+    { "files": ["**/*.cts"], "languageOptions": { "sourceType": "commonjs" } },
+    {
+        "files": ["**/*.{js,jsx,ts,tsx}"],
+        "ignores": ["**/*.d.ts"],
+        "languageOptions": { "$sourceTypeBySyntax": true }
+    },
+    { "$packageType": "module", "languageOptions": { "$packageIsModule": true } },
     {
         "rules": {
             "bun:test/no-disabled-tests": "warn",
@@ -310,23 +317,33 @@ fn is_written_for_oxlint(path: &[u8]) -> bool {
         || schema.is_some_and(|it| strings::contains(it, b"oxlint"))
 }
 
-/// Reads `directory/package.json` and returns the [`Frameworks`] it lists in `dependencies`, `devDependencies` or
-/// `peerDependencies`.
-///
-/// Returns `None` when this file can't decide and the caller should use the next one up: it doesn't exist, isn't a JSON
-/// object, or has none of the three fields (a nested `{ "type": "module" }`, for example). An empty `"dependencies": {}`
-/// still counts as a decision.
-pub(crate) fn read_frameworks(directory: &[u8]) -> Option<Frameworks> {
+/// What [`read_frameworks`] finds in a package.json.
+#[derive(Copy, Clone)]
+pub(crate) struct OfPackage {
+    /// The [`Frameworks`] it lists in `dependencies`, `devDependencies` or `peerDependencies`. `None` when this file can't
+    /// decide and the caller should use the next one up: it has none of the three fields (a nested `{ "type": "module" }`,
+    /// for example). An empty `"dependencies": {}` still counts as a decision.
+    listed: Option<Frameworks>,
+    /// [`Frameworks::TYPE_MODULE`] or nothing. The nearest package.json always decides this, as it does for Node and for
+    /// Bun's resolver.
+    module_type: Frameworks,
+}
+
+/// Reads `directory/package.json`. `None`: it doesn't exist or isn't a JSON object.
+pub(crate) fn read_frameworks(directory: &[u8]) -> Option<OfPackage> {
     let package = fs::read(&paths::join(directory, b"package.json")).ok()?;
     let package = bun_lint::json::parse(&package).filter(|it| it.as_object().is_some())?;
     let fields: [&[u8]; 3] = [b"dependencies", b"devDependencies", b"peerDependencies"];
     let fields: Vec<&Json> = fields.iter().filter_map(|it| package.get(it)).collect();
-    if fields.is_empty() {
-        return None;
-    }
     let is_listed = |name: &str| fields.iter().any(|it| it.get(name.as_bytes()).is_some());
     let listed = Frameworks::PACKAGES.iter().filter(|it| is_listed(it.0));
-    Some(listed.map(|it| it.1).collect())
+    Some(OfPackage {
+        listed: (!fields.is_empty()).then(|| listed.map(|it| it.1).collect()),
+        module_type: match package.get(b"type").and_then(Json::as_str) {
+            Some(b"module") => Frameworks::TYPE_MODULE,
+            _ => Frameworks::empty(),
+        },
+    })
 }
 
 /// Combines a directory's `own` [`read_frameworks`] result with its `parent` directory's frameworks. The closest
@@ -337,19 +354,21 @@ pub(crate) fn read_frameworks(directory: &[u8]) -> Option<Frameworks> {
 /// package.json is still part of the React project around it.
 pub(crate) fn inherit_frameworks(
     parent: Frameworks,
-    own: Option<Frameworks>,
+    own: Option<OfPackage>,
     is_repository_root: bool,
 ) -> Frameworks {
+    let module_type = own.map_or(parent & Frameworks::TYPE_MODULE, |it| it.module_type);
     let parent = match is_repository_root {
         true => parent - Frameworks::TEST_RUNNERS,
         false => parent,
     };
-    match own {
+    let frameworks = match own.and_then(|it| it.listed) {
         // With both runners' plugins on, each problem would be reported twice.
         Some(own) if own.intersects(Frameworks::TEST_RUNNERS) => own,
         Some(own) => own | (parent & Frameworks::TEST_RUNNERS),
         None => parent,
-    }
+    };
+    (frameworks - Frameworks::TYPE_MODULE) | module_type
 }
 
 /// A configuration that has been read.
@@ -2151,8 +2170,11 @@ impl<'l> Loader<'l> {
         };
         let rule = self.options.rule.iter().position(|it| is_about(&it.0));
         let mut of_overrides = self.options.overrides.iter().flat_map(|it| &it.rules);
+        let places = &self.options.rules_of_bunfig;
         let place = match (rule, file) {
-            (Some(at), _) if at < self.options.rules_of_bunfig.len() => self.options.bunfig.clone(),
+            (Some(at), _) if places.get(at).is_some_and(|it| it.setting.is_some()) => {
+                self.options.bunfig.clone()
+            }
             (None, _) if of_overrides.any(|it| is_about(&it.0)) => self.options.bunfig.clone(),
             (Some(_), _) => b"--rule".to_vec(),
             (None, Some(file)) => paths::relative(self.cwd(), file),

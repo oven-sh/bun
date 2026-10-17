@@ -5,8 +5,12 @@ use super::super::sort::stable_sort_by;
 use super::super::{How, SortImports};
 use super::options::{Modifier, Options, Selector};
 use crate::ir::element::{Interned, LineMode};
+use crate::pragma::{has_ignore_pragma, has_pragma};
 use crate::prelude::*;
 use crate::write;
+use bun_core::strings;
+use bun_lint::linter::goes_to_flow;
+use bun_lint::utils::directives::match_directives_pattern;
 use std::sync::Arc;
 
 impl SortImports {
@@ -440,6 +444,72 @@ fn transform<'a>(
     out.pop();
 }
 
+/// Whether `content` has one of the `@name`s that say something about a file, as a word of its own: not `@bun/types`.
+fn has_tag_about_the_file(content: &[u8]) -> bool {
+    const TAGS: [&[u8]; 6] = [
+        b"ts-nocheck",
+        b"ts-check",
+        b"bun",
+        b"license",
+        b"preserve",
+        b"copyright",
+    ];
+    let ends_a_word = |byte: &u8| byte.is_ascii_whitespace() || *byte == b'*';
+    let mut from = 0;
+    while let Some(at) = strings::index_of_char_usize(content.get(from..).unwrap_or_default(), b'@')
+    {
+        let (at, start) = (from + at, from + at + 1);
+        let name = content.get(start..).unwrap_or_default();
+        let len = (name.iter())
+            .take_while(|byte| byte.is_ascii_alphanumeric() || **byte == b'-')
+            .count();
+        let name = &name[..len];
+        from = start + len;
+        if (TAGS.contains(&name) || name.starts_with(b"jsx"))
+            && (at.checked_sub(1).and_then(|before| content.get(before)))
+                .is_none_or(|byte| ends_a_word(byte) || *byte == b'/')
+            && content.get(from).is_none_or(ends_a_word)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether `comment` is about the file, going by its text: a pragma, which counts only before all code, a directive for a
+/// linter, which counts from where it stands, or a license. `// eslint-disable-next-line`, `// @ts-ignore` and
+/// `// @ts-expect-error` are about the statement after them.
+fn is_about_the_file(comment: Comment<'_>) -> bool {
+    let text = comment.text();
+    let content = strings::trim_js_whitespace(comment.content());
+    let starts_with_word = |word: &[u8]| {
+        (content.strip_prefix(word))
+            .is_some_and(|rest| rest.first().is_none_or(u8::is_ascii_whitespace))
+    };
+    // `/**⏎ * Copyright`
+    let stars = (content.iter())
+        .take_while(|byte| **byte == b'*' || byte.is_ascii_whitespace())
+        .count();
+    // `/// <reference path="a" />`
+    let is_triple_slash_directive =
+        (text.strip_prefix(b"///")).is_some_and(|rest| rest.trim_ascii_start().starts_with(b"<"));
+    is_triple_slash_directive
+        // What the bundler keeps: `//!`, `/*!`
+        || text.get(2) == Some(&b'!')
+        || match_directives_pattern(content)
+            .is_some_and(|it| it.starts_with("eslint") && !it.ends_with("line"))
+        || [&b"oxlint-disable"[..], b"oxlint-enable", b"biome-ignore-all"]
+            .into_iter()
+            .any(starts_with_word)
+        || strings::starts_with_case_insensitive_ascii(&content[stars..], b"copyright")
+        || strings::contains(content, b"SPDX-License-Identifier")
+        || (strings::contains_char(content, b'@')
+            && (has_tag_about_the_file(content)
+                || goes_to_flow(text, b"")
+                || has_pragma(text)
+                || has_ignore_pragma(text)))
+}
+
 /// Sorts the runs of imports in a list of statements. Whoever writes the list says what it is
 /// about to write.
 pub(crate) struct ImportRun<'a> {
@@ -449,6 +519,7 @@ pub(crate) struct ImportRun<'a> {
     slot: Option<usize>,
     /// Whether the next statement can be part of a run, if that is known.
     is_next_sortable: Option<bool>,
+    has_seen_import: bool,
     lines: Vec<Line>,
     imports: Vec<Written<'a>>,
     /// Where the line that is being written starts.
@@ -467,6 +538,7 @@ impl<'a> ImportRun<'a> {
                 .map(Arc::clone),
             slot: None,
             is_next_sortable: None,
+            has_seen_import: false,
             lines: Vec::new(),
             imports: Vec::new(),
             line_start: 0,
@@ -556,8 +628,19 @@ impl<'a> ImportRun<'a> {
         let StmtKind::Import(import) = statement.kind() else {
             return;
         };
+        let is_first_of_file = !std::mem::replace(&mut self.has_seen_import, true)
+            && matches!(statement.parent(), Node::File(_));
         if !is_sortable {
             return;
+        }
+        // `// @ts-nocheck⏎import b from "b";⏎import a from "a";`: oxfmt takes the comment along with `b`, where TypeScript no
+        // longer reads it. It stays on top, with all comments above it: they are written before the run starts.
+        let mut comments = f.comments().of_node(statement.as_ast_nodes()).leading;
+        if is_first_of_file {
+            let count = comments.iter().rposition(is_about_the_file);
+            let (about_the_file, others) = comments.split_at(count.map_or(0, |last| last + 1));
+            write!(f, FormatLeadingComments::Comments(about_the_file));
+            comments = others;
         }
         match self.slot {
             None => self.slot = Some(f.start_capture()),
@@ -570,7 +653,6 @@ impl<'a> ImportRun<'a> {
         self.line_start = f.elements().len();
 
         // One line at a time. What is left for the statement to write is its own line.
-        let mut comments = f.comments().of_node(statement.as_ast_nodes()).leading;
         while let Some(first) = comments.first() {
             // Comments without anything between them belong together.
             let mut end = first.span().end;

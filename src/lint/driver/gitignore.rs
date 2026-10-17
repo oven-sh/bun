@@ -1,7 +1,8 @@
 //! `.gitignore` and other files in its format. ESLint doesn't read them. oxlint does, so they apply
 //! when the config is an `.oxlintrc.json` and when there's no config. Prettier only reads the ones in
-//! the working directory. `bun fmt` reads those, and the `info/exclude` of the repository that the
-//! working directory is in.
+//! the working directory. With a Prettier config `bun fmt` reads those, and the `info/exclude` of the
+//! repository that the working directory is in. With no config of another tool it reads every
+//! `.gitignore`, as Git does.
 //!
 //! This module finds the files and tracks which directory each file's lines belong to.
 //! [`bun_lint::ignore`] decides what a line matches.
@@ -236,6 +237,8 @@ pub(crate) struct OfGit {
     stops_at_roots: bool,
     /// `info/exclude` is found as the crate does: [`common_directory`].
     is_for_oxc: bool,
+    /// The lines are read as Prettier reads them: [`OF_PRETTIER`].
+    reads_like_prettier: bool,
 }
 
 impl OfGit {
@@ -258,27 +261,42 @@ impl OfGit {
 
     /// The files in `directory` and above it, up to the root of the repository. Outside of one, all the way up.
     pub(crate) fn above_and_in(directory: &[u8], stops_at_roots: bool, is_for_oxc: bool) -> Self {
-        let mut directories: Vec<&[u8]> = paths::ancestors(directory).collect();
-        let nearest = directories.iter().position(|it| is_root(it));
-        let stops_at_roots = stops_at_roots && nearest.is_some();
-        if let Some(nearest) = nearest.filter(|_| stops_at_roots) {
-            directories.truncate(nearest + 1);
-        }
-        let mut files = Self {
+        Self {
             stops_at_roots,
             is_for_oxc,
             ..Self::default()
-        };
+        }
+        .with_all_above_and_in(directory)
+    }
+
+    /// The same for `bun fmt` with no config of another tool. It reads the lines the way it reads those of `.prettierignore`.
+    pub(crate) fn above_and_in_for_fmt(directory: &[u8]) -> Self {
+        Self {
+            stops_at_roots: true,
+            reads_like_prettier: true,
+            ..Self::default()
+        }
+        .with_all_above_and_in(directory)
+    }
+
+    fn with_all_above_and_in(mut self, directory: &[u8]) -> Self {
+        let mut directories: Vec<&[u8]> = paths::ancestors(directory).collect();
+        let nearest = directories.iter().position(|it| is_root(it));
+        self.stops_at_roots &= nearest.is_some();
+        if let Some(nearest) = nearest.filter(|_| self.stops_at_roots) {
+            directories.truncate(nearest + 1);
+        }
         for (index, directory) in directories.iter().enumerate().rev() {
             let can_be_root = nearest.is_some_and(|nearest| nearest <= index);
-            files = files.and_in(directory, |name| can_be_root || name == b".gitignore");
+            self = self.and_in(directory, |name| can_be_root || name == b".gitignore");
         }
-        files
+        self
     }
 
     /// The same with the files in `directory`, which the search has come to. `has`: whether an entry of it can be called so.
     pub(crate) fn and_in(mut self, directory: &[u8], has: impl Fn(&[u8]) -> bool) -> Self {
-        let own = |chain, file: &[u8]| with_file(chain, directory, file, true);
+        let is_for_oxc = !self.reads_like_prettier;
+        let own = |chain, file: &[u8]| with_file(chain, directory, file, is_for_oxc);
         let dot_git = has(b".git").then(|| paths::join(directory, b".git"));
         let kind = match &dot_git {
             Some(dot_git) if self.stops_at_roots || !self.is_for_oxc => fs::kind(dot_git),
@@ -314,6 +332,11 @@ impl OfGit {
     /// Whether the directory at `path` is ignored, or one that it is in.
     pub(crate) fn is_directory_ignored_anywhere(&self, path: &[u8]) -> bool {
         paths::ancestors(path).any(|directory| self.is_ignored(directory, true))
+    }
+
+    /// Whether the file at `path` is ignored, or a directory that it is in.
+    pub(crate) fn is_file_ignored_anywhere(&self, path: &[u8]) -> bool {
+        self.is_directory_ignored_anywhere(paths::dirname(path)) || self.is_ignored(path, false)
     }
 }
 

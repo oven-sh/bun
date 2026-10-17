@@ -1260,6 +1260,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             match self.name_after_import_and_dot() {
                 b"meta" if self.token() == T::Identifier => {
                     self.next();
+                    self.f.rare_syntax |= rare::IMPORT_META;
                     return self.finish_expr(ExprKind::ImportMeta, start);
                 }
                 // For Babel and oxc `source` is a phase too. It is kept like `defer`: the text tells

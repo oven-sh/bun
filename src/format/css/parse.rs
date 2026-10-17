@@ -294,16 +294,10 @@ impl<'a> Context<'a> {
         node: &mut CssNode<'a>,
         parsed: &mut Parsed,
     ) -> Result<bool, Refused> {
-        let parse = |text: Cow<'a, [u8]>, node: &CssNode<'a>, parsed: &mut Parsed| {
+        let parse = |text: Cow<'a, [u8]>, root_offset: u32, parsed: &mut Parsed| {
             let Parsed { selectors, values } = parsed;
             values
-                .parse(
-                    &text,
-                    self.syntax,
-                    value_root_offset(node),
-                    selectors,
-                    &self.stack,
-                )
+                .parse(&text, self.syntax, root_offset, selectors, &self.stack)
                 .map(Value::Parsed)
                 .map_err(|_| self.refusal.note(Message::UnreadableAtRule, raw.start))
         };
@@ -331,7 +325,7 @@ impl<'a> Context<'a> {
                         }
                     }
                 }
-                node.value = parse(value, node, parsed)?;
+                node.value = parse(value, value_root_offset(node), parsed)?;
             }
         }
 
@@ -357,17 +351,19 @@ impl<'a> Context<'a> {
             node.variable = true;
             let rest = &node.name[colon + 1..];
             node.name = &node.name[..colon];
-            let value = if clean_params.is_empty() {
-                Cow::Borrowed(rest)
-            } else if node.after_name.is_empty() && raw.clean_params.is_none() {
-                Cow::Borrowed(self.of(Range::new(
+            // Prettier joins the two without `raws.afterName`, so `@a:1px solid` is `@a: 1pxsolid`. It also counts
+            // `raws.afterName` and not the colon to find the value in the file, which is where the text of a comment
+            // comes from: `@a:b(c)/* d */e` is `@a: b(c) )/* d * e`.
+            let value = match &raw.clean_params {
+                _ if clean_params.is_empty() => Cow::Borrowed(rest),
+                None => Cow::Borrowed(self.of(Range::new(
                     raw.name.start + colon as u32 + 1,
                     raw.params.end,
-                )))
-            } else {
-                Cow::Owned([rest, &clean_params].concat())
+                ))),
+                Some(clean) => Cow::Owned([rest, node.after_name, clean].concat()),
             };
-            node.value = parse(value, node, parsed)?;
+            let behind_colon = node.start + 1 + colon + 1;
+            node.value = parse(value, behind_colon as u32, parsed)?;
         }
         // `@color :blue;`
         if !matches!(node.name, b"page" | b"nest" | b"keyframes") && clean_params.starts_with(b":")
@@ -378,7 +374,7 @@ impl<'a> Context<'a> {
                 false => self.of(Range::new(raw.after_name.start, raw.after_name.end + 1)),
             };
             if clean_params.len() > 1 {
-                node.value = parse(skip(&clean_params, 1), node, parsed)?;
+                node.value = parse(skip(&clean_params, 1), value_root_offset(node), parsed)?;
             }
         }
         Ok(node.variable)

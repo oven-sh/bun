@@ -120,6 +120,16 @@ impl<'c> Words<'c> {
         matches!(self, Words::None) || matches!(self, Words::Slices(words) if words.is_empty())
     }
 
+    fn ends_with_blank(&self) -> bool {
+        let last = match self {
+            Words::None => None,
+            Words::One(word) => Some(*word),
+            Words::Slices(words) => words.last().copied(),
+            Words::Joined(text) => Some(&text[..]),
+        };
+        last.is_some_and(|word| matches!(word.last(), Some(b' ' | b'\t')))
+    }
+
     /// `fill(join(line, words))`
     fn write_fill(&self, out: &mut Elements) {
         let words = match self {
@@ -821,8 +831,12 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 .unwrap_or(usize::MAX),
             Some(indent) => (indent as usize + parent_indent).saturating_sub(1),
         };
+        // Only blanks are cut off. Prettier cuts as many characters off a line that has fewer, whatever they are.
         let raw_lines: Vec<&'a [u8]> = strings::split(content, b"\n")
-            .map(|line| line.get(leading_space_count..).unwrap_or_default())
+            .map(|line| {
+                let spaces = line.iter().take(leading_space_count);
+                &line[spaces.take_while(|&&b| b == b' ').count()..]
+            })
             .collect();
 
         let lines: Vec<Words<'a>> = if self.prose_wrap == ProseWrap::Preserve
@@ -906,23 +920,17 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             }
             return lines;
         }
-        let is_blank = |words: &Words<'a>| {
-            // For oxfmt, blanks that are left of a line are a part of the value.
-            let is_blank = |word: &[u8]| match self.is_oxfmt {
-                true => word.is_empty(),
-                false => word.iter().all(|b| matches!(b, b' ' | b'\t')),
-            };
-            match words {
-                Words::None => true,
-                Words::One(word) => is_blank(word),
-                Words::Slices(words) => words.iter().all(|word| is_blank(word)),
-                Words::Joined(text) => is_blank(text),
-            }
+        // Blanks past the indentation are part of the value. Prettier takes a line of them for an empty one.
+        let has_no_text = |words: &Words<'a>| match words {
+            Words::None => true,
+            Words::One(word) => word.is_empty(),
+            Words::Slices(words) => words.iter().all(|word| word.is_empty()),
+            Words::Joined(text) => text.is_empty(),
         };
         let trailing_newline_count = lines
             .iter()
             .rev()
-            .take_while(|words| is_blank(words))
+            .take_while(|words| has_no_text(words))
             .count();
         let removed = match trailing_newline_count {
             0 => 0,
@@ -987,7 +995,9 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 out.hard_line();
             }
             words.write_fill(out);
-            if self.is_oxfmt && !words.is_empty() {
+            // They are part of the value. Prettier loses those of the last line: the hard line after the scalar
+            // trims them (prettier#19764).
+            if words.ends_with_blank() {
                 out.keep_blanks();
             }
             if index + 1 != lines.len() {

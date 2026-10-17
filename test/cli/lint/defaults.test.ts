@@ -16,9 +16,15 @@ const env = {
   NO_COLOR: "1",
 };
 
-type Result = { filePath: string; messages: { line: number; column: number; severity: number; ruleId: string }[] };
+type Result = {
+  filePath: string;
+  messages: { line: number; column: number; severity: number; ruleId: string; message: string }[];
+};
 
-/** `reports` has one `a.js:1:1 error no-debugger` string per problem. `texts` has the files' contents after the run. */
+/**
+ * `reports` has one `a.js:1:1 error no-debugger` string per problem, and `problems` one `a.js:1:1 Unexpected 'debugger' statement.`
+ * `texts` has the files' contents after the run.
+ */
 async function lint(files: Record<string, string>, args: string[], stdin?: string, cwd = ".") {
   using dir = tempDir("bun-lint-defaults", files);
   await using proc = spawn({
@@ -37,10 +43,13 @@ async function lint(files: Record<string, string>, args: string[], stdin?: strin
       it => `${nameOf(filePath)}:${it.line}:${it.column} ${it.severity === 2 ? "error" : "warning"} ${it.ruleId}`,
     ),
   );
+  const problems = (Array.isArray(json) ? (json as Result[]) : []).flatMap(({ filePath, messages }) =>
+    messages.map(it => `${nameOf(filePath)}:${it.line}:${it.column} ${it.message}`),
+  );
   const texts = Object.fromEntries(
     Object.keys(files).map(name => [name, readFileSync(join(String(dir), name), "utf8")]),
   );
-  return { json, reports, texts, stderr, exitCode };
+  return { json, reports, problems, texts, stderr, exitCode };
 }
 
 describe.concurrent("globals", () => {
@@ -1554,5 +1563,348 @@ export function useThing(a, on) {
     expect(eslint.json).toEqual([expect.objectContaining({ messages: [] })]);
     expect(oxlint.json.diagnostics).toEqual([]);
     expect([eslint.exitCode, oxlint.exitCode]).toEqual([0, 0]);
+  });
+});
+
+describe.concurrent("ES modules and CommonJS", () => {
+  const early = `const os = require("os");
+if (os.platform() === "never") {
+  return;
+}
+module.exports = os.platform();
+`;
+  const returnOutside = "Parsing error: 'return' outside of function";
+  const ofModule = { "package.json": `{ "type": "module" }` };
+
+  test.each([
+    ["no package.json", {}],
+    ["a package.json without a type", { "package.json": `{ "name": "a" }` }],
+    [`"type": "commonjs"`, { "package.json": `{ "type": "commonjs" }` }],
+  ])("a file can return at the top level with %s", async (_, files) => {
+    const { problems, exitCode } = await lint({ ...files, "early.js": early }, []);
+    expect(problems).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("rules run on a file that returns at the top level", async () => {
+    const { reports } = await lint({ "early.js": `${early}debugger;\n` }, []);
+    expect(reports).toEqual(["early.js:6:1 error no-debugger"]);
+  });
+
+  test(`a top-level return is still an error with "type": "module"`, async () => {
+    const { problems, exitCode } = await lint({ ...ofModule, "early.js": early }, []);
+    expect(problems).toEqual([`early.js:3:3 ${returnOutside}`]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("the nearest package.json decides", async () => {
+    const files = {
+      ...ofModule,
+      "early.js": early,
+      "src/early.js": early,
+      "legacy/package.json": "{}",
+      "legacy/early.js": early,
+      "legacy/esm/package.json": ofModule["package.json"],
+      "legacy/esm/early.js": early,
+    };
+    const expected = ["early.js", "legacy/esm/early.js", "src/early.js"].map(it => `${it}:3:3 ${returnOutside}`);
+    const names = Object.keys(files).filter(it => it.endsWith(".js"));
+    const [all, named] = await Promise.all([lint(files, []), lint(files, names)]);
+    expect(all.problems.sort()).toEqual(expected);
+    expect(named.problems.sort()).toEqual(expected);
+  });
+
+  test.each([
+    ["import", `import "./b.js";`],
+    ["export", "export {};"],
+    ["import.meta", "console.log(import.meta.url);"],
+    ["a top-level await", "await 1;"],
+    ["a top-level for await", "for await (const a of []) console.log(a);"],
+  ])("%s makes a file a module", async (_, code) => {
+    const files = { "a.js": `${code}\nreturn;\n`, "b.js": "" };
+    const [alone, inCommonJs] = await Promise.all([
+      lint(files, ["a.js"]),
+      lint({ ...files, "package.json": `{ "type": "commonjs" }` }, ["a.js"]),
+    ]);
+    expect(alone.problems).toEqual([`a.js:2:1 ${returnOutside}`]);
+    expect(inCommonJs.problems).toEqual([`a.js:2:1 ${returnOutside}`]);
+  });
+
+  test.each([
+    ["import()", `import("./b.js").then(console.log);`],
+    ["an await in a function", "(async () => { await 1; })();"],
+    ["the word in a string", `console.log("import.meta, export, await");`],
+  ])("%s doesn't make a file a module", async (_, code) => {
+    const { problems } = await lint({ "a.js": `${code}\nreturn;\n`, "b.js": "" }, ["a.js"]);
+    expect(problems).toEqual([]);
+  });
+
+  test(`an import is fine with "type": "commonjs", as it is for Bun and TypeScript`, async () => {
+    const files = {
+      "package.json": `{ "type": "commonjs" }`,
+      "a.js": `import os from "os";\nexport default os.platform();\n`,
+      "b.ts": `import os from "os";\nexport default os.platform();\n`,
+    };
+    const { problems, exitCode } = await lint(files, []);
+    expect(problems).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  const sloppy: [name: string, code: string, inStrictMode: string][] = [
+    ["with", "with (Math) console.log(PI);", "'with' in strict mode"],
+    ["delete of a variable", "var a = 1;\ndelete a;", "Deleting local variable in strict mode"],
+    ["a word that strict mode reserves", "var public = 1;\nconsole.log(public);", "The keyword 'public' is reserved"],
+    ["an octal literal", "console.log(010);", ""],
+    ["two parameters with one name", "console.log(function (a, a) {});", ""],
+    ["await as a name", "var await = 1;\nconsole.log(await);", ""],
+    ["an HTML comment", "<!-- hidden from old browsers\nconsole.log(1);\n--> the end", ""],
+  ];
+
+  test.each(sloppy)("CommonJS isn't strict: %s", async (_, code, inStrictMode) => {
+    const line = code.split("\n").length + 1;
+    const files = { "a.js": `${code}\ndebugger;\n` };
+    const [commonJs, esm] = await Promise.all([lint(files, []), lint({ ...ofModule, ...files }, [])]);
+    expect(commonJs.problems.filter(it => it.includes("Parsing error"))).toEqual([]);
+    expect(commonJs.reports).toContain(`a.js:${line}:1 error no-debugger`);
+    expect(esm.problems).toEqual([expect.stringContaining(`Parsing error: ${inStrictMode}`)]);
+  });
+
+  test(`"use strict" makes a CommonJS file strict`, async () => {
+    const { problems } = await lint({ "a.js": `"use strict";\nwith (Math) console.log(PI);\n` }, []);
+    expect(problems).toEqual(["a.js:2:1 Parsing error: 'with' in strict mode"]);
+  });
+
+  test("the extension counts for more than package.json", async () => {
+    const files = { "a.mjs": early, "a.cjs": early };
+    const [inCommonJs, inModule] = await Promise.all([
+      lint({ ...files, "package.json": `{ "type": "commonjs" }` }, []),
+      lint({ ...files, ...ofModule }, []),
+    ]);
+    expect(inCommonJs.problems).toEqual([`a.mjs:3:3 ${returnOutside}`]);
+    expect(inModule.problems).toEqual([`a.mjs:3:3 ${returnOutside}`]);
+  });
+
+  describe("sourceType and globalReturn", () => {
+    const ways = (toml: string, ...flags: string[]): [string, Record<string, string>, string[]][] => [
+      [flags.join(" "), {}, flags.flatMap(it => ["--parser-options", it])],
+      [toml.replaceAll("\n", " "), { "bunfig.toml": `[lint.parserOptions]\n${toml}\n` }, []],
+    ];
+
+    test.each([
+      ...ways(`sourceType = "commonjs"`, "sourceType:commonjs"),
+      ...ways("ecmaFeatures = { globalReturn = true }", "ecmaFeatures:{globalReturn:true}"),
+      ...ways(
+        `sourceType = "script"\necmaFeatures = { globalReturn = true }`,
+        "sourceType:script",
+        "ecmaFeatures:{globalReturn:true}",
+      ),
+    ])(`%s allows a top-level return with "type": "module"`, async (_, files, flags) => {
+      const { problems, exitCode } = await lint({ ...ofModule, ...files, "early.js": early }, flags);
+      expect(problems).toEqual([]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.each([
+      ...ways(`sourceType = "module"`, "sourceType:module"),
+      ...ways(`sourceType = "script"`, "sourceType:script"),
+    ])("%s refuses a top-level return", async (_, files, flags) => {
+      const { problems, exitCode } = await lint({ ...files, "early.js": early }, flags);
+      expect(problems).toEqual([`early.js:3:3 ${returnOutside}`]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("globalReturn doesn't count in a file with an import, as in ESLint", async () => {
+      const flags = ["--parser-options", "ecmaFeatures:{globalReturn:true}", "a.js"];
+      const { problems } = await lint({ "a.js": `import "./b.js";\nreturn;\n`, "b.js": "" }, flags);
+      expect(problems).toEqual([`a.js:2:1 ${returnOutside}`]);
+    });
+
+    test("a script isn't strict, and refuses an import", async () => {
+      const files = { "a.js": "with (Math) console.log(PI);\ndebugger;\n", "b.js": `import "./a.js";\n` };
+      const { problems, reports } = await lint(files, ["--parser-options", "sourceType:script"]);
+      expect(reports).toContain("a.js:2:1 error no-debugger");
+      expect(problems).toContain(
+        "b.js:1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'",
+      );
+    });
+
+    test("what a script declares is global, and what a CommonJS file declares isn't", async () => {
+      const files = { "a.js": "var a = 1;\nconsole.log(a);\n" };
+      const rule = ["--rule", "no-implicit-globals: error"];
+      const [commonJs, script] = await Promise.all([
+        lint(files, rule),
+        lint(files, [...rule, "--parser-options", "sourceType:script"]),
+      ]);
+      expect(commonJs.reports).toEqual([]);
+      expect(script.reports).toEqual(["a.js:1:5 error no-implicit-globals"]);
+    });
+
+    test.each(ways(`sourceType = "esm"`, "sourceType:esm"))("%s is an error", async (_, files, flags) => {
+      const { stderr, exitCode } = await lint({ ...files, "a.js": "" }, flags);
+      expect(stderr).toContain(`Key "sourceType": Expected "script", "module", or "commonjs".`);
+      expect(exitCode).toBe(2);
+    });
+
+    test("--print-config says what decides", async () => {
+      const files = { "esm/package.json": ofModule["package.json"] };
+      const sourceType = async (...args: string[]) =>
+        (await lint(files, ["--print-config", ...args])).json.languageOptions.sourceType;
+      expect(
+        await Promise.all([
+          sourceType("a.js"),
+          sourceType("a.ts"),
+          sourceType("a.mjs"),
+          sourceType("a.cjs"),
+          sourceType("a.cts"),
+          sourceType("esm/a.js"),
+          sourceType("a.js", "--parser-options", "sourceType:script"),
+        ]),
+      ).toEqual(["unambiguous", "unambiguous", "module", "commonjs", "commonjs", "module", "script"]);
+    });
+  });
+
+  describe("strict", () => {
+    const bunfig = { "bunfig.toml": `[lint.rules]\nstrict = "error"\n` };
+    const strict = `"use strict";
+module.exports = (function () {
+  return this === undefined;
+})();
+`;
+    const unnecessary = "'use strict' is unnecessary inside of modules.";
+
+    test.each([{}, { "package.json": `{ "type": "commonjs" }` }])(
+      `--fix keeps "use strict" in a CommonJS file: %j`,
+      async files => {
+        const { problems, texts } = await lint({ ...bunfig, ...files, "strict.js": strict }, ["--fix"]);
+        expect(problems).toEqual([]);
+        expect(texts["strict.js"]).toBe(strict);
+      },
+    );
+
+    test("a CommonJS file needs the directive", async () => {
+      const { problems } = await lint({ ...bunfig, "a.js": "module.exports = 1;\n" }, []);
+      expect(problems).toEqual(["a.js:1:1 Use the global form of 'use strict'."]);
+    });
+
+    test("--fix removes it from a module", async () => {
+      const files = {
+        ...bunfig,
+        "a.js": `"use strict";\nexport default 1;\n`,
+        "esm/package.json": ofModule["package.json"],
+      };
+      const { problems, texts } = await lint({ ...files, "esm/strict.js": strict }, ["--fix"]);
+      expect(problems).toEqual([]);
+      expect(texts["a.js"]).not.toContain("use strict");
+      expect(texts["esm/strict.js"]).not.toContain("use strict");
+    });
+
+    test.each([
+      ["a.js", false],
+      ["a.jsx", false],
+      ["a.ts", false],
+      ["a.tsx", false],
+      ["a.cjs", false],
+      ["a.cts", false],
+      ["a.mjs", true],
+      ["a.mts", true],
+    ])("%s without an import or an export is a module: %p", async (name, isModule) => {
+      const { problems } = await lint({ ...bunfig, [name]: `"use strict";\nconsole.log(1);\n` }, []);
+      expect(problems).toEqual(isModule ? [`${name}:1:1 ${unnecessary}`] : []);
+    });
+  });
+
+  test("no-undef knows what a CommonJS file gets", async () => {
+    const code = "module.exports = exports.a = [require, __filename, __dirname];\n";
+    const { reports } = await lint({ "a.js": code, "b.cjs": code }, ["--rule", "no-undef: error"]);
+    expect(reports).toEqual([]);
+  });
+
+  test("no-inner-declarations reports a function in a block of a CommonJS file", async () => {
+    const code = "if (process.env.DEBUG) {\n  function log() {}\n  log();\n}\n";
+    const files = { "a.js": code, "b.js": `${code}export {};\n` };
+    const { reports } = await lint(files, ["--rule", "no-inner-declarations: error"]);
+    expect(reports).toEqual(["a.js:2:3 error no-inner-declarations"]);
+  });
+
+  test("a JavaScript plugin is told what the file is", async () => {
+    const files = {
+      "bunfig.toml": `[lint]\nplugins = ["./plugin.mjs"]\n\n[lint.rules]\n"local/kind" = "error"\n`,
+      "plugin.mjs": `
+        const kind = {
+          create(context) {
+            return {
+              Program(node) {
+                const scopes = context.sourceCode.scopeManager;
+                const message = [context.languageOptions.sourceType, node.sourceType, scopes.isGlobalReturn(), scopes.scopes[1].type];
+                context.report({ node, message: message.join(" ") });
+              },
+            };
+          },
+        };
+        export default { meta: { name: "local" }, rules: { kind } };`,
+      "src/commonjs.js": "module.exports = 1;\n",
+      "src/module.js": "export default 1;\n",
+    };
+    const { problems } = await lint(files, ["src"]);
+    expect(problems.sort()).toEqual([
+      "src/commonjs.js:1:1 commonjs commonjs true function",
+      "src/module.js:1:1 module module false module",
+    ]);
+  });
+
+  describe("with an eslint.config.js, ESLint's defaults apply", () => {
+    const config = (languageOptions = "{}", rules = "{}") => ({
+      "package.json": `{ "type": "commonjs" }`,
+      "eslint.config.mjs": `export default [{ languageOptions: ${languageOptions}, rules: ${rules} }];\n`,
+    });
+
+    test(".js and .mjs are modules and .cjs is CommonJS, whatever package.json says", async () => {
+      const files = { ...config(), "a.js": early, "a.mjs": early, "a.cjs": early };
+      const { problems, exitCode } = await lint(files, ["a.js", "a.mjs", "a.cjs"]);
+      expect(problems.sort()).toEqual([`a.js:3:3 ${returnOutside}`, `a.mjs:3:3 ${returnOutside}`]);
+      expect(exitCode).toBe(1);
+    });
+
+    test.each([
+      `{ sourceType: "commonjs" }`,
+      `{ sourceType: "script", parserOptions: { ecmaFeatures: { globalReturn: true } } }`,
+    ])("languageOptions: %s allows a top-level return", async languageOptions => {
+      const { problems, exitCode } = await lint({ ...config(languageOptions), "a.js": early }, ["a.js"]);
+      expect(problems).toEqual([]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.each([
+      `{ sourceType: "script" }`,
+      `{ parserOptions: { ecmaFeatures: { globalReturn: true } } }`,
+      // ESLint overwrites it with `languageOptions.sourceType` before it calls espree.
+      `{ parserOptions: { sourceType: "commonjs" } }`,
+    ])("languageOptions: %s doesn't", async languageOptions => {
+      const { problems } = await lint({ ...config(languageOptions), "a.js": early }, ["a.js"]);
+      expect(problems).toEqual([`a.js:3:3 ${returnOutside}`]);
+    });
+
+    test("no-undef knows require and module only in CommonJS", async () => {
+      const code = "module.exports = require;\n";
+      const rules = `{ "no-undef": "error" }`;
+      const [byDefault, commonJs] = await Promise.all([
+        lint({ ...config("{}", rules), "a.js": code, "a.cjs": code }, ["a.js", "a.cjs"]),
+        lint({ ...config(`{ sourceType: "commonjs" }`, rules), "a.js": code }, ["a.js"]),
+      ]);
+      expect(byDefault.reports).toEqual(["a.js:1:1 error no-undef", "a.js:1:18 error no-undef"]);
+      expect(commonJs.reports).toEqual([]);
+    });
+
+    test(`strict reports "use strict" in a .js file`, async () => {
+      const files = { ...config("{}", `{ strict: "error" }`), "a.js": `"use strict";\nmodule.exports = 1;\n` };
+      const { problems } = await lint(files, ["a.js"]);
+      expect(problems).toEqual(["a.js:1:1 'use strict' is unnecessary inside of modules."]);
+    });
+  });
+
+  test("with an .oxlintrc.json, a file without an import or an export can return at the top level, as in oxlint", async () => {
+    const { json, exitCode } = await lint({ ...ofModule, ".oxlintrc.json": "{}", "early.js": early }, ["early.js"]);
+    expect(json.diagnostics).toEqual([]);
+    expect(exitCode).toBe(0);
   });
 });

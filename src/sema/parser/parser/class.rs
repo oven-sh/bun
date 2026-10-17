@@ -7,6 +7,7 @@ use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
+use bun_sema::util::SharedSort;
 
 /// The heritage clauses of a class: see `Class`.
 struct Heritage {
@@ -493,12 +494,17 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn resolve_private_names(&mut self, (scanned, declared): (usize, usize)) {
         let own = self
             .declared_private_names
-            .get(declared..)
+            .get_mut(declared..)
             .unwrap_or_default();
+        // Sorted only to look names up: a generated class can declare tens of thousands.
+        own.shared_sort_unstable_by_key(|it| it.0);
+        if own.array_windows().any(|[a, b]| a == b) {
+            self.f.rare_syntax |= rare::NOTABLE_CLASS_MEMBER;
+        }
         let mut at = 0;
         self.lx.private_names.retain(|it| {
             at += 1;
-            at <= scanned || !own.contains(it)
+            at <= scanned || own.binary_search_by_key(&it.0, |own| own.0).is_err()
         });
         self.declared_private_names.truncate(declared);
     }
@@ -768,9 +774,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     || before.iter().any(|it| it.kind == MemberKind::Constructor)
             }
             (_, PropKey::Private(name)) => {
+                // `resolve_private_names` finds the ones that are declared twice.
                 self.declared_private_names.push(name);
-                before.iter().any(|it| it.key == member.key)
-                    || self.lx.text_of(name) == b"#constructor"
+                self.lx.text_of(name) == b"#constructor"
             }
             (_, PropKey::Name(name)) => name == known::constructor || name == known::prototype,
             _ => false,

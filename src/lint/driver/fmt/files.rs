@@ -10,7 +10,7 @@ use bun_collections::index_sort;
 use bun_core::strings;
 use bun_lint::glob::Picomatch;
 use bun_lint::linter::config::glob_refusal;
-use bun_sema::util::FxHashSet;
+use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_threading::Guarded;
 use std::cell::LazyCell;
 use std::sync::Arc;
@@ -424,21 +424,34 @@ pub(crate) struct Ignored {
     negative: Vec<bun_glob::Pattern>,
     /// `.gitignore`, `.prettierignore`: a file is ignored if one of them says so.
     files: Vec<Chain>,
+    /// `Some`: every `.gitignore` counts, as for Git, and none of them is in `files`. It holds what has been read so far, by
+    /// directory.
+    of_git: Option<Guarded<FxHashMap<Vec<u8>, OfGit>>>,
     cwd: Vec<u8>,
-    /// A search came to a file that it looks for, or a directory that it enters, which one of `files` has.
+    /// A search came to a file that it looks for, or a directory that it enters, which an ignore file has.
     has_left_out: AtomicBool,
 }
 
 impl Ignored {
-    pub(crate) fn new(options: &Options, cwd: &[u8], flavor: Flavor) -> Result<Ignored, Fatal> {
+    /// `is_native`: [`Configs::is_native`].
+    pub(crate) fn new(
+        options: &Options,
+        cwd: &[u8],
+        flavor: Flavor,
+        is_native: bool,
+    ) -> Result<Ignored, Fatal> {
         let mut directories: Vec<&[u8]> = vec![b".git", b".sl", b".svn", b".hg", b".jj"];
         if !options.with_node_modules {
             directories.push(b"node_modules");
         }
+        // Prettier only reads the `.gitignore` of the working directory, so that is all a project with its config gets.
+        let follows_git = is_native && options.ignore_path.is_none();
         // oxfmt reads every `.gitignore` on its way, as Git does.
         let default: &[Vec<u8>] = match flavor {
-            Flavor::Prettier => &[b".gitignore".to_vec(), b".prettierignore".to_vec()],
-            Flavor::Oxfmt => &[b".prettierignore".to_vec()],
+            Flavor::Prettier if !follows_git => {
+                &[b".gitignore".to_vec(), b".prettierignore".to_vec()]
+            }
+            _ => &[b".prettierignore".to_vec()],
         };
         let is_oxfmt = flavor == Flavor::Oxfmt;
         // Prettier does not read it. It goes with `.gitignore`, the first of `default`, which Git asks before it.
@@ -451,6 +464,16 @@ impl Ignored {
             false => gitignore::excludes_above(cwd)
                 .map_err(|(file, error)| cannot_read(&file, &error))?,
         };
+        if follows_git {
+            // `OfGit` reads both. It passes over a file that it can't read, which is an error here.
+            excludes = None;
+            let file = paths::join(cwd, b".gitignore");
+            if let Err(error) = fs::read(&file)
+                && error.get_errno() != bun_sys::E::ENOENT
+            {
+                return Err(cannot_read(&file, &error));
+            }
+        }
         let mut files = Vec::new();
         for file in options.ignore_path.as_deref().unwrap_or(default) {
             let file = paths::resolve(cwd, &paths::from_native(file));
@@ -489,6 +512,7 @@ impl Ignored {
             directories,
             negative: Vec::new(),
             files,
+            of_git: follows_git.then(Guarded::default),
             cwd: cwd.to_vec(),
             has_left_out: AtomicBool::new(false),
         })
@@ -526,11 +550,23 @@ impl Ignored {
             .any(|chain| gitignore::is_ignored_in_search(chain, path, is_directory))
     }
 
+    /// The files of Git that count in `directory`. `None`: they are not read.
+    fn of_git_in(&self, directory: &[u8]) -> Option<OfGit> {
+        let known = self.of_git.as_ref()?;
+        if let Some(found) = known.lock().get(directory) {
+            return Some(found.clone());
+        }
+        let read = OfGit::above_and_in_for_fmt(directory);
+        known.lock().insert(directory.to_vec(), read.clone());
+        Some(read)
+    }
+
     /// Whether an ignore file has the directory at `path`, or one that it is in: then it has all that is in it.
     fn ignores_directory(&self, path: &[u8]) -> bool {
         self.files
             .iter()
             .any(|chain| gitignore::is_directory_ignored_anywhere(chain, path))
+            || (self.of_git_in(path)).is_some_and(|git| git.is_directory_ignored_anywhere(path))
     }
 
     /// Prettier's `isIgnored`, for any file.
@@ -539,6 +575,8 @@ impl Ignored {
             .iter()
             .chain([config])
             .any(|chain| gitignore::is_file_ignored_anywhere(chain, path))
+            || (self.of_git_in(paths::dirname(path)))
+                .is_some_and(|git| git.is_file_ignored_anywhere(path))
     }
 }
 
@@ -562,16 +600,12 @@ fn search(
     base: &[u8],
     matches: &(dyn Fn(&[u8]) -> bool + Sync),
     enters: &(dyn Fn(&[u8]) -> bool + Sync),
-    // `None`: the files of Git are not read. Otherwise [`gitignore::are_all_in_repositories`] of the run.
-    are_all_in_repositories: Option<&dyn Fn() -> bool>,
+    // The files of Git that count in `base`. `None`: they are not read.
+    git: Option<OfGit>,
 ) -> Result<Vec<Target>, Fatal> {
     let (mut found, mut failure) = (Guarded::new(Vec::new()), Guarded::new(None::<Fatal>));
-    let reads_gitignore = are_all_in_repositories.is_some();
-    let git = match are_all_in_repositories.map(|it| OfGit::for_search(base, true, it)) {
-        Some(Some(git)) => git,
-        Some(None) => return Ok(Vec::new()),
-        None => OfGit::default(),
-    };
+    let reads_gitignore = git.is_some();
+    let git = git.unwrap_or_default();
     let above = configs.for_directory(base)?;
     let mut level = vec![Directory {
         path: base.to_vec(),
@@ -624,16 +658,15 @@ fn search(
                     continue;
                 }
                 let relative = paths::relative(&ignored.cwd, &path);
-                if ignored.ignores_entry(&path, entry.is_directory) {
+                if ignored.ignores_entry(&path, entry.is_directory)
+                    || git.is_ignored(&path, entry.is_directory)
+                {
                     if match entry.is_directory {
                         true => enters(&relative),
                         false => matches(&relative),
                     } {
                         ignored.has_left_out.store(true, Ordering::Relaxed);
                     }
-                    continue;
-                }
-                if git.is_ignored(&path, entry.is_directory) {
                     continue;
                 }
                 let is_ignored_by_configuration = is_ignored_by_configuration
@@ -764,7 +797,8 @@ pub(crate) fn expand(
                     is_anything_ignored = true;
                     continue;
                 }
-                let mut found = search(configs, pool, ignored, &path, &|_| true, &|_| true, None)?;
+                let git = ignored.of_git_in(&path);
+                let mut found = search(configs, pool, ignored, &path, &|_| true, &|_| true, git)?;
                 found.iter_mut().for_each(|it| it.ignores_unknown = true);
                 written_base = (paths::relative(&cwd, &path), path);
                 (found, b"No supported files were found in the directory")
@@ -804,7 +838,7 @@ pub(crate) fn expand(
                             true => glob.may_match_inside(&absolute(relative)),
                             false => glob.may_match_inside(relative),
                         },
-                        None,
+                        ignored.of_git_in(&base),
                     )?,
                     _ => Vec::new(),
                 };
@@ -914,6 +948,9 @@ pub(crate) fn expand_as_oxfmt(
         if *kind == fs::Kind::Directory {
             let matches =
                 |relative: &[u8]| globs.is_empty() || globs.iter().any(|it| it.matches(relative));
+            let Some(git) = OfGit::for_search(path, true, || *are_all_in_repositories) else {
+                continue;
+            };
             found.append(&mut search(
                 configs,
                 pool,
@@ -921,7 +958,7 @@ pub(crate) fn expand_as_oxfmt(
                 path,
                 &matches,
                 &|_| true,
-                Some(&|| *are_all_in_repositories),
+                Some(git),
             )?);
             continue;
         }

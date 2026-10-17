@@ -677,3 +677,49 @@ pub(crate) fn find_files(
     found.dedup_by(|a, b| a.path == b.path);
     Ok(found)
 }
+
+/// What [`find_files`] would find of `files` if they were on disk. `files`: absolute paths, each with the size of its text.
+/// `--staged` has these from the index. One is taken if it's in a directory that is an argument or a pattern matches it, and
+/// neither the configuration nor an ignore file leaves it out.
+pub(crate) fn find_files_not_on_disk<'f>(
+    loader: &Loader,
+    patterns: &[Vec<u8>],
+    files: impl Iterator<Item = (&'f [u8], u64)>,
+) -> Result<Vec<Target>, Fatal> {
+    let cwd = &loader.environment().cwd;
+    let is_wanted = |file: &[u8]| {
+        patterns.iter().any(|pattern| {
+            let pattern = paths::from_native(pattern);
+            let path = paths::resolve(cwd, &pattern);
+            if paths::inside(&path, file).is_some() {
+                return true;
+            }
+            let base_path = paths::resolve(cwd, &bun_glob::scan::glob_parent(&pattern));
+            bun_glob::scan::is_glob(&pattern)
+                && paths::inside(&base_path, file).is_some_and(|relative| {
+                    Matcher::new(&paths::relative(&base_path, &path)).matches(relative)
+                })
+        })
+    };
+    let mut found = Vec::new();
+    for (file, size) in files.filter(|it| is_wanted(it.0)) {
+        let directory = paths::dirname(file);
+        let loaded = loader.for_directory(directory)?;
+        if loader.lacks_file_of_eslint(&loaded) {
+            return Err(config_file_missing(file));
+        }
+        let is_ignored = (loader.ignore_files_at(directory, &loaded, || true)).is_none_or(|it| {
+            it.is_ignored(file, false)
+                || paths::ancestors(directory).any(|above| it.is_ignored(above, true))
+        });
+        if !is_ignored && let FileConfig::Matched(config) = loader.config_of(&loaded, file) {
+            found.push(Target {
+                path: file.to_vec(),
+                size,
+                loaded,
+                status: Status::Matched(config),
+            });
+        }
+    }
+    Ok(found)
+}

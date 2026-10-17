@@ -660,6 +660,10 @@ pub struct Dialect {
     /// With `oxc`: the parser says whether a name may be declared twice in a scope (`rare::MAY_REDECLARE`). It is for a caller
     /// that would make the scopes of the file for nothing else.
     pub oxc_names: bool,
+    /// Nothing outside the file says whether it's a module or a script, so its syntax decides. It's read as a module. If that
+    /// fails or the text has a `<!--`, and the file has no `import`, `export` or `import.meta`, it's read again as a script,
+    /// where `await` is a name and `<!--` starts a comment. Not with `script` or `oxc`.
+    pub module_or_script: bool,
 }
 
 impl Dialect {
@@ -673,6 +677,7 @@ impl Dialect {
             flow: false,
             oxc: false,
             oxc_names: false,
+            module_or_script: false,
         }
     }
 

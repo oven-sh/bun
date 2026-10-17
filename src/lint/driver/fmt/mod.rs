@@ -27,6 +27,7 @@ use bun_format::verify::Program;
 use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::File;
 use bun_lint::js_plugin::{HEAVY, Unformatted};
+use bun_lint::json::{Notation, parse_as};
 use bun_lint::language::{LanguageOptions, ParseOptions, Parser, SourceType};
 use bun_lint::linter::TypesInJavaScript;
 use bun_lint::utils::text::ends_with_ignore_ascii_case as ends_in;
@@ -594,11 +595,11 @@ fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
     });
 }
 
-/// Whether the two texts are the same value. What cannot be read as a value, with a key twice, is not looked at.
-fn is_same_toml(before: &[u8], after: &[u8]) -> bool {
-    use bun_lint::json::{Notation, parse_as};
-    match parse_as(Notation::Toml, before) {
-        Ok(before) => parse_as(Notation::Toml, after).is_ok_and(|after| after == before),
+/// Whether the two texts are the same value. What cannot be read as a value is not looked at: TOML with a key twice,
+/// YAML with an alias to what it is in.
+fn is_same_value(notation: Notation, before: &[u8], after: &[u8]) -> bool {
+    match parse_as(notation, before) {
+        Ok(before) => parse_as(notation, after).is_ok_and(|after| after == before),
         Err(_) => true,
     }
 }
@@ -666,6 +667,10 @@ fn format(
         }
         Some(Kind::Yaml) => {
             let done = bun_format::yaml::format(text, options, &mut scratch.yaml, &mut out);
+            if verifies && done.is_ok() && out != text && !is_same_value(Notation::Yaml, text, &out)
+            {
+                return Err(Failure::Changed("formatting would change its contents"));
+            }
             return finish(done, out, "YAML");
         }
         Some(kind @ (Kind::Markdown | Kind::Mdx)) => {
@@ -718,7 +723,8 @@ fn format(
                     false => Failure::Syntax(error),
                 });
             }
-            if verifies && done.is_ok() && out != text && !is_same_toml(text, &out) {
+            if verifies && done.is_ok() && out != text && !is_same_value(Notation::Toml, text, &out)
+            {
                 return Err(Failure::Changed("formatting would change its contents"));
             }
             return finish(done, out, "TOML");
@@ -1604,8 +1610,7 @@ impl Run<'_> {
         let asks_for_different = (options.check || options.list_different) && !options.write;
         let only_looks = asks_for_different || options.debug_check;
         let is_oxfmt = configs.flavor == Flavor::Oxfmt;
-        let only =
-            (options.only.as_ref()).map(|it| git::Files::read(it, !only_looks, self.environment));
+        let only = (options.only.as_ref()).map(|it| git::Files::read(it, self.environment));
         let only = match only.transpose() {
             Ok(only) => only,
             Err(Fatal(error)) => return self.fail(&error),
@@ -1794,7 +1799,7 @@ impl Run<'_> {
                 if leaves_classes.load(Ordering::Relaxed) {
                     options.options.tailwind = None;
                 }
-                let text = fs::read(&target.path).map_err(|error| {
+                let text = git::read(only.as_ref(), &target.path).map_err(|error| {
                     [
                         b"Unable to read file \"",
                         &shown[..],
@@ -1881,7 +1886,8 @@ impl Run<'_> {
                 let config = configs.path_of_config(&target.scope);
                 let file = (&target.path[..], &shown[..]);
                 let writes = !only_looks && !is_partly_staged(target);
-                results.lock()[index] = Some(match bridge.format_file(file, config, writes) {
+                let formatted = bridge.format_file(file, config, writes, only.as_ref());
+                results.lock()[index] = Some(match formatted {
                     Ok(true) if !only_looks && !writes => Done::PartlyStaged,
                     Ok(true) => Done::Different(began.elapsed()),
                     Ok(false) => Done::Unchanged,
@@ -2272,7 +2278,8 @@ impl Run<'_> {
         let mut out = if is_unnamed {
             self.format_unnamed_stdin(&configs)
         } else {
-            let mut ignored = match Ignored::new(options, &environment.cwd, configs.flavor) {
+            let (cwd, is_native) = (&environment.cwd, self.is_native);
+            let mut ignored = match Ignored::new(options, cwd, configs.flavor, is_native) {
                 Ok(ignored) => ignored,
                 Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
             };

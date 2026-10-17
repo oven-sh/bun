@@ -253,6 +253,28 @@ pub(crate) fn usage_error(command: &str, message: &[u8]) -> ! {
     Global::exit(2);
 }
 
+/// Prints what `bun lint`, `bun fmt` or `bun check` has to say, and returns the exit code. `stdout` is what was asked for: the
+/// formatted text, the report, a list. `Output` drops write errors, and with exit code 0 a script like
+/// `bun fmt --stdin-filepath f < f > f.tmp && mv f.tmp f` would then lose `f` on a full disk. So that's an error here. A reader
+/// that has gone away (`| head`) isn't.
+pub(crate) fn print(stdout: &[u8], stderr: &[u8], exit_code: u8) -> u8 {
+    let written = bun_sys::write_all_to_stdio(bun_core::Fd::stdout(), stdout);
+    let _ = Output::error_writer().write_all(stderr);
+    let exit_code = match written {
+        Err(error) if error.get_errno() != bun_sys::E::EPIPE => {
+            let why = error.msg().unwrap_or(b"unknown error");
+            Output::err_generic(
+                "Cannot write standard output: {}: {}",
+                (BStr::new(error.name()), BStr::new(why)),
+            );
+            2
+        }
+        _ => exit_code,
+    };
+    Output::flush();
+    exit_code
+}
+
 /// Calls `run` with what it takes from this process, prints what it returns, and exits.
 /// `command`: `lint` or `format`. `cwd`: its `--cwd`.
 pub(crate) fn run_and_exit(
@@ -304,11 +326,9 @@ pub(crate) fn run_and_exit(
     };
     let outcome = run(&environment);
     // The report is the output. Everything else is printed separately.
-    let _ = Output::writer().write_all(&outcome.stdout);
-    let _ = Output::error_writer().write_all(&outcome.stderr);
-    Output::flush();
+    let exit_code = print(&outcome.stdout, &outcome.stderr, outcome.exit_code);
     js_engine.end_all();
-    Global::exit(u32::from(outcome.exit_code));
+    Global::exit(u32::from(exit_code));
 }
 
 impl LintCommand {

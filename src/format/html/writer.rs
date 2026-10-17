@@ -286,13 +286,20 @@ impl<'w, 'f> Writer<'w, 'f> {
     /// Text that another formatter has printed for lines that start where these do. A line break that is part of
     /// a text in it is `\r\n`: see `FormatOptions::is_in_markdown`.
     pub(crate) fn printed_text(&mut self, text: &[u8]) {
+        // A formatter only leaves blanks at the end of a line if they have to stay, and a `hardline` trims them. Where
+        // nothing is indented, the line break can be part of the text instead.
+        let keeps_blanks = self.indent_level == Some(0);
         let mut rest = text;
         loop {
             // Up to the first line break that is not part of a text.
             let (mut end, mut has_line_breaks) = (0, false);
             while let Some(at) =
                 strings::index_of_char_usize(&rest[end..], b'\n').map(|at| end + at)
-                && rest[..at].ends_with(b"\r")
+                && match rest[..at].last() {
+                    Some(b'\r') => true,
+                    Some(b' ' | b'\t') => keeps_blanks,
+                    _ => false,
+                }
             {
                 (end, has_line_breaks) = (at + 1, true);
             }

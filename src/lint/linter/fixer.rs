@@ -95,7 +95,7 @@ pub struct FixReport {
     pub result: LintResult,
     /// The fixes undo each other, so fixing was given up. ESLint warns about it.
     pub is_circular: bool,
-    /// The rules whose fixes, all in one pass, made a text that cannot be parsed. `output` is the text before that pass.
+    /// The rules whose fixes, all in one pass, [broke the syntax](breaks_syntax). `output` is the text before that pass.
     pub broken_by: Option<Vec<RuleId>>,
 }
 
@@ -106,6 +106,14 @@ fn is_fatal(result: &LintResult) -> bool {
 /// The text cannot be parsed. What is said about a comment with a configuration that cannot be read is fatal, too.
 pub fn is_parse_error(message: &LintMessage) -> bool {
     message.is_fatal && message.message.starts_with(b"Parsing error: ")
+}
+
+/// Whether the fixes that made the text that `result` is about have to be taken back. Either the text cannot be parsed, or it
+/// has more [errors that the parser lets pass](LintResult::tolerated_errors) than the text before the fixes, which had
+/// `tolerated_before`. The next pass would work on broken code, and taking that pass back would leave the broken code there.
+pub fn breaks_syntax(result: &LintResult, tolerated_before: usize) -> bool {
+    is_fatal(result) && result.messages.iter().all(is_parse_error)
+        || result.tolerated_errors > tolerated_before
 }
 
 /// oxlint's error for a name that is declared twice. It isn't from oxc's parser, which takes such a text.
@@ -119,12 +127,12 @@ pub fn is_redeclaration(message: &LintMessage) -> bool {
 fn without_the_last_pass(
     before: Vec<u8>,
     (rules, was_fixed, fixes): (Vec<RuleId>, bool, usize),
-    lint: &mut dyn FnMut(&[u8]) -> LintResult,
+    lint: &mut dyn FnMut(&[u8], bool) -> LintResult,
 ) -> FixReport {
     FixReport {
         is_fixed: was_fixed,
         fixes,
-        result: lint(&before),
+        result: lint(&before, false),
         output: before,
         is_circular: false,
         broken_by: Some(rules),
@@ -132,29 +140,31 @@ fn without_the_last_pass(
 }
 
 /// ESLint's `Linter.verifyAndFix`: lints and fixes until nothing is left to fix, ten times at most.
-/// `lint` parses and lints the text that it is given. Unlike ESLint, it takes back the fixes of a pass after which the text cannot
-/// be parsed.
+/// `lint` parses and lints the text that it is given, and is told whether fixes have just made that text. Unlike ESLint, it takes
+/// back the fixes of a pass that [breaks the syntax](breaks_syntax).
 pub fn verify_and_fix(
     text: &[u8],
     should_fix: &dyn Fn(&LintMessage) -> bool,
-    lint: &mut dyn FnMut(&[u8]) -> LintResult,
+    lint: &mut dyn FnMut(&[u8], bool) -> LintResult,
 ) -> FixReport {
     let mut current = text.to_vec();
     let mut previous: Option<Vec<u8>> = None;
     let (mut is_fixed, mut is_circular, mut fixes) = (false, false, 0);
     // About the previous pass: the rules whose fixes it applied, then `is_fixed` and `fixes` as they were before it.
     let mut last_pass: Option<(Vec<RuleId>, bool, usize)> = None;
+    // [`LintResult::tolerated_errors`] of `previous`.
+    let mut tolerated_before = 0;
     let mut passes = 0;
     loop {
         passes += 1;
-        let mut result = lint(&current);
+        let mut result = lint(&current, passes > 1);
         let is_fatal = is_fatal(&result);
-        if is_fatal
-            && result.messages.iter().all(is_parse_error)
+        if breaks_syntax(&result, tolerated_before)
             && let (Some(before), Some(pass)) = (previous.take(), last_pass.take())
         {
             return without_the_last_pass(before, pass, lint);
         }
+        tolerated_before = result.tolerated_errors;
         let fixed = apply_fixes(&current, std::mem::take(&mut result.messages), should_fix);
         result.messages = fixed.remaining;
         if is_fatal {
@@ -178,9 +188,8 @@ pub fn verify_and_fix(
         if is_circular || !fixed.is_fixed || passes >= MAX_AUTOFIX_PASSES {
             // The messages are about the text before the last fixes.
             if fixed.is_fixed {
-                result = lint(&current);
-                if self::is_fatal(&result)
-                    && result.messages.iter().all(is_parse_error)
+                result = lint(&current, true);
+                if breaks_syntax(&result, tolerated_before)
                     && let (Some(before), Some(pass)) = (previous.take(), last_pass.take())
                 {
                     return without_the_last_pass(before, pass, lint);

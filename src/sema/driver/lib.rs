@@ -1228,7 +1228,7 @@ impl Incomplete {
     }
 }
 
-/// A program that was not made: `PlanOptions::refuses_broken_configurations`.
+/// A program that was not made: its configuration file can't be read, or `PlanOptions::refuses_broken_configurations`.
 pub struct Refused {
     pub config_path: Vec<u8>,
     /// The errors of reading the configuration file, or else those of the program about its options and its files.
@@ -2538,31 +2538,29 @@ fn check_project_of(
             Ok(project) => project,
             // `tscCompilation`: "these are unrecoverable errors--exit to report them as
             // diagnostics". To a build, `upToDateStatusTypeConfigFileNotFound`.
-            Err(errors) if request.plan_options.refuses_broken_configurations => {
+            Err(errors) => {
                 let is_case_sensitive = disk.is_case_sensitive();
                 let files = of.named.map(|it| it.1).unwrap_or_default().iter();
                 let mut last = None;
+                let diagnostics: Vec<Diagnostic> = (errors.iter())
+                    .map(|it| of_config_error(disk, config, it, &mut last))
+                    .collect();
+                if !request.plan_options.refuses_broken_configurations {
+                    match request.build {
+                        true => report
+                            .diagnostics
+                            .push(global(6053, &[displayed_path(config)])),
+                        false => report.diagnostics.extend(diagnostics.iter().cloned()),
+                    }
+                    report.load_time = started.elapsed();
+                }
                 report.refused.push(Refused {
                     config_path: config.to_vec(),
-                    diagnostics: (errors.iter())
-                        .map(|it| of_config_error(disk, config, it, &mut last))
-                        .collect(),
+                    diagnostics,
                     files: files
                         .map(|it| to_path(it, is_case_sensitive).into_owned())
                         .collect(),
                 });
-                return report;
-            }
-            Err(errors) => {
-                let mut last = None;
-                let errors = (errors.iter()).map(|it| of_config_error(disk, config, it, &mut last));
-                match request.build {
-                    true => report
-                        .diagnostics
-                        .push(global(6053, &[displayed_path(config)])),
-                    false => report.diagnostics.extend(errors),
-                }
-                report.load_time = started.elapsed();
                 return report;
             }
         },
@@ -3150,8 +3148,10 @@ fn check_with_references(
         not_found,
         ..
     } = graph;
-    // `buildOrClean`: "Circularity errors prevent any project from being built".
-    if !errors.is_empty() {
+    let reads_sources = request.plan_options.reads_sources_of_references && !request.build;
+    // `buildOrClean`: "Circularity errors prevent any project from being built". A program that reads the sources of what it
+    // references waits for no build, like that of `tsc -p`, which doesn't look for a circle.
+    if !errors.is_empty() && !reads_sources {
         report.diagnostics.append(&mut errors);
         report.load_time = started.elapsed();
         return report;
@@ -3196,7 +3196,6 @@ fn check_with_references(
             Some((output_dir.clone(), root_dir.to_vec()))
         })
         .collect();
-    let reads_sources = request.plan_options.reads_sources_of_references && !request.build;
     // Then there is one program, that of `root`, and it reads what is on the disk. Otherwise what one program emits
     // another reads, and several run at the same time.
     let is_one_program = reads_sources && !reports_references;

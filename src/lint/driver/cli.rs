@@ -706,7 +706,11 @@ pub(crate) fn severity(name: &[u8], value: &[u8]) -> Result<Severity, UsageError
 }
 
 fn object(name: &[u8], value: &[u8], into: &mut Vec<(Vec<u8>, Json)>) -> Result<(), UsageError> {
-    let Some(entries) = bun_lint::linter::parse_levn_object(value) else {
+    let entries = match name {
+        b"rule" => bun_lint::linter::parse_levn_rules(value),
+        _ => bun_lint::linter::parse_levn_object(value),
+    };
+    let Some(entries) = entries else {
         return error(&[
             b"Invalid value for option '",
             name,
@@ -802,7 +806,7 @@ impl Options {
                 for (at, place) in self.rules_of_bunfig.iter_mut().enumerate() {
                     if (self.rule.get(at)).is_some_and(|it| said.iter().any(|said| said.0 == it.0))
                     {
-                        place.setting = Json::Null;
+                        place.setting = None;
                     }
                 }
                 merge(&mut self.rule, said);
@@ -1044,7 +1048,8 @@ impl Options {
         };
         for (at, (id, setting)) in rules.iter_mut().enumerate() {
             // `--rule` may have replaced this entry.
-            if places.get(at).is_none_or(|it| it.setting != *setting) {
+            let written = places.get(at).and_then(|it| it.setting.as_ref());
+            if written != Some(&*setting) {
                 continue;
             }
             let (prefix, name) = parse_rule_id(id);

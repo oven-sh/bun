@@ -57,15 +57,17 @@ describe("cart", () => {
 });
 ```
 
-A call to one of these names is reported too if the name is imported from another package:
+A name that the file imports from another package, or declares itself, isn't a global:
 
-{/* bad */}
+{/* good */}
 ```ts
-import { test } from "node:test";
+import { expect, test } from "@playwright/test";
 
-test("starts empty", () => {});
+test("starts empty", async ({ page }) => {
+  await expect(page.getByRole("listitem")).toHaveCount(0);
+});
 ```
 
 ## When not to use it
 
-Turn it off for files that use another test runner with the same names.
+Turn it off for files that use the globals of another test runner with the same names.

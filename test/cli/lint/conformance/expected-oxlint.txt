@@ -1,7 +1,41 @@
+FAIL oxlint/unicorn/no-unnecessary-await#10 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#11 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#12 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#13 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#14 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#15 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#16 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#22 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#23 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#24 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#25 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#26 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#27 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#28 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#29 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#30 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#31 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#32 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#33 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#34 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#35 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#36 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#37 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#38 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#39 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#40 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#43 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#44 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#47 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#48 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#49 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#54 output differs
+FAIL oxlint/unicorn/no-unnecessary-await#55 output differs
+FAIL oxlint/vitest/prefer-importing-vitest-globals#15 messages differ
 
 1 messages lack the help that oxlint has
 
-2 cases have their messages in another order
+0 cases have their messages in another order
 
-504 rules, 504 without failures, 0 not implemented
-27702 cases passed, 0 failed, 63 skipped
+504 rules, 502 without failures, 0 not implemented
+27668 cases passed, 34 failed, 63 skipped

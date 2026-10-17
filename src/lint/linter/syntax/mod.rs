@@ -15,12 +15,12 @@ mod oxc_typescript;
 mod typescript_estree;
 
 use super::message::{Details, LintMessage, NotNumbers};
-use crate::ast::{File, Stmt};
+use crate::ast::{File, Stmt, StmtTag};
 use crate::context::Severity;
 use crate::language::{Parser, SourceType};
 use crate::span::Span;
 use crate::tokens::{skip_trivia, token_len};
-use bun_sema::hir::{Diagnostic, DiagnosticKind, StmtKind};
+use bun_sema::hir::{Diagnostic, DiagnosticKind, StmtKind, rare};
 use std::borrow::Cow;
 
 /// Why a parser throws, and where.
@@ -266,6 +266,41 @@ fn in_words_of_oxc<'a>(
         all.push(error.stage(Stage::Fatal));
     }
     (all, None)
+}
+
+/// How many syntax errors are in a file that is linted all the same. TypeScript's parser leaves them to the checker, and
+/// typescript-estree says nothing about them: `var a,` at the end of a line, `class A extends B, {}`. A fix must not add one.
+pub(super) fn tolerated_errors<'a>(file: &'a File<'a>) -> usize {
+    let is_syntax = |it: &&Diagnostic| {
+        matches!(
+            it.kind,
+            DiagnosticKind::Parse | DiagnosticKind::Js | DiagnosticKind::Grammar
+        ) && !file.is_in_jsdoc(it.start)
+    };
+    let found = file.hir.diagnostics.iter().filter(is_syntax).count();
+    if !file.has_rare_syntax(rare::ODD_DECLARATION) {
+        return found;
+    }
+    // The parser has no diagnostic for a list of declarations that ends with a comma.
+    let text = file.text();
+    let ends_with_comma = |it: &Stmt| {
+        let Some(StmtKind::Var(list)) = it.try_raw().map(|it| it.kind) else {
+            return false;
+        };
+        let declarations = file.hir.var_decls.get(list.range()).unwrap_or_default();
+        let after = declarations.last().map(|it| skip_trivia(text, it.loc.end));
+        after.is_some_and(|it| text.get(it as usize) == Some(&b','))
+    };
+    let lists = file.stmts_of_kind(StmtTag::Var);
+    found + lists.filter(ends_with_comma).count()
+}
+
+/// How many times the file declares a name again in a scope that already has it, where that's an error: two imports, an import
+/// and a `const`, two `let`. In JavaScript espree refuses such a file. In TypeScript only the type checker reports it (TS2300,
+/// TS2451, TS2440). What TypeScript merges doesn't count: overloads, an interface and a class, a namespace and a function, a type
+/// and a value. It makes the scopes of the file, so it's only for a text whose fixes are applied, or that fixes have made.
+pub fn redeclarations<'a>(file: &'a File<'a>) -> usize {
+    oxc::count_of_redeclarations(file)
 }
 
 /// Whether the parser of the configuration, which is neither espree nor that of typescript-eslint, may read what is a syntax error

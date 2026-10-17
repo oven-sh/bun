@@ -1073,6 +1073,10 @@ pub mod rare {
     /// A list of variable declarations is empty or declares with `using`, a `const` or a pattern in it has no initializer and
     /// isn't ambient, or the head of a `for-in` / `for-of` doesn't declare exactly one variable.
     pub const ODD_DECLARATION: u32 = 1 << 26;
+    /// `await`, `for await` or `await using` was read as a keyword at the top level.
+    pub const TOP_LEVEL_AWAIT: u32 = 1 << 27;
+    /// `import.meta`
+    pub const IMPORT_META: u32 = 1 << 28;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

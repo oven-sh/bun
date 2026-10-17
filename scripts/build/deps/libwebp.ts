@@ -2,12 +2,12 @@
  * libwebp — Google's reference WebP codec. Backs Bun.Image WebP
  * decode/encode plus the SharpYUV RGB→YUV converter the encoder prefers.
  *
- * mux/demux are the RIFF-container helpers: demux reads VP8X chunks (ICCP,
- * EXIF, XMP) out of an input WebP without touching the bitstream; mux
- * wraps a raw VP8/VP8L encode in a VP8X container so those chunks can be
- * attached on output. Only the ICCP chunk is used today (ICC profile
- * carry-through for #30197), but the full mux/demux is linked since the
- * TUs are tiny and the EXIF/XMP chunks will need the same plumbing later.
+ * mux is the RIFF-container writer: it wraps a raw VP8/VP8L encode in a VP8X
+ * container so chunks can be attached on output. Only the ICCP chunk is used
+ * today (ICC profile carry-through for #30197), but the whole of mux is
+ * linked since the TUs are tiny and the EXIF/XMP chunks will need the same
+ * plumbing later. Reading a chunk back out of an input is `iccp_chunk` in
+ * codec_webp.rs, not demux: see the DEMUX note below.
  *
  * DirectBuild: no config.h, no codegen. Every dsp/*_{sse2,sse41,neon,msa,
  * mips}*.c file self-guards on WEBP_USE_<ISA> (derived from compiler arch
@@ -75,11 +75,15 @@ const UTILS = [
   "rescaler_utils", "thread_utils", "utils",
 ];
 
-// RIFF container read/write — extracts/attaches the ICCP chunk so a
-// non-sRGB source (Display P3, Adobe RGB, Jpegli XYB) keeps its colour
-// meaning through a WebP re-encode. `anim_decode.c`/`anim_encode.c`
-// (WebPAnimDecoder/WebPAnimEncoder) are omitted: they layer ON TOP of
-// demux/mux, not the reverse, and Bun has no animated-WebP support.
+// RIFF container writer — attaches the ICCP chunk so a non-sRGB source
+// (Display P3, Adobe RGB, Jpegli XYB) keeps its colour meaning through a
+// WebP re-encode. `anim_decode.c`/`anim_encode.c` (WebPAnimDecoder/
+// WebPAnimEncoder) are omitted: they layer ON TOP of demux/mux, not the
+// reverse, and Bun has no animated-WebP support.
+//
+// Nothing calls demux, and the linker drops it. Its chunk lookups re-read the
+// caller's buffer, which JS can rewrite mid-decode, so `codec_webp.rs` reads
+// the ICCP chunk out of an input itself.
 const DEMUX = ["demux"];
 const MUX = ["muxedit", "muxinternal", "muxread"];
 

@@ -10,7 +10,7 @@
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, isASAN, rss, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isASAN, isDebug, rss, tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 
@@ -1222,9 +1222,716 @@ describe("concurrent terminals on one Image", () => {
     expect(out[0]).toBe(0xff);
     expect(out[1]).toBe(0xd8); // still JPEG
   });
+
+  // An input over ~1 KB is BORROWED, not copied, so a caller that refills one
+  // buffer with the next picture while a terminal is pending has the pool
+  // thread read bytes the JS thread is still writing. That is documented as
+  // not allowed, and the result must be a rejection or a wrong picture — never
+  // bytes from outside the decoder's own buffer.
+  //
+  // libwebp decodes in two passes over the input: `WebPDecodeRGBA` reports the
+  // dimensions its first header parse found, then allocates the output by the
+  // dimensions a later parse finds. A rewrite between the two leaves the
+  // decoder with a 16x16 allocation while the reported size is still 200x211,
+  // so `w * h * 4` bytes came out of a 1024-byte buffer: 167776 bytes of heap
+  // left the process inside a fulfilled output. The marker below is the pixels
+  // of OTHER pictures that the same process decoded, found in that output.
+  //
+  // A child process runs the fixture because the ASAN build stops on the read.
+  test("an input rewritten while a WebP pipeline is pending cannot leak heap bytes", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // BMP is the cheapest format to write by hand, and Bun.Image turns it
+        // into the flat-colour WebP files the race needs. Every file is under
+        // 200 bytes, so the input can change inside one decode's header parses.
+        // The pixels repeat to the end of the picture. BMP stores B,G,R,X.
+        const bmp = (w, h, pixels) => {
+          const b = Buffer.alloc(54 + w * h * 4);
+          b.write("BM");
+          b.writeUInt32LE(b.length, 2);
+          b.writeUInt32LE(54, 10);
+          b.writeUInt32LE(40, 14);
+          b.writeInt32LE(w, 18);
+          b.writeInt32LE(-h, 22);
+          b.writeUInt16LE(1, 26);
+          b.writeUInt16LE(32, 28);
+          b.fill(Buffer.from(pixels), 54);
+          return b;
+        };
+        const MARK = Buffer.from("SECRET-PIXELS-OF-ANOTHER-PICTURE"); // 8 pixels
+        const markPixels = [];
+        for (let p = 0; p < 8; p++) markPixels.push(MARK[p * 4 + 2], MARK[p * 4 + 1], MARK[p * 4], 255);
+        const secrets = [16, 64, 100].map(s => bmp(s, s, markPixels));
+        // The marker as the RGBA bytes an output would carry.
+        const want = Buffer.from([...MARK].map((c, i) => (i % 4 === 3 ? 255 : c))).subarray(0, 12);
+        // 16 pixels of the byte ASAN fills a new allocation with: canvas that no decode wrote.
+        const blank = Buffer.alloc(64, Number(process.env.WEBP_RACE_FILL));
+
+        // One 16x16 and one 200x211 file per bitstream: VP8L and VP8 size
+        // their output in different branches of the decoder.
+        const n = 2048; // over fastSizeLimit elements, so Bun.Image borrows instead of copying
+        const pairs = [];
+        for (const opts of [{ lossless: true }, { quality: 80 }]) {
+          const pair = [];
+          for (const [w, h, c] of [[16, 16, 1], [200, 211, 2]]) {
+            const padded = new Uint8Array(n);
+            padded.set(await new Bun.Image(bmp(w, h, [c, c, c, 255])).webp(opts).bytes());
+            pair.push(padded);
+          }
+          pairs.push(pair);
+        }
+        const buf = new Uint8Array(n);
+
+        let outputs = 0, leaked = 0, unwritten = 0, rejected = 0, rounds = 0;
+        // Every round is an independent try. Past the minimum, keep going
+        // while few decodes have seen the rewrite, by the clock and not by a
+        // count of rounds: a box where the writer and the pool rarely overlap
+        // gets the tries its speed allows. About one in four of those decodes
+        // completes as the small picture, which is the case the fill finds.
+        const minRounds = Number(process.env.WEBP_RACE_ROUNDS);
+        const withMarker = process.env.WEBP_RACE_MARKER === "1";
+        const deadline = performance.now() + 20_000;
+        for (let round = 0; round < minRounds || (rejected < 16 && performance.now() < deadline); round++) {
+          rounds++;
+          const [small, large] = pairs[round % pairs.length];
+          buf.set(large);
+          const jobs = [];
+          for (let i = 0; i < 32; i++) {
+            // compressionLevel 0 keeps the decoded bytes readable in the output.
+            jobs.push(new Bun.Image(buf).png({ compressionLevel: 0 }).bytes().catch(() => (rejected++, null)));
+            // Pictures of the marker, decoded and encoded on the same pool, so
+            // the heap around the victim's output buffer holds their pixels.
+            if (withMarker) {
+              jobs.push(
+                new Bun.Image(secrets[i % 3])
+                  .webp({ lossless: true })
+                  .bytes()
+                  .then(w => new Bun.Image(w).resize(2, 2).png().bytes())
+                  .then(() => null, () => null),
+              );
+            }
+          }
+          let done = false;
+          const all = Promise.all(jobs).then(r => ((done = true), r));
+          while (!done) {
+            // Bursts by the clock, so a slow build still settles its jobs.
+            const until = performance.now() + 4;
+            do {
+              for (let k = 0; k < 64; k++) {
+                buf.set(large);
+                buf.set(small);
+              }
+            } while (performance.now() < until);
+            await new Promise(r => setImmediate(r));
+          }
+          for (const out of await all) {
+            if (!out) continue;
+            outputs++;
+            if (Buffer.from(out).includes(want)) leaked++;
+            if (Buffer.from(out).includes(blank)) unwritten++;
+          }
+        }
+
+        // With the writer stopped, the same buffer decodes to its own picture.
+        const calm = [];
+        for (const [, large] of pairs) {
+          buf.set(large);
+          const png = Buffer.from(await new Bun.Image(buf).png().bytes());
+          calm.push(png.readUInt32BE(16) + "x" + png.readUInt32BE(20));
+        }
+        console.log(JSON.stringify({ rounds, outputs, leaked, unwritten, rejected, calm }));
+      `,
+      ],
+      // ASAN stops on the over-read itself, in the first rounds. Without it the
+      // marker is the only witness, and it takes more tries to catch.
+      //
+      // A decode of the small picture into the canvas of the large one is no
+      // over-read: it completes, and leaves most of the canvas as the
+      // allocator gave it. Under ASAN that is the fill byte, so an output
+      // that carries a run of it was accepted with canvas nothing wrote.
+      env: {
+        ...bunEnv,
+        WEBP_RACE_ROUNDS: isASAN || isDebug ? "6" : "12",
+        WEBP_RACE_MARKER: isASAN ? "0" : "1",
+        WEBP_RACE_FILL: "167",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "malloc_fill_byte=167", "max_malloc_fill_size=1073741824"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A sanitizer stop on the over-read leaves no summary line behind.
+    const summary = stdout.trim().split("\n").at(-1) ?? "";
+    expect({ summary, stderr: stderr.slice(-3000), exitCode }).toMatchObject({ exitCode: 0 });
+    const { rounds, leaked, unwritten, rejected, calm } = JSON.parse(summary);
+    // A run in which no decode saw the rewrite shows nothing about the decode, so it does not pass.
+    expect(rejected, `inconclusive: no decode saw the rewrite in ${rounds} rounds`).toBeGreaterThan(0);
+    expect({ leaked, unwritten, calm }).toEqual({
+      leaked: 0,
+      unwritten: 0,
+      calm: ["200x211", "200x211"],
+    });
+  });
+
+  // The same rewrite, against the part of the decode that reads the colour
+  // profile out of the RIFF container. The writer here only changes the ICCP
+  // chunk's four-character tag, so the picture is byte-identical throughout
+  // and every pipeline must fulfil.
+  //
+  // libwebp's demuxer cannot survive that: it records chunk OFFSETS and
+  // re-reads the tag from the caller's buffer on every lookup, so
+  // `WebPDemuxGetChunk` counts the matching chunks in one walk and finds the
+  // Nth in a second walk. A tag that changes in between leaves the count
+  // non-zero and the lookup NULL, and libwebp dereferences that
+  // (`SetChunk`, demux.c:938).
+  test("an input whose ICCP tag is rewritten mid-pipeline cannot crash the decode", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const bmp = (w, h, c) => {
+          const b = Buffer.alloc(54 + w * h * 4);
+          b.write("BM");
+          b.writeUInt32LE(b.length, 2);
+          b.writeUInt32LE(54, 10);
+          b.writeUInt32LE(40, 14);
+          b.writeInt32LE(w, 18);
+          b.writeInt32LE(-h, 22);
+          b.writeUInt16LE(1, 26);
+          b.writeUInt16LE(32, 28);
+          b.fill(Buffer.from([c, c, c, 255]), 54);
+          return b;
+        };
+        const chunk = (tag, payload) => {
+          const h = Buffer.alloc(8);
+          h.write(tag, 0, "latin1");
+          h.writeUInt32LE(payload.length, 4);
+          return Buffer.concat([h, payload, Buffer.alloc(payload.length & 1)]);
+        };
+        const le24 = v => Buffer.from([v & 255, (v >> 8) & 255, (v >> 16) & 255]);
+
+        // A colour profile only lives in a VP8X container, so wrap a bare
+        // VP8L encode in one: VP8X (ICCP flag, canvas size) + ICCP + VP8L.
+        // The chunks after ICCP are filler: a long list puts libwebp's two
+        // walks far apart in time, which is the window this test needs.
+        const W = 32, H = 32;
+        const bare = Buffer.from(await new Bun.Image(bmp(W, H, 9)).webp({ lossless: true }).bytes());
+        const profile = Buffer.alloc(512, 7);
+        const body = Buffer.concat([
+          Buffer.from("WEBP"),
+          chunk("VP8X", Buffer.concat([Buffer.from([0x20, 0, 0, 0]), le24(W - 1), le24(H - 1)])),
+          chunk("ICCP", profile),
+          Buffer.alloc(4096 * 10, chunk("FILL", Buffer.alloc(2))), // 4096 chunks of 10 bytes
+          bare.subarray(12), // the "VP8L" chunk, header and all
+        ]);
+        const head = Buffer.alloc(8);
+        head.write("RIFF");
+        head.writeUInt32LE(body.length, 4);
+        const file = Buffer.concat([head, body]);
+        const at = file.indexOf("ICCP");
+
+        const buf = new Uint8Array(Math.max(file.length, 2048)); // borrowed, not copied
+        buf.set(file);
+        const input = buf.subarray(0, file.length);
+        const ICCP = Buffer.from("ICCP");
+        const JUNK = Buffer.from("JUNK");
+
+        let ok = 0, rejected = 0;
+        for (let round = 0; round < Number(process.env.WEBP_RACE_ROUNDS); round++) {
+          const jobs = [];
+          for (let i = 0; i < 32; i++) {
+            jobs.push(new Bun.Image(input).resize(4, 4).png().bytes().then(() => ok++, () => rejected++));
+          }
+          let done = false;
+          const all = Promise.all(jobs).then(() => (done = true));
+          while (!done) {
+            const until = performance.now() + 4;
+            do {
+              for (let k = 0; k < 64; k++) {
+                buf.set(JUNK, at);
+                buf.set(ICCP, at);
+              }
+            } while (performance.now() < until);
+            await new Promise(r => setImmediate(r));
+          }
+          await all;
+        }
+
+        // With the writer stopped, the profile still travels into the output.
+        buf.set(file);
+        const out = Buffer.from(await new Bun.Image(input).webp({ lossless: true }).bytes());
+        const back = out.indexOf("ICCP");
+        const carried = back >= 0 && out.readUInt32LE(back + 4) === profile.length;
+        console.log(JSON.stringify({ ok, rejected, carried }));
+      `,
+      ],
+      // A round is 32 decodes. An optimized build needs more of them to put a
+      // rewrite between the demuxer's two walks.
+      env: { ...bunEnv, WEBP_RACE_ROUNDS: isASAN || isDebug ? "8" : "32" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A crash in the chunk lookup leaves no summary line behind.
+    const summary = stdout.trim().split("\n").at(-1) ?? "";
+    expect({ summary, stderr: stderr.slice(-3000), exitCode }).toMatchObject({ exitCode: 0 });
+    const { ok, rejected, carried } = JSON.parse(summary);
+    // The picture bytes never change, so nothing may reject either.
+    expect({ ok: ok > 0, rejected, carried }).toEqual({ ok: true, rejected: 0, carried: true });
+  });
 });
 
-// ─── 10. random-byte fuzz (cheap, bounded) ───────────────────────────────────
+// ─── 10. hand-built RIFF containers ──────────────────────────────────────────
+
+// A colour profile rides in an ICCP chunk of a VP8X container, and the decode
+// reads it out of the input itself: libwebp's demuxer re-reads the caller's
+// buffer on every lookup, which a rewritten input turns into a crash. These
+// cases pin which containers yield a profile, which yield none, and which are
+// refused outright. The answers are libwebp's demuxer's, on bytes that do not
+// change, so a container it accepted keeps its profile and one it refused
+// stays without. Every case is a whole decode + re-encode, not a unit call.
+// `bare` is RIFF + VP8L with no container, so its `subarray(12)` is the
+// picture chunk every case below wraps.
+const bareWebp = Buffer.from(
+  await new Bun.Image(makePng(32, 32, () => [9, 9, 9, 255])).webp({ lossless: true }).bytes(),
+);
+// A lossy picture whose chunk, taken for a VP8X chunk, would flag a profile:
+// its first byte is 0x20 or 0x30. One quality in eight gives such a picture.
+const flagLikeWebp = await (async () => {
+  const src = makePng(32, 32, (x, y) => [x * 8, y * 8, 40, 255]);
+  for (let quality = 1; quality <= 100; quality++) {
+    const file = Buffer.from(await new Bun.Image(src).webp({ quality }).bytes());
+    if (file.toString("latin1", 12, 16) === "VP8 " && (file[20] & 0xef) === 0x20) return file;
+  }
+  throw new Error("no quality gives a picture that starts with 0x20 or 0x30");
+})();
+// A lossy picture with transparency: the encoder writes VP8X + ALPH + "VP8 ".
+const lossyAlphaWebp = Buffer.from(
+  await new Bun.Image(makePng(32, 32, (x, y) => [x * 8, y * 8, 40, 100 + ((x * 7 + y * 3) % 100)]))
+    .webp({ quality: 80 })
+    .bytes(),
+);
+
+describe("WebP container walk", () => {
+  const W = 32;
+  const H = 32;
+  const le24 = (v: number) => Buffer.from([v & 255, (v >> 8) & 255, (v >> 16) & 255]);
+  /** `pad` false omits the pad byte an odd payload must have. */
+  function chunk(tag: string, payload: Uint8Array, pad = true): Buffer {
+    const head = Buffer.alloc(8);
+    head.write(tag, 0, "latin1");
+    head.writeUInt32LE(payload.length, 4);
+    return Buffer.concat([head, payload, Buffer.alloc(pad ? payload.length & 1 : 0)]);
+  }
+  /** `extra` appends bytes a reader must skip; `flags` is the feature bitmask. */
+  const vp8x = (flags: number, w = W, h = H, extra = 0) =>
+    chunk("VP8X", Buffer.concat([Buffer.from([flags, 0, 0, 0]), le24(w - 1), le24(h - 1), Buffer.alloc(extra)]));
+  /** `declare` skews the RIFF length; `tail` appends bytes outside it. */
+  function riff(chunks: Uint8Array[], { declare = 0, tail = Buffer.alloc(0) } = {}): Buffer {
+    const body = Buffer.concat([Buffer.from("WEBP"), ...chunks]);
+    const head = Buffer.alloc(8);
+    head.write("RIFF");
+    head.writeUInt32LE(body.length + declare, 4);
+    return Buffer.concat([head, body, tail]);
+  }
+  // Distinctive bytes, so a profile in the output is this profile.
+  const profile = (n: number) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + 7) & 255);
+  const ANIM = 0x02;
+  const ALPHA = 0x10;
+  const ICCP = 0x20;
+
+  const bare = bareWebp;
+  const image = bare.subarray(12);
+  const payload = bare.subarray(20, 20 + bare.readUInt32LE(16));
+  // An odd-length picture payload, for the pad-byte rules.
+  const oddImage = Buffer.concat([payload, Buffer.alloc((payload.length & 1) ^ 1)]);
+  /** One chunk of a file the encoder wrote, header and pad byte included. */
+  function chunkOf(file: Buffer, tag: string): Buffer {
+    for (let at = 12; at + 8 <= file.length; ) {
+      const size = file.readUInt32LE(at + 4);
+      const end = at + 8 + size + (size & 1);
+      if (file.toString("latin1", at, at + 4) === tag) return file.subarray(at, end);
+      at = end;
+    }
+    throw new Error(`no ${tag} chunk`);
+  }
+  const alph = chunkOf(lossyAlphaWebp, "ALPH");
+  const lossy = chunkOf(lossyAlphaWebp, "VP8 ");
+  // Stands for a chunk that holds no alpha plane: nothing decodes it after the picture.
+  const stray = chunk("ALPH", profile(8));
+  const anim = chunk("ANIM", Buffer.alloc(6));
+  /** A frame of an animation: 16 bytes of position, size and timing, then the frame's own chunks. */
+  const frame = (parts: Uint8Array[], w = W, h = H) =>
+    chunk("ANMF", Buffer.concat([le24(0), le24(0), le24(w - 1), le24(h - 1), le24(100), Buffer.alloc(1), ...parts]));
+
+  const cases: [name: string, file: Uint8Array, want: number | "none" | "rejects"][] = [
+    ["no container", bare, "none"],
+    [
+      "a picture with no VP8X chunk, then ICCP",
+      riff([flagLikeWebp.subarray(12), chunk("ICCP", profile(512)), image]),
+      "none",
+    ],
+    ["ICCP right after VP8X", riff([vp8x(ICCP), chunk("ICCP", profile(512)), image]), 512],
+    ["ICCP after the picture", riff([vp8x(ICCP), image, chunk("ICCP", profile(512))]), 512],
+    ["ICCP of an odd length", riff([vp8x(ICCP), chunk("ICCP", profile(383)), image]), 383],
+    ["ICCP of one byte", riff([vp8x(ICCP), chunk("ICCP", profile(1)), image]), 1],
+    [
+      "an odd chunk before ICCP",
+      riff([vp8x(ICCP), chunk("XTRA", profile(3)), chunk("ICCP", profile(512)), image]),
+      512,
+    ],
+    [
+      "the first of two ICCP chunks",
+      riff([vp8x(ICCP), chunk("ICCP", profile(100)), chunk("ICCP", profile(200)), image]),
+      100,
+    ],
+    ["ICCP without the flag", riff([vp8x(0), chunk("ICCP", profile(512)), image]), "none"],
+    ["the flag without an ICCP chunk", riff([vp8x(ICCP), image]), "none"],
+    ["an empty ICCP chunk", riff([vp8x(ICCP), chunk("ICCP", profile(0)), image]), "none"],
+    ["a reserved feature flag", riff([vp8x(ICCP | 0x01), chunk("ICCP", profile(512)), image]), "none"],
+    [
+      "the animation flag",
+      riff([vp8x(ICCP | ANIM), chunk("ICCP", profile(512)), chunk("ANIM", profile(6)), image]),
+      "rejects",
+    ],
+    [
+      "an ANIM chunk before the picture",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), chunk("ANIM", profile(6)), image]),
+      "none",
+    ],
+    [
+      "an ANMF chunk in a still container",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), chunk("ANMF", profile(16)), image]),
+      "none",
+    ],
+    ["a second VP8X chunk", riff([vp8x(ICCP), chunk("ICCP", profile(512)), vp8x(ICCP), image]), "none"],
+    ["two pictures", riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, image]), "none"],
+    [
+      "an alpha plane after a lossless picture",
+      riff([vp8x(ICCP | ALPHA), chunk("ICCP", profile(512)), image, chunk("ALPH", profile(8))]),
+      "none",
+    ],
+    ["stray bytes inside the RIFF chunk", riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, profile(4)]), "none"],
+    ["bytes after the RIFF chunk", riff([vp8x(ICCP), chunk("ICCP", profile(512)), image], { tail: profile(33) }), 512],
+    [
+      "a RIFF length past the buffer",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image], { declare: 100 }),
+      "rejects",
+    ],
+    ["a last ICCP chunk without its pad byte", riff([vp8x(ICCP), image, chunk("ICCP", profile(383), false)]), "none"],
+    ["an ICCP chunk without its pad byte", riff([vp8x(ICCP), chunk("ICCP", profile(383), false), image]), "rejects"],
+    [
+      "an odd picture chunk with its pad byte",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), chunk("VP8L", oddImage)]),
+      512,
+    ],
+    [
+      "an odd picture chunk without its pad byte",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), chunk("VP8L", oddImage, false)]),
+      "rejects",
+    ],
+    ["trailing bytes in the VP8X chunk", riff([vp8x(ICCP, W, H, 2), chunk("ICCP", profile(512)), image]), "rejects"],
+    ["a canvas larger than the picture", riff([vp8x(ICCP, 64, 64), chunk("ICCP", profile(512)), image]), "rejects"],
+    ["a truncated chunk header", riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, Buffer.from("IC")]), "none"],
+    [
+      "a chunk longer than the file",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)).subarray(0, 100), image]),
+      "rejects",
+    ],
+    ["VP8X and ICCP with no picture", riff([vp8x(ICCP), chunk("ICCP", profile(512))]), "rejects"],
+    ["a VP8X header alone", riff([vp8x(ICCP)]), "rejects"],
+
+    // An alpha plane belongs right before a lossy picture.
+    ["a lossy picture with its alpha plane", riff([vp8x(ICCP | ALPHA), chunk("ICCP", profile(512)), alph, lossy]), 512],
+    ["the same without the alpha flag", riff([vp8x(ICCP), chunk("ICCP", profile(512)), alph, lossy]), 512],
+    [
+      "ICCP after a picture with its alpha plane",
+      riff([vp8x(ICCP | ALPHA), alph, lossy, chunk("ICCP", profile(512))]),
+      512,
+    ],
+    [
+      "an alpha plane before a lossless picture",
+      riff([vp8x(ICCP | ALPHA), chunk("ICCP", profile(512)), alph, image]),
+      "none",
+    ],
+    [
+      "two alpha planes before the picture",
+      riff([vp8x(ICCP | ALPHA), chunk("ICCP", profile(512)), alph, alph, lossy]),
+      "none",
+    ],
+    [
+      "a chunk between the alpha plane and the picture",
+      riff([vp8x(ICCP | ALPHA), chunk("ICCP", profile(512)), alph, chunk("XTRA", profile(4)), lossy]),
+      "none",
+    ],
+    [
+      "ICCP between the alpha plane and the picture",
+      riff([vp8x(ICCP | ALPHA), alph, chunk("ICCP", profile(512)), lossy]),
+      "none",
+    ],
+    // After the picture it is dropped, and an error when the container flags alpha.
+    [
+      "an alpha plane after a lossy picture",
+      riff([vp8x(ICCP | ALPHA), chunk("ICCP", profile(512)), lossy, stray]),
+      "none",
+    ],
+    [
+      "an alpha plane after the picture, alpha flag clear",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, stray]),
+      512,
+    ],
+    [
+      "ICCP after an alpha plane that follows the picture",
+      riff([vp8x(ICCP), image, stray, chunk("ICCP", profile(512))]),
+      512,
+    ],
+    [
+      "two alpha planes after the picture",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, stray, stray]),
+      "none",
+    ],
+    [
+      "a chunk between the picture and an alpha plane",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, chunk("XTRA", profile(4)), stray]),
+      "none",
+    ],
+
+    // ANIM after the picture is read and ignored: it needs its 6 bytes, pad byte counted.
+    ["an ANIM chunk after the picture", riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim]), 512],
+    [
+      "an ANIM chunk of 5 bytes",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, chunk("ANIM", profile(5))]),
+      512,
+    ],
+    [
+      "an ANIM chunk of 4 bytes",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, chunk("ANIM", profile(4))]),
+      "none",
+    ],
+
+    // A frame in a still container is parsed and dropped. One that does not parse is an error.
+    ["a frame after the picture", riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([image])]), 512],
+    [
+      "a frame with its alpha plane",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([alph, lossy])]),
+      512,
+    ],
+    ["two frames", riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([image]), frame([lossy])]), 512],
+    [
+      "a frame that holds an unknown chunk",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([chunk("XTRA", profile(10))])]),
+      512,
+    ],
+    [
+      "a frame with no ANIM chunk before it",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, frame([image])]),
+      "none",
+    ],
+    [
+      "a frame chunk shorter than its 16 bytes",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, chunk("ANMF", Buffer.alloc(12))]),
+      "none",
+    ],
+    [
+      "a frame chunk with nothing after its 16 bytes",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([])]),
+      "none",
+    ],
+    [
+      "a frame of 65536 by 65536",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([image], 65536, 65536)]),
+      "none",
+    ],
+    [
+      "a frame whose picture has no header",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([chunk("VP8L", profile(8))])]),
+      "none",
+    ],
+    [
+      "a frame of a lossless picture after an alpha plane",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([alph, image])]),
+      "none",
+    ],
+    // The frame takes the picture that follows its chunk, which then ends before the frame does.
+    [
+      "a frame whose picture is outside its chunk",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([alph]), lossy]),
+      "none",
+    ],
+    // The decoder steps over a frame chunk. The demuxer goes on inside it, where these frames
+    // end in a chunk header that covers the picture: the demuxer has no picture then.
+    [
+      "a picture that a header inside a frame chunk covers",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), anim, frame([chunk("XTRA", image).subarray(0, 8)]), image]),
+      "none",
+    ],
+    [
+      "the same after an alpha plane",
+      riff([
+        vp8x(ICCP | ALPHA),
+        chunk("ICCP", profile(512)),
+        alph,
+        anim,
+        frame([chunk("XTRA", lossy).subarray(0, 8)]),
+        lossy,
+      ]),
+      "none",
+    ],
+    // The walk goes on from the frame's last chunk, not from the end of the frame chunk.
+    [
+      "ICCP inside a frame chunk, after the frame's picture",
+      riff([vp8x(ICCP), image, anim, frame([image, chunk("ICCP", profile(64))])]),
+      64,
+    ],
+  ];
+
+  test.each(cases)("%s", async (_name, file, want) => {
+    // Over fastSizeLimit elements, so the input is borrowed as in production.
+    const buf = new Uint8Array(Math.max(file.length, 2048));
+    buf.set(file);
+    const input = buf.subarray(0, file.length);
+    let got: number | "none" | "rejects";
+    try {
+      const out = Buffer.from(await new Bun.Image(input).webp({ lossless: true }).bytes());
+      const at = out.indexOf("ICCP");
+      got = at < 0 ? "none" : out.readUInt32LE(at + 4);
+      if (typeof got === "number") {
+        // The profile that came out must be the one that went in.
+        const want = profile(got);
+        expect(Array.from(out.subarray(at + 8, at + 8 + got))).toEqual(Array.from(want));
+      }
+    } catch (e) {
+      expect((e as { code: string }).code).toBe("ERR_IMAGE_DECODE_FAILED");
+      got = "rejects";
+    }
+    expect(got).toEqual(want);
+  });
+
+  // A header that reports a canvas and cannot decode: an animation, and a
+  // file that ends before its picture. The pixel limit is checked first, so
+  // one that is also too large says so.
+  test.each([
+    ["an animation", riff([vp8x(ANIM, 64, 64), chunk("ANIM", profile(6))]), "ERR_IMAGE_DECODE_FAILED"],
+    ["a header alone", riff([vp8x(0, 64, 64)]), "ERR_IMAGE_DECODE_FAILED"],
+    [
+      "an animation over the pixel limit",
+      riff([vp8x(ANIM, 5000, 5000), chunk("ANIM", profile(6))]),
+      "ERR_IMAGE_TOO_MANY_PIXELS",
+    ],
+    ["a header alone over the pixel limit", riff([vp8x(0, 5000, 5000)]), "ERR_IMAGE_TOO_MANY_PIXELS"],
+  ])("%s is refused", async (_name, file, code) => {
+    const decode = new Bun.Image(file, { maxPixels: 4096 * 4096 }).png().bytes();
+    await expect(decode).rejects.toMatchObject({ code });
+  });
+});
+
+// The decoder writes into capacity that nothing initialised, so an accepted
+// decode must write all of it. ASAN fills every new allocation with a chosen
+// byte, so a byte libwebp never wrote reads as that byte, whatever the block
+// held before. Each file is decoded under two fills: a byte that differs
+// between the two runs followed the fill. Same idea as the JPEG check above.
+test.skipIf(!isASAN)("an accepted WebP decode commits no byte that libwebp did not write", async () => {
+  const fills = [90, 230];
+  // Alpha stays clear of both fills and of 255.
+  const alphaOf = (x: number, y: number) => 100 + ((x * 7 + y * 3) % 100);
+  const sizes: [number, number][] = [
+    [1, 1],
+    [17, 13],
+    [129, 33],
+  ];
+  const cases: { name: string; w: number; h: number; alpha: boolean; webp: string }[] = [];
+  for (const [w, h] of sizes) {
+    for (const alpha of [false, true]) {
+      const src = makePng(w, h, (x, y) => [(x * 5) & 255, (y * 9) & 255, (x + y) & 255, alpha ? alphaOf(x, y) : 255]);
+      for (const [kind, opts] of [
+        ["lossless", { lossless: true }],
+        ["lossy", { quality: 80 }],
+      ] as const) {
+        const webp = await new Bun.Image(src).webp(opts).bytes();
+        cases.push({
+          name: `${kind} ${w}x${h}${alpha ? " with alpha" : ""}`,
+          w,
+          h,
+          alpha,
+          webp: Buffer.from(webp).toString("base64"),
+        });
+      }
+    }
+  }
+
+  const runs = await Promise.all(
+    fills.map(async fill => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const cases = await Bun.stdin.json();
+            const out = {};
+            for (const c of cases) {
+              out[c.name] = await new Bun.Image(Buffer.from(c.webp, "base64")).png().bytes().then(
+                png => Buffer.from(png).toString("base64"),
+                e => "rejected: " + e.code,
+              );
+            }
+            console.log(JSON.stringify(out));
+          `,
+        ],
+        env: {
+          ...bunEnv,
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, `malloc_fill_byte=${fill}`, "max_malloc_fill_size=1073741824"]
+            .filter(Boolean)
+            .join(":"),
+        },
+        stdin: Buffer.from(JSON.stringify(cases)),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const stderr = rawStderr
+        .split("\n")
+        .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+        .join("\n");
+      return { stderr, exitCode, pngs: JSON.parse(stdout || "{}") as Record<string, string> };
+    }),
+  );
+  expect(runs.map(r => r.stderr)).toEqual(["", ""]);
+
+  const got: Record<string, string> = {};
+  for (const { name, w, h, alpha } of cases) {
+    const pngs = runs.map(r => r.pngs[name] ?? "missing");
+    const bad = pngs.find(png => png.startsWith("rejected") || png === "missing");
+    if (bad) {
+      got[name] = bad;
+      continue;
+    }
+    const [a, b] = await Promise.all(pngs.map(png => rgbaOf(Buffer.from(png, "base64"))));
+    let followFill = a.length === w * h * 4 && b.length === a.length ? 0 : -1;
+    let otherAlpha = 0;
+    for (let i = 0; i < a.length && followFill >= 0; i++) {
+      if (a[i] !== b[i]) followFill++;
+      if (i % 4 === 3) {
+        const x = ((i - 3) / 4) % w;
+        const y = ((i - 3) / 4 - x) / w;
+        if (a[i] !== (alpha ? alphaOf(x, y) : 255)) otherAlpha++;
+      }
+    }
+    got[name] =
+      followFill === 0 && otherAlpha === 0
+        ? "fully written"
+        : `${followFill} bytes follow the fill, ${otherAlpha} pixels with another alpha`;
+  }
+  expect(got).toEqual(Object.fromEntries(cases.map(c => [c.name, "fully written"])));
+  expect(runs.map(r => r.exitCode)).toEqual([0, 0]);
+});
+
+// ─── 11. random-byte fuzz (cheap, bounded) ───────────────────────────────────
 
 describe("random-byte fuzz", () => {
   // Deterministic LCG so failures are reproducible from the seed.

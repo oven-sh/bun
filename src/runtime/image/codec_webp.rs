@@ -9,7 +9,14 @@ use crate::encoded_wrap_free;
 
 unsafe extern "C" {
     pub(crate) fn WebPGetInfo(data: *const u8, len: usize, w: *mut c_int, h: *mut c_int) -> c_int;
-    fn WebPDecodeRGBA(data: *const u8, len: usize, w: *mut c_int, h: *mut c_int) -> *mut u8;
+    fn WebPInitDecoderConfigInternal(config: *mut WebPDecoderConfig, version: c_int) -> c_int;
+    fn WebPGetFeaturesInternal(
+        data: *const u8,
+        len: usize,
+        features: *mut WebPBitstreamFeatures,
+        version: c_int,
+    ) -> c_int;
+    fn WebPDecode(data: *const u8, len: usize, config: *mut WebPDecoderConfig) -> c_int;
     fn WebPEncodeRGBA(
         rgba: *const u8,
         w: c_int,
@@ -28,31 +35,138 @@ unsafe extern "C" {
     pub(crate) fn WebPFree(ptr: *mut c_void);
 }
 
-// ─── libwebpmux / libwebpdemux ──────────────────────────────────────────────
+// ─── libwebp advanced decoding API: mirrors of `src/webp/decode.h` ──────────
+const WEBP_DECODER_ABI_VERSION: c_int = 0x0210;
+/// `WEBP_CSP_MODE.MODE_RGBA` — 4 bytes per pixel, straight alpha.
+const MODE_RGBA: c_int = 1;
+/// `VP8StatusCode.VP8_STATUS_OK` — the only status of a completed decode.
+const VP8_STATUS_OK: c_int = 0;
+
+/// `struct WebPRGBABuffer`
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WebPRGBABuffer {
+    rgba: *mut u8,
+    stride: c_int,
+    size: usize,
+}
+
+/// `struct WebPYUVABuffer` — never filled in, and the larger arm of the union.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WebPYUVABuffer {
+    y: *mut u8,
+    u: *mut u8,
+    v: *mut u8,
+    a: *mut u8,
+    y_stride: c_int,
+    u_stride: c_int,
+    v_stride: c_int,
+    a_stride: c_int,
+    y_size: usize,
+    u_size: usize,
+    v_size: usize,
+    a_size: usize,
+}
+
+#[repr(C)]
+union WebPDecBufferPlanes {
+    rgba: WebPRGBABuffer,
+    yuva: WebPYUVABuffer,
+}
+
+/// `struct WebPDecBuffer` — libwebp writes the decoded `width`/`height` here.
+#[repr(C)]
+struct WebPDecBuffer {
+    colorspace: c_int,
+    width: c_int,
+    height: c_int,
+    /// Non-zero: the caller's memory, which libwebp neither allocates nor frees.
+    is_external_memory: c_int,
+    u: WebPDecBufferPlanes,
+    pad: [u32; 4],
+    private_memory: *mut u8,
+}
+
+/// `struct WebPBitstreamFeatures`
+#[repr(C)]
+struct WebPBitstreamFeatures {
+    width: c_int,
+    height: c_int,
+    has_alpha: c_int,
+    has_animation: c_int,
+    /// 1 lossy, 2 lossless, 0 when the parse did not reach a VP8/VP8L chunk.
+    format: c_int,
+    pad: [u32; 5],
+}
+
+/// `struct WebPDecoderOptions` — all-zero: no crop, no scale, no flip.
+#[repr(C)]
+struct WebPDecoderOptions {
+    bypass_filtering: c_int,
+    no_fancy_upsampling: c_int,
+    use_cropping: c_int,
+    crop_left: c_int,
+    crop_top: c_int,
+    crop_width: c_int,
+    crop_height: c_int,
+    use_scaling: c_int,
+    scaled_width: c_int,
+    scaled_height: c_int,
+    use_threads: c_int,
+    dithering_strength: c_int,
+    flip: c_int,
+    alpha_dithering_strength: c_int,
+    pad: [u32; 5],
+}
+
+/// `struct WebPDecoderConfig`
+#[repr(C)]
+struct WebPDecoderConfig {
+    input: WebPBitstreamFeatures,
+    output: WebPDecBuffer,
+    options: WebPDecoderOptions,
+}
+// SAFETY: integers, raw pointers and arrays of integers only; all-zero is valid.
+unsafe impl bun_core::Zeroable for WebPDecoderConfig {}
+// SAFETY: integers only; all-zero is valid.
+unsafe impl bun_core::Zeroable for WebPBitstreamFeatures {}
+
+// `WebPInitDecoderConfigInternal` clears `sizeof(WebPDecoderConfig)` bytes.
+#[cfg(target_pointer_width = "64")]
+const _: () = {
+    assert!(size_of::<WebPRGBABuffer>() == 24);
+    assert!(size_of::<WebPYUVABuffer>() == 80);
+    assert!(size_of::<WebPDecBuffer>() == 120 && align_of::<WebPDecBuffer>() == 8);
+    assert!(size_of::<WebPBitstreamFeatures>() == 40);
+    assert!(size_of::<WebPDecoderOptions>() == 76);
+    assert!(size_of::<WebPDecoderConfig>() == 240);
+    assert!(core::mem::offset_of!(WebPDecBuffer, u) == 16);
+    assert!(core::mem::offset_of!(WebPDecoderConfig, output) == 40);
+    assert!(core::mem::offset_of!(WebPDecoderConfig, options) == 160);
+};
+
+// ─── libwebpmux ─────────────────────────────────────────────────────────────
 // WebP carries colour profiles (and EXIF/XMP) in a VP8X RIFF container that
 // wraps the VP8/VP8L bitstream. `WebPEncodeRGBA` only emits the bare
-// bitstream chunk, and `WebPDecodeRGBA` only reads it — neither touches
-// the surrounding chunks. To pull an ICCP chunk out of an input (decode)
-// or to attach one to an output (encode) we go through the separate
-// demux/mux APIs, which operate on the whole RIFF file. Both are
-// statically linked from the same libwebp checkout.
+// bitstream chunk, so attaching an ICCP chunk to an output goes through mux.
 //
-// ABI version constants below are pinned to the libwebp commit in
+// ABI version constants in this file are pinned to the libwebp commit in
 // `scripts/build/deps/libwebp.ts` (v1.6.0). If that commit is bumped, check
-// `src/webp/mux.h` / `demux.h` for `WEBP_{MUX,DEMUX}_ABI_VERSION` — the
+// `src/webp/decode.h` / `mux.h` for `WEBP_{DECODER,MUX}_ABI_VERSION` — the
 // *Internal entry points reject a caller with a different major byte.
-const WEBP_DEMUX_ABI_VERSION: c_int = 0x0107;
 const WEBP_MUX_ABI_VERSION: c_int = 0x0109;
-/// `WebPFormatFeature.WEBP_FF_FORMAT_FLAGS` — selector for `WebPDemuxGetI`
-/// that returns the VP8X feature bitmask.
-const WEBP_FF_FORMAT_FLAGS: c_int = 0;
 /// `WebPFeatureFlags.ICCP_FLAG` — set when an ICCP chunk is present in the
 /// VP8X container.
 const ICCP_FLAG: u32 = 0x20;
+// The other `WebPFeatureFlags` bits that `iccp_chunk` reads.
+const ANIMATION_FLAG: u32 = 0x02;
+const ALPHA_FLAG: u32 = 0x10;
+const ALL_VALID_FLAGS: u32 = 0x3e;
 /// `WebPMuxError.WEBP_MUX_OK` — the only non-error return from mux calls.
 const WEBP_MUX_OK: c_int = 1;
 
-/// `struct WebPData` — borrowed-bytes view used by both mux and demux.
+/// `struct WebPData` — borrowed-bytes view the mux API reads and writes.
 /// Memory is `WebPMalloc`-owned when libwebp writes to it (e.g.
 /// `WebPMuxAssemble` output) and caller-owned when libwebp reads it.
 #[repr(C)]
@@ -69,43 +183,12 @@ impl Default for WebPData {
     }
 }
 
-/// `struct WebPChunkIterator` — cursor into a VP8X chunk list. Only `chunk`
-/// is read; `pad`/`private_` are libwebp-internal bookkeeping that
-/// `WebPDemuxReleaseChunkIterator` walks. `chunk.bytes` is a borrowed view
-/// INTO the original input buffer — dupe it out before `WebPDemuxDelete`.
-#[repr(C)]
-struct WebPChunkIterator {
-    chunk_num: c_int,
-    num_chunks: c_int,
-    chunk: WebPData,
-    pad: [u32; 6],
-    private_: *mut c_void,
-}
-
 bun_opaque::opaque_ffi! {
-    pub(crate) struct WebPDemuxer;
     pub(crate) struct WebPMux;
 }
 
-// `WebPDemux()` and `WebPMuxNew()` are `static inline` in the headers and
-// just forward to these version-checked entry points with the ABI constant.
+// `WebPMuxNew()` is a `static inline` that calls `WebPNewInternal` with the ABI constant.
 unsafe extern "C" {
-    fn WebPDemuxInternal(
-        data: *const WebPData,
-        allow_partial: c_int,
-        state: *mut c_int,
-        version: c_int,
-    ) -> *mut WebPDemuxer;
-    fn WebPDemuxDelete(dmux: *mut WebPDemuxer);
-    fn WebPDemuxGetI(dmux: *const WebPDemuxer, feature: c_int) -> u32;
-    fn WebPDemuxGetChunk(
-        dmux: *const WebPDemuxer,
-        fourcc: *const u8,
-        chunk_number: c_int,
-        iter: *mut WebPChunkIterator,
-    ) -> c_int;
-    fn WebPDemuxReleaseChunkIterator(iter: *mut WebPChunkIterator);
-
     fn WebPNewInternal(version: c_int) -> *mut WebPMux;
     fn WebPMuxDelete(mux: *mut WebPMux);
     fn WebPMuxSetImage(mux: *mut WebPMux, bitstream: *const WebPData, copy_data: c_int) -> c_int;
@@ -119,101 +202,79 @@ unsafe extern "C" {
 }
 
 pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
-    let mut cw: c_int = 0;
-    let mut ch: c_int = 0;
-    // Header-only probe first so the pixel guard fires before libwebp
-    // allocates the full canvas internally. WebPGetInfo can hand back
-    // non-positive on a malformed header; reject before the cast traps.
-    // SAFETY: bytes.ptr/len describe a valid readable slice.
-    if unsafe { WebPGetInfo(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) } == 0
-        || cw <= 0
-        || ch <= 0
-    {
+    let mut config: WebPDecoderConfig = bun_core::ffi::zeroed();
+    // SAFETY: config is a live WebPDecoderConfig of the size libwebp clears.
+    if unsafe { WebPInitDecoderConfigInternal(&raw mut config, WEBP_DECODER_ABI_VERSION) } == 0 {
+        return Err(codecs::Error::DecodeFailed);
+    }
+    // Probe first, so the pixel guard fires before the canvas is allocated.
+    // SAFETY: bytes.ptr/len describe a valid readable slice; config.input is a valid out-param.
+    let probed = unsafe {
+        WebPGetFeaturesInternal(
+            bytes.as_ptr(),
+            bytes.len(),
+            &raw mut config.input,
+            WEBP_DECODER_ABI_VERSION,
+        )
+    };
+    let (cw, ch) = (config.input.width, config.input.height);
+    if probed != VP8_STATUS_OK || cw <= 0 || ch <= 0 {
         return Err(codecs::Error::DecodeFailed);
     }
     let w: u32 = u32::try_from(cw).expect("int cast");
     let h: u32 = u32::try_from(ch).expect("int cast");
     codecs::guard(w, h, max_pixels)?;
-    // SAFETY: bytes.ptr/len describe a valid readable slice; cw/ch are valid out-params.
-    let ptr = unsafe { WebPDecodeRGBA(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) };
-    if ptr.is_null() {
+    // The probe accepts an animation, and a file that ends before its bitstream (`format` 0).
+    if config.input.has_animation != 0 || config.input.format == 0 {
         return Err(codecs::Error::DecodeFailed);
     }
-    let _free_ptr = scopeguard::guard(ptr, |p| {
-        // SAFETY: p was returned by WebPDecodeRGBA above; WebPFree is the matching deallocator.
-        unsafe { WebPFree(p.cast::<c_void>()) }
-    });
-    // `bytes` is a borrowed view of a JS ArrayBuffer the user can still WRITE
-    // (the pin only blocks detach), so a hostile caller can swap in a smaller
-    // WebP between WebPGetInfo and WebPDecodeRGBA. libwebp re-parses on the
-    // second call and writes the actual decoded dims back into cw/ch — reject
-    // any mismatch instead of trusting the probe and over-reading the
-    // smaller allocation. (Same race the CG shim guards at :298.)
-    if u32::try_from(cw).ok() != Some(w) || u32::try_from(ch).ok() != Some(h) {
+
+    // `WebPDecodeRGBA` reports one header parse and allocates by a later one: own the canvas.
+    let stride: usize = (w as usize) * 4;
+    let len: usize = stride * (h as usize);
+    let mut out: Vec<u8> = Vec::new();
+    // Up to ~1 GiB at the default pixel limit: fail the decode, not the process.
+    out.try_reserve_exact(len)
+        .map_err(|_| codecs::Error::OutOfMemory)?;
+    config.output.colorspace = MODE_RGBA;
+    config.output.is_external_memory = 1;
+    config.output.u.rgba = WebPRGBABuffer {
+        rgba: out.as_mut_ptr(),
+        stride: c_int::try_from(stride).map_err(|_| codecs::Error::DecodeFailed)?,
+        size: len,
+    };
+    // SAFETY: bytes.ptr/len describe a valid readable slice. The output is
+    // `out`'s exclusive `len` bytes of capacity: libwebp checks the dimensions
+    // it is about to decode against `size` and `stride` before it writes.
+    let status = unsafe { WebPDecode(bytes.as_ptr(), bytes.len(), &raw mut config) };
+    // JS can rewrite `bytes` after the probe: a smaller picture leaves part of `out` unwritten.
+    if status != VP8_STATUS_OK || config.output.width != cw || config.output.height != ch {
         return Err(codecs::Error::DecodeFailed);
     }
-    let len: usize = (w as usize) * (h as usize) * 4;
-    // SAFETY: WebPDecodeRGBA returns a buffer of w*h*4 bytes on success.
-    let out: Vec<u8> = unsafe { core::slice::from_raw_parts(ptr, len) }.to_vec();
+    // SAFETY: a completed decode of `h` rows of `w` pixels at this stride
+    // wrote every one of `out`'s first `len` bytes.
+    unsafe { bun_core::vec::commit_spare(&mut out, len) };
 
     // Extract the ICCP chunk (if any) from the RIFF container. A plain
-    // VP8/VP8L WebP with no VP8X wrapper has no ICCP — `WebPDemux` still
-    // succeeds, `WEBP_FF_FORMAT_FLAGS` returns 0, and we skip the chunk
-    // walk. The chunk iterator hands back a borrowed view into `bytes`;
+    // VP8/VP8L WebP with no VP8X wrapper has no ICCP. `iccp_chunk` hands back a view into `bytes`;
     // dupe into the global allocator to match JPEG/PNG ownership so the
     // pipeline can free it uniformly. Propagate OutOfMemory on the dupe
     // rather than silently dropping colour management — the pixels may be
     // Display P3 / Adobe RGB / XYB where "no profile" reinterprets them as
     // sRGB and visibly shifts colour, which is the exact bug #30197 is
-    // about. A failed demux (malformed container) falls through with
+    // about. A malformed container falls through with
     // `icc_profile = None`; the pixels decoded fine so the image is still
     // usable.
-    let icc: Option<Vec<u8>> = 'blk: {
-        let data = WebPData {
-            bytes: bytes.as_ptr(),
-            size: bytes.len(),
-        };
-        // SAFETY: `data` points to a valid WebPData; null state ptr is allowed.
-        let dmux = unsafe {
-            WebPDemuxInternal(
-                &raw const data,
-                0,
-                core::ptr::null_mut(),
-                WEBP_DEMUX_ABI_VERSION,
-            )
-        };
-        if dmux.is_null() {
-            break 'blk None;
+    let icc: Option<Vec<u8>> = match iccp_chunk(bytes) {
+        Some(profile) => {
+            let mut owned: Vec<u8> = Vec::new();
+            owned
+                .try_reserve_exact(profile.len())
+                .map_err(|_| codecs::Error::OutOfMemory)?;
+            owned.extend_from_slice(profile);
+            Some(owned)
         }
-        let _free_dmux = scopeguard::guard(dmux, |d| {
-            // SAFETY: d was returned by WebPDemuxInternal above and is non-null; matching destructor.
-            unsafe { WebPDemuxDelete(d) }
-        });
-        // SAFETY: dmux is a live demuxer handle.
-        if unsafe { WebPDemuxGetI(dmux, WEBP_FF_FORMAT_FLAGS) } & ICCP_FLAG == 0 {
-            break 'blk None;
-        }
-        // SAFETY: all-zero is a valid WebPChunkIterator (#[repr(C)] POD, raw ptr + ints).
-        let mut iter: WebPChunkIterator =
-            unsafe { core::mem::MaybeUninit::<WebPChunkIterator>::zeroed().assume_init() };
-        // SAFETY: dmux is live; fourcc reads exactly 4 bytes; iter is a valid out-param.
-        if unsafe { WebPDemuxGetChunk(dmux, b"ICCP".as_ptr(), 1, &raw mut iter) } == 0 {
-            break 'blk None;
-        }
-        let iter = scopeguard::guard(iter, |mut it| {
-            // SAFETY: it was populated by WebPDemuxGetChunk above; matching release call.
-            unsafe { WebPDemuxReleaseChunkIterator(&raw mut it) }
-        });
-        if iter.chunk.bytes.is_null() {
-            break 'blk None;
-        }
-        if iter.chunk.size == 0 {
-            break 'blk None;
-        }
-        // SAFETY: chunk.bytes points into `bytes` for chunk.size bytes per libwebp contract.
-        break 'blk Some(
-            unsafe { core::slice::from_raw_parts(iter.chunk.bytes, iter.chunk.size) }.to_vec(),
-        );
+        None => None,
     };
     Ok(codecs::Decoded {
         rgba: out,
@@ -221,6 +282,157 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
         height: h,
         icc_profile: icc,
     })
+}
+
+const CHUNK_HEADER_SIZE: usize = 8;
+
+/// Trusts no byte to read the same twice. libwebp's demuxer does, and can dereference NULL.
+fn iccp_chunk(bytes: &[u8]) -> Option<&[u8]> {
+    const RIFF_HEADER_SIZE: usize = 12;
+    const VP8X_CHUNK_SIZE: usize = 10;
+    const ANIM_CHUNK_SIZE: usize = 6;
+    const ANMF_CHUNK_SIZE: usize = 16;
+    const MAX_IMAGE_AREA: u64 = 1 << 32;
+
+    if bytes.len() < RIFF_HEADER_SIZE || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WEBP" {
+        return None;
+    }
+    // The walk ends at the RIFF length. One past the buffer is a truncated file.
+    let riff_size = u32::from_le_bytes(bytes[4..8].try_into().expect("infallible: size matches"));
+    let riff_end = (riff_size as usize).checked_add(CHUNK_HEADER_SIZE)?;
+    let rest = bytes.get(RIFF_HEADER_SIZE..riff_end)?;
+
+    let ((tag, vp8x), mut rest) = split_chunk(rest)?;
+    if tag != *b"VP8X" || vp8x.len() < VP8X_CHUNK_SIZE {
+        return None;
+    }
+    // One flags byte, then three reserved ones nothing reads.
+    let flags = u32::from(vp8x[0]);
+    if flags & ICCP_FLAG == 0 || flags & !ALL_VALID_FLAGS != 0 || flags & ANIMATION_FLAG != 0 {
+        return None;
+    }
+
+    // The demuxer's rules (demux.c `IsValidExtendedFormat`): what it refused has no profile.
+    let mut profile: Option<&[u8]> = None;
+    let mut seen_image = false;
+    let mut seen_anim = false;
+    while !rest.is_empty() {
+        let ((tag, payload), mut after) = split_chunk(rest)?;
+        match &tag {
+            b"VP8X" => return None,
+            b"ANIM" => {
+                if payload.len() + (payload.len() & 1) < ANIM_CHUNK_SIZE {
+                    return None;
+                }
+                seen_anim = true;
+            }
+            // The animation flag is clear, so the demuxer parses the frame and keeps none of it.
+            b"ANMF" => {
+                let padded = payload.len() + (payload.len() & 1);
+                if !seen_anim || padded < ANMF_CHUNK_SIZE {
+                    return None;
+                }
+                let le24 = |at: usize| {
+                    u64::from(payload[at])
+                        | (u64::from(payload[at + 1]) << 8)
+                        | (u64::from(payload[at + 2]) << 16)
+                };
+                if (1 + le24(6)) * (1 + le24(9)) >= MAX_IMAGE_AREA {
+                    return None;
+                }
+                let body = &rest[CHUNK_HEADER_SIZE + ANMF_CHUNK_SIZE..];
+                let frame = split_frame(body)?;
+                let taken = body.len() - frame.after.len();
+                if taken > padded - ANMF_CHUNK_SIZE
+                    || frame.picture.is_some_and(|p| !has_picture_header(p))
+                {
+                    return None;
+                }
+                // Not the chunk's end: the demuxer goes on from the last chunk the frame took.
+                after = frame.after;
+            }
+            // The one picture: `VP8L`, or `VP8 ` with its alpha plane before it.
+            b"ALPH" | b"VP8 " | b"VP8L" => {
+                if seen_image || seen_anim {
+                    return None;
+                }
+                let frame = split_frame(rest)?;
+                // The decode can find a picture in bytes that are another chunk's payload here.
+                frame.picture?;
+                // An alpha plane after the picture is an error only when the container flags alpha.
+                if frame.alpha_after && flags & ALPHA_FLAG != 0 {
+                    return None;
+                }
+                after = frame.after;
+                seen_image = true;
+            }
+            // The first one is the profile, whatever follows it.
+            b"ICCP" if profile.is_none() => profile = Some(payload),
+            _ => {}
+        }
+        rest = after;
+    }
+    if !seen_image {
+        return None;
+    }
+    profile.filter(|p| !p.is_empty())
+}
+
+/// One chunk off the front, or `None` when its header, payload or pad byte does not fit.
+fn split_chunk(rest: &[u8]) -> Option<(([u8; 4], &[u8]), &[u8])> {
+    let (header, body) = rest.split_at_checked(CHUNK_HEADER_SIZE)?;
+    let tag: [u8; 4] = header[0..4].try_into().expect("infallible: size matches");
+    let size =
+        u32::from_le_bytes(header[4..8].try_into().expect("infallible: size matches")) as usize;
+    let payload = body.get(..size)?;
+    let next = body.get(size.checked_add(size & 1)?..)?;
+    Some(((tag, payload), next))
+}
+
+struct Frame<'a> {
+    /// The `VP8 ` or `VP8L` chunk, header and pad byte included.
+    picture: Option<&'a [u8]>,
+    alpha_after: bool,
+    after: &'a [u8],
+}
+
+/// The chunks the demuxer takes as one frame (`StoreFrame`): one alpha plane and one picture.
+fn split_frame(mut rest: &[u8]) -> Option<Frame<'_>> {
+    let (mut alpha, mut alpha_after, mut picture) = (false, false, None);
+    loop {
+        let ((tag, _), next) = split_chunk(rest)?;
+        match &tag {
+            b"ALPH" if !alpha => (alpha, alpha_after) = (true, picture.is_some()),
+            b"VP8L" if alpha => return None,
+            b"VP8 " | b"VP8L" if picture.is_none() => {
+                picture = Some(&rest[..rest.len() - next.len()]);
+            }
+            _ => break,
+        }
+        rest = next;
+        if rest.is_empty() {
+            break;
+        }
+    }
+    Some(Frame {
+        picture,
+        alpha_after,
+        after: rest,
+    })
+}
+
+fn has_picture_header(chunk: &[u8]) -> bool {
+    let mut features: WebPBitstreamFeatures = bun_core::ffi::zeroed();
+    // SAFETY: chunk.ptr/len describe a valid readable slice; features is a valid out-param.
+    let status = unsafe {
+        WebPGetFeaturesInternal(
+            chunk.as_ptr(),
+            chunk.len(),
+            &raw mut features,
+            WEBP_DECODER_ABI_VERSION,
+        )
+    };
+    status == VP8_STATUS_OK
 }
 
 pub(crate) fn encode(

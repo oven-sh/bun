@@ -464,11 +464,11 @@ impl Order {
     }
 }
 
-/// A numeric address, or a host name within the RFC 1035 limits made of the bytes
-/// c-ares allows in one (`ares_is_hostnamech`) or of non-ASCII bytes (UTF-8 mDNS names).
+/// A numeric address, or a host name within the RFC 1035 limits made of LDH, `_`
+/// (the bytes glibc `getaddrinfo` accepts in a query) or non-ASCII bytes (UTF-8 mDNS names).
 pub fn is_valid_hostname(name: &[u8]) -> bool {
     fn is_hostname_byte(b: u8) -> bool {
-        b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'/' | b'*') || !b.is_ascii()
+        b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_') || !b.is_ascii()
     }
     if name.is_empty() || bun_core::strings::contains_char(name, 0) {
         return false;

@@ -22,7 +22,6 @@
 #include <JavaScriptCore/JavaScript.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/RegExpObject.h>
-#include <JavaScriptCore/RegularExpression.h>
 #include <JavaScriptCore/SourceOrigin.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/SubspaceInlines.h>
@@ -36,13 +35,14 @@
 
 namespace Zig {
 
+static bool isValidNamespaceCharacter(char16_t c)
+{
+    return isASCIIAlphanumeric(c) || c == '_' || c == '-' || c == '/' || c == '@';
+}
+
 static bool isValidNamespaceString(String& namespaceString)
 {
-    static JSC::Yarr::RegularExpression* namespaceRegex = nullptr;
-    if (!namespaceRegex) {
-        namespaceRegex = new JSC::Yarr::RegularExpression("^([/@a-zA-Z0-9_\\-]+)$"_s);
-    }
-    return namespaceRegex->match(namespaceString) > -1;
+    return !namespaceString.isEmpty() && namespaceString.containsOnly<isValidNamespaceCharacter>();
 }
 
 static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin)

@@ -5,10 +5,12 @@
 #include "root.h"
 #include "ScriptExecutionContext.h"
 #include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
+#include <wtf/SentinelLinkedList.h>
 
 namespace WebCore {
 
-class ContextDestructionObserver : public AbstractRefCountedAndCanMakeWeakPtr<ContextDestructionObserver> {
+// A node of ScriptExecutionContext::m_destructionObservers while it observes a context.
+class ContextDestructionObserver : public AbstractRefCountedAndCanMakeWeakPtr<ContextDestructionObserver>, public BasicRawSentinelNode<ContextDestructionObserver> {
 
 public:
     WEBCORE_EXPORT virtual void contextDestroyed();

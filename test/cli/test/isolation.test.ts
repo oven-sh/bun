@@ -1455,6 +1455,79 @@ test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next fil
   expect(exitCode).toBe(0);
 });
 
+// A retired global is destroyed by a later GC, usually before the wrappers of
+// the AbortSignals, EventTargets and ports its file left alive are swept. Each
+// of those is still registered with the global's ScriptExecutionContext, and
+// the context's destructor tells every one of them. That loop was quadratic in
+// the count: 50k leaked AbortControllers made the next file's first full GC
+// take 20x the time it took to create them, on release and debug builds alike.
+test.concurrent("--isolate: destroying a global with many leaked AbortControllers is not quadratic", async () => {
+  const count = 50_000;
+  using dir = tempDir("isolate-many-observers", {
+    // The measured global is the second one of the run. On a debug build the
+    // first one survives every GC: TestCommand::exec's frame still holds its
+    // address in stale spill slots.
+    "a-first.test.ts": `
+      import { test, expect } from "bun:test";
+      test("first file", () => {
+        expect(1).toBe(1);
+      });
+    `,
+    "b-leak.test.ts": `
+      import { test, expect } from "bun:test";
+      test("keep ${count} AbortControllers alive", () => {
+        const start = performance.now();
+        const keep = [];
+        for (let i = 0; i < ${count}; i++) keep.push(new AbortController());
+        (globalThis as any).keep = keep;
+        console.log("ALLOC_MS=" + (performance.now() - start).toFixed(0));
+        expect(keep.length).toBe(${count});
+      });
+    `,
+    "c-collect.test.ts": `
+      import { test, expect } from "bun:test";
+      import { heapStats } from "bun:jsc";
+      test("collect the previous file's global", () => {
+        const start = performance.now();
+        Bun.gc(true);
+        console.log("GC_MS=" + (performance.now() - start).toFixed(0));
+        // The previous file's global died in that collection, with its
+        // controllers: the timed GC ran the observer drain.
+        expect(heapStats().objectTypeCounts.AbortController ?? 0).toBeLessThan(${count / 10});
+      });
+    `,
+  });
+  // The child's 5 s default per-test timeout would turn a slow but linear
+  // collection on a loaded debug runner into a failure. The ratio below is
+  // the assertion, the outer timeout bounds the run.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "test",
+      "--parallel=1",
+      "--timeout=60000",
+      "./a-first.test.ts",
+      "./b-leak.test.ts",
+      "./c-collect.test.ts",
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("3 pass");
+  expect(exitCode).toBe(0);
+  expect(stdout).toMatch(/ALLOC_MS=\d+/);
+  expect(stdout).toMatch(/GC_MS=\d+/);
+  const allocMs = Number(stdout.match(/ALLOC_MS=(\d+)/)![1]);
+  const gcMs = Number(stdout.match(/GC_MS=(\d+)/)![1]);
+  // Creating the controllers and collecting them are both linear in count
+  // (1.2x to 1.8x each other on a debug build, under load). Before the fix
+  // the collection took 17x the creation on release and debug builds alike.
+  expect(gcMs, `alloc ${allocMs}ms, gc ${gcMs}ms`).toBeLessThan(allocMs * 8);
+});
+
 // The swap sweeps what exists AT the file boundary. Work a finished file left
 // in flight lands later, while the next file runs: a thread-pool job settles a
 // promise of the retired realm, a child the swap killed reports its exit. The

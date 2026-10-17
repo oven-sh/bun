@@ -94,9 +94,18 @@ function normalizeStringPosix(path, allowAboveRoot) {
   return res;
 }
 
+// Node separates an extension from the name with a dot, adding one when `ext`
+// does not already start with it, so `{ name: "n", ext: "txt" }` is "n.txt".
+function formatExt(ext) {
+  if (!ext) {
+    return "";
+  }
+  return ext[0] === "." ? ext : "." + ext;
+}
+
 function _format(sep, pathObject) {
   var dir = pathObject.dir || pathObject.root;
-  var base = pathObject.base || (pathObject.name || "") + (pathObject.ext || "");
+  var base = pathObject.base || (pathObject.name || "") + formatExt(pathObject.ext);
   if (!dir) {
     return base;
   }
@@ -267,9 +276,13 @@ export function relative(from, to) {
   }
 }
 
-export function _makeLong(path) {
+// On posix this is the identity. `_makeLong` is its legacy alias, and in Node
+// the two are the same function.
+export function toNamespacedPath(path) {
   return path;
 }
+
+export const _makeLong = toNamespacedPath;
 
 export function dirname(path) {
   assertPath(path);
@@ -518,6 +531,7 @@ export const posix = /* @__PURE__ */ (p => ((p.posix = p), p))({
   join,
   relative,
   _makeLong,
+  toNamespacedPath,
   dirname,
   basename,
   extname,

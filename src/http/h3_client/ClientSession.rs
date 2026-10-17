@@ -38,6 +38,12 @@ pub struct ClientSession {
     pub(crate) pool_id: u64,
     pub(crate) handshake_done: bool,
     pub(crate) closed: bool,
+    /// Set by `on_conn_close`: closed before the handshake, and a new dial would close too.
+    pub(crate) unreachable: bool,
+    /// Dialed for a request whose connection before this one closed before its handshake.
+    pub(crate) second_dial: bool,
+    /// `close_if_idle` closed the connection: its close says nothing about the peer.
+    pub(crate) closed_by_us: bool,
     pub(crate) registry_index: u32,
 
     /// Requests waiting for `onStreamOpen` to hand them a stream. Order is
@@ -64,6 +70,9 @@ impl ClientSession {
             pool_id,
             handshake_done: false,
             closed: false,
+            unreachable: false,
+            second_dial: false,
+            closed_by_us: false,
             registry_index: u32::MAX,
             pending: Vec::new(),
         }))
@@ -105,6 +114,7 @@ impl ClientSession {
         if let Some(qs) = self.qsocket_mut() {
             // No later request may pick a connection that is going away.
             self.closed = true;
+            self.closed_by_us = true;
             qs.close();
         }
     }
@@ -257,6 +267,7 @@ impl ClientSession {
     /// standard h2/h3 client behavior for the GOAWAY / stateless-reset /
     /// port-reuse race where a pooled session goes stale between the
     /// `matches()` check and the first stream open.
+    /// An Alt-Svc-routed request on an `unreachable` connection leaves through `h3_upgrade_failed`.
     pub(crate) fn retry_or_fail(&mut self, stream: *mut Stream, err: crate::Error) {
         // Shaped for Stacked Borrows like `fail` below — `detach()`
         // re-derives `&mut HTTPClient` from the same raw ptr to null `h3`, which
@@ -269,7 +280,16 @@ impl ClientSession {
         // `Stream.client` is a live backref while attached; `ParentRef::from`
         // (NonNull → shared deref) reads the Copy `flags` field without
         // forming `&mut HTTPClient` across the `detach()` below.
-        if bun_ptr::ParentRef::from(client_ptr).flags.h3_retried || st.is_streaming_body {
+        let flags = bun_ptr::ParentRef::from(client_ptr).flags;
+        // Nothing was written here. `h3_upgrade_failed` rejects what an earlier connection wrote.
+        if !self.handshake_done
+            && flags.forced_protocol != Some(Protocol::Http3)
+            && (self.unreachable || flags.h3_retried)
+        {
+            self.detach_with(stream, true);
+            return client_mut(client_ptr).h3_upgrade_failed(err);
+        }
+        if flags.h3_retried || st.is_streaming_body {
             return self.fail(stream, err);
         }
         let Some(ctx) = ClientContext::get() else {
@@ -289,12 +309,13 @@ impl ClientSession {
             port,
             bstr::BStr::new(err.name()),
         );
+        let second_dial = !self.handshake_done;
         self.detach_with(stream, true);
         // Formed only after detach() so its Unique tag is not invalidated by
         // detach()'s aliasing write to `client.h3`.
         let client = client_mut(client_ptr);
-        if !ClientContext::as_mut(ctx).connect(client, &host, port) {
-            client.fail_from_h2(err);
+        if !ClientContext::as_mut(ctx).connect(client, &host, port, second_dial) {
+            client.h3_upgrade_failed(err);
         }
         // `host` drops here (was `defer bun.default_allocator.free(host)`).
     }

@@ -105,8 +105,14 @@ impl ClientContext {
     }
 
     /// Find or open a connection to `hostname:port` and queue `client` on it.
-    /// `false` leaves `client` on no session, for the caller to fail.
-    pub(crate) fn connect(&mut self, client: &mut HTTPClient, hostname: &[u8], port: u16) -> bool {
+    /// `false` leaves `client` on no session: the caller fails it or sends it over TCP.
+    pub(crate) fn connect(
+        &mut self,
+        client: &mut HTTPClient,
+        hostname: &[u8],
+        port: u16,
+        second_dial: bool,
+    ) -> bool {
         let reject = client.flags.reject_unauthorized;
         for &s in self.sessions.iter() {
             // sessions vec holds live ClientSession pointers; removed via
@@ -140,6 +146,7 @@ impl ClientContext {
         // upgrades the fresh heap pointer (sole owner) for these set-up writes.
         session_mut(session).registry_index = u32::try_from(self.sessions.len()).expect("int cast");
         self.sessions.push(session);
+        session_mut(session).second_dial = second_dial;
         session_mut(session).enqueue(client);
 
         let result =
@@ -177,7 +184,7 @@ impl ClientContext {
                     bstr::BStr::new(hostname),
                     port,
                 );
-                // `fail_session` fails what is queued, and that dispatch frees
+                // `fail_session` fails or restarts what is queued, and a failure dispatch frees
                 // the `AsyncHTTP` the caller still holds. Queue nothing.
                 if let Some(stream) = client.h3 {
                     session_mut(session).detach(stream.as_ptr());

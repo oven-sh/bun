@@ -1342,6 +1342,12 @@ fn codegen_for_init(cx: &mut Context, init: &ReactiveValue) -> Result<Option<Stm
         let mut declarators: G::DeclList = AstAlloc::vec();
         let mut kind = S::Kind::KConst;
         for instr in body {
+            // `for (;;)`: what is left of the `undefined` that lowering puts in place of an initializer. Upstream refuses it.
+            match instr.data {
+                StmtData::SEmpty(_) => continue,
+                StmtData::SExpr(it) if matches!(it.value.data, ExprData::EUndefined(_)) => continue,
+                _ => {}
+            }
             if let StmtData::SExpr(expr_stmt) = instr.data {
                 if let ExprData::EBinary(assign) = expr_stmt.value.data {
                     if assign.op == OpCode::BinAssign {
@@ -1383,10 +1389,7 @@ fn codegen_for_init(cx: &mut Context, init: &ReactiveValue) -> Result<Option<Stm
             }
         }
         if declarators.is_empty() {
-            return Err(invariant_err(
-                "Expected a variable declaration in for-init",
-                None,
-            ));
+            return Ok(None);
         }
         Ok(Some(Stmt::alloc(
             S::Local {

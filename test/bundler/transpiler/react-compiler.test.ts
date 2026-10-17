@@ -3857,6 +3857,53 @@ describe("bundler", () => {
     });
   });
 
+  // The parser drops a test that is always true. The compiler refused a `for` without a test, so it also refused
+  // `for (let i = 0; true; i++)`, which babel-plugin-react-compiler compiles, with a cache of 6 for this hook.
+  // It refuses the other three, which mean the same as `while (true)`.
+  itBundled("react-compiler/ForWithoutATest", {
+    files: {
+      "/entry.js": /* js */ `
+        import { useCallback, useState } from "react";
+        ${["let i = 0; true; i++", "let i = 0; ; i++", "; true; ", ";;"]
+          .map(
+            (head, n) => `
+              function usePages${n}(fetchPage) {
+                const [pages, setPages] = useState([]);
+                const run = useCallback(async () => {
+                  let cursor = 0;
+                  for (${head}) {
+                    const page = await fetchPage(cursor);
+                    setPages(page.items);
+                    if (page.next === undefined) break;
+                    if (page.skip) continue;
+                    cursor = page.next;
+                  }
+                  return cursor;
+                }, [fetchPage]);
+                return { pages, run };
+              }
+            `,
+          )
+          .join("")}
+        const book = [{ items: "a", next: 1 }, { items: "b", next: 2 }, { items: "c" }];
+        for (const usePages of [usePages0, usePages1, usePages2, usePages3]) {
+          const seen = [];
+          const last = await usePages(async cursor => (seen.push(cursor), book[cursor])).run();
+          console.log(JSON.stringify([seen, last, String(usePages).match(/\\$ = [\\w$]+\\((\\d+)\\)/)?.[1]]));
+        }
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `
+        exports.useState = value => [value, () => {}];
+        exports.useCallback = fn => fn;
+      `,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    run: { stdout: Array(4).fill(`[[0,1,2],2,"6"]`).join("\n") },
+  });
+
   // The parser inlines a spread object literal into the props.
   itBundled("react-compiler/JsxSpreadWithAComputedKey", {
     files: {

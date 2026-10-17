@@ -11,6 +11,9 @@
  * of GOAWAY frames (bun charges a malformed block to maxSessionRejectedStreams, node does not),
  * the test asserts the id of every GOAWAY and not the number of frames or the error code.
  *
+ * The second block has the requests that cross a server's GOAWAY: the ones that the GOAWAY
+ * keeps from opening.
+ *
  * These cases are not in h2-conformance.test.ts, because that file also holds cases that fail
  * now and then on a debug build (the stream-reset floods, and the cases that count live stream
  * objects after a GC).
@@ -23,6 +26,7 @@ import assert from "node:assert";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
+import { Duplex, duplexPair } from "node:stream";
 import { describe, test } from "node:test";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
@@ -67,14 +71,16 @@ function encodeFrame(type: number, flags: number, streamId: number, payload: Buf
 
 /** A minimal raw HTTP/2 client: send arbitrary frames, collect parsed inbound frames. */
 class RawH2 {
-  socket: net.Socket;
+  socket: Duplex;
   private buf: Buffer = Buffer.alloc(0);
   frames: Frame[] = [];
   closed = false;
   private waiters: Array<{ pred: (f: Frame) => boolean; resolve: (f: Frame) => void }> = [];
 
-  constructor(port: number) {
-    this.socket = net.connect(port, "127.0.0.1");
+  constructor(target: number | Duplex) {
+    this.socket = typeof target === "number" ? net.connect(target, "127.0.0.1") : target;
+    // A net.Socket ends its side when the peer does (allowHalfOpen is false). A Duplex does not.
+    if (typeof target !== "number") target.on("end", () => target.end());
     this.socket.on("data", (d: Buffer) => this.onData(d));
     this.socket.on("close", () => (this.closed = true));
     this.socket.on("error", () => {});
@@ -676,8 +682,8 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
   });
 
   // §6.8: "Endpoints MUST NOT increase the value they send in the last stream identifier". After
-  // a GOAWAY of its own, node does not answer a new stream at all. bun still answers, but a
-  // stream that it does not open must not raise the id.
+  // a GOAWAY of its own, a server does not answer a new stream at all, and a stream that it does
+  // not open must not raise the id.
   test("a stream refused for maxSessionMemory after session.goaway() does not raise the last-stream-id", async () => {
     const seen: number[] = [];
     const server = http2.createServer({ maxSessionMemory: 1 });
@@ -925,5 +931,463 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
         raw.close();
       }
     });
+  });
+});
+
+// A request can cross the server's GOAWAY on the wire. After the read that wrote the GOAWAY, the
+// server opens no request. In that read it opens a request only when the id is new and the GOAWAY
+// covers it. An ignored header block still goes through HPACK, its DATA still counts toward the
+// connection window, and no frame answers it. node v26.3.0 puts the same frames on the wire in
+// every case below. Where node emits a 'stream' event that bun does not (node opens a request in
+// the read of the GOAWAY and the GOAWAY then closes it), the case asserts frames only.
+describe("requests that cross the server's GOAWAY (RFC 9113 §6.8)", () => {
+  /** Like duplexPair, but the client side has no write queue: what the client writes from inside
+   *  its own 'data' callback reaches the server side at once, inside the server's current read.
+   *  `nested.count` is the number of such writes. */
+  const nested = { count: 0 };
+  function reentrantPair(): [Duplex, Duplex] {
+    let depth = 0;
+    const serverSide: Duplex = new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        clientSide.push(chunk);
+        callback();
+      },
+      final(callback) {
+        clientSide.push(null);
+        callback();
+      },
+    });
+    const clientSide: Duplex = new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        callback(); // first: a write from inside the push below must not wait for this one
+        if (depth > 0) nested.count++;
+        depth++;
+        try {
+          serverSide.push(chunk);
+        } finally {
+          depth--;
+        }
+      },
+      final(callback) {
+        serverSide.push(null);
+        callback();
+      },
+    });
+    return [clientSide, serverSide];
+  }
+
+  /** A server that calls `shutdown(session)` from its first 'stream' event and answers a request
+   *  once its body ends. Streams that reach JS are recorded in `seen`. Over "duplexPair" each
+   *  write of the client is exactly one read of the server. */
+  async function shuttingDownSession(
+    shutdown: (session: http2.ServerHttp2Session) => void,
+    transport: "tcp" | "duplexPair" | "reentrant" = "tcp",
+  ) {
+    const seen: number[] = [];
+    let session!: http2.ServerHttp2Session;
+    const firstRequest = Promise.withResolvers<void>();
+    const sessionClosed = Promise.withResolvers<void>();
+    /** Wait for the session's 'close' event. */
+    const waitSessionClosed = (timeoutMs = 2000) =>
+      new Promise<void>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error("session did not close")), timeoutMs);
+        sessionClosed.promise.then(() => {
+          clearTimeout(t);
+          resolve();
+        });
+      });
+    const server = http2.createServer();
+    server.on("session", s => {
+      session = s;
+      s.on("error", () => {});
+      s.on("close", () => sessionClosed.resolve());
+    });
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
+      seen.push(stream.id!);
+      stream.on("error", () => {});
+      stream.on("end", () => {
+        // A failed test destroys the connection, which also ends the request.
+        if (stream.destroyed) return;
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      stream.resume();
+      if (seen.length === 1) {
+        shutdown(session);
+        firstRequest.resolve();
+      }
+    });
+    let c: RawH2;
+    let serverSide: Duplex | undefined;
+    if (transport === "tcp") {
+      server.listen(0);
+      await once(server, "listening");
+      c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    } else {
+      const pair = transport === "reentrant" ? reentrantPair() : duplexPair();
+      serverSide = pair[1];
+      server.emit("connection", serverSide);
+      c = new RawH2(pair[0]);
+    }
+    /** A destroyed Duplex does not tell its peer, so the server's side is destroyed here too. */
+    const stop = () => {
+      c.destroy();
+      serverSide?.destroy();
+      server.close();
+    };
+    c.sendPreface();
+    c.sendEmptySettings();
+    // A closed session waits 250ms for a SETTINGS ACK that is still due before it destroys itself.
+    await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+    c.sendSettingsAck();
+    return { c, seen, session: () => session, firstRequest: firstRequest.promise, waitSessionClosed, stop };
+  }
+
+  const NO_ERROR = http2.constants.NGHTTP2_NO_ERROR;
+  const MAX_ID = 2 ** 31 - 1;
+  const isErrorGoaway = (f: Frame) => f.type === FrameType.GOAWAY && goawayFields(f).errorCode !== ErrorCode.NO_ERROR;
+  const endsStream = (id: number) => (f: Frame) =>
+    f.streamId === id && (f.type === FrameType.DATA || f.type === FrameType.HEADERS) && (f.flags & 0x1) === 1;
+  const framesOn = (c: RawH2, ...ids: number[]) => c.frames.filter(f => ids.includes(f.streamId));
+  const get = (id: number) => encodeFrame(FrameType.HEADERS, 0x5, id, requestHeaderBlock("GET"));
+  const ping = (fill: number) => encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8, fill));
+
+  /** Expects the response to request `id`: a frame with END_STREAM, and no error GOAWAY first. */
+  async function expectAnswered(c: RawH2, id: number) {
+    const frame = await c.waitFor(f => isErrorGoaway(f) || endsStream(id)(f));
+    assert.strictEqual(frame.type, FrameType.DATA);
+  }
+
+  /** Ends request `id`, then expects its response, the end of the connection and the session
+   *  'close', while this client keeps its side of the connection open until the server ends it. */
+  async function expectGracefulCloseCompletes(c: RawH2, waitSessionClosed: () => Promise<void>, id = 1) {
+    c.sendFrame(FrameType.DATA, 0x1, id, Buffer.from("body"));
+    await expectAnswered(c, id);
+    await c.waitClosed();
+    await waitSessionClosed();
+  }
+
+  /** PING as a barrier: its ACK means that the server processed every frame sent before it. */
+  let barriers = 0;
+  async function pingBarrier(c: RawH2) {
+    const opaque = Buffer.alloc(8, 0xba);
+    opaque.writeUInt32BE(++barriers, 4);
+    c.sendFrame(FrameType.PING, 0, 0, opaque);
+    const frame = await c.waitFor(
+      f => isErrorGoaway(f) || (f.type === FrameType.PING && (f.flags & 0x1) === 1 && f.payload.equals(opaque)),
+    );
+    assert.strictEqual(frame.type, FrameType.PING);
+  }
+
+  test("ignores a request that arrives after the GOAWAY of close()", async () => {
+    const { c, seen, waitSessionClosed, stop } = await shuttingDownSession(session => session.close());
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      assert.deepStrictEqual(goawayFields(await c.waitForGoaway()), { lastStreamId: 1, errorCode: ErrorCode.NO_ERROR });
+      c.send(get(3));
+
+      await expectGracefulCloseCompletes(c, waitSessionClosed);
+      assert.deepStrictEqual({ seen, on3: framesOn(c, 3) }, { seen: [1], on3: [] });
+    } finally {
+      stop();
+    }
+  });
+
+  // The result is the same for one read and for two, so this case needs no control of the reads.
+  test("ignores a request in the same write as the request whose handler calls close()", async () => {
+    const { c, seen, waitSessionClosed, stop } = await shuttingDownSession(session => session.close());
+    try {
+      c.send(Buffer.concat([encodeFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST")), get(3)]));
+      assert.deepStrictEqual(goawayFields(await c.waitForGoaway()), { lastStreamId: 1, errorCode: ErrorCode.NO_ERROR });
+
+      await expectGracefulCloseCompletes(c, waitSessionClosed);
+      assert.deepStrictEqual({ seen, on3: framesOn(c, 3) }, { seen: [1], on3: [] });
+    } finally {
+      stop();
+    }
+  });
+
+  // A 'ping' listener runs inside the read, so the GOAWAY is written before the server parses the
+  // frames behind the PING. A build that opens request 3 here answers it with RST_STREAM.
+  for (const [name, shutdown, closes] of [
+    ["close()", (s: http2.ServerHttp2Session) => s.close(), true],
+    ["goaway()", (s: http2.ServerHttp2Session) => s.goaway(), false],
+    [
+      "close() and then goaway() with last-stream-id 2^31-1",
+      (s: http2.ServerHttp2Session) => (s.close(), s.goaway(NO_ERROR, MAX_ID)),
+      true,
+    ],
+    [
+      "goaway() with last-stream-id 2^31-1 and then close()",
+      (s: http2.ServerHttp2Session) => (s.goaway(NO_ERROR, MAX_ID), s.close()),
+      true,
+    ],
+    [
+      "goaway() and then goaway() with last-stream-id 2^31-1",
+      (s: http2.ServerHttp2Session) => (s.goaway(), s.goaway(NO_ERROR, MAX_ID)),
+      false,
+    ],
+    [
+      "goaway() with last-stream-id 2^31-1 and then goaway()",
+      (s: http2.ServerHttp2Session) => (s.goaway(NO_ERROR, MAX_ID), s.goaway()),
+      false,
+    ],
+  ] as const) {
+    test(`ignores a request in the same read as the PING whose listener calls ${name}`, async () => {
+      const { c, firstRequest, waitSessionClosed, stop } = await shuttingDownSession(
+        session => session.once("ping", () => shutdown(session)),
+        "duplexPair",
+      );
+      try {
+        c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+        await firstRequest;
+        c.send(Buffer.concat([ping(0x41), get(3)]));
+        await c.waitForGoaway();
+        if (closes) {
+          await expectGracefulCloseCompletes(c, waitSessionClosed);
+        } else {
+          await pingBarrier(c);
+          c.sendFrame(FrameType.DATA, 0x1, 1, Buffer.from("body"));
+          await expectAnswered(c, 1);
+        }
+        assert.deepStrictEqual(framesOn(c, 3), []);
+      } finally {
+        stop();
+      }
+    });
+  }
+
+  test("serves a request in the same read as the PING whose listener calls goaway() with last-stream-id 2^31-1", async () => {
+    const { c, seen, firstRequest, stop } = await shuttingDownSession(
+      session => session.once("ping", () => session.goaway(NO_ERROR, MAX_ID)),
+      "duplexPair",
+    );
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      await firstRequest;
+      c.send(Buffer.concat([ping(0x41), get(3)]));
+      assert.deepStrictEqual(goawayFields(await c.waitForGoaway()), {
+        lastStreamId: MAX_ID,
+        errorCode: ErrorCode.NO_ERROR,
+      });
+      await expectAnswered(c, 3);
+
+      // The GOAWAY is on the wire now, so a request in a later read is ignored.
+      c.send(get(5));
+      await pingBarrier(c);
+      assert.deepStrictEqual({ seen, on5: framesOn(c, 5) }, { seen: [1, 3], on5: [] });
+    } finally {
+      stop();
+    }
+  });
+
+  test("in the read of a goaway() with last-stream-id 3, serves request 3 and ignores request 5", async () => {
+    const { c, firstRequest, stop } = await shuttingDownSession(
+      session => session.once("ping", () => session.goaway(NO_ERROR, 3)),
+      "duplexPair",
+    );
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      await firstRequest;
+      c.send(Buffer.concat([ping(0x41), get(3), get(5)]));
+      assert.deepStrictEqual(goawayFields(await c.waitForGoaway()), { lastStreamId: 3, errorCode: ErrorCode.NO_ERROR });
+      await expectAnswered(c, 3);
+      await pingBarrier(c);
+      assert.deepStrictEqual(framesOn(c, 5), []);
+    } finally {
+      stop();
+    }
+  });
+
+  // Request 3 arrives behind request 5, so its id is not new.
+  test("in the read of a goaway() with last-stream-id 3, ignores request 3 behind request 5", async () => {
+    const { c, firstRequest, stop } = await shuttingDownSession(
+      session => session.once("ping", () => session.goaway(NO_ERROR, 3)),
+      "duplexPair",
+    );
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      await firstRequest;
+      c.send(Buffer.concat([ping(0x41), get(5), get(3)]));
+      assert.deepStrictEqual(goawayFields(await c.waitForGoaway()), { lastStreamId: 3, errorCode: ErrorCode.NO_ERROR });
+      await pingBarrier(c);
+      assert.deepStrictEqual(framesOn(c, 3, 5), []);
+    } finally {
+      stop();
+    }
+  });
+
+  // The client's GOAWAY(NO_ERROR) makes the server call close() inside the read that carries it.
+  test("ignores requests on unused lower ids in the read of the client's GOAWAY", async () => {
+    const { c, seen, firstRequest, waitSessionClosed, stop } = await shuttingDownSession(() => {}, "duplexPair");
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x4, 7, requestHeaderBlock("POST"));
+      await firstRequest;
+      c.send(Buffer.concat([encodeFrame(FrameType.GOAWAY, 0, 0, Buffer.alloc(8)), get(1), get(3), get(5)]));
+      assert.deepStrictEqual(goawayFields(await c.waitForGoaway()), { lastStreamId: 7, errorCode: ErrorCode.NO_ERROR });
+
+      await expectGracefulCloseCompletes(c, waitSessionClosed, 7);
+      assert.deepStrictEqual({ seen, lower: framesOn(c, 1, 3, 5) }, { seen: [7], lower: [] });
+    } finally {
+      stop();
+    }
+  });
+
+  // settings() makes bun write the GOAWAY inside the listener. The client answers it from inside
+  // that write, so request 3 reaches the server while it is still in the read of the PING.
+  test("ignores a request that re-enters the read in which goaway() with last-stream-id 2^31-1 was written", async () => {
+    nested.count = 0;
+    const { c, seen, firstRequest, stop } = await shuttingDownSession(
+      session =>
+        session.once("ping", () => {
+          session.goaway(NO_ERROR, MAX_ID);
+          session.settings({});
+        }),
+      "reentrant",
+    );
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      await firstRequest;
+      assert.strictEqual(nested.count, 0);
+      // The predicate runs inside the client's 'data' callback.
+      const goaway = c.waitFor(f => {
+        if (f.type !== FrameType.GOAWAY) return false;
+        c.send(get(3));
+        return true;
+      });
+      c.send(ping(0x41));
+      assert.deepStrictEqual(goawayFields(await goaway), { lastStreamId: MAX_ID, errorCode: ErrorCode.NO_ERROR });
+      assert.strictEqual(nested.count, 1);
+      await pingBarrier(c);
+      assert.deepStrictEqual({ seen, on3: framesOn(c, 3) }, { seen: [1], on3: [] });
+    } finally {
+      stop();
+    }
+  });
+
+  // goaway() does not close the session. The last-stream-id it names does not matter: 2^31-1 is
+  // the first GOAWAY of the two-step shutdown of §6.8, and a request in a later read is ignored.
+  for (const [name, shutdown, lastStreamId] of [
+    ["its default last-stream-id", (s: http2.ServerHttp2Session) => s.goaway(), 1],
+    ["last-stream-id 2^31-1", (s: http2.ServerHttp2Session) => s.goaway(NO_ERROR, MAX_ID), MAX_ID],
+  ] as const) {
+    test(`ignores a request that arrives after goaway() with ${name}`, async () => {
+      const { c, seen, session, stop } = await shuttingDownSession(shutdown);
+      try {
+        c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+        assert.deepStrictEqual(goawayFields(await c.waitForGoaway()), { lastStreamId, errorCode: ErrorCode.NO_ERROR });
+        c.send(get(3));
+        await pingBarrier(c);
+        assert.deepStrictEqual(
+          { seen, on3: framesOn(c, 3), lastProcStreamID: session().state.lastProcStreamID },
+          { seen: [1], on3: [], lastProcStreamID: 1 },
+        );
+
+        // The session stays open: request 1 still gets its response.
+        c.sendFrame(FrameType.DATA, 0x1, 1, Buffer.from("body"));
+        await expectAnswered(c, 1);
+      } finally {
+        stop();
+      }
+    });
+  }
+
+  test("keeps HPACK and the connection window in sync with the frames of an ignored request", async () => {
+    const { c, seen, waitSessionClosed, stop } = await shuttingDownSession(session => session.close());
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      await c.waitForGoaway();
+
+      // Request 3's block inserts `x-bun-sync: 1` into the HPACK dynamic table from its
+      // CONTINUATION half. Its body is more than half of the 65535-byte connection window.
+      const insert = Buffer.concat([Buffer.from([0x40]), hpackLiteral("x-bun-sync"), hpackLiteral("1")]);
+      const body = encodeFrame(FrameType.DATA, 0, 3, Buffer.alloc(16384, "a"));
+      const windowUpdate = Buffer.alloc(4);
+      windowUpdate.writeUInt32BE(1000, 0);
+      const priority = Buffer.alloc(5);
+      priority.writeUInt8(16, 4);
+      const cancel = Buffer.alloc(4);
+      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0, 3, requestHeaderBlock("POST")),
+          encodeFrame(FrameType.CONTINUATION, 0x4 /* END_HEADERS */, 3, insert),
+          body,
+          body,
+          body,
+        ]),
+      );
+      const update = await c.waitFor(f => isErrorGoaway(f) || (f.type === FrameType.WINDOW_UPDATE && f.streamId === 0));
+      assert.strictEqual(update.type, FrameType.WINDOW_UPDATE);
+
+      // The trailers of request 1 are 0xbe: indexed field 62, the entry that request 3's block
+      // inserted. If that block had not been decoded, they are a COMPRESSION_ERROR and request 1
+      // gets no response.
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.WINDOW_UPDATE, 0, 3, windowUpdate),
+          encodeFrame(FrameType.PRIORITY, 0, 3, priority),
+          encodeFrame(FrameType.RST_STREAM, 0, 3, cancel),
+          encodeFrame(FrameType.HEADERS, 0x5, 1, Buffer.from([0xbe])),
+        ]),
+      );
+      await expectAnswered(c, 1);
+      await c.waitClosed();
+      await waitSessionClosed();
+      assert.deepStrictEqual({ seen, on3: framesOn(c, 3) }, { seen: [1], on3: [] });
+    } finally {
+      stop();
+    }
+  });
+
+  test("ignores a DATA frame of an ignored request that arrives in one read or in two", async () => {
+    const { c, seen, stop } = await shuttingDownSession(session => session.close(), "duplexPair");
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      await c.waitForGoaway();
+      c.sendFrame(FrameType.HEADERS, 0x4, 3, requestHeaderBlock("POST"));
+      const data = encodeFrame(FrameType.DATA, 0, 3, Buffer.alloc(1024, "a"));
+      c.send(data);
+      c.send(data.subarray(0, 512));
+      c.send(data.subarray(512));
+      await pingBarrier(c);
+      assert.deepStrictEqual({ seen, on3: framesOn(c, 3) }, { seen: [1], on3: [] });
+    } finally {
+      stop();
+    }
+  });
+
+  // node's onSessionHeaders: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L373-L381
+  test("refuses a request whose header block completes after close()", async () => {
+    // setImmediate: close() runs after the read that carries both HEADERS frames below.
+    const { c, seen, waitSessionClosed, stop } = await shuttingDownSession(
+      session => setImmediate(() => session.close()),
+      "duplexPair",
+    );
+    try {
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST")),
+          encodeFrame(FrameType.HEADERS, 0x1 /* END_STREAM, no END_HEADERS */, 3, requestHeaderBlock("GET")),
+        ]),
+      );
+      // Last-stream-id 3: the server opened request 3 before close() ran. Only REFUSED_STREAM
+      // tells the client that it can send the request again.
+      assert.deepStrictEqual(goawayFields(await c.waitForGoaway()), { lastStreamId: 3, errorCode: ErrorCode.NO_ERROR });
+      const rest = Buffer.concat([Buffer.from([0x40]), hpackLiteral("x-bun-sync"), hpackLiteral("1")]);
+      c.sendFrame(FrameType.CONTINUATION, 0x4 /* END_HEADERS */, 3, rest);
+      const rst = await c.waitFor(f => isErrorGoaway(f) || (f.type === FrameType.RST_STREAM && f.streamId === 3));
+      assert.deepStrictEqual(
+        { type: rst.type, code: rst.payload.readUInt32BE(0) },
+        { type: FrameType.RST_STREAM, code: ErrorCode.REFUSED_STREAM },
+      );
+
+      await expectGracefulCloseCompletes(c, waitSessionClosed);
+      assert.deepStrictEqual({ seen, on3: framesOn(c, 3) }, { seen: [1], on3: [rst] });
+    } finally {
+      stop();
+    }
   });
 });

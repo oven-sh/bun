@@ -3575,6 +3575,7 @@ impl H2FrameParser {
             engine.max_header_list_pairs = self.max_header_list_pairs.get();
             engine.max_settings = self.max_settings.get();
             engine.max_invalid_frames = self.max_session_invalid_frames.get();
+            engine.goaway_sent = self.goaway_sent.get();
             engine.set_stream_reset_limit(
                 self.stream_reset_burst.get(),
                 self.stream_reset_rate.get(),
@@ -3691,7 +3692,10 @@ impl H2FrameParser {
             let pending = self.rewrite_tail.with_mut(std::mem::take);
             let feed = {
                 let mut guard = self.engine.borrow_mut();
-                guard.as_mut().unwrap().receive(self, &pending)
+                let engine = guard.as_mut().unwrap();
+                // A read() that re-entered a dispatch above is a later read than that batch.
+                engine.goaway_sent = self.goaway_sent.get();
+                engine.receive(self, &pending)
             };
             if feed.fatal {
                 self.rewrite_tail.with_mut(|t| t.clear());
@@ -3969,8 +3973,12 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.streams.get().contains_key(&stream_id)
     }
 
-    fn goaway_sent(&self) -> bool {
+    fn goaway_submitted(&self) -> bool {
         self.goaway_sent.get()
+    }
+
+    fn sent_goaway_last_stream_id(&self) -> Option<u32> {
+        self.sent_goaway_last_stream_id.get()
     }
 
     fn highest_started_stream_id(&self) -> u32 {

@@ -234,33 +234,40 @@ int main(int argc, char **argv) {
 }
 `;
 
-// The supervisor, or undefined when this machine cannot build it or cannot run it.
+// The supervisor. It is undefined when this machine cannot build it or cannot run it, and
+// the tests that need it are skipped. test.skipIf reads it when the file loads, so the
+// build runs here. A build that fails in another way is an error that fails only those tests.
 const superviseDir = isLinux && cc ? tempDir("glob-scan-supervise", { "supervise.c": superviseSource }) : undefined;
-const supervise = (() => {
+const supervise = ((): string | Error | undefined => {
   if (!superviseDir) return;
-  const bin = path.join(String(superviseDir), "supervise");
-  const compile = Bun.spawnSync({
-    cmd: [cc!, "-o", bin, path.join(String(superviseDir), "supervise.c")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  if (compile.exitCode !== 0) {
-    const output = compile.stderr.toString();
-    // The kernel headers are not installed, or they are older than Linux 5.0.
-    const headers =
-      /fatal error: .?(linux\/(seccomp|filter|audit)\.h|sys\/prctl\.h).?:? (No such file|file not found)|seccomp_notif|SECCOMP_/;
-    if (headers.test(output)) return;
-    throw new Error(`Failed to build the seccomp supervisor:\n${output}`);
+  try {
+    const bin = path.join(String(superviseDir), "supervise");
+    const compile = Bun.spawnSync({
+      cmd: [cc!, "-o", bin, path.join(String(superviseDir), "supervise.c")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (compile.exitCode !== 0) {
+      const output = compile.stderr.toString();
+      // The kernel headers are not installed, or they are older than Linux 5.0.
+      const headers =
+        /fatal error: .?(linux\/(seccomp|filter|audit)\.h|sys\/prctl\.h).?:? (No such file|file not found)|seccomp_notif|SECCOMP_/;
+      if (headers.test(output)) return;
+      return new Error(`Failed to build the seccomp supervisor:\n${output}`);
+    }
+    // "ls" opens a directory, so the supervisor gets a notification and lets the call continue.
+    const probe = Bun.spawnSync({ cmd: [bin, "--", "ls", "/"], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    if (probe.exitCode === 77) return;
+    if (probe.exitCode !== 0) return new Error(`The seccomp supervisor failed:\n${probe.stderr.toString()}`);
+    return bin;
+  } catch (e) {
+    return e as Error;
   }
-  // "ls" opens a directory, so the supervisor gets a notification and lets the call continue.
-  const probe = Bun.spawnSync({ cmd: [bin, "--", "ls", "/"], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  if (probe.exitCode === 77) return;
-  if (probe.exitCode !== 0) throw new Error(`The seccomp supervisor failed:\n${probe.stderr.toString()}`);
-  return bin;
 })();
 
 async function runSupervised(rules: string[], cwd: string) {
+  if (supervise instanceof Error) throw supervise;
   await using proc = Bun.spawn({
     cmd: [supervise!, ...rules, "--", bunExe(), "glob-fixture.js"],
     cwd,

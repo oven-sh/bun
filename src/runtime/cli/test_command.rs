@@ -3123,7 +3123,7 @@ impl TestCommand {
         let mut repeat_index: u32 = 0;
         vm.on_unhandled_rejection_ctx = None;
         vm.on_unhandled_rejection = jest::on_unhandled_rejection::on_unhandled_rejection;
-        vm.process_listeners_take_test_errors = false;
+        vm.is_running_vitest_entry = false;
         let mut environment =
             Environment::of_file(file_path, reporter.jest.test_options.environment);
 

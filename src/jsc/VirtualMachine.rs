@@ -305,9 +305,9 @@ pub struct VirtualMachine {
     pub on_unhandled_rejection_ctx: Option<*mut c_void>,
     pub on_unhandled_rejection_exception_list: Option<NonNull<ExceptionList>>,
     pub unhandled_error_counter: usize,
-    /// `bun test`: what is running is a test or a hook of Vitest's, where an error that a `process` listener takes
-    /// is not the runner's.
-    pub process_listeners_take_test_errors: bool,
+    /// `bun test`: what is running is a test or a hook of Vitest's. There, an error that a `process` listener takes is
+    /// not the runner's, and arrays of different lengths are never equal.
+    pub is_running_vitest_entry: bool,
     /// When set, `print_error_instance_body` calls this with the remapped
     /// `ZigException` (same lifecycle as the GitHub Actions annotation hook),
     /// so observers can read name/message/stack without re-running the
@@ -2178,7 +2178,7 @@ impl VirtualMachine {
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
             // What a listener throws comes back here, and is the runner's.
-            if self.process_listeners_take_test_errors && !self.is_handling_uncaught_exception {
+            if self.is_running_vitest_entry && !self.is_handling_uncaught_exception {
                 self.is_handling_uncaught_exception = true;
                 let handled = Bun__handleUncaughtException(
                     global_object,
@@ -4501,7 +4501,7 @@ impl VirtualMachine {
         }
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
-            if self.process_listeners_take_test_errors
+            if self.is_running_vitest_entry
                 && Bun__handleUnhandledRejection(global_object, reason, promise) > 0
             {
                 let _ = self.event_loop_mut().drain_microtasks();
@@ -5796,6 +5796,11 @@ impl VirtualMachine {
         self.test_isolation_enabled
             && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
                 .unwrap_or(false)
+    }
+
+    #[unsafe(export_name = "Bun__VM__isRunningVitestEntry")]
+    pub extern "C" fn is_running_vitest_entry(&self) -> bool {
+        self.is_running_vitest_entry
     }
 
     #[unsafe(export_name = "Bun__VM__hasGlobalsOfVitest")]

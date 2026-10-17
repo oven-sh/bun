@@ -1360,7 +1360,7 @@ fn step_sequence_one(
             args
         };
 
-        global_this.bun_vm().as_mut().process_listeners_take_test_errors = next_item.calling.is_vitest();
+        global_this.bun_vm().as_mut().is_running_vitest_entry = next_item.calling.is_vitest();
         if BunTest::run_test_callback(
             buntest_strong,
             global_this,

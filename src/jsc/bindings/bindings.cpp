@@ -914,6 +914,8 @@ static bool isWellKnownConstructor(JSValue value)
         || info == WebCore::JSBufferConstructor::info();
 }
 
+extern "C" bool Bun__VM__isRunningVitestEntry(void* bunVM);
+
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, bool addToStack)
 {
@@ -1091,6 +1093,11 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         size_t array2Length = array2->length();
         if constexpr (isStrict) {
             if (array1Length != array2Length) {
+                return false;
+            }
+        } else if constexpr (enableAsymmetricMatchers) {
+            // Vitest's toEqual() compares the lengths. Jest's takes an item that isn't there for undefined.
+            if (array1Length != array2Length && Bun__VM__isRunningVitestEntry(bunVM(globalObject))) {
                 return false;
             }
         }

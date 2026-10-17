@@ -5267,6 +5267,62 @@ describe.concurrent("resolution", () => {
   });
 });
 
+test.concurrent("arrays of different lengths can be equal in Jest and never in Vitest", async () => {
+  // Prints the names of the checks that pass.
+  const checks = `
+    const fn = vi.fn();
+    fn(["a"]);
+    expect.extend({ toBeSame(a, b) { return { pass: this.equals(a, b), message: () => "" }; } });
+    const checks = {
+      "toEqual": () => expect(["a"]).toEqual(["a", undefined]),
+      "not.toEqual": () => expect([undefined]).not.toEqual([]),
+      "nested": () => expect({ x: [["a"]] }).toEqual({ x: [["a", undefined]] }),
+      "toHaveBeenCalledWith": () => expect(fn).toHaveBeenCalledWith(["a", undefined]),
+      "toContainEqual": () => expect([["a"]]).toContainEqual(["a", undefined]),
+      "toHaveProperty": () => expect({ x: ["a"] }).toHaveProperty("x", ["a", undefined]),
+      "objectContaining": () => expect({ x: ["a"] }).toEqual(expect.objectContaining({ x: ["a", undefined] })),
+      "this.equals": () => expect(["a"]).toBeSame(["a", undefined]),
+      "a hole": () => expect([, "a"]).toEqual([undefined, "a"]),
+      "an undefined property": () => expect({ a: 1 }).toEqual({ a: 1, b: undefined }),
+      "Bun.deepEquals": () => expect(Bun.deepEquals(["a"], ["a", undefined])).toBe(true),
+    };
+    test("checks", () => {
+      for (const [name, check] of Object.entries(checks)) {
+        try {
+          check();
+          console.log(name);
+        } catch {}
+      }
+    });
+  `;
+  const ofBun = `import { expect, test, vi } from "bun:test";` + checks;
+  const ofVitest = `import { expect, test, vi } from "vitest";` + checks;
+  const [bun, vitest, globals, oneAfterTheOther] = await Promise.all([
+    runTests({ "a.test.js": ofBun }),
+    runTests({ "a.test.js": ofVitest }),
+    runTests({ "a.test.js": checks, "bunfig.toml": `[test]\nglobals = "vitest"\n` }),
+    runTests({ "a.test.js": ofVitest, "b.test.js": ofBun }),
+  ]);
+  const inBoth = ["a hole", "an undefined property", "Bun.deepEquals"];
+  const inJest = [
+    "toEqual",
+    "nested",
+    "toHaveBeenCalledWith",
+    "toContainEqual",
+    "toHaveProperty",
+    "objectContaining",
+    "this.equals",
+    ...inBoth,
+  ];
+  const inVitest = ["not.toEqual", ...inBoth];
+  expect({ bun: bun.log, vitest: vitest.log, globals: globals.log, oneAfterTheOther: oneAfterTheOther.log }).toEqual({
+    bun: inJest,
+    vitest: inVitest,
+    globals: inVitest,
+    oneAfterTheOther: [...inVitest, ...inJest],
+  });
+});
+
 describe.concurrent("the name of the running test", () => {
   const names = `
     expect.extend({

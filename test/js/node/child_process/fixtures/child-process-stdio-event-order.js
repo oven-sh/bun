@@ -64,7 +64,11 @@ const childSource =
 
 const stdio = ["ignore", "ignore", "ignore"];
 for (const fd of fds) stdio[fd] = "pipe";
-const child = spawn(process.execPath, ["-e", childSource], { stdio });
+const env = { ...process.env };
+// The test runner sets this for ASAN builds. With it a Bun child ends its own children when it exits, and the
+// grandchild has to outlive the child here.
+if (mode === "held-open") delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+const child = spawn(process.execPath, ["-e", childSource], { stdio, env });
 
 const events = [];
 // The chain goes from the promise job queue to the nextTick queue and back, twice.

@@ -1101,6 +1101,37 @@ void textDecodeReadRequestCloseSteps(JSGlobalObject* globalObject, JSReadableStr
     }
 }
 
+// The source failed: both branches fail with it.
+static void defaultTeeErrorBranches(JSGlobalObject* globalObject, JSStreamTeeState* teeState, JSValue reason)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* controller1 = teeBranchDefaultController(teeState->branch1())) {
+        readableStreamDefaultControllerError(globalObject, controller1, reason);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    if (auto* controller2 = teeBranchDefaultController(teeState->branch2())) {
+        readableStreamDefaultControllerError(globalObject, controller2, reason);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    if (!teeState->m_canceled1 || !teeState->m_canceled2)
+        RELEASE_AND_RETURN(scope, resolvePromise(globalObject, teeState->cancelPromise(), jsUndefined()));
+}
+
+// The pull algorithm's deliver. Once the source gave the branches their outcome (it closed them,
+// even if chunks are still queued, or it failed and reader.[[closedPromise]] carries its own
+// error), no branch is left to take this one: it is reported rather than dropped.
+static void deliverDefaultTeeReadError(JSGlobalObject* globalObject, JSStreamTeeState* teeState, JSValue error)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    auto* controller1 = teeBranchDefaultController(teeState->branch1());
+    auto* controller2 = teeBranchDefaultController(teeState->branch2());
+    bool open = (controller1 && readableStreamDefaultControllerCanCloseOrEnqueue(controller1)) || (controller2 && readableStreamDefaultControllerCanCloseOrEnqueue(controller2));
+    if (!open || teeState->stream()->m_state == ReadableStreamState::Errored)
+        RELEASE_AND_RETURN(scope, Bun__reportUnhandledError(globalObject, JSValue::encode(error)));
+    RELEASE_AND_RETURN(scope, defaultTeeErrorBranches(globalObject, teeState, error));
+}
+
 // ReadableStreamDefaultTee's shared pullAlgorithm.
 JSPromise* defaultTeePullAlgorithm(JSGlobalObject* globalObject, JSStreamTeeState* teeState, uint8_t)
 {
@@ -1113,7 +1144,9 @@ JSPromise* defaultTeePullAlgorithm(JSGlobalObject* globalObject, JSStreamTeeStat
     }
     teeState->m_reading = true;
     auto* readRequest = WebCore::JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::DefaultTee, teeState);
-    readableStreamDefaultReaderRead(globalObject, uncheckedDowncast<JSReadableStreamDefaultReader>(teeState->reader()), readRequest);
+    // One read feeds both branches, so a throw from it (a direct source's close() hook) is not
+    // the rejection of the one pull that made it.
+    atStreamsBoundary(globalObject, [&] { readableStreamDefaultReaderRead(globalObject, uncheckedDowncast<JSReadableStreamDefaultReader>(teeState->reader()), readRequest); }, [&](JSValue error) { deliverDefaultTeeReadError(globalObject, teeState, error); });
     RETURN_IF_EXCEPTION(scope, nullptr);
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
@@ -1190,20 +1223,9 @@ static EncodedJSValue defaultTeeChunkStepsMicrotask(JSGlobalObject* globalObject
 // "Upon rejection of reader.[[closedPromise]] with reason r" (default tee).
 static EncodedJSValue defaultTeeReaderClosedRejected(JSGlobalObject* globalObject, JSValue reason, JSStreamTeeState* teeState)
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (auto* controller1 = teeBranchDefaultController(teeState->branch1())) {
-        readableStreamDefaultControllerError(globalObject, controller1, reason);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-    if (auto* controller2 = teeBranchDefaultController(teeState->branch2())) {
-        readableStreamDefaultControllerError(globalObject, controller2, reason);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-    if (!teeState->m_canceled1 || !teeState->m_canceled2) {
-        resolvePromise(globalObject, teeState->cancelPromise(), jsUndefined());
-        RETURN_IF_EXCEPTION(scope, {});
-    }
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    defaultTeeErrorBranches(globalObject, teeState, reason);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 

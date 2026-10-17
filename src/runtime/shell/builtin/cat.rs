@@ -273,7 +273,7 @@ impl Cat {
                 CatState::WaitingWriteErr => {}
                 _ => panic!("Invalid state"),
             }
-            return Builtin::done(interp, cmd, errno);
+            return Builtin::done(interp, cmd, 1);
         }
 
         let step = match &mut Self::state_mut(interp, cmd).state {

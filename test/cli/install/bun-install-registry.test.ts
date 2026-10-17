@@ -3875,7 +3875,7 @@ describe.concurrent("binaries", () => {
       isWindows ? ["multi-b.bunx", "multi-b.exe", "multi-c.bunx", "multi-c.exe"] : ["multi-b", "multi-c"],
     );
     expect(join(packageDir, "node_modules", ".bin", "multi-b")).toBeValidBin(join("..", "multi-bin", "cli.js"));
-    expect(stderr).toContain(`error: Failed to link multi-bin: ${isWindows ? "ENOENT" : "ENAMETOOLONG"}`);
+    expect(stderr).toContain(`error: failed to link multi-bin: ${isWindows ? "ENOENT" : "ENAMETOOLONG"}`);
     expect(exitCode).toBe(1);
   });
 
@@ -3927,7 +3927,7 @@ describe.concurrent("binaries", () => {
       chmodSync(binDir, 0o755);
     }
 
-    expect(err).not.toContain("Failed to link");
+    expect(err).not.toContain("failed to link");
     expect(err).not.toContain("error:");
     expect(binPath).toBeValidBin(join("..", "what-bin", "what-bin.js"));
     expect(lstatSync(binPath).mtimeMs).toBe(1000);
@@ -4010,9 +4010,9 @@ describe.concurrent("binaries", () => {
         "dep-with-map-bins",
         "dep-with-file-bin",
       );
-      expect(err).toContain("Failed to link what-bin: EEXIST");
-      expect(err).toContain("Failed to link dep-with-map-bins: EEXIST");
-      if (!isWindows) expect(err).toContain("Failed to link dep-with-file-bin: EEXIST");
+      expect(err).toContain("failed to link what-bin: EEXIST");
+      expect(err).toContain("failed to link dep-with-map-bins: EEXIST");
+      if (!isWindows) expect(err).toContain("failed to link dep-with-file-bin: EEXIST");
 
       expect(await file(join(binDir, binEntry("what-bin"))).text()).toBe("not a bin of what-bin");
       expect(await file(join(binDir, binEntry("map-bin-1"), "inner.txt")).text()).toBe("keep");
@@ -4030,7 +4030,7 @@ describe.concurrent("binaries", () => {
       await write(join(binDir, binEntry("map-bin-1")), "not a bin of dep-with-map-bins");
 
       let result = await runGlobal(packageDir, env, "add", "dep-with-map-bins");
-      expect(result.err).toContain("error: Failed to link dep-with-map-bins: EEXIST");
+      expect(result.err).toContain("error: failed to link dep-with-map-bins: EEXIST");
       expect(join(binDir, "map-bin-2")).toBeValidBin(linkTarget("dep-with-map-bins", "map-bin-2"));
       expect(await file(join(globalDir, "package.json")).json()).toEqual({
         dependencies: { "dep-with-map-bins": "^1.0.0" },
@@ -4089,7 +4089,7 @@ describe.concurrent("binaries", () => {
       ]);
 
       const { err, exitCode } = await runGlobal(packageDir, env, "install", "test-native-binlink");
-      expect(err).toContain("Failed to link test-native-binlink: EEXIST");
+      expect(err).toContain("failed to link test-native-binlink: EEXIST");
       expect(await file(join(binDir, binEntry("test-binlink-cmd"))).text()).toBe("not a bin of test-native-binlink");
       expect(exitCode).toBe(1);
     });
@@ -4137,7 +4137,7 @@ describe.concurrent("binaries", () => {
         expect({ out, err }).toEqual({ out: "", err: "" });
       } else {
         // A path below a regular file is ENOTDIR on POSIX. Windows reports another errno.
-        expect(err).toContain(`error: Failed to link what-bin: ${isWindows ? "" : "ENOTDIR"}`);
+        expect(err).toContain(`error: failed to link what-bin: ${isWindows ? "" : "ENOTDIR"}`);
         expect(out).not.toContain("installed");
       }
       expect({
@@ -4183,7 +4183,7 @@ describe.concurrent("binaries", () => {
         if (flags.length > 0) {
           expect({ out, err }).toEqual({ out: "", err: "" });
         } else {
-          expect(err).toContain(`error: Failed to link into ${join(realpathSync(nodeModules), ".bin")}: EACCES`);
+          expect(err).toContain(`error: failed to link into ${join(realpathSync(nodeModules), ".bin")}: EACCES`);
         }
         // The link is still there, and no bin went through it.
         expect(await readlink(join(nodeModules, ".bin"))).toBe(join("..", "elsewhere"));
@@ -5084,7 +5084,7 @@ describe.concurrent("binaries", () => {
       const { out, err, exitCode } = await run(["install"], project, env);
       const shortened = await shorten();
 
-      expect(err).toContain(`error: Failed to link ${name}: ENAMETOOLONG`);
+      expect(err).toContain(`error: failed to link ${name}: ENAMETOOLONG`);
       expect(out).not.toContain("installed");
       // The package itself was installed. Only its bin is missing.
       expect(await exists(join(shortened, "node_modules", name, "package.json"))).toBeTrue();
@@ -5353,7 +5353,7 @@ describe.concurrent("binaries", () => {
         const { err, exitCode } = await install(linker);
         expect(err).toContain(
           linker === "hoisted"
-            ? "error: Failed to link long-dir-bin: ENAMETOOLONG"
+            ? "error: failed to link long-dir-bin: ENAMETOOLONG"
             : "ENAMETOOLONG: failed to link binaries for package: long-dir-bin@",
         );
         expect(exitCode).toBe(1);
@@ -13729,7 +13729,7 @@ test.concurrent("rejects dependency aliases containing relative path segments", 
 
   let err = await stderr.text();
   await stdout.text();
-  expect(err).toContain('Invalid dependency name "../escaped-target"');
+  expect(err).toContain('invalid dependency name "../escaped-target"');
   // Nothing may be created outside of `node_modules`. `node_modules/../escaped-target`
   // resolves to a sibling of `node_modules` inside the project directory.
   expect(await exists(join(packageDir, "escaped-target"))).toBe(false);
@@ -13832,7 +13832,7 @@ test.concurrent("rejects package names containing relative path components in bu
   await stdout.text();
 
   // The lockfile entry must be rejected instead of being used as a cache path.
-  expect(err).toContain("Invalid package name");
+  expect(err).toContain("invalid package name");
 
   // Nothing may be created outside the cache directory. The escape target for
   // a "../escaped-pkg" name is a direct child of packageDir (a sibling of
@@ -13905,7 +13905,7 @@ test.concurrent("rejects npm aliases whose manifest URL resolves to a different 
   // The manifest request must be refused with a clear error (today the name is
   // already refused while resolving, before a URL is built; the URL check stays
   // behind it as a second line of defense)...
-  expect(err).toMatch(/Invalid dependency name|is not on registry/);
+  expect(err).toMatch(/invalid dependency name|is not on registry/);
   // ...and no request (carrying the registry Authorization header) may reach
   // a host other than the configured registry.
   expect(received).toEqual([]);

@@ -604,7 +604,7 @@ describe.concurrent.skipIf(isWindows)("package.json in a sticky, shared director
   const installIn = (root: string, ...subdirectory: string[]) =>
     runBun(["install"], join(root, ...subdirectory), { ...bunEnv, POSTINSTALL_MARKER: marker(root) });
   const ignored = (root: string) =>
-    `warn: other local users can add files to ${join(root, "shared")}, so bun ignored the package.json in it\n`;
+    `warn: ignoring package.json in ${join(root, "shared")}: directory is writable by other users\n`;
 
   test.each([
     ["everyone", 0o1777],

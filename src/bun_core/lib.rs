@@ -2869,6 +2869,7 @@ pub mod asan {
         safe fn __lsan_register_root_region(ptr: *const c_void, size: usize);
         safe fn __lsan_unregister_root_region(ptr: *const c_void, size: usize);
         safe fn __lsan_ignore_object(ptr: *const c_void);
+        safe fn __lsan_disable();
     }
 
     #[inline]
@@ -2921,6 +2922,13 @@ pub mod asan {
         __lsan_ignore_object(ptr);
         #[cfg(not(bun_asan))]
         let _ = ptr;
+    }
+    /// Exclude all future allocations on the calling thread from leak reports.
+    /// For threads that are never joined and never free their state.
+    #[inline]
+    pub fn disable_leak_checks_on_current_thread() {
+        #[cfg(bun_asan)]
+        __lsan_disable();
     }
 }
 

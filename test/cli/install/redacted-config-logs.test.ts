@@ -177,14 +177,14 @@ describe.concurrent("bun install masks the configured registry URL in the messag
       title: "manifest URL outside the registry directory (dependency)",
       registry: `http://127.0.0.1:1/${token}/`,
       files: { "package.json": packageJson({ dependencies: { innocent: "npm:..@1.0.0" } }) },
-      expected: `error: Invalid dependency name ".."\n`,
+      expected: `error: invalid dependency name ".."\n`,
       exitCode: 1,
     },
     {
       title: "manifest URL outside the registry directory (optional dependency)",
       registry: `http://127.0.0.1:1/${token}/`,
       files: { "package.json": packageJson({ optionalDependencies: { innocent: "npm:..@1.0.0" } }) },
-      expected: `warn: Invalid dependency name ".."\n`,
+      expected: `warn: invalid dependency name ".."\n`,
       exitCode: 0,
     },
     {
@@ -311,7 +311,7 @@ describe.concurrent("redact", async () => {
     {
       title: "_auth zero length",
       npmrc: "//registry.npmjs.org/:_auth=",
-      expected: "supplies no credentials",
+      expected: "ignoring empty _auth value",
     },
     {
       // The unknown-option warning names the option but never echoes the line, so no
@@ -319,31 +319,31 @@ describe.concurrent("redact", async () => {
       // underscore. These rows pin that the warning prints and the value does not.
       title: "quoted _authToken key",
       npmrc: '"//registry.npmjs.org/:_authtoken"=npm_notarealtokenvalue',
-      expected: "is not a known .npmrc option",
+      expected: "ignoring unknown .npmrc option",
       secret: "npm_notarealtokenvalue",
     },
     {
       title: "quoted _auth key",
       npmrc: 'registry=https://registry.example.com/api/\n"//registry.example.com/:_auth_"=does-not-decode',
-      expected: "is not a known .npmrc option",
+      expected: "ignoring unknown .npmrc option",
       secret: "does-not-decode",
     },
     {
       title: "quoted password key",
       npmrc: '"//registry.npmjs.org/:password"=SUPERSECRETVALUE',
-      expected: "is not a known .npmrc option",
+      expected: "ignoring unknown .npmrc option",
       secret: "SUPERSECRETVALUE",
     },
     {
       title: "misspelt option without the underscore",
       npmrc: "//registry.npmjs.org/:authToken=npm_notarealtokenvalue",
-      expected: "is not a known .npmrc option",
+      expected: "ignoring unknown .npmrc option",
       secret: "npm_notarealtokenvalue",
     },
     {
       title: "misspelt _authToken key",
       npmrc: "//registry.npmjs.org/:_authtoken=npm_notarealtokenvalue",
-      expected: "is not a known .npmrc option",
+      expected: "ignoring unknown .npmrc option",
       secret: "npm_notarealtokenvalue",
     },
     // Lines that are not `//host/…:option=value` never reach the unknown-option
@@ -979,7 +979,7 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
     });
 
     const { out, err, exitCode } = await run(String(dir), nowhere, ["install"]);
-    expect(err).toContain(`error: Invalid dependency name "${masked(nowhere)}"\n`);
+    expect(err).toContain(`error: invalid dependency name "${masked(nowhere)}"\n`);
     expect(err).toContain(`error: ${masked(nowhere)}@1.0.0 failed to resolve\n`);
     expectNoSecrets(out, err);
     expect(exitCode).toBe(1);
@@ -1005,7 +1005,7 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
 
   // The package that declares a refused dependency is named by its resolution.
   test.each([
-    ["file:./inner.tgz", "local tarball dependencies are only allowed in the package.json files of this project"],
+    ["file:./inner.tgz", "local tarballs are only allowed in this project's package.json files"],
     ["link:../../inner", "only the root package.json, a workspace, or a top-level override may link to a path"],
   ])("a dependency on %s declared by a tarball", async (inner, reason) => {
     await using server = await serveTarballOf(
@@ -1062,11 +1062,11 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
       "package.json": packageJson(spec(nowhere)),
       "yarn.lock": `# yarn lockfile v1\n\n\n"direct@${spec(nowhere)}":\n  version "1.0.0"\n`,
     });
-    const fromYarn = await run(String(yarn), nowhere, ["pm", "migrate"]);
+    const fromYarn = await run(String(yarn), nowhere, ["pm", "migrate", "--verbose"]);
     expect(fromYarn.err).toContain(
-      `warn: skipped "direct@${masked(nowhere)}" from yarn.lock: missing "resolved" field\n`,
+      `warn: skipping "direct@${masked(nowhere)}" from yarn.lock: missing "resolved" field\n`,
     );
-    expect(fromYarn.err).toContain(`warn: yarn.lock has no entry for "direct@${masked(nowhere)}"; bun resolves it\n`);
+    expect(fromYarn.err).toContain(`warn: yarn.lock missing "direct@${masked(nowhere)}", resolving it\n`);
     expectNoSecrets(fromYarn.out, fromYarn.err);
     expect(fromYarn.exitCode).toBe(0);
 
@@ -1100,9 +1100,9 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
         packages: { "": { name: "app", dependencies: { direct: spec(nowhere) } } },
       }),
     });
-    const fromNpm = await run(String(npm), nowhere, ["pm", "migrate"]);
+    const fromNpm = await run(String(npm), nowhere, ["pm", "migrate", "--verbose"]);
     expect(fromNpm.err).toContain(
-      `warn: skipped "direct@${masked(nowhere)}" from package-lock.json: no entry for this dependency of "."\n`,
+      `warn: skipping "direct@${masked(nowhere)}" from package-lock.json: no entry for this dependency of "."\n`,
     );
     expectNoSecrets(fromNpm.out, fromNpm.err);
     expect(fromNpm.exitCode).toBe(0);

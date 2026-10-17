@@ -454,7 +454,7 @@ describe.concurrent("git", () => {
     const { out, err, exitCode } = await create(String(dir), ["tmpl", "dest"], noIdentity);
 
     expect(err.split("\n").filter(line => /git|fatal|\*\*\*/i.test(line) && !line.includes("bun create"))).toEqual([
-      "note: git has no user.name and user.email, so the files are staged but not committed",
+      "note: git has no user.name and user.email, files staged but not committed",
       expect.stringMatching(/^\[.*\] git$/),
     ]);
     expect(out).toContain("A local git repository was created for you.");
@@ -536,9 +536,7 @@ describe.concurrent("when the nested `bun install` fails", () => {
     });
 
     expect(err).toMatch(new RegExp(`error: bun install failed in "[^"]*dest" \\(code: ${code}\\)`));
-    expect(err).toContain(
-      "note: the template files were written; run bun install in that directory once the error is fixed",
-    );
+    expect(err).toContain("note: template files were written. run bun install there once the error is fixed");
     expect(out).toContain("$ bun install");
     expect(out).not.toContain("installed automatically");
     expect(out).not.toContain("successfully");
@@ -823,7 +821,7 @@ describe.concurrent("template given as a path", () => {
       "--force",
     ]);
 
-    expect(err).toContain("is inside the template");
+    expect(err).toContain("is inside template");
     expect(await tree(root)).toEqual(before);
     expect(exitCode).toBe(1);
   });
@@ -861,7 +859,7 @@ describe.concurrent("template given as a path", () => {
         BUN_CREATE_DIR: undefined,
       });
 
-      expect(err).toBe("error: the template name is too long\n");
+      expect(err).toBe("error: template name too long\n");
       expect(exitCode).toBe(1);
     },
   );

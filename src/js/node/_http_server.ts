@@ -487,6 +487,9 @@ function checkConnections(this: Server) {
     return;
   }
 
+  // A connection that is served from JS keeps the time of its message in its own parser.
+  http1Fallback?.expireHttp1Connections(this, headersTimeout, requestTimeout);
+
   const connections = this[kTrackedConnections];
   if (!connections || connections.size === 0) {
     return;

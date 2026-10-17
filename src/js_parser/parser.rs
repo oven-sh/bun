@@ -1230,6 +1230,10 @@ pub struct ParenExprOpts {
     pub(crate) is_async: bool,
     pub(crate) force_arrow_fn: bool,
     pub(crate) is_after_question_and_before_colon: bool,
+    /// The mark came through an arrow function body or the right side of an assignment.
+    pub(crate) is_carried: bool,
+    /// `<T>(`: tsc never decides this head at first sight.
+    pub(crate) after_type_parameters: bool,
 }
 
 #[repr(u8)]
@@ -1338,6 +1342,8 @@ pub struct DeferredErrors {
     /// These are errors for expressions
     pub(crate) invalid_expr_default_value: Option<bun_ast::Range>,
     pub(crate) invalid_expr_after_question: Option<bun_ast::Range>,
+    /// A cast, `!`, type arguments or parentheses where a binding would stand. A parameter of an arrow function has none of these.
+    pub(crate) is_not_binding: bool,
 }
 
 impl DeferredErrors {
@@ -1348,6 +1354,7 @@ impl DeferredErrors {
         to.invalid_expr_after_question = self
             .invalid_expr_after_question
             .or(to.invalid_expr_after_question);
+        to.is_not_binding |= self.is_not_binding;
     }
 }
 

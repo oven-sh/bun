@@ -439,6 +439,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut spread_range = bun_ast::Range::default();
         let mut type_colon_range = bun_ast::Range::default();
         let mut comma_after_spread = bun_ast::Loc::EMPTY;
+        // tsc decides at first sight that "()", "(...a", "(a:" and "(a?" start an arrow function. Its body is then a new expression, not one between the "?" and ":".
+        let mut is_first_sight_arrow = true;
 
         // Push a scope assuming this is an arrow function. It may not be, in which
         // case we'll need to roll this change back. This has to be done ahead of
@@ -473,6 +475,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let mut item = Expr::EMPTY;
             p.parse_expr_or_bindings(Level::Comma, Some(&mut errors), &mut item)?;
+
+            if opts.is_after_question_and_before_colon && items_list.is_empty() {
+                is_first_sight_arrow = is_spread
+                    || (matches!(item.data, js_ast::expr::Data::EIdentifier(_))
+                        && (p.lexer.token == T::TColon
+                            || errors.invalid_expr_after_question.is_some()));
+            }
 
             if is_spread {
                 item = p.new_expr(E::Spread { value: item }, spread_range.loc);
@@ -519,6 +528,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Also restore "await" and "yield" expression errors
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
+
+        is_first_sight_arrow &= !opts.after_type_parameters;
+        let body_flags = if opts.is_after_question_and_before_colon && !is_first_sight_arrow {
+            EFlags::AfterQuestionAndBeforeColonCarried
+        } else {
+            EFlags::None
+        };
 
         // Are these arguments to an arrow function?
         let mut is_arrow_fn = p.lexer.token == T::TEqualsGreaterThan;
@@ -582,12 +598,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if Self::IS_TYPESCRIPT_ENABLED
                 && p.lexer.token == T::TColon
                 && (invalid_log.is_empty() || Self::has_only_rest_initializers(&invalid_log))
+                && !errors.is_not_binding
             {
-                if opts.is_after_question_and_before_colon {
+                // A head that starts a branch takes the attempt whatever it looks like, as before the mark was carried. `a ? async() : b => c` stays a call of `async`.
+                if opts.is_after_question_and_before_colon
+                    && !(opts.is_carried && is_first_sight_arrow)
+                {
                     // Only do this very expensive check if we must
                     is_arrow_fn = p
                         .is_type_script_arrow_return_type_after_question_and_before_colon(
                             &arrow_data,
+                            body_flags,
                         )?;
                     if is_arrow_fn {
                         // We know this will succeed because we've already done it once above
@@ -612,7 +633,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
-                let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data)?;
+                let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data, body_flags)?;
                 arrow.is_async = opts.is_async;
                 arrow.has_rest_arg = spread_range.len > 0;
                 p.pop_scope();
@@ -1669,7 +1690,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             needs_async_loc: async_range.loc,
                             ..Default::default()
                         };
-                        let arrow_body = p.parse_arrow_body(args, &mut data)?;
+                        let arrow_body = p.parse_arrow_body(args, &mut data, flags)?;
                         p.pop_scope();
                         return Ok(p.new_expr(arrow_body, async_range.loc));
                     }
@@ -1707,7 +1728,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 ..Default::default()
                             };
                             // Pop the scope on the error path too.
-                            let mut arrow_body = match p.parse_arrow_body(args, &mut data) {
+                            let mut arrow_body = match p.parse_arrow_body(args, &mut data, flags) {
                                 Ok(body) => body,
                                 Err(e) => {
                                     p.pop_scope();
@@ -1731,7 +1752,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ParenExprOpts {
                             is_async: true,
                             is_after_question_and_before_colon: flags
-                                == EFlags::AfterQuestionAndBeforeColon,
+                                .is_after_question_and_before_colon(),
+                            is_carried: flags == EFlags::AfterQuestionAndBeforeColonCarried,
                             ..Default::default()
                         },
                     );
@@ -1756,6 +1778,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         is_async: true,
                                         force_arrow_fn: result
                                             == SkipTypeParameterResult::DefinitelyTypeParameters,
+                                        is_after_question_and_before_colon: flags
+                                            .is_after_question_and_before_colon()
+                                            && !p.is_jsx_enabled(),
+                                        after_type_parameters: true,
                                         ..Default::default()
                                     },
                                 );

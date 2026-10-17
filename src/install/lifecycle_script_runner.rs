@@ -946,7 +946,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     // Git dependencies are the only dependencies whose `prepare` scripts run.
                     if self.scripts.is_dependency && self.script_name().ends_with(b"prepare") {
                         bun_core::note!(
-                            "Bun does not install the devDependencies of a git dependency before its prepare scripts"
+                            "devDependencies of a git dependency are not installed before its prepare scripts"
                         );
                     }
                     self.discard_packages_with_unfinished_scripts();

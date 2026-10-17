@@ -1792,7 +1792,7 @@ describe("the trusted set", () => {
         [[], { npm_config_ignore_scripts: "true" }],
       ] as [string[], Record<string, string>][]) {
         const trust = await bun(ctx, ["pm", "trust", "lifecycle-postinstall", ...args], env);
-        expect(trust.err).toContain("error: lifecycle scripts are turned off (ignore-scripts)");
+        expect(trust.err).toContain("error: lifecycle scripts are disabled (ignore-scripts)");
         expect(await textOf(packageDirOf(ctx, linker, "lifecycle-postinstall"), "postinstall.txt")).toBeNull();
         expect(await recorded(ctx)).toEqual({ "package.json": null, "bun.lock": null });
         expect(trust.exitCode).toBe(1);
@@ -1809,7 +1809,7 @@ describe("the trusted set", () => {
       expect((await bun(ctx, ["install"])).exitCode).toBe(0);
 
       const trust = await bun(ctx, ["pm", "trust", "lifecycle-postinstall", "--frozen-lockfile"]);
-      expect(trust.err).toContain("error: the lockfile is frozen");
+      expect(trust.err).toContain("error: lockfile is frozen");
       expect(await textOf(packageDirOf(ctx, linker, "lifecycle-postinstall"), "postinstall.txt")).toBeNull();
       expect(await recorded(ctx)).toEqual({ "package.json": null, "bun.lock": null });
       expect(trust.exitCode).toBe(1);
@@ -1885,7 +1885,7 @@ describe("the trusted set", () => {
     const runsEnv = (ctx: TestCtx) => ({ SCRIPT_RUNS: join(ctx.packageDir, "runs.txt") });
     const runs = async (ctx: TestCtx) =>
       ((await textOf(ctx.packageDir, "runs.txt")) ?? "").split(/\s+/).filter(Boolean).sort();
-    const cannot = "cannot be trusted by name: declare it in your package.json";
+    const cannot = "cannot trust by name: add it to your package.json dependencies";
 
     test.concurrent.each([
       ["pm", "trust", "sharp", "--omit", "dev"],
@@ -2590,7 +2590,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("a git dependency of 
     await writeFile(ctx.packageJson, JSON.stringify({ name: "foo", dependencies: added ? {} : { host: "1.0.0" } }));
     if (!added) {
       expect((await ctx.bun("install")).exitCode).toBe(0);
-      expect((await ctx.bun("pm", "untrusted")).out).toContain("cannot be trusted by name");
+      expect((await ctx.bun("pm", "untrusted")).out).toContain("cannot trust by name");
     }
 
     const { exitCode } = await ctx.bun(...args);

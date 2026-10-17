@@ -21,6 +21,8 @@
 extern "C" void Bun__startCPUProfiler(JSC::VM* vm);
 extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText);
 extern "C" void Bun__setSamplingInterval(int intervalMicroseconds);
+extern "C" void Bun__CPUProfiler__enterIdle(JSC::VM* vm);
+extern "C" void Bun__CPUProfiler__exitIdle();
 
 void Bun__setSamplingInterval(int intervalMicroseconds)
 {
@@ -34,6 +36,14 @@ static thread_local double s_profilingStartTime = 0.0;
 // Set sampling interval to 1ms (1000 microseconds) to match Node.js
 static thread_local int s_samplingInterval = 1000;
 static thread_local bool s_isProfilerRunning = false;
+
+// JSC samples only while the VM is entered, so a wait in the event loop shows up as one long gap between two samples.
+struct IdleSpan {
+    MonotonicTime begin;
+    MonotonicTime end;
+};
+static thread_local WTF::Vector<IdleSpan> s_idleSpans;
+static thread_local MonotonicTime s_idleBegin;
 
 void setSamplingInterval(int intervalMicroseconds)
 {
@@ -59,7 +69,25 @@ void startCPUProfiler(JSC::VM& vm)
     samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(s_samplingInterval));
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
+    s_idleSpans.clear();
+    s_idleBegin = {};
     s_isProfilerRunning = true;
+}
+
+// Called before each event-loop poll that can block (on Windows, before every libuv poll phase). Must not allocate: the thread's mimalloc heaps may be handed off for the wait.
+static void enterIdle(JSC::VM& vm)
+{
+    if (!s_isProfilerRunning || vm.isEntered())
+        return;
+    s_idleBegin = MonotonicTime::now();
+}
+
+static void exitIdle()
+{
+    if (!s_idleBegin)
+        return;
+    s_idleSpans.append({ s_idleBegin, MonotonicTime::now() });
+    s_idleBegin = {};
 }
 
 struct ProfileNode {
@@ -222,6 +250,10 @@ static WTF::String escapeMarkdownTableCell(const WTF::String& str)
 // Uses the CommonMark spec: use N+1 backticks as delimiter where N is the longest run of backticks in the string
 static WTF::String formatCodeSpan(const WTF::String& str)
 {
+    // An empty code span is not valid markdown; leave the cell empty.
+    if (str.isEmpty())
+        return emptyString();
+
     // Also escape pipes since this will be used in table cells
     WTF::String escaped = escapeMarkdownTableCell(str);
 
@@ -289,10 +321,47 @@ static WTF::String generateEmptyProfileJSON()
     return sb.toString();
 }
 
+// Idle time between a sample and the one before it, and when that idle time began.
+struct IdleGap {
+    MonotonicTime begin;
+    Seconds duration;
+};
+
+// A wait never extends past the first sample taken after it began: that sample saw the thread in JavaScript.
+static WTF::Vector<IdleGap> idleGapBeforeEachSample(const WTF::Vector<JSC::SamplingProfiler::StackTrace>& stackTraces, const WTF::Vector<size_t>& sortedIndices, const WTF::Vector<IdleSpan>& idleSpans)
+{
+    WTF::Vector<IdleGap> gaps(stackTraces.size());
+    size_t nextSpan = 0;
+    for (size_t idx : sortedIndices) {
+        MonotonicTime sampleTime = stackTraces[idx].timestamp;
+        for (; nextSpan < idleSpans.size() && idleSpans[nextSpan].begin < sampleTime; nextSpan++) {
+            const IdleSpan& span = idleSpans[nextSpan];
+            if (!gaps[idx].begin)
+                gaps[idx].begin = span.begin;
+            gaps[idx].duration += std::min(span.end, sampleTime) - span.begin;
+        }
+    }
+    return gaps;
+}
+
+// Average non-idle time between two samples, so (idle) hit counts split time like the timestamps.
+static Seconds idleSampleSpacing(const WTF::Vector<JSC::SamplingProfiler::StackTrace>& stackTraces, const WTF::Vector<size_t>& sortedIndices, const WTF::Vector<IdleGap>& idleGaps)
+{
+    Seconds interval = Seconds::fromMicroseconds(s_samplingInterval);
+    if (sortedIndices.size() < 2)
+        return interval;
+    Seconds busy = stackTraces[sortedIndices.last()].timestamp - stackTraces[sortedIndices.first()].timestamp;
+    for (size_t i = 1; i < sortedIndices.size(); i++)
+        busy -= idleGaps[sortedIndices[i]].duration;
+    return std::max(busy / static_cast<double>(sortedIndices.size() - 1), interval);
+}
+
 // Unified function that stops the profiler and generates requested output formats
 void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 {
     s_isProfilerRunning = false;
+    auto idleSpans = std::exchange(s_idleSpans, {});
+    s_idleBegin = {};
 
     JSC::SamplingProfiler* profiler = vm.samplingProfiler();
     if (!profiler) {
@@ -336,6 +405,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         return stackTraces[a].timestamp < stackTraces[b].timestamp;
     });
 
+    auto idleGaps = idleGapBeforeEachSample(stackTraces, sortedIndices, idleSpans);
+
     // Generate JSON format if requested
     if (outJSON) {
         // Map from stack frame signature to node ID
@@ -360,8 +431,36 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         double startTime = s_profilingStartTime;
         double lastTime = s_profilingStartTime;
 
+        int idleNodeId = 0;
+        Seconds idleSpacing = idleSampleSpacing(stackTraces, sortedIndices, idleGaps);
+        Seconds idleNotYetSampled;
+
         for (size_t idx : sortedIndices) {
             auto& stackTrace = stackTraces[idx];
+
+            idleNotYetSampled += idleGaps[idx].duration;
+            for (MonotonicTime idleSampleTime = idleGaps[idx].begin; idleNotYetSampled >= idleSpacing; idleSampleTime += idleSpacing) {
+                if (!idleNodeId) {
+                    idleNodeId = nextNodeId++;
+                    ProfileNode idleNode;
+                    idleNode.id = idleNodeId;
+                    idleNode.functionName = "(idle)"_s;
+                    idleNode.url = ""_s;
+                    idleNode.scriptId = 0;
+                    idleNode.lineNumber = -1;
+                    idleNode.columnNumber = -1;
+                    idleNode.hitCount = 0;
+                    nodes.append(WTF::move(idleNode));
+                    nodes[0].children.append(idleNodeId);
+                }
+                nodes[idleNodeId - 1].hitCount++;
+                samples.append(idleNodeId);
+                double idleTime = idleSampleTime.approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
+                timeDeltas.append(static_cast<long long>(std::max(0.0, idleTime - lastTime)));
+                lastTime = idleTime;
+                idleNotYetSampled -= idleSpacing;
+            }
+
             if (stackTrace.frames.isEmpty()) {
                 samples.append(1);
                 double currentTime = stackTrace.timestamp.approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
@@ -624,6 +723,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         WTF::HashMap<WTF::String, FunctionStats> functionStatsMap;
 
         long long totalTimeUs = 0;
+        long long idleTimeUs = 0;
         int totalSamples = static_cast<int>(stackTraces.size());
 
         for (size_t idx : sortedIndices) {
@@ -634,6 +734,10 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             totalTimeUs += deltaUs;
             lastTime = currentTime;
             endTime = currentTime;
+
+            long long gapIdleUs = std::min(deltaUs, static_cast<long long>(idleGaps[idx].duration.microseconds()));
+            idleTimeUs += gapIdleUs;
+            deltaUs -= gapIdleUs;
 
             if (stackTrace.frames.isEmpty())
                 continue;
@@ -717,10 +821,18 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             }
         }
 
+        // Not in functionStatsMap: it has no location, callers or callees, and no source file.
+        FunctionStats idleStats;
+        idleStats.functionName = "(idle)"_s;
+        idleStats.selfTimeUs = idleTimeUs;
+        idleStats.totalTimeUs = idleTimeUs;
+
         // Sort functions by self time
         WTF::Vector<std::pair<WTF::String, FunctionStats*>> sortedBySelf;
         for (auto& entry : functionStatsMap)
             sortedBySelf.append({ entry.key, &entry.value });
+        if (idleTimeUs)
+            sortedBySelf.append({ idleStats.functionName, &idleStats });
         std::sort(sortedBySelf.begin(), sortedBySelf.end(), [](const auto& a, const auto& b) {
             return a.second->selfTimeUs > b.second->selfTimeUs;
         });
@@ -729,6 +841,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         WTF::Vector<std::pair<WTF::String, FunctionStats*>> sortedByTotal;
         for (auto& entry : functionStatsMap)
             sortedByTotal.append({ entry.key, &entry.value });
+        if (idleTimeUs)
+            sortedByTotal.append({ idleStats.functionName, &idleStats });
         std::sort(sortedByTotal.begin(), sortedByTotal.end(), [](const auto& a, const auto& b) {
             return a.second->totalTimeUs > b.second->totalTimeUs;
         });
@@ -818,6 +932,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         for (auto& [key, stats] : sortedBySelf) {
             // Skip functions with no self time and no interesting relationships
             if (stats->selfTimeUs == 0 && stats->callers.isEmpty() && stats->callees.isEmpty())
+                continue;
+            if (stats == &idleStats)
                 continue;
 
             // Header: ### `functionName`
@@ -933,6 +1049,16 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 extern "C" void Bun__startCPUProfiler(JSC::VM* vm)
 {
     Bun::startCPUProfiler(*vm);
+}
+
+extern "C" void Bun__CPUProfiler__enterIdle(JSC::VM* vm)
+{
+    Bun::enterIdle(*vm);
+}
+
+extern "C" void Bun__CPUProfiler__exitIdle()
+{
+    Bun::exitIdle();
 }
 
 extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText)

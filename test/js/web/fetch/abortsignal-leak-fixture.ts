@@ -51,7 +51,7 @@ export function createAbortSignalLeakSuite({ http2 = false }: { http2?: boolean 
 
   // This test checks that calling req.signal doesn't cause the AbortSignal to be leaked.
   async function testReqSignalGetter() {
-    const url = `${server.url}/req-signal-aborted`;
+    const url = new URL("/req-signal-aborted", server.url).href;
     const batchSize = 50;
     const iterations = isDebug || isASAN ? 15 : 50;
 
@@ -95,7 +95,7 @@ export function createAbortSignalLeakSuite({ http2 = false }: { http2?: boolean 
   // This test checks that calling req.signal.addEventListener("abort", ...)
   // doesn't cause the AbortSignal to be leaked after the request is aborted.
   async function testReqSignalAbortEvent() {
-    const url = `${server.url}/req-signal-aborted`;
+    const url = new URL("/req-signal-aborted", server.url).href;
     const batchSize = 50;
     const iterations = isDebug || isASAN ? 15 : 50;
 
@@ -153,7 +153,7 @@ export function createAbortSignalLeakSuite({ http2 = false }: { http2?: boolean 
 
   // This test checks that we decrement the pending activity count for the AbortSignal.
   async function testReqSignalAbortEventNeverResolves() {
-    const url = `${server.url}/req-signal-aborted`;
+    const url = new URL("/req-signal-aborted", server.url).href;
     const batchSize = 50;
     const iterations = isDebug || isASAN ? 15 : 50;
 

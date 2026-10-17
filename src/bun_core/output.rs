@@ -863,17 +863,25 @@ pub fn is_ai_agent() -> bool {
         if is_verbose() {
             return false;
         }
-        // Cross-tool convention.
-        env_var::AI_AGENT.get().unwrap_or(false)
+        // Each agent exports its own variable. One set to a falsy value opts out:
+        // `CLAUDECODE=0` keeps the human output although Claude Code also exports `AI_AGENT`.
+        let signals = [
+            // Cross-tool convention.
+            env_var::AI_AGENT.get(),
             // Claude Code.
-            || env_var::CLAUDECODE.get().unwrap_or(false)
+            env_var::CLAUDECODE.get(),
             // Replit.
-            || env_var::REPL_ID.get().unwrap_or(false)
+            env_var::REPL_ID.get(),
             // Gemini CLI.
-            || env_var::GEMINI_CLI.get().unwrap_or(false)
+            env_var::GEMINI_CLI.get(),
             // Codex.
-            || env_var::CODEX_THREAD_ID.get().unwrap_or(false)
-            || env_var::CODEX_CI.get().unwrap_or(false)
+            env_var::CODEX_THREAD_ID.get(),
+            env_var::CODEX_CI.get(),
+        ];
+        if signals.contains(&Some(false)) {
+            return false;
+        }
+        signals.contains(&Some(true))
     }
 
     ONCE.call_once(|| VALUE.store(evaluate(), Ordering::Relaxed));

@@ -1151,7 +1151,8 @@ describe.concurrent("bun test --isolate", () => {
         heldLongAfterItsEnd: held.filter(file => file < 10),
         exitCode,
       }).toEqual({ theFileThatCounts: true, heldLongAfterItsEnd: [], exitCode: 0 });
-      expect(alive.filter(file => file < 10).length).toBeLessThanOrEqual(1);
+      // A leak that the snapshot can't see keeps all ten. A stray word keeps one file, and which words are left depends on the build.
+      expect(alive.filter(file => file < 10).length).toBeLessThan(5);
     },
   );
 

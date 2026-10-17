@@ -381,8 +381,10 @@ impl QueryCondition for ContainerCondition {
                 dest.write_char(b')')
             }
             Self::ScrollState(query) => {
-                // A bare feature already prints its own parentheses.
-                let needs_parens = !matches!(query, ScrollStateQuery::Feature(_));
+                // A plain feature prints its own parentheses. Everything else
+                // (`not`, and/or, a feature that downlevels to `(min) and (max)`)
+                // needs the outer pair.
+                let needs_parens = query.needs_parens(None, &dest.targets);
                 dest.write_str("scroll-state")?;
                 if needs_parens {
                     dest.write_char(b'(')?;
@@ -417,35 +419,18 @@ impl QueryCondition for ContainerCondition {
         input: &mut css::Parser,
         _options: &css::ParserOptions,
     ) -> Option<css::Result<Self>> {
-        use crate::media_query::QueryConditionFlags;
         use bun_core::strings;
         if strings::eql_case_insensitive_ascii_check_length(name, b"style") {
-            return Some(input.parse_nested_block(|i| {
-                if let Ok(res) = i.try_parse(|i2| {
-                    media_query::parse_query_condition::<StyleQuery>(
-                        i2,
-                        QueryConditionFlags::ALLOW_OR,
-                    )
-                }) {
-                    return Ok(ContainerCondition::Style(res));
-                }
-                Ok(ContainerCondition::Style(StyleQuery::parse_feature(i)?))
-            }));
+            return Some(Self::parse_query_function_block(
+                input,
+                ContainerCondition::Style,
+            ));
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-state") {
-            return Some(input.parse_nested_block(|i| {
-                if let Ok(res) = i.try_parse(|i2| {
-                    media_query::parse_query_condition::<ScrollStateQuery>(
-                        i2,
-                        QueryConditionFlags::ALLOW_OR,
-                    )
-                }) {
-                    return Ok(ContainerCondition::ScrollState(res));
-                }
-                Ok(ContainerCondition::ScrollState(
-                    ScrollStateQuery::parse_feature(i)?,
-                ))
-            }));
+            return Some(Self::parse_query_function_block(
+                input,
+                ContainerCondition::ScrollState,
+            ));
         }
         None
     }
@@ -481,6 +466,23 @@ impl ContainerCondition {
 
 // ─── ContainerCondition parse ─────────────────────────────────────────────
 impl ContainerCondition {
+    /// Parse the `( ... )` block of a query function such as `style(...)`: a
+    /// `not`/`and`/`or` condition over `Q`, or a single bare feature.
+    fn parse_query_function_block<Q: QueryCondition>(
+        input: &mut css::Parser,
+        wrap: fn(Q) -> Self,
+    ) -> css::Result<Self> {
+        use crate::media_query::QueryConditionFlags;
+        input.parse_nested_block(|i| {
+            if let Ok(res) = i.try_parse(|i2| {
+                media_query::parse_query_condition::<Q>(i2, QueryConditionFlags::ALLOW_OR)
+            }) {
+                return Ok(wrap(res));
+            }
+            Ok(wrap(Q::parse_feature(i)?))
+        })
+    }
+
     pub fn parse(input: &mut css::Parser) -> css::Result<ContainerCondition> {
         use crate::media_query::QueryConditionFlags;
         media_query::parse_query_condition::<ContainerCondition>(

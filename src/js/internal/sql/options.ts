@@ -17,6 +17,8 @@ const kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
 const env = Bun.env;
 
 const SQLITE_MEMORY = ":memory:";
+const REDACTED = "[REDACTED]";
+const SCHEME = /^[a-z][a-z0-9+.-]*$/i;
 const SUPPORTED_ADAPTERS = `"postgres", "sqlite", "mysql", "mariadb"`;
 
 function decodeIfValid(value: string | null | undefined): string | null {
@@ -298,7 +300,9 @@ function resolveTarget(
         ? "postgres"
         : adapterFromScheme(scheme);
     if (!adapter) {
-      throw new Error(`Unsupported protocol: ${scheme}. Supported adapters: ${SUPPORTED_ADAPTERS}`);
+      // Without a scheme, what is in front of a `://` further back can be anything.
+      const named = SCHEME.test(scheme) ? scheme : REDACTED;
+      throw new Error(`Unsupported protocol: ${named}. Supported adapters: ${SUPPORTED_ADAPTERS}`);
     }
   }
 
@@ -380,6 +384,24 @@ function parseSQLiteOptions(target: string | URL | null, options: AnyOptions): B
   return sqliteOptions;
 }
 
+/** What an error may say of a connection URL that cannot be parsed: no user, no password, no query. */
+function withoutSecrets(value: string): string {
+  const schemeEnd = value.indexOf("://");
+  const scheme = value.slice(0, schemeEnd + 3);
+  // The `://` is further back, and anything can be in front of it.
+  if (!SCHEME.test(value.slice(0, schemeEnd))) return REDACTED;
+
+  // A password can have any character, so the host starts behind the last `@`.
+  const at = value.lastIndexOf("@");
+  const rest = value
+    .slice(at === -1 ? scheme.length : at + 1)
+    .split("?", 1)[0]
+    .split("#", 1)[0];
+  if (at !== -1) return `${scheme}${REDACTED}@${rest}`;
+  // "user:password" looks like "host:port".
+  return rest.split("/", 1)[0].indexOf(":") > 0 ? scheme + REDACTED : scheme + rest;
+}
+
 function parseServerUrl(
   target: string | URL,
   adapter: Adapter,
@@ -392,7 +414,7 @@ function parseServerUrl(
     const value = target.includes("://") ? target : `${adapter}://${target}`;
     try {
       url = new URL(value);
-    } catch (e) {
+    } catch {
       // `new URL()` refuses credentials or a port without a host. libpq takes the host from elsewhere.
       const start = value.indexOf("://") + 3;
       let end = start;
@@ -403,13 +425,17 @@ function parseServerUrl(
         if (withHost) return [withHost, ""];
       }
 
+      // The error of `new URL()` has the whole string.
+      const input = withoutSecrets(value);
       if (adapterOption && value.includes("sqlite")) {
         throw new Error(
-          `Invalid URL '${value}' for ${adapterOption}. Did you mean to specify \`{ adapter: "sqlite" }\`?`,
-          { cause: e },
+          `Invalid URL '${input}' for ${adapterOption}. Did you mean to specify \`{ adapter: "sqlite" }\`?`,
         );
       }
-      throw e;
+      const error = $ERR_INVALID_URL(input);
+      // On the error of `new URL()` it is an own property, so `JSON.stringify(error)` has it.
+      $putByValDirect(error, "code", "ERR_INVALID_URL");
+      throw error;
     }
   }
 
@@ -491,7 +517,7 @@ function isLibpqClientKeyword(key: string, value: string): boolean {
 function setStartupParameter(parameters: Record<string, string>, name: string, key: string, raw: unknown) {
   const value = `${raw}`;
   if (key.includes("\0") || value.includes("\0")) {
-    throw $ERR_INVALID_ARG_VALUE(name, raw, "must not contain null bytes");
+    throw $ERR_INVALID_ARG_VALUE(name, REDACTED, "must not contain null bytes");
   }
   parameters[key] = value;
 }
@@ -581,11 +607,11 @@ function parseTransform(transform: any): import("./shared").Transform {
 
 function inspectOptions(this: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
   const copy = { ...this };
-  if (copy.password) copy.password = "[REDACTED]";
+  if (copy.password) copy.password = REDACTED;
   if ($isObject(copy.tls)) {
     const tls = { ...(copy.tls as TLSOptions) };
-    if (tls.key) tls.key = "[REDACTED]";
-    if (tls.passphrase) tls.passphrase = "[REDACTED]";
+    if (tls.key) tls.key = REDACTED;
+    if (tls.passphrase) tls.passphrase = REDACTED;
     copy.tls = tls;
   }
   return copy;

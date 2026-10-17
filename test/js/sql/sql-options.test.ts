@@ -383,6 +383,162 @@ describe("what the options object inherits", () => {
   });
 });
 
+describe("the error for a connection URL that cannot be parsed", () => {
+  const marker = "Hunter2Marker";
+
+  /** All that a program, a log or the print of an uncaught error can show of it, in lower case. */
+  function everythingIn(error: any): string {
+    const parts: unknown[] = [];
+    for (let e = error; e != null && parts.length < 100; e = e.cause) {
+      parts.push(String(e), e.message, e.stack, Bun.inspect(e), util.inspect(e), JSON.stringify(e));
+      for (const key of Reflect.ownKeys(Object(e))) parts.push(Bun.inspect(e[key]));
+    }
+    return parts.join("\n").toLowerCase();
+  }
+  function errorOf(make: () => unknown): any {
+    try {
+      make();
+    } catch (error) {
+      return error;
+    }
+  }
+
+  // [what is in the way, the URL behind its scheme, what the error names behind the scheme]
+  const urls: [string, string, string][] = [
+    ["a port that is none", `user:${marker}@db.example:port/db`, "[REDACTED]@db.example:port/db"],
+    ["a port that is too high", `user:${marker}@db.example:99999/db`, "[REDACTED]@db.example:99999/db"],
+    ["a space in the host", `user:${marker}@db example/db`, "[REDACTED]@db example/db"],
+    ["a / in the password", `user:ab/${marker}@db.example:5432/db`, "[REDACTED]@db.example:5432/db"],
+    ["a # in the password", `user:ab#${marker}@db.example:5432/db`, "[REDACTED]@db.example:5432/db"],
+    ["a ? in the password", `user:ab?${marker}@db.example:5432/db`, "[REDACTED]@db.example:5432/db"],
+    ["an @ in the password", `user:ab@${marker}@db.example:port/db`, "[REDACTED]@db.example:port/db"],
+    ["a space in the password", `user:ab ${marker}@db.example:port/db`, "[REDACTED]@db.example:port/db"],
+    ["a % in the password", `user:ab%${marker}@db.example:port/db`, "[REDACTED]@db.example:port/db"],
+    ["?password=", `user@db.example:port/db?password=${marker}`, "[REDACTED]@db.example:port/db"],
+    ["?sslpassword=", `user@db.example:port/db?sslpassword=${marker}`, "[REDACTED]@db.example:port/db"],
+    ["a fragment", `user@db.example:port/db#${marker}`, "[REDACTED]@db.example:port/db"],
+    ["an @ in the query", `user:${marker}@db.example:port/db?application_name=a@b`, "[REDACTED]@b"],
+    ["?password= and no user", `db.example:port/db?password=${marker}`, "[REDACTED]"],
+    ["no @ behind the password", `user:${marker}%40db.example/db`, "[REDACTED]"],
+    ["nothing behind the password", `user:${marker}`, "[REDACTED]"],
+  ];
+
+  describe.each([
+    ["postgres", "POSTGRES_URL"],
+    ["mysql", "MYSQL_URL"],
+    ["mariadb", "MARIADB_URL"],
+  ] as const)("%s", (adapter, variable) => {
+    test.each(urls)("%s", (_, rest, named) => {
+      const url = `${adapter}://${rest}`;
+      const fromEnvironment = (name: string, options?: object) => {
+        process.env[name] = url;
+        try {
+          return new SQL(options as never);
+        } finally {
+          delete process.env[name];
+        }
+      };
+      for (const make of [
+        () => new SQL(url),
+        () => new SQL(url, { adapter }),
+        () => new SQL(rest, { adapter }),
+        () => new SQL({ url }),
+        () => new SQL({ adapter, url: rest }),
+        () => fromEnvironment("DATABASE_URL"),
+        () => fromEnvironment("TLS_DATABASE_URL", { max: 1 }),
+        () => fromEnvironment(variable),
+        () => fromEnvironment("DATABASE_URL", { hostname: "other.example" }),
+      ]) {
+        const error = errorOf(make);
+        expect(error).toBeInstanceOf(TypeError);
+        expect({ ...error, name: error.name, message: error.message, cause: error.cause }).toEqual({
+          name: "TypeError",
+          message: "Invalid URL",
+          code: "ERR_INVALID_URL",
+          input: `${adapter}://${named}`,
+          cause: undefined,
+        });
+        expect(everythingIn(error)).not.toContain(marker.toLowerCase());
+      }
+    });
+  });
+
+  test.each([
+    ["postgres://db example/db", "postgres://db example/db"],
+    ["postgres://db example/db?application_name=api#x", "postgres://db example/db"],
+    ["postgres://h1:1,h2:2/db", "postgres://[REDACTED]"],
+  ])("%s has no user: %s", (url, input) => {
+    expect(errorOf(() => new SQL(url))).toMatchObject({ code: "ERR_INVALID_URL", input });
+  });
+
+  // [what the error names, the adapter, the URL]
+  test.each([
+    ["sqlite://[REDACTED]@db example/db", "postgres", `sqlite://user:${marker}@db example/db`],
+    ["sqlite://[REDACTED]@db.example/db", "mysql", `sqlite://user:ab/${marker}@db.example/db`],
+    [
+      "postgres://[REDACTED]@db.example:port/sqlite",
+      "mariadb",
+      `postgres://user:${marker}@db.example:port/sqlite?password=${marker}`,
+    ],
+    ["sqlite://:memory:", "postgres", "sqlite://:memory:"],
+  ] as const)("the hint at the sqlite adapter names %s", (named, adapter, url) => {
+    const error = errorOf(() => new SQL(url, { adapter }));
+    expect(error.message).toBe(
+      `Invalid URL '${named}' for ${adapter}. Did you mean to specify \`{ adapter: "sqlite" }\`?`,
+    );
+    expect(error.cause).toBeUndefined();
+    expect(everythingIn(error)).not.toContain(marker.toLowerCase());
+  });
+
+  // [what is in front of the `://`, what the error names, the URL]
+  test.each([
+    [
+      "a user, a password, a host and a query",
+      "[REDACTED]",
+      `user:${marker}@db.example/db?redirect=https://example.com`,
+    ],
+    ["a user and a part of the password", "[REDACTED]", `user:${marker}://x@db.example/db`],
+    ["a user, a host and a query", "[REDACTED]", `${marker}@db.example/db?redirect=https://example.com`],
+    ["a scheme", "mongodb", `mongodb://user:${marker}@db.example/db`],
+  ])("a protocol that is not supported: %s", (_, named, url) => {
+    for (const error of [errorOf(() => new SQL(url)), errorOf(() => new SQL({ url }))]) {
+      expect(error.message).toBe(
+        `Unsupported protocol: ${named}. Supported adapters: "postgres", "sqlite", "mysql", "mariadb"`,
+      );
+      expect(everythingIn(error)).not.toContain(marker.toLowerCase());
+    }
+  });
+
+  test.each<[string, unknown[]]>([
+    ["options.password", [`mysql://user@db.example/db?password=${marker}%00`]],
+    ["options.sslpassword", [`mariadb://user@db.example/db?sslpassword=${marker}%00`]],
+    ["options.anything", [`postgres://user@db.example/db?anything=${marker}%00`]],
+    ["options.connection.password", ["postgres://user@db.example/db", { connection: { password: `${marker}\0` } }]],
+  ])("a NUL in the startup parameter %s", (name, args) => {
+    const error = errorOf(() => new SQL(...(args as [string])));
+    expect(error).toMatchObject({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: `The property '${name}' must not contain null bytes. Received '[REDACTED]'`,
+    });
+    expect(everythingIn(error)).not.toContain(marker.toLowerCase());
+  });
+
+  test("when nothing catches it", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "new Bun.SQL();"],
+      env: { ...bunEnv, DATABASE_URL: `postgres://user:ab/${marker}@db.example:5432/db?password=${marker}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("ERR_INVALID_URL");
+    expect(stderr).toContain("postgres://[REDACTED]@db.example:5432/db");
+    expect(stderr.toLowerCase()).not.toContain(marker.toLowerCase());
+    expect(exitCode).toBe(1);
+  });
+});
+
 describe("inspecting sql.options", () => {
   const secret = "sekret-password";
 

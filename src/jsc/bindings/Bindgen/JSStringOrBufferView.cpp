@@ -2,23 +2,20 @@
 #include "Bindgen/JSStringOrBufferView.h"
 #include "ErrorCode.h"
 #include "ZigGeneratedClasses.h"
+#include "blob.h"
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
-
-// False for a Blob whose bytes are not in memory.
-extern "C" bool Blob__getInMemoryBytes(void* blob, const uint8_t** data, size_t* length);
 
 namespace Bun::Bindgen {
 using namespace JSC;
 
 bool isInMemoryBlob(JSGlobalObject& globalObject, JSValue value)
 {
-    auto* blob = dynamicDowncast<WebCore::JSBlob>(value);
-    if (!blob)
+    if (!value.inherits<WebCore::JSBlob>())
         return false;
     const uint8_t* data = nullptr;
     size_t length = 0;
-    if (!Blob__getInMemoryBytes(blob->wrapped(), &data, &length)) {
+    if (!WebCore::Blob__sharedView(JSValue::encode(value), &data, &length)) {
         auto scope = DECLARE_THROW_SCOPE(getVM(&globalObject));
         Bun::throwError(&globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "File blob cannot be used here"_s);
         return false;
@@ -38,7 +35,7 @@ void JSStringOrBufferView::readBuffer(JSGlobalObject& globalObject, JSValue argu
     } else {
         const uint8_t* data = nullptr;
         size_t length = 0;
-        Blob__getInMemoryBytes(uncheckedDowncast<WebCore::JSBlob>(argument)->wrapped(), &data, &length);
+        WebCore::Blob__sharedView(JSValue::encode(argument), &data, &length);
         m_buffer = { data, length };
     }
     if (isShared && !m_buffer.empty()) {

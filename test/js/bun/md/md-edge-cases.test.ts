@@ -2033,12 +2033,12 @@ test("a long delimiter run uses all of its characters to open and close emphasis
   const repeated = (fill: string, count: number) => Buffer.alloc(count * fill.length, fill).toString();
   const nested = (depth: number, text: string) =>
     `${repeated("<strong>", depth)}${text}${repeated("</strong>", depth)}`;
-  expect(Markdown.html(`${"_".repeat(13)}!${"_".repeat(13)}`)).toBe(`<p><em>${nested(6, "!")}</em></p>\n`);
-  expect(Markdown.html(`${"*".repeat(14)}a${"*".repeat(14)}`)).toBe(`<p>${nested(7, "a")}</p>\n`);
+  expect(Markdown.html(`${repeated("_", 13)}!${repeated("_", 13)}`)).toBe(`<p><em>${nested(6, "!")}</em></p>\n`);
+  expect(Markdown.html(`${repeated("*", 14)}a${repeated("*", 14)}`)).toBe(`<p>${nested(7, "a")}</p>\n`);
   expect(Markdown.html(`${repeated("*", 2000)}a${repeated("*", 2000)}`)).toBe(`<p>${nested(1000, "a")}</p>\n`);
   // One run can close many openers.
-  expect(Markdown.html(`${"**a ".repeat(20)}b${"*".repeat(40)}`)).toBe(
-    `<p>${"<strong>a ".repeat(20)}b${"</strong>".repeat(20)}</p>\n`,
+  expect(Markdown.html(`${repeated("**a ", 20)}b${repeated("*", 40)}`)).toBe(
+    `<p>${repeated("<strong>a ", 20)}b${repeated("</strong>", 20)}</p>\n`,
   );
 });
 

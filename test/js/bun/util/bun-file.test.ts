@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { closeSync, openSync, writeSync } from "fs";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
@@ -154,4 +155,84 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
     emptyErr: "Unexpected end of JSON input",
   });
   expect(exitCode).toBe(0);
+});
+
+// A pipe and a socket have no length. macOS and the BSDs report the bytes that wait in one as its
+// st_size, and a Bun.file() that takes that count for its size stops every later read there.
+describe.skipIf(isWindows)("Bun.stdin asked for its size while bytes wait in it", () => {
+  const first = "first,";
+  const second = "second";
+
+  // A byte on the READY FIFO says that `first` is in the child's stdin. The child prints the size on
+  // a line of its own, and `second` is sent only after that line.
+  const script = (ask: string, read: string) => `
+    const fs = require("fs");
+    fs.readSync(fs.openSync(process.env.READY, "r"), Buffer.alloc(1));
+    ${ask}
+    process.stdout.write(String(Bun.stdin.size) + "\\n");
+    ${read}
+    process.stdout.write(text);
+  `;
+  const asks = {
+    ".size": "",
+    "exists()": "await Bun.stdin.exists();",
+  };
+  const reads = {
+    "text()": "const text = await Bun.stdin.text();",
+    "stream()": 'let text = ""; for await (const chunk of Bun.stdin.stream()) text += Buffer.from(chunk).toString();',
+  };
+  const stdins = {
+    // The stdin that Bun.spawn hands out is a socketpair. The test says when `first` is in it.
+    socket: { cmd: (script: string) => [bunExe(), "-e", script], saysReady: false },
+    // A shell pipeline is a kernel pipe. Its left side passes `first` on, says so, then passes the rest on.
+    pipe: {
+      cmd: () => ["sh", "-c", `{ head -c ${first.length}; echo >"$READY"; cat; } | "$BUN" -e "$SCRIPT"`],
+      saysReady: true,
+    },
+  };
+
+  for (const [stdinName, stdin] of Object.entries(stdins)) {
+    for (const [askName, ask] of Object.entries(asks)) {
+      for (const [readName, read] of Object.entries(reads)) {
+        test.concurrent(`${stdinName}: ${askName}, then ${readName} reads to the end`, async () => {
+          using dir = tempDir("bun-stdin-size-waiting", {});
+          const ready = join(String(dir), "ready");
+          expect(Bun.spawnSync({ cmd: ["mkfifo", ready] }).exitCode).toBe(0);
+          // Open for both directions: no open of the FIFO blocks, and the byte stays in it until the child reads it.
+          const readyFd = openSync(ready, "r+");
+          try {
+            const SCRIPT = script(ask, read);
+            await using proc = Bun.spawn({
+              cmd: stdin.cmd(SCRIPT),
+              env: { ...bunEnv, BUN: bunExe(), SCRIPT, READY: ready },
+              stdin: "pipe",
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            // Drained from the start so a failing child can never block on a full stderr pipe.
+            const stderr = proc.stderr.text();
+            const reader = proc.stdout.getReader();
+            const decoder = new TextDecoder();
+            let stdout = "";
+
+            proc.stdin.write(first);
+            await proc.stdin.flush();
+            if (!stdin.saysReady) writeSync(readyFd, "\n");
+            for (let r; !stdout.includes("\n") && !(r = await reader.read()).done; ) {
+              stdout += decoder.decode(r.value, { stream: true });
+            }
+
+            proc.stdin.write(second);
+            await proc.stdin.end();
+            for (let r; !(r = await reader.read()).done; ) stdout += decoder.decode(r.value, { stream: true });
+
+            expect({ stdout, stderr: await stderr }).toEqual({ stdout: "Infinity\n" + first + second, stderr: "" });
+            expect(await proc.exited).toBe(0);
+          } finally {
+            closeSync(readyFd);
+          }
+        });
+      }
+    }
+  }
 });

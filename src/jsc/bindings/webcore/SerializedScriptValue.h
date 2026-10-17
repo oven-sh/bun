@@ -72,6 +72,7 @@ using DenseArrayElement = std::variant<JSC::JSValue, WTF::String, SimpleCloneabl
 
 enum class FastPath : uint8_t {
     None,
+    Primitive,
     String,
     SimpleObject,
     SimpleArray,
@@ -118,6 +119,9 @@ public:
 
     static RefPtr<SerializedScriptValue> convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value) { return create(globalObject, value, SerializationForStorage::Yes); }
 
+    // Fast path for postMessage with a bare non-cell primitive (int32/double/bool/null/undefined)
+    static Ref<SerializedScriptValue> createPrimitiveFastPath(JSC::JSValue);
+
     // Fast path for postMessage with pure strings
     static Ref<SerializedScriptValue> createStringFastPath(const String& string);
 
@@ -163,6 +167,8 @@ private:
 #endif
     );
 
+    // Constructor for primitive fast path (non-cell JSValue)
+    explicit SerializedScriptValue(JSC::JSValue fastPathPrimitive);
     // Constructor for string fast path
     explicit SerializedScriptValue(const String& fastPathString);
     explicit SerializedScriptValue(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>&& object);
@@ -187,6 +193,8 @@ private:
 
     // Fast path for postMessage with pure strings - avoids serialization overhead
     String m_fastPathString;
+    // Fast path for postMessage with a bare non-cell primitive. Only valid when m_fastPath == Primitive.
+    JSC::JSValue m_fastPathPrimitive {};
     FastPath m_fastPath { FastPath::None };
     size_t m_memoryCost { 0 };
 

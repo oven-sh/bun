@@ -23,12 +23,14 @@ const QUIC_CALLBACK_NAMES: &[&str] = &[
     "SessionPathValidation",
     "SessionTicket",
     "SessionVersionNegotiation",
+    "StreamAvailable",
     "StreamBlocked",
     "StreamClose",
     "StreamCreated",
     "StreamDrain",
     "StreamHeaders",
     "StreamReset",
+    "StreamStopSending",
     "StreamTrailers",
 ];
 
@@ -270,6 +272,7 @@ pub(crate) fn create_node_quic_binding(global: &JSGlobalObject) -> JsResult<JSVa
         "WANTS_HEADERS" => wants_headers,
         "WANTS_RESET" => wants_reset,
         "WANTS_TRAILERS" => wants_trailers,
+        "WANTS_STOP_SENDING" => wants_stop_sending,
         "RECEIVED_EARLY_DATA" => received_early_data,
         "WRITE_DESIRED_SIZE" => write_desired_size,
         "HIGH_WATER_MARK" => high_water_mark,

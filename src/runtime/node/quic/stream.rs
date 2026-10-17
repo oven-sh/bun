@@ -36,6 +36,7 @@ pub(crate) struct StreamState {
     pub(crate) wants_headers: u8,
     pub(crate) wants_reset: u8,
     pub(crate) wants_trailers: u8,
+    pub(crate) wants_stop_sending: u8,
     pub(crate) received_early_data: u8,
     pub(crate) write_desired_size: u32,
     pub(crate) high_water_mark: u32,
@@ -461,6 +462,9 @@ impl QuicStream {
     }
     pub(super) fn wants_block(&self) -> bool {
         self.with_state(|s| s.wants_block != 0)
+    }
+    pub(super) fn wants_stop_sending(&self) -> bool {
+        self.with_state(|s| s.wants_stop_sending != 0)
     }
     fn note_write_blocked(&self) {
         if self.blocked_reported.replace(true) {

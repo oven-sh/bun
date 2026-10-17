@@ -61,6 +61,7 @@ const {
   IDX_STATE_STREAM_WANTS_HEADERS,
   IDX_STATE_STREAM_WANTS_RESET,
   IDX_STATE_STREAM_WANTS_TRAILERS,
+  IDX_STATE_STREAM_WANTS_STOP_SENDING,
   IDX_STATE_STREAM_RECEIVED_EARLY_DATA,
   IDX_STATE_STREAM_WRITE_DESIRED_SIZE,
   IDX_STATE_STREAM_HIGH_WATER_MARK,
@@ -728,6 +729,20 @@ class QuicStreamState {
   }
 
   /** @type {boolean} */
+  get wantsStopSending() {
+    const handle = this.#handle;
+    if (handle === undefined) return undefined;
+    return DataViewPrototypeGetUint8(handle, this.#offset + IDX_STATE_STREAM_WANTS_STOP_SENDING) !== 0;
+  }
+
+  /** @type {boolean} */
+  set wantsStopSending(val) {
+    const handle = this.#handle;
+    if (handle === undefined) return;
+    DataViewPrototypeSetUint8(handle, this.#offset + IDX_STATE_STREAM_WANTS_STOP_SENDING, val ? 1 : 0);
+  }
+
+  /** @type {boolean} */
   get early() {
     const handle = this.#handle;
     if (handle === undefined) return undefined;
@@ -787,6 +802,7 @@ class QuicStreamState {
       wantsReset,
       wantsHeaders,
       wantsTrailers,
+      wantsStopSending,
       early,
       resetCode,
       writeDesiredSize,
@@ -807,6 +823,7 @@ class QuicStreamState {
       wantsReset,
       wantsHeaders,
       wantsTrailers,
+      wantsStopSending,
       early,
       resetCode: `${resetCode}`,
       writeDesiredSize,
@@ -843,6 +860,7 @@ class QuicStreamState {
       wantsReset,
       wantsHeaders,
       wantsTrailers,
+      wantsStopSending,
       early,
       resetCode,
       writeDesiredSize,
@@ -864,6 +882,7 @@ class QuicStreamState {
         wantsReset,
         wantsHeaders,
         wantsTrailers,
+        wantsStopSending,
         early,
         resetCode,
         writeDesiredSize,

@@ -1040,6 +1040,21 @@ impl QuicSession {
                             &[handle, direction],
                         );
                     }
+                } else {
+                    // A local stream reaches here only when it was opened
+                    // without stream credit and lsquic has now bound it
+                    // (`on_new_stream`). Settles `stream.opened`.
+                    let handle = stream.handle();
+                    if let Some(cb) = callbacks::get(global, "onStreamAvailable") {
+                        let vm = global.bun_vm().as_mut();
+                        vm.event_loop_ref().run_callback(
+                            bun_event_loop::ContextId::NONE,
+                            cb,
+                            global,
+                            handle,
+                            &[],
+                        );
+                    }
                 }
             }
             SessionEvent::NewToken(token) => {
@@ -1448,6 +1463,21 @@ impl QuicSession {
                     return Ok(());
                 };
                 stream.apply_peer_stop_sending(code);
+                if !stream.wants_stop_sending() || stream.is_announce_suppressed() {
+                    return Ok(());
+                }
+                let handle = stream.handle();
+                let err = make_application_error(global, code)?;
+                if let Some(cb) = callbacks::get(global, "onStreamStopSending") {
+                    let vm = global.bun_vm().as_mut();
+                    vm.event_loop_ref().run_callback(
+                        bun_event_loop::ContextId::NONE,
+                        cb,
+                        global,
+                        handle,
+                        &[err],
+                    );
+                }
             }
             SessionEvent::StreamClosed { stream: stream_ptr } => {
                 let Some(stream) = self.live_stream(stream_ptr) else {

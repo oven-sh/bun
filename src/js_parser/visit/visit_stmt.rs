@@ -363,6 +363,70 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
+    fn append_export_default(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: Stmt,
+        data: &mut S::ExportDefault,
+    ) {
+        if !(p.current_scope().parent.is_none() && p.will_wrap_module_in_try_catch_for_using) {
+            stmts.push(stmt);
+            return;
+        }
+
+        let default_name = data.default_name;
+        let exported: js_ast::LocRef = match data.value {
+            js_ast::StmtOrExpr::Stmt(
+                func_stmt @ Stmt {
+                    data: StmtData::SFunction(mut func),
+                    ..
+                },
+            ) => {
+                let name = *func.func.name.get_or_insert(default_name);
+                stmts.push(func_stmt);
+                name
+            }
+            // The default binding was already declared (react fast refresh does this).
+            js_ast::StmtOrExpr::Expr(Expr {
+                data: js_ast::ExprData::EIdentifier(ident),
+                ..
+            }) if ident.ref_ == default_name.ref_ => default_name,
+            value => {
+                let decls = G::DeclList::init_one(G::Decl {
+                    binding: p.b(
+                        B::Identifier {
+                            r#ref: default_name.ref_,
+                        },
+                        default_name.loc,
+                    ),
+                    value: Some(value.to_expr()),
+                });
+                stmts.push(p.s(
+                    S::Local {
+                        decls,
+                        ..Default::default()
+                    },
+                    stmt.loc,
+                ));
+                default_name
+            }
+        };
+
+        let items = core::slice::from_mut(p.arena.alloc(js_ast::ClauseItem {
+            alias: js_ast::StoreStr::new(js_ast::ClauseItem::DEFAULT_ALIAS),
+            alias_loc: exported.loc,
+            name: exported,
+            ..Default::default()
+        }));
+        stmts.push(p.s(
+            S::ExportClause {
+                items: bun_ast::StoreSlice::new_mut(items),
+                is_single_line: false,
+            },
+            stmt.loc,
+        ));
+    }
+
     fn s_export_default(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
@@ -507,45 +571,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if p.options.features.server_components.wraps_exports() {
                     *expr = p.wrap_value_for_server_component_reference(*expr, b"default");
-                }
-
-                // If there are lowered "using" declarations, change this into a "var"
-                if p.current_scope().parent.is_none() && p.will_wrap_module_in_try_catch_for_using {
-                    stmts.reserve(2);
-
-                    let mut decls = G::DeclList::init_capacity(1);
-                    VecExt::append(
-                        &mut decls,
-                        G::Decl {
-                            binding: p.b(
-                                B::Identifier {
-                                    r#ref: data.default_name.ref_,
-                                },
-                                data.default_name.loc,
-                            ),
-                            value: Some(*expr),
-                        },
-                    );
-                    stmts.push(p.s(
-                        S::Local {
-                            decls,
-                            ..Default::default()
-                        },
-                        stmt.loc,
-                    ));
-                    let items = core::slice::from_mut(p.arena.alloc(js_ast::ClauseItem {
-                        alias: js_ast::StoreStr::new(b"default"),
-                        alias_loc: data.default_name.loc,
-                        name: data.default_name,
-                        ..Default::default()
-                    }));
-                    stmts.push(p.s(
-                        S::ExportClause {
-                            items: bun_ast::StoreSlice::new_mut(items),
-                            is_single_line: false,
-                        },
-                        stmt.loc,
-                    ));
                 }
 
                 if mark_for_replace {
@@ -703,7 +728,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                                     stmts.push(Stmt::alloc(
                                         S::Local {
-                                            kind: S::Kind::KConst,
+                                            kind: p.select_local_kind(S::Kind::KConst),
                                             decls: G::DeclList::from_slice(&[G::Decl {
                                                 binding: Binding::alloc(
                                                     p.arena,
@@ -743,7 +768,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 );
                             }
 
-                            stmts.push(*stmt);
+                            Self::append_export_default(p, stmts, *stmt, data);
                             p.emit_react_refresh_register(
                                 stmts,
                                 name,
@@ -765,7 +790,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 );
                             }
 
-                            stmts.push(*stmt);
+                            Self::append_export_default(p, stmts, *stmt, data);
                         }
 
                         p.react_refresh.hook_ctx_storage = prev;
@@ -846,22 +871,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         stmts.extend_from_slice(&class_stmts[0..class_stmt_idx]);
 
                         data.value = js_ast::StmtOrExpr::Stmt(class_stmts[class_stmt_idx]);
-                        stmts.push(*stmt);
-
-                        // Emit any suffix statements after the export default
-                        if class_stmt_idx + 1 < class_stmts.len() {
-                            stmts.extend_from_slice(&class_stmts[class_stmt_idx + 1..]);
-                        }
 
                         if p.options.features.server_components.wraps_exports() {
-                            // `data.value` is mutated *after* pushing `stmt`; the pushed
-                            // stmt still observes the write because `data` is an arena
-                            // backref shared with the pushed copy.
                             let class_expr =
                                 p.new_expr(core::mem::take(&mut class.class), stmt.loc);
                             data.value = js_ast::StmtOrExpr::Expr(
                                 p.wrap_value_for_server_component_reference(class_expr, b"default"),
                             );
+                        }
+
+                        Self::append_export_default(p, stmts, *stmt, data);
+
+                        // Emit any suffix statements after the export default
+                        if class_stmt_idx + 1 < class_stmts.len() {
+                            stmts.extend_from_slice(&class_stmts[class_stmt_idx + 1..]);
                         }
 
                         restore_dead!();
@@ -873,7 +896,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        stmts.push(*stmt);
+        Self::append_export_default(p, stmts, *stmt, data);
         restore_dead!();
         record_on_exit!();
         Ok(())

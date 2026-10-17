@@ -1,6 +1,6 @@
 // The parts of `bun ./index.html` (internal/html.ts) and `bun bake` (internal/bake.ts) that start
 // the server and talk to the terminal.
-import type { Server, Serve } from "bun";
+import type { Serve, Server } from "bun";
 
 const path = require("node:path");
 

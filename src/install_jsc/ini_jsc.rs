@@ -102,8 +102,10 @@ impl IniTestingAPIs {
         let source = Source::init_path_string(b"<js>", input.bytes());
 
         let mut install = Box::new(BunInstall::default());
-        if load_npmrc(&mut install, env, &mut log, &source).is_err() {
-            return log.to_js(global, format_args!("error"));
+        match load_npmrc(&mut install, env, &mut log, &source) {
+            Ok(()) => {}
+            Err(bun_ini::Error::Alloc(_)) => return Err(bun_jsc::JsError::OutOfMemory),
+            Err(bun_ini::Error::SourceTooLarge) => return log.to_js(global, format_args!("error")),
         }
         // The package manager applies `url_auth` in `Options::load`; the same walk reports what the default registry would get.
         let default_url: Box<[u8]> = match install.default_registry.as_ref() {

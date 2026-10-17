@@ -251,7 +251,9 @@ impl Cmd {
                 CmdState::Idle => {
                     if !n.assigns.is_empty() {
                         interp.as_cmd_mut(this).state = CmdState::ExpandingAssigns;
-                        let child = Assigns::init(interp, shell, n.assigns, this, AssignCtx::Cmd);
+                        let io = interp.as_cmd(this).io.clone();
+                        let child =
+                            Assigns::init(interp, shell, n.assigns, this, io, AssignCtx::Cmd);
                         return Assigns::start(interp, child);
                     }
                     interp.as_cmd_mut(this).state = CmdState::ExpandingRedirect { idx: 0 };
@@ -265,7 +267,8 @@ impl Cmd {
                     match &n.redirect_file {
                         Some(ast::Redirect::Atom(atom)) if idx == 0 => {
                             let atom: *const ast::Atom = atom;
-                            let child = Expansion::init(interp, shell, atom, this, false);
+                            let io = interp.as_cmd(this).io.clone();
+                            let child = Expansion::init(interp, shell, atom, this, io, false);
                             return Expansion::start(interp, child);
                         }
                         // JsBuf redirects don't need expansion; nor does the
@@ -285,7 +288,8 @@ impl Cmd {
                         && is_declaration_utility(&args[0])
                         && is_assignment_word(&args[idx as usize]);
                     let atom: *const ast::Atom = &raw const args[idx as usize];
-                    let child = Expansion::init(interp, shell, atom, this, assign_ctx);
+                    let io = interp.as_cmd(this).io.clone();
+                    let child = Expansion::init(interp, shell, atom, this, io, assign_ctx);
                     return Expansion::start(interp, child);
                 }
                 CmdState::Exec => {

@@ -97,6 +97,48 @@ describe("tsconfig compilerOptions.useDefineForClassFields", () => {
     expect(exitCode).toBe(0);
   });
 
+  // tsc moves the instance field initializers into the constructor, where
+  // `new.target` is the class. A static field stays a field, where it is undefined.
+  test.concurrent("false: new.target in a lowered field initializer is the class", async () => {
+    using dir = tempDir("udfcf-new-target", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
+      "index.ts": `
+        class C {
+          x = typeof new.target;
+          y = () => typeof new.target;
+          static s = typeof new.target;
+          constructor(public z = typeof new.target) {}
+        }
+        const c = new C();
+        process.stdout.write(JSON.stringify({ x: c.x, y: c.y(), s: C.s, z: c.z }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ x: "function", y: "function", s: "undefined", z: "function" });
+    expect(exitCode).toBe(0);
+  });
+
+  // A computed key keeps every field in the class body, so `new.target` is undefined there.
+  // A key that folds to a literal (the template) still lowers, as before.
+  test.concurrent("false: new.target in a field initializer next to a computed key", async () => {
+    using dir = tempDir("udfcf-new-target-computed", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
+      "index.ts": `
+        const k = () => "a";
+        function kept() { return class { [k()] = 1; x = typeof new.target; }; }
+        const lowered = () => class { [\`a\`] = 1; x = typeof new.target; };
+        const c1 = new (kept())();
+        const c2 = new (lowered())();
+        process.stdout.write(JSON.stringify({ a1: c1.a, x1: c1.x, a2: c2.a, x2: c2.x }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ a1: 1, x1: "undefined", a2: 1, x2: "function" });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("false: computed literal keys use [[Set]] semantics", async () => {
     using dir = tempDir("udfcf-computed", {
       "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),

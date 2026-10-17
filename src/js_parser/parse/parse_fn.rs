@@ -207,6 +207,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse.allow_super_call = opts.allow_super_call;
         p.fn_or_arrow_data_parse.allow_super_property = opts.allow_super_property;
 
+        let suppressions_taken = p.react_hooks_suppressions_taken;
         let mut rest_arg: bool = false;
         let mut arg_has_decorators: bool = false;
         let mut args = bun_alloc::ArenaVec::<G::Arg>::new_in(p.arena);
@@ -364,6 +365,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.lexer.expect(T::TCloseParen)?;
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
+        p.return_react_hooks_suppression(suppressions_taken);
 
         p.fn_or_arrow_data_parse.has_argument_decorators = arg_has_decorators;
 
@@ -400,16 +402,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let mut temp_opts = opts;
         func.body = p.parse_fn_body(&mut temp_opts)?;
-        if p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression {
+        if p.take_react_hooks_suppression() {
             func.flags.insert(Flags::Function::HasReactHooksSuppression);
-            // next-line semantics: a suppression marks the enclosing top-level
-            // function and is consumed; it never reaches that function's siblings.
-            if p.fn_or_arrow_data_parse.is_top_level {
-                p.lexer.has_react_hooks_suppression_before = false;
-            }
         }
 
         Ok(func)
+    }
+
+    /// A function closed. Returns whether a `react-hooks` eslint suppression
+    /// covers it. next-line semantics: a suppression marks the enclosing
+    /// top-level function and is consumed; it never reaches that function's
+    /// siblings.
+    fn take_react_hooks_suppression(&mut self) -> bool {
+        let pending = self.lexer.has_react_hooks_suppression_before;
+        if pending && self.fn_or_arrow_data_parse.is_top_level {
+            self.lexer.has_react_hooks_suppression_before = false;
+            self.react_hooks_suppressions_taken =
+                self.react_hooks_suppressions_taken.wrapping_add(1);
+        }
+        pending || self.lexer.has_react_hooks_block_suppression
+    }
+
+    /// The end of a parameter list, with `react_hooks_suppressions_taken` from
+    /// its start. The list of a top-level function is parsed as top-level code,
+    /// so a function in it consumed the suppression. The function that owns the
+    /// list closes later and takes it again.
+    pub(crate) fn return_react_hooks_suppression(&mut self, taken_at_start: u32) {
+        if self.react_hooks_suppressions_taken != taken_at_start {
+            self.lexer.has_react_hooks_suppression_before = true;
+        }
     }
 
     pub(crate) fn parse_fn_expr(
@@ -552,11 +573,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TOpenBrace {
             let body = p.parse_fn_body(data)?;
             p.after_arrow_body_loc = p.lexer.loc();
-            let has_react_hooks_suppression = p.lexer.has_react_hooks_suppression_before
-                || p.lexer.has_react_hooks_block_suppression;
-            if has_react_hooks_suppression && p.fn_or_arrow_data_parse.is_top_level {
-                p.lexer.has_react_hooks_suppression_before = false;
-            }
+            let has_react_hooks_suppression = p.take_react_hooks_suppression();
             return Ok(E::Arrow {
                 args: args_slice,
                 body,
@@ -591,11 +608,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let stmts: &'a mut [Stmt] = p.arena.alloc_slice_copy(&[ret_stmt]);
 
         p.pop_scope();
-        let has_react_hooks_suppression =
-            p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression;
-        if has_react_hooks_suppression && p.fn_or_arrow_data_parse.is_top_level {
-            p.lexer.has_react_hooks_suppression_before = false;
-        }
+        let has_react_hooks_suppression = p.take_react_hooks_suppression();
         Ok(E::Arrow {
             args: args_slice,
             prefer_expr: true,

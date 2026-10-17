@@ -177,6 +177,7 @@ pub(crate) struct ParserSnapshot<'a> {
     has_non_local_export_declare_inside_namespace: bool,
     should_fold_typescript_constant_expressions: bool,
     fn_or_arrow_data_parse: FnOrArrowDataParse,
+    react_hooks_suppressions_taken: u32,
     latest_arrow_arg_loc: bun_ast::Loc,
     forbid_suffix_after_as_loc: bun_ast::Loc,
     after_arrow_body_loc: bun_ast::Loc,
@@ -265,6 +266,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_es_module_syntax: bool,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
+    /// Counts the function closes that consumed `lexer.has_react_hooks_suppression_before`.
+    /// See `return_react_hooks_suppression`.
+    pub(crate) react_hooks_suppressions_taken: u32,
     pub(crate) fn_or_arrow_data_visit: FnOrArrowDataVisit,
     pub(crate) fn_only_data_visit: FnOnlyDataVisit,
     pub(crate) allocated_names: List<'a, &'a [u8]>,
@@ -8227,6 +8231,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             should_fold_typescript_constant_expressions: self
                 .should_fold_typescript_constant_expressions,
             fn_or_arrow_data_parse: self.fn_or_arrow_data_parse.clone(),
+            react_hooks_suppressions_taken: self.react_hooks_suppressions_taken,
             latest_arrow_arg_loc: self.latest_arrow_arg_loc,
             forbid_suffix_after_as_loc: self.forbid_suffix_after_as_loc,
             after_arrow_body_loc: self.after_arrow_body_loc,
@@ -8261,6 +8266,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.should_fold_typescript_constant_expressions =
             snapshot.should_fold_typescript_constant_expressions;
         self.fn_or_arrow_data_parse = snapshot.fn_or_arrow_data_parse;
+        self.react_hooks_suppressions_taken = snapshot.react_hooks_suppressions_taken;
         self.latest_arrow_arg_loc = snapshot.latest_arrow_arg_loc;
         self.forbid_suffix_after_as_loc = snapshot.forbid_suffix_after_as_loc;
         self.after_arrow_body_loc = snapshot.after_arrow_body_loc;
@@ -9713,6 +9719,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,
+            react_hooks_suppressions_taken: 0,
             fn_or_arrow_data_visit: FnOrArrowDataVisit::default(),
             fn_only_data_visit: FnOnlyDataVisit::default(),
             allocated_names: BumpVec::new_in(arena),

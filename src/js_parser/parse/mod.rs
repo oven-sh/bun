@@ -431,6 +431,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut spread_range = bun_ast::Range::default();
         let mut type_colon_range = bun_ast::Range::default();
         let mut comma_after_spread = bun_ast::Loc::EMPTY;
+        let suppressions_taken = p.react_hooks_suppressions_taken;
 
         // Push a scope assuming this is an arrow function. It may not be, in which
         // case we'll need to roll this change back. This has to be done ahead of
@@ -601,6 +602,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
+                p.return_react_hooks_suppression(suppressions_taken);
                 let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data)?;
                 arrow.is_async = opts.is_async;
                 arrow.has_rest_arg = spread_range.len > 0;

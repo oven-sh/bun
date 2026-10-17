@@ -18,13 +18,13 @@ const env = {
   FORCE_COLOR: undefined,
 };
 
-async function lint(files: Record<string, string | Buffer>, args: string[], reads: string[] = []) {
+async function lint(files: Record<string, string | Buffer>, args: string[], reads: string[] = [], stdin?: string) {
   using dir = tempDir("bun-lint-js-parsers", files);
   await using proc = spawn({
     cmd: [bunExe(), "lint", ...(args.includes("--threads") ? [] : ["--threads", "2"]), ...args],
     env,
     cwd: String(dir),
-    stdin: "ignore",
+    stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -326,7 +326,9 @@ describe.concurrent("bun lint with processors", () => {
       expect(result.exitCode).toBe(1);
       // What the processor gives back without a name is for the language.
       const whole = await lint(files, ["b.txt"]);
-      expect(whole.stderr).toContain(`b.txt returned code in the language "fenced/text", but`);
+      expect(whole.stderr).toContain(
+        "1 file was not linted because it needs eslint, which is not installed (1 *.txt): b.txt",
+      );
       expect(whole.exitCode).toBe(2);
     },
     timeout,
@@ -1781,15 +1783,128 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
       expect(result.stderr).toContain("the eslint package linted 1 files");
     });
 
-    test("and it's an error if eslint isn't installed", async () => {
-      const config = jsonConfig(`{ files: ["a.json"], rules: { "json/only-in-the-package": "warn" } }`);
-      const files = { ...json, "eslint.config.mjs": config, "a.json": text, "b.json": text };
-      const result = await lint(files, ["-f", "unix", "."]);
-      expect(result.stdout).toContain('b.json:1:11: Duplicate key "a" found. [Error/json/no-duplicate-keys]');
-      expect(result.stderr).toContain(
-        "1 file was not linted because it needs eslint, which is not installed (1 *.json): a.json\n  Run bun add -d eslint",
-      );
-      expect(result.exitCode).toBe(2);
+    // A rule that needs eslint can be turned on in the config or by a comment in the file. Either way the run goes on.
+    describe("if eslint isn't installed, the file is skipped with a warning and the rest is linted", () => {
+      const languages = {
+        JSON: {
+          needy: "needs-eslint.jsonc",
+          good: "good.jsonc",
+          text: `${text}\n`,
+          comment: '/* eslint no-irregular-whitespace: "error" */',
+          // The comment that disables nothing is what `--fix` removes.
+          fixable: '{\n  "a": 1 // eslint-disable-line json/no-duplicate-keys\n}\n',
+          fixed: '{\n  "a": 1  \n}\n',
+          project: (more: string) => ({ ...jsonPackage(), "eslint.config.mjs": jsonConfig(more) }),
+          rule: "json/only-in-the-package",
+          reported: "json/no-duplicate-keys",
+        },
+        Markdown: {
+          needy: "needs-eslint.md",
+          good: "good.md",
+          text: "<b>a</b>\n",
+          comment: '<!-- eslint markdown/only-in-the-package: "error" -->\n\n',
+          fixable: "(reversed)[x]\n",
+          fixed: "[reversed](x)\n",
+          project: (more: string) => ({
+            ...markdownPackage(),
+            "eslint.config.mjs": markdownConfig(more, `["no-html", "no-reversed-media-syntax"]`),
+          }),
+          rule: "markdown/only-in-the-package",
+          reported: "markdown/no-html",
+        },
+      };
+      type Language = keyof typeof languages;
+      // The same project twice. Only the place where the rule is turned on differs.
+      const both = (language: Language, good?: string) => {
+        const it = languages[language];
+        const rest = { [it.good]: good ?? it.text };
+        return [
+          {
+            ...it.project(`{ files: ["${it.needy}"], rules: { "${it.rule}": "error" } }`),
+            ...rest,
+            [it.needy]: it.text,
+          },
+          { ...it.project(""), ...rest, [it.needy]: it.comment + it.text },
+        ];
+      };
+      const withoutTimes = (text: string) => text.replaceAll(/\[[\d.]+m?s\]/g, "[time]");
+      const warning = (name: string) =>
+        `1 file was not linted because it needs eslint, which is not installed (1 *${name.slice(name.indexOf("."))}): ${name}\n  Run bun add -d eslint`;
+
+      describe.each(Object.keys(languages) as Language[])("%s", language => {
+        const it = languages[language];
+
+        test.each(["-f unix", "-f stylish", "-f json", "-f agent", "-f unix --allow-unsupported", "-f unix --quiet"])(
+          "%s",
+          async args => {
+            const flags = args.split(" ");
+            const [inConfig, inComment] = await Promise.all(both(language).map(files => lint(files, [...flags, "."])));
+            expect(inComment.stdout).toContain(it.reported);
+            expect(inComment.stdout).not.toContain(it.needy);
+            expect(inComment.stderr).toContain(warning(it.needy));
+            expect(inComment.exitCode).toBe(flags.includes("--allow-unsupported") ? 1 : 2);
+            const printed = (it: typeof inConfig) => [it.stdout, withoutTimes(it.stderr), it.exitCode];
+            expect(printed(inComment)).toEqual(printed(inConfig));
+          },
+        );
+
+        test("--fix fixes the other files", async () => {
+          const projects = both(language, it.fixable);
+          for (const result of await Promise.all(projects.map(files => lint(files, ["--fix", "."], [it.good])))) {
+            expect(result.files).toEqual({ [it.good]: it.fixed });
+            expect(result.stderr).toContain(warning(it.needy));
+            expect(result.exitCode).toBe(2);
+          }
+        });
+
+        test("--stdin", async () => {
+          const results = await Promise.all(
+            both(language).map(files =>
+              lint(files, ["--stdin", "--stdin-filename", it.needy, "-f", "json"], [], String(files[it.needy])),
+            ),
+          );
+          for (const result of results) {
+            expect(result.raw.trim()).toBe("[]");
+            expect(result.stderr).toContain(warning(it.needy));
+            expect(result.exitCode).toBe(2);
+          }
+        });
+      });
+
+      test("several such files among others", async () => {
+        const [json, markdown] = [languages.JSON, languages.Markdown];
+        const config = `
+          import json from "@eslint/json";
+          import markdown from "@eslint/markdown";
+          export default [
+            { files: ["**/*.jsonc"], plugins: { json }, language: "json/jsonc", rules: { "json/no-duplicate-keys": "error" } },
+            { files: ["**/*.md"], plugins: { markdown }, language: "markdown/commonmark", rules: { "markdown/no-html": "error" } },
+            { files: ["in-config.*"], rules: { "json/only-in-the-package": "error" } },
+            { files: ["**/*.js"], rules: { "no-var": "error" } },
+          ];`;
+        const files: Record<string, string> = {
+          ...jsonPackage(),
+          ...markdownPackage(),
+          "eslint.config.mjs": config,
+          "in-config.jsonc": json.text,
+          "a/in-comment.jsonc": json.comment + json.text,
+          "b/in-comment.jsonc": json.comment + json.text,
+          "a/in-comment.md": markdown.comment + markdown.text,
+          "script.js": "var a;\n",
+        };
+        for (let i = 0; i < 10; i++) {
+          files[`a/${i}.jsonc`] = json.text;
+          files[`b/${i}.md`] = markdown.text;
+        }
+        const result = await lint(files, ["-f", "json", "--threads", "4", "."]);
+        const linted = JSON.parse(result.raw).filter((it: any) => it.messages.length === 1);
+        expect(linted.length).toBe(21);
+        expect(result.raw).not.toContain("in-co");
+        expect(result.stderr).toContain(
+          "4 files were not linted because they need eslint, which is not installed (3 *.jsonc, 1 *.md): a/in-comment.jsonc, a/in-comment.md, b/in-comment.jsonc, ..\n  Run bun add -d eslint",
+        );
+        expect(result.exitCode).toBe(2);
+      });
     });
   });
 });

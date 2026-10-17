@@ -29,25 +29,13 @@ fn thrown(message: Vec<u8>) -> LintResult {
     }
 }
 
-pub(crate) const HOW_TO_INSTALL: &[u8] = b"\n  Run bun add -d eslint";
-
-/// What is said about the file at `path`, which only ESLint can lint, if there is no ESLint.
-fn not_installed(path: &[u8], config: &ResolvedConfig) -> Vec<u8> {
-    let (what, name): (&[u8], _) = match config.is_javascript() {
-        true => (b"the parser", &config.parser_name),
-        false => (b"the language", &config.language_name),
-    };
-    [
-        b"Cannot lint ",
-        path,
-        b" because ",
-        what,
-        b" \"",
-        name.as_deref().unwrap_or_default(),
-        b"\" needs eslint, which is not installed",
-        HOW_TO_INSTALL,
-    ]
-    .concat()
+/// The result for a text that only the `eslint` package can lint, when it isn't installed. [`Context::verify_processed_text`]
+/// lists the file in [`Context::needs_eslint`].
+fn needs_eslint() -> LintResult {
+    LintResult {
+        is_unread: true,
+        ..LintResult::default()
+    }
 }
 
 /// What ESLint says about a `processor` that is not there.
@@ -89,17 +77,7 @@ impl Context<'_, '_> {
         config: &ResolvedConfig,
     ) -> LintResult {
         if !config.is_javascript() {
-            return thrown(
-                [
-                    b"The processor for ",
-                    file.path,
-                    b" returned code in the language \"",
-                    config.language_name.as_deref().unwrap_or_default(),
-                    b"\", but that needs eslint, which is not installed",
-                    HOW_TO_INSTALL,
-                ]
-                .concat(),
-            );
+            return needs_eslint();
         }
         let (len, fixes) = (file.physical_path_len, file.fixes);
         // What only the parser of the configuration can read is for ESLint's own `Linter`, which has that parser.
@@ -176,7 +154,7 @@ impl Context<'_, '_> {
         match (linted.filter(|it| !it.is_unread), &loaded.for_eslint) {
             (Some(result), _) => result,
             (None, Some(_)) => self.verify_with_eslint(loaded, it, config).0,
-            (None, None) => thrown(not_installed(it.path, config)),
+            (None, None) => needs_eslint(),
         }
     }
 
@@ -188,6 +166,7 @@ impl Context<'_, '_> {
         processor: &Processor,
     ) -> LintResult {
         let path = paths::to_native(it.path.to_vec());
+        let mut is_unread = false;
         let mut lint = |supports_autofix: bool, blocks: Vec<Block>| {
             let file = Text {
                 fixes: match supports_autofix && it.fixes != Fixes::Disabled {
@@ -205,6 +184,8 @@ impl Context<'_, '_> {
                 if let Some(thrown) = result.thrown {
                     return Err(thrown);
                 }
+                // A block without a name is linted as the file itself.
+                is_unread |= result.is_unread && matches!(block, Block::Unnamed(_));
                 let (Block::Unnamed(text) | Block::Named { text, .. }) = block;
                 write_messages(&mut lists, &result.messages, &result.suppressed, text);
             }
@@ -215,6 +196,7 @@ impl Context<'_, '_> {
             .js_plugins
             .process(processor, &path, it.text, &mut lint)
         {
+            Ok(_) if is_unread => needs_eslint(),
             Ok(messages) => {
                 let (messages, suppressed) =
                     read_messages(&messages, it.text, &|id| self.find_rule(config, id));
@@ -257,7 +239,7 @@ impl Context<'_, '_> {
                 },
                 Some(linted.deprecated),
             ),
-            Err(Refusal::NotInstalled) => (thrown(not_installed(it.path, config)), None),
+            Err(Refusal::NotInstalled) => (needs_eslint(), None),
             Err(Refusal::Thrown(message)) => (thrown(message), None),
         }
     }
@@ -287,7 +269,8 @@ impl Context<'_, '_> {
         }
     }
 
-    /// [`Context::verify_text`] for a file with a processor. `loaded`: where `config` is from.
+    /// [`Context::verify_text`] for a file with a processor. `loaded`: where `config` is from. `None`: the file
+    /// [needs `eslint`](Context::needs_eslint).
     pub(crate) fn verify_processed_text(
         &self,
         loaded: &Loaded,
@@ -296,9 +279,9 @@ impl Context<'_, '_> {
         text: Vec<u8>,
         config: &Arc<ResolvedConfig>,
         on_circular_fixes: &dyn Fn(&[u8]),
-    ) -> FileResult {
+    ) -> Option<FileResult> {
         let reads_fixes = self.lint_options().wants_fixes;
-        let mut deprecated = None;
+        let (mut deprecated, mut is_unread) = (None, false);
         // ESLint reads files as UTF-8, so invalid bytes become U+FFFD.
         let is_read_here = loaded.routes(config, path_to_verify) == Route::Language;
         let text = match is_read_here && !bun_core::strings::is_valid_utf8(&text) {
@@ -329,6 +312,7 @@ impl Context<'_, '_> {
                 }
                 _ => self.verify_routed(loaded, it, config),
             };
+            is_unread |= result.is_unread;
             // ESLint and a processor have them whoever reads them.
             if !reads_fixes {
                 for message in result.messages.iter_mut().chain(&mut result.suppressed) {
@@ -346,7 +330,11 @@ impl Context<'_, '_> {
             on_circular_fixes,
             &mut verify,
         );
+        if is_unread {
+            self.needs_eslint.lock().push(path_to_verify.to_vec());
+            return None;
+        }
         result.deprecated = deprecated;
-        result
+        Some(result)
     }
 }

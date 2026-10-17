@@ -69,6 +69,8 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) broken_fixes: &'c Guarded<Vec<(Vec<u8>, Vec<RuleId>)>>,
     /// The files and blocks that [may be misread](may_be_misread), with nobody there to read them.
     pub(crate) unread: &'c Guarded<Vec<Vec<u8>>>,
+    /// The files that only the `eslint` package can lint, when it isn't installed. They get no result.
+    pub(crate) needs_eslint: &'c Guarded<Vec<Vec<u8>>>,
     /// Why files were [handed back](LintResult::handed_back), and how many for each reason.
     pub(crate) handed_back: &'c Guarded<Vec<(Reason, usize)>>,
     /// What oxlint says about the configuration files of TypeScript for which there is no program, so that no rule that
@@ -836,14 +838,14 @@ impl Context<'_, '_> {
         }
         // With another parser it shows only when the file is read whether it can be read here.
         if target.route() != Route::Native || config.language.parser == Parser::Other {
-            return Ok(Some(self.verify_processed_text(
+            return Ok(self.verify_processed_text(
                 &target.loaded,
                 shown,
                 &target.path,
                 text,
                 config,
                 on_circular_fixes,
-            )));
+            ));
         }
         Ok(Some(self.verify_text(
             shown,

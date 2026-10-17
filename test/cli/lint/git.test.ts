@@ -583,7 +583,7 @@ test.concurrent("bun lint --staged and --changed don't warn that many files were
   };
   // The same file, found in a directory.
   expect(await warnings("sub")).toEqual([
-    expect.stringMatching(/^warn: Loaded 1,001 files in \S+ to lint 1 file: sub\/a\.ts$/),
+    expect.stringMatching(/^warn: Loaded 1,001 files in \S+ to lint sub\/a\.ts$/),
   ]);
   expect(await warnings("--staged")).toEqual([]);
   expect(await warnings("--changed")).toEqual([]);

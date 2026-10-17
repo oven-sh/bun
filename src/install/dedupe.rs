@@ -723,8 +723,25 @@ pub(crate) fn effective_version(
     dep_id: DependencyID,
     dep: &Dependency,
 ) -> Option<dependency::Version> {
-    let mut version = applied_override(lockfile, dep_id, dep)
-        .map_or_else(|| dep.version.clone(), |rule| rule.version().clone());
+    version_under(lockfile, dep, applied_override(lockfile, dep_id, dep))
+}
+
+/// Like `effective_version`, but picks the rule the way yarn does (`OverrideMap::lookup_as_yarn`).
+pub(crate) fn effective_version_as_yarn(
+    lockfile: &Lockfile,
+    dep_id: DependencyID,
+    dep: &Dependency,
+) -> Option<dependency::Version> {
+    let rule = (lockfile.overrides).lookup_as_yarn(lockfile, dep_id, dep.name_hash);
+    version_under(lockfile, dep, rule)
+}
+
+fn version_under(
+    lockfile: &Lockfile,
+    dep: &Dependency,
+    rule: Option<OverrideRule<'_>>,
+) -> Option<dependency::Version> {
+    let mut version = rule.map_or_else(|| dep.version.clone(), |rule| rule.version().clone());
     if version.tag == DependencyVersionTag::Catalog {
         version = lockfile
             .catalogs

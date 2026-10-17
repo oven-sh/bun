@@ -89,7 +89,7 @@ pub struct FormatOptions {
     pub in_html: InHtml,
     /// Whose output to produce where the two differ.
     pub flavor: Flavor,
-    /// oxfmt's `sortPackageJson`: the keys of a `package.json` are put in the usual order.
+    /// How the keys of a `package.json` are sorted, if they are: oxfmt's `sortPackageJson`, or `prettier-plugin-packagejson`.
     pub sort_package_json: Option<crate::json::SortPackageJson>,
     /// How imports are sorted, if they are.
     pub sort_imports: Option<std::sync::Arc<crate::sort_imports::SortImports>>,

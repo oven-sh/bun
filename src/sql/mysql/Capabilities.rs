@@ -126,8 +126,13 @@ impl Capabilities {
         self.CLIENT_QUERY_ATTRIBUTES = false;
     }
 
-    pub fn get_default_capabilities(ssl: bool, has_db_name: bool) -> Capabilities {
+    pub fn get_default_capabilities(
+        ssl: bool,
+        has_db_name: bool,
+        found_rows: bool,
+    ) -> Capabilities {
         Capabilities {
+            CLIENT_FOUND_ROWS: found_rows,
             CLIENT_PROTOCOL_41: true,
             CLIENT_PLUGIN_AUTH: true,
             CLIENT_SECURE_CONNECTION: true,

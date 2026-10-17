@@ -132,11 +132,6 @@ pub(crate) extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_ch
         "leak:bun_runtime::node::fs_events::init_core_foundation\n",
         "leak:bun_runtime::node::fs_events::init_core_services\n",
         "leak:bun_runtime::node::fs_events::FSEventsLoop\n",
-        // Process-lifetime inspector thread. The debugger handles SIGINT and
-        // serves the WebSocket protocol up to (and during) `process.exit()`;
-        // joining it from `global_exit` would deadlock when the user is
-        // mid-breakpoint. The thread's stack/Arc are reclaimed by the OS.
-        "leak:bun_jsc::debugger::Debugger>::start_js_debugger_thread\n",
         "\0",
     )
     .as_ptr()

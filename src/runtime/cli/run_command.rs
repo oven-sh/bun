@@ -1432,7 +1432,9 @@ impl Run<'_> {
                 let Some(connect_fn) = sql_object.get(global, "connect")? else {
                     return Ok(());
                 };
-                connect_fn.call(global, sql_object, &[])?;
+                if let Some(promise) = connect_fn.call(global, sql_object, &[])?.as_any_promise() {
+                    promise.set_handled(global.vm());
+                }
                 Ok(())
             };
             crate::dispatch::fold(preconnect());
@@ -1645,7 +1647,6 @@ impl Run<'_> {
         // (Rust-defined `#[no_mangle]` exports don't need this; the imported
         // C symbols do.)
         crate::napi::fix_dead_code_elimination();
-        crate::webcore::bake_response::fix_dead_code_elimination();
         bun_crash_handler::fix_dead_code_elimination();
         vm.global_exit();
     }

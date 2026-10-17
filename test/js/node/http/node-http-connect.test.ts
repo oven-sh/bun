@@ -2370,3 +2370,52 @@ describe("a CONNECT tunnel pipelined behind a response that still drains", () =>
     });
   });
 });
+
+test("CONNECT and upgrade do not hand a function that settles its argument to a replaced Function.prototype.bind", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      // Records what a replaced Function.prototype.bind is handed, and calls none of it.
+      const original = Function.prototype.bind;
+      const handed = [];
+      Function.prototype.bind = function (...args) {
+        handed.push(this);
+        return Reflect.apply(original, this, args);
+      };
+      const settlesAPromise = fn => /(resolve|reject|fulfill)Promise/.test(Function.prototype.toString.call(fn));
+      const http = await import("node:http");
+      const net = await import("node:net");
+      const server = http.createServer();
+      server.on("connect", (req, socket) => socket.end("HTTP/1.1 200 OK\\r\\n\\r\\n"));
+      server.on("upgrade", (req, socket) => socket.end("HTTP/1.1 101 Switching Protocols\\r\\n\\r\\n"));
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      for (const request of [
+        "CONNECT example.com:80 HTTP/1.1\\r\\nHost: example.com\\r\\n\\r\\n",
+        "GET / HTTP/1.1\\r\\nHost: example.com\\r\\nConnection: Upgrade\\r\\nUpgrade: websocket\\r\\n\\r\\n",
+      ]) {
+        await new Promise((resolve, reject) => {
+          const client = net.connect(server.address().port, "127.0.0.1", () => client.write(request));
+          client.on("error", reject);
+          client.on("close", resolve);
+          client.resume();
+        });
+      }
+      await new Promise(resolve => server.close(resolve));
+      function own() {}
+      own.bind();
+      console.log(JSON.stringify({ recordsOwn: handed.includes(own), settlers: handed.filter(settlesAPromise).map(fn => fn.name) }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: { recordsOwn: true, settlers: [] },
+    stderr: "",
+    exitCode: 0,
+  });
+});

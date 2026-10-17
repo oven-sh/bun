@@ -2,6 +2,41 @@ import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isIPv6, isMacOS, isWindows } from "harness";
 import * as dgram from "node:dgram";
 
+test("node:dgram does not hand a function that settles its argument to a replaced Function.prototype.bind", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      // Records what a replaced Function.prototype.bind is handed, and calls none of it.
+      const original = Function.prototype.bind;
+      const handed = [];
+      Function.prototype.bind = function (...args) {
+        handed.push(this);
+        return Reflect.apply(original, this, args);
+      };
+      const settlesAPromise = fn => /(resolve|reject|fulfill)Promise/.test(Function.prototype.toString.call(fn));
+      const dgram = await import("node:dgram");
+      const socket = dgram.createSocket("udp4");
+      socket.connect(1, "127.0.0.1");
+      await socket[Symbol.asyncDispose]();
+      function own() {}
+      own.bind();
+      console.log(JSON.stringify({ recordsOwn: handed.includes(own), settlers: handed.filter(settlesAPromise).map(fn => fn.name) }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: { recordsOwn: true, settlers: [] },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // close() from inside a 'message' handler must stop delivery of the remaining
 // datagrams in the current recvmmsg batch. Node guarantees no 'message' fires
 // after 'close'; previously bun replayed the rest of the batch into a handle

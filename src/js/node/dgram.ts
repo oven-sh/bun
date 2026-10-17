@@ -1186,17 +1186,20 @@ Socket.prototype[SymbolAsyncDispose] = async function () {
     return;
   }
   const promise = $newPromise();
-  this.close(FunctionPrototypeBind.$call(onAsyncDisposeClosed, undefined, promise));
+  this.close(createAsyncDisposeClosedCallback(promise));
 
   return promise;
 };
 
-function onAsyncDisposeClosed(promise, err) {
-  if (err) {
-    $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
-  } else {
-    $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
-  }
+// Not bind(): user code can replace it, and would be handed a function that settles whatever it is given, unchecked.
+function createAsyncDisposeClosedCallback(promise) {
+  return err => {
+    if (err) {
+      $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
+    } else {
+      $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
+    }
+  };
 }
 
 function socketCloseNT(self) {

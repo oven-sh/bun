@@ -583,9 +583,9 @@ impl Execution {
         }
     }
 
-    /// Ends each failed sequence that still runs its hooks, so that it is reported. The process is about to exit.
+    /// Ends up to `limit` failed sequences that still run their hooks, so that they are reported. The process is about to exit.
     #[cold]
-    pub(crate) fn end_failed_sequences_in_flight(buntest: NonNull<BunTest>) {
+    pub(crate) fn end_failed_sequences_in_flight(buntest: NonNull<BunTest>, mut limit: u32) {
         let (group, range) = {
             // SAFETY: `buntest` is the live active file. This borrow of its `execution` ends with the block.
             let bun_test = unsafe { &mut *buntest.as_ptr() };
@@ -607,6 +607,10 @@ impl Execution {
             if !sequence.result.is_fail() {
                 continue;
             }
+            if limit == 0 {
+                return;
+            }
+            limit -= 1;
             // SAFETY: arena-owned entries, alive for the lifetime of the `BunTest`.
             while let Some(next) = nn(unsafe { last.as_ref() }.next) {
                 last = next;

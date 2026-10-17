@@ -3160,19 +3160,31 @@ fn report_run_ended_by_exit(run: jest::SerialRun, vm: &mut VirtualMachine, code:
 
     let running_file =
         jest::Jest::runner().and_then(|runner| runner.bun_test_root.clone_active_file());
-    if let Some(file) = &running_file
-        && let Some(file) = core::ptr::NonNull::new(file.as_ptr())
-    {
-        // A test that failed and still runs its hooks gets its result before the verdict.
-        bun_test::Execution::Execution::end_failed_sequences_in_flight(file);
-    }
     // The running file holds the reporter pointer that `handle_test_completed` uses.
     let reporter = running_file
         .as_deref()
         .and_then(|file| file.reporter)
         .map_or_else(|| run.reporter.as_ptr(), core::ptr::NonNull::as_ptr);
+    // `--bail` is applied here: `handle_test_completed` would exit before `Bun__Process__exit` runs `vm.on_exit()`.
+    // SAFETY: the reporter outlives the run, and no reference to it is live in this function yet.
+    let bail = core::mem::take(unsafe { &mut (*reporter).jest.bail });
+    if let Some(file) = &running_file
+        && let Some(file) = core::ptr::NonNull::new(file.as_ptr())
+    {
+        // SAFETY: as above.
+        let counted = unsafe { (*reporter).jest.summary.fail };
+        let until_bail = if bail == 0 {
+            u32::MAX
+        } else {
+            bail.saturating_sub(counted)
+        };
+        // A test that failed and still runs its hooks gets its result before the verdict.
+        bun_test::Execution::Execution::end_failed_sequences_in_flight(file, until_bail);
+    }
     // SAFETY: the reporter outlives the run. Its borrowers never run again: the caller exits.
     let reporter = unsafe { &mut *reporter };
+    reporter.jest.bail = bail;
+    let bailed = bail != 0 && reporter.jest.summary.fail >= bail;
     let files: &[Interned] = &run.files;
     let has_failed =
         reporter.jest.summary.fail > 0 || reporter.jest.unhandled_errors_between_tests > 0;
@@ -3348,6 +3360,13 @@ fn report_run_ended_by_exit(run: jest::SerialRun, vm: &mut VirtualMachine, code:
             Output::err(err, "Failed to write snapshots", ());
             true
         });
+    if bailed {
+        pretty_error!(
+            "\nBailed out after {} failure{}<r>\n",
+            bail,
+            if bail == 1 { "" } else { "s" }
+        );
+    }
     if failed {
         vm.exit_handler.min_exit_code = 1;
     }

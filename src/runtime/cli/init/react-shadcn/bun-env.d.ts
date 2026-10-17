@@ -8,8 +8,6 @@ declare module "*.svg" {
   export = path;
 }
 
-declare module "*.css" {}
-
 declare module "*.module.css" {
   /**
    * A record of class names to their corresponding CSS module classes
@@ -17,3 +15,5 @@ declare module "*.module.css" {
   const classes: { readonly [key: string]: string };
   export = classes;
 }
+
+declare module "*.css" {}

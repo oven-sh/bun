@@ -256,7 +256,7 @@ function formatObject(ctx: InspectContext, value: any, recurseTimes: number) {
  */
 function formatArray(ctx: InspectContext, value: any[], recurseTimes: number) {
   // Special case for empty arrays
-  if (value.length === 0) return "[]";
+  if (value.length === 0 && Object.keys(value).length === 0) return "[]";
 
   const maxLength = Math.min(ctx.maxArrayLength!, value.length);
   const output: string[] = [];

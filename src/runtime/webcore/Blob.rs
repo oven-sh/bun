@@ -273,6 +273,8 @@ pub(crate) trait BlobExt {
     where
         Self: Sized;
     fn shared_view_raw(&self) -> *mut [u8];
+    /// The Blob's bytes, or `None` for a file- or S3-backed Blob, which has to be read first.
+    fn in_memory_view(&self) -> Option<&[u8]>;
     fn set_is_ascii_flag(&self, is_all_ascii: bool);
     /// # Safety
     /// `raw_bytes` must be valid for reads for the duration of the call; when
@@ -2355,6 +2357,13 @@ impl BlobExt for Blob {
             }
             _ => empty(),
         }
+    }
+
+    fn in_memory_view(&self) -> Option<&[u8]> {
+        if self.needs_to_read_file() || self.is_s3() {
+            return None;
+        }
+        Some(self.shared_view())
     }
 
     fn set_is_ascii_flag(&self, is_all_ascii: bool) {
@@ -5632,26 +5641,23 @@ pub(crate) extern "C" fn Bun__Blob__getSizeForBindings(this: &mut Blob) -> u64 {
     this.get_size_for_bindings()
 }
 
+/// Borrows the bytes of an in-memory Blob from `value`. Returns `false` for a file- or S3-backed
+/// Blob, which has to be read first.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__getDataPtr(value: JSValue) -> *mut c_void {
-    let Some(blob) = Blob::from_js(value) else {
-        return core::ptr::null_mut();
+pub(crate) extern "C" fn Blob__sharedView(
+    value: JSValue,
+    ptr: &mut *const u8,
+    len: &mut usize,
+) -> bool {
+    let Some(view) = value
+        .as_class_ref::<Blob>()
+        .and_then(BlobExt::in_memory_view)
+    else {
+        return false;
     };
-    // SAFETY: `from_js` returns a non-null pointer to a live JSC-owned Blob.
-    let data = unsafe { (*blob).shared_view() };
-    if data.is_empty() {
-        return core::ptr::null_mut();
-    }
-    data.as_ptr().cast_mut().cast::<c_void>()
-}
-
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__getSize(value: JSValue) -> usize {
-    let Some(blob) = Blob::from_js(value) else {
-        return 0;
-    };
-    // SAFETY: `from_js` returns a non-null pointer to a live JSC-owned Blob.
-    unsafe { (*blob).shared_view().len() }
+    *ptr = view.as_ptr();
+    *len = view.len();
+    true
 }
 
 /// # Safety

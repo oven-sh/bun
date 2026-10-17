@@ -182,7 +182,7 @@ devTest("react refresh cases", {
       scripts: ["index.tsx"],
     }),
     "index.tsx": `
-      import { expectComponent, expectHookComponent } from 'bun-devserver-react-mock';
+      import { expectComponent, expectHook, expectHookComponent } from 'bun-devserver-react-mock';
 
       expectComponent((await import("./default_unnamed")).default, "default_unnamed.tsx", "default");
       expectComponent((await import("./default_named")).default, "default_named.tsx", "default");
@@ -197,6 +197,19 @@ devTest("react refresh cases", {
       expectHookComponent((await import("./local_var_hooks")).LocalVar, "local_var_hooks.tsx", "LocalVar");
       expectHookComponent((await import("./local_const_hooks")).LocalConst, "local_const_hooks.tsx", "LocalConst");
       await import("./non_exported_hooks");
+
+      // A default function that calls a hook stays a hoisted function declaration.
+      const hoisted = await import("./default_named_hooks_hoisted");
+      expectHookComponent(hoisted.default, "default_named_hooks_hoisted.tsx", "default");
+      if (hoisted.typeBeforeDeclaration !== "function") {
+        throw new Error("typeof Hoisted before its declaration: " + hoisted.typeBeforeDeclaration);
+      }
+
+      const defaultHook = await import("./default_hook");
+      expectHook(defaultHook.default);
+      if (defaultHook.callDefault() !== 7) throw new Error("callDefault() did not return the value of the default export");
+
+      expectHook((await import("./default_hook_unreferenced")).default);
 
       console.log("PASS");
     `,
@@ -316,6 +329,32 @@ devTest("react refresh cases", {
       expectHookComponent(NonExportedVar, "non_exported_hooks.tsx", "NonExportedVar");
       expectHookComponent(NonExportedAnon, "non_exported_hooks.tsx", "NonExportedAnon");
       expectHookComponent(NonExportedAnonUnnamed, "non_exported_hooks.tsx", "NonExportedAnonUnnamed");
+    `,
+    "default_named_hooks_hoisted.tsx": `
+      import { useState } from "react";
+      export const typeBeforeDeclaration = typeof Hoisted;
+      export default function Hoisted() {
+        const [count, setCount] = useState(0);
+        return <div>{count}</div>;
+      }
+    `,
+    "default_hook.tsx": `
+      import { useState } from "react";
+      export default function useDefault() {
+        const [value] = useState(7);
+        return value;
+      }
+      export function callDefault() {
+        return useDefault();
+      }
+    `,
+    // No other statement of this module reads the name of the function.
+    "default_hook_unreferenced.tsx": `
+      import { useState } from "react";
+      export default function useUnreferenced() {
+        const [value] = useState(8);
+        return value;
+      }
     `,
   },
   async test(dev) {

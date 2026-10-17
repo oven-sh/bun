@@ -474,14 +474,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         _ => false,
                     };
                 if should_emit_temp_var {
-                    // declare a temporary ref for this
-                    let temp_id = p.generate_temp_ref(Some(b"default_export"));
-                    VecExt::append(&mut p.cur_scope().generated, temp_id);
+                    let temp_id = p.generate_temp_var(b"default_export");
 
                     let value_expr = *expr;
                     stmts.push(Stmt::alloc(
                         S::Local {
-                            kind: S::Kind::KConst,
+                            kind: p.select_local_kind(S::Kind::KConst),
                             decls: G::DeclList::from_slice(&[G::Decl {
                                 binding: Binding::alloc(
                                     p.arena,
@@ -607,9 +605,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         func.func =
                             p.visit_func(core::mem::take(&mut func.func), open_parens_loc, false);
                         p.react_compiler_candidate_name = None;
+                        p.react_refresh.hook_ctx_storage = prev;
 
                         if p.is_control_flow_dead {
-                            p.react_refresh.hook_ctx_storage = prev;
                             restore_dead!();
                             record_on_exit!();
                             return Ok(());
@@ -617,26 +615,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         if !data.default_name.ref_.is_symbol() {
                             data.default_name = p.create_default_name(stmt.loc);
-                        }
-
-                        // Capture the original function name before any `mem::take` below resets
-                        // `func.func` to its default; the name is needed for the
-                        // react_fast_refresh temp-var emission that follows.
-                        let func_name = func.func.name;
-
-                        if let Some(hook) = react_hook_data.as_mut() {
-                            let signature_cb = hook.signature_cb;
-                            stmts.push(p.get_react_refresh_hook_signal_decl(signature_cb));
-
-                            let func_expr = p.new_expr(
-                                E::Function {
-                                    func: core::mem::take(&mut func.func),
-                                },
-                                stmt.loc,
-                            );
-                            data.value = js_ast::StmtOrExpr::Expr(
-                                p.get_react_refresh_hook_signal_init(hook, func_expr),
-                            );
                         }
 
                         if mark_for_replace {
@@ -659,116 +637,85 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     bun_ast::Loc::EMPTY,
                                     &entry,
                                 );
-                                p.react_refresh.hook_ctx_storage = prev;
                                 restore_dead!();
                                 record_on_exit!();
                                 return Ok(());
                             }
                         }
 
-                        if p.options.features.react_fast_refresh
-                            && (ReactRefresh::is_componentish_name(name)
-                                || name == js_ast::ClauseItem::DEFAULT_ALIAS)
+                        if p.options.features.server_components.wraps_exports() {
+                            let func_expr = p.new_expr(
+                                E::Function {
+                                    func: core::mem::take(&mut func.func),
+                                },
+                                stmt.loc,
+                            );
+                            data.value = js_ast::StmtOrExpr::Expr(
+                                p.wrap_value_for_server_component_reference(func_expr, b"default"),
+                            );
+                        }
+
+                        // React Fast Refresh signs and registers the function by the name
+                        // that its declaration binds.
+                        let is_refresh_declaration = p.options.features.react_fast_refresh
+                            && matches!(data.value, js_ast::StmtOrExpr::Stmt(_));
+
+                        if is_refresh_declaration
+                            && p.current_scope().parent.is_none()
+                            && p.will_wrap_module_in_try_catch_for_using
                         {
-                            // If server components or react refresh had wrapped the value (convert to .expr)
-                            // then a temporary variable must be emitted.
-                            //
-                            // > export default _s(function App() { ... }, "...")
-                            // > $RefreshReg(App, "App.tsx:default")
-                            //
-                            // > const default_export = _s(function App() { ... }, "...")
-                            // > export default default_export;
-                            // > $RefreshReg(default_export, "App.tsx:default")
-                            let ref_ = if let js_ast::StmtOrExpr::Expr(e) = data.value {
-                                'emit_temp_var: {
-                                    let ref_to_use = 'brk: {
-                                        if let Some(loc_ref) = func_name {
-                                            // Input:
-                                            //
-                                            //  export default function Foo() {}
-                                            //
-                                            // Output:
-                                            //
-                                            //  const Foo = _s(function Foo() {})
-                                            //  export default Foo;
-                                            if let Some(r) = loc_ref.ref_.to_nullable() {
-                                                break 'brk r;
-                                            }
-                                        }
-
-                                        let temp_id = p.generate_temp_ref(Some(b"default_export"));
-                                        VecExt::append(&mut p.cur_scope().generated, temp_id);
-                                        break 'brk temp_id;
-                                    };
-
-                                    stmts.push(Stmt::alloc(
-                                        S::Local {
-                                            kind: S::Kind::KConst,
-                                            decls: G::DeclList::from_slice(&[G::Decl {
-                                                binding: Binding::alloc(
-                                                    p.arena,
-                                                    B::Identifier { r#ref: ref_to_use },
-                                                    stmt.loc,
-                                                ),
-                                                value: Some(e),
-                                            }]),
-                                            ..Default::default()
-                                        },
-                                        stmt.loc,
-                                    ));
-
-                                    data.value = js_ast::StmtOrExpr::Expr(Expr::init_identifier(
-                                        ref_to_use, stmt.loc,
-                                    ));
-
-                                    break 'emit_temp_var ref_to_use;
-                                }
-                            } else {
-                                data.default_name.ref_
-                            };
-
-                            if p.options.features.server_components.wraps_exports() {
-                                let inner = if let js_ast::StmtOrExpr::Expr(e) = data.value {
-                                    e
-                                } else {
-                                    p.new_expr(
-                                        E::Function {
-                                            func: core::mem::take(&mut func.func),
-                                        },
-                                        stmt.loc,
-                                    )
-                                };
-                                data.value = js_ast::StmtOrExpr::Expr(
-                                    p.wrap_value_for_server_component_reference(inner, b"default"),
-                                );
-                            }
-
-                            stmts.push(*stmt);
-                            p.emit_react_refresh_register(
-                                stmts,
-                                name,
-                                ref_,
-                                ReactRefreshExportKind::Default,
-                            )?;
+                            // The lowering of a top-level `using` drops an `export default`
+                            // statement. It keeps a function declaration and an export clause.
+                            stmts.push(s2_copy);
+                            let items = core::slice::from_mut(p.arena.alloc(js_ast::ClauseItem {
+                                alias: js_ast::StoreStr::new(js_ast::ClauseItem::DEFAULT_ALIAS),
+                                alias_loc: data.default_name.loc,
+                                name: data.default_name,
+                                ..Default::default()
+                            }));
+                            stmts.push(p.s(
+                                S::ExportClause {
+                                    items: bun_ast::StoreSlice::new_mut(items),
+                                    is_single_line: false,
+                                },
+                                stmt.loc,
+                            ));
                         } else {
-                            if p.options.features.server_components.wraps_exports() {
-                                let func_expr = p.new_expr(
-                                    E::Function {
-                                        func: core::mem::take(&mut func.func),
-                                    },
-                                    stmt.loc,
-                                );
-                                data.value = js_ast::StmtOrExpr::Expr(
-                                    p.wrap_value_for_server_component_reference(
-                                        func_expr, b"default",
-                                    ),
-                                );
-                            }
-
                             stmts.push(*stmt);
                         }
 
-                        p.react_refresh.hook_ctx_storage = prev;
+                        if is_refresh_declaration {
+                            let name_ref = data.default_name.ref_;
+                            if let Some(hook) = react_hook_data.as_mut() {
+                                let signature_cb = hook.signature_cb;
+                                stmts.push(p.get_react_refresh_hook_signal_decl(signature_cb));
+                                let init = p.get_react_refresh_hook_signal_init(
+                                    hook,
+                                    Expr::init_identifier(name_ref, bun_ast::Loc::EMPTY),
+                                );
+                                stmts.push(p.s(
+                                    S::SExpr {
+                                        value: init,
+                                        ..Default::default()
+                                    },
+                                    bun_ast::Loc::EMPTY,
+                                ));
+                                // The dev server moves a default function that nothing else
+                                // reads into the exports object. This read keeps the declaration.
+                                p.record_usage(name_ref);
+                            }
+                            if ReactRefresh::is_componentish_name(name)
+                                || name == js_ast::ClauseItem::DEFAULT_ALIAS
+                            {
+                                p.emit_react_refresh_register(
+                                    stmts,
+                                    name,
+                                    name_ref,
+                                    ReactRefreshExportKind::Default,
+                                )?;
+                            }
+                        }
+
                         restore_dead!();
                         record_on_exit!();
                         return Ok(());

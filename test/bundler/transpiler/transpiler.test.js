@@ -3992,7 +3992,7 @@ class Foo {
     });
     // An instance field becomes `this.x = init` in the constructor, where `new.target` is the class.
     expect(legacy.transformSync("class Foo { x = new.target; static s = new.target }")).toBe(
-      "class Foo {\n  static s = undefined;\n  constructor() {\n    this.x = new.target;\n  }\n}\n",
+      "class Foo {\n  constructor() {\n    this.x = new.target;\n  }\n  static s = undefined;\n}\n",
     );
     // A computed key keeps every field in the class body. The initializer is left as it is.
     expect(legacy.transformSync("class Foo { [k()] = 1; x = new.target }")).toBe(

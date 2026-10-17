@@ -1,7 +1,10 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, DirectoryTree, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { mkfifo } from "mkfifo";
+import { lstatSync, readFileSync, symlinkSync } from "node:fs";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -170,6 +173,90 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
+  });
+});
+
+// On Linux the builtin used to copy a non-directory source by opening it
+// first, and opening a FIFO that has no writer blocks forever, so each of the
+// refused copies below hung instead of finishing. The builtin is the default
+// only on Windows (no FIFOs there); on POSIX it is enabled by an env var read
+// once per process, so each cp runs in a child bun.
+describe.concurrent.skipIf(isWindows)("bunshell cp of a FIFO", () => {
+  const builtinEnv = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
+
+  // Runs argv[2] as a shell command inside `work/` and prints cp's exit code
+  // followed by whatever it wrote to stderr.
+  const runCpScript = /* ts */ `
+    import { $ } from "bun";
+    import { join } from "node:path";
+    const result = await $\`\${{ raw: process.argv[2] }}\`.cwd(join(import.meta.dir, "work")).nothrow().quiet();
+    process.stdout.write(result.exitCode + "\\n" + result.stderr.toString());
+  `;
+
+  /** A temp dir holding the script and `work/`, which has the FIFO `fifo` and `extra` in it. */
+  function setup(name: string, extra: DirectoryTree = {}) {
+    const dir = tempDir(`shell-cp-fifo-${name}`, { "run-cp.ts": runCpScript, "work": extra });
+    mkfifo(join(String(dir), "work/fifo"));
+    return dir;
+  }
+
+  async function cp(dir: string, command: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run-cp.ts", command],
+      cwd: dir,
+      env: builtinEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  function refused(fifo: string) {
+    return { stdout: `1\ncp: Operation not supported: ${fifo}\n`, stderr: "", exitCode: 0 };
+  }
+  const copied = { stdout: "0\n", stderr: "", exitCode: 0 };
+
+  test("as the source is refused", async () => {
+    using dir = setup("source");
+    const work = join(String(dir), "work");
+    expect(await cp(String(dir), "cp fifo out")).toEqual(refused(join(work, "fifo")));
+    expect(lstatSync(join(work, "out"), { throwIfNoEntry: false })).toBeUndefined();
+  });
+
+  test("as the source of cp -R is refused", async () => {
+    using dir = setup("source-recursive");
+    const work = join(String(dir), "work");
+    expect(await cp(String(dir), "cp -R fifo out")).toEqual(refused(join(work, "fifo")));
+    expect(lstatSync(join(work, "out"), { throwIfNoEntry: false })).toBeUndefined();
+  });
+
+  test("next to other sources is refused while they are copied", async () => {
+    using dir = setup("one-of-many", { "a.txt": "A\n", "dest": {} });
+    const work = join(String(dir), "work");
+    expect(await cp(String(dir), "cp fifo a.txt dest")).toEqual(refused(join(work, "fifo")));
+    expect(readFileSync(join(work, "dest/a.txt"), "utf8")).toBe("A\n");
+    expect(lstatSync(join(work, "dest/fifo"), { throwIfNoEntry: false })).toBeUndefined();
+  });
+
+  // On macOS a directory is copied with one clonefile() of the whole tree, so
+  // the per-entry copy this exercises is only reached on Linux.
+  test.skipIf(isMacOS)("inside a directory copied with -R is refused while the rest is copied", async () => {
+    using dir = setup("in-directory", { "d": { "b.txt": "B\n" } });
+    const work = join(String(dir), "work");
+    mkfifo(join(work, "d/pipe"));
+    expect(await cp(String(dir), "cp -R d out")).toEqual(refused(join(work, "d/pipe")));
+    expect(readFileSync(join(work, "out/b.txt"), "utf8")).toBe("B\n");
+    expect(lstatSync(join(work, "out/pipe"), { throwIfNoEntry: false })).toBeUndefined();
+  });
+
+  // With -R a symlink operand is copied as a link, so what it points at is
+  // never looked at.
+  test("behind a symlink is copied as a symlink by cp -R", async () => {
+    using dir = setup("symlink");
+    const work = join(String(dir), "work");
+    symlinkSync("fifo", join(work, "link"));
+    expect(await cp(String(dir), "cp -R link out")).toEqual(copied);
+    expect(lstatSync(join(work, "out")).isSymbolicLink()).toBe(true);
   });
 });
 

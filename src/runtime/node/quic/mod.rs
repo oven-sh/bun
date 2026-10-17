@@ -2,6 +2,7 @@
 
 pub(crate) mod endpoint;
 pub(crate) mod ffi;
+mod outbound;
 pub(crate) mod session;
 pub(crate) mod stream;
 pub(crate) mod tls;

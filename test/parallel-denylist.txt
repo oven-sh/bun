@@ -136,6 +136,7 @@ js/node/process/process-stdio.test.ts
 js/node/process/stdin/process-stdin-stale-hup.test.ts
 js/node/process/stdin/stdin-fixtures.test.ts
 js/node/promise/reject-tostring.test.ts
+js/node/quic/quic-stream.test.ts
 js/node/readline/readline_never_unrefs.test.ts
 js/node/readline/stdin-pause-pty.test.ts
 js/node/sqlite/node-sqlite.test.ts

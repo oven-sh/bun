@@ -226,12 +226,28 @@ impl hooks::AutoInstaller for PackageManager {
         package_json_dir: Option<&[u8]>,
         buf: &'b mut [u8],
     ) -> Option<&'b [u8]> {
-        let name_hash = bun_semver::string::Builder::string_hash(match version.try_npm() {
-            Some(npm) if npm.is_alias => npm.name.slice(version_buf),
+        let strings = self.lockfile.buffers.string_bytes.as_slice();
+        // A rule of `overrides` for the name is the package manager's to apply.
+        let overridden = |name_hash| self.lockfile.overrides.has_rule_for_name(name_hash);
+        // A `catalog:` row of the project has the version that the catalog has for the name.
+        let in_catalog = match package_json_dir {
+            Some(_)
+                if version.tag == dependency::Tag::Catalog
+                    && !overridden(bun_semver::string::Builder::string_hash(name)) =>
+            {
+                let catalog = version.catalog().slice(version_buf);
+                self.lockfile.catalogs.find(strings, catalog, name)
+            }
+            _ => None,
+        };
+        let (range, range_buf) =
+            in_catalog.map_or((version, version_buf), |entry| (&entry.version, strings));
+        let name_hash = bun_semver::string::Builder::string_hash(match range.try_npm() {
+            Some(npm) if npm.is_alias => npm.name.slice(range_buf),
             _ => name,
         });
         let links = self.options.link_workspace_packages;
-        let member: Option<SemverString> = match version.tag {
+        let member: Option<SemverString> = match range.tag {
             dependency::Tag::Workspace => self.lockfile.workspace_paths.get(&name_hash).copied(),
             // A hoisted install links every workspace into the root's node_modules, whether or not
             // a package.json lists it, so an import without a declared version finds it too.
@@ -243,32 +259,95 @@ impl hooks::AutoInstaller for PackageManager {
                 &self.lockfile.workspace_paths,
                 &self.lockfile.workspace_versions,
                 name_hash,
-                &version.npm().version,
-                version_buf,
-                self.lockfile.buffers.string_bytes.as_slice(),
+                &range.npm().version,
+                range_buf,
+                strings,
             ),
             _ => None,
         };
+        // In the root package.json, `bun install` links the workspace of the name for these rows.
+        let in_root = package_json_dir.is_some_and(|dir| dir == &*self.runtime_project_dir);
+        let own = (in_root && in_catalog.is_none())
+            .then(|| bun_semver::string::Builder::string_hash(name))
+            .filter(|own_hash| match version.tag {
+                dependency::Tag::Folder => true,
+                dependency::Tag::DistTag => {
+                    version.dist_tag().name.slice(version_buf) == name && !overridden(*own_hash)
+                }
+                _ => member.is_some(),
+            })
+            .and_then(|own_hash| self.lockfile.workspace_paths.get(&own_hash).copied());
+        let member = own.or(member);
         let (base, path): (&[u8], &[u8]) = if let Some(member) = &member {
             (self.root_dir.dir, self.lockfile.str(member))
         } else {
-            let package_json_dir = package_json_dir?;
-            match version.tag {
-                dependency::Tag::Folder => (package_json_dir, version.folder().slice(version_buf)),
-                dependency::Tag::Symlink => {
+            // A path in a catalog is from the root package.json, which has the catalogs.
+            let dir = match in_catalog {
+                Some(_) => &*self.runtime_project_dir,
+                None => package_json_dir?,
+            };
+            match range.tag {
+                dependency::Tag::Folder => (dir, range.folder().slice(range_buf)),
+                dependency::Tag::Symlink
+                    if dependency::is_link_path(range.symlink().slice(range_buf)) =>
+                {
+                    (dir, range.symlink().slice(range_buf))
+                }
+                // A package that `bun link` registered.
+                dependency::Tag::Symlink if in_catalog.is_none() => {
+                    directories::try_global_link_dir(self).ok()?;
                     let target = version.symlink().slice(version_buf);
-                    if dependency::is_link_path(target) {
-                        (package_json_dir, target)
-                    } else {
-                        directories::try_global_link_dir(self).ok()?;
-                        (directories::global_link_dir_path(self), target)
-                    }
+                    (directories::global_link_dir_path(self), target)
                 }
                 _ => return None,
             }
         };
         let len = join_abs_string_buf_checked::<platform::Auto>(base, buf, &[path])?.len();
         Some(&buf[..len])
+    }
+
+    fn project_dir_for_peer(&self, name: &[u8]) -> Option<&[u8]> {
+        let name_hash = bun_semver::string::Builder::string_hash(name);
+        (!self.lockfile.overrides.has_rule_for_name(name_hash))
+            .then_some(&*self.runtime_project_dir)
+    }
+
+    fn cache_relative_path<'p>(&mut self, path: &'p [u8]) -> Option<&'p [u8]> {
+        let is_open = self.cache_directory.is_some();
+        // The directory that opens is another one if the configured one cannot be made.
+        if (self.runtime_cache_dirs.as_ref()).is_none_or(|(was_open, _)| *was_open != is_open) {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let planned = match self.cache_directory {
+                Some(_) => None,
+                None => Some(directories::planned_cache_directory_path(self)?),
+            };
+            // As `path_for_resolution` joins a folder of the cache, less the folder.
+            const FOLDER: &[u8] = b"-";
+            let folder = bun_paths::resolve_path::join_abs_string_buf::<platform::Auto>(
+                planned
+                    .as_deref()
+                    .unwrap_or(self.cache_directory_path.as_bytes()),
+                &mut buf.0[..],
+                &[FOLDER],
+            );
+            let below = bun_paths::SEP_STR.len() + FOLDER.len();
+            let spelled: Box<[u8]> = folder[..folder.len().saturating_sub(below)].into();
+            // The files of a package can have their real path.
+            let real = match self.runtime_cache_dirs.take() {
+                Some((_, [was_spelled, real])) if was_spelled == spelled && !real.is_empty() => {
+                    real
+                }
+                _ => bun_sys::realpath(&bun_core::ZBox::from_bytes(&spelled), &mut buf)
+                    .map(Box::from)
+                    .unwrap_or_default(),
+            };
+            self.runtime_cache_dirs = Some((is_open, [spelled, real]));
+        }
+        let (_, dirs) = self.runtime_cache_dirs.as_ref()?;
+        (dirs.iter().filter(|dir| !dir.is_empty())).find_map(|dir| {
+            path.strip_prefix(&dir[..])?
+                .strip_prefix(bun_paths::SEP_STR.as_bytes())
+        })
     }
 
     fn path_for_resolution<'b>(
@@ -411,7 +490,7 @@ impl hooks::AutoInstaller for PackageManager {
     }
 }
 
-// `PackageJSON::parse` runs before the first bare import creates the manager.
+// For a package.json that is not the project's: an `npm:` alias in it is not recorded.
 #[unsafe(no_mangle)]
 fn __bun_resolver_parse_dependency(
     name: SemverString,

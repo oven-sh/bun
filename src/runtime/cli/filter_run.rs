@@ -26,7 +26,7 @@ struct ScriptConfig {
     script_name: Box<[u8]>,
     script_content: Box<[u8]>,
     combined: &'static ZStr, // interned via `cli_dupe` into the process-lifetime CLI arena
-    // Owned dep names; `DependencyMap.source_buf` would dangle once the
+    // Owned dep names; the rows of the package.json would dangle once the
     // parsed `PackageJSON` (which owns the file bytes) drops.
     deps: Vec<Box<[u8]>>,
 
@@ -879,14 +879,11 @@ pub(crate) fn run_scripts_with_filter(
             // SAFETY: interned[combined_len] == 0 (copied from `copy_script`).
             let combined = ZStr::from_buf(interned, combined_len);
 
-            let dep_source_buf: &[u8] = &package.json.dependencies.source_buf;
             let deps: Vec<Box<[u8]>> = package
                 .json
-                .dependencies
-                .map
-                .keys()
-                .iter()
-                .map(|k| Box::<[u8]>::from(k.slice(dep_source_buf)))
+                .dependency_names()
+                .into_iter()
+                .map(Box::<[u8]>::from)
                 .collect();
 
             scripts.push(ScriptConfig {

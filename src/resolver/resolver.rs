@@ -317,6 +317,28 @@ fn intern_package_json(pkg: PackageJSON) -> core::ptr::NonNull<PackageJSON> {
     core::ptr::NonNull::from(&mut **guard.last_mut().unwrap())
 }
 
+/// What auto-install keeps between imports, for the process.
+#[derive(Default)]
+struct AutoInstallState {
+    /// Lockfile ids of the folders that were loaded from the cache, by path below the cache.
+    cache_folders: bun_collections::StringHashMap<Install::PackageID>,
+    /// What `installed_package_id` found for an interned `PackageJSON`, by its address.
+    installed_packages: bun_collections::HashMap<usize, Install::PackageID>,
+}
+
+fn auto_install_state() -> &'static bun_threading::Guarded<AutoInstallState> {
+    static STATE: std::sync::LazyLock<bun_threading::Guarded<AutoInstallState>> =
+        std::sync::LazyLock::new(Default::default);
+    &STATE
+}
+
+/// The version that a package.json lists for a name, and the strings it was parsed in.
+struct ListedVersion {
+    version: Dependency::Version,
+    behavior: Dependency::Behavior,
+    buf: std::borrow::Cow<'static, [u8]>,
+}
+
 // `bun_core::declare_scope!` emits the per-scope `static ScopedLogger`; the
 // `debuglog!` macro forwards to the real `bun_core::scoped_log!` so debug builds
 // emit and release builds dead-strip (PORTING.md §Logging).
@@ -891,22 +913,212 @@ impl<'a> Resolver<'a> {
         self.package_manager.map(|mut pm| unsafe { pm.as_mut() })
     }
 
-    /// The project's package.json is parsed before the first bare import creates the manager.
-    pub(crate) fn parse_dependency(
-        &mut self,
-        name: Semver::String,
-        name_hash: Install::PackageNameHash,
-        version: &[u8],
-        sliced: &Semver::SlicedString,
-        log: Option<&mut bun_ast::Log>,
-        // The package manager only records the `npm:` aliases of the project's own package.json
-        // files. An alias that an installed package declares applies to that package alone.
-        is_project: bool,
-    ) -> Option<Dependency::Version> {
-        match self.auto_installer().filter(|_| is_project) {
-            Some(pm) => pm.parse_dependency(name, Some(name_hash), version, sliced, log),
-            None => __bun_resolver_parse_dependency(name, name_hash, version, sliced, log),
+    /// The package of the global cache that `dir_info` is in or below, and its lockfile id.
+    fn cache_package_above(
+        dir_info: DirInfoRef,
+        manager: Option<&mut dyn AutoInstaller>,
+    ) -> Option<(&'static PackageJSON, Install::PackageID)> {
+        let manager = manager?;
+        // The topmost package.json in the cache directory that this process did not load from it.
+        let mut unknown = None;
+        let mut dir = Some(dir_info);
+        while let Some(info) = dir {
+            dir = info.get_parent();
+            let folder = strings::without_trailing_slash_windows_path(info.abs_path);
+            // Nothing above a folder that is outside the cache directory is in it.
+            let Some(folder) = manager.cache_relative_path(folder) else {
+                break;
+            };
+            // Installed: a package of the cache ships it, or it is in the global store.
+            if strings::contains(folder, bun_paths::NODE_MODULES_NEEDLE) {
+                continue;
+            }
+            let Some(package_json) = info.package_json() else {
+                continue;
+            };
+            if package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID {
+                return Some((package_json, package_json.package_manager_package_id));
+            }
+            let state = auto_install_state().lock();
+            // The first answer of `installed_package_id` for a package.json stands.
+            let key = core::ptr::from_ref(package_json) as usize;
+            if !state.installed_packages.contains_key(&key)
+                && let Some(&package_id) = state.cache_folders.get(folder)
+            {
+                return Some((package_json, package_id));
+            }
+            unknown = Some((package_json, folder));
         }
+        let (package_json, folder) = unknown?;
+        let package_id = Self::installed_package_id(package_json, Some(folder), manager);
+        (package_id != Install::INVALID_PACKAGE_ID).then_some((package_json, package_id))
+    }
+
+    /// The lockfile id of the package with this name and version. `cache_folder`: its cache path.
+    fn installed_package_id(
+        package_json: &'static PackageJSON,
+        cache_folder: Option<&[u8]>,
+        manager: &mut dyn AutoInstaller,
+    ) -> Install::PackageID {
+        let key = core::ptr::from_ref(package_json) as usize;
+        if let Some(&package_id) = auto_install_state().lock().installed_packages.get(&key) {
+            return package_id;
+        }
+        let (name, version) = (&*package_json.name, &*package_json.version);
+        // The cache has a registry package in `<name>@<version>...`. No other folder is it.
+        let in_own_folder = cache_folder.is_none_or(|folder| {
+            let Some((as_name, rest)) = folder.split_at_checked(name.len()) else {
+                return false;
+            };
+            let same_name = match strings::index_of_char_usize(name, b'/') {
+                Some(scope) => {
+                    as_name[..scope] == name[..scope]
+                        && as_name[scope] == bun_paths::SEP
+                        && as_name[scope + 1..] == name[scope + 1..]
+                }
+                None => as_name == name,
+            };
+            same_name && rest.starts_with(b"@") && !strings::contains_char(rest, bun_paths::SEP)
+        });
+        let package_id = if name.is_empty()
+            || version.is_empty()
+            || !in_own_folder
+            || manager.infer_dependency_tag(version) != Dependency::version::Tag::Npm
+        {
+            None
+        } else {
+            manager
+                .parse_dependency_with_tag(
+                    Semver::String::init(name, name),
+                    Semver::semver_string::Builder::string_hash(name),
+                    version,
+                    Dependency::version::Tag::Npm,
+                    &Semver::SlicedString::init(version, version),
+                    None,
+                )
+                .filter(|exact| exact.is_exact_npm())
+                .and_then(|exact| manager.lockfile_resolve(name, &exact, version))
+                .filter(|&package_id| package_id > 0)
+        }
+        .unwrap_or(Install::INVALID_PACKAGE_ID);
+        auto_install_state()
+            .lock()
+            .installed_packages
+            .insert(key, package_id);
+        package_id
+    }
+
+    /// The package manager applies the `npm:` aliases of a project package.json to every package.
+    fn record_npm_aliases(package_json: &'static PackageJSON, manager: &mut dyn AutoInstaller) {
+        let folder = bun_paths::dirname(package_json.source.path.text);
+        if !package_json.is_project_file()
+            || folder.is_some_and(|folder| manager.cache_relative_path(folder).is_some())
+        {
+            return;
+        }
+        for (name, version) in package_json.npm_aliases() {
+            let buf = [name, version].concat();
+            let (name, version) = buf.split_at(name.len());
+            manager.parse_dependency(
+                Semver::String::init(&buf, name),
+                Some(Semver::semver_string::Builder::string_hash(name)),
+                version,
+                &Semver::SlicedString::init(&buf, version),
+                None,
+            );
+        }
+    }
+
+    /// Whether `package_json` lists `name`, and the first version by precedence that can be read.
+    fn listed_version(
+        package_json: &'static PackageJSON,
+        name: &[u8],
+        of_project: bool,
+    ) -> (bool, Option<ListedVersion>) {
+        let mut listed = false;
+        for (row, behavior) in package_json.dependency_rows_of(name, of_project) {
+            listed = true;
+            let Some(range) = row.value.as_str() else {
+                continue;
+            };
+            // The row is in the file's text unless it has a JSON escape.
+            let contents: &'static [u8] = &package_json.source_contents;
+            let in_contents = bun_alloc::is_slice_in_buffer(row.key.slice(), contents)
+                && bun_alloc::is_slice_in_buffer(range, contents);
+            let buf = if in_contents {
+                std::borrow::Cow::Borrowed(contents)
+            } else {
+                std::borrow::Cow::Owned([name, range].concat())
+            };
+            let (name, range) = if in_contents {
+                (row.key.slice(), range)
+            } else {
+                buf.split_at(name.len())
+            };
+            let version = __bun_resolver_parse_dependency(
+                Semver::String::init(&buf, name),
+                Semver::semver_string::Builder::string_hash(name),
+                range,
+                &Semver::SlicedString::init(&buf, range),
+                None,
+            );
+            if let Some(version) = version {
+                return (
+                    true,
+                    Some(ListedVersion {
+                        version,
+                        behavior,
+                        buf,
+                    }),
+                );
+            }
+        }
+        (listed, None)
+    }
+
+    /// The folder that the root package.json names for a peer. The package manager takes versions.
+    fn peer_folder_of_project(
+        &mut self,
+        name: &[u8],
+        manager: *mut dyn AutoInstaller,
+    ) -> Option<Option<DirInfoRef>> {
+        // `dir_info_cached` can reach the package manager through `self`: borrow it for each use.
+        macro_rules! manager {
+            () => {
+                // SAFETY: the caller's pointer to the PackageManager, which outlives the resolver.
+                unsafe { &mut *manager }
+            };
+        }
+        let mut project_dir = bun_paths::path_buffer_pool::get();
+        let project_dir = {
+            let dir = manager!().project_dir_for_peer(name)?;
+            project_dir.0.get_mut(..dir.len())?.copy_from_slice(dir);
+            &project_dir.0[..dir.len()]
+        };
+        let root = self.dir_info_cached(project_dir).ok().flatten()?;
+        let package_json = root.package_json().filter(|root| root.is_project_file())?;
+        let listed = Self::listed_version(package_json, name, true).1?;
+        let folder = manager!().project_folder(
+            name,
+            &listed.version,
+            &listed.buf,
+            bun_paths::dirname(package_json.source.path.text),
+            bufs!(path_in_global_disk_cache),
+        )?;
+        let found = self.dir_info_cached(folder).ok().flatten();
+        if found.is_none() {
+            self.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "\"{}@{}\": folder \"{}\" does not exist",
+                    bstr::BStr::new(name),
+                    bstr::BStr::new(listed.version.literal.slice(&listed.buf)),
+                    bstr::BStr::new(folder),
+                ),
+            );
+        }
+        Some(found)
     }
 
     /// Safe read-only accessor for the optional `DotEnv::Loader` back-reference.
@@ -2857,11 +3069,13 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            // The walk ended at a package in the global cache, which has no parent directory info.
-            // Any `node_modules` seen on the way came in its tarball, so auto-install stays on.
-            if dir_info.package_json().is_some_and(|package_json| {
-                package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID
-            }) {
+            // For a file of a cache package, a `node_modules` on the way leaves auto-install on.
+            if any_node_modules_folder
+                && global_cache.can_use(false)
+                && !global_cache.can_use(true)
+                && self.use_package_manager()
+                && Self::cache_package_above(source_dir_info, self.auto_installer()).is_some()
+            {
                 any_node_modules_folder = false;
             }
         }
@@ -2975,11 +3189,15 @@ impl<'a> Resolver<'a> {
                 }
                 let mut dependency_version = Dependency::Version::default();
                 let mut dependency_behavior = Dependency::Behavior::PROD;
-                let installed_buf: Vec<u8>;
+                let listed_buf: std::borrow::Cow<'static, [u8]>;
                 let mut string_buf: &[u8] = esm.version;
                 // The directory of the project's package.json that lists the package. A relative
                 // path in the dependency's version, as in `file:../foo`, is resolved from here.
                 let mut package_json_dir: Option<&[u8]> = None;
+
+                let cache_package = Self::cache_package_above(dir_info, Some(manager!()));
+                // The first project package.json that lists the package with no readable version.
+                let mut unreadable_in: Option<&'static [u8]> = None;
 
                 // const initial_pending_tasks = manager.pending_tasks;
                 let mut resolved_package_id: Install::PackageID = 'brk: {
@@ -2988,82 +3206,77 @@ impl<'a> Resolver<'a> {
                     let mut listing_dir = esm_ref.version.is_empty().then_some(dir_info);
                     // Walk up from the source directory to the nearest package.json that lists the
                     // package.
-                    while let Some(dir) = listing_dir
-                        && let Some(package_json) = dir.package_json_for_dependencies()
-                    {
-                        // check if this package.json was already added to the lockfile
-                        // and try to look up the dependency from there
-                        let resolve_from_lockfile =
-                            package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID;
-
-                        let dependencies_list: &[Dependency::Dependency] = if resolve_from_lockfile
-                        {
-                            let dependencies = manager!().lockfile_package_dependencies(
-                                package_json.package_manager_package_id,
-                            );
-
-                            // try to find this package name in the dependencies of the enclosing package
-                            string_buf = manager!().lockfile_string_bytes();
-                            dependencies.get(manager!().lockfile_dependencies_buf())
-                        } else {
-                            // If you don't specify a version, default to the one chosen in your package.json
-                            string_buf = &package_json.dependencies.source_buf;
-                            package_json.dependencies.map.values()
+                    while let Some(dir) = listing_dir {
+                        listing_dir = dir.get_parent();
+                        let Some(package_json) = dir.package_json() else {
+                            continue;
                         };
-
-                        for (dependency_id, dependency) in dependencies_list.iter().enumerate() {
-                            if !strings::eql_long(dependency.name.slice(string_buf), esm.name, true)
-                            {
+                        let of_project = cache_package.is_none() && package_json.is_project_file();
+                        let package_id = match cache_package {
+                            Some((root, package_id)) if core::ptr::eq(root, package_json) => {
+                                package_id
+                            }
+                            // Nested in a cache package: only a shipped `node_modules` counts.
+                            Some((root, _)) if !package_json.is_in_node_modules_of(root) => {
                                 continue;
                             }
+                            None if of_project => Install::INVALID_PACKAGE_ID,
+                            _ => Self::installed_package_id(package_json, None, manager!()),
+                        };
 
-                            dependency_version = dependency.version.clone();
-                            dependency_behavior = dependency.behavior;
+                        // A package that the lockfile has: look up the dependency there.
+                        if package_id != Install::INVALID_PACKAGE_ID {
+                            let dependencies = manager!().lockfile_package_dependencies(package_id);
+                            let lockfile_buf = manager!().lockfile_string_bytes();
+                            let dependencies_list: &[Dependency::Dependency] =
+                                dependencies.get(manager!().lockfile_dependencies_buf());
+                            for (dependency_id, dependency) in dependencies_list.iter().enumerate()
+                            {
+                                if !strings::eql_long(
+                                    dependency.name.slice(lockfile_buf),
+                                    esm.name,
+                                    true,
+                                ) {
+                                    continue;
+                                }
 
-                            if resolve_from_lockfile {
-                                let resolutions = manager!().lockfile_package_resolutions(
-                                    package_json.package_manager_package_id,
-                                );
-
+                                dependency_version = dependency.version.clone();
+                                dependency_behavior = dependency.behavior;
+                                string_buf = lockfile_buf;
+                                let resolutions =
+                                    manager!().lockfile_package_resolutions(package_id);
                                 // found it!
                                 break 'brk resolutions.get(manager!().lockfile_resolutions_buf())
                                     [dependency_id];
                             }
+                            // Nothing above a package of the global cache is its project.
+                            if cache_package
+                                .is_some_and(|(root, _)| core::ptr::eq(root, package_json))
+                            {
+                                break;
+                            }
+                            continue;
+                        }
 
-                            if !package_json.source.path.is_node_module() {
+                        // If you don't specify a version, default to the one chosen in your package.json
+                        let (listed, found) =
+                            Self::listed_version(package_json, esm.name, of_project);
+                        if let Some(found) = found {
+                            dependency_version = found.version;
+                            dependency_behavior = found.behavior;
+                            listed_buf = found.buf;
+                            string_buf = &listed_buf;
+                            if of_project {
                                 package_json_dir =
                                     bun_paths::dirname(package_json.source.path.text);
                             }
                             break 'brk Install::INVALID_PACKAGE_ID;
                         }
 
-                        let installed = package_json.installed_dependency_versions(esm.name);
-                        for (range, behavior) in installed.filter(|_| !resolve_from_lockfile) {
-                            let buf = [esm.name, range].concat();
-                            let (name, range) = buf.split_at(esm.name.len());
-                            let version = __bun_resolver_parse_dependency(
-                                Semver::String::init(&buf, name),
-                                Semver::semver_string::Builder::string_hash(name),
-                                range,
-                                &Semver::SlicedString::init(&buf, range),
-                                Some(self.log_mut()),
-                            );
-                            if let Some(version) = version {
-                                dependency_version = version;
-                                dependency_behavior = behavior;
-                                installed_buf = buf;
-                                string_buf = &installed_buf;
-                                break 'brk Install::INVALID_PACKAGE_ID;
-                            }
+                        // A package in node_modules is not the project's to repair.
+                        if listed && of_project && unreadable_in.is_none() {
+                            unreadable_in = Some(package_json.source.path.text);
                         }
-
-                        listing_dir =
-                            core::iter::successors(dir.get_parent(), |up| up.get_parent()).find(
-                                |up| {
-                                    up.package_json_for_dependencies
-                                        != dir.package_json_for_dependencies
-                                },
-                            );
                     }
 
                     // If we get here, it means that the lockfile doesn't have this package at all.
@@ -3117,6 +3330,22 @@ impl<'a> Resolver<'a> {
                     let resolution: Resolution = 'brk: {
                         if resolved_package_id == Install::INVALID_PACKAGE_ID {
                             if dependency_version.tag == Dependency::version::Tag::Uninitialized {
+                                // The project lists the package: it did not ask for `latest`.
+                                if let Some(package_json_path) = unreadable_in {
+                                    self.log_mut().add_error_fmt(
+                                        None,
+                                        bun_ast::Loc::EMPTY,
+                                        format_args!(
+                                            "\"{}\": the version in \"{}\" is not valid",
+                                            bstr::BStr::new(esm.name),
+                                            bstr::BStr::new(package_json_path),
+                                        ),
+                                    );
+                                    if let Some(d) = self.debug_logs.as_mut() {
+                                        d.decrease_indent();
+                                    }
+                                    return MatchStatus::NotFound;
+                                }
                                 let sliced_string =
                                     Semver::SlicedString::init(esm.version, esm.version);
                                 string_buf = esm.version;
@@ -3143,6 +3372,12 @@ impl<'a> Resolver<'a> {
 
                         if resolved_package_id != Install::INVALID_PACKAGE_ID {
                             break 'brk manager!().lockfile_package_resolution(resolved_package_id);
+                        }
+
+                        if dependency_behavior.is_peer()
+                            && let Some(found) = self.peer_folder_of_project(esm.name, manager_ptr)
+                        {
+                            break 'package_dir_info Ok(found);
                         }
 
                         // unsupported or not found dependency, we might need to install it to the cache
@@ -3397,6 +3632,15 @@ impl<'a> Resolver<'a> {
         debug_assert!(self.package_manager.is_some());
 
         let dir_path = strings::without_trailing_slash_windows_path(dir_path_maybe_trail_slash);
+
+        if let Some(manager) = self.auto_installer()
+            && let Some(folder) = manager.cache_relative_path(dir_path)
+        {
+            let mut state = auto_install_state().lock();
+            if state.cache_folders.get(folder) != Some(&package_id) {
+                bun_core::handle_oom(state.cache_folders.put(folder, package_id));
+            }
+        }
 
         Self::assert_valid_cache_key(dir_path);
         let mut dir_cache_info_result = self.dir_cache_mut().get_or_put(dir_path)?;
@@ -4136,38 +4380,19 @@ impl<'a> Resolver<'a> {
         unsafe { (*BIN_FOLDERS.get()).assume_init_ref().const_slice() }
     }
 
-    pub(crate) fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
+    pub(crate) fn parse_package_json(
         &mut self,
         file: &[u8],
         dirname_fd: FD,
         package_id: Option<Install::PackageID>,
     ) -> crate::CrateResult<Option<core::ptr::NonNull<PackageJSON>>> {
-        use crate::package_json::{IncludeDependencies, IncludeScripts};
-        // NOTE: `IncludeDependencies` is a
-        // const generic on `PackageJSON::parse`, `IncludeScripts` is runtime (it only
-        // gates one branch).
+        use crate::package_json::IncludeScripts;
         let include_scripts = if self.care_about_scripts {
             IncludeScripts::IncludeScripts
         } else {
             IncludeScripts::IgnoreScripts
         };
-        let pkg = if ALLOW_DEPENDENCIES {
-            PackageJSON::parse::<{ IncludeDependencies::Local }>(
-                self,
-                file,
-                dirname_fd,
-                package_id,
-                include_scripts,
-            )
-        } else {
-            PackageJSON::parse::<{ IncludeDependencies::None }>(
-                self,
-                file,
-                dirname_fd,
-                package_id,
-                include_scripts,
-            )
-        };
+        let pkg = PackageJSON::parse(self, file, dirname_fd, package_id, include_scripts);
         let Some(pkg) = pkg else { return Ok(None) };
 
         // NOTE: the DirInfo cache holds `&'static` refs. PORTING.md
@@ -6287,21 +6512,11 @@ impl<'a> Resolver<'a> {
                 if !parent_package_json.name.is_empty() || self.care_about_bin_folder {
                     info.enclosing_package_json = Some(parent_package_json);
                 }
-
-                if parent_package_json.lists_dependencies() {
-                    // NOTE: store the raw `NonNull` field (not the
-                    // `&'static` accessor result) so mut-provenance flows
-                    // through to `enqueue_dependency_to_resolve`.
-                    info.package_json_for_dependencies = parent_.package_json;
-                }
             }
 
             info.enclosing_package_json = info
                 .enclosing_package_json
                 .or(parent_.enclosing_package_json);
-            info.package_json_for_dependencies = info
-                .package_json_for_dependencies
-                .or(parent_.package_json_for_dependencies);
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
             if !self.opts.preserve_symlinks {
@@ -6390,13 +6605,8 @@ impl<'a> Resolver<'a> {
                 // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
                 if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
                 {
-                    // A package in the global cache has a `package_id`, and keeps it even if its
-                    // tarball shipped a `node_modules` folder.
-                    info.package_json = if self.use_package_manager()
-                        && (package_id.is_some() || !info.has_node_modules())
-                        && !info.is_node_modules()
-                    {
-                        self.parse_package_json::<true>(
+                    info.package_json = self
+                        .parse_package_json(
                             path,
                             if FeatureFlags::STORE_FILE_DESCRIPTORS {
                                 fd
@@ -6406,22 +6616,15 @@ impl<'a> Resolver<'a> {
                             package_id,
                         )
                         .ok()
-                        .flatten()
-                    } else {
-                        self.parse_package_json::<false>(
-                            path,
-                            if FeatureFlags::STORE_FILE_DESCRIPTORS {
-                                fd
-                            } else {
-                                FD::INVALID
-                            },
-                            None,
-                        )
-                        .ok()
-                        .flatten()
-                    };
+                        .flatten();
 
                     if let Some(pkg) = info.package_json() {
+                        if !info.has_node_modules()
+                            && let Some(manager) = self.auto_installer()
+                        {
+                            Self::record_npm_aliases(pkg, manager);
+                        }
+
                         if pkg.browser_map.count() > 0 {
                             info.enclosing_browser_scope = result.index;
                             info.package_json_for_browser_field = Some(pkg);
@@ -6429,13 +6632,6 @@ impl<'a> Resolver<'a> {
 
                         if !pkg.name.is_empty() || self.care_about_bin_folder {
                             info.enclosing_package_json = Some(pkg);
-                        }
-
-                        if pkg.lists_dependencies() {
-                            // NOTE: store the raw `NonNull` field (not the
-                            // `&'static` accessor result) so mut-provenance flows
-                            // through to `enqueue_dependency_to_resolve`.
-                            info.package_json_for_dependencies = info.package_json;
                         }
 
                         if let Some(logs) = self.debug_logs.as_mut() {

@@ -425,6 +425,24 @@ impl Conn {
         // SAFETY: as above.
         unsafe { lsquic_conn_make_uni_stream(self.0) }
     }
+    /// Forgets up to `n` `make_stream` requests that lsquic counts as delayed
+    /// (neither created nor refused yet). Returns how many remain, so `0`
+    /// reads the count.
+    pub fn cancel_pending_streams(&self, n: c_uint) -> c_uint {
+        unsafe extern "C" {
+            fn lsquic_conn_cancel_pending_streams(c: *mut lsquic_conn, n: c_uint) -> c_uint;
+        }
+        // SAFETY: as above.
+        unsafe { lsquic_conn_cancel_pending_streams(self.0, n) }
+    }
+    /// `cancel_pending_streams` for `make_uni_stream` requests.
+    pub fn cancel_pending_uni_streams(&self, n: c_uint) -> c_uint {
+        unsafe extern "C" {
+            fn lsquic_conn_cancel_pending_uni_streams(c: *mut lsquic_conn, n: c_uint) -> c_uint;
+        }
+        // SAFETY: as above.
+        unsafe { lsquic_conn_cancel_pending_uni_streams(self.0, n) }
+    }
     pub fn want_datagram_write(&self, want: bool) -> c_int {
         // SAFETY: as above.
         unsafe { lsquic_conn_want_datagram_write(self.0, want as c_int) }

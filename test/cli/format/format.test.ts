@@ -5372,6 +5372,48 @@ exports.format = async text => "by Prettier";
       }
     });
 
+    // JavaScript has read the file before it compares anything: by then a character that is cut off is one U+FFFD.
+    test.each<[string, string, string[], (a: string, b: string) => number]>([
+      [
+        "as npm has them, by localeCompare",
+        "",
+        ["\xF0\x9F\x98b", "\xEF\xBF\xBDc", "\xEF\xBF\xBD\xEF\xBF\xBD\\ud800"],
+        (a, b) => a.localeCompare(b, "en"),
+      ],
+      [
+        "as pnpm has them, by code units",
+        ',\n  "packageManager": "pnpm@9"',
+        ["\xF0A", "\xF1\x80\x80\x80", "\\udc00"],
+        (a, b) => (a < b ? -1 : 1),
+      ],
+    ])("dependencies whose names are not UTF-8 have one order, %s", async (_, more, kinds, compare) => {
+      const all = kinds.flatMap(kind => Array.from({ length: 8 }, (_, digit) => kind + digit));
+      const text = (names: string[]) =>
+        `{\n  "name": "x",\n  "dependencies": {\n${names.map(name => `    "${name}": "1"`).join(",\n")}\n  }${more}\n}\n`;
+      const asRead = (name: string): string => JSON.parse(`"${new TextDecoder().decode(Buffer.from(name, "latin1"))}"`);
+      const sorted = text(all.toSorted((a, b) => compare(asRead(a), asRead(b))));
+      for (const stride of [11, 7]) {
+        using dir = tempDir("bun-format", {
+          ".prettierrc": prettierrc,
+          "package.json": Buffer.from(text(all.map((_, i) => all[(i * stride) % all.length])), "latin1"),
+        });
+        for (const _ of ["sorts", "has nothing to sort"]) {
+          const cmd = [...command, "--log-level=warn", "package.json"];
+          await using proc = spawn({
+            // A crash leaves no core file.
+            cmd: isWindows ? cmd : ["sh", "-c", 'ulimit -c 0; exec "$0" "$@"', ...cmd],
+            env,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+          expect(readFileSync(join(String(dir), "package.json"), "latin1")).toBe(sorted);
+          expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+        }
+      }
+    });
+
     test("sortPackageJson, as a flag or in [fmt], overrides the plugin", async () => {
       const before = '{ "license": "MIT", "author": "a", "repository": "r" }\n';
       const text = (...names: string[]) =>

@@ -228,6 +228,8 @@ impl SortKeys {
         let (file, props) = (object.file(), self.collect_fixable_properties((object.span(), list), known)?);
         let (first, last) = (props.first()?, props.last()?);
         let mut sorted: Vec<&FixableProperty> = props.iter().collect();
+        // With `natural` the comparison goes in circles: `a10` < `a1b` < `a2` < `a10`. The sort still leaves no key greater than
+        // the next, which is all that the rule looks at, so what is fixed is not reported again.
         utils::sort::sort_by(&mut sorted, |a, b| {
             let order = compare_keys_as_oxlint(&a.key, &b.key, self.is_natural, self.is_insensitive);
             if self.is_descending { order.reverse() } else { order }

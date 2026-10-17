@@ -4,7 +4,7 @@ use bun_core::strings;
 use bun_lint::language::Parser;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use bun_lint::utils::sort::sort_indices;
+use bun_lint::utils::sort::merge_sort_indices;
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -870,7 +870,7 @@ impl Order {
             let key = |at: u32| Some((imported.get(at as usize)?, &**normalized.get(at as usize)?));
             let mut order: Vec<u32> = (0..imported.len() as u32).collect();
             let rank = |at: u32| key(at).map_or(0.0, |it| it.0.rank);
-            sort_indices(&mut order, &mut |a, b| {
+            merge_sort_indices(&mut order, &mut |a, b| {
                 rank(a).partial_cmp(&rank(b)).unwrap_or(Ordering::Equal)
             });
             let is_before = |a: u32, b: u32| match (key(a), key(b)) {

@@ -22,7 +22,8 @@ pub struct Fixed {
 const MARK: &[u8] = b"\xEF\xBB\xBF";
 
 /// ESLint's `SourceCodeFixer.applyFixes`. A fix that overlaps or touches one that is applied before
-/// it is left for the next pass. `should_fix`: ESLint's `fix` option as a function.
+/// it is left for the next pass. `should_fix`: ESLint's `fix` option as a function. Unlike ESLint, it
+/// does not take a fix that changes nothing for one.
 pub fn apply_fixes(
     text: &[u8],
     messages: Vec<LintMessage>,
@@ -52,8 +53,13 @@ pub fn apply_fixes(
             remaining.push(message);
             continue;
         };
-        is_fixed = true;
         let (start, end) = (fix.span.start as usize, fix.span.end as usize);
+        // It writes what is there, so the next run would say the same again.
+        if text.get(start..end) == Some(&fix.text[..]) {
+            remaining.push(message);
+            continue;
+        }
+        is_fixed = true;
         if last.is_some_and(|last| last >= start) || start > end {
             remaining.push(message);
             continue;

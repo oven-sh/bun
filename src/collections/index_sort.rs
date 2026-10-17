@@ -42,6 +42,53 @@ fn sort_unstable(indices: &mut [u32], mut by: By<'_>) {
     indices.sort_unstable_by(|&a, &b| by.compare(a, b));
 }
 
+/// The standard library sorts up to this many items by insertion too. So the result for those is what it gives, and what the tools
+/// that are written in Rust give, even if the comparison isn't a total order.
+const INSERTION_RUN: usize = 20;
+
+/// See [`merge_sort_indices`].
+#[inline(never)]
+fn merge_sort(indices: &mut [u32], mut by: By<'_>) {
+    for run in indices.chunks_mut(INSERTION_RUN) {
+        for end in 1..run.len() {
+            let mut at = end;
+            while at > 0 && by.compare(run[end], run[at - 1]) == Ordering::Less {
+                at -= 1;
+            }
+            run[at..=end].rotate_right(1);
+        }
+    }
+    let mut left = Vec::new();
+    let mut width = INSERTION_RUN;
+    while width < indices.len() {
+        for both in indices.chunks_mut(2 * width) {
+            merge(both, width, &mut left, &mut by);
+        }
+        width *= 2;
+    }
+}
+
+/// Merges `both[..middle]` with `both[middle..]`. `left` is for the copy of the first.
+fn merge(both: &mut [u32], middle: usize, left: &mut Vec<u32>, by: &mut By<'_>) {
+    if middle >= both.len() || by.compare(both[middle], both[middle - 1]) != Ordering::Less {
+        return;
+    }
+    left.clear();
+    left.extend_from_slice(&both[..middle]);
+    let (mut from_left, mut from_right, mut to) = (0, middle, 0);
+    while from_left < middle && from_right < both.len() {
+        if by.compare(both[from_right], left[from_left]) == Ordering::Less {
+            both[to] = both[from_right];
+            from_right += 1;
+        } else {
+            both[to] = left[from_left];
+            from_left += 1;
+        }
+        to += 1;
+    }
+    both[to..from_right].copy_from_slice(&left[from_left..]);
+}
+
 /// Stable sort of `indices` by `cmp` (called with the two indices being compared).
 pub fn sort_indices(indices: &mut [u32], cmp: &mut dyn FnMut(u32, u32) -> Ordering) {
     sort_stable(indices, By::Function(cmp));
@@ -50,6 +97,17 @@ pub fn sort_indices(indices: &mut [u32], cmp: &mut dyn FnMut(u32, u32) -> Orderi
 /// Unstable sort of `indices` by `cmp`.
 pub fn sort_indices_unstable(indices: &mut [u32], cmp: &mut dyn FnMut(u32, u32) -> Ordering) {
     sort_unstable(indices, By::Function(cmp));
+}
+
+/// [`sort_indices`] for a `cmp` that may not be a total order: one that goes in a circle (`a < b < c < a`), as ports of other people's
+/// comparisons do. The sorts of the standard library may panic on it. This one moves the items by counting alone, so it ends with
+/// the same items whatever `cmp` answers.
+///
+/// If `cmp` is a total order, the result is that of [`sort_indices`]. If it is not, but says the opposite of `(b, a)` for `(a, b)`, then
+/// still no item is less than the one before it: each pair of neighbors was compared, or was a pair of neighbors before. What
+/// is like that already stays as it is, so to sort a second time changes nothing.
+pub fn merge_sort_indices(indices: &mut [u32], cmp: &mut dyn FnMut(u32, u32) -> Ordering) {
+    merge_sort(indices, By::Function(cmp));
 }
 
 /// `0..len` in the order of `cmp`, ties in their order.
@@ -145,6 +203,25 @@ pub fn sort_slice_by<T>(items: &mut [T], mut cmp: impl FnMut(&T, &T) -> Ordering
     apply_permutation_in_place(items, &mut order);
 }
 
+/// `0..len` as [`merge_sort_indices`] sorts it.
+#[inline(never)]
+fn merge_sorted(len: usize, cmp: &mut dyn Compare) -> Vec<u32> {
+    let mut order = identity(len);
+    merge_sort(&mut order, By::Comparison(cmp));
+    order
+}
+
+/// [`sort_slice_by`] for a `cmp` that may not be a total order. See [`merge_sort_indices`].
+pub fn merge_sort_slice_by<T>(items: &mut [T], mut cmp: impl FnMut(&T, &T) -> Ordering) {
+    if items.len() < 2 {
+        return;
+    }
+    let mut order = merge_sorted(items.len(), &mut |a: u32, b: u32| {
+        cmp(&items[a as usize], &items[b as usize])
+    });
+    apply_permutation_in_place(items, &mut order);
+}
+
 /// Unstable counterpart of [`sort_slice_by`].
 pub fn sort_slice_unstable_by<T>(items: &mut [T], mut cmp: impl FnMut(&T, &T) -> Ordering) {
     if items.len() < 2 {
@@ -235,6 +312,102 @@ mod tests {
         a.reverse();
         sort_slice_unstable(&mut a);
         assert_eq!(a, b);
+    }
+
+    const LENGTHS: [usize; 7] = [0, 1, 2, 21, 22, 100, 1000];
+
+    fn shuffled(len: usize) -> Vec<u32> {
+        (0..len as u32)
+            .map(|i| i.wrapping_mul(7919) % 257)
+            .collect()
+    }
+
+    #[test]
+    fn merge_sort_matches_std_for_an_order() {
+        for len in LENGTHS {
+            let mut a: Vec<(u32, usize)> = shuffled(len).into_iter().zip(0..).collect();
+            let mut b = a.clone();
+            merge_sort_slice_by(&mut a, |x, y| x.0.cmp(&y.0));
+            b.sort_by(|x, y| x.0.cmp(&y.0));
+            assert_eq!(a, b, "{len}");
+            merge_sort_slice_by(&mut a, |x, y| y.0.cmp(&x.0));
+            b.sort_by(|x, y| y.0.cmp(&x.0));
+            assert_eq!(a, b, "{len}");
+        }
+    }
+
+    #[test]
+    fn merge_sort_keeps_the_items_whatever_the_comparison() {
+        const ANSWERS: [Ordering; 11] = [
+            Ordering::Less,
+            Ordering::Greater,
+            Ordering::Greater,
+            Ordering::Equal,
+            Ordering::Less,
+            Ordering::Less,
+            Ordering::Greater,
+            Ordering::Equal,
+            Ordering::Greater,
+            Ordering::Less,
+            Ordering::Equal,
+        ];
+        let mut asked = 0;
+        let comparisons: [&mut dyn FnMut(u32, u32) -> Ordering; 5] = [
+            &mut |_, _| Ordering::Less,
+            &mut |_, _| Ordering::Greater,
+            &mut |_, _| Ordering::Equal,
+            &mut |_, _| {
+                asked += 1;
+                ANSWERS[asked % ANSWERS.len()]
+            },
+            // 0 < 1 < 2 < 0
+            &mut |a, b| {
+                [Ordering::Equal, Ordering::Greater, Ordering::Less][((a + 3 - b % 3) % 3) as usize]
+            },
+        ];
+        for cmp in comparisons {
+            for len in LENGTHS {
+                let mut sorted = identity(len);
+                merge_sort_indices(&mut sorted, cmp);
+                sorted.sort_unstable();
+                assert_eq!(sorted, identity(len));
+                let mut items = shuffled(len);
+                merge_sort_slice_by(&mut items, |a, b| cmp(*a, *b));
+                let mut expected = shuffled(len);
+                items.sort_unstable();
+                expected.sort_unstable();
+                assert_eq!(items, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn merge_sort_leaves_no_item_less_than_the_one_before_it_and_then_changes_nothing() {
+        // Which of two is less is a coin toss, the same both ways round.
+        let cmp = |a: u32, b: u32| {
+            let (low, high) = (a.min(b), a.max(b));
+            let toss =
+                (low.wrapping_mul(0x9E37_79B1) ^ high.wrapping_mul(0x85EB_CA6B)).count_ones() % 2
+                    == 0;
+            match a.cmp(&b) {
+                Ordering::Equal => Ordering::Equal,
+                order if toss => order,
+                order => order.reverse(),
+            }
+        };
+        for len in LENGTHS {
+            let mut sorted = identity(len);
+            merge_sort_indices(&mut sorted, &mut |a, b| cmp(a, b));
+            assert!(
+                sorted
+                    .windows(2)
+                    .all(|it| cmp(it[1], it[0]) != Ordering::Less),
+                "{len}"
+            );
+            let once = sorted.clone();
+            merge_sort_indices(&mut sorted, &mut |a, b| cmp(a, b));
+            assert_eq!(sorted, once, "{len}");
+        }
     }
 
     #[test]

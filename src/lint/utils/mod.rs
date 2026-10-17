@@ -22,6 +22,7 @@
 //! | `require("ignore")` | [`crate::ignore`] | `IgnoreRules::from_lines(patterns, IgnoreOptions { has_braces: false, ignores_case }).ignores(path)` |
 //! | `node.type`, `node.range`, `node.parent`, `ChainExpression`, `SequenceExpression`, patterns in assignments | [`estree_compat`], re-exported from here | `utils::estree_type_name(node)`, `utils::estree_type_at(file, offset)`, `utils::Target` |
 //! | `array.sort((a, b) => a > b ? 1 : -1)`, a comparison that never answers 0 | [`array`] | `utils::array_sort_by(&mut items, \|a, b\| ..)` |
+//! | `array.sort(compare)` with any other comparison, `slice::sort_by` of oxlint | [`sort`] | `sort::sort_by(&mut items, \|a, b\| ..)`, which does not panic if `compare` isn't a total order, as `slice::sort_by` may |
 //! | `a.localeCompare(b)`, `new Intl.Collator("en", { numeric: true, sensitivity: "base" })` | `bun_core::strings` | `strings::locale_compare(a, b)`, `strings::locale_compare_numeric_base(a, b)` |
 //! | a `Literal` listener that looks at strings or numbers: keys, module specifiers and literal types are not expressions here | `rule.rs` | `on.string_literals(f)`, `on.number_literals(f)` |
 //! | `n.toString(radix)`, `parseInt`, `parseFloat`, `ToInt32` | [`eslint_utils::js_number`] | `js_number::parse_int(text, 10)`, .. |

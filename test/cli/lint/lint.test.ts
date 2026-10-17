@@ -6401,7 +6401,8 @@ maybe(() => { return f; });
       expect(stdout).toContain(" errors and 0 warnings potentially fixable with the `--fix` option.");
     }
     expect(exitCode).toBe(1);
-    expect(proc.resourceUsage()!.maxRSS).toBeLessThan((isASAN || isDebug ? 700 : 300) * 1024 * 1024);
+    // On Linux the peak of a child starts at the peak of the process that spawned it, which for this file is about 300 MB.
+    expect(proc.resourceUsage()!.maxRSS).toBeLessThan((isASAN || isDebug ? 800 : 600) * 1024 * 1024);
   });
 
   // What matches a path with a pattern of `include` called itself for each `**`, and tried every number of directories for each
@@ -11835,6 +11836,30 @@ describe.concurrent("what bun lint takes from Bun", () => {
     const expected = { line: "/n\xff.js:1:1: Unexpected 'debugger' statement. [Error/no-debugger]", exitCode: 1 };
     expect(await run(".")).toEqual(expected);
     expect(await run(`"$(printf 'n\\377.js')"`)).toEqual(expected);
+  });
+
+  // As JavaScript would compare them: U+40000, half a pair, and a byte that is no character, which is U+FFFD.
+  test.skipIf(!isLinux)("files whose names are not UTF-8 are in one order", async () => {
+    const kinds = ["\xF1\x80\x80\x80", "\xED\xB0\x80", "\xF0A"];
+    const names = kinds.flatMap(kind =>
+      Array.from({ length: 16 }, (_, i) => `${kind}${String.fromCharCode(97 + i)}.js`),
+    );
+    using dir = tempDir("bun-lint-process", { "eslint.config.js": basic });
+    for (const name of names) writeFileSync(Buffer.from(`${dir}/${name}`, "latin1"), "debugger;\n");
+    await using proc = spawn({
+      // A crash leaves no core file.
+      cmd: ["sh", "-c", 'ulimit -c 0; exec "$0" lint -f unix .', bunExe()],
+      env,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
+    const lines = Buffer.from(stdout).toString("latin1").split("\n");
+    const found = lines.filter(it => it.endsWith("[Error/no-debugger]"));
+    expect(found.map(it => it.slice(String(dir).length + 1, it.indexOf(":")))).toEqual(names);
+    expect(exitCode).toBe(1);
   });
 
   // `String(number)` and the value of a literal are WebKit's.

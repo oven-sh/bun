@@ -55,6 +55,21 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
 #undef IS_LETTER
 #undef IS_SLASH
 
+ALWAYS_INLINE size_t lastPathSeparatorIndex(const WTF::String& path)
+{
+#if OS(WINDOWS)
+    size_t slash = path.reverseFind(POSIX_PATH_SEP, path.length());
+    size_t backslash = path.reverseFind(WINDOWS_PATH_SEP, path.length());
+    if (slash == WTF::notFound)
+        return backslash;
+    if (backslash == WTF::notFound)
+        return slash;
+    return std::max(slash, backslash);
+#else
+    return path.reverseFind(POSIX_PATH_SEP, path.length());
+#endif
+}
+
 extern "C" BunString ResolvePath__joinAbsStringBufCurrentPlatformBunString(JSC::JSGlobalObject*, const BunString*);
 
 /// CWD is determined by the global object's current cwd.

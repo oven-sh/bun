@@ -2139,6 +2139,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, data.body_loc)
                 .expect("unreachable");
+            // A `case` label can skip the `const` after it: the switch body has no const local prefix.
+            p.cur_scope().is_after_const_local_prefix = true;
             let old_is_inside_switch = p.fn_or_arrow_data_visit.is_inside_switch;
             p.fn_or_arrow_data_visit.is_inside_switch = true;
             let cases = data.cases.slice_mut();

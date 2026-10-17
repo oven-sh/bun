@@ -1200,11 +1200,9 @@ impl AresReply for struct_ares_mx_reply {
     }
 }
 
-/// `struct ares_txt_ext`: one node per character string of a TXT record.
-/// A TXT record can hold several character strings (RFC 1035 3.3.14), and
-/// `record_start` marks the first string of each record. The plain
-/// `ares_parse_txt_reply` list has no such flag, so it cannot tell two
-/// records apart from one record with two strings. It is not bound.
+/// One node per character string of a TXT record. `record_start` marks the
+/// first string of each record. The plain `ares_parse_txt_reply` has no such
+/// flag, so it is not bound.
 #[repr(C)]
 pub struct struct_ares_txt_ext {
     pub next: *mut struct_ares_txt_ext,
@@ -1221,9 +1219,7 @@ impl AresReply for struct_ares_txt_ext {
 }
 
 impl struct_ares_txt_ext {
-    /// True when this node is the first character string of a TXT record.
-    /// c-ares sets it on the first node of the list and on every record
-    /// boundary after it.
+    /// True on the first character string of each TXT record, the list head included.
     #[inline]
     pub fn is_record_start(&self) -> bool {
         self.record_start != 0

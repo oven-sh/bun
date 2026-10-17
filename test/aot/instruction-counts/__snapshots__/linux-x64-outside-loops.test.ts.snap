@@ -120,10 +120,10 @@ untyped, function that no loop calls: 112.75 instructions (stub MapGet 58, kerne
 `;
 
 exports[`looks up a string that a Map holds, outside loops 1`] = `
-"typed, function: 51 instructions (stub MapGetWithStringKey 28, kernel 20, module 3), 492 bytes
-typed, function that no loop calls: 56.75 instructions (stub MapGetWithStringKey 28, a function without a name 17, kernel 8.25, module 3.50), 197 bytes
-untyped, function: 58.25 instructions (stub MapGetWithStringKey 28, kernel 27.25, module 3), 805 bytes
-untyped, function that no loop calls: 84.75 instructions (stub MapGet 30, kernel 17.25, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 14, stub Add 8, stub MapGetOrCallValue 6, stub ReadInheritedOutOfLineByName 6, module 3.50), 363 bytes"
+"typed, function: 72 instructions (stub MapGetWithStringKey 49, kernel 20, module 3), 492 bytes
+typed, function that no loop calls: 77.75 instructions (stub MapGetWithStringKey 49, a function without a name 17, kernel 8.25, module 3.50), 197 bytes
+untyped, function: 79.25 instructions (stub MapGetWithStringKey 49, kernel 27.25, module 3), 805 bytes
+untyped, function that no loop calls: 105.75 instructions (stub MapGet 51, kernel 17.25, stub GetByNameWithDirectColumnPreservingTwoWithReceiverInRCX 14, stub Add 8, stub MapGetOrCallValue 6, stub ReadInheritedOutOfLineByName 6, module 3.50), 363 bytes"
 `;
 
 exports[`makes an instance of a class, outside loops 1`] = `

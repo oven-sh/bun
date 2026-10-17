@@ -58,7 +58,6 @@ void throwTypeErrorOrOutOfMemory(JSC::JSGlobalObject*, JSC::ThrowScope&, const W
 class ErrorCodeCache : public JSC::JSInternalFieldObjectImpl<NODE_ERROR_COUNT> {
 public:
     using Base = JSInternalFieldObjectImpl<NODE_ERROR_COUNT>;
-    using Field = ErrorCode;
 
     DECLARE_EXPORT_INFO;
 

@@ -56,18 +56,11 @@ private:
     String m_extra;
 };
 
-Exception isolatedCopy(Exception&&);
-
 inline Exception::Exception(ExceptionCode code, String message, String extra)
     : m_code { code }
     , m_message { WTF::move(message) }
     , m_extra { WTF::move(extra) }
 {
-}
-
-inline Exception isolatedCopy(Exception&& value)
-{
-    return Exception { value.code(), value.releaseMessage().isolatedCopy(), value.releaseExtra().isolatedCopy() };
 }
 
 }

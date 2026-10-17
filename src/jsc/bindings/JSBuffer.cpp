@@ -2763,8 +2763,6 @@ JSC_ANNOTATE_HOST_FUNCTION(JSBufferConstructorConstruct, JSBufferConstructor::co
 class JSBuffer : public JSC::JSNonFinalObject {
 
     DECLARE_INFO;
-
-    static constexpr JSC::JSTypeRange typeRange = { Uint8ArrayType, Uint8ArrayType };
 };
 
 const ClassInfo JSBuffer::s_info = {
